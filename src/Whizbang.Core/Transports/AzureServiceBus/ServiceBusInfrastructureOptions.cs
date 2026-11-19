@@ -6,14 +6,14 @@ namespace Whizbang.Core.Transports.AzureServiceBus;
 /// <summary>
 /// Configuration options for Service Bus infrastructure auto-discovery and provisioning.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_DefaultValues_AreSetAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_ServiceName_CanBeSetAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_RequiredTopics_CanBeModifiedAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_AutoCreateInProduction_CanBeDisabledAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_GenerateAspireConfigInDev_CanBeDisabledAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_FailOnProvisioningError_CanBeEnabledAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_RequiredTopics_InitializedAsEmptyListAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_MultipleRequiredTopics_CanBeAddedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_DefaultValues_AreSetAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_ServiceName_CanBeSetAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_RequiredTopics_CanBeModifiedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_AutoCreateInProduction_CanBeDisabledAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_GenerateAspireConfigInDev_CanBeDisabledAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_FailOnProvisioningError_CanBeEnabledAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_RequiredTopics_InitializedAsEmptyListAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_MultipleRequiredTopics_CanBeAddedAsync</tests>
 public class ServiceBusInfrastructureOptions {
   /// <summary>
   /// Name of this service (used for generating unique subscription names).

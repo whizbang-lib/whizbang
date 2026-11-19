@@ -21,6 +21,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
@@ -179,7 +180,9 @@ consumerOptions.Destinations.Add(new TransportDestination(
 #endif
 
 builder.Services.AddSingleton(consumerOptions);
-builder.Services.AddHostedService<TransportConsumerWorker>();
+// This host names its destinations by hand rather than calling AddTransportConsumer(), so it hosts the consumer itself,
+// with its start point: Accept commands, once this instance's row says it is eligible for work.
+builder.Services.AddWhizbangWorker<TransportConsumerWorker>();
 
 // Outbox publisher worker - publishes pending messages from outbox to Service Bus
 // Options configured via appsettings.json "WorkCoordinatorPublisher" section.
@@ -191,9 +194,8 @@ builder.Services.AddOptions<PerspectiveWorkerOptions>()
 // Register event type provider for AOT-compatible polymorphic event deserialization
 builder.Services.AddSingleton<IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
 
-// Perspective worker - processes perspective checkpoints (event replay for read models)
-// NOTE: Skeleton implementation - logs checkpoint claims but doesn't invoke perspectives yet
-builder.Services.AddHostedService<PerspectiveWorker>();
+// Perspective worker - processes perspective checkpoints (event replay for read models).
+// AddWhizbang() hosts it, starting at Accept commands.
 
 // Add FastEndpoints for REST API (AOT-compatible)
 builder.Services.AddFastEndpoints();

@@ -18,7 +18,11 @@ namespace Whizbang.Transports.RabbitMQ;
 public sealed class RabbitMQSubscription : ISubscription {
   private readonly IChannel _channel;
   private readonly string _queueName;
-  private readonly string? _consumerTag;
+  private string? _consumerTag;
+  // True while the consumer is canceled because the subscription is paused; a resume then starts one again (#2406).
+  private bool _consumerCanceledForPause;
+  // The consumer cancel the last pause started; a resume waits for it before it starts a consumer again.
+  private Task _canceling = Task.CompletedTask;
   // Always present: a subscription built without a logger discards through NullLogger, exactly as the
   // null-conditional calls it replaces did, and the fire-and-forget dispose then has no branch on it.
   private readonly ILogger _logger;
@@ -104,7 +108,24 @@ public sealed class RabbitMQSubscription : ISubscription {
   /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQSubscriptionTests.cs:Disconnection_AfterAnApplicationInitiatedShutdown_IsNullAsync</tests>
   public SubscriptionDisconnectedEventArgs? Disconnection => Volatile.Read(ref _disconnection);
 
+  /// <summary>
+  /// Starts a consumer on the subscription's queue again and returns its tag. Set by the transport; with it, a pause
+  /// cancels the consumer and a resume starts one (#2406). Without it (a subscription built directly), a pause only stops
+  /// handling, and the transport requeues what the consumer is still given.
+  /// </summary>
+  internal Func<Task<string>>? RestartConsuming { get; init; }
+
   /// <inheritdoc />
+  /// <remarks>
+  /// Pausing cancels the consumer (#2406), so the broker hands this instance nothing while it is paused and the queue is
+  /// left to the instances that are running. A paused consumer that stayed on the queue was handed every delivery and
+  /// could only requeue it, raising each message's delivery count. The cancel is started, not awaited, so a pause reached
+  /// from a consumer callback cannot wait on itself; a delivery already handed over is requeued once with a Warning.
+  /// </remarks>
+  /// <docs>messaging/transports/rabbitmq#paused-subscriptions</docs>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQPausedSubscriptionTests.cs:Batch_Paused_CancelsItsConsumerAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQPausedSubscriptionTests.cs:Single_Paused_CancelsItsConsumerAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQPausedSubscriptionTests.cs:Batch_PauseCannotCancelTheConsumer_LogsAWarningAndResumeStartsNoSecondConsumerAsync</tests>
   public Task PauseAsync() {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -117,16 +138,35 @@ public sealed class RabbitMQSubscription : ISubscription {
     }
 
     _isActive = false;
+    if (_consumerTag is { } consumerTag && RestartConsuming is not null) {
+      _consumerCanceledForPause = true;
+      _canceling = _cancelConsumerForPauseAsync(consumerTag);
+    }
     if (_logger.IsEnabled(LogLevel.Information)) {
       var queueName = _queueName;
-      _logger.LogInformation("Paused subscription for queue {QueueName}", queueName);
+      _logger.LogInformation("Paused subscription for queue {QueueName}: its consumer stops taking deliveries until it is resumed", queueName);
     }
 
     return Task.CompletedTask;
   }
 
+  private async Task _cancelConsumerForPauseAsync(string consumerTag) {
+    try {
+      await _channel.BasicCancelAsync(consumerTag).ConfigureAwait(false);
+    } catch (Exception ex) {
+      // The consumer is still on the queue, so a resume must not start a second one next to it.
+      _consumerCanceledForPause = false;
+      _logger.LogWarning(ex,
+        "Paused subscription for queue {QueueName} could not cancel its consumer; it keeps taking deliveries while "
+        + "paused and requeues each one", _queueName);
+    }
+  }
+
   /// <inheritdoc />
-  public Task ResumeAsync() {
+  /// <remarks>Resuming starts a consumer again once the pause's cancel has finished (#2406).</remarks>
+  /// <docs>messaging/transports/rabbitmq#paused-subscriptions</docs>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQPausedSubscriptionTests.cs:Batch_ResumedAfterAPause_ConsumesAgainAndHandlesDeliveriesAsync</tests>
+  public async Task ResumeAsync() {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     if (_isActive) {
@@ -134,16 +174,19 @@ public sealed class RabbitMQSubscription : ISubscription {
         var queueName = _queueName;
         _logger.LogDebug("Subscription for queue {QueueName} already active, skipping", queueName);
       }
-      return Task.CompletedTask;
+      return;
     }
 
+    await _canceling.ConfigureAwait(false);
     _isActive = true;
+    if (_consumerCanceledForPause) {
+      _consumerCanceledForPause = false;
+      _consumerTag = await RestartConsuming!().ConfigureAwait(false);
+    }
     if (_logger.IsEnabled(LogLevel.Information)) {
       var queueName = _queueName;
       _logger.LogInformation("Resumed subscription for queue {QueueName}", queueName);
     }
-
-    return Task.CompletedTask;
   }
 
   /// <summary>
@@ -184,7 +227,8 @@ public sealed class RabbitMQSubscription : ISubscription {
       try {
         // Cancel consumer explicitly if consumer tag is available
         // Use noWait: true to avoid waiting for server confirmation
-        if (_consumerTag != null) {
+        // A consumer the pause already canceled is not canceled again (#2406).
+        if (_consumerTag != null && !_consumerCanceledForPause) {
           await _channel.BasicCancelAsync(_consumerTag, noWait: true);
           if (_logger.IsEnabled(LogLevel.Debug)) {
             var consumerTag = _consumerTag;

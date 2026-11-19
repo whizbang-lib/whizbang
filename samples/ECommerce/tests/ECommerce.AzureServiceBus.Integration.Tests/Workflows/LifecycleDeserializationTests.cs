@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using ECommerce.Contracts.Commands;
 using ECommerce.Contracts.Events;
@@ -11,7 +13,10 @@ using ECommerce.Integration.Tests.Fixtures;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
 
 namespace ECommerce.Integration.Tests.Workflows;
 
@@ -127,7 +132,7 @@ public class LifecycleDeserializationTests {
     // Create a custom receptor that counts events ONLY for products sent in THIS test
     // This prevents counting stale events from previous tests or concurrent processes
     // Deduplicates by ProductId since Service Bus may deliver same message multiple times
-    var countingReceptor = new CustomDistributeReceptor((evt) => {
+    var countingReceptor = new CustomDistributeReceptor<ProductCreatedEvent>((evt) => {
       if (expectedProductIds.Contains(evt.ProductId)) {
         // TryAdd returns true only for first occurrence - deduplicates retries
         if (receivedEvents.TryAdd(evt.ProductId, evt)) {
@@ -170,16 +175,69 @@ public class LifecycleDeserializationTests {
     }
   }
 
-  // Helper receptor for counting multiple events
-  [FireAt(LifecycleStage.PostDistributeInline)]
-  // Constructed by hand so it can close over per-test state; the container has no way to supply
-  // that callback. Declaring it keeps the receptor out of DI, where one un-constructible
-  // descriptor would abort the whole service provider.
-  [SuppressReceptorRegistration]
-  public sealed class CustomDistributeReceptor(Action<ProductCreatedEvent> onReceived) : IReceptor<ProductCreatedEvent> {
-    private readonly Action<ProductCreatedEvent> _onReceived = onReceived;
+  /// <summary>
+  /// Every receptor the compiled registries route a ProductCreatedEvent to at PostDistributeInline must
+  /// be one the inventory host can actually run. A routed entry nothing can resolve throws on every
+  /// flush, and the outbox flush runs a stage for a whole batch, so one throw also skips the receptors
+  /// of every other message coalesced into that batch. That made the multi-event test above lose an
+  /// event whenever its two products' events were flushed together.
+  /// </summary>
+  [Test]
+  public async Task CompiledPostDistributeInlineReceptors_ForProductCreatedEvent_AllRunInTheInventoryHostAsync() {
+    var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    var registry = fixture.InventoryHost!.Services.GetRequiredService<IReceptorRegistry>();
+    var evt = new ProductCreatedEvent {
+      ProductId = Guid.CreateVersion7(),
+      Name = "Routed receptor probe",
+      Description = "Every compiled entry must resolve",
+      Price = 1m
+    };
+    var envelope = new MessageEnvelope<ProductCreatedEvent> {
+      MessageId = MessageId.New(),
+      Payload = evt,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = []
+    };
 
-    public ValueTask HandleAsync(ProductCreatedEvent message, CancellationToken cancellationToken = default) {
+    // Positive control: a receptor registered at runtime shows up in the same query, so the probe reads
+    // the host's live registry at this stage rather than one that would list nothing for any reason.
+    var control = new CustomDistributeReceptor<ProductCreatedEvent>(_ => { });
+    registry.Register<ProductCreatedEvent>(control, LifecycleStage.PostDistributeInline);
+    List<ReceptorInfo> routed;
+    try {
+      routed = [.. registry.GetReceptorsFor(typeof(ProductCreatedEvent), LifecycleStage.PostDistributeInline)];
+    } finally {
+      registry.Unregister<ProductCreatedEvent>(control, LifecycleStage.PostDistributeInline);
+    }
+    await Assert.That(routed.Any(r => ReferenceEquals(r.RuntimeInstance, control))).IsTrue()
+      .Because("the runtime control must be visible, or an empty compiled list proves nothing");
+
+    var compiled = routed.Where(r => r.RuntimeInstance is null).ToList();
+
+    var failures = new List<string>();
+    using var scope = fixture.InventoryHost.Services.CreateScope();
+    foreach (var entry in compiled) {
+      try {
+        await entry.InvokeAsync(scope.ServiceProvider, evt, envelope, null, CancellationToken.None);
+      } catch (InvalidOperationException ex) {
+        failures.Add($"{entry.ReceptorId}: {ex.Message}");
+      }
+    }
+
+    await Assert.That(failures).IsEmpty()
+      .Because("a compiled route the host cannot resolve throws on every PostDistributeInline flush of the event");
+  }
+
+  // Helper receptor for counting multiple events. It is registered only at runtime, against the stage
+  // the test names, and it is an open generic on purpose: discovery skips open generic receptors, so no
+  // compiled route exists for it. A closed type here is routed at compile time in every host that loads
+  // this assembly, and that route resolves the receptor from DI, which can never supply the callback, so
+  // it throws on every flush of the event.
+  public sealed class CustomDistributeReceptor<TMessage>(Action<TMessage> onReceived) : IReceptor<TMessage>
+    where TMessage : IMessage {
+    private readonly Action<TMessage> _onReceived = onReceived;
+
+    public ValueTask HandleAsync(TMessage message, CancellationToken cancellationToken = default) {
       _onReceived(message);
       return ValueTask.CompletedTask;
     }

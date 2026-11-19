@@ -12,7 +12,6 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Messaging;
-using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Core.Workers;
 
@@ -26,8 +25,8 @@ namespace Whizbang.Core.Workers;
 /// Built once during <c>AddOrphanInboxJanitor</c> by walking the
 /// <see cref="IServiceCollection"/> for <c>IReceptor&lt;TMessage&gt;</c> /
 /// <c>IReceptor&lt;TMessage,TResponse&gt;</c> registrations and collecting their generic
-/// message-type arguments. Perspective Apply target types are unioned at janitor run time
-/// from <see cref="IPerspectiveRunnerRegistry.GetEventTypes"/>.
+/// message-type arguments. Everything the consumer registry enumerates
+/// (<see cref="IConsumerRegistry.GetConsumedMessages"/>) is unioned at janitor run time.
 /// </remarks>
 public sealed class HandledReceptorTypeSnapshot {
   /// <summary>The set of CLR types known to be handled by an <c>IReceptor</c> in this service.</summary>
@@ -45,45 +44,36 @@ public sealed class HandledReceptorTypeSnapshot {
 /// host startup, deleting <c>wh_inbox</c> rows whose <c>message_type</c> is not handled by
 /// any local receptor or perspective. Companion to slice 2's receive-time filter.
 /// </summary>
+/// <docs>operations/workers/orphan-inbox-janitor</docs>
 [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates",
   Justification = "Startup-once path with infrequent log calls; LoggerMessage overhead not justified.")]
 [SuppressMessage("Usage", "CA1873:Evaluation may be expensive",
   Justification = "Startup-once path; argument evaluation cost is negligible.")]
-public sealed class OrphanInboxJanitor : BackgroundService {
+public sealed partial class OrphanInboxJanitor : BackgroundService {
   private readonly IServiceProvider _services;
   private readonly HandledReceptorTypeSnapshot _receptorSnapshot;
   private readonly ILogger<OrphanInboxJanitor> _logger;
-  private readonly ISchemaReadyGate _schemaReadyGate;
 
   /// <summary>Constructs the janitor with required services and snapshot.</summary>
   public OrphanInboxJanitor(
       IServiceProvider services,
       HandledReceptorTypeSnapshot receptorSnapshot,
-      ISchemaReadyGate schemaReadyGate,
       ILogger<OrphanInboxJanitor> logger) {
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(receptorSnapshot);
     _services = services;
     _receptorSnapshot = receptorSnapshot;
     _logger = logger ?? NullLogger<OrphanInboxJanitor>.Instance;
-    _schemaReadyGate = schemaReadyGate;
   }
 
   /// <inheritdoc />
   /// <remarks>
   /// The sweep used to run inline in <c>StartAsync</c>, which both BLOCKED host startup (every
   /// later hosted service waited on the purge) and skipped the schema gate (a DELETE issued
-  /// against a possibly-unmigrated schema). It now runs here — in the background, after the gate.
+  /// against a possibly-unmigrated schema). It now runs here, in the background, and the host starts
+  /// the janitor at Accept commands (#1636).
   /// </remarks>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    if (_schemaReadyGate is not null) {
-      try {
-        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        return;
-      }
-    }
-
     try {
       using var scope = _services.CreateScope();
       var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
@@ -92,7 +82,7 @@ public sealed class OrphanInboxJanitor : BackgroundService {
         return;
       }
 
-      var handledTypeNames = _collectHandledTypeNames(scope.ServiceProvider);
+      var handledTypeNames = await _collectHandledTypeNamesAsync(scope.ServiceProvider, coordinator, stoppingToken);
       if (handledTypeNames.Count == 0) {
         _logger.LogInformation("OrphanInboxJanitor skipped: no locally-handled types — refusing to purge to avoid emptying the inbox during cold start");
         return;
@@ -113,23 +103,23 @@ public sealed class OrphanInboxJanitor : BackgroundService {
     }
   }
 
-  private List<string> _collectHandledTypeNames(IServiceProvider scopedProvider) {
+  private async Task<List<string>> _collectHandledTypeNamesAsync(
+      IServiceProvider scopedProvider, IWorkCoordinator coordinator, CancellationToken cancellationToken) {
     var names = new HashSet<string>(StringComparer.Ordinal);
 
     foreach (var t in _receptorSnapshot.ReceptorMessageTypes) {
-      var qualified = TypeNameFormatter.AssemblyQualifiedNameOrNull(t);
-      if (!string.IsNullOrEmpty(qualified)) {
-        names.Add(EventTypeMatchingHelper.NormalizeTypeName(qualified));
+      // The wire form (#2267); a type with no name (an open generic's parameter) has none to compare.
+      if (TypeNameFormatter.TryFormatClrTypeName(t, out _)) {
+        names.Add(TypeNameFormatter.Format(t));
       }
     }
 
-    var perspectiveRegistry = scopedProvider.GetService<IPerspectiveRunnerRegistry>();
-    if (perspectiveRegistry != null) {
-      foreach (var t in perspectiveRegistry.GetEventTypes()) {
-        var qualified = TypeNameFormatter.AssemblyQualifiedNameOrNull(t);
-        if (!string.IsNullOrEmpty(qualified)) {
-          names.Add(EventTypeMatchingHelper.NormalizeTypeName(qualified));
-        }
+    // #2058: what this service consumes comes from the one consumer registry (perspectives, lifecycle receptors, tags,
+    // composites and collectives included), not from the perspective event list alone.
+    var consumerRegistry = scopedProvider.GetService<IConsumerRegistry>();
+    if (consumerRegistry != null) {
+      foreach (var consumed in consumerRegistry.GetConsumedMessages()) {
+        names.Add(consumed.TypeName);
       }
     }
 
@@ -138,6 +128,15 @@ public sealed class OrphanInboxJanitor : BackgroundService {
       foreach (var name in rawRegistry.RegisteredTypeNames) {
         names.Add(name);
       }
+    }
+
+    // #2066: a pending type the receive boundary keeps with no consumer (an absorbed namespace, stored so a later
+    // perspective can rebuild from it) is not an orphan. Asked only when something is already handled, so the caller's
+    // cold-start guard still refuses to purge on an empty registry.
+    if (names.Count > 0) {
+      var keeps = ConsumedMessageTypes.Keeps(scopedProvider);
+      var pending = await coordinator.GetPendingInboxMessageTypesAsync(cancellationToken);
+      names.UnionWith(pending.Where(type => keeps(type)));
     }
 
     return [.. names];

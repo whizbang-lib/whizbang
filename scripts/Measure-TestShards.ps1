@@ -19,10 +19,10 @@
        spread between the sharded suite's shards.
 
     2. Class cost. For the last -TrxRuns (default 10) of those runs, each shard's TRX results. A shard's time is
-       NOT the sum of its test durations: tests that need a database queue for one (CREATE DATABASE
-       copies a template and serializes on its lock), so most of a shard's time is spent between test
-       bodies. Each test is therefore charged the gap from its own start to the next test's start,
-       which sums exactly to the shard's test window, and a class's cost is the median of its sums.
+       NOT the sum of its test durations: its tests run in parallel (#2069), and time can pass between test
+       bodies while the next test's database is provisioned. Each moment is therefore shared among the tests
+       running then, and an idle moment goes to the test that started last before it, which sums exactly to
+       the shard's test window; a class's cost is the median of its sums.
 
     3. Rebalance. Starting from the current [Category("ShardN")] assignment, repeatedly move the
        class from the heaviest shard to the lightest that best closes the gap without overshooting,
@@ -89,18 +89,41 @@ function Get-Quantile([double[]]$Values, [double]$P) {
 }
 
 <#
-    Charges each test the gap from its start to the next test's start (the last test runs to its own
-    end) and sums per class. The sum equals the shard's test window, which per-test durations do not.
+    Charges each class the time its tests occupied the shard, and sums per class. Every moment between two test
+    boundaries is shared equally among the tests running then, so a serial shard charges each test its whole
+    duration and a parallel one (#2069) charges a test its share of the time it ran beside others. A moment when no
+    test runs (the next test's database being provisioned) goes to the test that started last before it, as the gap
+    to the next start did when shards ran one test at a time. The costs sum to the shard's test window. A test the
+    runner never timed (a timeout reports 0001-01-01) is left out.
     $Results: objects with Class, Start ([datetime]) and End ([datetime]).
 #>
 function Get-ClassCost([object[]]$Results) {
-  $sorted = @($Results | Sort-Object Start)
+  # A test that hit its timeout is reported with both times at 0001-01-01; it has no place on the timeline.
+  $tests = @($Results | Where-Object { $_.Start.Year -gt 1 } | Sort-Object Start)
   $cost = @{}
-  for ($i = 0; $i -lt $sorted.Count; $i++) {
-    $next = if ($i + 1 -lt $sorted.Count) { $sorted[$i + 1].Start } else { $sorted[$i].End }
-    $seconds = [math]::Max(0.0, ($next - $sorted[$i].Start).TotalSeconds)
-    $class = $sorted[$i].Class
-    $cost[$class] = $(if ($cost.ContainsKey($class)) { $cost[$class] } else { 0.0 }) + $seconds
+  foreach ($t in $tests) { $cost[$t.Class] = 0.0 }
+  # One sweep over the boundaries: ends sort before starts at the same instant, so a test that ends as the next
+  # begins never shares that instant with it.
+  $events = [System.Collections.Generic.List[object]]::new()
+  for ($i = 0; $i -lt $tests.Count; $i++) {
+    $end = $(if ($tests[$i].End -gt $tests[$i].Start) { $tests[$i].End } else { $tests[$i].Start })
+    $events.Add([pscustomobject]@{ At = $tests[$i].Start; Kind = 1; Index = $i })
+    $events.Add([pscustomobject]@{ At = $end; Kind = 0; Index = $i })
+  }
+  $events = @($events | Sort-Object At, Kind)
+  $running = [System.Collections.Generic.HashSet[int]]::new()
+  $lastStarted = -1
+  for ($e = 0; $e -lt $events.Count; $e++) {
+    $ev = $events[$e]
+    if ($ev.Kind -eq 1) { [void]$running.Add($ev.Index); $lastStarted = $ev.Index } else { [void]$running.Remove($ev.Index) }
+    if ($e + 1 -ge $events.Count) { break }
+    $seconds = ($events[$e + 1].At - $ev.At).TotalSeconds
+    if ($seconds -le 0) { continue }
+    if ($running.Count -gt 0) {
+      foreach ($i in $running) { $cost[$tests[$i].Class] += $seconds / $running.Count }
+    } else {
+      $cost[$tests[$lastStarted].Class] += $seconds
+    }
   }
   return $cost
 }

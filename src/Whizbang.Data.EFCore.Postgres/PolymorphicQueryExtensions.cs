@@ -66,7 +66,7 @@ public static class PolymorphicQueryExtensions {
       where TModel : class {
     ArgumentNullException.ThrowIfNull(discriminatorSelector);
 
-    var typeName = typeof(TDerived).Name;
+    var typeName = TypeNameFormatter.SimpleName(typeof(TDerived));
     return query.WhereDiscriminatorValue(discriminatorSelector, typeName);
   }
 

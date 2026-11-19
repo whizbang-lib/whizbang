@@ -73,6 +73,46 @@ public class SnapshotSelectionFollowsStreamOrderTests : EFCoreTestBase {
     await Assert.That(beforeThird.Value.SnapshotVersion).IsEqualTo(2);
   }
 
+  /// <summary>
+  /// #2295, the floor a reap-driven snapshot gives: the pass bootstraps at the cursor's tip, and a snapshot at the tip
+  /// is a rewind floor only for a late event placed after it in the stream. A late event below the tip finds no floor
+  /// in it, so for an ephemeral perspective that late event is dropped (its earlier bodies are reaped once the tip
+  /// snapshot covers them). Snapshotting at the reap boundary instead would give such an event a floor; that needs the
+  /// model as of the boundary, which only a replay can produce, and is a follow-up. This test locks what ships.
+  /// </summary>
+  [Test]
+  public async Task AReapDrivenSnapshotAtTheTip_IsAFloorOnlyForALateEventAfterItAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+
+    var streamId = Guid.NewGuid();
+    var (first, second, tip, later) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+    await _commitAsync(connection, first, streamId);
+    await _commitAsync(connection, second, streamId);
+    await _commitAsync(connection, tip, streamId);
+    await _commitAsync(connection, later, streamId);
+    await _placeAsync(connection, first, version: 1, commitSequence: 10);
+    await _placeAsync(connection, second, version: 2, commitSequence: 20);
+    await _placeAsync(connection, tip, version: 3, commitSequence: 30);
+    await _placeAsync(connection, later, version: 4, commitSequence: 40);
+
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    IPerspectiveSnapshotStore store = new EFCorePerspectiveSnapshotStore(dataSource);
+    // The write the bootstrap makes: at the cursor's last event, with its commit sequence and no collectives mark.
+    using var data = System.Text.Json.JsonDocument.Parse("{}");
+    await store.CreateSnapshotAsync(streamId, _perspectiveName, tip, 30, data, null, CancellationToken.None);
+
+    var forASecondEventArrivingLate = await store.GetSnapshotFloorAsync(streamId, _perspectiveName, second, CancellationToken.None);
+    await Assert.That(forASecondEventArrivingLate).IsNull()
+      .Because("the tip snapshot sits after the late event in the stream, and restoring from it would skip the event");
+
+    var forAnEventAfterTheTip = await store.GetSnapshotFloorAsync(streamId, _perspectiveName, later, CancellationToken.None);
+    await Assert.That(forAnEventAfterTheTip).IsNotNull();
+    await Assert.That(forAnEventAfterTheTip!.SnapshotEventId).IsEqualTo(tip)
+      .Because("the positive control: an event placed after the tip restores from it");
+    await Assert.That(forAnEventAfterTheTip.SnapshotVersion).IsEqualTo(3);
+  }
+
   [Test]
   public async Task GetLatestSnapshotBeforeEventInStreamOrder_SnapshotRecordingNoVersion_IsNotSelectedAsync() {
     await using var dbContext = CreateDbContext();
@@ -168,6 +208,50 @@ public class SnapshotSelectionFollowsStreamOrderTests : EFCoreTestBase {
     await Assert.That(marked.SnapshotData.RootElement.ValueKind).IsEqualTo(System.Text.Json.JsonValueKind.Object);
     await Assert.That(await store.GetSnapshotFloorAsync(streamId, _perspectiveName, first, CancellationToken.None)).IsNull()
       .Because("the floor follows the stream order the selection always used: no snapshot sits before the first event");
+  }
+
+  // #1963: a snapshot records the commit sequence through which its row's collectives were complete, and the floor a
+  // rewind restores from and the newest snapshot a rebuild starts from both carry it. Data and mark are written together,
+  // so writing the same snapshot again replaces the mark with the new write's, and a write that records none leaves none.
+  [Test]
+  public async Task SnapshotStore_RecordsTheCollectivesCompleteThroughMark_AndTheFloorAndTheNewestSnapshotCarryItAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var streamId = Guid.NewGuid();
+    var (first, second, third) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+    await _commitAsync(connection, first, streamId);
+    await _commitAsync(connection, second, streamId);
+    await _commitAsync(connection, third, streamId);
+    await _placeAsync(connection, first, version: 1, commitSequence: 1);
+    await _placeAsync(connection, second, version: 2, commitSequence: 2);
+    await _placeAsync(connection, third, version: 3, commitSequence: 3);
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    var store = new EFCorePerspectiveSnapshotStore(dataSource);
+    using var data = System.Text.Json.JsonDocument.Parse("""{"at":1}""");
+
+    await store.CreateSnapshotAsync(streamId, _perspectiveName, first, 1, data, collectivesThroughSequence: 40);
+    var marked = await store.GetSnapshotFloorAsync(streamId, _perspectiveName, third, CancellationToken.None);
+    await store.CreateSnapshotAsync(streamId, _perspectiveName, first, 1, data, collectivesThroughSequence: 41);
+    var rewritten = await store.GetSnapshotFloorAsync(streamId, _perspectiveName, third, CancellationToken.None);
+    await store.CreateSnapshotAsync(streamId, _perspectiveName, second, 2, data, CancellationToken.None);
+    var unmarkedFloor = await store.GetSnapshotFloorAsync(streamId, _perspectiveName, third, CancellationToken.None);
+    var unmarkedNewest = await store.GetLatestSnapshotFloorAsync(streamId, _perspectiveName, CancellationToken.None);
+    await store.CreateSnapshotAsync(streamId, _perspectiveName, third, 3, data, collectivesThroughSequence: 90);
+    var markedNewest = await store.GetLatestSnapshotFloorAsync(streamId, _perspectiveName, CancellationToken.None);
+
+    await Assert.That(marked!.SnapshotEventId).IsEqualTo(first);
+    await Assert.That(marked.CollectivesThroughSequence).IsEqualTo(40L);
+    await Assert.That(rewritten!.CollectivesThroughSequence).IsEqualTo(41L)
+      .Because("the mark describes the data it was written with, so a new write of the snapshot carries its own");
+    await Assert.That(unmarkedFloor!.SnapshotEventId).IsEqualTo(second).Because("the control: the floor moved to the newer snapshot");
+    await Assert.That(unmarkedFloor.CollectivesThroughSequence).IsNull().Because("a write that records no mark stores none");
+    await Assert.That(unmarkedNewest!.SnapshotEventId).IsEqualTo(second);
+    await Assert.That(unmarkedNewest.CollectivesThroughSequence).IsNull();
+    await Assert.That(markedNewest!.SnapshotEventId).IsEqualTo(third);
+    await Assert.That(markedNewest.SnapshotVersion).IsEqualTo(3);
+    await Assert.That(markedNewest.CollectivesThroughSequence).IsEqualTo(90L);
+    await Assert.That(await store.GetLatestSnapshotFloorAsync(Guid.NewGuid(), _perspectiveName, CancellationToken.None)).IsNull()
+      .Because("a stream with no snapshot has no newest one");
   }
 
   private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext dbContext) {

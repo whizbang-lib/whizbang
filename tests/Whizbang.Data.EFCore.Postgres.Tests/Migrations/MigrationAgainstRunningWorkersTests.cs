@@ -38,7 +38,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/SchemaStepRunner.cs</code-under-test>
 /// <docs>operations/infrastructure/migrations#idempotent-ddl-takes-no-lock</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard5")]
 public sealed partial class MigrationAgainstRunningWorkersTests {
   /// <summary>The tables the electors, the assigner, the heartbeat and the eviction paths use while a pass runs.</summary>

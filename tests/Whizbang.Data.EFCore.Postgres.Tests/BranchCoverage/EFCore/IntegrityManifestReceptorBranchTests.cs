@@ -33,7 +33,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.EFCore;
 /// shared not-in-parallel key with the sibling suite.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityManifestReceptors.cs</code-under-test>
-[NotInParallel("IntegrityManifestGates")]
+[NotInParallel("IntegrityManifestGates")] // the receptors' per-process gates are shared state
 [Category("Shard3")]
 public class IntegrityManifestReceptorBranchTests {
 
@@ -51,7 +51,7 @@ public class IntegrityManifestReceptorBranchTests {
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox" });
+    await receptor.HandleAsync(new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox" });
 
     await Assert.That(transport.Published.Count).IsEqualTo(1);
     await Assert.That(_deserialize<IntegrityManifest>(transport.Published[0].Envelope).OriginServiceName).IsEqualTo("auditor-svc")
@@ -70,7 +70,7 @@ public class IntegrityManifestReceptorBranchTests {
     var receptor = new IntegrityManifestRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox" });
+    await receptor.HandleAsync(new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox" });
 
     await Assert.That(transport.Published.Count).IsEqualTo(1);
     var manifest = _deserialize<IntegrityManifest>(transport.Published[0].Envelope);
@@ -372,6 +372,7 @@ public class IntegrityManifestReceptorBranchTests {
 
   private static IntegrityManifest _manifest(
       AuditCoordinator coordinator, List<StreamDigest> digests, ManifestLevel level = ManifestLevel.Streams) => new() {
+        RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
         ManifestStreamId = coordinator.OriginId,
         OriginServiceId = coordinator.OriginId,
         OriginServiceName = "origin-svc",
@@ -400,6 +401,7 @@ public class IntegrityManifestReceptorBranchTests {
     wiring ??= new Wiring();
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IConsumerRegistry>(new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery());
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IDispatcher>(wiring.Dispatcher ?? new CaptureDispatcher());
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));

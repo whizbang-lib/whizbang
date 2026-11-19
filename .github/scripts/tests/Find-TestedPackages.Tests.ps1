@@ -167,3 +167,17 @@ Describe 'artifact missing' {
     (Invoke-Find $fake).Outcome | Should -Be 'found'
   }
 }
+
+Describe 'the recovery dispatch it names' {
+  It 'publishes the line''s own number when the release ships the branch version' {
+    $fake = New-FakeApi @{ sha = @(,(New-Runs @(New-Run -conclusion 'failure'))) }
+    (Invoke-Find $fake).Message | Should -BeLike '*-f version=0.2602.0 *'
+  }
+
+  It 'publishes the rolled-up stable number when it differs from the line it searches (#2136)' {
+    $fake = New-FakeApi @{ sha = @(,(New-Runs @(New-Run -conclusion 'failure'))) }
+    $r = Find-TestedPackage -Sha $script:Sha -Version 0.2602.0 -PublishVersion 0.2610.0 -Repo o/r -Delays @() -GhApi $fake.Api -Sleep {}
+    $r.Message | Should -BeLike '*-f version=0.2610.0 *'
+    $fake.State.Calls | Should -Not -BeNullOrEmpty
+  }
+}

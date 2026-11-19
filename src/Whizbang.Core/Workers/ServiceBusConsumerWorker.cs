@@ -15,6 +15,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Security;
+using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
@@ -27,8 +28,8 @@ namespace Whizbang.Core.Workers;
 /// Events from remote services are stored in inbox via store_inbox_messages and perspectives are invoked with ordering guarantees.
 /// </summary>
 /// <docs>messaging/transports/transport-consumer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerSecurityContextTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ServiceBusConsumerWorkerSecurityContextTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerWorkerCoverageTests.cs:StartAsync_WhenSubscribeFails_LogsAndRethrowsAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerWorkerCoverageTests.cs:ExecuteAsync_WhenFatalErrorOccurs_LogsAndRethrowsAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerWorkerGapTests.cs:HandleMessage_ConcurrencyLimitDisabled_ProcessesWithoutSemaphoreAsync</tests>
@@ -39,10 +40,6 @@ public partial class ServiceBusConsumerWorker(
   IServiceScopeFactory scopeFactory,
   ILogger<ServiceBusConsumerWorker> logger,
   OrderedStreamProcessor orderedProcessor,
-  // Startup barrier: subscribing lets the broker deliver, and delivery lands in the inbox —
-  // database work against a schema that may not exist yet on a first boot. Optional only so
-  // existing fixtures construct unchanged; DI always supplies it.
-  ISchemaReadyGate schemaReadyGate,
   ILifecycleMessageDeserializer lifecycleMessageDeserializer,
   IEnvelopeSerializer envelopeSerializer,
   IReceptorRegistryQuery receptorRegistry,
@@ -50,10 +47,13 @@ public partial class ServiceBusConsumerWorker(
   IEventMarkerResolver eventMarkerResolver,
   IEphemeralModeResolver ephemeralModeResolver,
   ServiceBusConsumerOptions? options = null,
-  MessageProcessingOptions? messageProcessingOptions = null) : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
+  MessageProcessingOptions? messageProcessingOptions = null,
+  // #2045: the instance's run permit. A host registers this worker itself; the container gives it the one permit
+  // whenever the worker pipeline registered it, so it obeys a stand-down, a pause and a stop by default.
+  Whizbang.Core.RunControl.WhizbangRunPermit? runPermit = null) : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor,
+  Whizbang.Core.Startup.IStartAbandonedObserver, Whizbang.Core.RunControl.IObeysRunPermit {
 #pragma warning restore S107
   private readonly ITransport _transport = ArgumentGuard.NotNull(transport);
-  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
   private readonly TaskCompletionSource _subscriptionsReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
   /// <summary>
@@ -69,6 +69,14 @@ public partial class ServiceBusConsumerWorker(
   /// <inheritdoc />
   Task Whizbang.Core.Startup.IStartupReadinessContributor.WaitForContributorReadyAsync(CancellationToken cancellationToken)
     => SubscriptionsReady.WaitAsync(cancellationToken);
+
+  /// <summary>
+  /// The host stopped before this worker's start point, so it never started (#1636): <see cref="SubscriptionsReady"/> is
+  /// settled as canceled, so a waiter on it observes an outcome rather than hanging.
+  /// </summary>
+  /// <param name="stoppingToken">The host's stopping token.</param>
+  void Whizbang.Core.Startup.IStartAbandonedObserver.OnStartAbandoned(CancellationToken stoppingToken)
+    => _subscriptionsReady.TrySetCanceled(stoppingToken);
   private readonly IEventMarkerResolver _eventMarkerResolver = eventMarkerResolver;
   private readonly IEphemeralModeResolver _ephemeralModeResolver = ephemeralModeResolver;
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
@@ -112,23 +120,81 @@ public partial class ServiceBusConsumerWorker(
     }
   }
 
+  /// <summary>The run permit this consumer obeys (#2045): nothing is received while it is closed.</summary>
+  public Whizbang.Core.RunControl.WhizbangRunPermit RunPermit { get; } = runPermit ?? new Whizbang.Core.RunControl.WhizbangRunPermit();
+
+  private readonly SemaphoreSlim _permitGate = new(1, 1);
+  private IDisposable? _obedience;
+
   /// <summary>
-  /// Pauses all subscriptions to temporarily stop receiving messages.
-  /// Useful for test cleanup scenarios where draining is needed without competing consumers.
+  /// Pauses receiving. Not a second path (#2045): when the run-control path is registered over this consumer's permit,
+  /// this pauses the instance through it (no claim, no receive, roles handed off), and <see cref="ResumeAllSubscriptionsAsync"/>
+  /// resumes it. Only a consumer under no run-control path pauses its own subscriptions alone.
   /// </summary>
   public async Task PauseAllSubscriptionsAsync() {
-    foreach (var subscription in _subscriptions) {
-      await subscription.PauseAsync();
+    if (_runControl() is { } path) {
+      await path.HaltAsync(Whizbang.Core.RunControl.RunHaltReason.Pause, CancellationToken.None).ConfigureAwait(false);
+      return;
     }
+    await _applyAsync(pause: true).ConfigureAwait(false);
   }
 
   /// <summary>
-  /// Resumes all subscriptions to continue receiving messages.
+  /// Resumes receiving: through the run-control path when it is registered over this consumer's permit, otherwise this
+  /// consumer's own subscriptions.
   /// </summary>
   public async Task ResumeAllSubscriptionsAsync() {
-    foreach (var subscription in _subscriptions) {
-      await subscription.ResumeAsync();
+    if (_runControl() is { } path) {
+      await path.ResumeAsync(Whizbang.Core.RunControl.RunHaltReason.Pause, CancellationToken.None).ConfigureAwait(false);
+      return;
     }
+    await _applyAsync(pause: false).ConfigureAwait(false);
+  }
+
+  /// <summary>The registered run-control path, when it closes this consumer's permit; otherwise null.</summary>
+  private Whizbang.Core.RunControl.IWhizbangRunController? _runControl() {
+    using var scope = _scopeFactory.CreateScope();
+    return scope.ServiceProvider.GetService<Whizbang.Core.RunControl.IWhizbangRunController>() is { } path
+      && ReferenceEquals(path.Permit, RunPermit) ? path : null;
+  }
+
+  /// <summary>Brings every subscription in line with the run permit (#2045), serialized with subscribing.</summary>
+  private Task _obeyRunPermitAsync() => _applyAsync(pause: !RunPermit.IsRunning);
+
+  private async Task _applyAsync(bool pause) {
+    await _permitGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    try {
+      foreach (var subscription in _subscriptions) {
+        await (pause ? subscription.PauseAsync() : subscription.ResumeAsync()).ConfigureAwait(false);
+      }
+    } finally {
+      _permitGate.Release();
+    }
+  }
+
+  /// <summary>Records a new subscription, paused at once while the permit is closed (#2045).</summary>
+  private async Task _addSubscriptionAsync(ISubscription subscription, string topic) {
+    await _permitGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+    try {
+      _subscriptions.Add(subscription);
+      if (!RunPermit.IsRunning) {
+        try {
+          await subscription.PauseAsync().ConfigureAwait(false);
+        } catch (Exception ex) {
+          LogPauseUnderClosedPermitFailed(_logger, ex, topic);
+        }
+      }
+    } finally {
+      _permitGate.Release();
+    }
+  }
+
+  /// <inheritdoc />
+  public override void Dispose() {
+    _obedience?.Dispose();
+    _permitGate.Dispose();
+    base.Dispose();
+    GC.SuppressFinalize(this);
   }
 
   /// <summary>
@@ -136,7 +202,7 @@ public partial class ServiceBusConsumerWorker(
   /// This ensures subscriptions are ready before ExecuteAsync runs (blocking initialization).
   /// </summary>
   /// <summary>
-  /// Background loop: waits for the schema gate, subscribes to the configured topics, then keeps
+  /// Background loop: subscribes to the configured topics, then keeps
   /// the worker alive while subscriptions process messages.
   /// </summary>
   /// <remarks>
@@ -145,22 +211,15 @@ public partial class ServiceBusConsumerWorker(
   /// messages land in inbox tables the migration creates. Both halves are fixed by moving the
   /// subscribe here, behind the gate.
   /// </remarks>
-  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup waits on the schema gate, subscribes to each configured topic and keeps the worker alive, with shutdown cancellation separated from a subscribe failure in both the per-topic and the outer scope.")]
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup subscribes to each configured topic and keeps the worker alive, with shutdown cancellation separated from a subscribe failure in both the per-topic and the outer scope.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     using var activity = WhizbangActivitySource.Hosting.StartActivity("ServiceBusConsumerWorker.Start");
     activity?.SetTag("worker.subscriptions_count", _options.Subscriptions.Count);
     activity?.SetTag("servicebus.has_filter", _options.Subscriptions.Any(s => !string.IsNullOrWhiteSpace(s.DestinationFilter)));
 
     LogWorkerStarting(_logger);
-
-    if (_schemaReadyGate is not null) {
-      try {
-        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        _subscriptionsReady.TrySetCanceled(stoppingToken);
-        return;
-      }
-    }
+    // #2045: obey the run permit from before the first subscription; a subscription added while it is closed is paused.
+    _obedience ??= RunPermit.Obey((_, _) => _obeyRunPermitAsync());
 
     try {
       foreach (var topicConfig in _options.Subscriptions) {
@@ -207,7 +266,7 @@ public partial class ServiceBusConsumerWorker(
           stoppingToken
         );
 
-        _subscriptions.Add(subscription);
+        await _addSubscriptionAsync(subscription, topicConfig.TopicName);
 
         LogSubscribedToTopic(_logger, topicConfig.TopicName, topicConfig.SubscriptionName);
       }
@@ -245,6 +304,10 @@ public partial class ServiceBusConsumerWorker(
     try { // semaphore is released in finally block
       await using var scope = _scopeFactory.CreateAsyncScope();
       var scopedProvider = scope.ServiceProvider;
+      // #2091: framework control or minted traffic this service cannot use is discarded on receipt, before any work.
+      if (_frameworkDiscardOnReceipt(envelope, envelopeType, scopedProvider)) {
+        return;
+      }
       await SecurityContextHelper.EstablishFullContextAsync(envelope, scopedProvider, ct);
       var strategy = scopedProvider.GetRequiredService<IWorkCoordinatorStrategy>();
       LogProcessingMessage(_logger, envelope.MessageId);
@@ -259,8 +322,16 @@ public partial class ServiceBusConsumerWorker(
       }
       LogMessageAcceptedForProcessing(_logger, envelope.MessageId, myWork.Count);
 
-      // 2. PreInbox lifecycle, process work, PostInbox lifecycle
+      // The receptor interceptors are asked before any stage runs and before the message is completed (#1996), so a
+      // denied message is dead-lettered, failed or retried instead of completed. Without interceptors this is skipped.
       var receptorInvoker = scopedProvider.GetService<IReceptorInvoker>();
+      myWork = await _withoutDeniedWorkAsync(myWork, receptorInvoker, strategy, scopedProvider, ct);
+      if (myWork.Count == 0) {
+        await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, ct);
+        return;
+      }
+
+      // 2. PreInbox lifecycle, process work, PostInbox lifecycle
       await _invokePreInboxLifecycleAsync(myWork, receptorInvoker, ct);
       await _processInboxWorkItemsAsync(myWork, strategy, ct);
       await _invokePostInboxLifecycleAsync(myWork, receptorInvoker, scopedProvider, ct);
@@ -302,6 +373,32 @@ public partial class ServiceBusConsumerWorker(
     LogDroppedUnsubscribedType(_logger, envelope.MessageId, unconsumedType);
     return InboxReceiveDiscard.NO_LOCAL_CONSUMER;
   }
+
+  /// <summary>
+  /// #2091: framework control or minted traffic addressed to another service, or consumed by nothing here, is
+  /// discarded on receipt with no row and no other work, counted under its reason
+  /// (<see cref="ReceiveConsumerGate.FrameworkDiscardOnReceipt"/>, shared with <see cref="TransportConsumerWorker"/>).
+  /// </summary>
+  /// <returns>True when the message was discarded.</returns>
+  private bool _frameworkDiscardOnReceipt(IMessageEnvelope envelope, string? envelopeType, IServiceProvider scopedProvider) {
+    var unconsumed = ReceiveConsumerGate.UnconsumedMessageType(
+      envelopeType, _receptorRegistry, _runtimeReceptorRegistry, _eventMarkerResolver,
+      scopedProvider.GetService<Routing.IMessageDiscardPolicy>()) is not null;
+    var serviceName = ReceiveConsumerGate.KnownServiceName(scopedProvider.GetService<IServiceInstanceProvider>());
+    if (ReceiveConsumerGate.FrameworkDiscardOnReceipt(envelopeType, envelope.Target, serviceName, unconsumed) is not { } reason) {
+      return false;
+    }
+    var messageType = TypeNameFormatter.GetSimpleName(envelopeType!);
+    scopedProvider.GetService<TransportMetrics>()?.InboxMessagesDiscarded.Add(1,
+      new KeyValuePair<string, object?>("reason", reason),
+      new KeyValuePair<string, object?>("message_type", messageType));
+    LogFrameworkMessageDiscardedOnReceipt(_logger, envelope.MessageId, messageType, reason);
+    return true;
+  }
+
+  [LoggerMessage(Level = LogLevel.Debug,
+    Message = "Discarded framework message {MessageId} ({MessageType}) on receipt ({Reason}): not stored or processed")]
+  private static partial void LogFrameworkMessageDiscardedOnReceipt(ILogger logger, MessageId messageId, string messageType, string reason);
 
   /// <summary>
   /// Starts a distributed trace activity linked to the sender's span via TraceParent.
@@ -346,6 +443,72 @@ public partial class ServiceBusConsumerWorker(
     var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
     LogWorkReturned(_logger, envelope.MessageId.Value, myWork.Count, newInboxMessage.IsEvent);
     return myWork;
+  }
+
+  /// <summary>
+  /// Asks the receptor interceptors about each work item's inbox receptors before any stage runs (#1996) and returns the
+  /// items they allow (a quiet drop is allowed: it skips only that receptor when it runs). A dead-letter or quarantine
+  /// denial moves the stored row to the dead-letter store; a throw denial throws, so the broker redelivers. A host with no
+  /// interceptor registered returns the list untouched without reading a payload.
+  /// </summary>
+  /// <docs>fundamentals/security/security#denied-action</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerWorkerReceptorDenialTests.cs</tests>
+  private async Task<List<InboxWork>> _withoutDeniedWorkAsync(
+    List<InboxWork> myWork, IReceptorInvoker? receptorInvoker, IWorkCoordinatorStrategy strategy,
+    IServiceProvider scopedProvider, CancellationToken ct) {
+    _receptorInterceptorsActive ??= ReceptorInterceptorGate.Active(scopedProvider) is not null;
+    if (receptorInvoker is null || _receptorInterceptorsActive == false) {
+      return myWork;
+    }
+    var admitted = new List<InboxWork>(myWork.Count);
+    foreach (var work in myWork) {
+      var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      var denial = await receptorInvoker.EvaluateAdmissionAsync(
+        work.Envelope.ReconstructWithPayload(message), ReceptorDenial.InboxHandlingStages, ct);
+      if (denial.Allow) {
+        admitted.Add(work);
+      } else {
+        await _handleReceptorDenialAsync(work, denial, strategy, scopedProvider, ct);
+      }
+    }
+    return admitted;
+  }
+
+  // Whether any receptor interceptor is registered: the pipeline is a singleton, so this is read once
+  private bool? _receptorInterceptorsActive;
+
+  /// <summary>
+  /// A dead-letter or quarantine denial moves the stored row to the dead-letter store under its own reason, and the
+  /// broker message is completed, so it is not redelivered; without a store the row is failed instead of completed. Any
+  /// other denial throws, so the broker's redelivery policy retries the message.
+  /// </summary>
+  private async Task _handleReceptorDenialAsync(
+    InboxWork work, InterceptorResult denial, IWorkCoordinatorStrategy strategy, IServiceProvider scopedProvider, CancellationToken ct) {
+    var detail = ReceptorDenial.Describe(work.MessageId, work.MessageType, denial);
+    LogReceptorDenied(_logger, work.MessageId, work.MessageType, denial.OnDenied, ReceptorDenial.ReasonOf(denial));
+    if (ReceptorDenial.DeadLetterReasonFor(denial.OnDenied) is not { } reason) {
+      throw new ReceptorInvocationDeniedException(detail, denial.OnDenied, denial.Reason);
+    }
+    if (scopedProvider.GetService<IDeadLetterStore>() is { IsConfigured: true } deadLetters) {
+      try {
+        var movedId = await deadLetters.MoveAsync(
+          deadLetterId: (Guid)TrackedGuid.New(),
+          sourceTable: DeadLetterSourceTable.INBOX,
+          sourceId: work.MessageId,
+          failureReason: reason,
+          errorText: detail,
+          instanceId: scopedProvider.GetService<IServiceInstanceProvider>()?.InstanceId ?? Guid.Empty,
+          generation: scopedProvider.GetService<IGenerationProvider>()?.GetGeneration() ?? string.Empty,
+          ct: ct).ConfigureAwait(false);
+        if (movedId is null) {
+          LogDeniedRowAlreadyGone(_logger, work.MessageId);
+        }
+        return;
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogDeniedDeadLetterFailed(_logger, work.MessageId, ex);
+      }
+    }
+    strategy.QueueInboxFailure(work.MessageId, work.Status, detail);
   }
 
   /// <summary>
@@ -455,7 +618,7 @@ public partial class ServiceBusConsumerWorker(
       // Not for an event something in this service applies later: the collective sink fires these for a
       // collective event once its apply commits (#1676).
       if (ReceivedEventPostPerspectiveStages.FiredOnReceipt(work.MessageType, message, scopedProvider)) {
-        await _invokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, DetachedWork.Track, ct);
+        await InvokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, DetachedWork.Track, ct);
       }
     }
   }
@@ -463,7 +626,10 @@ public partial class ServiceBusConsumerWorker(
   /// <summary>
   /// Invokes PostLifecycle stages for an event without perspectives.
   /// </summary>
-  private static async Task _invokePostLifecycleForEventAsync(
+  /// <remarks>Internal rather than private so its failure path, which must still end the tracking it began, can be
+  /// driven directly (#2228).</remarks>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/LifecycleTrackingEndsOnFailureTests.cs:ServiceBusConsumer_PostLifecycleStageThrows_EndsItsTrackingAsync</tests>
+  internal static async Task InvokePostLifecycleForEventAsync(
     InboxWork work, IMessageEnvelope typedEnvelope, IReceptorInvoker receptorInvoker,
     LifecycleExecutionContext lifecycleContext, IServiceProvider scopedProvider, Action<Task> trackDetachedTask,
     CancellationToken ct) {
@@ -472,13 +638,17 @@ public partial class ServiceBusConsumerWorker(
       var eventId = work.Envelope.MessageId.Value;
       var tracking = coordinator.BeginTracking(
         LifecycleTrackingPath.Inbox, eventId, typedEnvelope, LifecycleStage.PostLifecycleDetached, MessageSource.Inbox);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, ct);
-      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, ct);
-      // Wait for detached tasks to complete before abandoning tracking
-      // This ensures PostLifecycleDetached (which fires in Task.Run) completes
-      // before the worker's DrainDetachedAsync returns.
-      await tracking.DrainDetachedAsync();
-      coordinator.AbandonTracking(LifecycleTrackingPath.Inbox, eventId);
+      try {
+        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleDetached, scopedProvider, ct);
+        await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, ct);
+        // Wait for detached tasks to complete before abandoning tracking
+        // This ensures PostLifecycleDetached (which fires in Task.Run) completes
+        // before the worker's DrainDetachedAsync returns.
+        await tracking.DrainDetachedAsync();
+      } finally {
+        // #2228: this path began the entry, so it ends it whatever the stages did; nothing else would.
+        coordinator.AbandonTracking(LifecycleTrackingPath.Inbox, eventId);
+      }
     } else {
       var scopeFactory = scopedProvider.GetRequiredService<IServiceScopeFactory>();
       var detachedTask = _fireDetachedStageStaticAsync(scopeFactory, typedEnvelope, LifecycleStage.PostLifecycleDetached, lifecycleContext);
@@ -612,7 +782,7 @@ public partial class ServiceBusConsumerWorker(
       // This means envelope is probably IMessageEnvelope<object> with JsonElement payload
       // DEFENSIVE: This should not happen - envelopes from transport should be strongly-typed
       throw new InvalidOperationException(
-        $"Envelope has JsonElement payload but envelope type is {envelope.GetType().Name}. " +
+        $"Envelope has JsonElement payload but envelope type is {TypeNameFormatter.ForLog(envelope.GetType())}. " +
         $"MessageId: {envelope.MessageId}. " +
         "This indicates double-serialization or incorrect envelope creation. " +
         "Envelopes from transport must be strongly-typed (e.g., MessageEnvelope<ProductCreatedEvent>), " +
@@ -645,7 +815,8 @@ public partial class ServiceBusConsumerWorker(
       new ReceivedInboxMessageBuilder.ReceivedEnvelope(envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent),
       ReceivedInboxMessageBuilder.Classify(scopeServiceProvider, envelope, messageTypeName),
       "ServiceBusConsumer.Inbox", _eventMarkerResolver, _ephemeralModeResolver,
-      scopeServiceProvider.GetService<ReceivedOriginStampMonitor>());
+      scopeServiceProvider.GetService<ReceivedOriginStampMonitor>(),
+      scopeServiceProvider.GetService<System.Text.Json.JsonSerializerOptions>());
 
     LogCreatedInboxMessage(_logger, inboxMessage.MessageId, inboxMessage.IsEvent, inboxMessage.StreamId,
       inboxMessage.MessageType, inboxMessage.EnvelopeType, jsonEnvelope.Payload.ValueKind);
@@ -685,6 +856,8 @@ public partial class ServiceBusConsumerWorker(
   public override async Task StopAsync(CancellationToken cancellationToken) {
     LogWorkerStoppingGracefully(_logger);
 
+    // Stop obeying the run permit first: the subscriptions it would pause or resume are about to be disposed.
+    _obedience?.Dispose();
     // Dispose all subscriptions first so no new messages enter the serializer.
     foreach (var subscription in _subscriptions) {
       subscription.Dispose();
@@ -702,6 +875,14 @@ public partial class ServiceBusConsumerWorker(
   // ========================================
   // High-Performance LoggerMessage Delegates
   // ========================================
+
+  [LoggerMessage(
+    EventId = 30,
+    Level = LogLevel.Warning,
+    Message = "A subscription to {Topic} established while the run permit is closed could not be paused; it receives until "
+      + "the permit reopens or the instance stops"
+  )]
+  private static partial void LogPauseUnderClosedPermitFailed(ILogger logger, Exception exception, string topic);
 
   [LoggerMessage(
     EventId = 1,
@@ -794,9 +975,11 @@ public partial class ServiceBusConsumerWorker(
   )]
   static partial void LogQueuedCompletion(ILogger logger, Guid messageId, MessageProcessingStatus status);
 
+  // #1976: a failed message is retried (redelivered, or its inbox failure counted against the attempts bound) and
+  // dead-lettered only at the bound, which logs the dead-letter record, so the attempt is a Warning.
   [LoggerMessage(
     EventId = 14,
-    Level = LogLevel.Error,
+    Level = LogLevel.Warning,
     Message = "Queued failure for {MessageId}: {Error}"
   )]
   static partial void LogQueuedFailure(ILogger logger, Guid messageId, string error);
@@ -808,9 +991,11 @@ public partial class ServiceBusConsumerWorker(
   )]
   static partial void LogSuccessfullyProcessedMessage(ILogger logger, MessageId messageId);
 
+  // #1976: a failed message is retried (redelivered, or its inbox failure counted against the attempts bound) and
+  // dead-lettered only at the bound, which logs the dead-letter record, so the attempt is a Warning.
   [LoggerMessage(
     EventId = 16,
-    Level = LogLevel.Error,
+    Level = LogLevel.Warning,
     Message = "Error processing message {MessageId}"
   )]
   static partial void LogErrorProcessingMessage(ILogger logger, MessageId messageId, Exception ex);
@@ -870,6 +1055,28 @@ public partial class ServiceBusConsumerWorker(
     Message = "ServiceBus message {MessageId} of unsubscribed type {EnvelopeType} stored settled without processing: no consumer registered on this service"
   )]
   static partial void LogDroppedUnsubscribedType(ILogger logger, global::Whizbang.Core.ValueObjects.MessageId messageId, string envelopeType);
+
+  [LoggerMessage(
+    EventId = 27,
+    Level = LogLevel.Warning,
+    Message = "ServiceBus message {MessageId} ({MessageType}) was not handled: a receptor interceptor denied it with DeniedAction.{Action}. Reason: {Reason}"
+  )]
+  static partial void LogReceptorDenied(ILogger logger, Guid messageId, string messageType,
+    Security.Attributes.DeniedAction action, string reason);
+
+  [LoggerMessage(
+    EventId = 28,
+    Level = LogLevel.Information,
+    Message = "ServiceBus message {MessageId} was denied, but its inbox row was already gone when it was dead-lettered"
+  )]
+  static partial void LogDeniedRowAlreadyGone(ILogger logger, Guid messageId);
+
+  [LoggerMessage(
+    EventId = 29,
+    Level = LogLevel.Warning,
+    Message = "ServiceBus message {MessageId} was denied and could not be moved to the dead-letter store; its row is failed instead"
+  )]
+  static partial void LogDeniedDeadLetterFailed(ILogger logger, Guid messageId, Exception ex);
 }
 
 /// <summary>

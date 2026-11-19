@@ -34,42 +34,12 @@ public class TypeDefinitionReconcilerHostedServiceTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task ShutdownDuringTheSchemaWait_ReconcilesNothingAsync(
-      CancellationToken cancellationToken) {
-    // The reconcile reads the type-definition registry, which the migration that is still running
-    // may not have created. A host torn down mid-migration must leave that alone rather than
-    // report a failure against a table that was never going to be there.
-    var log = new RecordingLogger();
-    var gate = new BlockingSchemaGate();
-    var service = new TypeDefinitionReconcilerHostedService(_reconciler(), gate, log);
-
-    using var cts = new CancellationTokenSource();
-    await service.StartAsync(cts.Token);
-    // StartAsync returning does not mean ExecuteAsync has run -- the host starts it on the thread
-    // pool -- so without this the assertions below describe a service that never began.
-    await gate.WaitEntered.WaitAsync(cancellationToken);
-    await cts.CancelAsync();
-    await service.StopAsync(CancellationToken.None);
-
-    await Assert.That(service.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
-      .Because("a shutdown arriving during the schema wait is an ordinary stop; a faulted hosted "
-             + "service turns it into a reported crash");
-    await Assert.That(log.Events).DoesNotContain(COMPLETED_EVENT_ID)
-      .Because("nothing was reconciled, so claiming a completed pass would report drift figures "
-             + "for a walk that never happened");
-    await Assert.That(log.Events).DoesNotContain(FAILED_EVENT_ID)
-      .Because("stopping is not a reconcile failure, and logging it as one would make every "
-             + "deploy look like an error");
-  }
-
-  [Test]
-  [Timeout(30000)]
   public async Task OnceTheSchemaIsReady_TheReconcileRunsAndReportsAsync(
       CancellationToken cancellationToken) {
-    // The gate is the only thing holding the pass back, so once it opens the walk must actually
+    // Once the host starts the service (when the schema is ready, #1636) the walk must actually
     // happen -- a reconciler that waits forever is indistinguishable from one that found no drift.
     var log = new RecordingLogger();
-    var service = new TypeDefinitionReconcilerHostedService(_reconciler(), _readyGate(), log);
+    var service = new TypeDefinitionReconcilerHostedService(_reconciler(), log);
 
     using var cts = new CancellationTokenSource();
     await service.StartAsync(cts.Token);
@@ -93,7 +63,7 @@ public class TypeDefinitionReconcilerHostedServiceTests {
       Options.Create(new EphemeralOptions()),
       NullLogger<TypeDefinitionReconciler>.Instance,
       new EmptyCatalog());
-    var service = new TypeDefinitionReconcilerHostedService(failing, _readyGate(), log);
+    var service = new TypeDefinitionReconcilerHostedService(failing, log);
 
     using var cts = new CancellationTokenSource();
     await service.StartAsync(cts.Token);
@@ -112,27 +82,6 @@ public class TypeDefinitionReconcilerHostedServiceTests {
   /// <summary>A reconciler with no catalog: its pass is a well-defined no-op returning Empty.</summary>
   private static TypeDefinitionReconciler _reconciler() =>
     new(scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), options: Options.Create(new EphemeralOptions()), logger: NullLogger<TypeDefinitionReconciler>.Instance, catalog: NullMessageTypeCatalog.Instance);
-
-  private static SchemaReadyGate _readyGate() {
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
-    return gate;
-  }
-
-  /// <summary>A gate that never opens, and reports when the service began waiting on it.</summary>
-  private sealed class BlockingSchemaGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _waitEntered =
-      new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task WaitEntered => _waitEntered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _waitEntered.TrySetResult();
-      await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
-    }
-  }
 
   private sealed class ThrowingScopeFactory : IServiceScopeFactory {
     public IServiceScope CreateScope() =>

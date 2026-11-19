@@ -14,7 +14,7 @@ namespace Whizbang.Core.Workers;
 /// <param name="ValueType">The <c>value_type</c> recorded with it: <c>integer</c> or <c>boolean</c>.</param>
 /// <param name="Source">The configuration key the value came from, recorded as the row's description when it is first written.</param>
 /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs</tests>
 public readonly record struct RetentionSetting(string Key, string Value, string ValueType, string Source);
 
 /// <summary>
@@ -36,7 +36,7 @@ public readonly record struct RetentionSetting(string Key, string Value, string 
 /// </para>
 /// </remarks>
 /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs</tests>
 public static class RetentionSettingsBridge {
   private const string INTEGER = "integer";
   private const string BOOLEAN = "boolean";
@@ -46,7 +46,9 @@ public static class RetentionSettingsBridge {
   private const string POINTER_PRUNE_ENABLED_KEY = "ephemeral_deep_maintenance_enabled";
   private const string PARTITIONING_ENABLED_KEY = "partition_maintenance_enabled";
 
-  private sealed record IntegerSetting<TSource>(string Key, string Source, Func<TSource, int?> Read);
+  // Minimum is the smallest value accepted at startup; BelowMinimum is what a smaller value would do, for the message.
+  private sealed record IntegerSetting<TSource>(
+    string Key, string Source, Func<TSource, int?> Read, int Minimum = 0, string? BelowMinimum = null);
 
   private static readonly IntegerSetting<MaintenanceRetentionOptions>[] _maintenance = [
     new("dedup_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.DeduplicationDays), o => o.DeduplicationDays),
@@ -60,6 +62,22 @@ public static class RetentionSettingsBridge {
     new("schedule_run_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.ScheduleRunDays), o => o.ScheduleRunDays),
     new("stream_purge_audit_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.StreamPurgeAuditDays), o => o.StreamPurgeAuditDays),
     new("integrity_ledger_max_entries", MAINTENANCE + nameof(MaintenanceRetentionOptions.IntegrityLedgerMaxEntries), o => o.IntegrityLedgerMaxEntries),
+    new("collective_apply_progress_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.CollectiveApplyProgressDays), o => o.CollectiveApplyProgressDays),
+    new("trace_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.TraceDays), o => o.TraceDays),
+    new("route_idle_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.RouteIdleDays), o => o.RouteIdleDays),
+    new("instance_exit_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.InstanceExitDays), o => o.InstanceExitDays),
+    new("completed_inbox_purge_batch_size", MAINTENANCE + nameof(MaintenanceRetentionOptions.CompletedInboxPurgeBatchSize),
+      o => o.CompletedInboxPurgeBatchSize, Minimum: 1, BelowMinimum: "a batch below one never purges completed inbox rows"),
+    new("completed_outbox_purge_batch_size", MAINTENANCE + nameof(MaintenanceRetentionOptions.CompletedOutboxPurgeBatchSize),
+      o => o.CompletedOutboxPurgeBatchSize, Minimum: 1, BelowMinimum: "a batch below one never purges completed outbox rows"),
+    new("completed_perspective_event_purge_batch_size",
+      MAINTENANCE + nameof(MaintenanceRetentionOptions.CompletedPerspectiveEventPurgeBatchSize),
+      o => o.CompletedPerspectiveEventPurgeBatchSize, Minimum: 1,
+      BelowMinimum: "a batch below one never purges completed perspective events"),
+    new("deduplication_purge_batch_size", MAINTENANCE + nameof(MaintenanceRetentionOptions.DeduplicationPurgeBatchSize),
+      o => o.DeduplicationPurgeBatchSize, Minimum: 1, BelowMinimum: "a batch below one never purges deduplication rows"),
+    new("stuck_inbox_purge_batch_size", MAINTENANCE + nameof(MaintenanceRetentionOptions.StuckInboxPurgeBatchSize),
+      o => o.StuckInboxPurgeBatchSize, Minimum: 1, BelowMinimum: "a batch below one never purges stuck inbox rows"),
   ];
 
   private static readonly IntegerSetting<EphemeralOptions>[] _ephemeral = [
@@ -70,7 +88,7 @@ public static class RetentionSettingsBridge {
 
   /// <summary>Every <c>wh_settings</c> key this bridge can publish, <c>debug_mode</c> included.</summary>
   /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:EveryKeyInScope_IsMappedExactlyOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:EveryKeyInScope_IsMappedExactlyOnceAsync</tests>
   public static IReadOnlyList<string> SettingKeys { get; } = [
     DebugRetentionBridge.SettingKey,
     .. _maintenance.Select(s => s.Key),
@@ -88,8 +106,8 @@ public static class RetentionSettingsBridge {
   /// <returns>One entry per key to write, each key at most once.</returns>
   /// <exception cref="ArgumentNullException">An options object, or <see cref="EphemeralOptions.PointerPrune"/>, is null.</exception>
   /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:UnsetOptions_AreNotWritten_SoAValueSetInSqlStandsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:UnsetOptions_AreNotWritten_SoAValueSetInSqlStandsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
   public static IReadOnlyList<RetentionSetting> SettingsFor(
       bool debugMode, MaintenanceRetentionOptions retention, EphemeralOptions ephemeral) {
     ArgumentNullException.ThrowIfNull(retention);
@@ -118,8 +136,8 @@ public static class RetentionSettingsBridge {
   /// <returns>One entry per key to write, each key at most once.</returns>
   /// <exception cref="ArgumentNullException">An options object, or <see cref="EphemeralOptions.PointerPrune"/>, is null.</exception>
   /// <docs>operations/infrastructure/partitioned-ledgers#enabling-it</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:PartitionMaintenance_IsAlwaysPublishedInBothDirectionsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:EveryKeyInScope_IsMappedExactlyOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:PartitionMaintenance_IsAlwaysPublishedInBothDirectionsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:EveryKeyInScope_IsMappedExactlyOnceAsync</tests>
   public static IReadOnlyList<RetentionSetting> SettingsFor(
       bool debugMode, MaintenanceRetentionOptions retention, EphemeralOptions ephemeral, MaintenancePartitioningOptions partitioning) {
     ArgumentNullException.ThrowIfNull(partitioning);
@@ -135,7 +153,7 @@ public static class RetentionSettingsBridge {
   /// <param name="debugMode">Whether completed rows are retained.</param>
   /// <returns>The setting to publish.</returns>
   /// <docs>fundamentals/workers/maintenance-steps</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:DebugModeSetting_MatchesTheDebugBridgeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:DebugModeSetting_MatchesTheDebugBridgeAsync</tests>
   public static RetentionSetting DebugModeSetting(bool debugMode) =>
     new(DebugRetentionBridge.SettingKey, DebugRetentionBridge.SettingValueFor(debugMode), BOOLEAN, "Whizbang:WorkCoordinator:DebugMode");
 
@@ -148,7 +166,7 @@ public static class RetentionSettingsBridge {
   /// Absent is not <see langword="false"/>: reading it as false would switch debug retention off unasked.
   /// </remarks>
   /// <docs>fundamentals/workers/maintenance-steps</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:DebugModeIn_WithNoDebugEntry_IsNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:DebugModeIn_WithNoDebugEntry_IsNullAsync</tests>
   public static bool? DebugModeIn(IReadOnlyList<RetentionSetting> settings) {
     ArgumentNullException.ThrowIfNull(settings);
     foreach (var setting in settings) {
@@ -159,23 +177,24 @@ public static class RetentionSettingsBridge {
     return null;
   }
 
-  /// <summary>Configuration errors in the maintenance retention options: each negative value, by its key.</summary>
+  /// <summary>Configuration errors in the maintenance retention options: each value below its minimum, by its key.</summary>
   /// <param name="retention">The bound options.</param>
   /// <returns>One message per invalid value; empty when the options are valid.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsValidationTests.cs:ANegativeMaintenanceRetention_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsValidationTests.cs:ANegativeMaintenanceRetention_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsValidationTests.cs:ACompletedInboxPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
   internal static List<string> Validate(MaintenanceRetentionOptions? retention) =>
     retention is null
       ? [$"{MAINTENANCE.TrimEnd(':')} must not be null."]
-      : _negatives(_maintenance, retention);
+      : _belowMinimum(_maintenance, retention);
 
   /// <summary>Configuration errors in the ephemeral options: each negative value, by its key.</summary>
   /// <param name="ephemeral">The bound options.</param>
   /// <returns>One message per invalid value; empty when the options are valid.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsValidationTests.cs:ANegativeEphemeralSetting_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsValidationTests.cs:ANegativeEphemeralSetting_IsRejectedByNameAsync</tests>
   internal static List<string> Validate(EphemeralOptions ephemeral) =>
     ephemeral.PointerPrune is null
       ? [$"{POINTER_PRUNE.TrimEnd(':')} must not be null."]
-      : _negatives(_ephemeral, ephemeral);
+      : _belowMinimum(_ephemeral, ephemeral);
 
   private static void _addSet<TSource>(List<RetentionSetting> settings, IntegerSetting<TSource>[] table, TSource source) {
     foreach (var entry in table) {
@@ -186,13 +205,16 @@ public static class RetentionSettingsBridge {
   }
 
   // A negative window puts the sweep's cutoff (NOW() - n * INTERVAL) in the future, so every row of the table
-  // would become eligible at once. Zero is allowed: it deliberately keeps nothing past the current cycle.
-  private static List<string> _negatives<TSource>(IntegerSetting<TSource>[] table, TSource source) {
+  // would become eligible at once. Zero is allowed for a window: it deliberately keeps nothing past the current cycle.
+  // A batch size declares its own minimum of one, since a batch of zero does nothing at all.
+  private static List<string> _belowMinimum<TSource>(IntegerSetting<TSource>[] table, TSource source) {
     var failures = new List<string>();
     foreach (var entry in table) {
-      if (entry.Read(source) is int value && value < 0) {
-        failures.Add($"{entry.Source} must be zero or greater (was {value.ToString(CultureInfo.InvariantCulture)}); "
-                   + $"it sets wh_settings.{entry.Key}, and a negative window makes every row of that table eligible at once.");
+      if (entry.Read(source) is int value && value < entry.Minimum) {
+        var floor = entry.Minimum == 0 ? "zero" : entry.Minimum.ToString(CultureInfo.InvariantCulture);
+        failures.Add($"{entry.Source} must be {floor} or greater (was {value.ToString(CultureInfo.InvariantCulture)}); "
+                   + $"it sets wh_settings.{entry.Key}, and "
+                   + $"{entry.BelowMinimum ?? "a negative window makes every row of that table eligible at once"}.");
       }
     }
     return failures;

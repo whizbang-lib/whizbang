@@ -15,7 +15,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// an optimization, and a guard that turned into a dropped write would be silent.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/BaseUpsertStrategy.cs</code-under-test>
-[NotInParallel("EFCorePostgresTests")]
 [Category("Integration")]
 [Category("Shard4")]
 public class BaseUpsertStrategyAtomicPathGuardTests : EFCoreTestBase {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -13,7 +14,11 @@ namespace Whizbang.Core.Startup;
 public enum StartupVerdict {
   /// <summary>Fresh database, or this version has work to do and no live conflict — contend to migrate.</summary>
   Migrate,
-  /// <summary>The schema is at (or below) this version with nothing pending — proceed to serve.</summary>
+  /// <summary>
+  /// Nothing newer than this binary is recorded, but the schema could not be shown current: an upgrade with
+  /// migrations pending, or a check that could not answer. Startup runs as it always has: the election, the
+  /// migration pass under the schema lock, Converge and Coordinate.
+  /// </summary>
   Serve,
   /// <summary>
   /// The ledger records a version newer than this binary — never apply anything; release
@@ -21,13 +26,41 @@ public enum StartupVerdict {
   /// for an unparseable version: every wrong answer at that point is worse than stopping.
   /// </summary>
   StandDown,
+  /// <summary>
+  /// The schema is already current for this binary (#1992): the same checks the migration's lock-free fast path makes
+  /// found nothing to apply and no stored form left to convert. The election and the migration are skipped, and no
+  /// schema lock is taken; Converge and Coordinate still run. The normal restart and scale-out verdict.
+  /// </summary>
+  Current,
 }
 
 /// <summary>What <c>Assess</c> decided, and why.</summary>
 /// <param name="Verdict">The verdict.</param>
 /// <param name="Reason">Framework-authored explanation (versions involved, what was compared).</param>
 /// <docs>operations/startup/rolling-upgrades#assess</docs>
-public sealed record StartupAssessment(StartupVerdict Verdict, string Reason);
+public sealed record StartupAssessment(StartupVerdict Verdict, string Reason) {
+  /// <summary>
+  /// When the incompatibility override let this instance start (#2022): the reason the verdict would otherwise have
+  /// stood it down, in full; null when nothing was overridden. Only the one verdict sets it; everything else reads it.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#the-incompatibility-override</docs>
+  public string? OverriddenReason { get; init; }
+
+  /// <summary>
+  /// The rollback this instance's start owes (#2122): set with <see cref="StartupVerdict.Migrate"/> when changes were
+  /// applied since this version and every one can be reversed. The elected migrator runs it before the schema pass;
+  /// null when nothing is to be rolled back.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#rolling-back</docs>
+  public RollbackPlan? Rollback { get; init; }
+}
+
+/// <summary>A rollback <c>Assess</c> decided on (#2122): the changes applied since this version, and whether the operator
+/// lets it discard data.</summary>
+/// <param name="Changes">The changes to reverse, as the ledger recorded them.</param>
+/// <param name="AllowLossy">Whether a reversal that discards data may run (<see cref="Versioning.UpgradeOrder.ALLOW_LOSSY_ROLLBACK_KEY"/>).</param>
+/// <docs>operations/startup/rolling-upgrades#rolling-back</docs>
+public sealed record RollbackPlan(IReadOnlyList<Versioning.AppliedSchemaChange> Changes, bool AllowLossy);
 
 /// <summary>
 /// Computes the <c>Assess</c> verdict: this binary's library version against the versions the
@@ -67,7 +100,7 @@ public interface IStartupAssessor {
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/rolling-upgrades#assess</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/AssessStartupStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/AssessStartupStepTests.cs</tests>
 /// <remarks>Creates the step over the driver-supplied assessor; the framework's null default reports itself not configured and the step is skipped.</remarks>
 public sealed partial class AssessStartupStep(IStartupAssessor assessor, ILogger<AssessStartupStep> logger) : IStartupStep {
   private readonly IStartupAssessor _assessor = assessor;

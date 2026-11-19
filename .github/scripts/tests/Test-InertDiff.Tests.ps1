@@ -39,7 +39,7 @@ Describe 'inert-paths.txt' {
   It 'matches <path>' -ForEach @(
       @{ path = 'README.md' }, @{ path = 'docs/RELEASING.md' }, @{ path = 'plans/archive/x.md' },
       @{ path = 'ai-docs/flaky-tests.md' }, @{ path = '.claude/skills/release/SKILL.md' },
-      @{ path = '.github/WORKFLOWS.md' }, @{ path = 'LICENSE' }) {
+      @{ path = '.github/WORKFLOWS.md' }, @{ path = 'LICENSE' }, @{ path = 'changelog.d/2168.md' }) {
     Test-Inert $path | Should -BeTrue
   }
 

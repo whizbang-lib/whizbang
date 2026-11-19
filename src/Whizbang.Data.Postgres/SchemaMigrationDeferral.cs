@@ -25,6 +25,13 @@ public enum SchemaDeferralOutcome {
   /// migrating is not coming back and this instance must take the work over.
   /// </summary>
   MigratingInstanceGone,
+
+  /// <summary>
+  /// A wait between two steps of the schema pass ended with the schema lock free and the schema still behind: the
+  /// instance doing the pass is between two of its steps, or stopped after one. Not a migrator gone; the waiter simply
+  /// contends for the next step, and each step's re-check under the lock keeps it from applying anything twice.
+  /// </summary>
+  FreeBetweenSteps,
 }
 
 /// <summary>
@@ -107,13 +114,23 @@ public static class SchemaMigrationDeferral {
   /// <param name="logger">Optional logger.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Which of the two endings occurred.</returns>
-  public static async Task<SchemaDeferralOutcome> DeferAsync(
+  public static Task<SchemaDeferralOutcome> DeferAsync(
       Func<CancellationToken, Task<bool>> isSchemaCleanAsync,
       Func<CancellationToken, Task<bool>> isLockHeldAsync,
       TimeProvider timeProvider,
       string schema,
       ILogger? logger = null,
-      CancellationToken cancellationToken = default) {
+      CancellationToken cancellationToken = default) =>
+    _waitAsync(isSchemaCleanAsync, isLockHeldAsync, timeProvider, schema, betweenSteps: false, logger, cancellationToken);
+
+  private static async Task<SchemaDeferralOutcome> _waitAsync(
+      Func<CancellationToken, Task<bool>> isSchemaCleanAsync,
+      Func<CancellationToken, Task<bool>> isLockHeldAsync,
+      TimeProvider timeProvider,
+      string schema,
+      bool betweenSteps,
+      ILogger? logger,
+      CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(isSchemaCleanAsync);
     ArgumentNullException.ThrowIfNull(isLockHeldAsync);
     ArgumentNullException.ThrowIfNull(timeProvider);
@@ -141,19 +158,15 @@ public static class SchemaMigrationDeferral {
         // the whole fleet's startup riding on it. Contending for the lock is the guess that cannot
         // strand anything: it is what every instance did before this existed.
         SchemaMigrationDeferralLog.LockProbeFailed(log, ex, schema);
-        return SchemaDeferralOutcome.MigratingInstanceGone;
+        return betweenSteps ? SchemaDeferralOutcome.FreeBetweenSteps : SchemaDeferralOutcome.MigratingInstanceGone;
       }
 
       if (!held) {
-        // The lock is gone and the schema is still behind. Whoever held it is not coming back.
-        SchemaMigrationDeferralLog.MigratorGone(log, schema, polls);
-        return SchemaDeferralOutcome.MigratingInstanceGone;
+        return _lockFreed(log, schema, polls, betweenSteps);
       }
 
       if (polls == 0) {
-        // Once, not once per poll: a fleet waiting out a long migration would otherwise fill its
-        // logs with the fact that it is still waiting.
-        SchemaMigrationDeferralLog.DeferringToMigrator(log, schema);
+        _firstWait(log, schema, betweenSteps);
       }
 
       polls++;
@@ -161,6 +174,56 @@ public static class SchemaMigrationDeferral {
       delay = NextPollDelay(delay);
     }
   }
+
+  /// <summary>How a wait ends when the lock is free and the schema is still behind.</summary>
+  private static SchemaDeferralOutcome _lockFreed(ILogger log, string schema, int polls, bool betweenSteps) {
+    if (betweenSteps) {
+      // Free between two of the holder's steps: it is not gone, and this instance contends for the next step.
+      SchemaMigrationDeferralLog.FreeBetweenSteps(log, schema, polls);
+      return SchemaDeferralOutcome.FreeBetweenSteps;
+    }
+    // The lock is gone and the schema is still behind. Whoever held it is not coming back.
+    SchemaMigrationDeferralLog.MigratorGone(log, schema, polls);
+    return SchemaDeferralOutcome.MigratingInstanceGone;
+  }
+
+  /// <summary>
+  /// The line a wait writes before its first poll: once, not once per poll, since a fleet waiting out a long
+  /// migration would otherwise fill its logs with the fact that it is still waiting.
+  /// </summary>
+  private static void _firstWait(ILogger log, string schema, bool betweenSteps) {
+    if (betweenSteps) {
+      SchemaMigrationDeferralLog.WaitingOutAStep(log, schema);
+    } else {
+      SchemaMigrationDeferralLog.DeferringToMigrator(log, schema);
+    }
+  }
+
+  /// <summary>
+  /// Waits, between two steps of the schema pass, for the instance whose step holds the schema lock (#2127).
+  /// </summary>
+  /// <remarks>
+  /// The step-level wait: the lock it watches is taken and released by every step of every instance's pass, so a
+  /// free lock means only that the holder is between two steps. It ends <see cref="SchemaDeferralOutcome.FreeBetweenSteps"/>,
+  /// not <see cref="SchemaDeferralOutcome.MigratingInstanceGone"/>, and says what it is doing at Debug: a pass that
+  /// two instances take turns through would otherwise log a takeover and a deferral for every step.
+  /// </remarks>
+  /// <param name="isSchemaCleanAsync">Whether the schema is current; a failure is read as "not current".</param>
+  /// <param name="isLockHeldAsync">Whether another session holds the schema lock; a failure ends the wait.</param>
+  /// <param name="timeProvider">The clock the waits are measured on.</param>
+  /// <param name="schema">The schema being waited on, for reporting.</param>
+  /// <param name="logger">Optional logger.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns><see cref="SchemaDeferralOutcome.AnotherInstanceMigrated"/> or <see cref="SchemaDeferralOutcome.FreeBetweenSteps"/>.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaMigrationDeferralTests.cs</tests>
+  public static Task<SchemaDeferralOutcome> WaitBetweenStepsAsync(
+      Func<CancellationToken, Task<bool>> isSchemaCleanAsync,
+      Func<CancellationToken, Task<bool>> isLockHeldAsync,
+      TimeProvider timeProvider,
+      string schema,
+      ILogger? logger = null,
+      CancellationToken cancellationToken = default) =>
+    _waitAsync(isSchemaCleanAsync, isLockHeldAsync, timeProvider, schema, betweenSteps: true, logger, cancellationToken);
 
   /// <summary>
   /// Asks whether the schema is current, treating an unanswerable question as "no".
@@ -220,4 +283,17 @@ internal static partial class SchemaMigrationDeferralLog {
       Message = "Could not tell whether schema {Schema} is up to date; treating it as behind and "
               + "asking again (expected while the tracking tables are still being created)")]
   public static partial void CurrencyProbeFailed(ILogger logger, Exception exception, string schema);
+
+  [LoggerMessage(
+      EventId = 6,
+      Level = LogLevel.Debug,
+      Message = "Another instance holds the schema {Schema} lock for one of its steps; waiting for it")]
+  public static partial void WaitingOutAStep(ILogger logger, string schema);
+
+  [LoggerMessage(
+      EventId = 7,
+      Level = LogLevel.Debug,
+      Message = "The schema {Schema} lock is free between another instance's steps after {Polls} check(s); "
+              + "contending for the next step")]
+  public static partial void FreeBetweenSteps(ILogger logger, string schema, int polls);
 }

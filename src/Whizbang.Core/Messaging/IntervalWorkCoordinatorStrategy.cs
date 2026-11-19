@@ -21,7 +21,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:QueuedMessages_BatchedUntilTimerAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:IntervalStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkFlusherTests.cs:IntervalStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
 /// Interval strategy - batches operations and flushes on a timer.
 /// Provides lowest database load with higher latency.
 /// Best for: Background workers with high throughput, batch processing.
@@ -45,6 +45,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private readonly IInboxChannelWriter _inboxChannelWriter;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
+  // The process-wide deferred outbox channel this strategy drains at the start of every flush (#2228).
+  private readonly IDeferredOutboxChannel _deferredChannel;
   // The host's record of background work it waits for before disposing the service provider: the detached lifecycle
   // stages this strategy's flushes start are tracked there (#1721).
   private readonly DetachedLifecycleWork _detachedWork;
@@ -89,6 +91,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     IWorkChannelWriter workChannelWriter,
     IInboxChannelWriter inboxChannelWriter,
     DetachedLifecycleWork detachedWork,
+    IDeferredOutboxChannel deferredChannel,
     WorkCoordinatorMetrics? metrics = null,
     LifecycleMetrics? lifecycleMetrics = null) {
 #pragma warning restore S107
@@ -107,6 +110,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     _detachedWork = detachedWork;
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
+    ArgumentNullException.ThrowIfNull(deferredChannel);
+    _deferredChannel = deferredChannel;
 
     // Start the timer for periodic flushing
     _flushTimer = new Timer(
@@ -226,8 +231,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// the WorkBatch.
   /// </summary>
   /// <docs>data/work-coordinator-strategies</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs:Interval_FlushAsync_WithQueuedMessages_DefersToTimer_NoDbCallAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCascadeFlushTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/FlushApiTests.cs:Interval_FlushAsync_WithQueuedMessages_DefersToTimer_NoDbCallAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCascadeFlushTests.cs</tests>
   public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1,
@@ -242,7 +247,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// Use for dedup callers that must consume the WorkBatch, or for end-of-scope drains.
   /// </summary>
   /// <docs>data/work-coordinator-strategies</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs:Interval_FlushAndGetBatchAsync_WithQueuedMessages_FlushesImmediately_BypassesTimerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/FlushApiTests.cs:Interval_FlushAndGetBatchAsync_WithQueuedMessages_FlushesImmediately_BypassesTimerAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
   public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
@@ -315,6 +320,11 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// </summary>
   private bool _trySnapshotAndClearQueues(out QueueSnapshot snapshot) {
     lock (_lock) {
+      // #2228: what was queued on the deferred channel is written by this flush, before the empty check.
+      var drained = DeferredOutboxDrain.PrependTo(_deferredChannel, _queuedOutboxMessages);
+      if (drained > 0) {
+        LogDeferredChannelDrained(_logger, drained);
+      }
       if (_queuedOutboxMessages.Count == 0 &&
           _queuedInboxMessages.Count == 0 &&
           _queuedOutboxCompletions.Count == 0 &&
@@ -577,4 +587,11 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     Message = "Interval work coordinator strategy disposed"
   )]
   static partial void LogStrategyDisposed(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 17,
+    Level = LogLevel.Debug,
+    Message = "Interval strategy: Drained {Count} deferred messages from channel into this flush"
+  )]
+  static partial void LogDeferredChannelDrained(ILogger logger, int count);
 }

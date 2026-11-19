@@ -24,7 +24,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </remarks>
 /// <docs>fundamentals/perspectives/managed-schema-objects</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class ManagedObjectsDeclaredTests {
   private string _databaseName = null!;

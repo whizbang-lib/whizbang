@@ -139,7 +139,8 @@ review checks what it must contain (CONTRIBUTING.md, "Commit Messages"). Judge w
 - **`feat:` / enhancement.** The linked issue (and, for a feature, its accepted discussion) asked for this
   shape. Public API, AOT, turn-key defaults and configuration hold (Step 3), and the docs-site pull request
   documents it to the docs standards.
-- **Breaking (`!`).** The CHANGELOG **Upgrade:** note tells a consumer exactly what to change. Consider
+- **Breaking (`!`).** The **Upgrade:** note in the changelog fragment (`changelog.d/<issue>.md`; on a release
+  branch, `CHANGELOG.md`) tells a consumer exactly what to change. Consider
   whether a deprecation period would serve consumers better than a break.
 - **Security fix.** A fix for a reported vulnerability is developed in the advisory's private fork, never in
   a public pull request before disclosure. If a public pull request looks like one, stop the review and raise
@@ -189,7 +190,7 @@ Write for the author: plain, specific, no sarcasm. Thank an outside contributor 
 Use the same spelling and punctuation rules the code follows.
 
 Add a comment to the pending review. A finding on a line in the diff goes on that line. Anything else
-(a file-wide concern, a missing docs pull request or CHANGELOG entry, a question about the whole
+(a file-wide concern, a missing docs pull request or changelog fragment, a question about the whole
 change) goes in a **file-level thread**, on the file it is about, or on the most relevant changed file
 saying "About the pull request, pinned to this file so it can be resolved:". Never put an actionable
 item in the summary: it can't be resolved, so nothing makes it get answered.

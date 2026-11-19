@@ -67,7 +67,7 @@ public class DistributeLifecycleTests {
 
     // Act - Use hook to wait for perspective processing (distribute stages fire during event distribution)
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -95,7 +95,7 @@ public class DistributeLifecycleTests {
 
     // Act - Use hook to wait for perspective processing
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -123,7 +123,7 @@ public class DistributeLifecycleTests {
 
     // Act - Use hook to wait for perspective processing
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -154,9 +154,10 @@ public class DistributeLifecycleTests {
       }
     };
 
-    // Act - Wait for perspective processing for both commands
+    // Act - Wait for perspective processing on both commands' streams
+    // (2 commands x 3 events each: ProductCreated x2 perspectives + InventoryRestocked x1 = 6)
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 4, timeoutMilliseconds: 60000, hostFilter: "inventory");
+      expectedCompletions: 6, streamIds: [.. commands.Select(c => c.ProductId.Value)], timeoutMilliseconds: 60000, hostFilter: "inventory");
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
     }
@@ -186,7 +187,7 @@ public class DistributeLifecycleTests {
 
     // Act - Use hook to wait for perspective processing
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -214,7 +215,7 @@ public class DistributeLifecycleTests {
 
     // Act - Use hook to wait for perspective processing
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -242,7 +243,7 @@ public class DistributeLifecycleTests {
 
     // Act - Use hook to wait for perspective processing (all distribute stages fire in order)
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 60000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 60000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -272,9 +273,10 @@ public class DistributeLifecycleTests {
       }
     };
 
-    // Act - Wait for perspective processing for both commands
+    // Act - Wait for perspective processing on both commands' streams
+    // (2 commands x 3 events each: ProductCreated x2 perspectives + InventoryRestocked x1 = 6)
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 4, timeoutMilliseconds: 60000, hostFilter: "inventory");
+      expectedCompletions: 6, streamIds: [.. commands.Select(c => c.ProductId.Value)], timeoutMilliseconds: 60000, hostFilter: "inventory");
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
     }

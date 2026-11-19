@@ -53,7 +53,6 @@ public sealed class InboxHandlerWorkerCoverageTests {
     var worker = new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(coordinator),
       failureChannel: new NoopFailureChannel(),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       options: Options.Create(opts),
       logger: log,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -73,34 +72,35 @@ public sealed class InboxHandlerWorkerCoverageTests {
   }
 
   [Test]
-  public async Task FlushBatch_SchemaGateUnusuallySlow_LogsWhichPhaseIsStallingAsync(
+  public async Task FlushBatch_PinnedConnectionUnusuallySlow_LogsWhichPhaseIsStallingAsync(
       CancellationToken testToken) {
     // If this diagnostic regresses, a stalled flush phase becomes indistinguishable from any
     // other phase from the outside -- rows simply stop completing -- and an operator is back to
-    // guessing which of three completely different causes (schema gate, pinned pool exhaustion, or
-    // coordinator contention) is actually responsible, exactly the ambiguity this warning exists
-    // to remove.
+    // guessing which cause (pinned pool exhaustion or coordinator contention) is responsible,
+    // exactly the ambiguity this warning exists to remove. The phase is timed on the worker's
+    // clock, so the pool moves a fake clock past the threshold instead of the test waiting.
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
     var committed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var coordinator = new CountingCoordinator(committed);
     var log = new SlowPhaseCapturingLogger();
     var worker = new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(coordinator),
       failureChannel: new NoopFailureChannel(),
-      schemaReadyGate: new SlowSchemaReadyGate(TimeSpan.FromSeconds(5.5)),
       options: Options.Create(_enabledOptions()),
       logger: log,
-      pinnedPool: NoOpPinnedConnectionPool.Instance,
-      inboxChannelWriter: new InboxChannelWriter());
+      pinnedPool: new ClockAdvancingPool(clock, TimeSpan.FromSeconds(6)),
+      inboxChannelWriter: new InboxChannelWriter(),
+      timeProvider: clock);
 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
     await worker.StartAsync(cts.Token);
     await worker.EnqueueAsync(_request(Guid.NewGuid(), Guid.NewGuid()), cts.Token);
 
-    var loggedMessage = await log.SlowPhaseLogged.WaitAsync(TimeSpan.FromSeconds(20), cts.Token);
-    await committed.Task.WaitAsync(TimeSpan.FromSeconds(5), cts.Token);
+    var loggedMessage = await log.SlowPhaseLogged.WaitAsync(cts.Token);
+    await committed.Task.WaitAsync(cts.Token);
     await worker.StopAsync(cts.Token);
 
-    await Assert.That(loggedMessage).Contains("schema-ready-gate")
+    await Assert.That(loggedMessage).Contains("pinned-connection")
       .Because("the warning must name WHICH phase stalled, not just that a flush was slow -- naming the wrong (or no) phase sends an operator to check the wrong subsystem");
     await Assert.That(coordinator.CallCount).IsEqualTo(1)
       .Because("the slow phase must still complete, not abort the flush -- a stall warning is a diagnostic, not a timeout");
@@ -113,12 +113,6 @@ public sealed class InboxHandlerWorkerCoverageTests {
   private sealed class NoopFailureChannel : IFailureChannel {
     public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default)
       => ValueTask.CompletedTask;
-  }
-
-  private sealed class SlowSchemaReadyGate(TimeSpan delay) : ISchemaReadyGate {
-    public bool IsReady => true;
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) => await Task.Delay(delay, cancellationToken);
-    public void MarkReady() { }
   }
 
   // Extends the shared NoOpWorkCoordinator rather than reimplementing IWorkCoordinator: the
@@ -154,6 +148,15 @@ public sealed class InboxHandlerWorkerCoverageTests {
       if (message.Contains("dropping", StringComparison.OrdinalIgnoreCase)) {
         _logged.TrySetResult();
       }
+    }
+  }
+
+  /// <summary>A pinned pool whose borrow takes <paramref name="takes"/> on the worker's clock.</summary>
+  private sealed class ClockAdvancingPool(Microsoft.Extensions.Time.Testing.FakeTimeProvider clock, TimeSpan takes)
+      : IPinnedConnectionPool {
+    public ValueTask<IBorrowedConnection> TryPinForAsync(Type workerType, CancellationToken cancellationToken) {
+      clock.Advance(takes);
+      return NoOpPinnedConnectionPool.Instance.TryPinForAsync(workerType, cancellationToken);
     }
   }
 

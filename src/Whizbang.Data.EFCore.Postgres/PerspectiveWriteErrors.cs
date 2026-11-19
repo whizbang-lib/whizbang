@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Npgsql;
+using Whizbang.Core;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -70,7 +71,7 @@ public static class PerspectiveWriteErrors {
     }
 
     return new InvalidOperationException(
-        $"A '{modelType.Name}' perspective row could not be written because one of its text values "
+        $"A '{TypeNameFormatter.ForLog(modelType)}' perspective row could not be written because one of its text values "
         + "contains the null character U+0000, which PostgreSQL cannot store in a jsonb document. "
         + "Check the model's string properties for a value carrying one: a fixed-width import, a "
         + "buffer read as text, or a char property left at its default are the usual sources. There "

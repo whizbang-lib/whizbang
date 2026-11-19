@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Data.Postgres;
@@ -34,6 +35,8 @@ public static class SchemaInitializationRegistration {
     services.AddLogging();
     services.AddOptions();
     services.TryAddSingleton(TimeProvider.System);
+    // #1992: the one Assess verdict the initializer reads first, over whichever assessor the driver registers.
+    services.TryAddStartupAssessmentSource();
     // Registered as itself too, so a host (or a test) can reach the one initializer without activating every
     // hosted service; the hosted-service registration forwards to it.
     services.TryAddSingleton(sp =>

@@ -33,7 +33,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#statements-that-need-a-commit-between-them</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class SchemaBoundaryConnectionsTests : IAsyncDisposable {
   private NpgsqlDataSource _dataSource = null!;

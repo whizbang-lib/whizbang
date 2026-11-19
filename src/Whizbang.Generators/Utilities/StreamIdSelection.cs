@@ -33,9 +33,9 @@ internal static class StreamIdSelection {
 
   /// <summary>
   /// The chosen stream id: the property generated code reads, the constructor parameter that carried the attribute
-  /// when it was one, and whether it is an override.
+  /// when it was one, whether it is an override, and the <c>[StreamId]</c> attribute itself.
   /// </summary>
-  internal sealed record Choice(IPropertySymbol Property, IParameterSymbol? Parameter, bool IsOverride);
+  internal sealed record Choice(IPropertySymbol Property, IParameterSymbol? Parameter, bool IsOverride, AttributeData Attribute);
 
   /// <summary>
   /// Each <c>[StreamId]</c> the type declares itself: properties in member order, then constructor parameters, one
@@ -95,7 +95,7 @@ internal static class StreamIdSelection {
   }
 
   private static Choice? _toChoice(Declaration? declaration) =>
-    declaration is null ? null : new Choice(declaration.Property!, declaration.Parameter, declaration.IsOverride);
+    declaration is null ? null : new Choice(declaration.Property!, declaration.Parameter, declaration.IsOverride, declaration.Attribute);
 
   private static AttributeData? _streamIdAttribute(ISymbol symbol) =>
     symbol.GetAttributes().FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, STREAM_ID_ATTRIBUTE));

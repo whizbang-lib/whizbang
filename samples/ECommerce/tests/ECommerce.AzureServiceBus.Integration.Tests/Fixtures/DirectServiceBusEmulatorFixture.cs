@@ -88,6 +88,7 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
         await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
       }
 
+      await _pullImagesAsync(cancellationToken);
       await _runDockerComposeAsync($"-p {_projectName} up -d --force-recreate", cancellationToken);
 
       Console.WriteLine("[DirectEmulator] Waiting for emulator to be ready (polling up to 180 seconds)...");
@@ -191,6 +192,68 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
   }
 
   private async Task _runDockerComposeAsync(string arguments, CancellationToken cancellationToken = default) {
+    var (exitCode, error) = await _runDockerComposeProcessAsync(arguments, cancellationToken);
+    if (exitCode != 0) {
+      throw new InvalidOperationException($"docker compose failed: {error}");
+    }
+  }
+
+  /// <summary>
+  /// Pulls the compose file's images before <c>up</c>, retrying a pull that a registry dropped.
+  /// </summary>
+  /// <remarks>
+  /// The images come from mcr.microsoft.com, which the CI image mirror does not cover, so a reset connection
+  /// mid-pull used to fail the fixture and every test in the suite with it. Only a failure
+  /// <see cref="IsTransientPullFailure"/> recognizes is retried: a missing image or a stopped daemon fails at once.
+  /// </remarks>
+  private async Task _pullImagesAsync(CancellationToken cancellationToken) {
+    var error = string.Empty;
+    for (var attempt = 1; attempt <= MAX_PULL_ATTEMPTS; attempt++) {
+      int exitCode;
+      (exitCode, error) = await _runDockerComposeProcessAsync($"-p {_projectName} pull", cancellationToken);
+      if (exitCode == 0) {
+        return;
+      }
+
+      if (!IsTransientPullFailure(error)) {
+        throw new InvalidOperationException($"docker compose pull failed: {error}");
+      }
+
+      if (attempt < MAX_PULL_ATTEMPTS) {
+        Console.WriteLine($"[DirectEmulator] Image pull attempt {attempt} lost its registry connection; retrying: {error.Trim()}");
+        await Task.Delay(TimeSpan.FromSeconds(5 * attempt), cancellationToken);
+      }
+    }
+
+    throw new InvalidOperationException($"docker compose pull failed after {MAX_PULL_ATTEMPTS} attempts: {error}");
+  }
+
+  internal const int MAX_PULL_ATTEMPTS = 4;
+
+  private static readonly string[] _transientPullMarkers = [
+    "connection reset by peer",
+    "i/o timeout",
+    "TLS handshake timeout",
+    "unexpected EOF",
+    "Client.Timeout exceeded",
+    "502 Bad Gateway",
+    "503 Service Unavailable",
+    "504 Gateway Timeout",
+    "toomanyrequests",
+  ];
+
+  /// <summary>Whether a failed pull's error is a registry network failure worth another attempt.</summary>
+  internal static bool IsTransientPullFailure(string error) =>
+    _transientPullMarkers.Any(marker => error.Contains(marker, StringComparison.OrdinalIgnoreCase));
+
+  /// <summary>
+  /// Runs <c>docker compose</c> and returns its exit code and standard error.
+  /// </summary>
+  /// <remarks>
+  /// Both streams are read while the process runs: reading them only after it exits lets a long pull log fill the
+  /// pipe, and the process then blocks writing to it and never exits.
+  /// </remarks>
+  private async Task<(int ExitCode, string Error)> _runDockerComposeProcessAsync(string arguments, CancellationToken cancellationToken) {
     if (_activeComposeFile == null) {
       throw new InvalidOperationException("No active compose file - call InitializeAsync first");
     }
@@ -209,12 +272,11 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
     using var process = Process.Start(psi)
       ?? throw new InvalidOperationException("Failed to start docker compose process");
 
+    var output = process.StandardOutput.ReadToEndAsync(cancellationToken);
+    var error = process.StandardError.ReadToEndAsync(cancellationToken);
     await process.WaitForExitAsync(cancellationToken);
-
-    if (process.ExitCode != 0) {
-      var error = await process.StandardError.ReadToEndAsync(cancellationToken);
-      throw new InvalidOperationException($"docker compose failed: {error}");
-    }
+    await output;
+    return (process.ExitCode, await error);
   }
 
   private static async Task<string?> _getContainerStateAsync(string containerName, CancellationToken ct) {

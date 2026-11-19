@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -41,6 +41,12 @@
     <DefineConstants Condition="'$(TransportProvider)' == 'AzureServiceBus'">AZURESERVICEBUS</DefineConstants>
   </PropertyGroup>
 
+  <!-- Hang dumps (#2402), as in the root Directory.Build.props: every test module a suite runs accepts
+       Run-Tests.ps1 -HangDumpTimeout's options. This file does not import the parent props, so it is repeated here. -->
+  <ItemGroup Condition="'$(WhizbangTestType)' != '' and '$(WhizbangTestType)' != 'Benchmark'">
+    <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />
+  </ItemGroup>
+
   <!-- Analyzers. This file does not import the parent Directory.Build.props, so the root's analyzer
        ItemGroup does not reach these projects and each one has to be named here. A sample is code
        people copy, so it is held to the same rules as the library it demonstrates. -->
@@ -57,7 +63,7 @@
     <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Condition="'$(IsTestProject)' != 'true' and !$(MSBuildProjectName.Contains('.Tests'))" />
   </ItemGroup>
   <!-- Repository-internal test analyzers (src/Whizbang.TestAnalyzers) for the sample test projects, as in
-       tests/Directory.Build.props: assertions that cannot fail are build errors (WHZ0004 and on). This file does not
+       tests/Directory.Build.props: test code that cannot verify anything is a build error (WHIZ603). This file does not
        import the parent props, so the reference is repeated here. An Aspire host is not a test project, and Aspire
        reads every project it references as a resource to launch (ASPIRE004), so it is left out. -->
   <ItemGroup Condition="$(MSBuildProjectName.Contains('Test')) and !$(MSBuildProjectName.EndsWith('AppHost'))">

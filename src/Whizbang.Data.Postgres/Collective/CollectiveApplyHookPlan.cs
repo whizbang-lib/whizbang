@@ -73,12 +73,31 @@ public sealed record CollectiveApplyHookPlan<TModel>(
   }
 
   /// <summary>
+  /// The apply's timestamp (<see cref="ApplyHookContext.ApplyTimestamp"/>), the value the default
+  /// <c>whizbang.timestamps</c> hook stamps <c>updated_at</c> with. Null for a plan resolved without one.
+  /// </summary>
+  public DateTimeOffset? ApplyTimestamp { get; init; }
+
+  /// <summary>The timestamp an apply records as its start: the apply's timestamp, or now for a plan resolved without one.</summary>
+  internal DateTimeOffset AppliedAt => ApplyTimestamp ?? DateTimeOffset.UtcNow;
+
+  /// <summary>
   /// Render the store-column SET tail for the collective <c>UPDATE</c> — the shared SQL fragment both drivers
   /// append after the <c>data = …</c> setter: <c>, "col0" = @wb_hookcol0, "col1" = @wb_hookcol1</c> and, when
   /// <see cref="BumpVersion"/> is set, <c>, version = version + 1</c>. Each driver binds the <c>@wb_hookcol{i}</c>
   /// parameters to <see cref="StoreColumns"/>'s values in its own parameter mechanism.
   /// </summary>
-  public string RenderStoreColumnSetTail() {
+  public string RenderStoreColumnSetTail() => RenderStoreColumnSetTail(appliedAtSql: null);
+
+  /// <summary>
+  /// Render the store-column SET tail as <see cref="RenderStoreColumnSetTail()"/> does, except that a column assigned the
+  /// apply's timestamp (<see cref="ApplyTimestamp"/>) takes <paramref name="appliedAtSql"/> first, falling back to its
+  /// bound value: a resumed apply stamps the rows it reaches with the time the apply started (#1969).
+  /// </summary>
+  /// <param name="appliedAtSql">The SQL of the apply's recorded start time; null renders every column from its parameter.</param>
+  /// <docs>fundamentals/messaging/collective-events#resuming-an-apply</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveApplyHookPlanTests.cs:RenderStoreColumnSetTail_WithTheAppliedAtSql_StampsTheApplyTimestampColumnFromItAsync</tests>
+  public string RenderStoreColumnSetTail(string? appliedAtSql) {
     var tail = new StringBuilder();
     for (var i = 0; i < StoreColumns.Count; i++) {
       var column = StoreColumns[i].Column;
@@ -87,7 +106,14 @@ public sealed record CollectiveApplyHookPlan<TModel>(
           $"Apply hook produced an invalid store-column name '{column}'. Column names must be valid unquoted " +
           "Postgres identifiers (a letter or underscore, then letters/digits/underscores).");
       }
-      tail.Append(", \"").Append(column).Append("\" = @wb_hookcol").Append(i.ToString(CultureInfo.InvariantCulture));
+      var parameter = "@wb_hookcol" + i.ToString(CultureInfo.InvariantCulture);
+      tail.Append(", \"").Append(column).Append("\" = ");
+      if (appliedAtSql is not null && ApplyTimestamp is { } applyTimestamp && StoreColumns[i].Value is DateTimeOffset value
+          && value == applyTimestamp) {
+        tail.Append("COALESCE(").Append(appliedAtSql).Append(", ").Append(parameter).Append(')');
+      } else {
+        tail.Append(parameter);
+      }
     }
     if (BumpVersion) {
       tail.Append(", version = version + 1");

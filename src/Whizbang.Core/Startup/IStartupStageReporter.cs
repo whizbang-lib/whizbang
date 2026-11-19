@@ -5,8 +5,9 @@ namespace Whizbang.Core.Startup;
 
 /// <summary>
 /// The one owner of the stage this instance is in (#1636). Entering a stage logs it, records it on the instance's row
-/// (<c>startup_stage</c>, <c>startup_stage_message</c>, <c>startup_stage_entered_at</c>) and tells every
-/// <see cref="IStartupStageObserver"/>.
+/// (<c>startup_stage</c>, <c>startup_stage_message</c>, <c>startup_stage_entered_at</c>, with the lifecycle phase and
+/// the library version in the same write) and tells every <see cref="IStartupStageObserver"/>. It is the only writer
+/// of the instance's recorded phase: a pause or a stand-by is recorded through <see cref="EnterPhaseAsync"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -24,7 +25,7 @@ namespace Whizbang.Core.Startup;
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/startup-status#startup-stages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageReporterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStageReporterTests.cs</tests>
 public interface IStartupStageReporter {
   /// <summary>The stage this instance is in, or <see langword="null"/> before the first one is entered.</summary>
   StartupStageSnapshot? Current { get; }
@@ -47,6 +48,20 @@ public interface IStartupStageReporter {
   ValueTask SkipAsync(StartupStage stage, string reason, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Enters a lifecycle phase off the startup ladder (pausing, paused, standing by, resuming, faulted, halted) while the
+  /// stage stays where it is: the row records the phase with the stage it is in. Entering a stage afterwards records
+  /// that stage's own phase again. A phase on the ladder is the stage's, and is refused.
+  /// </summary>
+  /// <param name="phase">The phase.</param>
+  /// <param name="cancellationToken">Canceled when the caller is.</param>
+  /// <returns>A task that completes once the phase is written (or held).</returns>
+  /// <docs>operations/startup/startup-status#pause-and-standby</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStageReporterTests.cs:EnterPhase_OffTheLadder_WritesThePhase_AndKeepsTheStageAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/NullStartupStageReporterTests.cs:NothingItIsTold_PutsItInAStageAsync</tests>
+  ValueTask EnterPhaseAsync(RunControl.LifecyclePhase phase, CancellationToken cancellationToken = default) =>
+    ValueTask.CompletedTask;
+
+  /// <summary>
   /// The instance's row now exists: writes the stage held since before it did, or since a write failed. Called by
   /// whatever registers the instance, and after each accepted heartbeat; does nothing when nothing is held.
   /// </summary>
@@ -65,13 +80,16 @@ public interface IStartupStageReporter {
 /// instance in its stage; a production observer returns promptly.
 /// </remarks>
 /// <docs>operations/startup/startup-status#startup-stages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageReporterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStageReporterTests.cs</tests>
 public interface IStartupStageObserver {
   /// <summary>
   /// The stage changed (a transition, progress within it, or a skip), or a held stage was written.
   /// </summary>
   /// <param name="snapshot">The stage as it now stands.</param>
-  /// <param name="recorded">Whether the instance's row now records it.</param>
+  /// <param name="recorded">
+  /// Whether the instance's row now records it; also true when there is no row to record on (no storage, or a
+  /// coordinator that keeps no instance rows), so nothing waits for a record that cannot come.
+  /// </param>
   /// <param name="cancellationToken">Canceled when the caller is.</param>
   /// <returns>A task the reporter awaits.</returns>
   ValueTask OnStageChangedAsync(StartupStageSnapshot snapshot, bool recorded, CancellationToken cancellationToken);

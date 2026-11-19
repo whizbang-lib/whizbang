@@ -59,12 +59,17 @@ public class MaintenanceWorkerLifecycleTests {
   private sealed class FakeCoordinator : IWorkCoordinator {
     public TaskCompletionSource FirstMaintenance { get; } =
       new(TaskCreationOptions.RunContinuationsAsynchronously);
+    /// <summary>Completes on the second sweep: the loop came back around after the first one.</summary>
+    public TaskCompletionSource SecondMaintenance { get; } =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
     public int MaintenanceCalls;
     public Exception? MaintenanceThrows { get; init; }
     public Exception? BacklogThrows { get; init; }
 
     public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
-      Interlocked.Increment(ref MaintenanceCalls);
+      if (Interlocked.Increment(ref MaintenanceCalls) >= 2) {
+        SecondMaintenance.TrySetResult();
+      }
       FirstMaintenance.TrySetResult();
       return MaintenanceThrows is not null
         ? Task.FromException<IReadOnlyList<MaintenanceResult>>(MaintenanceThrows)
@@ -94,97 +99,48 @@ public class MaintenanceWorkerLifecycleTests {
         => Task.CompletedTask;
   }
 
-  /// <summary>
-  /// A gate that never opens and announces the arrival of a waiter. <see cref="Entered"/> is the
-  /// deterministic "ExecuteAsync is parked at the barrier" signal: on .NET 10 the base class
-  /// dispatches ExecuteAsync with <c>Task.Run</c>, so <c>StartAsync</c> returning proves only
-  /// that the body was scheduled. The infinite delay then observes the stopping token exactly as
-  /// the real gate's wait does.
-  /// </summary>
-  private sealed class BlockingGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Entered => _entered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-    }
-  }
-
-  private static readonly TimeSpan _wait = TimeSpan.FromSeconds(10);
-
   private static (MaintenanceWorker Worker, CapturingLogger Logger) _build(
       FakeCoordinator coord,
-      ISchemaReadyGate gate,
-      HousekeepingCoordinator? housekeeping = null) {
+      HousekeepingCoordinator? housekeeping = null,
+      Func<TimeSpan, CancellationToken, Task>? delay = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
     var logger = new CapturingLogger();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       logger,
       metrics: null,
-      housekeeping: housekeeping);
+      housekeeping: housekeeping) {
+      DelayAsync = delay ?? MaintenanceWorker.RealDelayAsync,
+    };
     return (worker, logger);
   }
 
   [Test]
-  public async Task ExecuteAsync_CanceledWhileWaitingOnTheSchemaGate_StopsWithoutSweepingAsync() {
-    // Shutdown during startup must not be treated as an error, and must not run a sweep
-    // against a schema that was never confirmed ready.
-    //
-    // The gate reports when the body actually parks on it, and the test cancels only after that.
-    // Canceling straight after StartAsync would race the thread pool: a work item dequeued after
-    // the token is already canceled never invokes ExecuteAsync at all, and every assertion below
-    // would then be satisfied by a worker that simply never ran.
-    var coord = new FakeCoordinator();
-    var gate = new BlockingGate();  // deliberately never marked ready
-    var (worker, logger) = _build(coord, gate);
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    await gate.Entered.WaitAsync(_wait);
-
-    await cts.CancelAsync();
-    await worker.StopAsync(CancellationToken.None).WaitAsync(_wait);
-    await worker.ExecuteTask!.WaitAsync(_wait).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    List<LogEntry> entries;
-    lock (logger.Entries) {
-      entries = [.. logger.Entries];
-    }
-
-    await Assert.That(coord.MaintenanceCalls).IsEqualTo(0)
-      .Because("a sweep issued before the gate opened runs DDL-dependent work against a schema "
-             + "nobody confirmed exists");
-    await Assert.That(entries.Any(e => e.Level == LogLevel.Error)).IsFalse()
-      .Because("stopping during migrations is an ordinary deploy, not a crash to report");
-    await Assert.That(entries.Any(e => e.Message.Contains("stopped", StringComparison.Ordinal))).IsFalse()
-      .Because("the canceled wait must take the early return; reaching the loop's exit log means "
-             + "the catch fell through into the maintenance loop instead of ending the run");
-    await Assert.That(worker.ExecuteTask!.IsCompleted).IsTrue()
-      .Because("a canceled gate wait must settle the hosted service rather than hang shutdown");
-    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
-      .Because("the cancellation belongs to shutdown, not to a fault");
-  }
-
-  [Test]
   public async Task ExecuteAsync_SweepThrows_LogsAsRetryableAndKeepsTheLoopAliveAsync() {
-    // One bad sweep must not kill maintenance for the life of the process.
+    // One bad sweep must not kill maintenance for the life of the process. Proven by the loop reaching its wait after
+    // the failure and then running a second tick, each observed on its own signal, with no real interval waited out.
     var coord = new FakeCoordinator { MaintenanceThrows = new InvalidOperationException("sweep blew up") };
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
-    var (worker, logger) = _build(coord, gate);
+    var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var waits = 0;
+    var (worker, logger) = _build(coord, delay: (_, ct) => {
+      if (Interlocked.Increment(ref waits) > 1) {
+        return new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(ct);   // after the released wait, idle until stopped
+      }
+      waiting.TrySetResult();
+      return release.Task.WaitAsync(ct);
+    });
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await logger.FirstFailureLogged.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    // The bounds below are hang guards only: each wait is on the transition itself.
+    await logger.FirstFailureLogged.Task.WaitAsync(TimeSpan.FromSeconds(60));
+    await waiting.Task.WaitAsync(TimeSpan.FromSeconds(60));
+    release.TrySetResult();
+    await coord.SecondMaintenance.Task.WaitAsync(TimeSpan.FromSeconds(60));
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
@@ -196,6 +152,61 @@ public class MaintenanceWorkerLifecycleTests {
     // Warning, not Error: a failed tick is retryable and the loop says so on the next interval.
     await Assert.That(failures.Any(e =>
       e.Exception is InvalidOperationException && e.Level == LogLevel.Warning)).IsTrue();
+    await Assert.That(coord.MaintenanceCalls).IsGreaterThanOrEqualTo(2)
+      .Because("the loop survived the failed sweep and ran the next tick");
+  }
+
+  /// <summary>
+  /// Every task of a cycle is isolated (#2174), but a tick does work around its tasks: it opens a scope and resolves the
+  /// work coordinator from it before any task runs. A coordinator that cannot be built (a missing connection string, a
+  /// disposed provider) throws there, outside every task, and only the loop's own catch stands between that and a
+  /// worker that stops maintaining for the life of the process.
+  /// </summary>
+  [Test]
+  public async Task ExecuteAsync_TheCoordinatorCannotBeResolved_LogsTheTickAsRetryable_AndTheNextTickSweepsAsync() {
+    var coord = new FakeCoordinator();
+    var resolutionFails = 1;
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinator>(_ => Volatile.Read(ref resolutionFails) == 1
+      ? throw new InvalidOperationException("the coordinator could not be built")
+      : coord);
+    var sp = services.BuildServiceProvider();
+    var logger = new CapturingLogger();
+    var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var waits = 0;
+    var worker = new MaintenanceWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
+      logger) {
+      DelayAsync = (_, ct) => {
+        if (Interlocked.Increment(ref waits) > 1) {
+          return new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(ct);
+        }
+        Volatile.Write(ref resolutionFails, 0);
+        waiting.TrySetResult();
+        return release.Task.WaitAsync(ct);
+      },
+    };
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // The bounds below are hang guards only: each wait is on the transition itself.
+    await waiting.Task.WaitAsync(TimeSpan.FromSeconds(60));
+    release.TrySetResult();
+    await coord.FirstMaintenance.Task.WaitAsync(TimeSpan.FromSeconds(60));
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    List<LogEntry> entries;
+    lock (logger.Entries) {
+      entries = [.. logger.Entries];
+    }
+    await Assert.That(entries.Any(e => e.Level == LogLevel.Warning
+        && e.Message.Contains("tick failed", StringComparison.Ordinal)
+        && e.Exception is InvalidOperationException { Message: "the coordinator could not be built" })).IsTrue()
+      .Because("a failure outside every task is the loop's to log, with what failed, and to retry next interval");
+    await Assert.That(coord.MaintenanceCalls).IsEqualTo(1).Because("the loop survived the failed tick and swept on the next");
   }
 
   [Test]
@@ -203,9 +214,7 @@ public class MaintenanceWorkerLifecycleTests {
     // Unmeasured is not busy. Treating a failed backlog read as "busy" would let one
     // broken query disable cleanup for the life of the process.
     var coord = new FakeCoordinator { BacklogThrows = new InvalidOperationException("probe blew up") };
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
-    var (worker, logger) = _build(coord, gate, new HousekeepingCoordinator());
+    var (worker, logger) = _build(coord, new HousekeepingCoordinator());
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
@@ -218,9 +227,7 @@ public class MaintenanceWorkerLifecycleTests {
     // Cancellation is shutdown, not a probe failure: it must surface rather than be
     // swallowed into "unmeasured" and trigger a sweep during teardown.
     var coord = new FakeCoordinator { BacklogThrows = new OperationCanceledException() };
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
-    var (worker, _) = _build(coord, gate, new HousekeepingCoordinator());
+    var (worker, _) = _build(coord, new HousekeepingCoordinator());
 
     await Assert.That(async () => await worker.RunMaintenanceOnceAsync(CancellationToken.None))
         .ThrowsExactly<OperationCanceledException>();
@@ -233,9 +240,7 @@ public class MaintenanceWorkerLifecycleTests {
     // A host constructing the worker directly gets prior behaviour; a missing
     // collaborator must never silently switch maintenance off.
     var coord = new FakeCoordinator();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
-    var (worker, _) = _build(coord, gate, housekeeping: null);
+    var (worker, _) = _build(coord, housekeeping: null);
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 

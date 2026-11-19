@@ -49,10 +49,9 @@ public sealed class EFCorePostgresStartupFleetStatusSource : IStartupFleetStatus
              COALESCE(array_agg(c.capability ORDER BY c.capability) FILTER (WHERE c.capability IS NOT NULL), '{{}}') AS capabilities,
              i.lifecycle_phase, i.library_version,
              (e.instance_id IS NOT NULL) AS evicted,
-             -- #1286: whether the instance's alive-lock is held now. is_instance_alive (055) with a zero heartbeat
-             -- threshold answers the lock alone. Read through 055 rather than 204's helper because the handshake
-             -- reads the fleet before this release's migrations have run.
-             {prefix}is_instance_alive(i.instance_id, 0) AS alive_lock_held
+             -- #2027: the one liveness rule. It is Preflight's (316's bootstrap region), so it exists before the
+             -- handshake reads the fleet, ahead of this release's main pass.
+             {prefix}wh_instance_is_live(i.instance_id) AS is_live
       FROM {prefix}wh_service_instances i
       LEFT JOIN {prefix}wh_instance_capabilities c ON c.instance_id = i.instance_id
       LEFT JOIN {prefix}wh_instance_evictions e ON e.instance_id = i.instance_id

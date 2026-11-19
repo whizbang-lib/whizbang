@@ -33,13 +33,22 @@ public record ScopedWorkCoordinatorDependencies {
   public Tags.CoalesceGroupResolver? CoalesceResolver { get; init; }
   /// <summary>The registered audit decision hook, consulted for every audit record this strategy builds.</summary>
   public SystemEvents.IAuditDecisionHook? AuditDecisionHook { get; init; }
+  /// <summary>Resolves an audited event's type through the message-type catalog, as the audit ledger rebuild does.</summary>
+  public SystemEvents.AuditTypeResolver? AuditEventTypes { get; init; }
+  /// <summary>
+  /// The process-wide deferred outbox channel, drained at the start of every flush so the audit records and
+  /// strategy-less publishes queued on it are stored (#2228). The factory always supplies it.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/message-cascade#deferred-event-channel</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DeferredChannelDrainEveryStrategyTests.cs:Flush_WithOnlyDeferredMessages_StoresThemAndEmptiesTheChannelAsync</tests>
+  public IDeferredOutboxChannel? DeferredChannel { get; init; }
 }
 
 /// <summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesQueuedMessagesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:FlushAsync_BeforeDisposal_FlushesImmediatelyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:MultipleQueues_FlushedTogetherOnDisposalAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:ScopedStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesQueuedMessagesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:FlushAsync_BeforeDisposal_FlushesImmediatelyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:MultipleQueues_FlushedTogetherOnDisposalAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkFlusherTests.cs:ScopedStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
 /// Scoped strategy - batches operations within a scope (e.g., HTTP request, message handler).
 /// Flushes on scope disposal (IAsyncDisposable pattern).
 /// Provides a good balance of latency and efficiency.
@@ -75,7 +84,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   private readonly ScopedWorkCoordinatorDependencies _dependencies = dependencies ?? new ScopedWorkCoordinatorDependencies();
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
-  private readonly WorkCoordinatorQueues _queues = new(logger, dependencies?.AuditDecisionHook, dependencies?.CoalesceResolver);
+  private readonly WorkCoordinatorQueues _queues = new(logger, dependencies?.AuditDecisionHook, dependencies?.CoalesceResolver, dependencies?.AuditEventTypes);
 
   private bool _disposed;
 
@@ -143,6 +152,13 @@ public partial class ScopedWorkCoordinatorStrategy(
     _metrics?.FlushCalls.Add(1,
       new KeyValuePair<string, object?>("strategy", STRATEGY_NAME),
       new KeyValuePair<string, object?>("trigger", "api"));
+
+    // #2228: what was queued on the deferred channel is written by this flush, before the empty check, so a
+    // scope whose only work is an audited direct append still stores its audit record.
+    var drained = DeferredOutboxDrain.PrependTo(_dependencies.DeferredChannel, _queues.OutboxMessages, _queues.Stamp);
+    if (drained > 0) {
+      LogDeferredChannelDrained(_logger, drained);
+    }
 
     if (_queues.IsEmpty) {
       _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", STRATEGY_NAME));
@@ -384,5 +400,12 @@ public partial class ScopedWorkCoordinatorStrategy(
     Message = "Flushing {Count} outbox messages with InstanceId={InstanceId}, Service={ServiceName}"
   )]
   static partial void LogFlushingWithInstanceId(ILogger logger, Guid instanceId, string serviceName, int count);
+
+  [LoggerMessage(
+    EventId = 13,
+    Level = LogLevel.Debug,
+    Message = "Scoped strategy: Drained {Count} deferred messages from channel into this flush"
+  )]
+  static partial void LogDeferredChannelDrained(ILogger logger, int count);
 
 }

@@ -20,6 +20,7 @@ using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
 using Whizbang.Testing.Containers;
+using Whizbang.Testing.Workers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -32,7 +33,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/SchemaInitConnection.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class DataOnlyRoleE2ETests {
   private const string PASSWORD = "data-only";
@@ -91,6 +91,7 @@ public class DataOnlyRoleE2ETests {
     builder.Logging.ClearProviders();
     builder.Logging.AddProvider(errors);
     builder.Services.Configure<SchemaInitializationOptions>(o => o.NonBlockingSchemaInit = false);
+    builder.Services.AddSingleton<Whizbang.Core.RunControl.IProcessExitCode>(_exitCodes);
     builder.Services.Configure<MaintenanceWorkerOptions>(o => o.AllowTableRewrite = true);
     builder.Services.AddSingleton<ITransport>(new InProcessTransport());
     _ = builder.Services.AddWhizbang().WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres;
@@ -99,15 +100,32 @@ public class DataOnlyRoleE2ETests {
     return builder.Build();
   }
 
+  /// <summary>How long a phase may take before it is reported as hung. A hang detector over signal waits, not a speed check.</summary>
+  private static readonly TimeSpan _phaseBound = TimeSpan.FromSeconds(60);
+
+  /// <summary>
+  /// The first start applies every migration to a brand-new database. On a saturated build server that took over 60 s
+  /// with nothing hung (flaky-tests.md, Pattern 3), so it gets its own bound, still inside the test timeout so a real
+  /// hang is still named.
+  /// </summary>
+  private static readonly TimeSpan _migratingStartBound = TimeSpan.FromSeconds(180);
+
   /// <summary>Bounds one phase, so a hang names where it happened instead of running into the test's timeout.</summary>
-  private static async Task _phaseAsync(string phase, Func<Task> work, IHost? host = null, ErrorLog? errors = null) {
+  private static async Task _phaseAsync(string phase, Func<Task> work, IHost? host = null, ErrorLog? errors = null, TimeSpan? bound = null) {
+    var limit = bound ?? _phaseBound;
     try {
-      await work().WaitAsync(TimeSpan.FromSeconds(60));
+      await work().WaitAsync(limit);
     } catch (TimeoutException ex) {
       var steps = host?.Services.GetService<IStartupPipelineState>()?.SnapshotSteps()
         .Select(s => $"{s.Name}={s.Status}/{s.Outcome}: {s.Reason}") ?? [];
+      // #2419: the Migrate step spans the startup stages Preflight to Coordinate; the stage and its message say which
+      // of them a hang is in, which the step alone does not.
+      var stage = host?.Services.GetService<IStartupStageReporter>()?.Current is { } current
+        ? $"{current.Stage}: {current.Message}"
+        : "none reported";
       throw new TimeoutException(
-        $"Phase '{phase}' did not finish within 60s. Startup steps: [{string.Join("; ", steps)}]. "
+        $"Phase '{phase}' did not finish within {limit.TotalSeconds}s. Startup stage: [{stage}]. "
+        + $"Startup steps: [{string.Join("; ", steps)}]. "
         + $"Errors logged: [{string.Join(" | ", errors?.Entries ?? [])}]", ex);
     }
   }
@@ -121,14 +139,14 @@ public class DataOnlyRoleE2ETests {
   }
 
   [Test]
-  [Timeout(180000)]
+  [Timeout(300000)]
   public async Task UnderADataOnlyRole_WithTheOwnerAsInit_TheServiceStartsAndMaintainsItselfAsync(CancellationToken cancellationToken) {
     var errors = new ErrorLog();
 
     // First start: migrations run on the init connection and create everything the role is then granted.
     using (var first = _buildHost(withInitConnection: true, errors)) {
       IReadOnlyList<StartupStepResult> steps = [];
-      await _phaseAsync("first start", async () => steps = await _startAsync(first, cancellationToken), first, errors);
+      await _phaseAsync("first start", async () => steps = await _startAsync(first, cancellationToken), first, errors, _migratingStartBound);
       await Assert.That(steps.Where(s => s.Outcome == StartupStepOutcome.Failed).Select(s => $"{s.Name}: {s.Reason}")).IsEmpty();
       await Assert.That(errors.Entries).IsEmpty()
         .Because("nothing a starting service does may need schema rights from its application role");
@@ -161,7 +179,7 @@ public class DataOnlyRoleE2ETests {
       }
     });
     // A message through the running service: published, stored, claimed and applied to a perspective row.
-    var perspectives = second.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().Single();
+    var perspectives = second.Services.GetHostedWorkers().OfType<PerspectiveWorker>().Single();
     var streamId = (Guid)TrackedGuid.New();
     var applied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     perspectives.OnPerspectiveEventProcessed += e => {
@@ -196,8 +214,25 @@ public class DataOnlyRoleE2ETests {
   public async Task UnderADataOnlyRole_WithNoInitConnection_StartupCannotMigrateAsync(CancellationToken cancellationToken) {
     using var host = _buildHost(withInitConnection: false, new ErrorLog());
 
-    await Assert.That(async () => await host.StartAsync(cancellationToken)).Throws<PostgresException>()
+    // #1636: the bootstrap, Preflight's first schema work, is what meets the refusal, and fails the start naming it.
+    // #2126: the failure is an exit, a startup failure (exit code 4), not an exception out of host start.
+    await host.StartAsync(cancellationToken);
+    await host.WaitForShutdownAsync(cancellationToken);
+    var exit = host.Services.GetRequiredService<Whizbang.Core.RunControl.IWhizbangInstanceExit>();
+
+    await Assert.That(exit.Cause).IsEqualTo(Whizbang.Core.RunControl.ExitCause.StartupFailure)
       .Because("the role cannot create the schema: without this, the test above would prove nothing about the role");
+    await Assert.That(exit.Report!.Record.ExceptionType).IsEqualTo(typeof(SchemaBootstrapException).FullName)
+      .Because("the bootstrap's refusal, carrying the server's, is what the exit names");
+    await Assert.That(_exitCodes.Codes).IsEquivalentTo([4]);
+  }
+
+  private readonly RecordingExitCodes _exitCodes = new();
+
+  /// <summary>The test process keeps its own exit code; the host's are recorded instead.</summary>
+  private sealed class RecordingExitCodes : Whizbang.Core.RunControl.IProcessExitCode {
+    public List<int> Codes { get; } = [];
+    public void SetExitCode(int exitCode) => Codes.Add(exitCode);
   }
 
   /// <summary>Every log entry at Error or above, kept so a failure the service only logs still fails the test.</summary>
@@ -211,7 +246,9 @@ public class DataOnlyRoleE2ETests {
       public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Error;
       public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
         if (IsEnabled(logLevel)) {
-          entries.Enqueue($"{category}: {formatter(state, exception)} {exception?.Message}");
+          // The whole exception, stack and inner exceptions included: an entry from the process-wide unobserved-task
+          // hook names only "a Task threw", and the stack is what says which operation abandoned it.
+          entries.Enqueue($"{category}: {formatter(state, exception)} {exception}");
         }
       }
     }

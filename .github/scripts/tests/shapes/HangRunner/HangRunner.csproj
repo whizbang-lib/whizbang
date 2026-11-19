@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- A test module whose one test never completes, with the hang dump extension and platform the product test
+       projects resolve (the repository's Directory.Packages.props), so TestSuiteHangDump.Tests.ps1 proves the hang dump
+       fires under `dotnet test` as the CI suites run it (#2402). Not in shapes.slnx: the coverage shapes never build it. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />
+  </ItemGroup>
+</Project>

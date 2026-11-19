@@ -26,9 +26,15 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// advancement uses "advance to the max id we just consumed" — if the loop crashes after dispatch but
 /// before cursor UPDATE, the next tick redelivers those rows.
 /// </para>
+/// <para>
+/// A coordination decision (#2046: a role released, an assignment published) carries its payload in the log, and the
+/// tail rebuilds the typed signal from it through the bus's wire binding (<see cref="PgSignalWire"/>), so a subscriber
+/// that missed the notification is told what changed, not only that something did.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Notifications/PgNotificationStackStartupGateTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinationSignalsSqlTests.cs:TheTail_ReplaysAMissedDecision_WithItsPayloadAsync</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list. Same reasoning as Dispatcher.")]
 public sealed partial class PgDurableSignalTailWorker(
   IOptions<WhizbangNotificationOptions> options,
@@ -38,7 +44,6 @@ public sealed partial class PgDurableSignalTailWorker(
   ILogger<PgDurableSignalTailWorker> logger,
   INotificationConnectionStringFallback? connectionStringFallback = null,
   INotificationDataSource? notificationDataSource = null,
-  Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate = null,
   ProbeCadenceMetrics? probeMetrics = null,
   TimeProvider? timeProvider = null
 ) : BackgroundService {
@@ -49,7 +54,6 @@ public sealed partial class PgDurableSignalTailWorker(
   private readonly ILogger<PgDurableSignalTailWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
   private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
-  private readonly Whizbang.Core.Workers.ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
   private readonly ProbeCadenceMetrics? _probeMetrics = probeMetrics;
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
   // Initializers run in declaration order, so the _options initializer above has already refused a null.
@@ -85,14 +89,7 @@ public sealed partial class PgDurableSignalTailWorker(
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     // The very first act below is INSERTing this pod's cursor into wh_signal_cursors —
-    // a table the migration creates. Hold at the schema gate before any of it.
-    if (_schemaReadyGate is not null) {
-      try {
-        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        return;
-      }
-    }
+    // a table the migration creates. The host starts this worker at Accept commands (#1636).
 
     _wireNameToEntry = _buildWireMap();
 
@@ -165,7 +162,7 @@ public sealed partial class PgDurableSignalTailWorker(
     // ORDER BY id caps memory and preserves emission order; batch size prevents runaway
     // reads if the tail falls far behind.
     await using var readCmd = new NpgsqlCommand(@"
-      SELECT s.id, s.wire_name
+      SELECT s.id, s.wire_name, COALESCE(s.payload, '')
       FROM wh_signals s
       JOIN wh_signal_cursors c ON c.instance_id = @instance_id
       WHERE s.id > c.last_delivered_signal_id
@@ -175,14 +172,14 @@ public sealed partial class PgDurableSignalTailWorker(
     readCmd.Parameters.AddWithValue("instance_id", _instanceProvider.InstanceId);
 
     long maxSeenId = 0;
-    var dispatched = new List<(long Id, SignalTypeEntry Entry)>();
+    var dispatched = new List<(SignalTypeEntry Entry, string Payload)>();
     await using (var reader = await readCmd.ExecuteReaderAsync(ct)) {
       while (await reader.ReadAsync(ct)) {
         var id = reader.GetInt64(0);
         var wireName = reader.GetString(1);
         if (id > maxSeenId) { maxSeenId = id; }
         if (map.TryGetValue(wireName, out var entry)) {
-          dispatched.Add((id, entry));
+          dispatched.Add((entry, reader.GetString(2)));
         }
         // Unknown wire-names on the durable path are still "consumed" (cursor advances past
         // them) — they belong to types this pod doesn't know about, and no local subscriber
@@ -190,9 +187,12 @@ public sealed partial class PgDurableSignalTailWorker(
       }
     }
 
-    foreach (var (_, entry) in dispatched) {
+    foreach (var (entry, payload) in dispatched) {
       try {
-        var pending = entry.Dispatch(_sink, ct);
+        // A coordination signal is rebuilt from its payload; any other durable signal is a doorbell.
+        var pending = PgSignalWire.ForType(entry.SignalType) is { } binding
+          ? binding.Dispatch(_sink, payload, ct)
+          : entry.Dispatch(_sink, ct);
         if (!pending.IsCompletedSuccessfully) {
           await pending.ConfigureAwait(false);
         }

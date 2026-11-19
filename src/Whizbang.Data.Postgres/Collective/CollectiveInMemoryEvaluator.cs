@@ -4,6 +4,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 
@@ -109,7 +110,7 @@ public static class CollectiveInMemoryEvaluator<TModel> where TModel : class {
         Expression<Func<TModel, TProp>> selector, Expression<Func<TModel, TProp>> computed) {
       if (CollectivePhysicalColumns.TryJsonbKey(typeof(TModel), selector) is not null) {
         throw new NotSupportedException(
-          $"CollectiveInMemoryEvaluator<{typeof(TModel).Name}> sets a key inside a jsonb column only to a value, not a computed expression, as the live apply does.");
+          $"CollectiveInMemoryEvaluator<{TypeNameFormatter.ForLog(typeof(TModel))}> sets a key inside a jsonb column only to a value, not a computed expression, as the live apply does.");
       }
       var value = computed.Compile().Invoke(original);
       _writes.Add((_property(selector), null, value));
@@ -126,7 +127,7 @@ public static class CollectiveInMemoryEvaluator<TModel> where TModel : class {
       var property = _property(collection);
       if (!property.PropertyType.IsAssignableFrom(typeof(List<TElement>))) {
         throw new NotSupportedException(
-          $"CollectiveInMemoryEvaluator<{typeof(TModel).Name}> can upsert into {property.Name} only when a List<{typeof(TElement).Name}> can be assigned to it.");
+          $"CollectiveInMemoryEvaluator<{TypeNameFormatter.ForLog(typeof(TModel))}> can upsert into {property.Name} only when a List<{TypeNameFormatter.ForLog(typeof(TElement))}> can be assigned to it.");
       }
       var keyOf = key.Compile();
       var target = keyOf(element);
@@ -175,7 +176,7 @@ public static class CollectiveInMemoryEvaluator<TModel> where TModel : class {
         return prop;
       }
       throw new NotSupportedException(
-        $"CollectiveInMemoryEvaluator<{typeof(TModel).Name}> only supports scalar top-level property selectors " +
+        $"CollectiveInMemoryEvaluator<{TypeNameFormatter.ForLog(typeof(TModel))}> only supports scalar top-level property selectors " +
         "(o => o.PropertyName), or one key inside a jsonb physical column (o => o.Column.Key). Other nested paths, " +
         "indexed access, or computed selectors are not replayable in-memory.");
     }

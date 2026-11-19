@@ -9,7 +9,7 @@ namespace Whizbang.Core.Capabilities;
 /// <param name="Enabled">Whether the library may create or upgrade the capability.</param>
 /// <param name="Key">The most specific key that is set, or the global key when neither override is.</param>
 /// <docs>operations/infrastructure/capabilities#provisioning</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityAutoProvisionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityAutoProvisionTests.cs</tests>
 public readonly record struct CapabilityAutoProvisionSetting(bool Enabled, string Key);
 
 /// <summary>
@@ -25,7 +25,7 @@ public readonly record struct CapabilityAutoProvisionSetting(bool Enabled, strin
 /// counts as not set, so the next level decides, as every hand-read Whizbang key treats a mistyped value.
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#provisioning</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityAutoProvisionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityAutoProvisionTests.cs</tests>
 public static class CapabilityAutoProvision {
 #pragma warning disable CA1707
   /// <summary>The global key, bound to <see cref="CapabilityOptions.AutoProvision"/>.</summary>

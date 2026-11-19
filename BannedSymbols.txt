@@ -2,5 +2,19 @@ T:System.Diagnostics.CodeAnalysis.RequiresUnreferencedCodeAttribute; Reflection 
 T:System.Diagnostics.CodeAnalysis.RequiresDynamicCodeAttribute; Dynamic code generation is banned in Whizbang - use source generators instead
 T:System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessageAttribute; Do not suppress AOT warnings - fix the underlying code instead
 P:System.Type.FullName; Type names are keys (issue #698): render them with TypeNameFormatter (DisplayName for logs/traces/messages, FormatClrTypeName for a CLR key, Format for the wire form) so both sides agree
-P:System.Type.AssemblyQualifiedName; Type names are keys (issue #698): use TypeNameFormatter.AssemblyQualifiedName / AssemblyQualifiedNameOrNull, and compare through EventTypeMatchingHelper
+P:System.Type.AssemblyQualifiedName; Type names are keys (issue #698): use TypeNameFormatter.Format, and compare persisted names through EventTypeMatchingHelper (#2267)
 P:System.Reflection.Assembly.FullName; Use TypeNameFormatter.AssemblyDisplayName (issue #698)
+M:Whizbang.Core.TypeNameFormatter.AssemblyQualifiedName(System.Type); A versioned type name differs between builds of one assembly (issue #2267): key, hash and compare with TypeNameFormatter.Format (EventTypeMatchingHelper for persisted names). Only a name a receiver resolves a type from (an envelope's message or envelope type) carries the version, with a commented suppression at that line
+M:Whizbang.Core.TypeNameFormatter.AssemblyQualifiedNameOrNull(System.Type); A versioned type name differs between builds of one assembly (issue #2267): use TypeNameFormatter.Format, or TryFormatClrTypeName for a type that may have no name
+M:Whizbang.Core.TypeNameFormatter.AssemblyQualifiedNameOrDisplay(System.Type); A versioned type name differs between builds of one assembly (issue #2267): use TypeNameFormatter.Format for a key, DisplayName for a log
+M:Whizbang.Core.Messaging.CompositeChildIdentity.Derive(System.Guid,System.Int32,System.String); A composite child id derives through CompositeChildIdentity.ForChild, the one rendering of the child's type (issues #2266, #2267)
+P:System.Type.Namespace; Type names come from the shared naming code (issue #2267): use TypeNameFormatter.NamespaceOf
+M:System.Reflection.Assembly.GetName; Assembly names come from the shared naming code (issue #2267): use TypeNameFormatter.AssemblySimpleName, AssemblyVersion or AssemblyIdentity
+M:System.Reflection.Assembly.GetName(System.Boolean); Assembly names come from the shared naming code (issue #2267): use TypeNameFormatter.AssemblySimpleName, AssemblyVersion or AssemblyIdentity
+P:System.Reflection.AssemblyName.Name; Assembly names come from the shared naming code (issue #2267): use TypeNameFormatter.AssemblySimpleName
+M:System.Type.GetType(System.String); A type is resolved from a name only by the shared resolver (issue #2267): use IMessageTypeBinder (MultiPassMessageTypeBinder) or EventTypeMatchingHelper.TryResolveType
+M:System.Type.GetType(System.String,System.Boolean); A type is resolved from a name only by the shared resolver (issue #2267): use IMessageTypeBinder (MultiPassMessageTypeBinder) or EventTypeMatchingHelper.TryResolveType
+M:System.Type.GetType(System.String,System.Boolean,System.Boolean); A type is resolved from a name only by the shared resolver (issue #2267): use IMessageTypeBinder (MultiPassMessageTypeBinder) or EventTypeMatchingHelper.TryResolveType
+M:System.Reflection.Assembly.GetType(System.String); A type is resolved from a name only by the shared resolver (issue #2267): use IMessageTypeBinder (MultiPassMessageTypeBinder) or EventTypeMatchingHelper.TryResolveType
+M:System.Reflection.Assembly.GetType(System.String,System.Boolean); A type is resolved from a name only by the shared resolver (issue #2267): use IMessageTypeBinder (MultiPassMessageTypeBinder) or EventTypeMatchingHelper.TryResolveType
+M:System.Reflection.Assembly.GetType(System.String,System.Boolean,System.Boolean); A type is resolved from a name only by the shared resolver (issue #2267): use IMessageTypeBinder (MultiPassMessageTypeBinder) or EventTypeMatchingHelper.TryResolveType

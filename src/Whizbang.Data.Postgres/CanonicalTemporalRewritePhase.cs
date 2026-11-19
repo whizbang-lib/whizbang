@@ -136,6 +136,17 @@ public static class CanonicalTemporalRewritePhase {
       return false;
     }
 
+    // #2131: who applies what this transaction converts, carried as transaction settings so every conversion records it
+    // without being handed it. Empty outside any scope: a conversion then records nobody.
+    var applier = StoredFormApplier.Current;
+    await using (var stamp = new NpgsqlCommand(
+        $"SELECT set_config('{StoredFormApplier.LIBRARY_SETTING}', $1, true), set_config('{StoredFormApplier.APPLICATION_SETTING}', $2, true)",
+        connection, transaction)) {
+      stamp.Parameters.AddWithValue(applier?.LibraryVersion ?? string.Empty);
+      stamp.Parameters.AddWithValue(applier?.ApplicationVersion ?? string.Empty);
+      await stamp.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     // What a statement says about itself, such as how many rows it touched, comes back as a notice.
     // Relayed while this phase runs the statements, and only then.
     void relay(object sender, NpgsqlNoticeEventArgs e) =>
@@ -151,6 +162,8 @@ public static class CanonicalTemporalRewritePhase {
     IReadOnlyList<string> rewritten;
     try {
       foreach (var (name, sql) in pending) {
+        // #2165: each table the phase reaches is progress, so a long phase over many tables keeps the migrator's role.
+        StartupProgress.Note();
         await transaction.SaveAsync(SAVEPOINT, cancellationToken);
         try {
           await using var command = new NpgsqlCommand(sql, connection) {

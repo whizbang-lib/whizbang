@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -71,7 +70,7 @@ public class SignalBusHostedServiceCoverageTests {
     services.AddWhizbangSignalBus();
     services.AddSingleton<ISignalTransport>(transport);
     await using var provider = services.BuildServiceProvider();
-    var hosted = provider.GetServices<IHostedService>().OfType<SignalBusHostedService>().Single();
+    var hosted = provider.GetRequiredService<SignalBusHostedService>();
     var state = provider.GetRequiredService<SignalBusLivenessState>();
 
     await hosted.StartAsync(CancellationToken.None);
@@ -100,7 +99,7 @@ public class SignalBusHostedServiceCoverageTests {
     services.AddWhizbangSignalBus();
     services.AddSingleton<ISignalTransport>(transport);
     await using var provider = services.BuildServiceProvider();
-    var hosted = provider.GetServices<IHostedService>().OfType<SignalBusHostedService>().Single();
+    var hosted = provider.GetRequiredService<SignalBusHostedService>();
     var state = provider.GetRequiredService<SignalBusLivenessState>();
 
     await hosted.StartAsync(CancellationToken.None);

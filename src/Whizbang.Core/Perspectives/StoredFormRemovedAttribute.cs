@@ -14,7 +14,7 @@ namespace Whizbang.Core.Perspectives;
 /// </remarks>
 /// <param name="path">The removed property's key, relative to the type carrying the attribute.</param>
 /// <docs>fundamentals/perspectives/stored-form-migrations</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/StoredFormAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/StoredFormAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true, Inherited = false)]
 public sealed class StoredFormRemovedAttribute(string path) : Attribute {
   /// <summary>The removed property's key, relative to the type carrying the attribute.</summary>

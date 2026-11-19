@@ -13,7 +13,7 @@ namespace Whizbang.Core.Perspectives;
 /// generator applies the same widening when it declares the column, so the three agree on the value.
 /// </summary>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectivePhysicalValuesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectivePhysicalValuesTests.cs</tests>
 public static class PerspectivePhysicalValues {
   /// <summary>
   /// The column value for <paramref name="value"/>: an enumeration becomes its underlying number (as
@@ -45,6 +45,6 @@ public static class PerspectivePhysicalValues {
     if (underlyingType == typeof(ulong)) {
       return typeof(decimal);
     }
-    throw new ArgumentException($"{underlyingType.Name} is not an enumeration's underlying integral type.", nameof(underlyingType));
+    throw new ArgumentException($"{TypeNameFormatter.ForLog(underlyingType)} is not an enumeration's underlying integral type.", nameof(underlyingType));
   }
 }

@@ -199,6 +199,14 @@ public class WorkEligibilitySqlTests : EFCoreTestBase {
     await Assert.That(partitions).IsEquivalentTo(_oddPartitions);
   }
 
+  /// <summary>
+  /// Flipped by 300 (#1636). The name is 229's, kept because 229's claim_work links to it and a shipped migration is
+  /// never edited; the rule it names is reversed. 300 drops 229's "the caller counts itself whatever its row says" for a
+  /// caller whose row records that it is not eligible yet: it gets nothing. 229 counted it so that, ranked as absent, it would not fall to a solo rank and
+  /// take every partition; refusing it outright has no such risk, and a starting instance's share is already its
+  /// peers' (they rank it out, and the assigner leaves it out). A data plane that started before its row recorded
+  /// Accept commands claims nothing until it does.
+  /// </summary>
   [Test]
   public async Task Rank_ACallerThatIsNotYetEligible_StillCountsItselfAsync() {
     var (self, peer) = _pair();
@@ -209,9 +217,56 @@ public class WorkEligibilitySqlTests : EFCoreTestBase {
 
     var (partitions, _) = await _claimAsync(conn, self, phase: null);
 
+    await Assert.That(partitions).IsEmpty()
+      .Because("its row says it is not eligible for work, so the claim gives it none; its peer covers every partition");
+  }
+
+  /// <summary>
+  /// The dependency 229 named and 300 keeps: a draining caller (recorded phase Stopping) still claims its share. Under a
+  /// published assignment its partitions stay its own until the assigner republishes, so refusing it would leave them
+  /// unclaimed for that window; claiming overlaps its peers instead, and stream leases keep the work single.
+  /// </summary>
+  [Test]
+  public async Task Claim_ADrainingCaller_StillClaimsItsShareAsync() {
+    var (self, peer) = _pair();
+    await using var conn = await _openAsync();
+    await _registerAsync(conn, peer, nameof(LifecyclePhase.Running));
+    await _registerAsync(conn, self, nameof(LifecyclePhase.Stopping));
+    await _seedOutboxAsync(conn, partitions: 10);
+
+    var (partitions, _) = await _claimAsync(conn, self, phase: null);
+
     await Assert.That(partitions).IsEquivalentTo(_oddPartitions)
-      .Because("the caller is running this claim: ranked as absent it would fall to a solo rank and take every "
-        + "partition its peer covers");
+      .Because("a draining instance finishes its share rather than leaving it unclaimed until the next assignment");
+  }
+
+  /// <summary>An older build records no phase and no stage: eligible whenever live, as 229 kept it, so it still claims.</summary>
+  [Test]
+  public async Task Claim_ACallerThatRecordsNoPhase_StillClaimsItsShareAsync() {
+    var (self, peer) = _pair();
+    await using var conn = await _openAsync();
+    await _registerAsync(conn, peer, nameof(LifecyclePhase.Running));
+    await _registerAsync(conn, self, phase: null);
+    await _seedOutboxAsync(conn, partitions: 10);
+
+    var (partitions, _) = await _claimAsync(conn, self, phase: null);
+
+    await Assert.That(partitions).IsEquivalentTo(_oddPartitions);
+  }
+
+  /// <summary>A refused caller is still asked to register when its row is stale, so the next claim finds it current.</summary>
+  [Test]
+  public async Task Claim_ARefusedCallerWhoseRowIsStale_IsStillAskedToRegisterAsync() {
+    var (self, peer) = _pair();
+    await using var conn = await _openAsync();
+    await _registerAsync(conn, peer, nameof(LifecyclePhase.Running));
+    await _registerAsync(conn, self, nameof(LifecyclePhase.Migrating), age: TimeSpan.FromMinutes(5));
+    await _seedOutboxAsync(conn, partitions: 10);
+
+    var (partitions, notices) = await _claimAsync(conn, self, phase: null);
+
+    await Assert.That(partitions).IsEmpty();
+    await Assert.That(notices).Contains("whizbang.instance_registration_stale=true");
   }
 
   // --- the caller's own recorded phase ---------------------------------------------------------
@@ -289,7 +344,7 @@ public class WorkEligibilitySqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task Registration_CarryingThePhase_MakesTheRowCurrentForTheNextClaimAsync() {
+  public async Task ARegistration_NoLongerMovesARecordedPhase_TheStageRecordMakesTheRowCurrentAsync() {
     var (self, _) = _pair();
     await using (var conn = await _openAsync()) {
       await _registerAsync(conn, self, nameof(LifecyclePhase.Migrating));
@@ -304,25 +359,31 @@ public class WorkEligibilitySqlTests : EFCoreTestBase {
 
     _ = await coordinator.RecordHeartbeatAsync(new Whizbang.Core.Messaging.HeartbeatRequest(
       self, "test", "test-host", 1, LifecyclePhase: nameof(LifecyclePhase.AcceptingCommands)));
-    var second = await coordinator.ClaimWorkAsync(request);
+    var afterTheBeat = await coordinator.ClaimWorkAsync(request);
+    _ = await coordinator.RecordInstanceTransitionAsync(new Whizbang.Core.Startup.InstanceTransition(
+      self, Whizbang.Core.Startup.StartupStage.AcceptingCommands, "accepting", LifecyclePhase.AcceptingCommands, null));
+    var afterTheTransition = await coordinator.ClaimWorkAsync(request);
 
     await Assert.That(first.InstanceRegistrationStale).IsTrue();
-    await Assert.That(second.InstanceRegistrationStale).IsFalse()
-      .Because("the registration the claim loop sends on the notice is the write that makes a ready instance eligible");
+    await Assert.That(afterTheBeat.InstanceRegistrationStale).IsTrue()
+      .Because("278 (#1636): a registration never overwrites a recorded phase, which is why the claim loop no longer "
+        + "announces one");
+    await Assert.That(afterTheTransition.InstanceRegistrationStale).IsFalse()
+      .Because("the stage record, the one writer of the phase, is what makes a ready instance's row current");
   }
 
   // --- the bootstrap registration --------------------------------------------------------------
 
   [Test]
-  public async Task BootstrapRegistration_RecordsTheInstanceAsMigrating_SoItIsNotACandidateAsync() {
+  public async Task BootstrapRegistration_RecordsTheInstanceAsConnecting_SoItIsNotACandidateAsync() {
     var instance = new ServiceInstanceProvider(Guid.CreateVersion7(), "test", "test-host", processId: 1);
 
     await SchemaBootstrapPhase.RegisterInstanceAsync(() => new NpgsqlConnection(ConnectionString), "public", instance);
 
     await using var conn = await _openAsync();
-    await Assert.That(await _phaseAsync(conn, instance.InstanceId)).IsEqualTo(nameof(LifecyclePhase.Migrating))
-      .Because("the bootstrap registers an instance before its migration pass; a row without a phase would read as an "
-        + "older build, eligible for work it cannot yet claim");
+    await Assert.That(await _phaseAsync(conn, instance.InstanceId)).IsEqualTo(nameof(LifecyclePhase.Connecting))
+      .Because("the bootstrap registers an instance at the end of Preflight (#1636), before its migration pass; a row "
+        + "without a phase would read as an older build, eligible for work it cannot yet claim");
     await Assert.That(await _candidatesAsync(conn)).DoesNotContain(instance.InstanceId);
   }
 

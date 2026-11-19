@@ -14,9 +14,9 @@ namespace Whizbang.Core.Perspectives;
 /// Tracks which callbacks have been invoked per ServiceCollection to prevent duplicate registrations.
 /// Uses ConditionalWeakTable to track per-ServiceCollection without preventing garbage collection.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs</tests>
 public static class PerspectiveRunnerCallbackRegistry {
-  private static readonly List<Action<IServiceCollection>> _callbacks = [];
+  private static readonly List<(string? Assembly, Action<IServiceCollection> Callback)> _callbacks = [];
   private static readonly ConditionalWeakTable<IServiceCollection, HashSet<int>> _invoked = [];
   private static readonly Lock _lock = new();
 
@@ -26,12 +26,27 @@ public static class PerspectiveRunnerCallbackRegistry {
   /// Supports multiple assemblies registering callbacks (thread-safe).
   /// </summary>
   /// <param name="callback">Callback that registers perspective runners with the service collection.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs:RegisterCallback_WithValidCallback_StoresCallbackAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs:RegisterCallback_WithValidCallback_StoresCallbackAsync</tests>
   public static void RegisterCallback(Action<IServiceCollection> callback) {
     ArgumentNullException.ThrowIfNull(callback);
 
     lock (_lock) {
-      _callbacks.Add(callback);
+      _callbacks.Add((null, callback));
+    }
+  }
+
+  /// <summary>
+  /// Registers <paramref name="assembly"/>'s perspective runner registration. Called from generated code, so a host
+  /// runs only its own service's (#2243).
+  /// </summary>
+  /// <param name="assembly">The registering assembly's name.</param>
+  /// <param name="callback">The registration.</param>
+  /// <tests>tests/Whizbang.Core.Tests/ServiceScope/ServiceScopedRegistrationTests.cs:EverySlot_ReplaysOnlyTheHostsOwnServiceAsync</tests>
+  public static void RegisterCallback(string assembly, Action<IServiceCollection> callback) {
+    ArgumentNullException.ThrowIfNull(assembly);
+    ArgumentNullException.ThrowIfNull(callback);
+    lock (_lock) {
+      _callbacks.Add((assembly, callback));
     }
   }
 
@@ -48,7 +63,7 @@ public static class PerspectiveRunnerCallbackRegistry {
   /// restore with <see cref="RestoreCallbacksForTests"/> in a finally, and must serialize against
   /// anything else that touches this registry.
   /// </remarks>
-  internal static Action<IServiceCollection>[] TakeCallbacksForTests() {
+  internal static (string? Assembly, Action<IServiceCollection> Callback)[] TakeCallbacksForTests() {
     lock (_lock) {
       var taken = _callbacks.ToArray();
       _callbacks.Clear();
@@ -57,7 +72,7 @@ public static class PerspectiveRunnerCallbackRegistry {
   }
 
   /// <summary>Puts back the callbacks taken by <see cref="TakeCallbacksForTests"/>.</summary>
-  internal static void RestoreCallbacksForTests(Action<IServiceCollection>[] callbacks) {
+  internal static void RestoreCallbacksForTests((string? Assembly, Action<IServiceCollection> Callback)[] callbacks) {
     ArgumentNullException.ThrowIfNull(callbacks);
     lock (_lock) {
       _callbacks.Clear();
@@ -75,9 +90,10 @@ public static class PerspectiveRunnerCallbackRegistry {
   /// Uses ConditionalWeakTable to track per-ServiceCollection, allowing test scenarios where each test creates a new ServiceCollection.
   /// </summary>
   /// <param name="services">The service collection to register services in.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs:InvokeRegistration_WithNoCallback_DoesNotThrowAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs:InvokeRegistration_PassesCorrectServicesToCallbackAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs:InvokeRegistration_SameServiceCollection_OnlyInvokesOncePerCallbackAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs:InvokeRegistration_WithNoCallback_DoesNotThrowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs:InvokeRegistration_PassesCorrectServicesToCallbackAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerCallbackRegistryTests.cs:InvokeRegistration_SameServiceCollection_OnlyInvokesOncePerCallbackAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/ServiceScope/ServiceScopedRegistrationTests.cs:AnExcludedRunnerCallback_IsNotSpent_SoALaterAnchorOnItsServiceStillRegistersItAsync</tests>
   public static void InvokeRegistration(IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
 
@@ -93,11 +109,12 @@ public static class PerspectiveRunnerCallbackRegistry {
         _invoked.Add(services, invokedSet);
       }
 
-      // Invoke ALL callbacks that haven't been invoked yet for this ServiceCollection
-      // This supports multiple assemblies with perspectives in the same process
+      // Invoke every callback of the host's own service not yet invoked for this ServiceCollection (#2243). Another
+      // service's is skipped without being marked, so a later anchor on that service still runs it.
+      var scope = ServiceAssemblyScope.For(services);
       for (var i = 0; i < _callbacks.Count; i++) {
-        if (invokedSet.Add(i)) {
-          _callbacks[i](services);
+        if (scope.Includes(_callbacks[i].Assembly) && invokedSet.Add(i)) {
+          _callbacks[i].Callback(services);
         }
       }
     }

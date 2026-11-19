@@ -29,8 +29,9 @@ namespace Whizbang.Data.Postgres;
 /// <para>
 /// <b>Blocking (opt in with <c>NonBlockingSchemaInit = false</c>):</b>
 /// migrations run inline in <c>StartAsync</c>, so the host does not finish starting (no HTTP port,
-/// no workers) until they complete, and a failure throws — aborting startup and keeping the system
-/// in a safe halted state.
+/// no workers) until they complete. A failure ends the process through the one exit path (#2126): a
+/// startup failure (exit code 4), or an incompatible schema (exit code 5) when the schema is newer than
+/// the binary, with the schema-ready gate still closed. A host without the exit path fails its start.
 /// </para>
 /// <para>
 /// <b>In the non-blocking default:</b> initialization runs in the background; <c>StartAsync</c> returns
@@ -73,7 +74,17 @@ internal sealed partial class WhizbangDatabaseInitializerService(
   private readonly ILogger<WhizbangDatabaseInitializerService> _logger = logger;
 
   private Task? _backgroundInit;
-  private readonly CancellationTokenSource _stopCts = new();
+  private Task? _standDown;
+  // The token is read once, with the source, while the source is alive: the retry loop waits on it after an attempt
+  // fails, which can be after the host has disposed this service, and reading Token from a disposed source throws an
+  // exception nothing awaits (it surfaced as an unobserved task exception).
+  private readonly (CancellationTokenSource Source, CancellationToken Token) _stop = _newStop();
+  private bool _disposed;
+
+  private static (CancellationTokenSource Source, CancellationToken Token) _newStop() {
+    var source = new CancellationTokenSource();
+    return (source, source.Token);
+  }
 
   /// <summary>
   /// The background initialization task when <see cref="SchemaInitializationOptions.NonBlockingSchemaInit"/>
@@ -81,6 +92,12 @@ internal sealed partial class WhizbangDatabaseInitializerService(
   /// background init completion (success or fail-closed) without polling.
   /// </summary>
   internal Task? BackgroundInitTask => _backgroundInit;
+
+  /// <summary>
+  /// The stood-down instance keeping its row alive (#1992) when the <c>Assess</c> verdict was a stand-down;
+  /// <see langword="null"/> otherwise. Ends when the host stops. Test seam: await it after <see cref="StopAsync"/>.
+  /// </summary>
+  internal Task? StandDownTask => _standDown;
 
   public Task StartAsync(CancellationToken cancellationToken) {
     if (_schemaInitOptions.Value.NonBlockingSchemaInit) {
@@ -91,17 +108,61 @@ internal sealed partial class WhizbangDatabaseInitializerService(
       return Task.CompletedTask;
     }
 
-    // Blocking (default): the host waits for init; a failure throws and aborts startup.
-    return _runInitializationAsync(cancellationToken);
+    // Blocking: the host waits for init; a failure ends the process through the one exit path (#2126).
+    return _runBlockingAsync(cancellationToken);
   }
+
+  /// <summary>
+  /// Blocking initialization (#2126): a failure is an exit, not an exception out of host start. An exception thrown out
+  /// of <c>StartAsync</c> ends the process as an unhandled crash, whose exit code and log say nothing of why; instead the
+  /// instance exits through the one exit path, as a <see cref="Whizbang.Core.RunControl.ExitCause.SchemaIncompatible"/>
+  /// (code 5) when the schema is newer than this binary and a <see cref="Whizbang.Core.RunControl.ExitCause.StartupFailure"/>
+  /// (code 4) otherwise. The schema-ready gate stays closed, so nothing touches the unmigrated schema while the host stops.
+  /// A host without the exit path fails its start as before.
+  /// </summary>
+  private async Task _runBlockingAsync(CancellationToken cancellationToken) {
+    try {
+      await _runInitializationAsync(cancellationToken);
+    } catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested) {
+      if (_serviceProvider.GetService<Whizbang.Core.RunControl.IWhizbangInstanceExit>() is not { } exit) {
+        throw;
+      }
+      exit.RequestExit(StartupFailureOf(ex));
+    }
+  }
+
+  /// <summary>The exit a blocking initialization failure takes: an incompatible schema, or a startup failure.</summary>
+  /// <param name="failure">Why initialization failed.</param>
+  /// <returns>The exit request.</returns>
+  internal static Whizbang.Core.RunControl.InstanceExitRequest StartupFailureOf(Exception failure) =>
+    failure is SchemaStandDownException
+      ? new(Whizbang.Core.RunControl.ExitCause.SchemaIncompatible,
+        "schema initialization found the schema newer than this binary, so this binary cannot run against it: " + failure.Message,
+        failure)
+      : new(Whizbang.Core.RunControl.ExitCause.StartupFailure,
+        "schema initialization failed, and with NonBlockingSchemaInit = false the host does not start without it: " + failure.Message,
+        failure);
 
   public Task StopAsync(CancellationToken cancellationToken) {
     // Ends the background retry loop (it waits on this token between attempts).
-    _stopCts.Cancel();
+    _stop.Source.Cancel();
     return Task.CompletedTask;
   }
 
-  public void Dispose() => _stopCts.Dispose();
+  /// <summary>Ends the background retry loop, if it is still running, and releases its token source.</summary>
+  /// <remarks>
+  /// Canceled before it is disposed, so a loop whose attempt fails after this returns sees a canceled token and ends,
+  /// rather than retrying on a token that can no longer be canceled.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangDatabaseInitializerServiceCoverageTests.cs:BackgroundInit_AnAttemptFailingAfterDispose_EndsTheLoopWithoutFaultingAsync</tests>
+  public void Dispose() {
+    if (_disposed) {
+      return;
+    }
+    _disposed = true;
+    _stop.Source.Cancel();
+    _stop.Source.Dispose();
+  }
 
   private async Task _runInitializationLoggedAsync() {
     // Self-healing loop: fail-closed WHILE retrying, but never give up. MarkReady is only reached
@@ -126,9 +187,9 @@ internal sealed partial class WhizbangDatabaseInitializerService(
         LogBackgroundInitializationRetrying(_logger, ex, attempt, delay.TotalSeconds);
         try {
           foreach (var observer in _observers) {
-            await observer.OnAttemptFailedAsync(attempt, ex, _stopCts.Token).ConfigureAwait(false);
+            await observer.OnAttemptFailedAsync(attempt, ex, _stop.Token).ConfigureAwait(false);
           }
-          await Task.Delay(delay, _timeProvider, _stopCts.Token).ConfigureAwait(false);
+          await Task.Delay(delay, _timeProvider, _stop.Token).ConfigureAwait(false);
         } catch (OperationCanceledException) {
           return;   // host shutdown ends the loop; the gate stays closed.
         }
@@ -137,6 +198,13 @@ internal sealed partial class WhizbangDatabaseInitializerService(
   }
 
   private async Task _runInitializationAsync(CancellationToken cancellationToken) {
+    // #1992: Assess is the first stage. The one verdict is produced before anything is applied, and every runner reads
+    // that same verdict as its input. An unreadable version record throws here, before any runner, and fails the attempt.
+    if (await _assessAsync(cancellationToken) is { Verdict: Whizbang.Core.Startup.StartupVerdict.StandDown } standDown) {
+      await _standDownAsync(standDown, cancellationToken);
+      return;
+    }
+
     await _runMigrationsAsync(cancellationToken);
 
     // #1636: every driver's schema is in place; what follows is coordinated across the fleet and ends with the gate.
@@ -148,6 +216,26 @@ internal sealed partial class WhizbangDatabaseInitializerService(
     await TryRecomputePartitionsAsync(cancellationToken);
 
     _schemaReadyGate.MarkReady();
+  }
+
+  /// <summary>The verdict, or <see langword="null"/> when no driver supplied an assessor (startup runs as it always has).</summary>
+  private async Task<Whizbang.Core.Startup.StartupAssessment?> _assessAsync(CancellationToken cancellationToken) =>
+    _serviceProvider.GetService<Whizbang.Core.Startup.StartupAssessmentSource>() is { IsConfigured: true } source
+      ? await source.AssessAsync(cancellationToken)
+      : null;
+
+  /// <summary>
+  /// The schema is newer than this binary: nothing is applied and the schema-ready gate stays closed, which holds the
+  /// data plane and keeps readiness failing while the process stays alive. The instance records why and registers at
+  /// once, and stays registered until the host stops.
+  /// </summary>
+  private async Task _standDownAsync(Whizbang.Core.Startup.StartupAssessment assessment, CancellationToken cancellationToken) {
+    if (Whizbang.Core.Startup.StartupStandDown.FromServices(_serviceProvider) is not { } standDown) {
+      LogStoodDownUnregistered(_logger, assessment.Reason);
+      return;
+    }
+    await standDown.RecordAsync(assessment, cancellationToken);
+    _standDown = standDown.KeepVisibleAsync(_stop.Token);
   }
 
   private async Task _runMigrationsAsync(CancellationToken cancellationToken) {
@@ -213,6 +301,10 @@ internal sealed partial class WhizbangDatabaseInitializerService(
   [LoggerMessage(EventId = 3, Level = LogLevel.Error,
     Message = "Background schema initialization attempt {Attempt} failed; the schema-ready gate stays closed and the next attempt runs in {DelaySeconds}s")]
   static partial void LogBackgroundInitializationRetrying(ILogger logger, Exception ex, int attempt, double delaySeconds);
+
+  [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
+    Message = "Standing down without an instance identity to register as: {Reason}. Nothing is applied and the schema-ready gate stays closed; the fleet cannot see this instance")]
+  static partial void LogStoodDownUnregistered(ILogger logger, string reason);
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Information,
     Message = "Background schema initialization recovered on attempt {Attempt}; the schema-ready gate is now open")]

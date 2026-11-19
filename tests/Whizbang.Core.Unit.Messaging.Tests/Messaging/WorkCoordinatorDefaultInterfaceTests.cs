@@ -1,0 +1,484 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.ValueObjects;
+
+namespace Whizbang.Core.Tests.Messaging;
+
+/// <summary>
+/// Exercises every default interface member on <see cref="IWorkCoordinator"/> through a
+/// minimal fake that implements ONLY the abstract members. The default bodies split into
+/// two families with distinct contracts:
+///   - Postgres-only surfaces (RecordHeartbeatAsync, ClaimWorkAsync, the flushers, ...) throw
+///     NotImplementedException naming the missing member so a mis-wired backend fails loudly.
+///   - Optional surfaces (maintenance, drain fetches, lifecycle reconciliation, ...) no-op
+///     with empty/zero results so in-memory coordinators and test fakes need no overrides.
+/// A fake that overrode any of these would bypass the default body, so this file uses its
+/// own non-overriding stub.
+/// </summary>
+/// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+public class WorkCoordinatorDefaultInterfaceTests {
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance", Justification = "Default interface members are only dispatchable through the interface type — that dispatch IS the behavior under test")]
+  private readonly IWorkCoordinator _coordinator = new MinimalWorkCoordinator();
+
+  // ========================================
+  // Throwing defaults (Postgres-only surfaces)
+  // ========================================
+
+  [Test]
+  public async Task RecordHeartbeatAsync_DefaultImplementation_ThrowsNamingTheMemberAsync() {
+    var request = new HeartbeatRequest(
+      (Guid)TrackedGuid.New(), "TestService", "test-host", 123);
+
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.RecordHeartbeatAsync(request));
+
+    await Assert.That(message).Contains("RecordHeartbeatAsync");
+    await Assert.That(message).Contains(nameof(MinimalWorkCoordinator));
+  }
+
+  /// <summary>
+  /// #2126: a coordinator with no staged schema has no Preflight-only beat, so a starting instance's beat is the full
+  /// heartbeat; the minimal coordinator implements neither, so the call reaches the heartbeat's own default.
+  /// </summary>
+  [Test]
+  public async Task RecordStartupHeartbeatAsync_DefaultImplementation_IsTheHeartbeatAsync() {
+    var request = new HeartbeatRequest((Guid)TrackedGuid.New(), "TestService", "test-host", 123);
+
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.RecordStartupHeartbeatAsync(request));
+
+    await Assert.That(message).Contains("RecordHeartbeatAsync")
+      .Because("the default startup beat delegates to the full heartbeat");
+  }
+
+  /// <summary>#2126: a coordinator that keeps no instance records keeps no exit record, and says so.</summary>
+  [Test]
+  public async Task RecordInstanceExitAsync_DefaultImplementation_KeepsNoRecordAsync() {
+    var exit = new Whizbang.Core.RunControl.InstanceExitRecord(
+      (Guid)TrackedGuid.New(), "TestService", "test-host", 123, Whizbang.Core.RunControl.ExitCause.HostShutdown, 0, true,
+      "stop", null, null, null, null, null, null, [], 0, 0, null);
+
+    var result = await _coordinator.RecordInstanceExitAsync(exit);
+
+    await Assert.That(result).IsSameReferenceAs(Whizbang.Core.RunControl.InstanceExitRecordResult.NotKept);
+    await Assert.That(result.Recorded).IsFalse();
+    await Assert.That(result.NotRecordedBecause).IsEqualTo("this host's work coordinator keeps no instance records");
+  }
+
+  [Test]
+  public async Task NotifyScheduledRetryDueAsync_DefaultImplementation_ThrowsNamingTheMemberAsync() {
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.NotifyScheduledRetryDueAsync());
+
+    await Assert.That(message).Contains("NotifyScheduledRetryDueAsync");
+  }
+
+  [Test]
+  public async Task CompleteOutboxPublishedAsync_SimpleOverload_DelegatesToThrowingDebugOverloadAsync() {
+    IReadOnlyList<Guid> ids = [(Guid)TrackedGuid.New()];
+
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.CompleteOutboxPublishedAsync(ids));
+
+    await Assert.That(message).Contains("CompleteOutboxPublishedAsync");
+  }
+
+  [Test]
+  public async Task CompleteOutboxPublishedAsync_DebugOverload_ThrowsNamingTheMemberAsync() {
+    IReadOnlyList<Guid> ids = [(Guid)TrackedGuid.New()];
+
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.CompleteOutboxPublishedAsync(ids, debugMode: true));
+
+    await Assert.That(message).Contains("CompleteOutboxPublishedAsync");
+  }
+
+  [Test]
+  public async Task CompletePerspectiveAsync_SimpleOverload_DelegatesToThrowingDebugOverloadAsync() {
+    IReadOnlyList<PerspectiveCursorCompletion> cursors = [];
+    IReadOnlyList<Guid> eventWorkIds = [];
+
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.CompletePerspectiveAsync(cursors, eventWorkIds));
+
+    await Assert.That(message).Contains("CompletePerspectiveAsync");
+  }
+
+  [Test]
+  public async Task CompletePerspectiveAsync_DebugOverload_ThrowsNamingTheMemberAsync() {
+    IReadOnlyList<PerspectiveCursorCompletion> cursors = [];
+    IReadOnlyList<Guid> eventWorkIds = [];
+
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.CompletePerspectiveAsync(cursors, eventWorkIds, debugMode: true));
+
+    await Assert.That(message).Contains("CompletePerspectiveAsync");
+  }
+
+  [Test]
+  public async Task RenewHeldLeasesAsync_DefaultImplementation_ThrowsNamingTheMemberAsync() {
+    IReadOnlyList<Guid> ids = [(Guid)TrackedGuid.New()];
+
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.RenewHeldLeasesAsync(WorkCategory.Outbox, (Guid)TrackedGuid.New(), ids));
+
+    await Assert.That(message).Contains("RenewHeldLeasesAsync");
+  }
+
+  [Test]
+  public async Task ReportFailuresAsync_DefaultImplementation_ThrowsNamingTheMemberAsync() {
+    IReadOnlyList<MessageFailure> failures = [];
+
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.ReportFailuresAsync(WorkCategory.Inbox, failures));
+
+    await Assert.That(message).Contains("ReportFailuresAsync");
+  }
+
+  [Test]
+  public async Task CommitHandlerResultAsync_DefaultImplementation_ThrowsNamingTheMemberAsync() {
+    var request = _createHandlerCommitRequest();
+
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.CommitHandlerResultAsync(request));
+
+    await Assert.That(message).Contains("CommitHandlerResultAsync");
+  }
+
+  [Test]
+  public async Task CommitHandlerBatchAsync_DefaultImplementation_ThrowsNamingTheMemberAsync() {
+    IReadOnlyList<HandlerCommitRequest> requests = [_createHandlerCommitRequest()];
+
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.CommitHandlerBatchAsync(requests));
+
+    await Assert.That(message).Contains("CommitHandlerBatchAsync");
+  }
+
+  [Test]
+  public async Task ClaimWorkAsync_DefaultImplementation_ThrowsNamingTheMemberAsync() {
+    var request = new ClaimWorkRequest(
+      (Guid)TrackedGuid.New(), "TestService", "test-host", 123);
+
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.ClaimWorkAsync(request));
+
+    await Assert.That(message).Contains("ClaimWorkAsync");
+  }
+
+  [Test]
+  public async Task FlushCompletionsAsync_DefaultImplementation_ThrowsNamingTheMemberAsync() {
+    var request = new FlushCompletionsRequest();
+
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.FlushCompletionsAsync(request));
+
+    await Assert.That(message).Contains("FlushCompletionsAsync");
+  }
+
+  [Test]
+  public async Task ResolveSyncInquiriesAsync_DefaultImplementation_ThrowsNamingTheMemberAsync() {
+    IReadOnlyList<SyncInquiry> inquiries = [];
+
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.ResolveSyncInquiriesAsync(inquiries));
+
+    await Assert.That(message).Contains("ResolveSyncInquiriesAsync");
+  }
+
+  // ========================================
+  // No-op defaults (optional surfaces)
+  // ========================================
+
+  [Test]
+  public async Task StoreOutboxMessagesAsync_DefaultImplementation_CompletesWithoutErrorAsync() {
+    var threw = false;
+    try {
+      await _coordinator.StoreOutboxMessagesAsync([], 10);
+      await _coordinator.RecordLifecycleCompletionAsync((Guid)TrackedGuid.New());
+    } catch {
+      threw = true;
+    }
+
+    await Assert.That(threw).IsFalse();
+  }
+
+  [Test]
+  public async Task CleanupCompletedStreamsAsync_DefaultImplementation_EvictsZeroStreamsAsync() {
+    IReadOnlyList<Guid> streamIds = [(Guid)TrackedGuid.New()];
+
+    var evicted = await _coordinator.CleanupCompletedStreamsAsync(streamIds);
+
+    await Assert.That(evicted).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task RecomputePartitionNumbersAsync_DefaultImplementation_ReportsNothingRecomputedAsync() {
+    var result = await _coordinator.RecomputePartitionNumbersAsync(10_000);
+
+    await Assert.That(result.InboxRowsRecomputed).IsEqualTo(0);
+    await Assert.That(result.OutboxRowsRecomputed).IsEqualTo(0);
+    await Assert.That(result.ActiveStreamsRowsRecomputed).IsEqualTo(0);
+    await Assert.That(result.AnyRecomputed).IsFalse();
+  }
+
+  [Test]
+  public async Task GetPerspectiveCursorsBatchAsync_DefaultImplementation_ReturnsEmptyListAsync() {
+    Guid[] streamIds = [(Guid)TrackedGuid.New()];
+
+    var cursors = await _coordinator.GetPerspectiveCursorsBatchAsync(streamIds);
+
+    await Assert.That(cursors.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task GetOrphanedLifecycleEventsAsync_DefaultImplementation_ReturnsEmptyListAsync() {
+    var registry = new Dictionary<string, IReadOnlyList<string>>();
+
+    var orphans = await _coordinator.GetOrphanedLifecycleEventsAsync(registry, TimeSpan.FromMinutes(5));
+
+    await Assert.That(orphans.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task CleanupLifecycleCompletionsAsync_DefaultImplementation_DeletesZeroAsync() {
+    var deleted = await _coordinator.CleanupLifecycleCompletionsAsync(TimeSpan.FromHours(1));
+
+    await Assert.That(deleted).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task LookupHandledEvents_Default_HasNoLedgerAsync() {
+    var answer = await _coordinator.LookupHandledEventsAsync([TrackedGuid.New().Value]);
+
+    await Assert.That(answer.CoversFrom).IsNull()
+      .Because("#2273: a store that keeps no ledger covers nothing, so no repaired event can be proven never handled");
+    await Assert.That(answer.Handled).IsEmpty();
+  }
+
+  [Test]
+  public async Task SweepHandledLedger_Default_RemovesNothingAsync() {
+    var removed = await _coordinator.SweepHandledLedgerAsync(DateTimeOffset.UnixEpoch, TimeSpan.FromDays(7));
+
+    await Assert.That(removed).IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task GetCursorsRequiringRewindAsync_DefaultImplementation_ReturnsEmptyListAsync() {
+    var cursors = await _coordinator.GetCursorsRequiringRewindAsync();
+
+    await Assert.That(cursors.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task CompletePerspectiveEventsAsync_SimpleOverload_DelegatesToZeroResultDebugOverloadAsync() {
+    Guid[] workItemIds = [(Guid)TrackedGuid.New()];
+
+    var affected = await _coordinator.CompletePerspectiveEventsAsync(workItemIds);
+
+    await Assert.That(affected).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task CompletePerspectiveEventsAsync_DebugOverload_ReturnsZeroAsync() {
+    Guid[] workItemIds = [(Guid)TrackedGuid.New()];
+
+    var affected = await _coordinator.CompletePerspectiveEventsAsync(workItemIds, debugMode: true);
+
+    await Assert.That(affected).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task GetStreamEventsAsync_DefaultImplementation_ReturnsEmptyListAsync() {
+    Guid[] streamIds = [(Guid)TrackedGuid.New()];
+
+    var events = await _coordinator.GetStreamEventsAsync((Guid)TrackedGuid.New(), streamIds);
+
+    await Assert.That(events.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task GetLocalServiceIdAsync_DefaultImplementation_ReturnsEmptyGuidAsync() {
+    var serviceId = await _coordinator.GetLocalServiceIdAsync();
+
+    await Assert.That(serviceId).IsEqualTo(Guid.Empty);
+  }
+
+  [Test]
+  public async Task FetchOutboxBatchAsync_DefaultImplementation_ReturnsEmptyListAsync() {
+    IReadOnlyList<Guid> streamIds = [(Guid)TrackedGuid.New()];
+
+    var rows = await _coordinator.FetchOutboxBatchAsync(streamIds, (Guid)TrackedGuid.New());
+
+    await Assert.That(rows.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task ContinueOutboxStreamsAsync_DefaultImplementation_ReturnsNothing_SoTheDrainWaitsForTheClaimAsync() {
+    IReadOnlyList<OutboxStreamCursor> streams = [new OutboxStreamCursor((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New())];
+
+    var rows = await _coordinator.ContinueOutboxStreamsAsync(streams, (Guid)TrackedGuid.New(), runLength: 100, maxBytes: null);
+
+    await Assert.That(rows.Count).IsEqualTo(0)
+      .Because("a store that cannot continue a stream leaves it to the next claim cycle, the behavior before continuation existed");
+  }
+
+  [Test]
+  public async Task FetchInboxBatchAsync_DefaultImplementation_ReturnsEmptyListAsync() {
+    IReadOnlyList<Guid> streamIds = [(Guid)TrackedGuid.New()];
+
+    var rows = await _coordinator.FetchInboxBatchAsync(streamIds, (Guid)TrackedGuid.New());
+
+    await Assert.That(rows.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task FetchPendingPerspectiveEventsAsync_DefaultImplementation_ReturnsEmptyListAsync() {
+    var pending = await _coordinator.FetchPendingPerspectiveEventsAsync(
+      (Guid)TrackedGuid.New(), "TestPerspective", (Guid)TrackedGuid.New());
+
+    await Assert.That(pending.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task ClaimAndFetchPendingPerspectiveEventsAsync_DefaultImplementation_ReturnsEmptyListAsync() {
+    var pending = await _coordinator.ClaimAndFetchPendingPerspectiveEventsAsync(
+      (Guid)TrackedGuid.New(), "TestPerspective", (Guid)TrackedGuid.New(), TimeSpan.FromMinutes(5));
+
+    await Assert.That(pending.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task FetchEventsByIdsAsync_DefaultImplementation_ReturnsEmptyListAsync() {
+    IReadOnlyList<Guid> eventIds = [(Guid)TrackedGuid.New()];
+
+    var events = await _coordinator.FetchEventsByIdsAsync(eventIds);
+
+    await Assert.That(events.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task PerformMaintenanceAsync_DefaultImplementation_ReturnsEmptyListAsync() {
+    var results = await _coordinator.PerformMaintenanceAsync();
+
+    await Assert.That(results.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task PurgeOrphanInboxAsync_DefaultImplementation_ReturnsEmptyListAsync() {
+    IReadOnlyList<string> handledTypes = ["MyApp.Events.OrderCreated, MyApp"];
+
+    var purged = await _coordinator.PurgeOrphanInboxAsync(handledTypes);
+
+    await Assert.That(purged.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task DiscardPendingInboxMessagesAsync_DefaultImplementation_ReturnsZeroAsync() {
+    var discarded = await _coordinator.DiscardPendingInboxMessagesAsync(RepairTraffic.InboxMessageTypeNames);
+
+    await Assert.That(discarded).IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task DiscardPendingOutboxMessagesAsync_DefaultImplementation_ReturnsZeroAsync() {
+    var discarded = await _coordinator.DiscardPendingOutboxMessagesAsync(IntegrityTraffic.OutboxTypesToDiscard(null));
+
+    await Assert.That(discarded).IsEqualTo(0L);
+  }
+
+  /// <summary>
+  /// A coordinator that cannot tell which streams have a message waiting says so with null rather than
+  /// an empty set: empty would read as "nothing is coming", and the saga sweep would wake sagas that
+  /// still have a watchdog tick on the way.
+  /// </summary>
+  [Test]
+  public async Task GetStreamsWithPendingMessagesAsync_DefaultImplementation_AnswersUnknownAsync() {
+    var pending = await _coordinator.GetStreamsWithPendingMessagesAsync([Guid.Parse("00000000-0000-0000-0000-000000000001")], ["Any.Type, Any"]);
+
+    await Assert.That(pending).IsNull();
+  }
+
+  [Test]
+  public async Task FindStuckOutboxRowsAsync_DefaultImplementation_ReturnsEmptyListAsync() {
+    var rows = await _coordinator.FindStuckOutboxRowsAsync(5, 100);
+
+    await Assert.That(rows.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task FindStuckInboxRowsAsync_DefaultImplementation_ReturnsEmptyListAsync() {
+    var rows = await _coordinator.FindStuckInboxRowsAsync(5, 100);
+
+    await Assert.That(rows.Count).IsEqualTo(0);
+  }
+
+  // ========================================
+  // Helpers
+  // ========================================
+
+  private static async Task<string> _captureNotImplementedMessageAsync(Func<Task> action) {
+    try {
+      await action();
+    } catch (NotImplementedException ex) {
+      return ex.Message;
+    }
+    return string.Empty;
+  }
+
+  private static HandlerCommitRequest _createHandlerCommitRequest() {
+    return new HandlerCommitRequest(
+      (Guid)TrackedGuid.New(),
+      (Guid)TrackedGuid.New(),
+      "TestService",
+      "test-host",
+      123,
+      10_000,
+      new HandlerInboxCompletion((Guid)TrackedGuid.New(), (int)MessageProcessingStatus.Stored));
+  }
+
+  [Test]
+  public async Task CountOutstandingWorkAsync_DefaultImplementation_ReportsUnmeasurableNotZeroAsync() {
+    var reported = await _coordinator.CountOutstandingWorkAsync((Guid)TrackedGuid.New());
+
+    // The distinction is load-bearing rather than stylistic. Zero is a MEASUREMENT meaning "this
+    // instance holds nothing", which licenses a full-size claim. Null means the figure was never
+    // read, and the claim-outstanding budget declines to engage rather than bound against it.
+    // A backend that cannot count returning 0 here would disable the bound while looking exactly
+    // like a healthy idle worker — the silent-disable this default exists to prevent.
+    await Assert.That(reported).IsNull()
+      .Because("a backend that has not implemented the count must report UNMEASURABLE, not zero — "
+             + "zero is a reading, and the budget would size itself from a number nobody took");
+  }
+
+  /// <summary>
+  /// Implements ONLY the abstract members of <see cref="IWorkCoordinator"/> so every
+  /// default interface member above executes its actual default body. Do NOT add
+  /// overrides for defaulted members here — that would silently un-test them.
+  /// </summary>
+  private sealed class MinimalWorkCoordinator : IWorkCoordinator {
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(new WorkCoordinatorStatistics());
+
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+}

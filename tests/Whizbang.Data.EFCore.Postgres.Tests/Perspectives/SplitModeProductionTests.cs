@@ -26,7 +26,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// These tests reproduce the exact bugs seen in a consumer's production deployment.
 /// </summary>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class SplitModeProductionTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
@@ -125,10 +124,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
 
-    _testDatabaseName = $"test_{Guid.NewGuid():N}";
-    await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-    await adminConnection.OpenAsync();
-    await adminConnection.ExecuteAsync($"CREATE DATABASE {_testDatabaseName}");
+    _testDatabaseName = (await PerTestDatabaseFactory.CreateAsync("split_prod")).Name;
 
     var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _testDatabaseName,
@@ -191,14 +187,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
     if (_context != null) { await _context.DisposeAsync(); _context = null; }
     if (_dataSource != null) { await _dataSource.DisposeAsync(); _dataSource = null; }
     if (_testDatabaseName != null) {
-      try {
-        await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await adminConnection.OpenAsync();
-        await adminConnection.ExecuteAsync($@"
-          SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-          WHERE datname = '{_testDatabaseName}' AND pid <> pg_backend_pid()");
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
-      } catch { /* cleanup errors */ }
+      await PerTestDatabaseFactory.DropAsync(_testDatabaseName);
       _testDatabaseName = null;
     }
   }

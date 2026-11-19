@@ -102,10 +102,7 @@ public static class AzureBlobOffloadServiceCollectionExtensions {
   }
 
   private static void _bindProviderOptions(IConfiguration section, AzureBlobOffloadOptions options) {
-    var connectionString = section["ConnectionString"];
-    if (!string.IsNullOrWhiteSpace(connectionString)) {
-      options.ConnectionString = connectionString;
-    }
+    Whizbang.Core.Configuration.ConfigurationValueBinder.BindSensitive(section, "ConnectionString", value => options.ConnectionString = value);
 
     var containerName = section["ContainerName"];
     if (!string.IsNullOrWhiteSpace(containerName)) {

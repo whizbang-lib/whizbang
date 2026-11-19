@@ -41,7 +41,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Workers/ReadModelsReadyGate.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Startup/StartupPipelineHosting.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
 public class ColdBootJourneyE2ETests {
 
@@ -87,14 +86,7 @@ public class ColdBootJourneyE2ETests {
   [Before(Test)]
   public async Task SetupColdDatabaseAsync() {
     await SharedPostgresContainer.InitializeAsync();
-    _databaseName = $"coldboot_{Guid.NewGuid():N}";
-
-    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
-      await admin.OpenAsync();
-      await using var create = admin.CreateCommand();
-      create.CommandText = $"CREATE DATABASE {_databaseName}";
-      await create.ExecuteNonQueryAsync();
-    }
+    _databaseName = (await PerTestDatabaseFactory.CreateAsync("coldboot")).Name;
 
     var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _databaseName,
@@ -123,20 +115,7 @@ public class ColdBootJourneyE2ETests {
       _dataSource = null;
     }
     if (_databaseName is not null) {
-      try {
-        await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await admin.OpenAsync();
-        await using var terminate = admin.CreateCommand();
-        terminate.CommandText = $@"
-          SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-          WHERE datname = '{_databaseName}' AND pid <> pg_backend_pid()";
-        await terminate.ExecuteNonQueryAsync();
-        await using var drop = admin.CreateCommand();
-        drop.CommandText = $"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)";
-        await drop.ExecuteNonQueryAsync();
-      } catch {
-        // container teardown reclaims stragglers
-      }
+      await PerTestDatabaseFactory.DropAsync(_databaseName);
       _databaseName = null;
     }
   }
@@ -144,7 +123,7 @@ public class ColdBootJourneyE2ETests {
   private WorkCoordinationDbContext _createDbContext() => new(_dbOptions);
 
   /// <summary>One booting pod: the REAL generated dispatcher, real coordinator, real gates, real
-  /// lens registration, real lifecycle machine with the real instance-state participant.</summary>
+  /// lens registration, real lifecycle machine with the real stage participant and stage reporter.</summary>
   private ServiceProvider _buildPodServices(
       Pod pod, SchemaReadyGate schemaGate, ReadModelsReadyGate readGate, RecordingRunControl recorder) {
     var services = new ServiceCollection();
@@ -181,13 +160,13 @@ public class ColdBootJourneyE2ETests {
     services.AddWhizbangDispatcher();
 
     var lifecycleOptions = new WhizbangLifecycleOptions();
+    // The one writer of the row's stage, phase and version (#1636), as the worker pipeline registers it.
+    services.AddSingleton<IStartupStageReporter>(sp => new StartupStageReporter(
+      sp.GetRequiredService<IServiceScopeFactory>(), pod, [], NullLogger<StartupStageReporter>.Instance,
+      new LibraryVersionProvider("999.9.9")));
     services.AddSingleton<IWhizbangLifecycleState>(sp => new WhizbangLifecycleState(
       new WhizbangLifecycleCoordinator(
-        [recorder, new InstanceStateRunControl(
-          scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-          instanceProvider: pod,
-          versionProvider: new LibraryVersionProvider("999.9.9"),
-          logger: NullLogger<InstanceStateRunControl>.Instance)],
+        [recorder, new StartupStageRunControl(sp.GetRequiredService<IStartupStageReporter>())],
         lifecycleOptions),
       lifecycleOptions));
 
@@ -256,8 +235,8 @@ public class ColdBootJourneyE2ETests {
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
       await coordinator.RecordHeartbeatAsync(
         new HeartbeatRequest(pod.InstanceId, pod.ServiceName, pod.HostName, 1), cancellationToken);
-      await coordinator.RecordInstanceStateAsync(
-        pod.InstanceId, nameof(LifecyclePhase.AcceptingCommands), "999.9.9", cancellationToken);
+      // The row exists now: the stage held until it did (Accept commands) is written, as an accepted beat triggers.
+      await scope.ServiceProvider.GetRequiredService<IStartupStageReporter>().InstanceRegisteredAsync(cancellationToken);
     }
 
     // (2) AcceptingCommands: the WRITE side is live — the same publish that was refused now
@@ -300,7 +279,7 @@ public class ColdBootJourneyE2ETests {
     var instances = await fleet.GetFleetAsync(cancellationToken);
     var mine = instances.Single(i => i.InstanceId == pod.InstanceId);
     await Assert.That(mine.LifecyclePhase).IsEqualTo(nameof(LifecyclePhase.Running))
-      .Because("the instance-state participant records each settled transition on the row");
+      .Because("the stage participant records each settled transition on the row, through the stage record");
 
     await phaseWorker.StopAsync(CancellationToken.None);
   }

@@ -1,0 +1,173 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Archival;
+using Whizbang.Core.Lifecycle;
+using Whizbang.Core.Messaging;
+using Whizbang.Data.Postgres;
+
+namespace Whizbang.Data.EFCore.Postgres.Tests;
+
+/// <summary>
+/// Unit tests (no Postgres) for the A1 increment-5 scheduled-close bridge: the built-in
+/// <see cref="ScheduledPrefixTruncateReceptor"/> turns a fired <see cref="ScheduledPrefixTruncate"/> occurrence into
+/// an <see cref="IStreamPrefixTruncator.CloseAsync"/> call, and <see cref="ScheduledPrefixTruncateReceptorRegistrar"/>
+/// runtime-registers it at the three default lifecycle stages.
+/// </summary>
+/// <code-under-test>src/Whizbang.Data.Postgres/ScheduledPrefixTruncateReceptor.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/ScheduledPrefixTruncateReceptorRegistrar.cs</code-under-test>
+/// <docs>fundamentals/events/ephemeral-events</docs>
+[Category("Shard2")]
+public class ScheduledPrefixTruncateReceptorTests {
+  private sealed class RecordingTruncator : IStreamPrefixTruncator {
+    public (Guid StreamId, long Through, bool Archive)? LastCall { get; private set; }
+    public int Calls { get; private set; }
+    public Task<StreamTruncateResult> TruncateAsync(Guid streamId, long throughVersion, Whizbang.Core.Lifecycle.Disposition disposition = Whizbang.Core.Lifecycle.Disposition.Delete, CancellationToken cancellationToken = default) {
+      Calls++;
+      LastCall = (streamId, throughVersion, disposition == Whizbang.Core.Lifecycle.Disposition.Archive);
+      return Task.FromResult(new StreamTruncateResult("truncated", 5));
+    }
+    public Task<StreamTruncateResult> TruncateAsync(Guid streamId, long throughVersion, Whizbang.Core.Lifecycle.Disposition disposition,
+        Whizbang.Core.Lifecycle.DestructionReason reason, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException("this caller truncates for a period close");
+  }
+
+  /// <summary>Captures what the receptor logged, so a "did nothing" path can be told apart from
+  /// a "did nothing and said nothing" one.</summary>
+  private sealed class RecordingLogger : ILogger<ScheduledPrefixTruncateReceptor> {
+    public List<(LogLevel Level, string Message)> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+      Func<TState, Exception?, string> formatter) {
+      ArgumentNullException.ThrowIfNull(formatter);
+      Entries.Add((logLevel, formatter(state, exception)));
+    }
+  }
+
+  private sealed class RecordingRegistry : IReceptorRegistry {
+    public List<(Type Msg, LifecycleStage Stage)> Registered { get; } = [];
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage =>
+      Registered.Add((typeof(TMessage), stage));
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) => [];
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+  }
+
+  [Test]
+  public async Task Receptor_FiredOccurrence_CallsStreamPrefixTruncatorWithPayloadAsync() {
+    var closer = new RecordingTruncator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IStreamPrefixTruncator>(closer);
+    await using var sp = services.BuildServiceProvider();
+    var receptor = new ScheduledPrefixTruncateReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledPrefixTruncateReceptor>.Instance);
+
+    var target = Guid.NewGuid();
+    await receptor.HandleAsync(new ScheduledPrefixTruncate(target, ThroughVersion: 900, Archive: true));
+
+    await Assert.That(closer.Calls).IsEqualTo(1);
+    await Assert.That(closer.LastCall!.Value.StreamId).IsEqualTo(target);
+    await Assert.That(closer.LastCall!.Value.Through).IsEqualTo(900L);
+    await Assert.That(closer.LastCall!.Value.Archive).IsTrue()
+      .Because("The receptor forwards the occurrence's {streamId, throughVersion, archive} straight to IStreamPrefixTruncator.CloseAsync.");
+  }
+
+  [Test]
+  public async Task Receptor_AnOccurrenceThatDoesNotArchive_AsksForADiscardAsync() {
+    // #1735: the stored occurrence keeps its archive flag; false is the Delete disposition.
+    var closer = new RecordingTruncator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IStreamPrefixTruncator>(closer);
+    await using var sp = services.BuildServiceProvider();
+    var receptor = new ScheduledPrefixTruncateReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledPrefixTruncateReceptor>.Instance);
+
+    await receptor.HandleAsync(new ScheduledPrefixTruncate(Guid.NewGuid(), ThroughVersion: 7, Archive: false));
+
+    await Assert.That(closer.Calls).IsEqualTo(1);
+    await Assert.That(closer.LastCall!.Value.Archive).IsFalse();
+  }
+
+  [Test]
+  public async Task Receptor_NoStreamPrefixTruncatorRegistered_IsInertAsync() {
+    var services = new ServiceCollection();   // no IStreamPrefixTruncator
+    await using var sp = services.BuildServiceProvider();
+    var logger = new RecordingLogger();
+    var receptor = new ScheduledPrefixTruncateReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), logger);
+    var streamId = Guid.NewGuid();
+
+    // Must not throw: a host without an IStreamPrefixTruncator simply ignores the occurrence.
+    await receptor.HandleAsync(new ScheduledPrefixTruncate(streamId, 1, false));
+
+    // Inert is not the same as silent: a scheduled close that fired and closed nothing is a
+    // configuration fault, so the ignored occurrence must name the stream it dropped.
+    var warnings = logger.Entries.Count(e =>
+      e.Level == LogLevel.Warning
+      && e.Message.Contains(streamId.ToString(), StringComparison.Ordinal));
+    await Assert.That(warnings).IsEqualTo(1)
+      .Because("A fired ScheduledPrefixTruncate with no IStreamPrefixTruncator must warn once, naming the stream.");
+  }
+
+  [Test]
+  public async Task Registrar_RegistersReceptorAtThreeDefaultStagesAsync() {
+    var registry = new RecordingRegistry();
+    var services = new ServiceCollection();
+    services.AddSingleton<IReceptorRegistry>(registry);
+    await using var sp = services.BuildServiceProvider();
+    var registrar = new ScheduledPrefixTruncateReceptorRegistrar(
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledPrefixTruncateReceptor>.Instance);
+
+    await registrar.StartAsync(CancellationToken.None);
+
+    await Assert.That(registry.Registered.Count).IsEqualTo(3);
+    var stages = new HashSet<LifecycleStage>();
+    foreach (var (msg, stage) in registry.Registered) {
+      await Assert.That(msg).IsEqualTo(typeof(ScheduledPrefixTruncate));
+      stages.Add(stage);
+    }
+    await Assert.That(stages.Contains(LifecycleStage.LocalImmediateInline)).IsTrue();
+    await Assert.That(stages.Contains(LifecycleStage.PreOutboxInline)).IsTrue();
+    await Assert.That(stages.Contains(LifecycleStage.PostInboxInline)).IsTrue()
+      .Because("A receptor without [FireAt] fires at all three default stages, so the occurrence reaches it in-process and over the inbox.");
+  }
+
+  /// <summary>
+  /// A schema-only or diagnostic host registers no dispatch pipeline; the registrar must still
+  /// start and stop cleanly there.
+  /// </summary>
+  /// <remarks>
+  /// Renamed from <c>Registrar_NoRegistry_IsInertAsync</c>: with no <see cref="IReceptorRegistry"/>
+  /// in the container there is nothing the registrar could have touched, so "inert" is not
+  /// observable here and the honest guarantee is the one this name now states. The positive half
+  /// (three stages registered when a registry IS present) is pinned by
+  /// <see cref="Registrar_RegistersReceptorAtThreeDefaultStagesAsync"/>.
+  /// </remarks>
+  [Test]
+  public async Task Registrar_NoRegistry_StartsAndStopsWithoutThrowingAsync() {
+    var services = new ServiceCollection();   // no IReceptorRegistry
+    await using var sp = services.BuildServiceProvider();
+    var registrar = new ScheduledPrefixTruncateReceptorRegistrar(
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledPrefixTruncateReceptor>.Instance);
+
+    await registrar.StartAsync(CancellationToken.None);
+    await registrar.StopAsync(CancellationToken.None);
+
+    await Assert.That(sp.GetService<IReceptorRegistry>()).IsNull()
+      .Because("the registrar must leave a registry-less host registry-less: it may not conjure one to register into");
+  }
+}

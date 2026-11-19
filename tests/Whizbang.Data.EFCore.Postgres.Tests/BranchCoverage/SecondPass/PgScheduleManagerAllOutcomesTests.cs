@@ -132,6 +132,26 @@ public class PgScheduleManagerAllOutcomesTests : EFCoreTestBase {
       .Because("the row is stored under the caller's id, active");
   }
 
+  // A schedule created with no start time is stored with none and is active from creation: the
+  // integrity checks' schedules are created this way, and a NULL start must reach the database as NULL.
+  [Test]
+  [Timeout(60000)]
+  public async Task Create_WithoutAStart_IsStoredActiveAsync(CancellationToken cancellationToken) {
+    var manager = _manager(ConnectionString);
+
+    var handle = await manager.CreateAsync(new ScheduleDefinition {
+      EventType = "AllOutcomesNoStart",
+      AuthorityPrincipalId = _authority,
+      StreamId = Guid.NewGuid(),
+      Kind = RecurrenceKind.Cron,
+      Cron = "0 9 * * *",
+    }, cancellationToken);
+
+    await Assert.That(await _statusAsync(handle.ScheduleId, cancellationToken)).IsEqualTo((short)0)
+      .Because("a schedule with no start time is active from creation");
+    await Assert.That(await _cronAsync(handle.ScheduleId, cancellationToken)).IsEqualTo("0 9 * * *");
+  }
+
   private static Task<ScheduleHandle> _createIntervalScheduleAsync(
       PgScheduleManager manager, string eventType, CancellationToken cancellationToken) =>
     manager.CreateAsync(new ScheduleDefinition {

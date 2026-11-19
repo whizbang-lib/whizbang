@@ -86,6 +86,34 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
+  /// #2201: the generated model registration is keyed by its assembly and declares the models it registers for each
+  /// DbContext, so every assembly's models are registered and a model two assemblies share is reported.
+  /// </summary>
+  [Test]
+  public async Task Generator_ModelRegistration_IsKeyedByItsAssembly_AndDeclaresItsModelsAsync() {
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+    var registration = result.GeneratedSources.First(s => s.HintName.Contains("EFCoreModelRegistration")).SourceText.ToString();
+
+    await Assert.That(registration).Contains(
+      "ModelRegistrationRegistry.RegisterModels(typeof(GeneratedModelRegistration).Assembly.GetName().Name!, [");
+    await Assert.That(registration).Contains("(typeof(global::TestApp.TestDbContext), typeof(global::TestApp.TestModel)),");
+  }
+
+  /// <summary>
   /// Issue #697: the perspective registry key for a NESTED model is the CLR form (Outer+Model),
   /// from TypeNameUtilities.BuildClrTypeName, which the runtime mirrors with
   /// TypeNameFormatter.FormatClrTypeName. The display-string form (Outer.Model) matched nothing
@@ -840,9 +868,11 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = schemaExtensions!.SourceText.ToString();
 
-    // Migration SQL is carried in tuples as verbatim UTF-8 literals decoded at run time (#1622)
+    // Migration SQL is carried in tuples as verbatim UTF-8 literals decoded at run time (#1622), once for the
+    // assembly in the shared migration set (#2388).
     // Pattern: ("migration_name.sql", global::System.Text.Encoding.UTF8.GetString(@"SQL content"u8))
-    await Assert.That(sourceText).Contains(".sql\", global::System.Text.Encoding.UTF8.GetString(@\"");
+    var migrationScripts = result.GeneratedSources.Single(s => s.HintName == "WhizbangMigrationScripts.g.cs").SourceText.ToString();
+    await Assert.That(migrationScripts).Contains(".sql\", global::System.Text.Encoding.UTF8.GetString(@\"");
 
     // Should call ExecuteSqlRawAsync with migration SQL (variable names may vary: sql, transformedSql, etc.)
     await Assert.That(sourceText).Contains("await dbContext.Database.ExecuteSqlRawAsync(");
@@ -997,8 +1027,10 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
     // Should have outer retry loop with _isRetryableError
     await Assert.That(sourceText).Contains("_isRetryableError");
 
-    // Should set 600s command timeout for DDL
-    await Assert.That(sourceText).Contains("600");
+    // The DDL command timeout is resolved for the pass (SchemaCommandTimeout: 600s unless the init settings say
+    // otherwise; SchemaCommandTimeoutTests pins the default). This used to look for "600" anywhere in the file, which
+    // only the embedded migration text satisfied.
+    await Assert.That(sourceText).Contains("Whizbang.Data.Postgres.SchemaCommandTimeout.Resolve(");
 
     // Should have owner column for migration categorization
     await Assert.That(sourceText).Contains("owner");
@@ -2428,6 +2460,37 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
+  /// #2145: the associations step writes the collective event types this service handles, read from the consumer
+  /// registry the host's service provider holds, and the schema currency check reads the same set, so a start whose
+  /// handler set changed is not reported current and runs the step.
+  /// </summary>
+  [Test]
+  public async Task Generator_HandledCollectiveSet_ReachesTheAssociationsStep_AndTheCurrencyCheckAsync() {
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+    var schemaExtensions = result.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions")).SourceText.ToString();
+    var registration = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    await Assert.That(schemaExtensions).Contains("logger, cancellationToken, _collectiveEventTypes.Value);")
+      .Because("the step passes the handled set the pass resolved, the set its hash was computed over");
+    await Assert.That(registration).Contains("IsWhizbangSchemaCurrentAsync(ct, scope.ServiceProvider)")
+      .Because("the currency check must hash the same handled set the pass would write");
+  }
+
+  /// <summary>
   /// Test that Step 5 is called AFTER Step 4 (migrations).
   /// The order matters because associations should only be registered after the
   /// wh_message_associations table and register_message_associations function are created.
@@ -2768,7 +2831,7 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(sourceText).Contains("\"wh_per_model_b\"");
 
     // The table names in multi-model registration should be in a Dictionary
-    await Assert.That(sourceText).Contains("System.Collections.Generic.Dictionary<System.Type, string>");
+    await Assert.That(sourceText).Contains("global::System.Collections.Generic.Dictionary<global::System.Type, string>");
   }
 
   #endregion

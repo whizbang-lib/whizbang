@@ -35,4 +35,16 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- #2343: the rules' version and golden file, read by RuleSemanticsGoldenTests. Embedded so the test reads no
+         files at run time (a unit test does no I/O, #1264), and a change to either rebuilds it. -->
+    <EmbeddedResource Include="..\..\src\Whizbang.Rules\rules-version.txt;..\..\src\Whizbang.Rules\rule-semantics.golden.txt"
+                      LogicalName="WhizbangRules/%(Filename)%(Extension)" />
+  </ItemGroup>
+  <!-- Test helpers shared between the Whizbang.Core unit test projects (#2392): each file has one home and is
+       compiled into every test assembly that uses it, so the copies cannot drift. Only helper files are linked,
+       never a file that holds tests, which would then run twice. -->
+  <ItemGroup>
+    <Compile Include="../Whizbang.Core.Unit.Workers.Tests/Workers/NoOpWorkCoordinator.cs" Link="Shared/Workers/NoOpWorkCoordinator.cs" />
+  </ItemGroup>
 </Project>

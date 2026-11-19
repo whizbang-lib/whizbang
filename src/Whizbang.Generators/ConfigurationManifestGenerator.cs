@@ -82,6 +82,8 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
     "global::System.Int128",
     "global::System.UInt128",
     "global::System.Globalization.CultureInfo",
+    // A credential: one string, bound by ConfigurationValueBinder.BindSensitive (#2251).
+    "global::Whizbang.Core.Configuration.SensitiveString",
   };
 
   private static readonly HashSet<string> _dictionaries = new(StringComparer.Ordinal) {
@@ -105,7 +107,7 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
         transform: static (ctx, _) => _extractRemovedKeys(ctx.Attributes))
       .SelectMany(static (keys, _) => keys);
 
-    var assemblyName = context.CompilationProvider.Select(static (c, _) => c.Assembly.Name);
+    var assemblyName = context.CompilationProvider.Select(static (c, _) => TypeNameUtilities.SimpleName(c.Assembly));
 
     context.RegisterSourceOutput(bindings.Collect().Combine(removedKeys.Collect()).Combine(assemblyName),
       static (spc, pair) => _emit(spc, pair.Left.Left, pair.Left.Right, pair.Right));

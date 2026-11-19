@@ -15,7 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Tests for DbContextInitializationRegistry static registry.
 /// Each test resets static state via reflection to ensure isolation.
 /// </summary>
-[NotInParallel(["DbContextInitializationRegistry", "EFCorePostgresTests"])]
+[NotInParallel] // Resets a process-wide registry the database tests read (#1903): runs alone, after the parallel tests.
 [Category("Shard3")]
 public class DbContextInitializationRegistryTests {
   private IDisposable? _restore;
@@ -38,6 +38,49 @@ public class DbContextInitializationRegistryTests {
 
     await Assert.That(DbContextInitializationRegistry.Count).IsEqualTo(1)
       .Because("a reset that is not undone unregisters every generated schema initializer for the rest of the process");
+  }
+
+  // ── #1992: whether the schema is current, asked by the Assess verdict ────────────────────────────────
+
+  [Test]
+  public async Task IsSchemaCurrent_WithNoCheckRegistered_IsNotCurrentAsync() {
+    await Assert.That(await DbContextInitializationRegistry.IsSchemaCurrentAsync(new FakeServiceProvider(), CancellationToken.None))
+      .IsFalse().Because("a schema nothing can vouch for is never Current: startup takes the full path, as before");
+  }
+
+  [Test]
+  public async Task IsSchemaCurrent_IsCurrentOnlyWhenEveryContextThisHostRegistersIsAsync() {
+    DbContextInitializationRegistry.RegisterSchemaCurrencyCheck<FakeDbContextA>((_, _) => Task.FromResult<bool?>(true));
+    DbContextInitializationRegistry.RegisterSchemaCurrencyCheck<FakeDbContextB>((_, _) => Task.FromResult<bool?>(null));
+
+    await Assert.That(await DbContextInitializationRegistry.IsSchemaCurrentAsync(new FakeServiceProvider(), CancellationToken.None))
+      .IsTrue().Because("a context this host does not register answers null and is passed over, as initialization passes it over");
+
+    DbContextInitializationRegistry.RegisterSchemaCurrencyCheck<FakeDbContextB>((_, _) => Task.FromResult<bool?>(false));
+
+    await Assert.That(await DbContextInitializationRegistry.IsSchemaCurrentAsync(new FakeServiceProvider(), CancellationToken.None))
+      .IsFalse().Because("one context with work to do makes the schema not current");
+  }
+
+  [Test]
+  public async Task IsSchemaCurrent_WhenNoContextIsRegisteredInTheHost_IsNotCurrentAsync() {
+    DbContextInitializationRegistry.RegisterSchemaCurrencyCheck<FakeDbContextA>((_, _) => Task.FromResult<bool?>(null));
+
+    await Assert.That(await DbContextInitializationRegistry.IsSchemaCurrentAsync(new FakeServiceProvider(), CancellationToken.None))
+      .IsFalse();
+  }
+
+  [Test]
+  public async Task ResetForTesting_AlsoClearsAndPutsBackTheCurrencyChecksAsync() {
+    DbContextInitializationRegistry.RegisterSchemaCurrencyCheck<FakeDbContextA>((_, _) => Task.FromResult<bool?>(true));
+
+    using (DbContextInitializationRegistry.ResetForTesting()) {
+      await Assert.That(await DbContextInitializationRegistry.IsSchemaCurrentAsync(new FakeServiceProvider(), CancellationToken.None))
+        .IsFalse();
+    }
+
+    await Assert.That(await DbContextInitializationRegistry.IsSchemaCurrentAsync(new FakeServiceProvider(), CancellationToken.None))
+      .IsTrue();
   }
 
   [Test]
@@ -192,15 +235,23 @@ public class DbContextInitializationRegistryTests {
   /// still migrating. The first call is held mid-initialization by its own callback, so "not finished" is a fact when
   /// it is asserted, not a race.
   /// </summary>
+  /// <remarks>
+  /// What the second call waits for is the initialization, and that is what is asserted: the callback's last statement
+  /// has run. The first call's own task completes a few statements later (it logs completion and returns), and nothing
+  /// orders the waiting call after that, so asserting the first call had returned failed once in a while (#2019); the
+  /// test below holds that window open.
+  /// </remarks>
   [Test]
   public async Task InitializeAllAsync_ASecondCallWhileTheFirstRuns_ReturnsOnlyOnceTheFirstHasFinishedAsync() {
     var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var calls = 0;
+    var finished = 0;
     DbContextInitializationRegistry.Register<FakeDbContextA>(async (_, _, _) => {
       Interlocked.Increment(ref calls);
       entered.TrySetResult();
       await release.Task;
+      Interlocked.Exchange(ref finished, 1);
     });
     var host = new FakeServiceProvider();
     var sink = new List<string>();
@@ -214,8 +265,40 @@ public class DbContextInitializationRegistryTests {
     await Assert.That(sink).Contains("Whizbang database initialization is in progress; waiting for it to finish");
     release.TrySetResult();
     await second;
-    await Assert.That(first.IsCompletedSuccessfully).IsTrue().Because("the second returned only after the first finished");
+    await Assert.That(Volatile.Read(ref finished)).IsEqualTo(1).Because("the second returned only after the first's initialization finished");
+    await first;
     await Assert.That(calls).IsEqualTo(1).Because("waiting is not initializing again");
+  }
+
+  /// <summary>
+  /// The window behind the flake in #2019, held open on purpose: the first call's attempt completes, then the first call
+  /// still logs that initialization is complete before its own task completes. The first call's logger parks in that log
+  /// line, so the window stays open for as long as the test needs. The second call returns inside it: it waits for the
+  /// initialization, not for the other call's epilogue, so a test of it asserts the initialization finished.
+  /// </summary>
+  [Test]
+  public async Task InitializeAllAsync_ASecondCallWhileTheFirstRuns_ReturnsWhenTheInitializationFinishes_NotWhenTheFirstCallReturnsAsync() {
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    DbContextInitializationRegistry.Register<FakeDbContextA>(async (_, _, _) => {
+      entered.TrySetResult();
+      await release.Task;
+    });
+    var host = new FakeServiceProvider();
+    using var parked = new ParkingLogger("All Whizbang DbContext(s) initialized successfully");
+
+    var first = DbContextInitializationRegistry.InitializeAllAsync(host, parked);
+    await entered.Task;
+    var second = DbContextInitializationRegistry.InitializeAllAsync(host);
+    release.TrySetResult();
+    await parked.Reached;
+
+    await second;
+    await Assert.That(first.IsCompleted).IsFalse()
+      .Because("the first call is parked after its initialization finished, and the second waited only for that");
+
+    parked.Release();
+    await first;
   }
 
   /// <summary>
@@ -361,6 +444,37 @@ public class DbContextInitializationRegistryTests {
 
   private sealed class FakeServiceProvider : IServiceProvider {
     public object? GetService(Type serviceType) => null;
+  }
+
+  /// <summary>
+  /// A logger that parks the thread writing <paramref name="message"/> until <see cref="Release"/>, and says when it got
+  /// there, so a window that opens after that log line stays open for as long as a test needs.
+  /// </summary>
+  private sealed class ParkingLogger(string message) : ILogger, IDisposable {
+    private readonly string _message = message;
+    private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly ManualResetEventSlim _gate = new();
+
+    /// <summary>Completes when the parked message is being written.</summary>
+    public Task Reached => _reached.Task;
+
+    /// <summary>Lets the parked writer go on.</summary>
+    public void Release() => _gate.Set();
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (formatter(state, exception) != _message) {
+        return;
+      }
+      _reached.TrySetResult();
+      _gate.Wait();
+    }
+
+    public void Dispose() {
+      _gate.Set();
+      _gate.Dispose();
+    }
   }
 
   private sealed class ListLogger(List<string> sink) : ILogger {

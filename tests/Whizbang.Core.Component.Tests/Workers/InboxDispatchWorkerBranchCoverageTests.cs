@@ -235,20 +235,18 @@ public class InboxDispatchWorkerBranchCoverageTests {
     public InboxMetrics? InboxMetrics { get; init; }
     public WorkCompletionMeter? CompletionMeter { get; init; }
     public CompositeMetrics? CompositeMetrics { get; init; }
+    public Microsoft.Extensions.Logging.ILogger<InboxDispatchWorker> Logger { get; init; } = NullLogger<InboxDispatchWorker>.Instance;
 
     public InboxDispatchWorker Build(IServiceProvider sp) {
-      var gate = new SchemaReadyGate();
-      gate.MarkReady();
       return new InboxDispatchWorker(
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
         instanceProvider: new FakeInstanceProvider(),
         inboxChannelWriter: Inbox,
         handlerCommitChannel: HandlerCommit,
         failureChannel: Failure,
-        schemaReadyGate: gate,
         options: Options.Create(WorkerOptions),
         coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
-        logger: NullLogger<InboxDispatchWorker>.Instance,
+        logger: Logger,
         integrityOptions: Options.Create(IntegrityOptions),
         lifecycleMessageDeserializer: Deserializer,
         leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
@@ -529,8 +527,8 @@ public class InboxDispatchWorkerBranchCoverageTests {
   // ============================================================
 
   /// <summary>
-  /// A failed composite commit with no composite meter wired is still swallowed, and the row is
-  /// still released for the claim loop to re-offer.
+  /// A failed composite commit with no composite meter wired is still contained, recorded as the row's failure, and
+  /// the row is still released for the claim loop to re-offer.
   /// </summary>
   [Test]
   public async Task CompositeCommitFails_WithoutCompositeMetrics_StillReleasesRowForRetryAsync() {
@@ -552,7 +550,8 @@ public class InboxDispatchWorkerBranchCoverageTests {
       .Because("a failed commit leaves the row unprocessed; its in-flight entry must not block the re-offer");
     await Assert.That(parts.HandlerCommit.All).IsEmpty()
       .Because("the expansion is committed through the coordinator only, never re-routed to the batched channel");
-    await Assert.That(parts.Failure.All).IsEmpty();
+    await Assert.That(parts.Failure.All.Select(f => f.Failure.MessageId)).IsEquivalentTo([work.MessageId])
+      .Because("the failed commit is recorded against the row, so it is backed off and bounded by the attempt limit (#1983)");
   }
 
   // ============================================================
@@ -767,5 +766,80 @@ public class InboxDispatchWorkerBranchCoverageTests {
     await Assert.That(parts.HandlerCommit.All).IsEmpty()
       .Because("a refused expansion is dead-lettered, and after the move resumes nothing is committed for it");
     await Assert.That(parts.Inbox.RemovedInFlight.Contains(work.MessageId)).IsTrue();
+  }
+
+  // ============================================================
+  // #1901: a dead-lettered composite gets the dead-letter record
+  // ============================================================
+
+  private sealed class RecordingLogger : Microsoft.Extensions.Logging.ILogger<InboxDispatchWorker> {
+    public ConcurrentQueue<(Microsoft.Extensions.Logging.LogLevel Level, int EventId, string Message)> Entries { get; } = new();
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+        Exception? exception, Func<TState, Exception?, string> formatter)
+      => Entries.Enqueue((logLevel, eventId.Id, formatter(state, exception)));
+  }
+
+  [Test]
+  public async Task CompositeOverOwnCap_MovedToTheDeadLetterStore_LogsTheDeadLetterRecordAtErrorAsync() {
+    var logger = new RecordingLogger();
+    var parts = new WorkerParts {
+      Deserializer = new FakeCompositeDeserializer(new OverCapComposite(5)),
+      DeadLetterStore = new YieldingDeadLetterStore(),
+      Logger = logger,
+    };
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = parts.Build(sp);
+
+    var work = _makeWork(messageType: "Contracts.Imports.ImportBatch, Contracts");
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    var record = logger.Entries.Single(e => e.EventId == 1901);
+    await Assert.That(record.Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Error)
+      .Because("#1901: a composite that cannot be expanded is a dead letter like any other, logged at Error by default");
+    await Assert.That(record.Message).Contains("Contracts.Imports.ImportBatch, Contracts")
+      .And.Contains(nameof(MessageFailureReason.CompositeInnerEventLimitExceeded));
+  }
+
+  [Test]
+  public async Task CompositeOverConsumerBudget_NoDeadLetterStore_LogsTheRecordForTheTerminalCompletionAsync() {
+    var logger = new RecordingLogger();
+    var parts = new WorkerParts {
+      Deserializer = new FakeCompositeDeserializer(new WideComposite(12)),
+      WorkerOptions = new InboxDispatchWorkerOptions { MaxCompositeChildrenPerExpansion = 3, EnforceCompositeExpansionBudget = true },
+      Logger = logger,
+    };
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = parts.Build(sp);
+
+    var work = _makeWork();
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    var record = logger.Entries.Single(e => e.EventId == 1901);
+    await Assert.That(record.Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Error);
+    await Assert.That(record.Message).Contains("budget of 3")
+      .Because("the record's last error says why the composite was refused");
+  }
+
+  [Test]
+  public async Task CompositeOverOwnCap_NoDeadLetterStore_LogsTheRecordForTheTerminalCompletionAsync() {
+    var logger = new RecordingLogger();
+    var parts = new WorkerParts {
+      Deserializer = new FakeCompositeDeserializer(new OverCapComposite(5)),
+      Logger = logger,
+    };
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = parts.Build(sp);
+
+    await worker.ProcessOneInnerAsync(_makeWork(), CancellationToken.None);
+
+    await Assert.That(logger.Entries.Single(e => e.EventId == 1901).Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Error);
   }
 }

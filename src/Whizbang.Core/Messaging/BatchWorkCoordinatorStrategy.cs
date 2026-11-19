@@ -23,7 +23,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:BatchSize_TakesPriorityOverDebounceAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerOrBatchAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:BatchStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkFlusherTests.cs:BatchStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
 /// Batch strategy - flushes when batch size is reached OR after a debounce quiet period.
 /// Combines count-based and time-based triggers for optimal throughput.
 /// Best for: Bulk imports, seeding, high-volume background processing.
@@ -47,6 +47,8 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   private readonly IWorkChannelWriter _workChannelWriter;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
+  // The process-wide deferred outbox channel this strategy drains at the start of every flush (#2228).
+  private readonly IDeferredOutboxChannel _deferredChannel;
   // The host's record of background work it waits for before disposing the service provider: the detached lifecycle
   // stages this strategy's flushes start are tracked there (#1721).
   private readonly DetachedLifecycleWork _detachedWork;
@@ -95,6 +97,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     IOptionsMonitor<TracingOptions> tracingOptions,
     IWorkChannelWriter workChannelWriter,
     DetachedLifecycleWork detachedWork,
+    IDeferredOutboxChannel deferredChannel,
     WorkCoordinatorMetrics? metrics = null,
     LifecycleMetrics? lifecycleMetrics = null) {
 #pragma warning restore S107
@@ -112,6 +115,8 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     _detachedWork = detachedWork;
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
+    ArgumentNullException.ThrowIfNull(deferredChannel);
+    _deferredChannel = deferredChannel;
 
     // Debounce timer: fires once after quiet period, not repeating. Created with the flow suppressed: the strategy is
     // often resolved lazily inside some caller, and a tick must not run in that caller's context (#1868).
@@ -245,7 +250,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// and routed publish/send paths that do not consume the WorkBatch.
   /// </summary>
   /// <docs>data/work-coordinator-strategies</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/FlushApiTests.cs</tests>
   public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1,
@@ -260,7 +265,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// and batch-size trigger. Use for dedup callers that must consume the WorkBatch, or end-of-scope drains.
   /// </summary>
   /// <docs>data/work-coordinator-strategies</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/FlushApiTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerOrBatchAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
   public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
@@ -300,6 +305,11 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       MessageFailure[] inboxFailures;
 
       lock (_lock) {
+        // #2228: what was queued on the deferred channel is written by this flush, before the empty check.
+        var drained = DeferredOutboxDrain.PrependTo(_deferredChannel, _queuedOutboxMessages);
+        if (drained > 0) {
+          LogDeferredChannelDrained(_logger, drained);
+        }
         if (_queuedOutboxMessages.Count == 0 &&
             _queuedInboxMessages.Count == 0 &&
             _queuedOutboxCompletions.Count == 0 &&
@@ -591,6 +601,13 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     Message = "Batch work coordinator strategy disposed"
   )]
   static partial void LogStrategyDisposed(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 16,
+    Level = LogLevel.Debug,
+    Message = "Batch strategy: Drained {Count} deferred messages from channel into this flush"
+  )]
+  static partial void LogDeferredChannelDrained(ILogger logger, int count);
 }
 
 /// <summary>

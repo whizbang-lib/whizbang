@@ -39,6 +39,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#what-the-append-policy-costs</docs>
 [Category("Benchmark")]
+[NotInParallel] // A measurement: runs alone so it measures the code, not its neighbors.
 [Category("Performance")]
 public class ArchivedStreamEmitCostScenarioTests : EFCoreTestBase {
   private const int EVENTS = 500;

@@ -20,7 +20,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </summary>
 /// <docs>fundamentals/perspectives/physical-fields#when-the-document-has-no-copy</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class PhysicalFieldMoveNoticeTests {
   private const string TABLE = PhysicalMoves.TABLE;

@@ -42,7 +42,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard5")]
 public class JsonIndexUsageTests : IAsyncDisposable {
   private const string TABLE = "wh_per_json_index";
@@ -99,12 +98,7 @@ public class JsonIndexUsageTests : IAsyncDisposable {
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
 
-    _databaseName = $"json_index_{Guid.NewGuid():N}";
-    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
-      await admin.OpenAsync();
-      await using var create = new NpgsqlCommand($"CREATE DATABASE {_databaseName}", admin);
-      await create.ExecuteNonQueryAsync();
-    }
+    _databaseName = (await PerTestDatabaseFactory.CreateAsync("json_index")).Name;
 
     _connectionString = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _databaseName,
@@ -188,13 +182,10 @@ public class JsonIndexUsageTests : IAsyncDisposable {
       _context = null;
     }
 
-    try {
-      await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-      await admin.OpenAsync();
-      await using var drop = new NpgsqlCommand($"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)", admin);
-      await drop.ExecuteNonQueryAsync();
-    } catch (NpgsqlException) {
-      // Per-test database on a shared container; a failed drop is not a test failure.
+    if (_databaseName is not null) {
+
+      await PerTestDatabaseFactory.DropAsync(_databaseName);
+
     }
 
     GC.SuppressFinalize(this);

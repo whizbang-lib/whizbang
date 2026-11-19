@@ -58,7 +58,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Workers/InboxDispatchWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Dispatcher.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
 
@@ -174,8 +173,6 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     // Boundary invariant: the worker's poll loop never establishes an ambient context. Clear both AsyncLocals
     // so the ONLY identity the worker can carry is what it reads off the inbound hop.
@@ -188,7 +185,6 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -285,8 +281,6 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     ScopeContextAccessor.CurrentInitiatingContext = null;
     ScopeContextAccessor.CurrentContext = null;
@@ -297,7 +291,6 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -393,8 +386,6 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     ScopeContextAccessor.CurrentInitiatingContext = null;
     ScopeContextAccessor.CurrentContext = null;
@@ -405,7 +396,6 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,

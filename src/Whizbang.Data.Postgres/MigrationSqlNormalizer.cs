@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System;
+using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -54,6 +55,100 @@ public static class MigrationSqlNormalizer {
   public static string LegacyContentHash(string sql) {
     ArgumentNullException.ThrowIfNull(sql);
     return _sha256(sql);
+  }
+
+  // REUSE-IgnoreStart: the header aadb4cc45 wrote into every migration, not this file's license
+  private const string LICENSE_LINE_1 = "-- Copyright (c) whizbang-lib contributors.";
+  private const string LICENSE_LINE_2 = "-- SPDX-License-Identifier: MIT";
+  // REUSE-IgnoreEnd
+
+  /// <summary>
+  /// Every hash a release before the normalized hash (#1681) can have recorded for a migration that has not changed
+  /// since: the raw-text hash of the text as shipped now, and of that text without the license header every migration
+  /// gained in the same release (#2125); and the same two for the text an earlier release's driver produced, when it
+  /// produced different text. The core of the hash upgrade: a recorded hash in this set is the same migration.
+  /// </summary>
+  /// <param name="sql">The migration text this release hashes, after any schema substitution the driver applies.</param>
+  /// <param name="earlierReleaseSql">
+  /// The text an earlier release's driver hashed for the same file, when it differs (the EF Core driver for a named
+  /// schema; see <see cref="EarlierReleaseMigrationText"/>); <see langword="null"/> when it is <paramref name="sql"/>.
+  /// </param>
+  /// <returns>The distinct hashes, each sixty-four lowercase hex characters.</returns>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/LegacyMigrationHashRecognitionTests.cs</tests>
+  public static IReadOnlyList<string> LegacyContentHashes(string sql, string? earlierReleaseSql = null) {
+    ArgumentNullException.ThrowIfNull(sql);
+    var hashes = new List<string>(4);
+    _addLegacyForms(hashes, sql);
+    if (earlierReleaseSql is not null) {
+      _addLegacyForms(hashes, earlierReleaseSql);
+    }
+    return hashes;
+  }
+
+  /// <summary>Whether <paramref name="recorded"/> is one of <see cref="LegacyContentHashes"/>.</summary>
+  /// <param name="recorded">The hash a ledger row holds; <see langword="null"/> when there is no row.</param>
+  /// <param name="sql">The migration text this release hashes.</param>
+  /// <param name="earlierReleaseSql">The text an earlier release's driver hashed, when it differs.</param>
+  /// <returns>True when the row was recorded by an earlier release for the file as it is now.</returns>
+  public static bool IsLegacyContentHash(string? recorded, string sql, string? earlierReleaseSql = null) =>
+    recorded is not null && LegacyContentHashes(sql, earlierReleaseSql).Contains(recorded);
+
+  /// <summary>
+  /// The text as it read before aadb4cc45 put the license header at its start: the two header lines and the blank line
+  /// after them removed. Otherwise the text unchanged.
+  /// </summary>
+  /// <remarks>
+  /// The EF Core generator embeds a migration with every line after its first indented to the generated code's depth,
+  /// so there the header's second line carries that indentation and so does the line that was the file's first before
+  /// the header, which the earlier release embedded unindented. The second line's indentation is therefore taken off
+  /// the line after the header as well; for a driver that embeds nothing it is empty and takes nothing off.
+  /// </remarks>
+  internal static string WithoutLicenseHeader(string sql) {
+    if (!sql.StartsWith(LICENSE_LINE_1, StringComparison.Ordinal)) {
+      return sql;
+    }
+    var i = LICENSE_LINE_1.Length;
+    if (!_skipLineBreak(sql, ref i)) {
+      return sql;
+    }
+    var indentStart = i;
+    while (i < sql.Length && sql[i] is ' ' or '\t') {
+      i++;
+    }
+    var indentation = sql[indentStart..i];
+    if (string.CompareOrdinal(sql, i, LICENSE_LINE_2, 0, LICENSE_LINE_2.Length) != 0) {
+      return sql;
+    }
+    i += LICENSE_LINE_2.Length;
+    // The second line's own ending, then the blank line.
+    var lineEnds = 0;
+    while (lineEnds < 2 && _skipLineBreak(sql, ref i)) {
+      lineEnds++;
+    }
+    if (lineEnds < 2) {
+      return sql;
+    }
+    return string.CompareOrdinal(sql, i, indentation, 0, indentation.Length) == 0 ? sql[(i + indentation.Length)..] : sql[i..];
+  }
+
+  /// <summary>Moves past one line ending (CRLF, LF or a lone CR) at <paramref name="i"/>; false when there is none.</summary>
+  private static bool _skipLineBreak(string sql, ref int i) {
+    if (i >= sql.Length || (sql[i] != '\n' && sql[i] != '\r')) {
+      return false;
+    }
+    i += sql[i] == '\r' && i + 1 < sql.Length && sql[i + 1] == '\n' ? 2 : 1;
+    return true;
+  }
+
+  private static void _addLegacyForms(List<string> hashes, string text) {
+    _addDistinct(hashes, _sha256(text));
+    _addDistinct(hashes, _sha256(WithoutLicenseHeader(text)));
+  }
+
+  private static void _addDistinct(List<string> hashes, string hash) {
+    if (!hashes.Contains(hash)) {
+      hashes.Add(hash);
+    }
   }
 
   private static string _sha256(string text) =>

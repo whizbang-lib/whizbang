@@ -250,13 +250,15 @@ public class EFCoreWorkCoordinatorScalarShapeTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task RecordInstanceState_ForARegisteredInstanceWithAVersion_ReportsTheRowWasUpdatedAsync() {
+  public async Task RecordInstanceTransition_ForARegisteredInstanceWithAVersion_ReportsTheRowWasUpdatedAsync() {
     await using var dbContext = CreateDbContext();
     var coordinator = _coordinator(dbContext);
     var instanceId = _newId();
     await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(instanceId, "scalar-svc", "scalar-host", 7));
 
-    var updated = await coordinator.RecordInstanceStateAsync(instanceId, "Draining", "9.9.9");
+    var updated = await coordinator.RecordInstanceTransitionAsync(new Whizbang.Core.Startup.InstanceTransition(
+      instanceId, Whizbang.Core.Startup.StartupStage.Draining, "stopping", Whizbang.Core.RunControl.LifecyclePhase.Stopping,
+      "9.9.9"));
 
     await Assert.That(updated).IsTrue();
   }

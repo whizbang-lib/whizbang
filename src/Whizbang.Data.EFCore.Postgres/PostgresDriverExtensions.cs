@@ -16,6 +16,7 @@ using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.RunControl;
+using Whizbang.Core.Startup;
 using Whizbang.Data.EFCore.Postgres.Dispatch;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Notifications;
@@ -84,6 +85,10 @@ public static class PostgresDriverExtensions {
         selector.Services.TryAddSingleton<Whizbang.Core.Observability.ILibraryVersionProvider>(
             new Whizbang.Core.Observability.LibraryVersionProvider(LibraryVersionInfo.Value));
 
+        // TURNKEY (#2076): the context's open transaction, read by the application signal channel resolved in the same
+        // scope, so a signal published inside it is delivered on commit and never on rollback.
+        EFCoreAppSignalTransactionSource.Register(selector.Services, selector.DbContextType);
+
         // Invoke model registration callback (infrastructure + perspectives)
         // This is registered by source-generated module initializer in consumer assembly
         // The generated code contains AOT-safe registration using concrete types
@@ -107,6 +112,28 @@ public static class PostgresDriverExtensions {
             new EFCorePostgresPerspectiveCheckpointCompleter(
                 (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
                 sp.GetService<ILogger<EFCorePostgresPerspectiveCheckpointCompleter>>()));
+
+        // TURNKEY: Register IPerspectiveWriteSink, the write seam of set-based perspective writes (#2246): a batch's
+        // prepared rows are written with one statement per table and shape over the consumer's DbContext. TryAdd,
+        // so a service's own sink still wins.
+        selector.Services.TryAddScoped<IPerspectiveWriteSink>(sp =>
+            new EFCorePostgresPerspectiveWriteSink(
+                (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
+                sp.GetService<TimeProvider>()));
+        // One sink per DbContext as well, under the context's type: each store keys the rows it prepares to its own
+        // context (PendingPerspectiveWrite.SinkKey), so a service with several contexts writes every perspective through
+        // its own. A second context registered through this driver gets its own keyed sink.
+        selector.Services.TryAddKeyedScoped<IPerspectiveWriteSink>(dbContextType, (sp, _) =>
+            new EFCorePostgresPerspectiveWriteSink(
+                (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
+                sp.GetService<TimeProvider>()));
+
+        // TURNKEY: Register IPerspectiveStateSource, the read seam of set-based perspective writes (#2246): a batch's
+        // rows are read with one statement per perspective table, no row is read for a stream known to be new, and the
+        // purge-marker and history probes of missing rows are asked once per perspective. TryAdd, so a service's own
+        // state source still wins. The container takes the logging constructor when logging is registered, and the
+        // parameterless one when it is not.
+        selector.Services.TryAddSingleton<IPerspectiveStateSource, BatchedPerspectiveStateSource>();
 
         // TURNKEY: Register IPerspectiveRowDigest so a rebuild of named streams can record what those rows
         // looked like before and after it ran. Without this the rebuild still happens and still reports its
@@ -136,11 +163,10 @@ public static class PostgresDriverExtensions {
 
         // TURNKEY: the Assess verdict machinery — this binary's version against every version
         // the migration ledger records, decided on every instance before the migration barrier.
-        selector.Services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IStartupAssessor>(sp =>
-            new EFCorePostgresStartupAssessor(
-                sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
-                dbContextType,
-                sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>()));
+        // #2022: with this instance's application version and id, so both versions are compared, and the online
+        // instances' versions from the same read, for a newer instance's announcement.
+        selector.Services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IStartupAssessor>(sp => _assessor(sp, dbContextType));
+        selector.Services.TryAddSingleton<Whizbang.Core.Versioning.IOnlineVersionReader>(sp => _assessor(sp, dbContextType));
         // TURNKEY: Register IClaimedEmissionStore so PublishOnceAsync (saga completion via
         // SagaCompletionGuard.EmitOnceAsync, idempotent receptor emissions, etc.) doesn't
         // throw at runtime. EFCoreClaimedEmissionStore writes ON CONFLICT DO NOTHING against
@@ -173,6 +199,11 @@ public static class PostgresDriverExtensions {
                 dbContextType,
                 sp.GetService<ILogger<IndexStatisticsMaintenanceStep>>(),
                 sp.GetService<TimeProvider>()));
+
+        // TURNKEY: the step that keeps the held-without-sequence change log bounded (#2351). An integrity answer folds
+        // only its own origin's changes; this folds every origin's, so an origin nobody audits never grows the log.
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new UnsequencedDigestCompactionStep(dbContextType, sp.GetService<ILogger<UnsequencedDigestCompactionStep>>()));
 
         // TURNKEY: the partition manager (#1611). It converts wh_log, wh_signals and wh_lifecycle_completions once
         // (#1646) and keeps the framework's partitioned tables while Whizbang:Workers:Maintenance:Partitioning:Enabled
@@ -208,18 +239,30 @@ public static class PostgresDriverExtensions {
                 dbContextType,
                 sp.GetService<ILogger<StreamLifecycleBackfillMaintenanceStep>>()));
 
+        // TURNKEY: the maintenance step that fills the id lanes of stream digests stored before migration 336 (#2106),
+        // reporting any drift it corrects. Idle once the backfill is recorded as done, which a new database is.
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new StreamDigestIdLaneBackfillMaintenanceStep(
+                dbContextType,
+                sp.GetService<ILogger<StreamDigestIdLaneBackfillMaintenanceStep>>()));
+        // TURNKEY: the maintenance step that builds the framework indexes a migration must not build, concurrently and
+        // outside any transaction, so writes to the indexed table go on during the build (#2092). Idle once each is valid.
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new FrameworkIndexBuildMaintenanceStep(
+                dbContextType,
+                sp.GetService<ILogger<FrameworkIndexBuildMaintenanceStep>>()));
+
         // TURNKEY: Hosted service that runtime-registers RebuildPerspectiveCommandReceptor
         // with IReceptorRegistry at startup. Without this, dispatching RebuildPerspectiveCommand
         // has no effect — source-gen receptor discovery only sees the consumer's own syntax,
-        // so a built-in receptor shipped from this assembly needs runtime registration.
-        selector.Services.AddHostedService<RebuildCommandReceptorRegistrar>();
-        // #1353: a whole-perspective blue-green rebuild runs on this worker, off the inbox handler's budget.
-        selector.Services.TryAddSingleton<RebuildBackgroundQueue>();
-        selector.Services.AddHostedService<RebuildBackgroundWorker>();
+        // so a built-in receptor needs runtime registration. #1353: a whole-perspective blue-green rebuild runs on the
+        // background rebuild worker, off the inbox handler's budget. Shared with the Dapper driver.
+        selector.Services.AddRebuildCommandHandling();
 
-        // TURNKEY: A1 scheduled close — runtime-register ScheduledStreamCloseReceptor so a fired
-        // "close the books" schedule occurrence drives IStreamPrefixTruncator.TruncateAsync. Same rationale as above.
-        selector.Services.AddHostedService<ScheduledStreamCloseReceptorRegistrar>();
+        // TURNKEY: scheduled prefix truncate (#1760): runtime-register ScheduledPrefixTruncateReceptor so a fired
+        // schedule occurrence drives IStreamPrefixTruncator.TruncateAsync. Same rationale as above. Shared with the
+        // Dapper driver (#2043).
+        selector.Services.AddScheduledPrefixTruncate();
 
         // TURNKEY: stream-integrity R1b — runtime-register RedeliveryRequestReceptor so a received
         // RequestRedeliveryCommand drives the selection + targeted re-delivery pump. Same rationale as above.
@@ -229,7 +272,8 @@ public static class PostgresDriverExtensions {
         // occurrences, and the scheduler registers that cron on the temporal engine (standing the
         // audit worker's every-Nth-cycle counter down). Same rationale as above.
         selector.Services.AddHostedService<ScheduledIntegritySweepReceptorRegistrar>();
-        selector.Services.AddHostedService<IntegritySweepScheduler>();
+        // Hosted to start at Accept commands (#1636): it registers a schedule in the temporal engine's tables.
+        selector.Services.AddWhizbangWorker<IntegritySweepScheduler>();
 
         // TURNKEY: stream-integrity B2/B3 — runtime-register IntegrityCheckpointReceptor so received
         // checkpoints drive windowed gap detection (and ladder-gated auto-repair). Same rationale as above.
@@ -239,11 +283,9 @@ public static class PostgresDriverExtensions {
         // audit's request/response exchange works out of the box. Same rationale as above.
         selector.Services.AddHostedService<IntegrityManifestReceptorRegistrar>();
 
-        // TURNKEY: Auto-initialize database schema. Workers wait on ISchemaReadyGate
-        // (registered by AddWhizbangWorkers as a singleton) before issuing any SQL, so the
-        // initializer's registration order in the IHostedService chain doesn't matter — even
-        // if a worker's StartAsync runs first, it blocks on the gate until the initializer
-        // calls MarkReady() at the end of migrations.
+        // TURNKEY: Auto-initialize database schema. Workers are hosted with the point they start at
+        // (#1636), the schema-ready gate the initializer opens at the end of migrations or a later
+        // stage, so the initializer's registration order in the IHostedService chain doesn't matter.
         // The driver's share of the shared schema initializer: every DbContext registered for initialization.
         selector.Services.TryAddEnumerable(ServiceDescriptor.Singleton<ISchemaInitializationRunner, DbContextSchemaInitializationRunner>(sp =>
             new DbContextSchemaInitializationRunner(sp, sp.GetRequiredService<ILogger<DbContextSchemaInitializationRunner>>())));
@@ -303,13 +345,22 @@ public static class PostgresDriverExtensions {
           new PostgresStreamPurger(
             sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
             defaultSchema(sp),
-            logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+            logger: sp.GetService<ILogger<PostgresStreamPurger>>(),
+            integrityMetrics: sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()));
         // TURNKEY: the built-in archive store (WS-3 S7), over the same data source. The prefix truncate's archive path
         // writes through it; a blob store package registers its own IArchiveStore first and wins.
         // <docs>fundamentals/events/archive-store#the-postgres-table-store</docs>
         // How an archive store reaches this database, shared by the table store and any store that keeps state here.
         selector.Services.TryAddSingleton(sp =>
           new PostgresArchiveConnection(sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync, defaultSchema(sp)));
+        // TURNKEY: what a rebuild knows of each stream's archive (#1931), read from the lifecycle ledger.
+        // <docs>fundamentals/perspectives/rebuild#archived-data</docs>
+        selector.Services.TryAddSingleton<global::Whizbang.Core.Archival.IArchivedStreamExtents>(sp =>
+          new PostgresArchivedStreamExtents(sp.GetRequiredService<PostgresArchiveConnection>()));
+        // TURNKEY: what a snapshot of a row with collectives reads to record how far they are complete (#1963).
+        // <docs>fundamentals/perspectives/snapshots#collectives</docs>
+        selector.Services.TryAddSingleton<global::Whizbang.Core.Perspectives.ICollectiveSnapshotFence>(sp =>
+          new PostgresCollectiveSnapshotFence(sp.GetRequiredService<PostgresArchiveConnection>()));
         selector.Services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(sp => {
           var database = sp.GetRequiredService<PostgresArchiveConnection>();
           return new PostgresTableArchiveStore(database.Open, database.Schema, sp.GetService<ILogger<PostgresTableArchiveStore>>());
@@ -319,6 +370,41 @@ public static class PostgresDriverExtensions {
         // <docs>fundamentals/events/archive-store#restore-requests</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, ArchiveRestoreRequestStep>(
           ArchiveRestoreRequestStep.FromServices));
+        // TURNKEY: the maintenance step that distills staged event metadata into routes and traces (#1726), under the
+        // maintainer duty.
+        // <docs>data/event-store#distillation</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataDistillationStep>(
+          MetadataDistillationStep.FromServices));
+        // TURNKEY: the maintenance step that converts rows written with full metadata before slim stored metadata to the
+        // slim form plus their route id (#1727), under the maintainer duty.
+        // <docs>data/event-store#history-conversion</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
+          MetadataHistoryConversionStep.FromServices));
+        // TURNKEY: the maintenance step that converts audit records written before the pointer default (#1588) to the
+        // pointer form (#2326), keeping the bodies of [AuditEvent(IncludeBody = true)] types, under the maintainer duty.
+        // <docs>fundamentals/events/system-events#audit-body</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, AuditBodyConversionStep>(
+          AuditBodyConversionStep.FromServices));
+        // TURNKEY: the maintenance step that brings the history a superseding type stored before its declaration under the
+        // superseding rule (#2110), under the maintainer duty. Whizbang:Superseding:ReconcileHistory=false turns it off.
+        // <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, SupersedingHistoryReconcileStep>(
+          SupersedingHistoryReconcileStep.FromServices));
+        // TURNKEY: the maintenance step that reclassifies the history an [Ephemeral] type stored before its declaration
+        // (#2206), in bounded batches under the maintainer duty, when Whizbang:Ephemeral:ReconcileHistoricalOnStartup opts in.
+        // <docs>fundamentals/events/ephemeral-events#making-an-existing-type-ephemeral</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, EphemeralHistoryReclassifyStep>(
+          EphemeralHistoryReclassifyStep.FromServices));
+        // TURNKEY: the maintenance step that re-attributes stored events recorded under an origin that does not own their
+        // type to their owner (#2116), under the maintainer duty, idle-gated.
+        // <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MisattributedOriginCorrectionStep>(
+          MisattributedOriginCorrectionStep.FromServices));
+        // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
+        selector.Services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
+          new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, global::Whizbang.Core.Lifecycle.StreamDispositionStep>(
+          global::Whizbang.Core.Lifecycle.StreamDispositionStep.FromServices));
         // TURNKEY: the stream finalizer (WS-3 S4), over the same data source and the host's clock. Sealing a stream is a
         // developer's call (IStreamFinalizer.FinalizeAsync); every write path then refuses the stream's appends.
         // <docs>fundamentals/events/stream-end-of-life#finalizing-a-stream</docs>
@@ -328,6 +414,17 @@ public static class PostgresDriverExtensions {
             defaultSchema(sp),
             sp.GetService<TimeProvider>(),
             sp.GetService<ILogger<PostgresStreamFinalizer>>()));
+        // TURNKEY: closing the books (#1741), over the same data source and the host's clock, storing its events exactly
+        // as this driver's direct append does.
+        // <docs>fundamentals/events/closing-the-books</docs>
+        selector.Services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IBookCloser>(sp =>
+          new PostgresBookCloser(
+            sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
+            defaultSchema(sp),
+            new EFCoreDirectAppendRowBuilder(
+              global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+              sp.GetService<global::Whizbang.Core.IEphemeralModeResolver>()),
+            sp.GetService<TimeProvider>()));
         // The operator repair for composite children filed under the composite's stream (#1798), over the same data source.
         // <docs>operations/infrastructure/purging-streams#refiling-composite-children</docs>
         selector.Services.TryAddSingleton<IFanoutChildRefiler>(sp =>
@@ -400,7 +497,8 @@ public static class PostgresDriverExtensions {
           return new PostgresNotifyDebounceStatsProvider(ds, schema);
         });
         selector.Services.TryAddSingleton<NotifyDebounceMetrics>();
-        selector.Services.AddHostedService<NotifyDebounceStatsCollector>();
+        // Hosted to start when the schema-ready gate opens (#1636): it reads wh_notify_state, which the migration creates.
+        selector.Services.AddWhizbangWorkerAtSchemaReady<NotifyDebounceStatsCollector>();
 
         // v0.502 DLQ — register IDeadLetterStore + IDeadLetterRecoveryService so the
         // dispatch worker can move failed inbox rows into wh_dead_letters and the
@@ -466,7 +564,7 @@ public static class PostgresDriverExtensions {
         // An unnamed context still configured under the name earlier releases derived from its class
         // keeps working until its keys are renamed (see ResolveConnectionStringName).
         var legacyConnectionStringName = selector.ConnectionStringName is null
-          ? Whizbang.Core.Naming.WhizbangNamingConvention.LegacyConnectionStringName(selector.DbContextType.Name)
+          ? Whizbang.Core.Naming.WhizbangNamingConvention.LegacyConnectionStringName(TypeNameFormatter.SimpleName(selector.DbContextType))
           : null;
         // #1012: the same name keys this database's PostgresOptions section,
         // Whizbang:Postgres:<name>, which overrides the code values per key.
@@ -505,4 +603,14 @@ public static class PostgresDriverExtensions {
     await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     return true;
   }
+
+  /// <summary>The driver's assessor (#1992), comparing both versions and skipping the instance's own row (#2022).</summary>
+  private static EFCorePostgresStartupAssessor _assessor(IServiceProvider sp, Type dbContextType) => new(
+    sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
+    dbContextType,
+    sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
+    sp.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>(),
+    sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+    Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()),
+    Whizbang.Core.Versioning.UpgradeOrder.IsLossyRollbackAllowed(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
 }

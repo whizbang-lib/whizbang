@@ -88,8 +88,8 @@ public sealed class RecentlyProcessedEventCache {
   /// </para>
   /// </remarks>
   /// <docs>operations/workers/perspective-worker#cooldown-cache-capacity</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RecentlyProcessedEventCacheTests.cs:MarkProcessed_OverCap_RaisesOnCapacityExceededWithResidentCountAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RecentlyProcessedEventCacheTests.cs:MarkProcessed_BulkOverCap_RaisesOnCapacityExceededOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RecentlyProcessedEventCacheTests.cs:MarkProcessed_OverCap_RaisesOnCapacityExceededWithResidentCountAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RecentlyProcessedEventCacheTests.cs:MarkProcessed_BulkOverCap_RaisesOnCapacityExceededOnceAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ProcessedEventCacheCoverageTests.cs:MarkProcessed_OverflowEvictedWhileInsertWaitsForLock_EvictsNothingAsync</tests>
   public event Action<int>? OnCapacityExceeded;
 

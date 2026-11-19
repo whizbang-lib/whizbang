@@ -32,6 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// that return events with different routing modes to verify the cascade flow.</para>
 /// </remarks>
 [Category("Shard4")]
+[NotInParallel("LocalEventStorageTests.LocalEventTracker")] // every test resets and reads the one process-wide event tracker
 public class LocalEventStorageTests : EFCoreTestBase {
   #region Test Messages
 
@@ -199,7 +200,6 @@ public class LocalEventStorageTests : EFCoreTestBase {
   /// Route.Local should invoke local receptors when cascaded from command handler.
   /// </summary>
   [Test]
-  [NotInParallel]
   public async Task RouteLocal_CascadedEvent_InvokesLocalReceptorsAsync() {
     // Arrange
     LocalEventTracker.Reset();
@@ -223,7 +223,6 @@ public class LocalEventStorageTests : EFCoreTestBase {
   /// The null destination signals event-store-only mode (transport bypass).
   /// </summary>
   [Test]
-  [NotInParallel]
   public async Task RouteLocal_CascadedEvent_StoredToOutboxWithNullDestinationAsync() {
     // Arrange
     LocalEventTracker.Reset();
@@ -265,7 +264,6 @@ public class LocalEventStorageTests : EFCoreTestBase {
   /// Route.LocalNoPersist should invoke local receptors when cascaded.
   /// </summary>
   [Test]
-  [NotInParallel]
   public async Task RouteLocalNoPersist_CascadedEvent_InvokesLocalReceptorsAsync() {
     // Arrange
     LocalEventTracker.Reset();
@@ -288,7 +286,6 @@ public class LocalEventStorageTests : EFCoreTestBase {
   /// This is the old Route.Local behavior - no persistence.
   /// </summary>
   [Test]
-  [NotInParallel]
   public async Task RouteLocalNoPersist_CascadedEvent_NotStoredToOutboxAsync() {
     // Arrange
     LocalEventTracker.Reset();
@@ -323,7 +320,6 @@ public class LocalEventStorageTests : EFCoreTestBase {
   /// Route.EventStoreOnly should NOT invoke local receptors when cascaded.
   /// </summary>
   [Test]
-  [NotInParallel]
   public async Task RouteEventStoreOnly_CascadedEvent_DoesNotInvokeLocalReceptorsAsync() {
     // Arrange
     LocalEventTracker.Reset();
@@ -345,7 +341,6 @@ public class LocalEventStorageTests : EFCoreTestBase {
   /// Route.EventStoreOnly should store event to outbox with null destination when cascaded.
   /// </summary>
   [Test]
-  [NotInParallel]
   public async Task RouteEventStoreOnly_CascadedEvent_StoredToOutboxWithNullDestinationAsync() {
     // Arrange
     LocalEventTracker.Reset();
@@ -384,7 +379,6 @@ public class LocalEventStorageTests : EFCoreTestBase {
   /// This verifies the standard outbox flow still works correctly.
   /// </summary>
   [Test]
-  [NotInParallel]
   public async Task RouteOutbox_CascadedEvent_StoredToOutboxWithDestinationAsync() {
     // Arrange
     var services = await _createServicesWithEFCoreAsync();
@@ -424,7 +418,6 @@ public class LocalEventStorageTests : EFCoreTestBase {
   /// Nested test types fall back to MessageId as StreamId, which is still valid for partitioning.
   /// </summary>
   [Test]
-  [NotInParallel]
   public async Task RouteLocal_CascadedEvent_HasStreamIdSetAsync() {
     // Arrange
     LocalEventTracker.Reset();
@@ -460,7 +453,6 @@ public class LocalEventStorageTests : EFCoreTestBase {
   /// Nested test types fall back to MessageId as StreamId, which is still valid for partitioning.
   /// </summary>
   [Test]
-  [NotInParallel]
   public async Task RouteEventStoreOnly_CascadedEvent_HasStreamIdSetAsync() {
     // Arrange
     LocalEventTracker.Reset();

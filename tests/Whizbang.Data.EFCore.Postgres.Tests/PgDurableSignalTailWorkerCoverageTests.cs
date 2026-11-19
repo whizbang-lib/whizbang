@@ -126,7 +126,9 @@ public class PgDurableSignalTailWorkerCoverageTests : EFCoreTestBase {
       await using var probe = new NpgsqlConnection(ConnectionString);
       await probe.OpenAsync(ct);
       await using var cmd = new NpgsqlCommand(
-        "SELECT COUNT(*) FROM pg_locks WHERE relation = 'wh_signal_cursors'::regclass AND granted = false", probe);
+        "SELECT COUNT(*) FROM pg_locks WHERE relation = 'wh_signal_cursors'::regclass AND granted = false"
+        // pg_locks is cluster-wide and every test database has this table, so the count is scoped to this one.
+        + " AND database = (SELECT oid FROM pg_database WHERE datname = current_database())", probe);
       var blocked = Convert.ToInt64(await cmd.ExecuteScalarAsync(ct) ?? 0, System.Globalization.CultureInfo.InvariantCulture);
       if (blocked > 0) { return; }
       await Task.Delay(50, ct);

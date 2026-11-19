@@ -26,9 +26,9 @@ namespace Whizbang.Core.Workers;
 /// are appended after auto-generated inbox and event subscriptions.
 /// </remarks>
 /// <docs>messaging/transports/transport-consumer#additional-destinations</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultAdditionalDestinations_IsEmptyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultResilienceOptions_IsNotNullAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:AddTransportConsumer_WithConfigureAction_AddsAdditionalDestinationsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultAdditionalDestinations_IsEmptyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultResilienceOptions_IsNotNullAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:AddTransportConsumer_WithConfigureAction_AddsAdditionalDestinationsAsync</tests>
 public sealed class TransportConsumerConfiguration {
   /// <summary>
   /// Gets the list of additional destinations to subscribe to beyond auto-generated ones.
@@ -47,9 +47,9 @@ public sealed class TransportConsumerConfiguration {
   /// Resilience is always enabled - subscriptions retry with exponential backoff on failure.
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsCoverageTests.cs:AddTransportConsumer_RegistersSubscriptionResilienceOptionsAsSingletonAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsCoverageTests.cs:AddTransportConsumer_PerspectiveBuilder_RegistersResilienceOptionsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultResilienceOptions_IsNotNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerBuilderExtensionsCoverageTests.cs:AddTransportConsumer_RegistersSubscriptionResilienceOptionsAsSingletonAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerBuilderExtensionsCoverageTests.cs:AddTransportConsumer_PerspectiveBuilder_RegistersResilienceOptionsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerBuilderExtensionsServiceNameTests.cs:TransportConsumerConfiguration_DefaultResilienceOptions_IsNotNullAsync</tests>
   public SubscriptionResilienceOptions ResilienceOptions { get; } = new();
 }
 
@@ -72,7 +72,7 @@ public sealed class TransportConsumerConfiguration {
 /// </para>
 /// </remarks>
 /// <docs>messaging/transports/transport-consumer#auto-configuration</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerBuilderExtensionsTests.cs</tests>
 public static class TransportConsumerBuilderExtensions {
   private const string HEALTH_CHECK_NAME = "subscriptions";
 
@@ -126,7 +126,7 @@ public static class TransportConsumerBuilderExtensions {
   /// </code>
   /// </example>
   /// <docs>messaging/transports/transport-consumer#auto-configuration</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsTests.cs:AddTransportConsumer_AutoPopulatesInboxDestination_FromOwnDomainsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerBuilderExtensionsTests.cs:AddTransportConsumer_AutoPopulatesInboxDestination_FromOwnDomainsAsync</tests>
   public static WhizbangBuilder AddTransportConsumer(
       this WhizbangBuilder builder,
       Action<TransportConsumerConfiguration>? configure = null) {
@@ -346,15 +346,17 @@ public static class TransportConsumerBuilderExtensions {
   /// <see cref="InProcessTransport"/> in a test, turns the worker on.
   /// </summary>
   /// <docs>messaging/transports/transport-consumer</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithNoTransport_BuildsUnderContainerValidationAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithNoTransport_StartsNoConsumerAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithTheInProcessTransport_StartsTheConsumerAsBeforeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithNoTransport_BuildsUnderContainerValidationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithNoTransport_StartsNoConsumerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithTheInProcessTransport_StartsTheConsumerAsBeforeAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/DependencyInjection/RealCompositionValidationTests.cs:ATransportConsumerWithoutATransport_IsNotAGapAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/DependencyInjection/RealCompositionValidationTests.cs:ATransportConsumerWithATransport_IsCheckedForWhatItsWorkerNeedsAsync</tests>
   private static void _addConsumerWorker(IServiceCollection services) {
     // A factory rather than a type registration: container validation (ValidateOnBuild) activates a type
     // registration's constructor graph, which needs a transport. A null result is what GetService returns,
-    // and the forwards below read it. Registered through a descriptor so registration validation does not
-    // read the constructor as this registration's requirements: the transport is optional here.
+    // and the forwards below read it. Registration validation reads this factory's shape (#1907): what the
+    // branch that builds the worker resolves is required only when a transport is registered, so a broker-less
+    // host starts and a host with a broker is checked for every service the worker needs.
     services.TryAdd(ServiceDescriptor.Singleton<TransportConsumerWorker>(sp => sp.GetService<ITransport>() is not { } transport
       ? null!
       : new TransportConsumerWorker(
@@ -367,7 +369,6 @@ public static class TransportConsumerBuilderExtensions {
           sp.GetRequiredService<TransportMetrics>(),
           sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<TransportConsumerWorker>>(),
           sp.GetRequiredService<IServiceInstanceProvider>(),
-          sp.GetRequiredService<ISchemaReadyGate>(),
           sp.GetRequiredService<IOptions<RoutingOptions>>(),
           sp.GetRequiredService<IWorkChannelWriter>(),
           sp.GetRequiredService<IOptions<ClaimWorkerOptions>>(),
@@ -378,13 +379,26 @@ public static class TransportConsumerBuilderExtensions {
           sp.GetRequiredService<IOptions<ControlClassOptions>>(),
           sp.GetService<TransportBatchOptions>(),
           sp.GetService<Tags.ControlClassResolver>(),
-          sp.GetService<TimeProvider>())));
+          sp.GetService<TimeProvider>(),
+          sp.GetRequiredService<DeadLetterLoggingOptions>(),
+          // #2045: the instance's one run permit, when the host runs the worker pipeline (which registers it).
+          sp.GetService<Whizbang.Core.RunControl.WhizbangRunPermit>())));
+    // The consumer dead-letters what it cannot store, so the level option binds here too: a host can register the
+    // consumer without the worker pipeline (#1901).
+    Whizbang.Core.Configuration.ProcessWideOptionsBinding.AddDeadLetterLogging(services);
 
     services.TryAddSingleton<NoTransportConfiguredNotice>();
     // Singleton + forwards so the SAME worker instance is the hosted service and the readiness contributor:
-    // Ready composes its SubscriptionsReady signal.
+    // Ready composes its SubscriptionsReady signal. The worker is hosted to start at Accept commands (#1636, owner
+    // decision 2026-11-02): it receives while the read models catch up, and never before the instance's row records
+    // that it is eligible for work. With no transport the notice stands in, and does no database work.
     services.AddSingleton<IHostedService>(sp =>
-      (IHostedService?)sp.GetService<TransportConsumerWorker>() ?? sp.GetRequiredService<NoTransportConfiguredNotice>());
+      sp.GetService<TransportConsumerWorker>() is { } worker
+        ? new Whizbang.Core.Startup.StartupStageGatedService<TransportConsumerWorker>(worker,
+          Whizbang.Core.Startup.StartupStage.AcceptingCommands,
+          sp.GetService<Whizbang.Core.Startup.IStartupStageGate>(),
+          Whizbang.Core.Startup.StartupStageGatedServiceCollectionExtensions.SchemaReadyGateOf(sp))
+        : sp.GetRequiredService<NoTransportConfiguredNotice>());
     services.AddSingleton<Whizbang.Core.Startup.IStartupReadinessContributor>(sp =>
       (Whizbang.Core.Startup.IStartupReadinessContributor?)sp.GetService<TransportConsumerWorker>()
         ?? sp.GetRequiredService<NoTransportConfiguredNotice>());
@@ -425,7 +439,11 @@ public static class TransportConsumerBuilderExtensions {
         discovery,
         serviceName,
         sp.GetService<IInboxRoutingStrategy>(),
-        sp.GetRequiredService<Messaging.IReceptorRegistryQuery>());
+        sp.GetRequiredService<Messaging.IReceptorRegistryQuery>(),
+        // The excluded-event-types checks (#2175) warn on a type the application does not declare and log what each
+        // event subscription excludes.
+        sp.GetService<IMessageTypeCatalog>(),
+        sp.GetService<Microsoft.Extensions.Logging.ILogger<TransportSubscriptionBuilder>>());
 
     subscriptionBuilder.ConfigureOptions(options);
 
@@ -439,7 +457,7 @@ public static class TransportConsumerBuilderExtensions {
   /// Gets the service name from <see cref="IServiceInstanceProvider"/> or falls back to assembly name.
   /// </summary>
   private static string _getServiceName(IServiceProvider sp)
-    => ResolveServiceName(sp, static () => System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name);
+    => ResolveServiceName(sp, static () => System.Reflection.Assembly.GetEntryAssembly() is { } entry ? TypeNameFormatter.AssemblySimpleName(entry) : null);
 
   /// <summary>
   /// The service-name fallback chain, with the entry-assembly lookup supplied by the caller.

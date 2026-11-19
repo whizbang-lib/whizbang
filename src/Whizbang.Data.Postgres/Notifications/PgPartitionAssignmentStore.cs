@@ -48,7 +48,7 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
   public async Task<PartitionAssignmentRead?> ReadAsync(CancellationToken cancellationToken) {
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using var connectionScope = connection.ConfigureAwait(false);
-    await using var cmd = connection.CreateCommand();
+    await using var cmd = connection.CreateWhizbangCommand();
     cmd.CommandText = "SELECT epoch, revision, assigner_instance_id, members, published_at, lease_expires_at, lease_remaining "
       + "FROM wh_read_partition_assignment()";
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -70,15 +70,16 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
     var candidates = new List<PartitionAssignmentCandidate>();
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
-      await using var cmd = connection.CreateCommand();
-      cmd.CommandText = "SELECT instance_id, connection_mode, alive_lock_held, heartbeat_age FROM wh_partition_assignment_candidates()";
+      await using var cmd = connection.CreateWhizbangCommand();
+      cmd.CommandText = "SELECT instance_id, connection_mode, alive_lock_held, heartbeat_age, is_live FROM wh_partition_assignment_candidates()";
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
         candidates.Add(new PartitionAssignmentCandidate(
           InstanceId: reader.GetGuid(0),
           Mode: InstanceConnectionModes.Parse(reader.GetString(1)),
           AliveLockHeld: reader.GetBoolean(2),
-          HeartbeatAge: reader.GetTimeSpan(3)));
+          HeartbeatAge: reader.GetTimeSpan(3),
+          IsLive: reader.GetBoolean(4)));
       }
     }
     return candidates;
@@ -91,7 +92,7 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
     ArgumentNullException.ThrowIfNull(members);
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
-      await using var cmd = connection.CreateCommand();
+      await using var cmd = connection.CreateWhizbangCommand();
       cmd.CommandText = "SELECT wh_publish_partition_assignment(@role, @instance, @epoch, @members, @lease)";
       cmd.Parameters.AddWithValue(nameof(role), role);
       cmd.Parameters.AddWithValue("instance", instanceId);
@@ -112,7 +113,7 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
   public async Task<bool> RenewAsync(Guid instanceId, long epoch, CancellationToken cancellationToken) {
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using var connectionScope = connection.ConfigureAwait(false);
-    await using var cmd = connection.CreateCommand();
+    await using var cmd = connection.CreateWhizbangCommand();
     cmd.CommandText = "SELECT wh_renew_partition_assignment(@instance, @epoch)";
     cmd.Parameters.AddWithValue("instance", instanceId);
     cmd.Parameters.AddWithValue(nameof(epoch), epoch);

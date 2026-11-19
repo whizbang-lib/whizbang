@@ -39,6 +39,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// </remarks>
 /// <docs>fundamentals/events/stream-end-of-life#what-sealing-costs</docs>
 [Category("Benchmark")]
+[NotInParallel] // A measurement: runs alone so it measures the code, not its neighbors.
 [Category("Performance")]
 public class StreamSealingEmitCostScenarioTests : EFCoreTestBase {
   private const int EVENTS = 500;

@@ -61,8 +61,8 @@ public class MintedCompositeConstructionAnalyzerCoverageTests {
     var syntaxTree = CSharpSyntaxTree.ParseText(source);
     var runtimeDir = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
     var references = new List<MetadataReference> {
-      MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
-      MetadataReference.CreateFromFile(Path.Combine(runtimeDir, "System.Runtime.dll")),
+      SharedMetadataReferences.FromFile(typeof(object).Assembly.Location),
+      SharedMetadataReferences.FromFile(Path.Combine(runtimeDir, "System.Runtime.dll")),
     };
     var compilation = CSharpCompilation.Create(
       assemblyName: assemblyName,

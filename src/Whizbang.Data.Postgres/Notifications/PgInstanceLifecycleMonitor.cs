@@ -22,13 +22,10 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Liveness is the two-signal predicate the SQL reap already uses (<c>is_instance_alive</c>,
-/// migration 055): an instance is alive while its session alive-lock is held OR its heartbeat row
-/// is within the stale threshold. The threshold is not a constant; it derives from the heartbeat
-/// writer's own cadence through <see cref="HeartbeatLivenessThreshold"/>, so a writer on its slow
-/// cadence (lock held) or a beat delayed by a stalled database can never read as a death. The
-/// earlier form of this monitor compared the bare timestamp against 30 s, the same as the fast
-/// cadence, and announced a live, heartbeating instance dead under load.
+/// Liveness is the database's one liveness rule (#2027, <c>wh_instance_is_live</c>), the same rule the claim, the reap
+/// and every other reader ask: an instance is alive while its heartbeat is newer than the window it declares from its
+/// own cadence (<see cref="HeartbeatLivenessThreshold"/>), or while it is a direct instance holding its alive-lock. This
+/// detector and the reap therefore can never disagree about who is dead. The threshold here only paces the scan.
 /// </para>
 /// <para>
 /// The monitor tracks the deaths it has already announced in-process so it does not republish the
@@ -53,7 +50,6 @@ public sealed partial class PgInstanceLifecycleMonitor(
   ILogger<PgInstanceLifecycleMonitor> logger,
   INotificationConnectionStringFallback? connectionStringFallback = null,
   INotificationDataSource? notificationDataSource = null,
-  Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate = null,
   IOptions<HeartbeatWorkerOptions>? heartbeatOptions = null,
   TimeProvider? timeProvider = null,
   InstanceLivenessMetrics? metrics = null,
@@ -66,7 +62,6 @@ public sealed partial class PgInstanceLifecycleMonitor(
   private readonly ILogger<PgInstanceLifecycleMonitor> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
   private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
-  private readonly Whizbang.Core.Workers.ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
   private readonly HeartbeatWorkerOptions _heartbeat = heartbeatOptions?.Value ?? new HeartbeatWorkerOptions();
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
   private readonly InstanceLivenessMetrics? _metrics = metrics;
@@ -113,15 +108,9 @@ public sealed partial class PgInstanceLifecycleMonitor(
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    // Death detection reads wh_service_instances; hold at the schema gate so the first
-    // tick never scans (or announces takeover from) a table the migration hasn't built yet.
-    if (_schemaReadyGate is not null) {
-      try {
-        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        return;
-      }
-    }
+    // Death detection reads wh_service_instances: the host starts this monitor when the schema-ready
+    // gate opens (#1636), so the first tick never scans (or announces takeover from) a table the
+    // migration hasn't built yet.
 
     while (!stoppingToken.IsCancellationRequested) {
       var next = ComputeTickInterval(null, StaleThreshold);
@@ -143,6 +132,7 @@ public sealed partial class PgInstanceLifecycleMonitor(
 
   /// <summary>Test hook: run one detection tick without the loop.</summary>
   /// <returns>The delay the loop would wait before the next tick, so a test can assert the cadence a tick chose.</returns>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Notifications/PgNotificationStackStartupGateTests.cs:InstanceLifecycleMonitor_WithNoDatabaseToReach_ScansNothingAndKeepsItsIdleCadenceAsync</tests>
   public Task<TimeSpan> TickForTestsAsync(CancellationToken cancellationToken) => _tickOnceAsync(cancellationToken);
 
   private async Task<TimeSpan> _tickOnceAsync(CancellationToken ct) {
@@ -156,7 +146,7 @@ public sealed partial class PgInstanceLifecycleMonitor(
       return ComputeTickInterval(null, threshold);
     }
 
-    var (dead, alive, oldestAge) = await _readLivenessAsync(plan, threshold, ct);
+    var (dead, alive, oldestAge) = await _readLivenessAsync(plan, ct);
     await _announceDeathsAsync(dead, threshold, ct);
     await _retractRevivalsAsync(alive, ct);
 
@@ -166,20 +156,18 @@ public sealed partial class PgInstanceLifecycleMonitor(
 
   /// <summary>One registry scan: the instances found dead, the ones found alive, and the oldest heartbeat age seen.</summary>
   private static async Task<(List<Guid> Dead, List<Guid> Alive, TimeSpan? OldestAge)> _readLivenessAsync(
-      NotificationConnectionPlan plan, TimeSpan threshold, CancellationToken ct) {
+      NotificationConnectionPlan plan, CancellationToken ct) {
     var dead = new List<Guid>();
     var alive = new List<Guid>();
     TimeSpan? oldestAge = null;
     await using var conn = await plan.OpenAsync(ct);
-    // Two-signal liveness (migration 055): the alive-lock in pg_locks OR a heartbeat row within
-    // the derived threshold. The bare timestamp comparison this replaced could not see the lock
-    // and used a threshold equal to the fast cadence.
+    // #2027: the one liveness rule decides who is dead (the window each instance declares, or a direct instance's held
+    // alive-lock); this detector keeps no threshold of its own. The threshold only paces the next scan.
     await using var cmd = new NpgsqlCommand(@"
       SELECT instance_id,
              EXTRACT(EPOCH FROM (NOW() - last_heartbeat_at))::double precision AS age_seconds,
-             is_instance_alive(instance_id, @threshold_seconds) AS alive
+             wh_instance_is_live(instance_id) AS alive
       FROM wh_service_instances", conn);
-    cmd.Parameters.AddWithValue("threshold_seconds", (int)Math.Ceiling(threshold.TotalSeconds));
     await using var reader = await cmd.ExecuteReaderAsync(ct);
     while (await reader.ReadAsync(ct)) {
       var id = reader.GetGuid(0);

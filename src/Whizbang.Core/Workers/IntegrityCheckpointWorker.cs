@@ -10,6 +10,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -20,21 +21,31 @@ namespace Whizbang.Core.Workers;
 /// <see cref="StreamIntegrityOptions.CheckpointIntervalSeconds"/> it advances the checkpoint
 /// watermark through the coordinator (a multi-instance-safe compare-and-swap — one winner per
 /// window) and publishes one <see cref="IntegrityCheckpoint"/> through the normal dispatch
-/// pipeline. Checkpoints publish even when the window is EMPTY: a missing checkpoint is the
-/// consumer's liveness alarm, so silence must always be abnormal. ON by default; disable with
+/// pipeline. #2348: a window that did not move goes out only as a heartbeat, every
+/// <see cref="StreamIntegrityOptions.CheckpointHeartbeatMinutes"/>; a missing heartbeat is the consumer's liveness alarm,
+/// so silence past it is always abnormal. ON by default; disable with
 /// <see cref="StreamIntegrityOptions.CheckpointsEnabled"/>.
+/// <para>
+/// Runs on the instance holding the maintainer duty (#2001), like the rest of integrity work, but is deliberately NOT
+/// idle-gated: it never asks the housekeeping coordinator for the integrity slot. A consumer reads a missing checkpoint
+/// as its liveness alarm, so a checkpoint deferred because its origin is busy would make every busy service look
+/// dead to its consumers. Publishing one is a watermark advance and a publish, cheap enough to keep its cadence under
+/// any load.
+/// </para>
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityCheckpointWorkerTests.cs</tests>
 public sealed partial class IntegrityCheckpointWorker(
   IServiceScopeFactory scopeFactory,
-  ISchemaReadyGate schemaReadyGate,
   IOptions<StreamIntegrityOptions> options,
-  ILogger<IntegrityCheckpointWorker> logger) : BackgroundService {
+  ILogger<IntegrityCheckpointWorker> logger,
+  TimeProvider? timeProvider = null) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
-  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly StreamIntegrityOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<IntegrityCheckpointWorker> _logger = ArgumentGuard.NotNull(logger);
+  private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
+  // #2348: when this instance last sent a checkpoint; null until the first, which always goes.
+  private DateTimeOffset? _lastSentAt;
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -44,12 +55,6 @@ public sealed partial class IntegrityCheckpointWorker(
       return;
     }
     LogStarted(_logger, _options.CheckpointIntervalSeconds);
-
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-    } catch (OperationCanceledException) {
-      return;
-    }
 
     while (!stoppingToken.IsCancellationRequested) {
       try {
@@ -68,10 +73,17 @@ public sealed partial class IntegrityCheckpointWorker(
     }
   }
 
-  /// <summary>One checkpoint cycle: advance the watermark, publish the window (empty included).</summary>
+  /// <summary>One checkpoint cycle: advance the watermark, publish the window when it moved or the heartbeat is due.</summary>
+  /// <docs>resilience/stream-integrity#checkpoints-go-out-on-change</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityCheckpointWorkerTests.cs:RunCheckpointOnce_AnUnmovedWindow_WaitsForTheHeartbeat_AndAMovedOneGoesAtOnceAsync</tests>
   public async Task RunCheckpointOnceAsync(CancellationToken cancellationToken) {
     await using var scope = _scopeFactory.CreateAsyncScope();
     using var priorityScope = Whizbang.Core.Priority.PriorityContext.Enter(Whizbang.Core.Priority.WorkPriority.BACKGROUND);   // system work nobody waits on: everything dispatched here inherits background
+    // #2001: on the maintainer only (every instance when role assignment does not manage that duty; the watermark CAS
+    // still picks one winner per window). Never idle-gated: see the type's remarks.
+    if (!MaintainerDuty.IsThisInstancesTurn(scope.ServiceProvider)) {
+      return;
+    }
     var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
     var dispatcher = scope.ServiceProvider.GetService<IDispatcher>();
     if (coordinator is null || dispatcher is null) {
@@ -92,8 +104,21 @@ public sealed partial class IntegrityCheckpointWorker(
       return;
     }
 
-    var originServiceName = scope.ServiceProvider.GetService<IServiceInstanceProvider>()?.ServiceName ?? string.Empty;
+    // #2348: a window that did not move counts nothing, so it goes out only as the heartbeat: the first after a start,
+    // then once CheckpointHeartbeatMinutes passed since the last one sent. A moved window goes at once.
+    var now = _time.GetUtcNow();
+    var moved = window.ToCommitSequence > window.FromCommitSequence;
+    if (!moved && _lastSentAt is { } lastSent && now - lastSent < TimeSpan.FromMinutes(_options.CheckpointHeartbeatMinutes)) {
+      await _reportStaleOriginsAsync(scope.ServiceProvider, coordinator, now, cancellationToken).ConfigureAwait(false);
+      return;
+    }
 
+    var originServiceName = scope.ServiceProvider.GetService<IServiceInstanceProvider>()?.ServiceName ?? string.Empty;
+    // #2008: the local lane follows registered ownership. A type this service does not own was received, not authored,
+    // so it is not counted as an emission; the owned domains ride the checkpoint so consumers learn who authors what.
+    var ownedDomains = _ownedDomains(scope.ServiceProvider);
+
+    List<CheckpointBucket> buckets = [.. window.Buckets.Where(b => OwnedNamespaceMatcher.IsLocalEventType(b.EventType, ownedDomains))];
     var checkpoint = new IntegrityCheckpoint {
       CheckpointStreamId = originServiceId,
       OriginServiceId = originServiceId,
@@ -104,16 +129,19 @@ public sealed partial class IntegrityCheckpointWorker(
       RequestTopic = RepairTopicResolver.Resolve(_options.RepairTopic, scope.ServiceProvider),
       FromCommitSequence = window.FromCommitSequence,
       ToCommitSequence = window.ToCommitSequence,
-      Buckets = [.. window.Buckets],
+      Buckets = buckets,
+      OwnedDomains = [.. ownedDomains.Select(OwnedNamespaceMatcher.NormalizeDomain).Distinct(StringComparer.OrdinalIgnoreCase)],
+      // #2362: the origin's rules for the counted types; a consumer whose rules differ verifies nothing from it.
+      RuleFingerprint = IntegrityPairGuard.Resolve(scope.ServiceProvider).Stamp(buckets.Select(b => b.EventType)),
     };
 
     // ROUTING: the checkpoint rides the ORIGIN'S OWN event topics — the topics its consumers
     // already subscribe to. Namespace-routing it (the dispatcher default) sends it to a
     // control-plane topic that, in a domain-ownership topology, no consumer subscribes to — the
     // broker silently drops every copy, origin tracking never populates, and the deep audit is
-    // permanently inert. One publish per DISTINCT topic across the window's types UNION the
-    // historically-emitted (own-lane digest) types, so quiet periods still heartbeat every
-    // covered topic. Falls back to the dispatcher when the transport infrastructure (or any
+    // permanently inert. One publish per DISTINCT topic of the types this service owns (#2031: other services' types
+    // would land a copy on every topic a consumer subscribes to); with no owned domains registered, the window's types
+    // UNION the historically-emitted (own-lane digest) types, so quiet periods still heartbeat every covered topic. Falls back to the dispatcher when the transport infrastructure (or any
     // resolvable topic) is absent — in-memory hosts keep the original behavior.
     // CONTROL CLASS (topology arc phase 9): the checkpoint is the archetypal supersedable control
     // signal — the next cycle re-derives it from the same watermarks, so a copy that outlives its
@@ -127,21 +155,39 @@ public sealed partial class IntegrityCheckpointWorker(
       });
 
     var topicsPublished = await _tryPublishToOwnEventTopicsAsync(
-      scope.ServiceProvider, coordinator, checkpoint, window, minted?.TimeToLive, cancellationToken).ConfigureAwait(false);
+      scope.ServiceProvider, coordinator, checkpoint, ownedDomains, minted?.TimeToLive, cancellationToken).ConfigureAwait(false);
     if (topicsPublished == 0) {
       await dispatcher.PublishAsync(checkpoint).ConfigureAwait(false);
     }
     LogPublished(_logger, window.FromCommitSequence, window.ToCommitSequence, window.Buckets.Count);
     scope.ServiceProvider.GetService<Observability.StreamIntegrityMetrics>()?.CheckpointsPublished.Add(1);
+    _lastSentAt = now;
 
-    // Consumer-side liveness (every service is both origin and consumer): an origin whose
-    // checkpoints stopped arriving is itself an integrity signal — 3× the interval by convention.
-    var tracker = scope.ServiceProvider.GetService<IntegrityGapTracker>();
-    if (tracker is not null) {
-      var staleAfter = TimeSpan.FromSeconds(_options.CheckpointIntervalSeconds * 3L);
-      foreach (var (staleOriginId, staleOriginName, lastSeen) in tracker.GetStaleOrigins(staleAfter, DateTimeOffset.UtcNow)) {
-        LogStaleOrigin(_logger, staleOriginName, staleOriginId, lastSeen);
-      }
+    await _reportStaleOriginsAsync(scope.ServiceProvider, coordinator, now, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Consumer-side liveness (every service is both origin and consumer): an origin whose checkpoints stopped arriving is
+  /// itself an integrity signal. #2348: an idle origin sends only its heartbeat, so an origin is stale once its heartbeat
+  /// plus two intervals passed without a checkpoint.
+  /// </summary>
+  private async Task _reportStaleOriginsAsync(
+      IServiceProvider services, IWorkCoordinator coordinator, DateTimeOffset now, CancellationToken cancellationToken) {
+    var tracker = services.GetService<IntegrityGapTracker>();
+    if (tracker is null) {
+      return;
+    }
+    // #2104: liveness keeps the last-seen times from before a restart.
+    await tracker.EnsureHydratedAsync(coordinator, cancellationToken).ConfigureAwait(false);
+    var staleAfter = TimeSpan.FromMinutes(_options.CheckpointHeartbeatMinutes)
+      + TimeSpan.FromSeconds(_options.CheckpointIntervalSeconds * 2L);
+    // #2001: received checkpoints wait in the integrity delivery queue while the idle gate defers the drain, so a
+    // live origin's checkpoint is late by as long as the deferral. Widen the bound by it rather than raise the alarm.
+    if (services.GetService<IntegrityDeliveryWorker>()?.DeferredSince is { } deferredSince) {
+      staleAfter += now - deferredSince;
+    }
+    foreach (var (staleOriginId, staleOriginName, lastSeen) in tracker.GetStaleOrigins(staleAfter, now)) {
+      LogStaleOrigin(_logger, staleOriginName, staleOriginId, lastSeen);
     }
   }
 
@@ -157,13 +203,13 @@ public sealed partial class IntegrityCheckpointWorker(
       : destination;
 
   /// <summary>
-  /// Publishes the checkpoint envelope once per DISTINCT topic of this origin's audited event
-  /// types. Returns the number of topics published to; 0 means the caller should use the
+  /// Publishes the checkpoint envelope once per DISTINCT topic of this origin's owned (or, with no owned domains,
+  /// audited) event types. Returns the number of topics published to; 0 means the caller should use the
   /// dispatcher fallback (missing transport infrastructure, or no type resolved to a topic).
   /// </summary>
   private async Task<int> _tryPublishToOwnEventTopicsAsync(
       IServiceProvider services, IWorkCoordinator coordinator, IntegrityCheckpoint checkpoint,
-      IntegrityCheckpointWindow window, TimeSpan? timeToLive, CancellationToken cancellationToken) {
+      HashSet<string> ownedDomains, TimeSpan? timeToLive, CancellationToken cancellationToken) {
     var transport = services.GetService<ITransport>();
     var serializer = services.GetService<IEnvelopeSerializer>();
     var catalog = services.GetService<IMessageTypeCatalog>();
@@ -176,27 +222,15 @@ public sealed partial class IntegrityCheckpointWorker(
       return 0;
     }
 
-    var typeNames = new HashSet<string>(StringComparer.Ordinal);
-    foreach (var bucket in window.Buckets) {
-      typeNames.Add(bucket.EventType);
-    }
-    foreach (var emitted in await coordinator.GetOwnAuditedEventTypesAsync(cancellationToken).ConfigureAwait(false)) {
-      typeNames.Add(emitted);
-    }
-    if (typeNames.Count == 0) {
+    var eventTypes = await _checkpointEventTypesAsync(coordinator, catalog, checkpoint, ownedDomains, cancellationToken)
+      .ConfigureAwait(false);
+    if (eventTypes.Count == 0) {
       return 0;
     }
 
-    var lookup = EventTypeMatchingHelper.BuildTypeLookup(
-      [.. catalog.GetAll().Where(e => e.Kind == "event").Select(e => e.Type)]);
-    var ownedDomains = services.GetOptionsValue<RoutingOptions>()?
-      .OwnedDomains.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
     var topicStrategy = services.GetService<ITopicRoutingStrategy>();
     var destinations = new Dictionary<string, TransportDestination>(StringComparer.Ordinal);
-    foreach (var typeName in typeNames) {
-      if (!EventTypeMatchingHelper.TryResolveType(lookup, typeName, out var eventType)) {
-        continue;
-      }
+    foreach (var eventType in eventTypes) {
       // Session-enabled subscriptions dead-letter sessionless deliveries — the checkpoint's own
       // stream identity (one homogeneous checkpoint stream per origin) is the session key.
       if (routing is not null) {
@@ -234,9 +268,42 @@ public sealed partial class IntegrityCheckpointWorker(
       await transport.PublishAsync(serialized.JsonEnvelope, destination, serialized.EnvelopeType,
         cancellationToken: cancellationToken).ConfigureAwait(false);
     }
-    LogPublishedToTopics(_logger, destinations.Count, typeNames.Count);
+    LogPublishedToTopics(_logger, destinations.Count, eventTypes.Count);
     return destinations.Count;
   }
+
+  /// <summary>
+  /// The event types whose topics the checkpoint rides. With owned domains registered: every catalog event type the
+  /// service owns, so each consumer of an owned topic gets the beat and no consumer gets a copy per topic of another
+  /// service's types (#2031). Without: the window's types and the store's own-lane digest types, as before.
+  /// </summary>
+  private static async Task<List<Type>> _checkpointEventTypesAsync(
+      IWorkCoordinator coordinator, IMessageTypeCatalog catalog, IntegrityCheckpoint checkpoint,
+      HashSet<string> ownedDomains, CancellationToken cancellationToken) {
+    var catalogEvents = catalog.GetAll().Where(e => e.Kind == "event").Select(e => e.Type).ToList();
+    if (ownedDomains.Count > 0) {
+      return [.. catalogEvents.Where(t => OwnedNamespaceMatcher.IsOwned(TypeNameFormatter.NamespaceOf(t), ownedDomains))];
+    }
+
+    var typeNames = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var bucket in checkpoint.Buckets) {
+      typeNames.Add(bucket.EventType);
+    }
+    foreach (var emitted in await coordinator.GetOwnAuditedEventTypesAsync(cancellationToken).ConfigureAwait(false)) {
+      typeNames.Add(emitted);
+    }
+    var lookup = EventTypeMatchingHelper.BuildTypeLookup(catalogEvents);
+    var resolved = new List<Type>();
+    foreach (var typeName in typeNames) {
+      if (EventTypeMatchingHelper.TryResolveType(lookup, typeName, out var eventType)) {
+        resolved.Add(eventType);
+      }
+    }
+    return resolved;
+  }
+
+  private static HashSet<string> _ownedDomains(IServiceProvider services) =>
+    services.GetOptionsValue<RoutingOptions>()?.OwnedDomains.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
 
   [LoggerMessage(EventId = 60, Level = LogLevel.Information,
     Message = "Integrity checkpoint publisher started (interval {IntervalSeconds}s)")]

@@ -238,6 +238,10 @@ public class AtMostOnceOccurrenceIntegrityTests : EFCoreTestBase {
       .Because("the occurrence's hash is XOR-ed back out of the bucket the old fold put it in.");
     await Assert.That(await _digestCountAsync(conn, outboxRowGone.StreamId)).IsNull();
     await Assert.That(await _digestCountAsync(conn, atLeastOnce.StreamId)).IsEqualTo(1);
+    // #2106: the hash lanes of what is left equal its events; the buckets were seeded by hand without id lanes, and
+    // subtracting from them keeps NULL rather than inventing a partial value.
+    _ = await StoredDigestInvariant.AssertHashLanesAgreeAsync(conn, atLeastOnce.StreamId, guaranteeChangedLater.StreamId);
+    await StoredDigestInvariant.AssertIdLanesAgreeAsync(conn, filled: 0, atLeastOnce.StreamId, guaranteeChangedLater.StreamId);
     await Assert.That(await _epochCountAsync(conn, withOutboxRow.EventId)).IsNull()
       .Because("the sealed epoch is refolded without them.");
     await Assert.That(await _epochCountAsync(conn, atLeastOnce.EventId)).IsEqualTo(2)

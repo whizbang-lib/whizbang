@@ -110,6 +110,81 @@ public class MigratorDutyStagingTests {
     await Assert.That(order).IsEquivalentTo(REGISTER_THEN_ELECT);
   }
 
+  /// <summary>Refuses as halted while the run permit is closed and grants once it reopens, as the role elector does.</summary>
+  private sealed class PermitElector(Whizbang.Core.RunControl.WhizbangRunPermit permit)
+      : IDutyElector, Whizbang.Core.RunControl.IObeysRunPermit {
+    private readonly TaskCompletionSource _firstAttempt = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Whizbang.Core.RunControl.WhizbangRunPermit RunPermit => permit;
+    public Task FirstAttempt => _firstAttempt.Task;
+    public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
+      _firstAttempt.TrySetResult();
+      return Task.FromResult(permit.IsRunning
+        ? DutyAttempt.Granted(new FakeGrant())
+        : DutyAttempt.Lost(DutyRefusal.Halted, "the run permit is closed"));
+    }
+  }
+
+  private sealed class NoLifecycle : Whizbang.Core.RunControl.IWhizbangLifecycleState {
+    public Whizbang.Core.RunControl.LifecyclePhase Phase => Whizbang.Core.RunControl.LifecyclePhase.Running;
+    public ValueTask AdvanceToAsync(Whizbang.Core.RunControl.LifecyclePhase phase, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+    public ValueTask FaultAsync(CancellationToken cancellationToken) => ValueTask.CompletedTask;
+  }
+
+  private static Whizbang.Core.RunControl.WhizbangRunController _path() => new(
+    new Whizbang.Core.RunControl.WhizbangRunPermit(), new NoLifecycle(), [], [],
+    new Whizbang.Core.RunControl.WhizbangLifecycleOptions(), null,
+    Microsoft.Extensions.Logging.Abstractions.NullLogger<Whizbang.Core.RunControl.WhizbangRunController>.Instance);
+
+  /// <summary>
+  /// A duty refused because the run permit is closed is not permanent (#2045): the election waits for the permit to
+  /// reopen, on its signal, says it is halted, and votes again.
+  /// </summary>
+  [Test]
+  public async Task AHaltedRefusal_WaitsForThePermitToReopen_ThenElectsAsync() {
+    var path = _path();
+    await path.HaltAsync(Whizbang.Core.RunControl.RunHaltReason.Pause, CancellationToken.None);
+    var elector = new PermitElector(path.Permit);
+    var logger = new RecordingLogger();
+
+    var electing = MigratorDutyStaging.ElectAsync(elector, _registers(), SCHEMA, logger);
+    await elector.FirstAttempt;
+    await Assert.That(electing.IsCompleted).IsFalse();
+    await path.ResumeAsync(Whizbang.Core.RunControl.RunHaltReason.Pause, CancellationToken.None);
+    var staging = await electing;
+
+    await Assert.That(staging.Stage).IsEqualTo(SchemaStage.Migrator);
+    await Assert.That(logger.Entries.Select(e => e.Message)).Contains(m => m.Contains("halted", StringComparison.Ordinal))
+      .Because("a halted refusal is logged as halted, not as an unavailable elector");
+  }
+
+  /// <summary>A stopped permit is final: the election ends as canceled, since the instance is stopping.</summary>
+  [Test]
+  public async Task AHaltedRefusal_WhenThePermitIsStopped_EndsTheElectionAsCanceledAsync() {
+    var path = _path();
+    await path.HaltAsync(Whizbang.Core.RunControl.RunHaltReason.Pause, CancellationToken.None);
+    var elector = new PermitElector(path.Permit);
+
+    var electing = MigratorDutyStaging.ElectAsync(elector, _registers(), SCHEMA);
+    await elector.FirstAttempt;
+    await path.HaltAsync(Whizbang.Core.RunControl.RunHaltReason.Stop, CancellationToken.None);
+
+    await Assert.That(async () => await electing).Throws<OperationCanceledException>();
+  }
+
+  /// <summary>An elector with no permit to wait on: the halted refusal is logged as halted, and the lock guards.</summary>
+  [Test]
+  public async Task AHaltedRefusal_FromAnElectorWithNoPermit_IsLoggedAsHalted_AndUnstagedAsync() {
+    var logger = new RecordingLogger();
+
+    var staging = await MigratorDutyStaging.ElectAsync(
+      new Elector(() => DutyAttempt.Lost(DutyRefusal.Halted, "the run permit is closed")), _registers(), SCHEMA, logger);
+
+    await Assert.That(staging.Stage).IsEqualTo(SchemaStage.Unstaged);
+    await Assert.That(logger.Entries.Select(e => e.Message)).Contains(m => m.Contains("halted", StringComparison.Ordinal));
+    await Assert.That(logger.Entries.Select(e => e.Message)).DoesNotContain(m => m.Contains("could not be decided", StringComparison.Ordinal))
+      .Because("the elector answered; the instance is halted, which is not a duty that could not be decided");
+  }
+
   /// <summary>A contended duty makes this instance a waiter.</summary>
   [Test]
   public async Task AContendedDutyMakesThisInstanceAWaiterAsync() {
@@ -276,4 +351,82 @@ public class MigratorDutyStagingTests {
     await Assert.That(async () => await MigratorDutyStaging.ElectAsync(
       new Elector(() => DutyAttempt.Granted(new FakeGrant())), null!, SCHEMA))
       .Throws<ArgumentNullException>();
+
+  /// <summary>
+  /// Registering is its own step, the last of Preflight (#1636): it runs the registration and answers whether this
+  /// instance joined.
+  /// </summary>
+  [Test]
+  public async Task Register_RunsTheRegistration_AndAnswersThatTheInstanceJoinedAsync() {
+    var calls = 0;
+
+    var joined = await MigratorDutyStaging.RegisterAsync(_registers(() => calls++), SCHEMA);
+
+    await Assert.That(joined).IsTrue();
+    await Assert.That(calls).IsEqualTo(1);
+  }
+
+  /// <summary>A registration that fails is said at Warning and answered, not thrown: the election is given up, not the start.</summary>
+  [Test]
+  public async Task Register_ThatFails_IsSaidAndAnsweredAsNotJoinedAsync() {
+    var logger = new RecordingLogger();
+
+    var joined = await MigratorDutyStaging.RegisterAsync(
+      _ => throw new InvalidOperationException("relation \"wh_service_instances\" does not exist"), SCHEMA, logger);
+
+    await Assert.That(joined).IsFalse();
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning)).IsTrue();
+  }
+
+  /// <summary>A registration that fails with no logger given is still answered as not joined, not thrown.</summary>
+  [Test]
+  public async Task Register_ThatFails_WithNoLogger_IsAnsweredAsNotJoinedAsync() {
+    var joined = await MigratorDutyStaging.RegisterAsync(
+      _ => throw new InvalidOperationException("relation \"wh_service_instances\" does not exist"), SCHEMA);
+
+    await Assert.That(joined).IsFalse();
+  }
+
+  /// <summary>Cancellation, before or during the registration, propagates.</summary>
+  [Test]
+  public async Task Register_Cancellation_PropagatesAsync() {
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
+
+    await Assert.That(async () => await MigratorDutyStaging.RegisterAsync(_registers(), SCHEMA, null, cts.Token))
+      .Throws<OperationCanceledException>();
+    await Assert.That(async () => await MigratorDutyStaging.RegisterAsync(
+      _ => throw new OperationCanceledException(), SCHEMA)).Throws<OperationCanceledException>();
+    await Assert.That(async () => await MigratorDutyStaging.RegisterAsync(null!, SCHEMA))
+      .Throws<ArgumentNullException>();
+  }
+
+  /// <summary>
+  /// Electing an instance that has already registered asks the elector once, registers nothing, and hands over the
+  /// grant.
+  /// </summary>
+  [Test]
+  public async Task Elect_AfterRegistering_AsksTheElectorOnce_AndHandsOverTheGrantAsync() {
+    var grant = new FakeGrant();
+    var elector = new Elector(() => DutyAttempt.Granted(grant));
+
+    var staging = await MigratorDutyStaging.ElectAsync(elector, SCHEMA);
+
+    await Assert.That(staging.Stage).IsEqualTo(SchemaStage.Migrator);
+    await Assert.That(staging.Grant).IsSameReferenceAs(grant);
+    await Assert.That(elector.Attempts).IsEqualTo(1);
+  }
+
+  /// <summary>Electing with no elector registered leaves the instance unstaged, and cancellation still propagates.</summary>
+  [Test]
+  public async Task Elect_AfterRegistering_WithNoElector_IsUnstaged_AndCancellationPropagatesAsync() {
+    var staging = await MigratorDutyStaging.ElectAsync(null, SCHEMA);
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
+
+    await Assert.That(staging.Stage).IsEqualTo(SchemaStage.Unstaged);
+    await Assert.That(staging.Detail).IsEqualTo("no elector is registered");
+    await Assert.That(async () => await MigratorDutyStaging.ElectAsync(
+      new Elector(() => DutyAttempt.Granted(new FakeGrant())), SCHEMA, null, cts.Token)).Throws<OperationCanceledException>();
+  }
 }

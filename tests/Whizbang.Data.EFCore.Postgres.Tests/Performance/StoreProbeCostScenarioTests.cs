@@ -39,6 +39,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// </para>
 /// </remarks>
 [Category("Benchmark")]
+[NotInParallel] // A measurement: runs alone so it measures the code, not its neighbors.
 [Category("Performance")]
 public class StoreProbeCostScenarioTests : EFCoreTestBase {
   /// <summary>Streams the outbox already holds pending work for.</summary>

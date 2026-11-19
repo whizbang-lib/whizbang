@@ -19,7 +19,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/polymorphic-discriminator</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PolymorphicDiscriminatorAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PolymorphicDiscriminatorAttributeTests.cs</tests>
 /// <example>
 /// <code>
 /// public record Field {

@@ -24,7 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// acquired, and that is observable without pinning any particular SQL.
 /// </remarks>
 [Category("Integration")]
-[Category("Shard2")]
+[Category("Shard5")]
 public class EFCoreWorkCoordinatorEmptyInputTests : EFCoreTestBase {
 
   private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator()

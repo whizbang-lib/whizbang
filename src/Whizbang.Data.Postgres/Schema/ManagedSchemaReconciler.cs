@@ -40,6 +40,7 @@ public sealed record ManagedSchemaReport(
 /// </remarks>
 /// <docs>fundamentals/perspectives/managed-schema-objects</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ManagedSchemaReconcilerTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/RetentionUpdatedAtIndexReconcileTests.cs</tests>
 public static class ManagedSchemaReconciler {
   /// <summary>Reconciles the perspective tables of one schema.</summary>
   /// <param name="connection">An open connection, outside any transaction, that the caller owns.</param>
@@ -89,11 +90,15 @@ public static class ManagedSchemaReconciler {
         return null;
       }
 
+      // The tables that declare row retention keep their updated_at index (#2087): built here when missing, before
+      // the tables are read, and declared, so the plan keeps it while it retires the same index everywhere else.
+      var retention = await PerspectiveRetentionIndexes.EnsureAsync(
+        connection, schema, settings.Mode is ReconcileMode.Apply or ReconcileMode.AddOnly, target.Logger, token);
       var live = await ManagedSchemaCatalog.ReadLiveAsync(connection, schema, token);
-      var effective = await _withEquivalentsAsync(connection, schema, declared, live, token);
+      var effective = await _withEquivalentsAsync(connection, schema, declared.With(retention), live, token);
       var ledger = await ManagedSchemaCatalog.ReadLedgerAsync(connection, target.LedgerTable, token);
       var fleet = await ManagedSchemaFleet.ReportAndReadAsync(
-        connection, schema, instanceId, effective, ManagedSchemaFleet.LiveWindow, token);
+        connection, schema, instanceId, effective, token);
       var planned = ManagedSchemaPlanner.Plan(effective, live, ledger, settings.ForPass(fleet), DateTimeOffset.UtcNow);
       await ManagedSchemaCatalog.WriteLedgerAsync(connection, target.LedgerTable, planned.Records, token);
       return planned;
@@ -234,9 +239,12 @@ public static class ManagedSchemaReconciler {
   /// <remarks>
   /// An object the ledger has never seen is left out: one the server never built (an index in an optional-extension
   /// block it refused) would otherwise send every start through the schema pass under the lock, to fail the same way.
-  /// It is reported missing by the reconcile instead. Nothing is named when the schema has no ledger yet.
+  /// It is reported missing by the reconcile instead. Nothing is named when the schema has no ledger yet. Whether it has
+  /// one is read from <c>pg_class</c>, so a caller's open transaction cannot hide a ledger another session committed.
   /// </remarks>
-  /// <param name="connection">An open connection.</param>
+  /// <docs>contributors/data-engines/writing-migrations#catalog-existence-checks</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ManagedSchemaReconcilerTests.cs:InsideATransactionThatBeganBeforeTheLedgerWasCommitted_NamesTheTableForRebuildingAsync</tests>
+  /// <param name="connection">An open connection, in a transaction or not.</param>
   /// <param name="schema">The schema, bare.</param>
   /// <param name="declared">What the model declares.</param>
   /// <param name="cancellationToken">Cancels the read.</param>
@@ -245,7 +253,9 @@ public static class ManagedSchemaReconciler {
     ArgumentNullException.ThrowIfNull(connection);
     ArgumentNullException.ThrowIfNull(declared);
     var ledgerTable = PgIdentifier.Quote(schema) + ".wh_managed_objects";
-    if (await _scalarAsync<string?>(connection, "SELECT to_regclass(@t)::text", cancellationToken, ("t", ledgerTable)) is null) {
+    // Read from pg_class, not resolved by name: the caller's connection may carry a transaction whose session cached the
+    // ledger as missing before another session committed it (#2038).
+    if (!await CatalogPresence.RelationExistsAsync(connection, schema, "wh_managed_objects", cancellationToken)) {
       return [];
     }
     var liveObjects = await ManagedSchemaCatalog.ReadLiveAsync(connection, schema, cancellationToken);

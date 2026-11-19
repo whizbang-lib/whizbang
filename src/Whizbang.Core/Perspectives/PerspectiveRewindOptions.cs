@@ -8,7 +8,7 @@ namespace Whizbang.Core.Perspectives;
 /// Controls whether rewinds are enabled, startup scan behavior, and concurrency limits.
 /// </summary>
 /// <docs>fundamentals/perspectives/rewind</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRewindOptionsTests.cs</tests>
 public class PerspectiveRewindOptions {
   /// <summary>
   /// Master switch for rewind detection and execution.
@@ -51,6 +51,14 @@ public class PerspectiveRewindOptions {
   public TimeSpan DebounceWindow { get; set; } = TimeSpan.FromSeconds(5);
 
   /// <summary>
+  /// How many times a rewind may be asked for again with the same trigger on an unchanged stream before the worker logs
+  /// a warning naming the perspective and the stream (#2366). Each repeat is settled without running either way, and
+  /// counted on <c>whizbang.perspective.rewind_repeats</c>; the warning is written once per stream and trigger.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#a-repeated-rewind-is-settled</docs>
+  public int RepeatWarningThreshold { get; set; } = 10;
+
+  /// <summary>
   /// Hard cap on debounce duration. Forces rewind after this time even if
   /// new late events keep arriving (sliding window still active).
   /// Set equal to DebounceWindow for fixed-window behavior.
@@ -64,9 +72,9 @@ public class PerspectiveRewindOptions {
 /// Controls startup rewind behavior.
 /// </summary>
 /// <docs>fundamentals/perspectives/rewind#startup-modes</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindOptionsTests.cs:RewindStartupMode_HasExpectedValuesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindOptionsTests.cs:Properties_CanBeSetAsync</tests>
-/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRewindOptionsTests.cs:RewindStartupMode_HasExpectedValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRewindOptionsTests.cs:Properties_CanBeSetAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_StartsConsumersAndHoldsOnlyTheBarrierAsync</tests>
 public enum RewindStartupMode {
   /// <summary>
   /// Rewinds complete before the worker starts polling for new work.

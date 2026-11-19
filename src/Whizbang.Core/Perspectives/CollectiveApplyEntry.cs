@@ -56,8 +56,8 @@ namespace Whizbang.Core.Perspectives;
 /// global default. Emitted from <c>[CollectiveApplyFor(StatementTimeoutSeconds = …)]</c>.
 /// </param>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_OneEntry_InvokesExecutorOnceAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_TwoEntriesSameEventDifferentModels_FansOutAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_OneEntry_InvokesExecutorOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_TwoEntriesSameEventDifferentModels_FansOutAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveEventApplierTests.cs:ApplyAsync_EventTypeMismatch_ThrowsArgumentExceptionAsync</tests>
 public sealed record CollectiveApplyEntry(
   Type ModelType,
@@ -69,4 +69,19 @@ public sealed record CollectiveApplyEntry(
   Func<object, ICollectiveEvent, ICollectiveQuery, object> Invoker,
   int BatchSizeOverride = 0,
   int StatementTimeoutSecondsOverride = 0
-);
+) {
+  /// <summary>
+  /// The stable identity of this handler's apply of an event to its model: the handler type, the method and the model.
+  /// The collective sink records how far each apply of a collective reached under this key (#1969), so two handlers that
+  /// apply one event to one model keep their own progress.
+  /// </summary>
+  /// <remarks>
+  /// The key is built from names, so it survives a restart and a redeploy. Renaming the handler type, the method or the
+  /// model between an apply's attempts gives the retry a new key, and the retry then applies the collective in full again.
+  /// </remarks>
+  /// <docs>fundamentals/messaging/collective-events#resuming-an-apply</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveApplyEntryTests.cs:EntryKey_NamesTheHandlerTheMethodAndTheModelAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveApplyEntryTests.cs:EntryKey_DiffersForTwoMethodsOfOneHandlerAsync</tests>
+  public string EntryKey =>
+    TypeNameFormatter.FormatClrTypeName(HandlerType) + "." + MethodName + ":" + TypeNameFormatter.FormatClrTypeName(ModelType);
+}

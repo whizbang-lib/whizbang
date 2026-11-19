@@ -30,6 +30,12 @@ namespace Whizbang.Data.Postgres;
 /// batch that finds it held returns at once, and this call stops for the cycle. Once a batch finds nothing left the
 /// marker is set, and every later call costs one keyed read.
 /// </para>
+/// <para>
+/// Once the backfill is done, the same call drives the one-time release of the ephemeral streams the ledger came to hold
+/// (#2328, <c>wh_stream_lifecycle_release_ephemeral_batch</c>): rows written while a type was Sourced stayed after its
+/// history was reclassified ephemeral. Same shape: bounded batches after a cursor, one instance at a time, a marker once
+/// done.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/events/stream-end-of-life#the-one-time-backfill</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamLifecycleBackfillMaintenanceStepTests.cs</tests>
@@ -65,31 +71,56 @@ public static partial class StreamLifecycleBackfill {
     ArgumentException.ThrowIfNullOrWhiteSpace(quotedSchema);
     ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
     var log = logger ?? NullLogger.Instance;
+    var (visited, rounds, done, busy) = await _runBatchesAsync(
+      connection, $"SELECT {quotedSchema}.wh_backfill_stream_lifecycle_batch($1)", batchSize, maxRounds, cancellationToken).ConfigureAwait(false);
+    if (busy) {
+      LogBusy(log);
+      return visited;
+    }
+    if (!done) {
+      return visited;
+    }
+    if (visited > 0) {
+      LogCompleted(log, visited);
+    }
+    // #2328: once the backfill is done, the one-time release of the ephemeral streams the ledger holds, with the rounds
+    // this cycle has left. Each call after the release is done costs one keyed read.
+    var (released, _, releaseDone, _) = await _runBatchesAsync(
+      connection, $"SELECT {quotedSchema}.wh_stream_lifecycle_release_ephemeral_batch($1)", batchSize,
+      maxRounds - rounds, cancellationToken).ConfigureAwait(false);
+    if (releaseDone && released > 0) {
+      LogReleased(log, released);
+    }
+    return visited + released;
+  }
+
+  // Runs one walker's batches until it is done (0), another instance holds its cursor (-1), or the rounds run out.
+  private static async Task<(long Visited, int Rounds, bool Done, bool Busy)> _runBatchesAsync(
+      NpgsqlConnection connection, string sql, int batchSize, int maxRounds, CancellationToken cancellationToken) {
     long visited = 0;
     for (var round = 0; round < maxRounds; round++) {
-      await using var command = new NpgsqlCommand(
-        $"SELECT {quotedSchema}.wh_backfill_stream_lifecycle_batch($1)", connection);
+      await using var command = new NpgsqlCommand(sql, connection);
       command.Parameters.AddWithValue(batchSize);
       var result = Convert.ToInt32(
         await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), CultureInfo.InvariantCulture);
       if (result == BUSY) {
-        LogBusy(log);
-        return visited;
+        return (visited, round + 1, false, true);
       }
       if (result == 0) {
-        if (visited > 0) {
-          LogCompleted(log, visited);
-        }
-        return visited;
+        return (visited, round + 1, true, false);
       }
       visited += result;
     }
-    return visited;
+    return (visited, maxRounds, false, false);
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "Stream lifecycle backfill finished: this run seeded the ledger for {Visited} streams, and the store is recorded as done.")]
   private static partial void LogCompleted(ILogger logger, long visited);
+
+  [LoggerMessage(EventId = 3, Level = LogLevel.Information,
+    Message = "Stream lifecycle ephemeral release finished: this run settled {Visited} ledger rows, and ephemeral streams are no longer held.")]
+  private static partial void LogReleased(ILogger logger, long visited);
 
   [LoggerMessage(EventId = 2, Level = LogLevel.Debug,
     Message = "Stream lifecycle backfill skipped this cycle: another instance holds its cursor.")]

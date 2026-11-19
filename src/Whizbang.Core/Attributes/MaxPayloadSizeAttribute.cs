@@ -13,7 +13,7 @@ namespace Whizbang.Core.Attributes;
 /// </remarks>
 /// <param name="bytes">The limit for this type's serialized payload, in bytes. Zero or less turns the limit off for the type.</param>
 /// <docs>fundamentals/messages/payload-size-limit</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/MessagePayloadLimitsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessagePayloadLimitsTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, Inherited = true, AllowMultiple = false)]
 public sealed class MaxPayloadSizeAttribute(long bytes) : Attribute {
   /// <summary>The limit, in bytes; zero or less means no limit for the type.</summary>

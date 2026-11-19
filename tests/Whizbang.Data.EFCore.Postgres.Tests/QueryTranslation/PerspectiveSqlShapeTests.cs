@@ -34,7 +34,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <docs>operations/diagnostics/whiz302</docs>
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class PerspectiveSqlShapeTests {
   // No connection is opened; the provider only needs a syntactically valid string to build a model.

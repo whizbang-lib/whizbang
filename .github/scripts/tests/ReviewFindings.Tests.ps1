@@ -505,19 +505,19 @@ Describe 'Find-PullRequestTypeFindings' {
   }
 
   It 'asks a fix to close an issue labeled bug' {
-    $f = Find-Type -Title 'fix: x' -Paths @('src/A.cs', 'tests/ATests.cs', 'CHANGELOG.md') -Labels @('enhancement')
+    $f = Find-Type -Title 'fix: x' -Paths @('src/A.cs', 'tests/ATests.cs', 'changelog.d/1.md') -Labels @('enhancement')
     $f.Rule | Should -Be @('pr.fix-bug-issue')
     $f[0].Severity | Should -Be 'blocking'
   }
 
   It 'asks a library fix for a test' {
-    (Find-Type -Title 'fix: x' -Paths @('src/A.cs', 'CHANGELOG.md')).Rule | Should -Be @('pr.fix-test')
+    (Find-Type -Title 'fix: x' -Paths @('src/A.cs', 'changelog.d/1.md')).Rule | Should -Be @('pr.fix-test')
   }
 
   It 'asks a library feat, fix or perf for its docs-site pull request, saying how to link it' -TestCases @(
     @{ T = 'feat: x'; L = @('feature') }, @{ T = 'fix: x'; L = @('bug') }, @{ T = 'perf: x'; L = @() }
   ) {
-    $f = @(Find-Type -Title $T -Paths @('src/A.cs', 'tests/ATests.cs', 'CHANGELOG.md') -Labels $L -Docs @())
+    $f = @(Find-Type -Title $T -Paths @('src/A.cs', 'tests/ATests.cs', 'changelog.d/1.md') -Labels $L -Docs @())
     $f.Rule | Should -Be @('pr.docs-link')
     $f[0].Severity | Should -Be 'blocking'
     $f[0].Body | Should -Match 'Docs for whizbang-lib/whizbang#'
@@ -527,37 +527,51 @@ Describe 'Find-PullRequestTypeFindings' {
 
   It 'does not count a docs-site pull request closed without merging' {
     $closed = @([pscustomobject]@{ Number = 9; State = 'CLOSED'; ReferencesThis = $true })
-    (Find-Type -Title 'feat: x' -Paths @('src/A.cs', 'CHANGELOG.md') -Labels @('feature') -Docs $closed).Rule | Should -Be @('pr.docs-link')
+    (Find-Type -Title 'feat: x' -Paths @('src/A.cs', 'changelog.d/1.md') -Labels @('feature') -Docs $closed).Rule | Should -Be @('pr.docs-link')
   }
 
   It 'counts a merged docs-site pull request' {
     $merged = @([pscustomobject]@{ Number = 9; State = 'MERGED'; ReferencesThis = $true })
-    @(Find-Type -Title 'feat: x' -Paths @('src/A.cs', 'CHANGELOG.md') -Labels @('feature') -Docs $merged).Count | Should -Be 0
+    @(Find-Type -Title 'feat: x' -Paths @('src/A.cs', 'changelog.d/1.md') -Labels @('feature') -Docs $merged).Count | Should -Be 0
   }
 
   It 'asks a docs-site pull request linked only from here to link back' {
     $oneWay = @([pscustomobject]@{ Number = 9; State = 'OPEN'; ReferencesThis = $false })
-    $f = @(Find-Type -Title 'feat: x' -Paths @('src/A.cs', 'CHANGELOG.md') -Labels @('feature') -Docs $oneWay)
+    $f = @(Find-Type -Title 'feat: x' -Paths @('src/A.cs', 'changelog.d/1.md') -Labels @('feature') -Docs $oneWay)
     $f.Rule | Should -Be @('pr.docs-backlink')
     $f[0].Body | Should -Match '#9'
   }
 
   It 'asks nothing about docs when a maintainer marked them not needed' {
-    @(Find-Type -Title 'fix: x' -Paths @('src/A.cs', 'tests/ATests.cs', 'CHANGELOG.md') -Docs @() -PrLabels @('docs:not-needed')).Count | Should -Be 0
+    @(Find-Type -Title 'fix: x' -Paths @('src/A.cs', 'tests/ATests.cs', 'changelog.d/1.md') -Docs @() -PrLabels @('docs:not-needed')).Count | Should -Be 0
   }
 
   It 'asks no docs of a refactor, a test or a change outside the library' {
-    @(Find-Type -Title 'refactor: x' -Paths @('src/A.cs', 'CHANGELOG.md') -Docs @()).Rule | Should -Not -Contain 'pr.docs-link'
+    @(Find-Type -Title 'refactor: x' -Paths @('src/A.cs', 'changelog.d/1.md') -Docs @()).Rule | Should -Not -Contain 'pr.docs-link'
     @(Find-Type -Title 'fix(ci): x' -Paths @('.github/workflows/ci.yml') -Docs @()).Rule | Should -Not -Contain 'pr.docs-link'
   }
 
-  It 'asks a library feat or fix for a CHANGELOG.md entry' -TestCases @(@{ T = 'fix: x' }, @{ T = 'feat(core): x' }) {
+  It 'asks a library feat or fix into develop for a changelog fragment' -TestCases @(@{ T = 'fix: x' }, @{ T = 'feat(core): x' }) {
     $body = 'whizbang-lib.github.io/pull/1'
-    (Find-Type -Title $T -Paths @('src/A.cs', 'tests/ATests.cs') -Body $body).Rule | Should -Contain 'pr.changelog'
+    $f = @(Find-Type -Title $T -Paths @('src/A.cs', 'tests/ATests.cs') -Body $body | Where-Object Rule -EQ 'pr.changelog')
+    $f.Count | Should -Be 1
+    $f[0].Body | Should -Match 'changelog\.d/<issue>\.md'
+  }
+
+  It 'does not count CHANGELOG.md or the fragment README as a fragment on a pull request into develop' {
+    (Find-Type -Title 'fix: x' -Paths @('src/A.cs', 'tests/ATests.cs', 'CHANGELOG.md')).Rule | Should -Contain 'pr.changelog'
+    (Find-Type -Title 'fix: x' -Paths @('src/A.cs', 'tests/ATests.cs', 'changelog.d/README.md')).Rule | Should -Contain 'pr.changelog'
+  }
+
+  It 'takes a CHANGELOG.md entry on a pull request into a release branch, and asks for one there' {
+    @(Find-Type -Title 'fix: x' -Paths @('src/A.cs', 'tests/ATests.cs', 'CHANGELOG.md') -Base 'release/v1.2.0').Count | Should -Be 0
+    $f = @(Find-Type -Title 'fix: x' -Paths @('src/A.cs', 'tests/ATests.cs', 'changelog.d/1.md') -Base 'release/v1.2.0' | Where-Object Rule -EQ 'pr.changelog')
+    $f.Count | Should -Be 1
+    $f[0].Body | Should -Match "CHANGELOG\.md's section"
   }
 
   It 'is quiet for a complete fix' {
-    @(Find-Type -Title 'fix(core): x' -Paths @('src/A.cs', 'tests/ATests.cs', 'CHANGELOG.md')).Count | Should -Be 0
+    @(Find-Type -Title 'fix(core): x' -Paths @('src/A.cs', 'tests/ATests.cs', 'changelog.d/1.md')).Count | Should -Be 0
   }
 
   It 'asks nothing of a change outside the library' {

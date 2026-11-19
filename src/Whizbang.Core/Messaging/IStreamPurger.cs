@@ -37,7 +37,7 @@ public interface IStreamPurger {
 
 /// <summary>An operator's request to purge streams.</summary>
 /// <docs>operations/infrastructure/purging-streams</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamPurgeRequestTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamPurgeRequestTests.cs</tests>
 public sealed record StreamPurgeRequest {
   /// <summary>The default number of streams per batch (one transaction each).</summary>
   public const int DEFAULT_BATCH_SIZE = 100;
@@ -90,7 +90,7 @@ public sealed record StreamPurgeRequest {
 /// <param name="DryRun">Whether nothing was changed.</param>
 /// <param name="Batches">Each batch, in order.</param>
 /// <docs>operations/infrastructure/purging-streams</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamPurgeRequestTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamPurgeRequestTests.cs</tests>
 public sealed record StreamPurgeReport(Guid PurgeId, bool DryRun, IReadOnlyList<StreamPurgeBatch> Batches) {
   /// <summary>Rows per table across the batches this instance ran.</summary>
   public IReadOnlyDictionary<string, long> Totals =>

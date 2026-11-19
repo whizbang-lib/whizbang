@@ -162,6 +162,18 @@ public static class ServiceCollectionExtensions {
         sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<UnknownConfigurationKeyStartupValidator>>(),
         sp.GetService<IConfiguration>())));
 
+    // #2201: items two assemblies both register (a perspective, a receptor, a model) are reported at host start,
+    // naming the item and both assemblies; Whizbang:Startup:RegistrationCollisions = Fail stops the start instead.
+    // Every per-assembly registration adds the check too; registering it here gives every host its setting.
+    services.AddRegistrationCollisionCheck();
+
+    // #2251: once the service is running, every setting it reads is logged with its value and where it came from.
+    services.AddWhizbangStartupSettingsReport();
+
+    // #2285: the service-wide defaults for streaming events into composites, with a byte limit derived from the transport
+    // and the body-offload threshold.
+    Whizbang.Core.Minting.CompositeBatchServiceCollectionExtensions.AddWhizbangCompositeBatches(services);
+
     // Inert-concurrency report: ParallelizeStreams defaults to false on BOTH WorkCoordinatorOptions
     // and OrderedStreamProcessorOptions, while the width options default to 16 and 8 — so the
     // shipped default advertises concurrency the runtime will not use, and every deployment
@@ -246,7 +258,9 @@ public static class ServiceCollectionExtensions {
     services.AddWhizbangWorkers();
 
     // Auto-invoke generated service registration callbacks
-    // These are set by source-generated module initializers in consumer assemblies
+    // These are set by source-generated module initializers in consumer assemblies. Only the host's own service's
+    // are replayed (#2243): the scope, and the startup report that names it.
+    services.AddServiceAssemblyScope();
     ServiceRegistrationCallbacks.InvokeAll(services, coreOptions.Services);
 
     // Turnkey: if the ASP.NET hosting assembly is loaded, its [ModuleInitializer] set
@@ -400,6 +414,9 @@ public static class ServiceCollectionExtensions {
       return new ServiceInstanceProvider(configuration);
     });
 
+    // #2027: the application version every instance records beside its library version.
+    Versioning.ApplicationVersionRegistration.TryAddWhizbangApplicationVersion(services);
+
     services.AddWhizbangMessageSecurity();
 
     // The event mint (topology arc phase 4): the composite splitter + the family facade.
@@ -444,6 +461,8 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<GovernorMetrics>();
     services.TryAddSingleton<EventCategoryMetrics>();
     services.TryAddSingleton<TypeRegistryMetrics>();
+    // #2250: the ephemeral blocker report's gauge, and the once-per-process startup summary it remembers.
+    services.TryAddSingleton<EphemeralBlockerMetrics>();
 
     // Cross-worker dedup: prevents same message+stage from firing twice
     services.TryAddSingleton<Messaging.LifecycleStageTracker>();
@@ -582,7 +601,7 @@ public static class ServiceCollectionExtensions {
   /// <see cref="DecorateEventStoreWithSyncTracking"/> registers them with the factory that calls this.
   /// </summary>
   /// <docs>fundamentals/events/archive-store#read-through</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveReadThroughRegistrationTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveReadThroughRegistrationTests.cs</tests>
   private static Messaging.IEventStore _withArchive(Messaging.IEventStore store, IServiceProvider sp) =>
     sp.GetService<Whizbang.Core.Archival.IArchiveStore>() is { } archive
       ? new Whizbang.Core.Archival.ArchiveAwareEventStoreDecorator(

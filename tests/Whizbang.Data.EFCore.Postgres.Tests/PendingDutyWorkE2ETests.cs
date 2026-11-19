@@ -25,11 +25,15 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// the interrupted holder can neither write under its stale epoch nor mark the work done. Nothing
 /// here sleeps: database time is advanced by shifting stored instants back.
 /// </summary>
+/// <remarks>
+/// These tests pin the lease mechanics, so their electors run with <c>RoleAssignmentOptions.ProgressWindow</c> off: a
+/// holder lapses at its lease. A holder judged by the one liveness rule (#2140) is covered by
+/// <c>RoleHolderLivenessE2ETests</c> and <c>RoleHolderLivenessSqlTests</c>.
+/// </remarks>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgPendingDutyWorkStore.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Startup/DutyHolderWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/173_RoleAssignments.sql</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class PendingDutyWorkE2ETests : EFCoreTestBase {
   private const string ROLE = StartupDuties.MAINTAINER;
@@ -73,17 +77,15 @@ public class PendingDutyWorkE2ETests : EFCoreTestBase {
 
   private static IConfiguration _config() => new ConfigurationBuilder().AddInMemoryCollection([]).Build();
 
-  private PgDutyElector _legacyFor(Pod pod) => new(_notification(), _config(), pod, NullLogger<PgDutyElector>.Instance);
-
-  private PgRoleElector _electorFor(Pod pod, bool bridge = true) => new(
-    _notification(), Options.Create(new RoleAssignmentOptions { HoldLegacySessionLock = bridge }), _config(), pod, _legacyFor(pod),
+  private PgRoleElector _electorFor(Pod pod) => new(
+    _notification(), Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero }), _config(), pod,
     NullLogger<PgRoleElector>.Instance, libraryVersion: null);
 
   private PgPendingDutyWorkStore _storeFor(Pod pod) =>
-    new(_notification(), Options.Create(new RoleAssignmentOptions()), _config(), pod);
+    new(_notification(), Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero }), _config(), pod);
 
   private DutyHolderWorker _workerFor(Pod pod, IDutyElector elector, params IDutyWorkHandler[] handlers) => new(
-    elector, _storeFor(pod), handlers, [], Options.Create(new RoleAssignmentOptions()), NullLogger<DutyHolderWorker>.Instance, notify: null);
+    elector, _storeFor(pod), handlers, [], Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero }), NullLogger<DutyHolderWorker>.Instance, signalBus: null);
 
   private async Task<Pod> _joinAsync(CancellationToken ct) {
     var pod = new Pod();
@@ -122,7 +124,8 @@ public class PendingDutyWorkE2ETests : EFCoreTestBase {
       CancellationToken cancellationToken) {
     var old = await _joinAsync(cancellationToken);
     var @new = await _joinAsync(cancellationToken);
-    var oldHolding = (await _legacyFor(old).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+    // An instance on an older release holds the duty by its own session lock, and records the holding (#2044).
+    await _executeAsync("SELECT record_capability(@id, @role)", cancellationToken, ("id", old.InstanceId), ("role", ROLE));
 
     // The new instance boots while the old one holds the duty: its step is skipped, and owed.
     var step = new RewriteStep();
@@ -133,10 +136,10 @@ public class PendingDutyWorkE2ETests : EFCoreTestBase {
 
     var worker = _workerFor(@new, elector, new StartupStepDutyWork(step, null));
     await worker.RunOnceAsync(cancellationToken);
-    await Assert.That(step.Runs).IsEqualTo(0).Because("the old instance still holds the duty through its session lock");
+    await Assert.That(step.Runs).IsEqualTo(0).Because("the old instance still holds the duty outside the role table");
 
     // The old instance stops. The new one's next pass wins the role and runs what it was owed.
-    await oldHolding.DisposeAsync();
+    await _executeAsync("SELECT release_capability(@id, @role)", cancellationToken, ("id", old.InstanceId), ("role", ROLE));
     await worker.RunOnceAsync(cancellationToken);
     await Assert.That(worker.Holds(ROLE)).IsTrue();
     await Assert.That(step.Runs).IsEqualTo(1);
@@ -159,16 +162,14 @@ public class PendingDutyWorkE2ETests : EFCoreTestBase {
       await _executeAsync("SELECT wh_assert_role_epoch(@role, @id, @epoch); INSERT INTO repair_effects VALUES (@id);", ct,
         ("id", pod.InstanceId), ("role", ROLE), ("epoch", grant.Epoch!.Value));
 
-    // Bridge off: while bridged, a stalled holder keeps its session lock and nobody can take over
-    // (the documented bridge trade-off), which is not what this test is about.
-    var electorB = _electorFor(b, bridge: false);
+    var electorB = _electorFor(b);
     var workerB = _workerFor(b, electorB, new Handler(async (grant, ct) => {
       await writeEffectAsync(b, grant, ct);
       return DutyWorkResult.Done();
     }));
 
     // A holds the role and starts the work; mid-run it stalls past its lease and B takes over.
-    var workerA = _workerFor(a, _electorFor(a, bridge: false), new Handler(async (grant, ct) => {
+    var workerA = _workerFor(a, _electorFor(a), new Handler(async (grant, ct) => {
       await _ageLeaseAsync(ct);
       await workerB.RunOnceAsync(ct);
       await writeEffectAsync(a, grant, ct);   // the stale holder wakes and tries to write
@@ -254,7 +255,7 @@ public class PendingDutyWorkE2ETests : EFCoreTestBase {
       .Throws<ArgumentNullException>();
 
     var options = _notification();
-    var roles = Options.Create(new RoleAssignmentOptions());
+    var roles = Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero });
     var config = _config();
     await Assert.That(() => new PgPendingDutyWorkStore(null!, roles, config, pod)).Throws<ArgumentNullException>();
     await Assert.That(() => new PgPendingDutyWorkStore(options, null!, config, pod)).Throws<ArgumentNullException>();

@@ -30,7 +30,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </summary>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
 public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
@@ -101,11 +100,7 @@ public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
   [Before(Test)]
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
-    _testDatabaseName = $"multipers_test_{Guid.NewGuid():N}";
-
-    await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-    await adminConnection.OpenAsync();
-    await adminConnection.ExecuteAsync($"CREATE DATABASE {_testDatabaseName}");
+    _testDatabaseName = (await PerTestDatabaseFactory.CreateAsync("multipers")).Name;
 
     var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _testDatabaseName,
@@ -133,18 +128,7 @@ public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
       _dataSource = null;
     }
     if (_testDatabaseName != null) {
-      try {
-        await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await adminConnection.OpenAsync();
-        await adminConnection.ExecuteAsync($@"
-          SELECT pg_terminate_backend(pg_stat_activity.pid)
-          FROM pg_stat_activity
-          WHERE pg_stat_activity.datname = '{_testDatabaseName}'
-          AND pid <> pg_backend_pid()");
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
-      } catch {
-        // Cleanup best-effort
-      }
+      await PerTestDatabaseFactory.DropAsync(_testDatabaseName);
       _testDatabaseName = null;
     }
   }

@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
+using Whizbang.Core;
 using Whizbang.Core.Perspectives.Hooks;
 
 namespace Whizbang.Data.Postgres;
@@ -114,7 +115,7 @@ public static class PerEventApplyHooks {
     DateTimeOffset dto => dto,
     DateTime dt => new DateTimeOffset(dt.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(dt, DateTimeKind.Utc) : dt),
     _ => throw new NotSupportedException(
-      $"Per-event SetColumn('{ApplyHookColumns.UPDATED_AT}') expects a DateTimeOffset or DateTime value; got {value.GetType().Name}."),
+      $"Per-event SetColumn('{ApplyHookColumns.UPDATED_AT}') expects a DateTimeOffset or DateTime value; got {TypeNameFormatter.ForLog(value.GetType())}."),
   };
 
   // Compile a type-erased setter: (object target, object? value) => ((TModel)target).Prop = (TProp)value.

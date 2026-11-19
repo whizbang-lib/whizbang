@@ -40,7 +40,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityManifestReceptors.cs</code-under-test>
 /// <docs>resilience/stream-integrity#repair-caps</docs>
-[NotInParallel("IntegrityManifestGates")]
+[NotInParallel("IntegrityManifestGates")] // the receptors' per-process gates are shared state
 [Category("Shard3")]
 public class IntegrityManifestDrainAdmissionTests {
 
@@ -337,6 +337,7 @@ public class IntegrityManifestDrainAdmissionTests {
       Coordinator.Local = Local;
       var services = new ServiceCollection();
       services.AddSingleton<IWorkCoordinator>(Coordinator);
+      services.AddSingleton<IConsumerRegistry>(new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery());
       services.AddSingleton<IDispatcher>(new NullDispatcher());
       services.AddSingleton<IIntegrityRepairLedger>(Ledger);
       services.AddSingleton(Options.Create(options));
@@ -346,6 +347,7 @@ public class IntegrityManifestDrainAdmissionTests {
       var sp = services.BuildServiceProvider();
       var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), Logger);
       await receptor.HandleAsync(new IntegrityManifest {
+        RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
         ManifestStreamId = Coordinator.OriginId,
         OriginServiceId = Coordinator.OriginId,
         OriginServiceName = "origin-svc",

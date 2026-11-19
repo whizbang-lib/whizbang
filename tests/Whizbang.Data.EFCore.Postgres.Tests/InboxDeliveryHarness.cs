@@ -47,15 +47,12 @@ internal static class InboxDeliveryHarness {
 
     var inbox = new FakeInboxChannelWriter();
     var failure = new RecordingFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new InboxDispatchWorker(
       scopeFactory: receiver.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: receiver.GetRequiredService<IServiceInstanceProvider>(),
       inboxChannelWriter: inbox,
       handlerCommitChannel: new DiscardingHandlerCommitChannel(),
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,

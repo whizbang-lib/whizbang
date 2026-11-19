@@ -44,27 +44,34 @@ namespace Whizbang.Core.Workers;
 /// binding later in composition), the worker parks at ExecuteAsync when no enabled binding
 /// exists: the coordinator is never touched, no tick ever runs.
 /// </para>
+/// <para>
+/// <b>Run control (#2045).</b> Folding takes the pending singles for this instance, so each tick is a hold of the
+/// instance's run permit: no tick starts while the permit is closed, and the run-control path waits for the tick in hand.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#coalescing</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_GroupQuiet_FoldsAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_ContinuousArrivalsPastMaxDelay_FoldsAnywayAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_PendingLargerThanMaxBatch_FoldsInChunksAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:ExecuteAsync_NoEnabledBindings_ParksWithoutTouchingTheCoordinatorAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:ExecuteAsync_WithNoClockGiven_ParksOnTheSystemClockAndStopsCleanlyAsync</tests>
 public sealed partial class CoalesceShipWorker(
   IServiceScopeFactory scopeFactory,
-  ISchemaReadyGate schemaReadyGate,
   IServiceInstanceProvider instanceProvider,
   ILogger<CoalesceShipWorker> logger,
   ICompositeFactory compositeFactory,
   CoalesceGroupResolver? coalesceResolver = null,
-  TimeProvider? timeProvider = null) : BackgroundService {
+  TimeProvider? timeProvider = null,
+  Whizbang.Core.RunControl.WhizbangRunPermit? runPermit = null) : BackgroundService, Whizbang.Core.RunControl.IObeysRunPermit {
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
-  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly CoalesceGroupResolver? _coalesceResolver = coalesceResolver;
   private readonly ILogger<CoalesceShipWorker> _logger = logger;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
   private readonly ICompositeFactory _compositeFactory = compositeFactory;
+
+  /// <summary>The run permit each tick takes a hold of (#2045).</summary>
+  public Whizbang.Core.RunControl.WhizbangRunPermit RunPermit { get; } = runPermit ?? new Whizbang.Core.RunControl.WhizbangRunPermit();
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -76,12 +83,6 @@ public sealed partial class CoalesceShipWorker(
       try {
         await Task.Delay(Timeout.InfiniteTimeSpan, _timeProvider, stoppingToken).ConfigureAwait(false);
       } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
-      return;
-    }
-
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken).ConfigureAwait(false);
-    } catch (OperationCanceledException) {
       return;
     }
 
@@ -138,6 +139,7 @@ public sealed partial class CoalesceShipWorker(
   /// wall-clock waits.
   /// </summary>
   internal async Task RunOnceAsync(CancellationToken cancellationToken) {
+    using var hold = await RunPermit.EnterAsync(cancellationToken).ConfigureAwait(false);
     using var scope = _scopeFactory.CreateScope();
     var sp = scope.ServiceProvider;
     var coordinator = sp.GetRequiredService<IWorkCoordinator>();
@@ -258,7 +260,7 @@ public sealed partial class CoalesceShipWorker(
   /// </summary>
   /// <param name="batch">The fold batch.</param>
   /// <returns>The built composite.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   public static CompositeEventBase BuildDefaultComposite(CoalesceFoldBatch batch) {
     ArgumentNullException.ThrowIfNull(batch);
     return new CoalescedEventsComposite {

@@ -191,8 +191,10 @@ public class ArchiveRestoreRequestSqlTests : EFCoreTestBase {
     await Assert.That(await _policiesAsync(conn)).IsEquivalentTo(["Shop.Invoice|AutoRestore", "Shop.Order|Refuse"]);
     await Assert.That(await _syncAsync(conn, [], [])).IsEqualTo(2);
     await Assert.That(await _policiesAsync(conn)).IsEmpty().Because("a type no longer configured refuses again");
-    await Assert.That(async () => await _syncAsync(conn, ["Shop.Order"], ["NewGeneration"])).Throws<PostgresException>()
-      .Because("the table admits only the policies that ship; NewGeneration comes with #1734");
+    await Assert.That(async () => await _syncAsync(conn, ["Shop.Order"], ["Restore"])).Throws<PostgresException>()
+      .Because("the table admits only the policies that ship");
+    await Assert.That(await _syncAsync(conn, ["Shop.Order"], ["NewGeneration"])).IsEqualTo(1)
+      .Because("NewGeneration ships with #1734, so migration 280 admits it");
   }
 
   [Test]

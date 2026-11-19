@@ -4,6 +4,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Whizbang.Core.Health;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.RunControl;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
@@ -207,14 +208,48 @@ public class StartupWiringAuditTests {
   }
 
   [Test]
-  public async Task RunControlPlane_IncludesTheInstanceStateParticipantAsync() {
-    var services = _collection();
+  public async Task RunControlPlane_RecordsTheInstanceRow_ThroughTheStageParticipantAlone_WithTheLibraryVersionAsync(
+      CancellationToken cancellationToken) {
+    var writes = new TransitionRecorder();
+    var services = _collection(s => {
+      s.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+        new Whizbang.Core.Observability.ServiceInstanceProvider(Guid.CreateVersion7(), "audit-svc", "audit-host", processId: 1));
+      s.AddSingleton<Whizbang.Core.Observability.ILibraryVersionProvider>(
+        new Whizbang.Core.Observability.LibraryVersionProvider("7.7.7"));
+    });
+    services.AddScoped<IWorkCoordinator>(_ => writes);
     await using var sp = services.BuildServiceProvider();
+    await sp.GetRequiredService<Whizbang.Core.Startup.IStartupStageReporter>().InstanceRegisteredAsync(cancellationToken);
 
-    var participants = sp.GetServices<IWhizbangRunControl>().ToList();
+    foreach (var participant in sp.GetServices<IWhizbangRunControl>()) {
+      await participant.OnPhaseAsync(LifecyclePhase.StandingBy, cancellationToken);
+    }
 
-    await Assert.That(participants.Any(p => p is InstanceStateRunControl)).IsTrue()
-      .Because("the standby handshake turns on lifecycle states a peer can actually see");
+    await Assert.That(writes.Calls).IsEquivalentTo(["transition StandingBy 7.7.7"])
+      .Because("one write per transition (#1636): the standby handshake's StandingBy reaches the row through the stage "
+        + "record alone, with the version the host registered");
+  }
+
+  /// <summary>Records every instance-row write a participant makes, by kind.</summary>
+  private sealed class TransitionRecorder : IWorkCoordinator {
+    public bool RecordsInstanceTransitions => true;
+    public List<string> Calls { get; } = [];
+
+    public Task<bool> RecordInstanceTransitionAsync(
+        Whizbang.Core.Startup.InstanceTransition transition, CancellationToken cancellationToken = default) {
+      Calls.Add($"transition {transition.Phase} {transition.LibraryVersion}");
+      return Task.FromResult(true);
+    }
+
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken cancellationToken = default) => Task.FromResult(new PartitionRecomputeResult());
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
   }
 
   [Test]
@@ -240,9 +275,11 @@ public class StartupWiringAuditTests {
     await cts.CancelAsync();
     await started;
 
-    var watcher = (StandbyWatcher)services
-      .Single(d => d.ServiceType == typeof(IHostedService) && d.ImplementationFactory?.Method.ReturnType == typeof(StandbyWatcher))
-      .ImplementationFactory!(sp);
+    // Hosted to start when the schema-ready gate opens (#1636): the wrapper the registration builds holds the watcher.
+    var watcher = ((SchemaReadyGatedService<StandbyWatcher>)services
+      .Single(d => d.ServiceType == typeof(IHostedService)
+        && d.ImplementationFactory?.Method.ReturnType == typeof(SchemaReadyGatedService<StandbyWatcher>))
+      .ImplementationFactory!(sp)).Inner;
     await watcher.StartAsync(cancellationToken);
     var poll = await clock.NextArmedAsync(cancellationToken);
     await Assert.That(poll).IsEqualTo(ProbeClock.Origin + sp.GetRequiredService<StandbyWatcherOptions>().PollInterval)
@@ -259,7 +296,8 @@ public class StartupWiringAuditTests {
       .Where(d => d.ServiceType == typeof(IHostedService))
       .Select(d => d.ImplementationType ?? d.ImplementationFactory?.Method.ReturnType)
       .Where(t => t is not null)
-      .Select(t => t!.Name)
+      // A worker hosted with its start point (#1636) is registered as its wrapper; name the worker it starts.
+      .Select(t => t!.IsGenericType ? t.GetGenericArguments()[0].Name : t.Name)
       .ToList();
 
     foreach (var expected in new[] {

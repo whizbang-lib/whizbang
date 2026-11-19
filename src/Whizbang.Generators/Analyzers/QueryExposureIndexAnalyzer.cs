@@ -149,7 +149,7 @@ public class QueryExposureIndexAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    var subject = $"An equality or 'in' filter a request composes on '{model.Name}' ({string.Join(", ", unattributed)})";
+    var subject = $"An equality or 'in' filter a request composes on '{TypeNameUtilities.SimpleName(model)}' ({string.Join(", ", unattributed)})";
     var location = LocationUtilities.FirstOrNone(surface);
 
     context.ReportDiagnostic(declared == DocumentMatchDeclaration.Off
@@ -157,14 +157,14 @@ public class QueryExposureIndexAnalyzer : DiagnosticAnalyzer {
           PerspectiveQueriesDiscovery.WholeDocumentMatchHasNoIndex,
           location,
           subject,
-          $"'{model.Name}' declares [PerspectiveQueries(MatchOnAnyField = false)]",
+          $"'{TypeNameUtilities.SimpleName(model)}' declares [PerspectiveQueries(MatchOnAnyField = false)]",
           "Mark each field a request can filter on [Indexed], declare MatchOnAnyField = true, or record the "
             + "decision with [SuppressIndexAdvisory(\"reason\")]")
       : Diagnostic.Create(
           PerspectiveQueriesDiscovery.WholeDocumentMatchReliesOnDefault,
           location,
           subject,
-          model.Name,
+          TypeNameUtilities.SimpleName(model),
           "; a request can name any of these fields, so the only other answer is to mark each of them [Indexed]"));
   }
 
@@ -206,7 +206,7 @@ public class QueryExposureIndexAnalyzer : DiagnosticAnalyzer {
     context.ReportDiagnostic(Diagnostic.Create(
       SortableExposureDiscovery.SortableFieldsHaveNoIndex,
       LocationUtilities.FirstOrNone(surface),
-      model.Name,
+      TypeNameUtilities.SimpleName(model),
       unattributed.Length,
       string.Join(", ", unattributed)));
   }

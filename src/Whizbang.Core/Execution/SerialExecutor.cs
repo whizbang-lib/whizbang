@@ -13,6 +13,13 @@ namespace Whizbang.Core.Execution;
 /// Executes handlers serially in strict FIFO order.
 /// All messages are processed one at a time, preserving exact ordering.
 /// </summary>
+/// <remarks>
+/// Every item accepted by <see cref="ExecuteAsync{TResult}"/> is finished: its handler runs, or its
+/// caller's await ends in <see cref="OperationCanceledException"/>. <see cref="DrainAsync"/> runs
+/// everything queued. <see cref="StopAsync"/> lets the item already running finish and finishes every
+/// item still queued as canceled without running its handler.
+/// </remarks>
+/// <docs>operations/workers/execution-lifecycle</docs>
 /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:Constructor_Default_CreatesUnboundedExecutorAsync</tests>
 /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:Constructor_WithValidBoundedCapacity_CreatesExecutorAsync</tests>
 /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:Constructor_WithInvalidCapacity_ThrowsArgumentOutOfRangeExceptionAsync</tests>
@@ -26,8 +33,13 @@ namespace Whizbang.Core.Execution;
 /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:DrainAsync_WhenNotRunning_ReturnsImmediatelyAsync</tests>
 /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:ExecuteAsync_SerialExecution_MaintainsStrictOrderAsync</tests>
 /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:ExecuteAsync_CancellationToken_SkipsCanceledWorkAsync</tests>
-/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:DrainAsync_WithWorkerCancellation_HandlesOperationCanceledExceptionAsync</tests>
-/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorDrainAfterStopTests.cs:DrainAsync_WorkerCanceledWhileTheDrainAwaitsIt_CompletesAndRecordsItAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:DrainAsync_AfterStop_ReturnsWithoutDrainingAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorDrainAfterStopTests.cs:DrainAsync_StopLandsWhileTheDrainAwaitsTheWorker_BothCompleteAndQueuedWorkIsCanceledAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorStopTests.cs:StopAsync_ItemQueuedBehindRunningWork_IsCanceledWithoutRunningAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorDrainCancellationTests.cs:DrainAsync_CanceledWhileWaiting_StopsWaitingAndTheQueueStillRunsAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorDrainCancellationTests.cs:DrainAsync_TokenAlreadyCanceled_LeavesTheExecutorAcceptingWorkAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorEnqueueFailureTests.cs:ExecuteAsync_StopClosesTheChannelWhileTheWriteWaits_CallerIsCanceledAndStateReturnedAsync</tests>
+/// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorEnqueueFailureTests.cs:ExecuteAsync_CallerCancelsWhileTheWriteWaits_CallerSeesItsCancellationAndStateReturnedAsync</tests>
 /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:ProcessWorkItemsAsync_ExceptionInHandler_CaughtAndRecordedAsync</tests>
 /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs:ExecuteAsync_BoundedChannel_HandlesBackpressureAsync</tests>
 public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
@@ -79,6 +91,15 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
   public string Name => "Serial";
 
   /// <inheritdoc/>
+  /// <remarks>
+  /// Throws <see cref="OperationCanceledException"/> when the executor stops accepting work between
+  /// the running check and the enqueue (a stop or drain closing the channel, including under a
+  /// bounded write waiting for room), and the caller's own cancellation when its token cancels that
+  /// wait. In both cases the pooled execution state is returned (#2012).
+  /// </remarks>
+  /// <docs>operations/workers/execution-lifecycle</docs>
+  /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorEnqueueFailureTests.cs:ExecuteAsync_StopClosesTheChannelWhileTheWriteWaits_CallerIsCanceledAndStateReturnedAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorEnqueueFailureTests.cs:ExecuteAsync_CallerCancelsWhileTheWriteWaits_CallerSeesItsCancellationAndStateReturnedAsync</tests>
   public async ValueTask<TResult> ExecuteAsync<TResult>(
     IMessageEnvelope envelope,
     Func<IMessageEnvelope, PolicyContext, ValueTask<TResult>> handler,
@@ -107,8 +128,30 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
       cancellationToken: ct
     );
 
-    await _channel.Writer.WriteAsync(workItem, ct);
+    try {
+      await _channel.Writer.WriteAsync(workItem, ct);
+    } catch (ChannelClosedException ex) {
+      // A stop (or a drain) closed the channel after the running check above, or while a bounded
+      // write waited for room. The work was never queued; its caller is canceled, the same as an
+      // item the stop found queued.
+      _returnUnqueuedState(state);
+      throw new OperationCanceledException(
+        "The SerialExecutor stopped accepting work before this item was queued.", ex);
+    } catch (OperationCanceledException) {
+      // The caller's own token canceled a bounded write waiting for room: its cancellation, unchanged.
+      _returnUnqueuedState(state);
+      throw;
+    }
     return await new ValueTask<TResult>(source, token);
+  }
+
+  /// <summary>
+  /// Returns the execution state of an item that never reached the channel. No worker will see it,
+  /// so nothing else would return it to the pool.
+  /// </summary>
+  private static void _returnUnqueuedState<TResult>(ExecutionState<TResult> state) {
+    state.Reset();
+    ExecutionStatePool<TResult>.Return(state);
   }
 
   /// <summary>
@@ -151,13 +194,28 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
 
       _state = State.Running;
       _workerCts = new CancellationTokenSource();
-      _workerTask = Task.Run(() => _processWorkItemsAsync(_workerCts.Token), _workerCts.Token);
+      var stopping = _workerCts.Token;
+      // Started without a token on purpose: a Task.Run handed the stopping token never runs its
+      // delegate when the stop lands before the pool picks it up, and the items already queued would
+      // then have no worker to finish them. The worker always runs and ends when the completed
+      // channel is empty.
+      _workerTask = Task.Run(() => _processWorkItemsAsync(stopping), CancellationToken.None);
     }
 
     return Task.CompletedTask;
   }
 
   /// <inheritdoc/>
+  /// <remarks>
+  /// Returns once the item already running has finished and every item still queued has been finished
+  /// as canceled: its handler is not run and its caller's await ends in
+  /// <see cref="OperationCanceledException"/>. Call <see cref="DrainAsync"/> first to run the queue
+  /// instead. Before #2004 a stop canceled only the worker's read, so a queued item could be left with
+  /// neither a result nor a cancellation and its caller waited forever.
+  /// </remarks>
+  /// <docs>operations/workers/execution-lifecycle</docs>
+  /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorStopTests.cs:StopAsync_ItemQueuedBehindRunningWork_IsCanceledWithoutRunningAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorDrainAfterStopTests.cs:DrainAsync_StopLandsWhileTheDrainAwaitsTheWorker_BothCompleteAndQueuedWorkIsCanceledAsync</tests>
   public async Task StopAsync(CancellationToken ct = default) {
     lock (_stateLock) {
       if (_state == State.Stopped) {
@@ -177,20 +235,28 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
       }
     }
 
+    // Marks the executor stopping. Nothing waits on this token: the worker tests it before each
+    // item, so whatever it reaches from here on is finished as canceled, and its read ends because
+    // the channel is completed above.
     if (_workerCts != null) {
       await _workerCts.CancelAsync();
     }
 
     if (_workerTask != null) {
-      try {
-        await _workerTask;
-      } catch (OperationCanceledException) {
-        // Expected when cancelling worker
-      }
+      await _workerTask;
     }
   }
 
   /// <inheritdoc/>
+  /// <remarks>
+  /// The token bounds the caller's wait and nothing else (#2011). A drain whose token is already
+  /// canceled throws before it closes the channel, so the executor keeps accepting work. A drain
+  /// canceled while it waits throws <see cref="OperationCanceledException"/>; the channel it closed
+  /// stays closed and the worker keeps running the queue, so a later drain or stop completes as usual.
+  /// </remarks>
+  /// <docs>operations/workers/execution-lifecycle</docs>
+  /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorDrainCancellationTests.cs:DrainAsync_CanceledWhileWaiting_StopsWaitingAndTheQueueStillRunsAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Component.Tests/SerialExecutorDrainCancellationTests.cs:DrainAsync_TokenAlreadyCanceled_LeavesTheExecutorAcceptingWorkAsync</tests>
   public async Task DrainAsync(CancellationToken ct = default) {
     using var activity = WhizbangActivitySource.Execution.StartActivity("SerialExecutor.DrainAsync");
 
@@ -199,6 +265,9 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
         return; // Nothing to drain
       }
 
+      // Before the channel is closed: a drain canceled before it starts changes nothing.
+      ct.ThrowIfCancellationRequested();
+
       // Complete the channel writer to signal no more work
       if (!_channelCompleted) {
         _channel.Writer.Complete();
@@ -206,53 +275,61 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
       }
     }
 
-    // Wait for worker to finish processing all items
+    // Wait for the worker to finish every item. The worker ends normally once the completed channel
+    // is empty, also when a stop lands while this drain is waiting (SerialExecutorDrainAfterStopTests):
+    // the stop only changes how the remaining items are finished, so there is no cancellation here to
+    // absorb.
+    // Bounded by the token: a canceled drain stops waiting, and the worker carries on.
     if (_workerTask != null) {
-      try {
-        await _workerTask;
-      } catch (OperationCanceledException) {
-        // A stop that lands while this drain is already awaiting the worker. Everything above the
-        // await is synchronous, so a caller can have the channel completed and this task suspended
-        // here when StopAsync cancels the worker token; the worker's next read observes the canceled
-        // token ahead of "done writing" and its task ends canceled. Swallowed for the caller, who
-        // asked only to drain, and recorded so an operator can see it happened.
-        // SerialExecutorDrainAfterStopTests reaches this deterministically.
-        WhizbangActivitySource.RecordDefensiveCancellation(
-          activity,
-          "Worker canceled during DrainAsync after channel completion"
-        );
-        // Note: We still swallow the exception but now it's observable via OpenTelemetry
-      }
+      await _workerTask.WaitAsync(ct);
     }
   }
 
-  private async Task _processWorkItemsAsync(CancellationToken ct) {
+  /// <summary>
+  /// The only reader of the channel, and so the one place every accepted item is finished.
+  /// </summary>
+  /// <param name="stopping">Canceled by <see cref="StopAsync"/>; tested before each item, never waited on.</param>
+  /// <remarks>
+  /// The read takes no token. It ends when the channel is completed and empty, which both
+  /// <see cref="StopAsync"/> and <see cref="DrainAsync"/> arrange before they await this task, so every
+  /// item written before the channel closed reaches the loop body. Reading with the stopping token
+  /// (as before #2004) let a stop end the loop with items still in the channel, whose callers then
+  /// waited forever.
+  /// </remarks>
+  private async Task _processWorkItemsAsync(CancellationToken stopping) {
     using var activity = WhizbangActivitySource.Execution.StartActivity("SerialExecutor.ProcessWorkItems");
 
-    await foreach (var workItem in _channel.Reader.ReadAllAsync(ct)) {
-      // Cancellation arriving AFTER the item was queued and before the worker reached it.
-      // WriteAsync rejects an already-canceled token, so this is the only way to get here --
-      // and it is ordinary, not defensive: a timeout or a shutdown firing while the worker is
-      // busy with earlier work. The caller must be finished rather than skipped, because only
-      // the execute path completes its value-task source.
-      if (workItem.CancellationToken.IsCancellationRequested) {
-        WhizbangActivitySource.RecordDefensiveCancellation(
-          activity,
-          "Work item canceled after queueing but before execution"
-        );
-        await workItem.CancelAsync(workItem.State, workItem.CancellationToken);
-        continue; // Handler is not run; the caller observes OperationCanceledException.
-      }
-
+    await foreach (var workItem in _channel.Reader.ReadAllAsync(CancellationToken.None)) {
       try {
+        // The executor is stopping: an item still queued is finished as canceled, not run. Running
+        // the queue is DrainAsync's job, and a stop runs under the host's shutdown timeout.
+        if (stopping.IsCancellationRequested) {
+          await workItem.CancelAsync(workItem.State, stopping);
+          continue; // Handler is not run; the caller observes OperationCanceledException.
+        }
+
+        // Cancellation arriving AFTER the item was queued and before the worker reached it.
+        // WriteAsync rejects an already-canceled token, so this is the only way to get here --
+        // and it is ordinary, not defensive: a timeout firing while the worker is busy with
+        // earlier work. The caller must be finished rather than skipped, because only the execute
+        // path completes its value-task source.
+        if (workItem.CancellationToken.IsCancellationRequested) {
+          WhizbangActivitySource.RecordDefensiveCancellation(
+            activity,
+            "Work item canceled after queueing but before execution"
+          );
+          await workItem.CancelAsync(workItem.State, workItem.CancellationToken);
+          continue; // Handler is not run; the caller observes OperationCanceledException.
+        }
+
         await workItem.ExecuteAsync(workItem.State);
       } catch (Exception ex) {
         // The ordinary path cannot get here: the only delegate the public enqueue assigns is
         // _executeWithPooledStateAsync, whose own try, catch and finally cover its whole body, so
         // a faulting handler is recorded on the pooled source and this await completes. What the
         // net is for is the rest of that delegate -- completing an already-completed source,
-        // resetting state, returning it to the pool -- any of which throwing would otherwise end
-        // the worker loop silently. EnqueueFaultingForTestsAsync is the second construction site
+        // resetting state, returning it to the pool -- or of the cancel delegate, any of which
+        // throwing would otherwise end the worker loop silently and strand every item behind it. EnqueueFaultingForTestsAsync is the second construction site
         // that lets a test hand the worker a delegate that faults, so the net is exercised.
         WhizbangActivitySource.RecordDefensiveException(
           activity,
@@ -265,12 +342,8 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
   }
 
   /// <summary>
-  /// Static delegate method that executes handler with pooled state.
-  /// Eliminates lambda closure allocations.
-  /// </summary>
-  /// <summary>
   /// Finishes a work item the worker is going to skip because its token was canceled while it
-  /// sat in the channel.
+  /// sat in the channel, or because the executor is stopping.
   /// </summary>
   /// <remarks>
   /// Without this the caller's <c>await</c> never returns. Only the execute path completes the
@@ -288,6 +361,10 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
     return ValueTask.CompletedTask;
   }
 
+  /// <summary>
+  /// Static delegate method that executes handler with pooled state.
+  /// Eliminates lambda closure allocations.
+  /// </summary>
   private static async ValueTask _executeWithPooledStateAsync<TResult>(object? stateObj) {
     var state = (ExecutionState<TResult>)stateObj!;
     try {

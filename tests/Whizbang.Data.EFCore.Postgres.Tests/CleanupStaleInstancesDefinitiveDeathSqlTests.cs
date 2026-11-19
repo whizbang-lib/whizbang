@@ -119,9 +119,10 @@ public class CleanupStaleInstancesDefinitiveDeathSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task CleanupStaleInstances_NoDefinitiveCutoff_LegacyBehaviorPreservedAsync() {
-    // Backwards-compatibility lock: when p_definitive_dead_cutoff is omitted (NULL),
-    // behavior must match pre-v0.687. The alive-lock guard is the only bypass.
+  public async Task CleanupStaleInstances_NoDefinitiveCutoff_TheRulesCutoffStillAppliesAsync() {
+    // #2027: the reap no longer reads its caller's cutoffs. The one liveness rule carries the definitive-dead cutoff
+    // itself (twice the instance's window, at least five minutes), so a legacy caller passing none no longer lets a
+    // lock left behind on a half-open connection keep a long-dead instance registered.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
@@ -139,8 +140,8 @@ public class CleanupStaleInstancesDefinitiveDeathSqlTests : EFCoreTestBase {
         staleCutoff: DateTimeOffset.UtcNow.AddSeconds(-30),
         definitiveDeadCutoff: null);
 
-      await Assert.That(deleted).DoesNotContain(oldDeadInstance)
-        .Because("When p_definitive_dead_cutoff is NULL (legacy callers), the alive-lock guard still wins regardless of heartbeat age — same as pre-v0.687.");
+      await Assert.That(deleted).Contains(oldDeadInstance)
+        .Because("a heartbeat thirty minutes old is past the rule's definitive-dead cutoff, whatever the caller passes");
     } finally {
       await lockHolder.CloseAsync();
     }
@@ -210,8 +211,9 @@ public class CleanupStaleInstancesDefinitiveDeathSqlTests : EFCoreTestBase {
     var hb = DateTimeOffset.UtcNow + lastHeartbeatOffset;
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = @"
-      INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
-      VALUES (@id, 'test-svc', 'test-host', 1, @hb, @hb, '{}'::jsonb)
+      INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata, connection_mode)
+      -- #2027: the alive-lock is a direct instance's (its LISTEN session takes it); the one liveness rule reads it only there.
+      VALUES (@id, 'test-svc', 'test-host', 1, @hb, @hb, '{}'::jsonb, 'direct')
       ON CONFLICT (instance_id) DO UPDATE SET last_heartbeat_at = EXCLUDED.last_heartbeat_at";
     cmd.Parameters.AddWithValue("id", instanceId);
     cmd.Parameters.Add(new NpgsqlParameter("hb", NpgsqlDbType.TimestampTz) { Value = hb });

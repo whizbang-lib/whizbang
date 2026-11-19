@@ -32,7 +32,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 /// <docs>operations/infrastructure/migrations</docs>
 [Category("Integration")]
 [Category("Shard4")]
-[NotInParallel("EFCorePostgresTests")]
 public class CollectivePositionQueryPlanTests : EFCoreTestBase {
   private const string INDEX = "idx_event_store_type_tenant";
   private const string TENANT = "tenant-07";

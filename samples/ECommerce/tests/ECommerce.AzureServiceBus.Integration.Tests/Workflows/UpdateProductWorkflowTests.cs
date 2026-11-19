@@ -67,7 +67,7 @@ public class UpdateProductWorkflowTests {
       InitialStock = 10
     };
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -81,7 +81,7 @@ public class UpdateProductWorkflowTests {
       ImageUrl = null
     };
     var updateTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 1, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateTask;
 
@@ -119,7 +119,7 @@ public class UpdateProductWorkflowTests {
       InitialStock = 20
     };
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -133,7 +133,7 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/updated.png"
     };
     var updateTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 1, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateTask;
 
@@ -231,7 +231,7 @@ public class UpdateProductWorkflowTests {
       InitialStock = 30
     };
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -245,7 +245,7 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/new-and-improved.png"
     };
     var updateTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 1, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateTask;
 
@@ -285,7 +285,7 @@ public class UpdateProductWorkflowTests {
       InitialStock = 5
     };
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -299,7 +299,7 @@ public class UpdateProductWorkflowTests {
       ImageUrl = null
     };
     var updateTask1 = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 1, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(update1);
     await updateTask1;
 
@@ -312,7 +312,7 @@ public class UpdateProductWorkflowTests {
       ImageUrl = null
     };
     var updateTask2 = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 1, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(update2);
     await updateTask2;
 
@@ -325,7 +325,7 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/v3.png"
     };
     var updateTask3 = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 1, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(update3);
     await updateTask3;
 
@@ -365,7 +365,7 @@ public class UpdateProductWorkflowTests {
     };
     // Wait for 2 inventory perspectives for ProductCreatedEvent
     var createTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await createTask;
 
@@ -386,7 +386,7 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/updated-isolation.png"
     };
     var updateTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 1, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateTask;
 

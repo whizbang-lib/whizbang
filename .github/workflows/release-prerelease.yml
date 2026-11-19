@@ -120,6 +120,25 @@ jobs:
         with:
           sparse-checkout: .github
 
+      # The stable number moves with every beta and rc (#2136): say where this one leaves it, so nobody has to
+      # work it out. Informational: the stable publish recomputes it and is the one that refuses a bad record.
+      - name: Preview the stable version
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          BRANCH="${REF#refs/heads/}"
+          LINE="${BRANCH#release/v}"
+          TAGS=$(gh api --paginate "repos/$REPO/git/matching-refs/tags/v$LINE-" --jq '.[].ref | sub("^refs/tags/"; "")')
+          RELEASE_PR_BODY=$(gh pr list --repo "$REPO" --head "$BRANCH" --base main --state open --json body --jq '.[0].body // ""') \
+            GITHUB_OUTPUT="$RUNNER_TEMP/stable.txt" \
+            pwsh -NoProfile -File .github/scripts/Get-ReleaseVersion.ps1 -Mode Stable -Line "$LINE" -Tags "$TAGS v$VERSION"
+          echo "After v$VERSION, merging the release PR ships v$(sed -n 's/^version=//p' "$RUNNER_TEMP/stable.txt")." >> "$GITHUB_STEP_SUMMARY"
+
       # 100% coverage of new lines and zero Sonar findings, on exactly the commit that ships.
       - name: Require the release PR's gate on this commit
         uses: ./.github/actions/require-pr-gate

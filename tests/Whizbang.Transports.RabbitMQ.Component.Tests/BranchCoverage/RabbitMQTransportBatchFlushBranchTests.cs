@@ -56,8 +56,11 @@ public class RabbitMQTransportBatchFlushBranchTests {
     await Assert.That(channel.NackAttempts).Count().IsEqualTo(2);
     await Assert.That(channel.NackAttempts.All(n => n.Requeue)).IsTrue()
       .Because("a failed batch is requeued so every message is redelivered");
-    await Assert.That(logger.Entries.Any(e =>
-      e.Level == LogLevel.Error && e.Message.Contains("Error processing batch of 2 messages", StringComparison.Ordinal))).IsTrue();
+    // #1976: the batch is requeued for redelivery, so the failed attempt is a Warning carrying its exception.
+    await Assert.That(logger.EntriesWithExceptions.Any(e =>
+      e.Level == LogLevel.Warning && e.Exception is not null
+      && e.Message.Contains("Error processing batch of 2 messages", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(logger.Entries.Any(e => e.Level >= LogLevel.Error)).IsFalse();
   }
 
   [Test]

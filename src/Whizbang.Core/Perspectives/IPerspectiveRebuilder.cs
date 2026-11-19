@@ -92,7 +92,7 @@ public interface IPerspectiveRebuilder {
   /// <param name="ct">Cancellation token.</param>
   /// <returns>The streams, or null when they cannot be listed here.</returns>
   /// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
-  /// <tests>tests/Whizbang.Core.Tests/MultiStream/RebuildPerspectiveStreamsHandlerTests.cs:ResolveStreamIdsAsync_ARebuilderThatCannotList_SaysNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/RebuildPerspectiveStreamsHandlerTests.cs:ResolveStreamIdsAsync_ARebuilderThatCannotList_SaysNothingAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:ResolveStreamIdsAsync_ListsTheStreamsCarryingThisPerspectivesEventsAsync</tests>
   Task<IReadOnlyList<Guid>?> ResolveStreamIdsAsync(string perspectiveName, CancellationToken ct = default) =>
     Task.FromResult<IReadOnlyList<Guid>?>(null);
@@ -125,7 +125,7 @@ public record RebuildResult(
   /// rebuildable source of truth. Their rows are left as they are.
   /// </summary>
   /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderTests.cs:RebuildStreamsAsync_WhenEveryNamedStreamIsRefused_ReportsTheRefusalsAsAFailureAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderTests.cs:RebuildStreamsAsync_WhenEveryNamedStreamIsRefused_ReportsTheRefusalsAsAFailureAsync</tests>
   public int StreamsRefused { get; init; }
 
   /// <summary>
@@ -135,6 +135,58 @@ public record RebuildResult(
   /// <docs>fundamentals/perspectives/rebuild#terminal-purges</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildStreamsAsync_WhenTheLastEventAlwaysPurges_DeletesTheRowWithoutFoldingTheStreamAsync</tests>
   public int StreamsPurged { get; init; }
+
+  /// <summary>
+  /// How many streams were skipped for their archived data (#1931): under the default
+  /// (<see cref="RebuildArchivedData.Skip"/>) a stream archived whole, or one archived through a prefix with no live
+  /// snapshot to start from; under <see cref="RebuildArchivedData.IncludeWhileLive"/> a stream archived whole. Their rows
+  /// are left as they are. A skipped stream is reported here, never as a failure.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#archived-data</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderArchivedDataTests.cs:Rebuild_ByDefault_SkipsAStreamArchivedWhole_AndReportsItSkippedNotFailedAsync</tests>
+  public int StreamsSkipped { get; init; }
+
+  /// <summary>
+  /// How many streams folded to exactly the row already stored (#2252): the store wrote nothing because the read model
+  /// was already right. Each is counted in <see cref="StreamsProcessed"/> as rebuilt and verified, so the rows the
+  /// rebuild actually rewrote are <see cref="StreamsProcessed"/> minus this.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderUnchangedReasonTests.cs:RebuildStreamsAsync_AFoldThatEqualsTheStoredRow_IsRebuiltAndVerified_NotFailedAsync</tests>
+  public int StreamsAlreadyCorrect { get; init; }
+
+  /// <summary>
+  /// How many streams folded to a row that differs from the stored one, whose write the row's ordering guard refused
+  /// (#2252). Their rows are left as they are and they are not rebuilt.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderUnchangedReasonTests.cs:RebuildStreamsAsync_AWriteTheOrderingGuardRefused_FailsAndSaysSoAsync</tests>
+  public int StreamsWriteRefused { get; init; }
+
+  /// <summary>
+  /// How many streams folded without any event producing a model, so there was nothing to write (#2252).
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderUnchangedReasonTests.cs:RebuildStreamsAsync_AFoldThatProducedNoModel_FailsAndIsToldApartFromARefusalAsync</tests>
+  public int StreamsWithoutModel { get; init; }
+
+  /// <summary>
+  /// How many streams had no events for this perspective (#2252).
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderUnchangedReasonTests.cs:RebuildStreamsAsync_AMixedRun_SeparatesRewrittenAlreadyCorrectRefusedNoModelAndNoEventsAsync</tests>
+  public int StreamsWithoutEvents { get; init; }
+
+  /// <summary>
+  /// How many streams failed to replay (#2376): the runner threw for the stream, or for a row folded from re-keyed
+  /// events. The rebuild carries on with the rest and keeps the streams that did rebuild, but a rebuild with any failed
+  /// stream reports <see cref="Success"/> false, with an <see cref="Error"/> naming how many failed and the first few
+  /// ids. Each failure is also logged with its exception.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderFailedStreamsTests.cs:RebuildStreamsAsync_OneOfThreeStreamsFails_IsNotASuccess_AndKeepsTheOtherTwoAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderFailedStreamsTests.cs:RebuildInPlaceAsync_OneOfThreeStreamsFails_IsNotASuccess_AndKeepsTheOtherTwoAsync</tests>
+  public int StreamsFailed { get; init; }
 
 }
 
@@ -183,7 +235,16 @@ public enum RebuildPhase {
 public record RebuildOrigin(
     Guid? RequestId = null,
     RebuildTrigger Trigger = RebuildTrigger.Unknown,
-    string? RequestedBy = null);
+    string? RequestedBy = null) {
+  /// <summary>
+  /// What the rebuild may read of a stream's archived events (#1931). <see cref="RebuildArchivedData.Skip"/> by default:
+  /// the rebuild never reads the archive unless it opts in. Carried with the request, so a run recorded for the streams'
+  /// owners and the background queue honor it, and recorded on the rebuild's events.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#archived-data</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderArchivedDataTests.cs:RebuildArchivedData_DefaultsToSkip_OnTheEnumAndOnARebuildRequestAsync</tests>
+  public RebuildArchivedData ArchivedData { get; init; }
+}
 
 /// <summary>
 /// What caused a rebuild. Distinguishes an operator repairing data from the framework rebuilding on its own,
@@ -198,7 +259,12 @@ public enum RebuildTrigger {
   /// <summary>A schema or stored-form migration needed the perspective rebuilt.</summary>
   Migration = 2,
   /// <summary>The startup scan found the perspective needed rebuilding.</summary>
-  StartupScan = 3
+  StartupScan = 3,
+  /// <summary>
+  /// The maintenance cycle rewrote the perspective's table by a blue-green rebuild, because no online rewrite extension
+  /// was usable (#2301).
+  /// </summary>
+  TableRewrite = 4
 }
 
 /// <summary>

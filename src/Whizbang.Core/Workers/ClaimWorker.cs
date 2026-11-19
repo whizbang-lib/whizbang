@@ -27,12 +27,11 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerAttemptAccountingTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerMetricsTests.cs:AClaim_RecordsItsDurationAsync</tests>
-public sealed partial class ClaimWorker : BackgroundService {
+public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunControl.IObeysRunPermit, Whizbang.Core.RunControl.IReleasesHeldWork {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IWorkNotificationListener _notificationListener;
   private readonly INotifySignalingGate _signalingGate;
-  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly IWorkChannelWriter _outboxChannel;
   private readonly IInboxChannelWriter _inboxChannel;
   private readonly IPerspectiveChannelWriter _perspectiveChannel;
@@ -46,6 +45,10 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly ClaimChurnFeedback? _churnFeedback;
   /// <summary>Clock for the claim's own duration (#714); injectable so the latency feedback is testable without waiting.</summary>
   private readonly TimeProvider _time;
+  private readonly DatabaseFailureEscalation _databaseFailures;
+
+  /// <summary>The tracker this worker's transient database failures are reported to (#1986).</summary>
+  internal DatabaseFailureEscalation DatabaseFailures => _databaseFailures;
   private readonly PerspectiveMetrics? _perspectiveMetrics;
   private readonly AdaptiveOutstandingBudget _outstandingBudget;
 
@@ -133,13 +136,18 @@ public sealed partial class ClaimWorker : BackgroundService {
   private bool _budgetEngaged =>
     _options.AdaptiveOutstandingBudget && _completionMeter is not null && !_outstandingUnmeasurable;
 
+  /// <summary>The run permit every claim takes a hold of (#2045).</summary>
+  public Whizbang.Core.RunControl.WhizbangRunPermit RunPermit { get; }
+
+  /// <summary>The last claim's batch: the streams this instance holds, which the run-control path releases (#2045).</summary>
+  private WorkBatch? _lastClaimed;
+
   /// <summary>Constructor.</summary>
 #pragma warning disable S107 // ClaimWorker is the central poller — its channel/option dependencies are unavoidable.
   public ClaimWorker(
     IServiceScopeFactory scopeFactory,
     IServiceInstanceProvider instanceProvider,
     IWorkNotificationListener notificationListener,
-    ISchemaReadyGate schemaReadyGate,
     IOptions<ClaimWorkerOptions> options,
     ILogger<ClaimWorker> logger,
     IWorkChannelWriter outboxChannel,
@@ -158,7 +166,12 @@ public sealed partial class ClaimWorker : BackgroundService {
     // Priority step 1: the batch hooks run over each claim's inbox streams before they reach the drain.
     Whizbang.Core.Priority.PriorityHookChain? priorityHooks = null,
     // #1535: each claim's round trip is recorded as whizbang.perspective.claim.duration.
-    PerspectiveMetrics? perspectiveMetrics = null) {
+    PerspectiveMetrics? perspectiveMetrics = null,
+    // #1986: when a run of transient database failures escalates to one Error; null takes the defaults.
+    DatabaseFailureEscalationOptions? databaseFailureEscalation = null,
+    // #2045: the instance's run permit; every claim is a hold of it. A worker built without one is under no run control.
+    Whizbang.Core.RunControl.WhizbangRunPermit? runPermit = null) {
+    RunPermit = runPermit ?? new Whizbang.Core.RunControl.WhizbangRunPermit();
     _priorityHooks = priorityHooks;
     _perspectiveMetrics = perspectiveMetrics;
 #pragma warning restore S107
@@ -169,8 +182,6 @@ public sealed partial class ClaimWorker : BackgroundService {
     ArgumentNullException.ThrowIfNull(notificationListener);
     _notificationListener = notificationListener;
     _signalingGate = signalingGate;
-    ArgumentNullException.ThrowIfNull(schemaReadyGate);
-    _schemaReadyGate = schemaReadyGate;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _claimWindow = new AdaptiveClaimWindow(
       ceiling: _options.MaxStreamsPerBatch,
@@ -195,6 +206,8 @@ public sealed partial class ClaimWorker : BackgroundService {
     _completionMeter = completionMeter;
     _churnFeedback = churnFeedback;
     _time = timeProvider ?? TimeProvider.System;
+    _databaseFailures = new DatabaseFailureEscalation(
+      nameof(ClaimWorker), databaseFailureEscalation ?? new DatabaseFailureEscalationOptions(), _time, logger);
 
     // F1 unify-now: bus signals for outbox/inbox/perspective work-available replace the raw
     // WorkSignalCategory subscription for those categories. Push transport (NOTIFY) and pull
@@ -225,7 +238,8 @@ public sealed partial class ClaimWorker : BackgroundService {
   }
 
   private void _onSignal(WorkSignalCategory category) {
-    // OrphanRedistribute has no typed signal yet, so it always wakes via this legacy path.
+    // OrphanRedistribute reaches the claim worker through the work listener (#2046: the listener hears
+    // WorkOrphanedSignal on the bus); a lost orphan doorbell is covered by the backstop poll.
     // Outbox/Inbox/Perspective: post-unify-now they wake via the bus (see ctor
     // _signalBus.Subscribe calls). When the bus isn't wired (legacy DI / tests), fall through
     // to the legacy wake so the pre-unify-now NOTIFY→ClaimWorker regression tests stay green.
@@ -319,6 +333,12 @@ public sealed partial class ClaimWorker : BackgroundService {
   public event Action<WorkBatch>? OnBatchClaimed;
 
   /// <summary>
+  /// Raised as the loop starts a spacing nap, with its length in milliseconds, once the nap can be cut short by
+  /// <see cref="SignalNewWork"/>. The signal a test waits on to know the next claim is being spaced out.
+  /// </summary>
+  internal event Action<int>? SpacingNapStarted;
+
+  /// <summary>
   /// Wake for NEW work (a store-level doorbell or a strategy persisting fresh rows) — as opposed
   /// to <see cref="RequestImmediatePoll"/>, which the system's own completion-feedback traffic
   /// also pulls. The distinction matters to the repeat-claim spacing: completion feedback must
@@ -369,7 +389,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   }
 
   /// <inheritdoc />
-  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup is a sequence of preconditions that each have their own reason to skip or stop (the adaptive budget report, the killswitch, the schema gate, instance registration, perspective-only mode), and the poll loop then adapts its cadence on four signals: the startup catch-up, the doorbell, a repeat claim and the drain linger. Every branch carries the comment explaining the policy it implements, and moving them apart would separate each policy from the loop that applies it.")]
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup is a sequence of preconditions that each have their own reason to skip or stop (the adaptive budget report, the killswitch, instance registration, perspective-only mode), and the poll loop then adapts its cadence on four signals: the startup catch-up, the doorbell, a repeat claim and the drain linger. Every branch carries the comment explaining the policy it implements, and moving them apart would separate each policy from the loop that applies it.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.PollingIntervalMilliseconds, _options.PollingMaxIntervalMilliseconds, _instanceProvider.InstanceId);
 
@@ -406,11 +426,6 @@ public sealed partial class ClaimWorker : BackgroundService {
     // (WhizbangDatabaseInitializerService) signals the gate after migrations succeed.
     // This decouples worker startup from hosted-service registration order — even if
     // this worker's StartAsync runs before the initializer, we still wait here.
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-    } catch (OperationCanceledException) {
-      return;
-    }
 
     // Register the instance in wh_service_instances before the first claim_work call.
     // HeartbeatWorker performs the UPSERT but ticks on its own cadence, so without this the
@@ -449,7 +464,13 @@ public sealed partial class ClaimWorker : BackgroundService {
     var startupCatchUpFired = false;
     while (!stoppingToken.IsCancellationRequested) {
       try {
+        // #2045: no claim while the run permit is closed, and the claim and its hand-off are a hold the run-control path
+        // waits for. A stopped permit cancels the wait and ends the loop below.
+        using var hold = await RunPermit.EnterAsync(stoppingToken);
         var batch = await _claimOnceAsync(stoppingToken);
+        Volatile.Write(ref _lastClaimed, batch);
+        // The claim reached the database and came back: whatever run of failures came before has ended.
+        _databaseFailures.Succeeded();
         var hadWork = batch.OutboxWork.Count > 0
                    || batch.InboxWork.Count > 0
                    || batch.PerspectiveStreamIds.Count > 0
@@ -505,7 +526,13 @@ public sealed partial class ClaimWorker : BackgroundService {
         // discovery as a missed doorbell and let the idle spacing below nap through a genuinely
         // fresh row (SignalNewWork's cancel only reaches a nap that has already registered its
         // token). Put it back so the next cycle sees it — for the spacing skip and for liveness.
-        if (!hadWork && doorbellRang) {
+        // A REPEAT claim is the same case: it re-offered only what this instance already held, so it
+        // cannot have served new work either, and consuming the doorbell there made the new work wait
+        // out the whole repeat spacing (up to PollingMaxIntervalMilliseconds). Liveness is unchanged:
+        // it reads the doorbell only on a fresh claim after an empty one, so a doorbell put back here is
+        // credited to the next such claim, the one it caused. Completion-feedback wakes
+        // (RequestImmediatePoll) never set the flag, so they still cannot shorten the spacing (#635).
+        if ((!hadWork || _lastClaimWasRepeat) && doorbellRang) {
           Volatile.Write(ref _doorbellSinceLastClaim, 1);
         }
         if (_busLiveness is not null && _lastClaimWasEmpty && hadWork && !_lastClaimWasRepeat
@@ -547,7 +574,10 @@ public sealed partial class ClaimWorker : BackgroundService {
         // an operator can tell a passing failure from a defect. This loop already had a cadence of
         // its own, so it reports and lets the empty-poll backoff below carry the waiting.
         WorkerLoopRecovery.Report(ex,
-          (transient, cause) => LogTransientFailure(_logger, transient.Reason, transient.SqlState ?? "none", cause),
+          (transient, cause) => {
+            LogTransientFailure(_logger, transient.Reason, transient.SqlStateOrNone, cause);
+            _databaseFailures.Failed(transient);
+          },
           cause => LogError(_logger, cause));
         Interlocked.Increment(ref _consecutiveEmptyPolls);  // back off after errors too
         _claimAgainNow = false;
@@ -605,6 +635,7 @@ public sealed partial class ClaimWorker : BackgroundService {
             // them would reintroduce the re-offer spin loop this spacing exists to damp.
             using var napCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
             Volatile.Write(ref _napCts, napCts);
+            SpacingNapStarted?.Invoke(floorMs);
             try {
               await Task.Delay(floorMs, napCts.Token);
             } catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) {
@@ -844,6 +875,36 @@ public sealed partial class ClaimWorker : BackgroundService {
     }
   }
 
+  /// <summary>
+  /// The run-control path's held-work step (#2045): once no claim is in hand, the streams of the last claim that no drain
+  /// has started are released, as the #724 release does, so a peer takes them over at once. A stream a drain has begun is
+  /// finished here, never released under it.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes when the release is done.</returns>
+  public async Task ReleaseHeldWorkAsync(CancellationToken cancellationToken) {
+    if (Volatile.Read(ref _lastClaimed) is not { } held) {
+      return;
+    }
+    var inboxStreams = _notInFlight(held.InboxStreamIds, _inboxDrainChannel.IsInFlight);
+    var perspectiveStreams = _notInFlight(held.PerspectiveStreamIds, _perspectiveDrainChannel.IsInFlight);
+    using var scope = _scopeFactory.CreateScope();
+    var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+    var released = await coordinator.ReleaseUnstartedLeasesAsync(
+      _instanceProvider.InstanceId, inboxStreams, perspectiveStreams, cancellationToken).ConfigureAwait(false);
+    LogReleasedHeldWork(_logger, released.InboxReleased, released.PerspectiveReleased);
+  }
+
+  /// <summary>The streams of the last claim this instance still holds leased, for the exit's account (#2126).</summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerRunPermitTests.cs:ReleaseHeldWork_ReleasesTheLastClaimsStreamsThatNoDrainHasStartedAsync</tests>
+  public int HeldLeases => Volatile.Read(ref _lastClaimed) is { } held
+    ? held.InboxStreamIds.Count + held.PerspectiveStreamIds.Count
+    : 0;
+
+  [LoggerMessage(EventId = 21, Level = LogLevel.Information,
+    Message = "Run control: released {InboxReleased} inbox and {PerspectiveReleased} perspective rows this instance had leased and not started, so a peer takes them over")]
+  private static partial void LogReleasedHeldWork(ILogger logger, int inboxReleased, int perspectiveReleased);
+
   // Both callers pass a drain channel's IsInFlight method group, so the predicate always exists.
   private static List<Guid> _notInFlight(List<Guid> streamIds, Func<Guid, bool> isInFlight) =>
     [.. streamIds.Where(id => !isInFlight(id))];
@@ -916,6 +977,12 @@ public sealed partial class ClaimWorker : BackgroundService {
       ? null
       : await partitionAssignments.ForClaimAsync(_instanceProvider.InstanceId, ct);
 
+    // #1853: no new inbox rows while the working set has turned rows away for its byte budget and has not drained to
+    // where the smallest of them fits. The drain would fetch, turn away and release every row leased meanwhile, a
+    // claim, a fetch and a release on every poll under memory pressure. Held inbox work is still re-offered.
+    var acquireInbox = !_inboxChannel.InboxAcquisitionDeferred;
+    _reportInboxAcquisition(acquireInbox);
+
     var claimStarted = _time.GetTimestamp();
     var batch = await coordinator.ClaimWorkAsync(new ClaimWorkRequest(
       InstanceId: _instanceProvider.InstanceId,
@@ -937,10 +1004,11 @@ public sealed partial class ClaimWorker : BackgroundService {
       MaxOutboxAcquireRows: maxOutboxRows,
       OutboxRunLength: Math.Max(1, _options.OutboxRunLength),
       PartitionAssignment: assignment,
+      // #1636: no phase is announced. The stage record is the only writer of the recorded phase and writes a lost
+      // write again on the next accepted beat, and a registration never overwrites a recorded phase, so a claim that
+      // compared the two could only report the row stale on every claim until the next transition.
       AliveLockHeld: aliveLockHeld,
-      // #1638: the phase this instance announces. A row that records another one is reported stale, and the
-      // registration below writes it, so a lost transition write cannot leave a ready instance ineligible for work.
-      LifecyclePhase: _announcedPhase(scope.ServiceProvider)), ct);
+      AcquireInbox: acquireInbox), ct);
     var claimElapsed = _time.GetElapsedTime(claimStarted);
     _perspectiveMetrics?.ClaimDuration.Record(claimElapsed.TotalMilliseconds);
 
@@ -957,7 +1025,7 @@ public sealed partial class ClaimWorker : BackgroundService {
       partitionAssignments?.MarkStale();
     }
 
-    _recordClaimShape(batch, allowSteal);
+    _recordClaimShape(batch, allowSteal, acquireInbox);
     if (_budgetEngaged) {
       await _observeOutstandingAsync(batch, coordinator, ct);
     }
@@ -966,6 +1034,23 @@ public sealed partial class ClaimWorker : BackgroundService {
       _observeChurn(batch);
     }
     return batch;
+  }
+
+  /// <summary>True while the last claim leased no new inbox rows because the working set was full (#1853).</summary>
+  private bool _inboxAcquisitionPaused;
+
+  /// <summary>Logs the claim pausing and resuming inbox acquisition for the working-set budget (#1853), once each way.</summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerAcquisitionBoundsTests.cs:WorkingSetFull_ClaimsLeaseNoNewInboxRows_UntilItDrainsAsync</tests>
+  private void _reportInboxAcquisition(bool acquireInbox) {
+    if (acquireInbox != _inboxAcquisitionPaused) {
+      return;
+    }
+    _inboxAcquisitionPaused = !acquireInbox;
+    if (acquireInbox) {
+      LogInboxAcquisitionResumed(_logger, _inboxChannel.HeldPayloadBytes);
+    } else {
+      LogInboxAcquisitionPaused(_logger, _inboxChannel.HeldPayloadBytes);
+    }
   }
 
   /// <summary>
@@ -1016,11 +1101,13 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// Bookkeeping on the claim's shape: the empty-claim streak that licenses stealing, the steal log,
   /// and the running rows-per-stream estimate the budget converts rows into streams with.
   /// </summary>
-  private void _recordClaimShape(WorkBatch batch, bool allowSteal) {
+  private void _recordClaimShape(WorkBatch batch, bool allowSteal, bool acquiredInbox) {
     var foundInbox = batch.InboxWork.Count > 0 || batch.InboxStreamIds.Count > 0;
     if (foundInbox) {
       Volatile.Write(ref _consecutiveInboxEmptyClaims, 0);
-    } else {
+    } else if (acquiredInbox) {
+      // #1853: a claim that leased no inbox rows did not look in this instance's residue, so coming back empty proves
+      // nothing about it and does not count toward the license to steal.
       Interlocked.Increment(ref _consecutiveInboxEmptyClaims);
     }
     if (allowSteal && foundInbox) {
@@ -1171,16 +1258,23 @@ public sealed partial class ClaimWorker : BackgroundService {
 
   /// <summary>
   /// The registration: this instance's identity through <c>record_heartbeat</c>, with the phase it announces (#1638).
-  /// A row it inserts records that phase rather than none, which would read as an older build; a row whose phase a lost
-  /// or overwritten transition left behind is corrected. Without a lifecycle the recorded phase is kept.
+  /// A row it inserts records that phase rather than none, which would read as an older build. A row that records a
+  /// phase keeps it (#1636): the stage record is its only writer. Without a lifecycle nothing is said of the phase.
+  /// A registration the registry refuses means the fleet evicted this instance: it exits through the one exit path
+  /// (#2126) so its host restarts it under a new instance id, rather than claiming on as an instance nobody counts.
   /// </summary>
-  private Task<bool> _registerAsync(IWorkCoordinator coordinator, IServiceProvider services, CancellationToken ct) =>
-    coordinator.RecordHeartbeatAsync(new HeartbeatRequest(
+  private async Task _registerAsync(IWorkCoordinator coordinator, IServiceProvider services, CancellationToken ct) {
+    var accepted = await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(
       InstanceId: _instanceProvider.InstanceId,
       ServiceName: _instanceProvider.ServiceName,
       HostName: _instanceProvider.HostName,
       ProcessId: _instanceProvider.ProcessId,
       LifecyclePhase: _announcedPhase(services)), ct);
+    if (!accepted) {
+      services.GetService<IWhizbangInstanceExit>()?.RequestExit(new InstanceExitRequest(ExitCause.ClusterEviction,
+        "the claim worker's registration was refused: the fleet evicted this instance (a peer reaped it and tombstoned it)"));
+    }
+  }
 
   /// <summary>
   /// The phase this instance announces (<see cref="IWhizbangLifecycleState.AnnouncedPhase"/>), resolved from the
@@ -1322,6 +1416,15 @@ public sealed partial class ClaimWorker : BackgroundService {
   [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
     Message = "ClaimWorker initial registration failed; the first claim will report the row missing and the claim loop will register again after it")]
   static partial void LogInitialHeartbeatFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 22, Level = LogLevel.Information,
+    Message = "Inbox acquisition paused: the inbox working set holds {HeldBytes} payload bytes and turned rows away for its "
+            + "byte budget, so claims lease no new inbox rows until it drains; inbox work already held is still offered")]
+  static partial void LogInboxAcquisitionPaused(ILogger logger, long heldBytes);
+
+  [LoggerMessage(EventId = 23, Level = LogLevel.Information,
+    Message = "Inbox acquisition resumed: the inbox working set drained to {HeldBytes} payload bytes")]
+  static partial void LogInboxAcquisitionResumed(ILogger logger, long heldBytes);
 
   [LoggerMessage(EventId = 20, Level = LogLevel.Warning,
     Message = "ClaimWorker could not register after a claim found this instance's registration missing or stale; "

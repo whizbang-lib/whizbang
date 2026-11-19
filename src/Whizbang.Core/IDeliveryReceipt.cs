@@ -15,8 +15,8 @@ namespace Whizbang.Core;
 /// </summary>
 /// <docs>fundamentals/dispatcher/dispatcher</docs>
 /// <tests>tests/Whizbang.Core.Tests/DeliveryReceiptTests.cs:AllProperties_AreAccessible_ThroughInterfaceAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherDeliveryReceiptTests.cs:SendAsync_CommandWithStreamId_DeliveryReceiptHasStreamIdAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherDeliveryReceiptTests.cs:PublishAsync_EventWithStreamId_DeliveryReceiptHasStreamIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDeliveryReceiptTests.cs:SendAsync_CommandWithStreamId_DeliveryReceiptHasStreamIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDeliveryReceiptTests.cs:PublishAsync_EventWithStreamId_DeliveryReceiptHasStreamIdAsync</tests>
 public interface IDeliveryReceipt {
   /// <summary>
   /// Unique identifier for this message

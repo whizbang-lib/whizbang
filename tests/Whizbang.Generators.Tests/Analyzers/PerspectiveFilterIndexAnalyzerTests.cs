@@ -1304,6 +1304,56 @@ public class PerspectiveFilterIndexAnalyzerTests {
   /// told it held a polymorphic member. An author acting on that goes hunting for an abstract type
   /// that is not there, while the collection that actually caused it goes unmentioned.
   /// </remarks>
+  /// <summary>
+  /// A model stored opaquely because it holds a recursive type is told the member is recursive, not that the mapped
+  /// path cannot construct it (#2112).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Filter_OnARecursiveModel_SaysTheMemberIsRecursiveAsync() {
+    const string SOURCE = """
+      using System;
+      using System.Collections.Generic;
+      using System.Linq;
+      using Whizbang.Core;
+      using Whizbang.Core.Lenses;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public sealed record Node {
+        public string Label { get; init; } = "";
+        public List<Node>? Children { get; init; }
+      }
+
+      public class TreeModel {
+        [StreamId]
+        public Guid TreeId { get; init; }
+
+        public string Title { get; init; } = string.Empty;
+
+        public List<Node>? Skeleton { get; init; }
+      }
+
+      public class TreeRepository {
+        private readonly IQueryable<PerspectiveRow<TreeModel>> _rows = null!;
+
+        public object Find() {
+          return _rows.Where(r => r.Data.Title.CompareTo("m") > 0).ToList();
+        }
+      }
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(SOURCE);
+    var message = _whiz302(diagnostics).Select(d => d.GetMessage(CultureInfo.InvariantCulture)).FirstOrDefault();
+
+    await Assert.That(message).IsNotNull();
+    await Assert.That(message).Contains(
+      "This model holds 'Skeleton.Children', which is recursive (Entity Framework maps a self-reference only one level "
+      + "deep), so its document is stored as one serialized value", StringComparison.Ordinal);
+    await Assert.That(message).DoesNotContain("cannot construct", StringComparison.Ordinal);
+  }
+
   [Test]
   [RequiresAssemblyFiles]
   public async Task Filter_OnAModelTheMappedPathCannotConstruct_NamesThatReasonAsync() {

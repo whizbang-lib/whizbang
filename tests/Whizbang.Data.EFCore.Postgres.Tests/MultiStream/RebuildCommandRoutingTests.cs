@@ -9,6 +9,7 @@ using TUnit.Core;
 using Whizbang.Core.Commands.System;
 using Whizbang.Core.MultiStream;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.MultiStream;
 
@@ -20,7 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.MultiStream;
 /// returns at once. Without a store or a queue, the rebuild runs where it was received, as before. No database.
 /// </summary>
 /// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RebuildPerspectiveCommandReceptor.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/RebuildPerspectiveCommandReceptor.cs</code-under-test>
 [Category("Shard1")]
 public class RebuildCommandRoutingTests {
   private const string PERSPECTIVE = "Test.Balance";

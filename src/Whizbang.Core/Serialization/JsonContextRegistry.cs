@@ -317,9 +317,9 @@ public static class JsonContextRegistry {
   /// case reads its value rather than the member's default. Writing always uses the declared name.</para>
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Serialization/DeclaredNameReadTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_DefaultProfileAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_PersistenceProfileAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/JsonbPolymorphicOrderingTests.cs:NestedPolymorphic_ShortKey_JsonbReordered_RoundTripsThroughCombinedOptionsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_DefaultProfileAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/JsonbPolymorphicOrderingTests.cs:CreateCombinedOptions_EnablesOutOfOrderMetadata_PersistenceProfileAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/JsonbPolymorphicOrderingTests.cs:NestedPolymorphic_ShortKey_JsonbReordered_RoundTripsThroughCombinedOptionsAsync</tests>
   public static JsonSerializerOptions CreateCombinedOptions(SerializationProfile profile)
     => CreateCombinedOptions(profile, _resolvers);
 
@@ -632,7 +632,7 @@ public static class JsonContextRegistry {
   public static void RegisterDerivedType<TBase, TDerived>(string? discriminator = null)
     where TDerived : TBase {
     var bag = _derivedTypes.GetOrAdd(typeof(TBase), _ => []);
-    var actualDiscriminator = discriminator ?? typeof(TDerived).Name;
+    var actualDiscriminator = discriminator ?? TypeNameFormatter.SimpleName(typeof(TDerived));
 
     // Avoid duplicate registrations
     if (!bag.Any(x => x.derivedType == typeof(TDerived))) {
@@ -861,7 +861,7 @@ public static class JsonContextRegistry {
   /// (<see cref="JsonUnknownDerivedTypeHandling.FallBackToNearestAncestor"/>). An interface has no
   /// constructor, so without a creator that read throws for the WHOLE containing message.
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeUnresolvedInnerMessageTests.cs:Deserialize_InnerDiscriminatorUnresolvable_KeepsResolvableInnerEventsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeUnresolvedInnerMessageTests.cs:Deserialize_InnerDiscriminatorUnresolvable_KeepsResolvableInnerEventsAsync</tests>
   private static Func<TBase>? _unresolvedElementCreator<TBase>(bool strict) where TBase : notnull =>
     !strict && typeof(TBase) == typeof(global::Whizbang.Core.IMessage)
       ? (Func<TBase>)(object)_createUnresolvedMessage
@@ -878,7 +878,7 @@ public static class JsonContextRegistry {
   /// another assembly's events would silently serialize them as empty base objects.
   /// </summary>
   /// <docs>fundamentals/messages/json-serialization</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RedeliveryCompositeWireSerializationTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RedeliveryCompositeWireSerializationTests.cs</tests>
   public static JsonTypeInfo<TBase>? GetLazyPolymorphicTypeInfo<TBase>(JsonSerializerOptions options)
     where TBase : notnull {
     ArgumentNullException.ThrowIfNull(options);
@@ -1148,7 +1148,7 @@ public static class JsonContextRegistry {
   /// interface-typed envelope (<c>MessageEnvelope&lt;IEvent&gt;</c> and kin) wherever a resolver is asked
   /// for one. It names every field the envelope carries, because hand-built metadata silently drops whatever
   /// it does not name on each round trip: the producer's origin and causality (#1029), the version and
-  /// dispatch context, the directed target, the state-only marker and the priority. Fields absent from an
+  /// dispatch context, the directed target, the state-only and repaired markers and the priority. Fields absent from an
   /// older body bind to their unstamped defaults (version 1, the v1 dispatch context, an empty origin).
   /// </remarks>
   /// <tests>tests/Whizbang.Core.Tests/Serialization/PolymorphicEnvelopeOriginTests.cs</tests>
@@ -1165,6 +1165,8 @@ public static class JsonContextRegistry {
       _createProperty<int, MessageEnvelope<TBase>>(_options, "Priority", obj => obj.Priority, (obj, value) => obj.Priority = value),
       _createProperty<string?, MessageEnvelope<TBase>>(_options, "Target", obj => obj.Target, (obj, value) => obj.Target = value),
       _createProperty<bool, MessageEnvelope<TBase>>(_options, "StateOnly", obj => obj.StateOnly, (obj, value) => obj.StateOnly = value),
+      // #2273: a repaired child's receptor restriction, omitted when false like the state-only marker.
+      _createProperty<bool, MessageEnvelope<TBase>>(_options, "Repaired", obj => obj.Repaired, (obj, value) => obj.Repaired = value),
       _createProperty<int, MessageEnvelope<TBase>>(_options, "Version", obj => obj.Version, null),
       _createProperty<MessageDispatchContext, MessageEnvelope<TBase>>(_options, "DispatchContext", obj => obj.DispatchContext, null),
       _createProperty<Guid, MessageEnvelope<TBase>>(_options, "SourceServiceId", obj => obj.SourceServiceId, null),
@@ -1175,6 +1177,7 @@ public static class JsonContextRegistry {
     properties[3].ShouldSerialize = static (_, value) => value is int priority && priority != 0;
     properties[4].ShouldSerialize = static (_, value) => value is not null;
     properties[5].ShouldSerialize = static (_, value) => value is true;
+    properties[6].ShouldSerialize = static (_, value) => value is true;
 
     // Constructor parameters for deserialization. Version and DispatchContext bind through the constructor
     // (which supplies the v1 dispatch context when absent); the origin and causality pairs are init-only

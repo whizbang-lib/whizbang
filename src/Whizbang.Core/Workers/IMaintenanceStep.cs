@@ -20,7 +20,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/workers/maintenance-steps#maintenance-steps</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStepTests.cs</tests>
 public interface IMaintenanceStep {
   /// <summary>A short name for logs.</summary>
   string Name { get; }

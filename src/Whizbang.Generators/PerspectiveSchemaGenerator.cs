@@ -185,7 +185,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     // Estimate size based on properties in the MODEL type (first type argument)
     // For IPerspectiveFor<TModel, TEvent>, TModel is at index 0
     var modelType = perspectiveInterfaces[0].TypeArguments[0];
-    var modelClassName = modelType.Name;
+    var modelClassName = TypeNameUtilities.SimpleName(modelType);
     // Use shared utility to include inherited properties from base model classes. A model type that
     // is NOT a named type — an array (IPerspectiveFor<TModel> only constrains TModel to `class`, which
     // an array satisfies), a type parameter — declares no member symbols at all in Roslyn, so there is
@@ -219,6 +219,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         DocumentProperties: [.. DocumentPropertyDiscovery.From(modelType as INamedTypeSymbol)],
         BuildsMetadataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsMetadataIndex,
         BuildsDataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsDataIndex,
+        CompositeIndexes: [.. JsonIndexDiscovery.CompositesFrom(modelType as INamedTypeSymbol)],
         TableStorage: TableStorageInfo.From(modelType)
     );
   }
@@ -252,6 +253,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         DocumentProperties: candidate.DocumentProperties,
         BuildsMetadataIndex: candidate.BuildsMetadataIndex,
         BuildsDataIndex: candidate.BuildsDataIndex,
+        CompositeIndexes: candidate.CompositeIndexes,
         TableStorage: candidate.TableStorage
     );
   }
@@ -567,9 +569,9 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     schemaBuilder.AppendLine("    /// Per-perspective SQL entries for individual hash tracking.");
     schemaBuilder.AppendLine("    /// Each entry maps a perspective name to its DDL (CREATE TABLE + indexes).");
     schemaBuilder.AppendLine("    /// </summary>");
-    schemaBuilder.AppendLine("    public static readonly System.Collections.Generic.KeyValuePair<string, string>[] Entries = new System.Collections.Generic.KeyValuePair<string, string>[] {");
+    schemaBuilder.AppendLine("    public static readonly global::System.Collections.Generic.KeyValuePair<string, string>[] Entries = new global::System.Collections.Generic.KeyValuePair<string, string>[] {");
     foreach (var (name, sql) in perspectiveEntries) {
-      schemaBuilder.Append("        new System.Collections.Generic.KeyValuePair<string, string>(\"");
+      schemaBuilder.Append("        new global::System.Collections.Generic.KeyValuePair<string, string>(\"");
       schemaBuilder.Append(name);
       schemaBuilder.Append("\", @\"");
       schemaBuilder.Append(sql.Replace("\"", "\"\""));
@@ -648,6 +650,13 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         .Replace("__TABLE_NAME__", perspective.TableName);
 
     perspectiveSqlBuilder.AppendLine(indexesCode);
+
+    // The model's [PerspectiveIndex] declarations, the same statements the EF Core schema emits (#2087): the
+    // updated_at index is one of them when the model asks for it, under the name that driver gives it.
+    var shortName = perspective.TableName.Replace("wh_per_", "");
+    foreach (var index in perspective.CompositeIndexes) {
+      perspectiveSqlBuilder.AppendLine(CompositeIndexSql.CreateStatement(index, perspective.TableName, shortName));
+    }
 
     // Generate physical field indexes
     var physicalIndexesSql = _generatePhysicalIndexesSql(perspective.TableName, perspective.PhysicalFields);
@@ -968,6 +977,7 @@ internal sealed record PerspectiveSchemaInfo(
     EquatableArray<string> DocumentProperties,
     bool BuildsMetadataIndex,
     bool BuildsDataIndex,
+    EquatableArray<CompositeIndexInfo> CompositeIndexes,
     TableStorageInfo? TableStorage = null
 );
 
@@ -1005,6 +1015,7 @@ public enum GeneratorFieldStorageMode {
 /// <param name="DocumentProperties">The model's properties kept only in the document, whose columns an earlier release may have left behind (#1022)</param>
 /// <param name="BuildsMetadataIndex">Whether the model's [PerspectiveQueries] asks for the metadata index</param>
 /// <param name="BuildsDataIndex">Whether the model's [PerspectiveQueries] asks for the index over its whole document</param>
+/// <param name="CompositeIndexes">The indexes the model declares with <c>[PerspectiveIndex]</c></param>
 /// <param name="TableStorage">The table's storage options from <c>[PerspectiveTableStorage]</c>, if any</param>
 internal sealed record PerspectiveCandidate(
     string ClassName,
@@ -1022,5 +1033,6 @@ internal sealed record PerspectiveCandidate(
     EquatableArray<string> DocumentProperties,
     bool BuildsMetadataIndex,
     bool BuildsDataIndex,
+    EquatableArray<CompositeIndexInfo> CompositeIndexes,
     TableStorageInfo? TableStorage = null
 );

@@ -3,12 +3,11 @@
 
 #Requires -Modules Pester
 
-# The runner picker chooses, per job class, the first of three tiers whose every check passes: a
-# team-owned self-hosted machine in the W! pool, then Blacksmith when a repository variable names its
-# label, then a GitHub-hosted runner. These tests cover each routing branch and each way a tier is
-# skipped: an untrusted run, a missing token, a closed or missing runner group, no idle machine with the
-# labels, a queue ahead of the run, an unset or malformed variable, and every API failure (an error, a
-# timeout, an unexpected response). The GitHub API is replaced by a scriptblock, except in the tests of
+# The runner picker chooses, per job class, a team-owned self-hosted machine in the W! pool when every
+# check passes, and a GitHub-hosted runner otherwise. These tests cover each routing branch and each way
+# the pool is skipped: an untrusted run, a missing token, a closed or missing runner group, no idle
+# machine with the labels, a queue ahead of the run, and every API failure (an error, a timeout, an
+# unexpected response). The GitHub API is replaced by a scriptblock, except in the tests of
 # the real invoker, which use a local listener.
 
 BeforeAll {
@@ -20,8 +19,6 @@ BeforeAll {
   $script:AnyOs = '["self-hosted","whizbang"]'
   $script:Linux = '["self-hosted","whizbang","Linux","X64"]'
   $script:LinuxDocker = '["self-hosted","whizbang","Linux","X64","docker"]'
-  $script:Bs = 'blacksmith-4vcpu-ubuntu-2404'
-  $script:BsJson = '"blacksmith-4vcpu-ubuntu-2404"'
 
   function New-Runner {
     param([string]$Name = 'r1', [string]$Status = 'online', [bool]$Busy = $false,
@@ -66,12 +63,12 @@ BeforeAll {
     [pscustomobject]@{ Group = $Group; SelectedRepositories = $Selected; Runners = $Runners }
   }
 
-  # Select-CiRunner for a trusted push with an open pool, an empty queue and no Blacksmith, unless overridden.
+  # Select-CiRunner for a trusted push with an open pool and an empty queue, unless overridden.
   function Invoke-Select {
     param([hashtable]$Context = (New-Context), $PoolState = (New-PoolState), [string]$PoolUnavailable = '',
-      $QueuedJobs = @(), [string]$QueueUnavailable = '', [int]$QueueThreshold = 0, [hashtable]$Variables = @{})
+      $QueuedJobs = @(), [string]$QueueUnavailable = '', [int]$QueueThreshold = 0)
     Select-CiRunner -Context $Context -PoolState $PoolState -PoolUnavailable $PoolUnavailable -QueuedJobs $QueuedJobs `
-      -QueueUnavailable $QueueUnavailable -QueueThreshold $QueueThreshold -Blacksmith (Get-BlacksmithConfig -Variables $Variables)
+      -QueueUnavailable $QueueUnavailable -QueueThreshold $QueueThreshold
   }
 
   # A fake GitHub API: answers each path from $Responses, records the calls, throws for a path it was
@@ -112,14 +109,13 @@ BeforeAll {
   function Invoke-Entry {
     param([scriptblock]$Api, [string]$EventName = 'merge_group', [string]$HeadRepository = '', [string]$Actor = 'someone',
       [string]$PrAuthor = '', [string]$PoolToken = 'pool-token', [string]$RepoToken = 'repo-token',
-      [string]$Disabled = '', [string]$Organization = 'whizbang-lib', [string]$RunId = '1000', [int]$BudgetSeconds = 60,
-      [hashtable]$Variables = @{})
+      [string]$Disabled = '', [string]$Organization = 'whizbang-lib', [string]$RunId = '1000', [int]$BudgetSeconds = 60)
     $script:OutPath = Join-Path $TestDrive "out-$([guid]::NewGuid().ToString('N')).txt"
     $script:SummaryPath = Join-Path $TestDrive "summary-$([guid]::NewGuid().ToString('N')).md"
     Invoke-SelectCiRunner -EventName $EventName -Repository $script:Repo -HeadRepository $HeadRepository -Actor $Actor `
       -PrAuthor $PrAuthor -RepositoryPrivate 'false' -Organization $Organization -GroupName 'Default' -RunId $RunId `
       -PoolToken $PoolToken -RepoToken $RepoToken -Disabled $Disabled -QueueThreshold 0 -BudgetSeconds $BudgetSeconds `
-      -Variables $Variables -OutputFile $script:OutPath -SummaryFile $script:SummaryPath -InvokeApi $Api
+      -OutputFile $script:OutPath -SummaryFile $script:SummaryPath -InvokeApi $Api
   }
 
   # The outputs the entry point wrote, as a name -> value table.
@@ -283,18 +279,6 @@ Describe 'Get-CompetingJobCount' {
   }
 }
 
-Describe 'Get-LabelQueueCount' {
-  It 'counts the queued jobs that ask for the label, whatever the case' {
-    $jobs = @(
-      (New-Job @($Bs))
-      (New-Job @('Blacksmith-4vcpu-Ubuntu-2404'))
-      (New-Job @($Bs) -Status 'in_progress')
-      (New-Job @('ubuntu-latest'))
-    )
-    Get-LabelQueueCount -QueuedJobs $jobs -Label $Bs | Should -Be 2
-  }
-}
-
 Describe 'ConvertTo-RunsOnJson' {
   It 'renders a single label as a JSON string and a label set as a JSON array' {
     ConvertTo-RunsOnJson -Value 'ubuntu-latest' | Should -Be $Hosted
@@ -323,77 +307,6 @@ Describe 'Get-CiRunnerClass' {
     $classes = Get-CiRunnerClass
     $classes['analyze'].Pool | Should -BeFalse
     foreach ($name in 'any-os', 'linux', 'compile', 'linux-docker') { $classes[$name].Pool | Should -BeTrue }
-  }
-}
-
-Describe 'Get-BlacksmithConfig' {
-  It 'is off when no label is set' {
-    $c = Get-BlacksmithConfig -Variables @{}
-    $c.Problem | Should -BeNullOrEmpty
-    Get-BlacksmithLabel -Config $c -Class 'linux' | Should -BeNullOrEmpty
-    $c.Forks | Should -BeFalse
-    $c.MaxQueued | Should -Be 0
-  }
-
-  It 'uses the default label for every class and a per-class label over it' {
-    $c = Get-BlacksmithConfig -Variables @{ CI_BLACKSMITH_RUNNER = " $Bs "; CI_BLACKSMITH_RUNNER_LINUX_DOCKER = 'blacksmith-8vcpu-ubuntu-2404' }
-    Get-BlacksmithLabel -Config $c -Class 'linux' | Should -Be $Bs
-    Get-BlacksmithLabel -Config $c -Class 'linux-docker' | Should -Be 'blacksmith-8vcpu-ubuntu-2404'
-    Get-BlacksmithLabel -Config $c -Class 'any-os' | Should -Be $Bs
-  }
-
-  It 'reads the per-class variable for <Class>' -ForEach @(
-    @{ Class = 'any-os'; Name = 'CI_BLACKSMITH_RUNNER_ANY_OS' }
-    @{ Class = 'linux'; Name = 'CI_BLACKSMITH_RUNNER_LINUX' }
-    @{ Class = 'compile'; Name = 'CI_BLACKSMITH_RUNNER_COMPILE' }
-    @{ Class = 'analyze'; Name = 'CI_BLACKSMITH_RUNNER_ANALYZE' }
-    @{ Class = 'linux-docker'; Name = 'CI_BLACKSMITH_RUNNER_LINUX_DOCKER' }
-  ) {
-    $c = Get-BlacksmithConfig -Variables @{ $Name = 'blacksmith-2vcpu-ubuntu-2404' }
-    Get-BlacksmithLabel -Config $c -Class $Class | Should -Be 'blacksmith-2vcpu-ubuntu-2404'
-  }
-
-  It 'serves forks only when CI_BLACKSMITH_FORKS is exactly true (<Value>)' -ForEach @(
-    @{ Value = 'true'; Expected = $true }
-    @{ Value = 'TRUE'; Expected = $true }
-    @{ Value = 'yes'; Expected = $false }
-    @{ Value = ''; Expected = $false }
-  ) {
-    (Get-BlacksmithConfig -Variables @{ CI_BLACKSMITH_FORKS = $Value }).Forks | Should -Be $Expected
-  }
-
-  It 'reads CI_BLACKSMITH_MAX_QUEUED as a whole number' {
-    (Get-BlacksmithConfig -Variables @{ CI_BLACKSMITH_MAX_QUEUED = '4' }).MaxQueued | Should -Be 4
-    (Get-BlacksmithConfig -Variables @{ CI_BLACKSMITH_MAX_QUEUED = '' }).MaxQueued | Should -Be 0
-  }
-
-  It 'reports a problem for a malformed CI_BLACKSMITH_MAX_QUEUED (<Value>)' -ForEach @(
-    @{ Value = 'many' }
-    @{ Value = '-1' }
-    @{ Value = '2.5' }
-  ) {
-    (Get-BlacksmithConfig -Variables @{ CI_BLACKSMITH_RUNNER = $Bs; CI_BLACKSMITH_MAX_QUEUED = $Value }).Problem |
-      Should -BeLike "*CI_BLACKSMITH_MAX_QUEUED*$Value*"
-  }
-}
-
-Describe 'Test-BlacksmithLabel' {
-  It 'accepts <Label> for <Class>' -ForEach @(
-    @{ Label = 'blacksmith-4vcpu-ubuntu-2404'; Class = 'linux' }
-    @{ Label = 'blacksmith-4vcpu-ubuntu-2404'; Class = 'linux-docker' }
-    @{ Label = 'blacksmith-4vcpu-ubuntu-2404-arm'; Class = 'any-os' }
-    @{ Label = 'blacksmith-4vcpu-windows-2025'; Class = 'any-os' }
-  ) {
-    Test-BlacksmithLabel -Label $Label -Class $Class | Should -BeNullOrEmpty
-  }
-
-  It 'refuses <Label> for <Class>: <Why>' -ForEach @(
-    @{ Label = 'blacksmith 4vcpu'; Class = 'linux'; Why = '*not a runner label*' }
-    @{ Label = '"x"'; Class = 'any-os'; Why = '*not a runner label*' }
-    @{ Label = 'blacksmith-4vcpu-ubuntu-2404-arm'; Class = 'linux'; Why = '*X64*' }
-    @{ Label = 'blacksmith-4vcpu-windows-2025'; Class = 'linux-docker'; Why = '*Linux*' }
-  ) {
-    Test-BlacksmithLabel -Label $Label -Class $Class | Should -BeLike $Why
   }
 }
 
@@ -496,19 +409,19 @@ Describe 'Select-CiRunner' {
       $d['linux'].Reason | Should -BeLike '*1 idle*1 queued*'
     }
 
-    It 'keeps the compile of a push run on GitHub-hosted runners, skipping Blacksmith too, while its tests use the pool' {
-      $d = Invoke-Select -Context (New-Context -EventName 'push') -Variables @{ CI_BLACKSMITH_RUNNER = $Bs }
+    It 'keeps the compile of a push run on GitHub-hosted runners while its tests use the pool' {
+      $d = Invoke-Select -Context (New-Context -EventName 'push')
       $d['compile'].RunsOn | Should -Be $Hosted
       $d['compile'].Tier | Should -Be 'github-hosted'
       $d['compile'].Reason | Should -BeLike '*push*publish*'
       $d['linux'].RunsOn | Should -Be $Linux
     }
 
-    It 'never sends the analysis to the pool, taking Blacksmith or GitHub-hosted instead' {
+    It 'never sends the analysis to the pool, taking GitHub-hosted instead' {
       $d = Invoke-Select
       $d['analyze'].RunsOn | Should -Be $Hosted
+      $d['analyze'].Tier | Should -Be 'github-hosted'
       $d['analyze'].Reason | Should -BeLike '*self-hosted pool skipped: this job waits on other jobs*'
-      (Invoke-Select -Variables @{ CI_BLACKSMITH_RUNNER = $Bs })['analyze'].RunsOn | Should -Be $BsJson
     }
 
     It 'routes the compile of a pull request like any other class' {
@@ -516,101 +429,14 @@ Describe 'Select-CiRunner' {
     }
   }
 
-  Context 'tier 2: Blacksmith' {
-    It 'takes Blacksmith when the pool is skipped and the label is set, naming why the pool was skipped' {
-      $d = Invoke-Select -PoolState (New-PoolState -Runners @()) -Variables @{ CI_BLACKSMITH_RUNNER = $Bs }
-      foreach ($class in 'any-os', 'linux', 'linux-docker') {
-        $d[$class].RunsOn | Should -Be $BsJson
-        $d[$class].Tier | Should -Be 'blacksmith'
-        $d[$class].Reason | Should -BeLike "Blacksmith ($Bs)*self-hosted pool skipped: no idle*"
-      }
-    }
-
-    It 'takes the per-class label' {
-      $d = Invoke-Select -PoolState $null -PoolUnavailable 'off' -Variables @{ CI_BLACKSMITH_RUNNER = $Bs; CI_BLACKSMITH_RUNNER_LINUX_DOCKER = 'blacksmith-8vcpu-ubuntu-2404' }
-      $d['linux-docker'].RunsOn | Should -Be '"blacksmith-8vcpu-ubuntu-2404"'
-      $d['linux'].RunsOn | Should -Be $BsJson
-    }
-
-    It 'prefers an idle pool machine to Blacksmith' {
-      (Invoke-Select -Variables @{ CI_BLACKSMITH_RUNNER = $Bs })['linux'].RunsOn | Should -Be $Linux
-    }
-
-    It 'serves a <Case> on Blacksmith when CI_BLACKSMITH_FORKS is true' -ForEach @(
-      @{ Case = 'fork pull request'; Context = @{ EventName = 'pull_request'; Repository = 'whizbang-lib/whizbang'; HeadRepository = 'someone/whizbang'; Actor = 'someone'; PrAuthor = 'someone'; RepositoryPrivate = $false } }
-      @{ Case = 'Dependabot pull request'; Context = @{ EventName = 'pull_request'; Repository = 'whizbang-lib/whizbang'; HeadRepository = 'whizbang-lib/whizbang'; Actor = 'dependabot[bot]'; PrAuthor = 'dependabot[bot]'; RepositoryPrivate = $false } }
-    ) {
-      $d = Invoke-Select -Context $Context -Variables @{ CI_BLACKSMITH_RUNNER = $Bs; CI_BLACKSMITH_FORKS = 'true' }
-      $d['linux-docker'].RunsOn | Should -Be $BsJson
-      $d['linux-docker'].Reason | Should -BeLike '*self-hosted pool skipped*'
-    }
-
-    It 'keeps a <Case> off Blacksmith unless CI_BLACKSMITH_FORKS is true' -ForEach @(
-      @{ Case = 'fork pull request'; Context = @{ EventName = 'pull_request'; Repository = 'whizbang-lib/whizbang'; HeadRepository = 'someone/whizbang'; Actor = 'someone'; PrAuthor = 'someone'; RepositoryPrivate = $false } }
-      @{ Case = 'Dependabot pull request'; Context = @{ EventName = 'pull_request'; Repository = 'whizbang-lib/whizbang'; HeadRepository = 'whizbang-lib/whizbang'; Actor = 'dependabot[bot]'; PrAuthor = 'dependabot[bot]'; RepositoryPrivate = $false } }
-    ) {
-      $d = Invoke-Select -Context $Context -Variables @{ CI_BLACKSMITH_RUNNER = $Bs }
-      $d['linux'].RunsOn | Should -Be $Hosted
-      $d['linux'].Reason | Should -BeLike '*Blacksmith skipped*CI_BLACKSMITH_FORKS*'
-    }
-
-    It 'never serves an ineligible event on Blacksmith, even with forks allowed' {
-      $ctx = New-Context -EventName 'pull_request_target'
-      $d = Invoke-Select -Context $ctx -Variables @{ CI_BLACKSMITH_RUNNER = $Bs; CI_BLACKSMITH_FORKS = 'true' }
-      $d['linux'].RunsOn | Should -Be $Hosted
-      $d['linux'].Reason | Should -BeLike '*Blacksmith skipped*not eligible*'
-    }
-
-    It 'takes Blacksmith while the queue for its label is under CI_BLACKSMITH_MAX_QUEUED' {
-      $d = Invoke-Select -PoolState $null -PoolUnavailable 'off' -QueuedJobs @(New-Job @($Bs)) `
-        -Variables @{ CI_BLACKSMITH_RUNNER = $Bs; CI_BLACKSMITH_MAX_QUEUED = '2' }
-      $d['linux'].RunsOn | Should -Be $BsJson
-      $d['linux'].Reason | Should -BeLike '*1 queued*'
-    }
-
-    It 'takes Blacksmith with no queue limit even when the queue is unreadable' {
-      $d = Invoke-Select -PoolState $null -PoolUnavailable 'off' -QueuedJobs $null -QueueUnavailable 'boom' -Variables @{ CI_BLACKSMITH_RUNNER = $Bs }
-      $d['linux'].RunsOn | Should -Be $BsJson
-    }
-  }
-
-  Context 'tier 2 skipped: the final fallback' {
-    It 'falls back when no label is set, naming both skipped tiers' {
+  Context 'tier 2: GitHub-hosted' {
+    It 'falls back to GitHub-hosted, naming why the pool was skipped and no other tier' {
       $d = Invoke-Select -PoolState (New-PoolState -Runners @())
-      $d['linux'].RunsOn | Should -Be $Hosted
-      $d['linux'].Reason | Should -BeLike 'GitHub-hosted*self-hosted pool skipped: no idle*Blacksmith skipped: CI_BLACKSMITH_RUNNER is not set*'
-    }
-
-    It 'falls back when the queue for the label is at CI_BLACKSMITH_MAX_QUEUED' {
-      $d = Invoke-Select -PoolState $null -PoolUnavailable 'off' -QueuedJobs @((New-Job @($Bs)), (New-Job @($Bs))) `
-        -Variables @{ CI_BLACKSMITH_RUNNER = $Bs; CI_BLACKSMITH_MAX_QUEUED = '2' }
-      $d['linux'].RunsOn | Should -Be $Hosted
-      $d['linux'].Reason | Should -BeLike '*Blacksmith skipped: 2 queued*CI_BLACKSMITH_MAX_QUEUED is 2*'
-    }
-
-    It 'falls back when a queue limit is set and the queue is unreadable' {
-      $d = Invoke-Select -PoolState $null -PoolUnavailable 'off' -QueuedJobs $null -QueueUnavailable 'boom' `
-        -Variables @{ CI_BLACKSMITH_RUNNER = $Bs; CI_BLACKSMITH_MAX_QUEUED = '2' }
-      $d['linux'].RunsOn | Should -Be $Hosted
-      $d['linux'].Reason | Should -BeLike '*Blacksmith skipped*queue*boom*'
-    }
-
-    It 'falls back on a malformed CI_BLACKSMITH_MAX_QUEUED' {
-      $d = Invoke-Select -PoolState $null -PoolUnavailable 'off' -Variables @{ CI_BLACKSMITH_RUNNER = $Bs; CI_BLACKSMITH_MAX_QUEUED = 'lots' }
-      $d['linux'].RunsOn | Should -Be $Hosted
-      $d['linux'].Reason | Should -BeLike '*Blacksmith skipped*CI_BLACKSMITH_MAX_QUEUED*lots*'
-    }
-
-    It 'falls back on a label that does not fit the class' {
-      $d = Invoke-Select -PoolState $null -PoolUnavailable 'off' -Variables @{ CI_BLACKSMITH_RUNNER = 'blacksmith-4vcpu-ubuntu-2404-arm' }
-      $d['linux'].RunsOn | Should -Be $Hosted
-      $d['linux'].Reason | Should -BeLike '*Blacksmith skipped*X64*'
-      $d['any-os'].RunsOn | Should -Be '"blacksmith-4vcpu-ubuntu-2404-arm"'
-    }
-
-    It 'falls back on a malformed label' {
-      $d = Invoke-Select -PoolState $null -PoolUnavailable 'off' -Variables @{ CI_BLACKSMITH_RUNNER = '["a","b"]' }
-      foreach ($class in $d.Keys) { $d[$class].RunsOn | Should -Be $Hosted }
+      foreach ($class in $d.Keys) {
+        $d[$class].RunsOn | Should -Be $Hosted
+        $d[$class].Tier | Should -Be 'github-hosted'
+      }
+      $d['linux'].Reason | Should -Be 'GitHub-hosted (ubuntu-latest); self-hosted pool skipped: no idle runner with labels self-hosted, whizbang, Linux, X64'
     }
   }
 }
@@ -710,30 +536,6 @@ Describe 'Invoke-SelectCiRunner' {
     Get-Content -Raw -LiteralPath $SummaryPath | Should -BeLike '*GitHub-hosted*simulated failure*'
   }
 
-  It 'still takes Blacksmith when the pool API fails' {
-    $decisions = Invoke-Entry -Api (New-FakeApi (Get-PoolResponse) -FailOn '/runners') -Variables @{ CI_BLACKSMITH_RUNNER = $Bs }
-    (Read-Output)['linux-docker'] | Should -Be $BsJson
-    $decisions['linux-docker'].Reason | Should -BeLike '*simulated failure*'
-  }
-
-  It 'reads the queue for Blacksmith on a fork pull request only when a queue limit is set' {
-    $fork = @{ EventName = 'pull_request'; HeadRepository = 'someone/whizbang'; PrAuthor = 'someone' }
-    $null = Invoke-Entry -Api (New-FakeApi (Get-PoolResponse)) @fork -Variables @{ CI_BLACKSMITH_RUNNER = $Bs; CI_BLACKSMITH_FORKS = 'true' }
-    $ApiCalls.Count | Should -Be 0
-    (Read-Output)['linux'] | Should -Be $BsJson
-    $null = Invoke-Entry -Api (New-FakeApi (Get-PoolResponse)) @fork -Variables @{ CI_BLACKSMITH_RUNNER = $Bs; CI_BLACKSMITH_FORKS = 'true'; CI_BLACKSMITH_MAX_QUEUED = '3' }
-    $ApiCalls | Should -Be @("repo-token /repos/$Repo/actions/runs?status=queued&per_page=20", "repo-token /repos/$Repo/actions/runs?status=in_progress&per_page=20")
-    (Read-Output)['linux'] | Should -Be $BsJson
-  }
-
-  It 'skips Blacksmith under a queue limit when there is no repository token to read the queue' {
-    $decisions = Invoke-Entry -Api (New-FakeApi @{}) -EventName 'pull_request' -HeadRepository 'someone/whizbang' -PrAuthor 'someone' `
-      -RepoToken '' -Variables @{ CI_BLACKSMITH_RUNNER = $Bs; CI_BLACKSMITH_FORKS = 'true'; CI_BLACKSMITH_MAX_QUEUED = '3' }
-    $ApiCalls.Count | Should -Be 0
-    $decisions['linux'].RunsOn | Should -Be $Hosted
-    $decisions['linux'].Reason | Should -BeLike '*Blacksmith skipped: the queue could not be read: no repository token*'
-  }
-
   It 'falls back on a response it cannot read (<Case>)' -ForEach @(
     @{ Case = 'a string, not JSON'; Body = 'not json' }
     @{ Case = 'JSON without runner_groups'; Body = [pscustomobject]@{ message = 'Not Found' } }
@@ -794,21 +596,6 @@ Describe 'Invoke-SelectCiRunner' {
   }
 }
 
-Describe 'Get-EnvironmentVariables' {
-  It 'reads every CI_BLACKSMITH_ variable from the environment, and only those' {
-    $saved = [Environment]::GetEnvironmentVariable('CI_BLACKSMITH_RUNNER_LINUX')
-    try {
-      [Environment]::SetEnvironmentVariable('CI_BLACKSMITH_RUNNER_LINUX', 'blacksmith-2vcpu-ubuntu-2404')
-      $vars = Get-EnvironmentVariables
-      @($vars.Keys | Sort-Object) | Should -Be @('CI_BLACKSMITH_FORKS', 'CI_BLACKSMITH_MAX_QUEUED', 'CI_BLACKSMITH_RUNNER',
-        'CI_BLACKSMITH_RUNNER_ANALYZE', 'CI_BLACKSMITH_RUNNER_ANY_OS', 'CI_BLACKSMITH_RUNNER_COMPILE', 'CI_BLACKSMITH_RUNNER_LINUX', 'CI_BLACKSMITH_RUNNER_LINUX_DOCKER')
-      $vars['CI_BLACKSMITH_RUNNER_LINUX'] | Should -Be 'blacksmith-2vcpu-ubuntu-2404'
-    } finally {
-      [Environment]::SetEnvironmentVariable('CI_BLACKSMITH_RUNNER_LINUX', $saved)
-    }
-  }
-}
-
 Describe 'New-GitHubApiInvoker' {
   It 'throws when the time budget is spent, before any request' {
     $invoke = New-GitHubApiInvoker -BaseUrl 'http://127.0.0.1:9' -TimeoutSec 5 -BudgetSeconds 0
@@ -864,10 +651,10 @@ Describe 'New-GitHubApiInvoker' {
 }
 
 Describe 'The script run as CI runs it' {
-  It 'falls back and exits 0 with no tokens or variables, writing every output' {
+  It 'falls back and exits 0 with no tokens, writing every output' {
     $out = Join-Path $TestDrive 'entry-out.txt'
     $summary = Join-Path $TestDrive 'entry-summary.md'
-    $names = 'RUNNER_POOL_TOKEN', 'GH_TOKEN', 'CI_BLACKSMITH_RUNNER'
+    $names = 'RUNNER_POOL_TOKEN', 'GH_TOKEN'
     $saved = @{}; foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
     try {
       foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $null) }
@@ -879,19 +666,6 @@ Describe 'The script run as CI runs it' {
     }
     $lines = Get-Content -LiteralPath $out
     foreach ($class in 'any-os', 'linux', 'compile', 'analyze', 'linux-docker') { $lines | Should -Contain "$class=$Hosted" }
-  }
-
-  It 'takes Blacksmith from the environment variables CI passes' {
-    $out = Join-Path $TestDrive 'entry-bs-out.txt'
-    $saved = [Environment]::GetEnvironmentVariable('CI_BLACKSMITH_RUNNER')
-    try {
-      [Environment]::SetEnvironmentVariable('CI_BLACKSMITH_RUNNER', $Bs)
-      pwsh -NoProfile -File $ScriptPath -EventName push -Repository $Repo -Organization 'whizbang-lib' -OutputFile $out | Out-Null
-      $LASTEXITCODE | Should -Be 0
-    } finally {
-      [Environment]::SetEnvironmentVariable('CI_BLACKSMITH_RUNNER', $saved)
-    }
-    (Get-Content -LiteralPath $out) | Should -Contain "linux=$BsJson"
   }
 }
 
@@ -919,12 +693,16 @@ Describe 'Which class each ci.yml job takes' {
     $script:CiJobs = Get-WorkflowJobText (Join-Path $Root '.github' 'workflows' 'ci.yml')
     $script:Expected = [ordered]@{
       'build'                  = 'compile'
+      'analyzers'              = 'compile'
+      'compile-net10'          = 'compile'
       'format'                 = 'any-os'
       'noop-rebuild'           = 'any-os'
       'unit-tests'             = 'any-os'
       'component-tests'        = 'any-os'
       'script-tests'           = 'any-os'
+      'quality-build'          = 'analyze'
       'quality'                = 'analyze'
+      'queue-quality'          = 'analyze'
       'postgres-integration'   = 'linux-docker'
       'inmemory-integration'   = 'linux-docker'
       'rabbitmq-integration'   = 'linux-docker'
@@ -936,12 +714,16 @@ Describe 'Which class each ci.yml job takes' {
 
   It 'routes <Job> through the <Class> class' -ForEach @(
     @{ Job = 'build'; Class = 'compile' }
+    @{ Job = 'analyzers'; Class = 'compile' }
+    @{ Job = 'compile-net10'; Class = 'compile' }
     @{ Job = 'format'; Class = 'any-os' }
     @{ Job = 'noop-rebuild'; Class = 'any-os' }
     @{ Job = 'unit-tests'; Class = 'any-os' }
     @{ Job = 'component-tests'; Class = 'any-os' }
     @{ Job = 'script-tests'; Class = 'any-os' }
+    @{ Job = 'quality-build'; Class = 'analyze' }
     @{ Job = 'quality'; Class = 'analyze' }
+    @{ Job = 'queue-quality'; Class = 'analyze' }
     @{ Job = 'postgres-integration'; Class = 'linux-docker' }
     @{ Job = 'inmemory-integration'; Class = 'linux-docker' }
     @{ Job = 'rabbitmq-integration'; Class = 'linux-docker' }

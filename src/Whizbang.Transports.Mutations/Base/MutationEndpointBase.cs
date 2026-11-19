@@ -110,7 +110,7 @@ public abstract class MutationEndpointBase<TCommand, TResult>
     // <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationEndpointBaseTests.cs:MapRequestToCommandAsync_Default_ShouldThrowNotImplementedAsync</tests>
     throw new NotImplementedException(
         "When using a custom RequestType, you must override MapRequestToCommandAsync " +
-        $"in your partial class to map {typeof(TRequest).Name} to {typeof(TCommand).Name}.");
+        $"in your partial class to map {TypeNameFormatter.ForLog(typeof(TRequest))} to {TypeNameFormatter.ForLog(typeof(TCommand))}.");
   }
 
   /// <summary>

@@ -94,10 +94,13 @@ public class TurnkeyVisibilityChainRegistrationTests {
     var services = _composeTurnkey();
     services.AddPerspectiveRunners();
 
+    // Both host it through the stage wrapper (#1636), to start at Accept commands: an unwrapped entry would start a
+    // second copy with the host, so it is counted too.
     var hostedPerspectiveWorkers = services.Count(sd =>
       sd.ServiceType == typeof(IHostedService) &&
       (sd.ImplementationType == typeof(PerspectiveWorker)
-       || sd.ImplementationFactory?.Method.ReturnType == typeof(PerspectiveWorker)));
+       || sd.ImplementationFactory?.Method.ReturnType == typeof(PerspectiveWorker)
+       || sd.ImplementationFactory?.Method.ReturnType == typeof(Whizbang.Core.Startup.StartupStageGatedService<PerspectiveWorker>)));
 
     await Assert.That(hostedPerspectiveWorkers).IsEqualTo(1)
       .Because("core registration + generated AddPerspectiveRunners() must dedupe to exactly one hosted PerspectiveWorker — "

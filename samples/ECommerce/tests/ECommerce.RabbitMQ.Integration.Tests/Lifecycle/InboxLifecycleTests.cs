@@ -308,7 +308,7 @@ public class InboxLifecycleTests {
     // The wait helper is deterministic — it hooks PerspectiveWorker.OnPerspectiveEventProcessed
     // on the inventory host and resolves a TCS once the count reaches 3.
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }

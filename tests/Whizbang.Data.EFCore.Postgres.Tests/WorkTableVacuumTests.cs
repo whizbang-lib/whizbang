@@ -19,7 +19,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class WorkTableVacuumTests : EFCoreTestBase {
   private static readonly string[] _workTables = ["wh_outbox", "wh_inbox", "wh_perspective_events", "wh_message_deduplication"];
@@ -66,6 +65,25 @@ public class WorkTableVacuumTests : EFCoreTestBase {
     await Assert.That(outcomes.Select(o => o.TableName)).IsEquivalentTo(_workTables);
     await Assert.That(outcomes.All(o => o.Vacuumed && o.SkippedReason is null)).IsTrue();
     await _assertEachVacuumedAsync(before, await _vacuumCountsAsync(cancellationToken), by: 1);
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task ATableVacuumedWithinTheWindow_IsLeftAlone_AndReportedAsRecentAsync(CancellationToken cancellationToken) {
+    // #2140: a hand-off shortly after a takeover finds the work tables just vacuumed (the database records when, for
+    // every instance) and does not vacuum them again; with no window, they are vacuumed as before.
+    await using var context = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(context, JsonContextRegistry.CreateCombinedOptions());
+    _ = await coordinator.VacuumWorkTablesAsync(cancellationToken);
+    var afterFirst = await _vacuumCountsAsync(cancellationToken);
+
+    var skipped = await coordinator.VacuumWorkTablesAsync(TimeSpan.FromMinutes(10), cancellationToken);
+
+    await Assert.That(skipped.All(o => !o.Vacuumed && o.RecentlyVacuumed && o.SkippedReason!.Contains("within"))).IsTrue();
+    await _assertEachVacuumedAsync(afterFirst, await _vacuumCountsAsync(cancellationToken), by: 0);
+    var again = await coordinator.VacuumWorkTablesAsync(TimeSpan.Zero, cancellationToken);
+    await Assert.That(again.All(o => o.Vacuumed && !o.RecentlyVacuumed)).IsTrue();
+    await _assertEachVacuumedAsync(afterFirst, await _vacuumCountsAsync(cancellationToken), by: 1);
   }
 
   /// <summary>

@@ -60,7 +60,7 @@ public class PostPerspectiveInlineCommitTest {
     // Act - Use hook to wait for perspective processing
     Console.WriteLine("[TEST] Setting up perspective processing hook...");
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
 
     Console.WriteLine("----------------------------------------------------------");
     Console.WriteLine($"[TEST] >>> DISPATCHING CreateProductCommand for ProductId={productId}");

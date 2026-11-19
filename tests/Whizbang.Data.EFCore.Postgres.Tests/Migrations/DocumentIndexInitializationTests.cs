@@ -32,7 +32,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-indexes</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class DocumentIndexInitializationTests {
   private const string UNDECLARED = "wh_per_document_index_undeclared";

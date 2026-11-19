@@ -31,7 +31,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>operations/workers/claim-worker</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ClaimCycleReportTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ClaimCycleReportTests.cs</tests>
 public sealed partial class ClaimCycleReport {
 
   private readonly int _threshold;

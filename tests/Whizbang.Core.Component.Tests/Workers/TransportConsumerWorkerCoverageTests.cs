@@ -55,7 +55,6 @@ public class TransportConsumerWorkerCoverageTests {
         metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance,
         serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         routingOptions: Options.Create(new RoutingOptions()),
         workChannelWriter: new WorkChannelWriter(),
         claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -81,7 +80,6 @@ public class TransportConsumerWorkerCoverageTests {
         metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance,
         serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         routingOptions: Options.Create(new RoutingOptions()),
         workChannelWriter: new WorkChannelWriter(),
         claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -107,7 +105,6 @@ public class TransportConsumerWorkerCoverageTests {
         metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance,
         serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         routingOptions: Options.Create(new RoutingOptions()),
         workChannelWriter: new WorkChannelWriter(),
         claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -133,7 +130,6 @@ public class TransportConsumerWorkerCoverageTests {
         metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance,
         serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         routingOptions: Options.Create(new RoutingOptions()),
         workChannelWriter: new WorkChannelWriter(),
         claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -159,7 +155,6 @@ public class TransportConsumerWorkerCoverageTests {
         metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance,
         serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         routingOptions: Options.Create(new RoutingOptions()),
         workChannelWriter: new WorkChannelWriter(),
         claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -185,7 +180,6 @@ public class TransportConsumerWorkerCoverageTests {
         metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance,
         serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         routingOptions: Options.Create(new RoutingOptions()),
         workChannelWriter: new WorkChannelWriter(),
         claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -211,7 +205,6 @@ public class TransportConsumerWorkerCoverageTests {
         metrics: null,
         logger: null!,
         serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         routingOptions: Options.Create(new RoutingOptions()),
         workChannelWriter: new WorkChannelWriter(),
         claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -237,7 +230,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -267,7 +259,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -323,7 +314,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -427,7 +417,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -493,7 +482,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -553,7 +541,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -616,7 +603,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -686,7 +672,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -754,7 +739,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -816,7 +800,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -877,7 +860,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -1024,7 +1006,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -1099,7 +1080,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -1240,7 +1220,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -1310,7 +1289,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -1337,41 +1315,24 @@ public class TransportConsumerWorkerCoverageTests {
   }
 
   // ========================================
-  // ExecuteAsync — schema-ready gate canceled before ready (coverage round 23)
+  // Stopped before its start point (coverage round 23, #1636)
   // ========================================
 
-  // If a host shuts down while migrations are still running, this early return must still let
-  // ExecuteAsync exit promptly instead of hanging. Today it does NOT settle SubscriptionsReady on
-  // the way out — any caller awaiting readiness (a startup health probe,
-  // IStartupReadinessContributor) is left parked forever even though the worker itself already
-  // stopped, which during a canceled startup means the host never reports ready and the readiness
-  // waiter never exits either.
+  // A host that stops while migrations are still running never starts this worker (#1636). Any caller
+  // awaiting readiness (a startup health probe, IStartupReadinessContributor) must still observe an
+  // outcome, so the wrapper tells the worker its start was abandoned and the worker settles
+  // SubscriptionsReady as canceled.
   [Test]
-  public async Task ExecuteAsync_CanceledWhileWaitingForSchemaGate_SettlesSubscriptionsReadyAsCanceledAsync() {
-    var neverReady = new EnteredSignalingSchemaGate();
-    var worker = _createWorkerWithSchemaGate(new CoverageTransport(), neverReady);
+  public async Task StoppedBeforeItsStartPoint_SettlesSubscriptionsReadyAsCanceledAsync() {
+    var worker = _createUnstartedWorker(new CoverageTransport());
+    using var hosted = new Whizbang.Core.Startup.StartupStageGatedService<TransportConsumerWorker>(worker,
+      Whizbang.Core.Startup.StartupStage.AcceptingCommands, new Whizbang.Core.Startup.StartupStageGate(new SchemaReadyGate()));
+    await hosted.StartAsync(CancellationToken.None);
 
-    using var stopping = new CancellationTokenSource();
-    await worker.StartAsync(stopping.Token);
+    await hosted.StopAsync(CancellationToken.None);
 
-    // Wait until the worker is provably parked on the gate before canceling. StartAsync returning
-    // only proves ExecuteAsync was queued: .NET 10 dispatches it with Task.Run(_, stoppingToken),
-    // which never invokes the delegate when the token is already canceled as the work item is
-    // dequeued -- the task then settles Canceled and nothing below was exercised at all. Canceling
-    // straight after StartAsync left it to thread-pool timing whether this test measured the gate
-    // path or measured nothing.
-    await neverReady.Entered.WaitAsync(TimeSpan.FromSeconds(10));
-
-    // Only now can cancellation resolve the gate await via OperationCanceledException, which the
-    // ExecuteAsync call site catches and returns from.
-    await stopping.CancelAsync();
-
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10))
-      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    await Assert.That(worker.ExecuteTask.IsCompletedSuccessfully).IsTrue()
-      .Because("a host shutting down mid-migration must return cleanly from the gate wait, not " +
-               "fault, and not leave this worker parked on the gate");
+    await Assert.That(worker.ExecuteTask is null).IsTrue()
+      .Because("the host stopped before Accept commands, so the worker never started");
     // The point of the fix (#716). Awaiting readiness must produce an outcome rather than park:
     // a bounded wait that throws is the caller's-eye view, and a wait that hung would fail here
     // instead of hanging the suite.
@@ -1422,7 +1383,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -1492,7 +1452,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -1561,7 +1520,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -1595,33 +1553,7 @@ public class TransportConsumerWorkerCoverageTests {
   // Helper Methods
   // ========================================
 
-  /// <summary>
-  /// Schema gate that never opens, but publishes the moment a worker starts waiting on it.
-  /// </summary>
-  /// <remarks>
-  /// Needed because <c>StartAsync</c> returning does not mean <c>ExecuteAsync</c> reached the
-  /// gate: .NET 10 queues it with <c>Task.Run</c>. Canceling before it is dequeued skips the body
-  /// entirely, so a test that cancels straight after starting can pass or fail on scheduling luck.
-  /// </remarks>
-  private sealed class EnteredSignalingSchemaGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    /// <summary>Completes the moment a worker begins waiting on this gate.</summary>
-    public Task Entered => _entered.Task;
-
-    public bool IsReady => _ready.Task.IsCompleted;
-
-    public void MarkReady() => _ready.TrySetResult();
-
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      return _ready.Task.WaitAsync(cancellationToken);
-    }
-  }
-
-  private static TransportConsumerWorker _createWorkerWithSchemaGate(
-      ITransport transport, ISchemaReadyGate schemaReadyGate) {
+  private static TransportConsumerWorker _createUnstartedWorker(ITransport transport) {
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("schema-gate-topic"));
     return new TransportConsumerWorker(
@@ -1634,7 +1566,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: schemaReadyGate,
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -1687,7 +1618,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -1717,7 +1647,6 @@ public class TransportConsumerWorkerCoverageTests {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),

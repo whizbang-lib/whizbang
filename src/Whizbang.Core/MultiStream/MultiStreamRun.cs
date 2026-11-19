@@ -15,5 +15,5 @@ namespace Whizbang.Core.MultiStream;
 /// <param name="Scope">The security scope the command was sent under, as a serialized scope delta, or null when it was
 /// sent with none.</param>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#intake</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandIntakeTests.cs:HandleAsync_RecordsOneRunCarryingTheCommandAndItsStreamsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandIntakeTests.cs:HandleAsync_RecordsOneRunCarryingTheCommandAndItsStreamsAsync</tests>
 public sealed record MultiStreamRun(Guid RunId, string CommandType, string Payload, IReadOnlyList<Guid> StreamIds, string? Scope);

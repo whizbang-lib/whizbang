@@ -86,7 +86,7 @@ public interface IStartupStep {
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/startup-pipeline</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineRunnerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupPipelineRunnerTests.cs</tests>
 public sealed class StartupPipelineRunner {
   private readonly IReadOnlyList<IStartupStep> _steps;
   private readonly IReadOnlyList<IStartupStepObserver> _observers;
@@ -243,7 +243,7 @@ public sealed class StartupPipelineRunner {
       // still Skipped; only the reason distinguishes "lost the race" from "could not ask".
       var reason = transient is null
         ? "capability not held"
-        : $"capability undetermined: the elector failed with {transient.GetType().Name}: {transient.Message}";
+        : $"capability undetermined: the elector failed with {TypeNameFormatter.ForLog(transient.GetType())}: {transient.Message}";
       return new StartupStepReport(StartupStepOutcome.Skipped,
         reason + await _oweAsync(descriptor, cancellationToken).ConfigureAwait(false));
     }
@@ -258,10 +258,28 @@ public sealed class StartupPipelineRunner {
         if (transientFailures > MaxTransientDutyFailures) {
           return new StartupStepReport(StartupStepOutcome.Failed,
             $"duty '{descriptor.RequiredCapability}' could not be reached after "
-            + $"{transientFailures} consecutive failures — last was {transient.GetType().Name}: "
+            + $"{transientFailures} consecutive failures; last was {TypeNameFormatter.ForLog(transient.GetType())}: "
             + $"{transient.Message}. Failing the step rather than waiting on it indefinitely.");
         }
-      } else if (attempt!.Refusal is not DutyRefusal.Contended) {
+      } else if (attempt!.Refusal is DutyRefusal.Halted && _dutyElector is Whizbang.Core.RunControl.IObeysRunPermit { RunPermit: var permit }) {
+        // #2045: the instance's run permit is closed (paused or standing down). Not permanent: a resume reopens it, and
+        // the permit's own signal says when, so the step waits on it and votes again. The run's token bounds the wait;
+        // a stopped permit is final.
+        transientFailures = 0;
+        await _notifyAsync(o => o.OnStepWaitingAsync(
+          new StartupStepWaitContext(descriptor, descriptor.RequiredCapability, waited, attempt.Detail),
+          cancellationToken)).ConfigureAwait(false);
+        try {
+          await permit.WaitAsync(cancellationToken).ConfigureAwait(false);
+        } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
+          return new StartupStepReport(StartupStepOutcome.Failed,
+            $"duty '{descriptor.RequiredCapability}' was refused while this instance's run permit was closed, and the "
+            + "permit was then stopped: the instance is stopping, so the step cannot run");
+        }
+        (attempt, transient) =
+          await _tryAcquireAsync(descriptor.RequiredCapability, cancellationToken).ConfigureAwait(false);
+        continue;
+      } else if (attempt.Refusal is not (DutyRefusal.Contended or DutyRefusal.Halted)) {
         return new StartupStepReport(StartupStepOutcome.Failed,
           $"duty '{descriptor.RequiredCapability}' is unacquirable ({attempt.Refusal}): "
           // A refusal always carries its detail: DutyAttempt.Lost requires one, and a grant ends the loop.
@@ -282,7 +300,7 @@ public sealed class StartupPipelineRunner {
         nextNarration = nextNarration switch { 3 => 10, 10 => 30, _ => nextNarration + 60 };
         var detail = transient is null
           ? attempt!.Detail
-          : $"{transient.GetType().Name}: {transient.Message}";
+          : $"{TypeNameFormatter.ForLog(transient.GetType())}: {transient.Message}";
         await _notifyAsync(o => o.OnStepWaitingAsync(
           new StartupStepWaitContext(descriptor, descriptor.RequiredCapability, waited, detail),
           cancellationToken)).ConfigureAwait(false);
@@ -311,7 +329,7 @@ public sealed class StartupPipelineRunner {
 #pragma warning disable CA1031 // reported in the step's reason; the step stays skipped exactly as without owing
     } catch (Exception ex) {
 #pragma warning restore CA1031
-      return $"; could not be owed to the duty's holder ({ex.GetType().Name})";
+      return $"; could not be owed to the duty's holder ({TypeNameFormatter.ForLog(ex.GetType())})";
     }
   }
 

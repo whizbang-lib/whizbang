@@ -185,19 +185,58 @@ public sealed class CoordinatorIntegrityRepairLedger(
   }
 
   /// <inheritdoc />
-  /// <remarks>One round trip. A store that cannot answer marks nothing: repair then keeps its terminal cadence for
-  /// these buckets, which costs an occasional redundant redelivery and never stops a repair that could help.</remarks>
-  public async ValueTask<System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey>> MarkUnhealableBatchAsync(
-      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
+  /// <remarks>One round trip (migration 384) when the store supports it. A store that does not, cannot be reached or
+  /// fails still forgets the proven types' type lanes through <see cref="MarkHealedBatchWithAgesAsync"/>, so the type lane
+  /// clears as #2207 made it. The keys share one origin, as every batch here does.</remarks>
+  public async ValueTask<System.Collections.Generic.IReadOnlyList<double>> MarkTypesHealedWithAgesAsync(
+      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> typeKeys,
       CancellationToken cancellationToken = default) {
-    if (keys.Count == 0) {
+    if (typeKeys.Count == 0) {
       return [];
     }
     try {
       using var scope = scopeFactory.CreateScope();
       var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
       if (coordinator is not null
-          && await coordinator.IntegrityMarkUnhealableBatchAsync(keys[0].OriginServiceId, keys, now, cancellationToken).ConfigureAwait(false) is { } marked) {
+          && await coordinator.IntegrityMarkTypesHealedWithAgesAsync(typeKeys[0].OriginServiceId, typeKeys, cancellationToken).ConfigureAwait(false) is { } ages) {
+        return ages;
+      }
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      _degraded("mark-types-healed", fallback: false, ex);
+    }
+    return await MarkHealedBatchWithAgesAsync([.. typeKeys.Select(k => k.ToTypeLane())], cancellationToken)
+      .ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  /// <remarks>One round trip. A store that cannot answer marks nothing: repair then keeps its terminal cadence for
+  /// these buckets, which costs an occasional redundant redelivery and never stops a repair that could help.</remarks>
+  public ValueTask<System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey>> MarkUnhealableBatchAsync(
+      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
+      CancellationToken cancellationToken = default) =>
+    _markUnhealableAsync(keys, (coordinator, origin) =>
+      coordinator.IntegrityMarkUnhealableBatchAsync(origin, keys, now, cancellationToken));
+
+  /// <inheritdoc />
+  /// <remarks>One round trip; the store marks only the rows whose deficit the answer covered (#2143).</remarks>
+  public ValueTask<System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey>> MarkUnhealableBatchAsync(
+      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, RedeliveryAnswerWindow answeredWindow,
+      System.Collections.Generic.IReadOnlyList<Guid> answeredEventIds, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+    _markUnhealableAsync(keys, (coordinator, origin) =>
+      coordinator.IntegrityMarkUnhealableBatchAsync(origin, keys, answeredWindow, answeredEventIds, now, cancellationToken));
+
+  private async ValueTask<System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey>> _markUnhealableAsync(
+      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,
+      Func<IWorkCoordinator, Guid, Task<System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?>> mark) {
+    if (keys.Count == 0) {
+      return [];
+    }
+    try {
+      using var scope = scopeFactory.CreateScope();
+      var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
+      if (coordinator is not null && await mark(coordinator, keys[0].OriginServiceId).ConfigureAwait(false) is { } marked) {
         return marked;
       }
     } catch (OperationCanceledException) {
@@ -207,6 +246,41 @@ public sealed class CoordinatorIntegrityRepairLedger(
     }
     return [];
   }
+
+  /// <inheritdoc />
+  /// <remarks>One store round trip per origin. Best-effort: a mark that cannot reach the store is logged and answers 0,
+  /// and the requested buckets wait out their backoff only.</remarks>
+  public async ValueTask<int> MarkAnswerPendingAsync(
+      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, long? windowFrom, long? windowUntil,
+      DateTimeOffset now, TimeSpan timeout, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(keys);
+    try {
+      using var scope = scopeFactory.CreateScope();
+      var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
+      if (coordinator is null) {
+        return 0;
+      }
+      var marked = 0;
+      foreach (var byOrigin in keys.GroupBy(k => k.OriginServiceId)) {
+        marked += await coordinator.IntegrityMarkAnswerPendingAsync(
+          byOrigin.Key, [.. byOrigin], windowFrom, windowUntil, now, timeout, cancellationToken).ConfigureAwait(false);
+      }
+      return marked;
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      _degraded("answer-pending mark", fallback: false, ex);
+      return 0;
+    }
+  }
+
+  /// <inheritdoc />
+  /// <remarks>Asks nothing: the store records a bundle's answer when its children commit, by event id
+  /// (<see cref="IWorkCoordinator.IntegrityRecordBundleAnswerAsync"/>), before the reconcile that calls this runs.</remarks>
+  public ValueTask MarkAnsweredAsync(
+      System.Collections.Generic.IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
+      CancellationToken cancellationToken = default) =>
+    ValueTask.CompletedTask;
 
   /// <inheritdoc />
   public async ValueTask MarkHealedAsync(IntegrityRepairLedger.DivergenceKey key, CancellationToken cancellationToken = default) {

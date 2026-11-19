@@ -155,10 +155,12 @@ and a coalesced bundle rides the ledger; PR #1598 (#1555) finished the per-tenan
 
 ### S7. A2e: audit is excluded from digests (defect 10) and re-derivable
 
-**Status (2026-10-24):** partly done. The digest half is done: #1492 in PR #1553 (both emit chains, sealed
-epochs and the sweeps skip `EventAudited` and `CommandAudited`; migration 216) and #1554 in PR #1568 (checkpoint
-counts). Still open: the audit backfill (a redelivery filtered by audit eligibility) and name-based audit ids on
-`OriginalEventId`. All three writers still mint `TrackedGuid.New()`.
+**Status (2026-11-01):** done. The digest half: #1492 in PR #1553 (both emit chains, sealed epochs and the sweeps
+skip `EventAudited` and `CommandAudited`; migration 216) and #1554 in PR #1568 (checkpoint counts). The rest is #1724:
+every writer names a record `AuditLedger.RecordIdFor(OriginalEventId)` (UUIDv5 under `sys-audit-record`), and
+`RequestAuditRebuildCommand` (receptor `AuditRebuildRequestReceptor`, driver assembly) runs `AuditLedgerRebuild` over the
+redelivery selection, filtered by `AuditEligibility.Decide`, queueing records through the deferred outbox channel.
+The decision hook is not re-applied on a rebuild (it judges payloads, which a rebuild never rehydrates).
 
 - **Changes.** Audit is a pure function of the origin event plus scope, so audit rows never need
   digest sync. On the subscriber a composite-fanned `EventAudited` folds into the origin's digest
@@ -198,9 +200,18 @@ the end of this slice.
 
 ### S9. A3b: slim at write time, full metadata staged, route hash stamped
 
-**Status (2026-10-24):** open. Nothing is built: `src/` has no `wh_event_metadata_staging`,
-`EventStoreMetadataOptions` or `[StoredMetadata]`. Its prerequisite, the WS-5 S4 partition manager, is done
-(PR #1623).
+**Status (2026-11-01):** built in #1725 with S9b (#1726), migration 285, on `feat/1725-storage`. Every write path
+(both emit chains and `wh_append_event`, which both direct appends call) keeps the slim form plus `rid` and stages the
+full form under `Linked`; `EventStoreMetadataOptions`, `[StoredMetadata]` (a generator registers the kept types by name)
+and the `metadata_*` settings published every maintenance tick ahead of the idle gate. Choices beyond the text below:
+the route id is computed in SQL on all four paths (both direct appends go through `wh_append_event` since #1555), with
+`RouteNormalizer` as the C# mirror pinned by a corpus test and used by the in-memory trace store; the route includes the
+event's type name; the slim form reduces only the hop list (`Hops`, or the Dapper store's `hops`), drops `dc` and `rin`
+and keeps every other key, so each store's reader still finds its keys; decision 4 (drop `sc`) is not applied and is
+back with the owner: `wh_event_store.scope` holds only the perspective scope, while the hop's delta also carries roles,
+permissions, principals, claims, the actual and effective principal and the context type, and the EF Core direct
+append writes no scope column at all. Measured on 500-event batches: see the event-store docs page
+(`data/event-store#what-slim-metadata-costs`).
 
 Decided 2026-10-21 (#1493). Stored metadata is split the way bodies are split from pointers: the event
 row keeps a slim form for good, and the full form is kept for a short staging window in a separate,
@@ -276,8 +287,13 @@ stops growing; only traces and counters grow.
 
 ### S9b. Routes and traces: distill staged metadata, and the persistent trace store
 
-**Status (2026-10-24):** open. `src/` has no `wh_routes`, `wh_traces` or `IRouteStore`. Depends on S9. The
-related defect #1601 (unbounded default trace store) is done in PR #1610.
+**Status (2026-11-01):** built in #1726 with S9 (#1725), migration 286: `wh_routes`, `wh_traces`,
+`wh_distill_event_metadata` (consumes staged rows in the statement that distills them, so each counts once with no
+cursor), the `metadata-distillation` maintenance step on both drivers (batches of 2,000, at most 50 per cycle),
+`wh_trace_metadata` reconstruction, the three retention windows (`reap_unbounded_ledgers` row sweeps plus the partition
+manager), `IRouteStore`, `ITraceStore.GetRouteIdAsync` and `PostgresRouteTraceStore` with its two registrations. Not
+built: serving routes from the apply-stack HTTP and GraphQL surfaces (the docs show `GetRoutesForApplyPathAsync`
+beside them). The related defect #1601 (unbounded default trace store) is done in PR #1610.
 
 - **Tables.**
   - `wh_routes`: one row per route id. The normalized hop sequence (service names, receptor class and
@@ -353,7 +369,18 @@ related defect #1601 (unbounded default trace store) is done in PR #1610.
 
 ### S10. A3c: history
 
-**Status (2026-10-24):** open. Nothing is built. Depends on S9 and S9b.
+**Status (2026-11-02):** built in #1727, migration 298, on `feat/1727-storage`: `wh_convert_event_metadata_history` and
+the `metadata-history-conversion` maintenance step on both drivers (batches of 1,000 rows, at most 20 per cycle),
+`ConvertHistory` published as `metadata_convert_history` every tick. Choices beyond the text below: the conversion walks
+`wh_event_body` by event id from a single-row cursor (`wh_metadata_history_conversion`) instead of searching for rows
+without `rid`, so each batch reads a bounded slice and the pass is linear; it writes routes and traces directly rather
+than staging and distilling (no extra staged copy and delete, and no staged row older than `StagingDays` that retention
+could remove before distillation), with first and last seen at the event's stored time and a trace only inside the
+trace window; it is skipped under `Full` as well as debug mode and `ConvertHistory = false`; it never waits (`SKIP
+LOCKED` on the cursor and on each row, the cursor stopping before a held row); once it reads to the end it is complete,
+and deleting the cursor row starts it over (restored archives, a type removed from the full list). Measured on copies
+of a 10,000-event history: see the event-store docs page (`data/event-store#what-history-conversion-costs`).
+Earlier status (2026-10-24): open. Nothing is built. Depends on S9 and S9b.
 
 Existing rows written full before S9 are converted once by a batched maintenance task:
 
@@ -370,8 +397,11 @@ metadata it touches, so it runs idle-gated in batches and WS-4 reclaims the spac
 
 ### S11. A6: `toast_tuple_target` on `wh_event_body`, measured first
 
-**Status (2026-10-24):** open. No migration sets `toast_tuple_target` on `wh_event_body` (the only uses in
-`src/` are the perspective-table storage attributes), and no measurement is recorded.
+**Status (2026-11-01):** done, #1728, migration 290. Measured on copies of the table (numbers on the docs page,
+`data/postgres#event-body-storage`): no target compresses a row under the 2 KB toast threshold, and a lower target only
+moves larger values out of line (1.7% to 2.7% smaller, 12% to 23% more buffers per body read), so the target stays at
+the server's value. lz4 on both columns helps (1.1% smaller, 26% faster writes, 11% faster full reads) and is set. The
+small-row win moves to K3 (WS-7) as this slice planned.
 
 - **Changes.** `toast_tuple_target` is per table, not per column, and lz4 is often already the
   server default. Lowering it on `wh_event_body` (created at `072_EphemeralBodyOffload.sql:19`,
@@ -391,9 +421,15 @@ metadata it touches, so it runs idle-gated in batches and WS-4 reclaims the spac
 
 ### S12. K1: superseding (latest-wins) event types
 
-**Status (2026-10-24):** open. `src/` has no `[Superseding]` attribute or flag. Decision 5 (#1674) sets the key:
-latest-wins per (stream, type, key), with the key stamped at emit. The flag value below is stale: S1 took bit 5
-for `EventFlags.AtMostOnce`, so the next free bit is `1 << 6`.
+**Status (2026-11-01):** done in the #1729 bundle (migration 295). `EventFlags.Superseding` is `1 << 7` (bit 6 went to
+`Terminal`). The key is stamped at emit from the stored metadata's `sk`; superseded events are queued at emit in
+`wh_superseded_events`, so the reaper never scans the event store. Gates as below plus: no snapshot rests on the event,
+no active destruction hold, commit sequence stamped. Deviation: a superseding event is NOT StateBased (the rebuild and
+rewind guards replay it), because counting it StateBased would skip every mixed stream on rebuild and trip WHIZ133;
+the newest event of each key is still in the log, so a replay is correct under the full-state contract. Diagnostics:
+WHIZ135 (ephemeral and superseding), WHIZ136 (two keys). Limit: an archived and restored event loses its key and is kept.
+Earlier status (2026-10-24): open. Decision 5 (#1674) sets the key: latest-wins per (stream, type, key), with the key
+stamped at emit.
 
 - **Changes.** An event type declares `[Superseding]` (new, `src/Whizbang.Core/Attributes/`); the
   generator discovers it as `EphemeralResolver` does (`src/Whizbang.Generators/Utilities/EphemeralResolver.cs:23`);
@@ -436,8 +472,9 @@ Questions 2 to 6 were decided on 2026-10-22 in #1674 (the owner accepted the rec
 
 2. **Audited ephemeral types** are excluded from audit by default, with an opt-in that keeps the
    body, so no audit pointer dangles once the origin reaps the event.
-   **Status (2026-10-24):** not built. Nothing under `src/Whizbang.Core/SystemEvents/` checks whether an
-   audited type is ephemeral.
+   **Status (2026-11-01):** done, #1730. `AuditEligibility.Decide` takes `isEphemeral`; the outbox builder reads the
+   stamped `EventFlags.Ephemeral`, the decorator and the emitter derive it with the ephemeral resolver. The opt-in is
+   the type's own `IncludeBody`; the global body default does not opt in and a hook cannot reopen.
 3. **`OriginalStreamPosition` on the outbox path** is filled at emit.
 4. **The current hop's `sc`** is dropped from stored metadata, and scope is rebuilt from
    `wh_event_store.scope` on read. This saves about 100 B per event.

@@ -87,15 +87,15 @@ public sealed class GraphQLMutationTypeGenerator : IIncrementalGenerator {
     var requestTypeName = _getAttributeTypeValue(commandEndpointAttr, "RequestType");
 
     // Generate mutation class name from command name
-    var mutationClassName = symbol.Name + "Mutation";
+    var mutationClassName = TypeNameUtilities.SimpleName(symbol) + "Mutation";
 
     return new GraphQLMutationInfo(
         CommandTypeName: TypeNameUtilities.FullyQualified(commandType),
-        CommandTypeNameShort: commandType.Name,
+        CommandTypeNameShort: TypeNameUtilities.SimpleName(commandType),
         ResultTypeName: TypeNameUtilities.FullyQualified(resultType),
         GraphQLMutationName: graphQLMutationName!,
         RequestTypeName: requestTypeName,
-        Namespace: TypeNameUtilities.Display(symbol.ContainingNamespace),
+        Namespace: TypeNameUtilities.Display(TypeNameUtilities.NamespaceOf(symbol)),
         MutationClassName: mutationClassName
     );
   }

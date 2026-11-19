@@ -48,7 +48,7 @@ namespace Whizbang.Core.Tags;
 /// </code>
 /// </example>
 /// <docs>fundamentals/messages/message-tags#tag-context</docs>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TagContextTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/TagContextTests.cs</tests>
 public sealed record TagContext<TAttribute> : ITagContextChanges where TAttribute : MessageTagAttribute {
   private MessageChanges? _changes;
 
@@ -126,7 +126,7 @@ public sealed record TagContext<TAttribute> : ITagContextChanges where TAttribut
   /// another record reports that key, not the referenced record's fields.
   /// </remarks>
   /// <docs>fundamentals/messages/message-tags#changed-properties</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Tags/MessageChangesTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/MessageChangesTests.cs</tests>
   public MessageChanges Changes {
     get => _changes ??= MessageChanges.For(Message, MessageType);
     init => _changes = value;

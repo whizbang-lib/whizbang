@@ -16,7 +16,7 @@ namespace Whizbang.Core.Messaging;
 /// Interval starts AFTER previous flush completes (natural backpressure).
 /// </summary>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
 public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy {
   private readonly TimeSpan _interval;
   private readonly TimeProvider _timeProvider;

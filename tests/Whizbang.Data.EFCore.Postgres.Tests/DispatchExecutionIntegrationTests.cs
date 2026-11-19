@@ -44,8 +44,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Workers/OutboxDrainWorker.cs</code-under-test>
 /// <docs>fundamentals/dispatcher/dispatch-policy#decision-table</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
-[Category("Shard4")]
+[Category("Shard3")]
 public class DispatchExecutionIntegrationTests : EFCoreTestBase {
   private const string OWNED_DOMAIN = "Whizbang.Data.EFCore.Postgres.Tests.DispatchExecution.Owned";
   private const string TENANT = "tenant-dispatch-execution";
@@ -479,7 +478,9 @@ public class DispatchExecutionIntegrationTests : EFCoreTestBase {
   private static async Task _waitUntilAnOutboxWriteWaitsAsync(NpgsqlConnection locker, NpgsqlTransaction held) {
     var deadline = DateTime.UtcNow.AddSeconds(30); // review-checks:allow: Postgres has no notification for a lock wait starting; a bounded read of pg_locks
     await using var waiting = new NpgsqlCommand(
-      "SELECT count(*) FROM pg_locks WHERE relation = 'wh_outbox'::regclass AND NOT granted", locker, held);
+      "SELECT count(*) FROM pg_locks WHERE relation = 'wh_outbox'::regclass AND NOT granted"
+        // pg_locks is cluster-wide and every test database has a wh_outbox, so the count is scoped to this one.
+        + " AND database = (SELECT oid FROM pg_database WHERE datname = current_database())", locker, held);
     while ((long)(await waiting.ExecuteScalarAsync())! == 0) {
       if (DateTime.UtcNow > deadline) { // review-checks:allow: Postgres has no notification for a lock wait starting; a bounded read of pg_locks
         throw new TimeoutException("The copy write never queued behind the lock on wh_outbox.");

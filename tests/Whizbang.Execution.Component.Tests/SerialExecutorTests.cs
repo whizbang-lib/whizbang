@@ -383,7 +383,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
 
   [Test]
   [Timeout(5000)] // 5 second timeout to prevent indefinite hanging
-  public async Task DrainAsync_WithWorkerCancellation_HandlesOperationCanceledExceptionAsync(CancellationToken cancellationToken) {
+  public async Task DrainAsync_AfterStop_ReturnsWithoutDrainingAsync(CancellationToken cancellationToken) {
     // Arrange
     var executor = new SerialExecutor();
     await executor.StartAsync(cancellationToken);
@@ -392,30 +392,25 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
 
     var tcs = new TaskCompletionSource<int>();
 
-    // Act - Queue long-running work
+    // Act - Queue work and let it finish before the stop
     var task = executor.ExecuteAsync<int>(envelope, async (_, _) => await tcs.Task, context
 , cancellationToken).AsTask();
-
-    // Complete the work BEFORE stopping to avoid deadlock
     tcs.SetResult(42);
-
-    // The queued work must finish normally: StopAsync cancels the worker token, so anything
-    // still in flight when the shutdown lands is what would surface as a canceled caller.
     var completed = await task;
 
-    // Stop executor (triggers cancellation of worker)
+    // The stop closes the channel and waits for the worker, which has nothing left to finish.
     await executor.StopAsync(cancellationToken);
 
-    // Drain AFTER a stop: DrainAsync sees State.Stopped and returns without awaiting the worker,
-    // so a worker canceled by the stop can never fault the drain.
+    // Drain AFTER a stop: DrainAsync sees State.Stopped and returns at once, without closing or
+    // awaiting anything.
     var drain = executor.DrainAsync(cancellationToken);
     await drain;
 
     // Assert
     await Assert.That(completed).IsEqualTo(42)
-      .Because("work that finished before the stop must not be lost to the worker's cancellation");
+      .Because("work that finished before the stop keeps its result");
     await Assert.That(drain.IsCompletedSuccessfully).IsTrue()
-      .Because("draining a stopped executor is an immediate no-op, not a faulted await on a canceled worker");
+      .Because("draining a stopped executor is an immediate no-op");
   }
 
   [Test]

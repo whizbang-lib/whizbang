@@ -43,7 +43,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:InstallScriptUri = 'https://dot.net/v1/dotnet-install.ps1'
+# Tried in order: Microsoft's CDN, then the dot.net redirect, so an outage of either host alone does not stop the
+# job (#2298).
+$script:InstallScriptUris = @(
+  'https://builds.dotnet.microsoft.com/dotnet/scripts/v1/dotnet-install.ps1',
+  'https://dot.net/v1/dotnet-install.ps1')
 
 # The channel to install, and where it came from.
 function Get-DotNetChannel {
@@ -57,6 +61,10 @@ function Get-DotNetChannel {
       Write-Host "global.json could not be read ($($_.Exception.Message)); using the input channel."
     }
   }
+  # A prerelease SDK (11.0.100-rc.3.x) has no feature-band channel of its own: install that exact version (#2135).
+  if ($version.Contains('-')) {
+    return [pscustomobject]@{ Channel = $version; Source = "exact version $version (prerelease, from global.json)" }
+  }
   if ($version -match '^(.*)\d\d$') {
     return [pscustomobject]@{ Channel = "$($Matches[1])xx"; Source = "feature band $($Matches[1])xx (from global.json version $version)" }
   }
@@ -69,7 +77,12 @@ function Get-DefaultDownload {
 }
 
 function Get-DefaultInstall {
-  return { param($Script, $Channel, $InstallDir) & $Script -Channel $Channel -InstallDir $InstallDir }
+  return {
+    param($Script, $Channel, $InstallDir)
+    # An exact (prerelease) version installs with -Version; a feature band or major.minor with -Channel.
+    if ($Channel.Contains('-')) { & $Script -Version $Channel -InstallDir $InstallDir }
+    else { & $Script -Channel $Channel -InstallDir $InstallDir }
+  }
 }
 
 function Get-DefaultGetVersion {
@@ -100,7 +113,21 @@ function Install-DotNetSdk {
   $choice = Get-DotNetChannel -GlobalJsonPath $GlobalJsonPath -FallbackVersion $FallbackVersion
   "Installing .NET SDK $($choice.Source) into $InstallDir"
   $installer = Join-Path $TempDir 'dotnet-install.ps1'
-  & $Download $script:InstallScriptUri $installer
+  $failures = [System.Collections.Generic.List[string]]::new()
+  $downloaded = $false
+  foreach ($uri in $script:InstallScriptUris) {
+    try {
+      & $Download $uri $installer
+      $downloaded = $true
+      break
+    }
+    catch {
+      $failures.Add("${uri}: $($_.Exception.Message)")
+    }
+  }
+  if (-not $downloaded) {
+    throw "Could not download dotnet-install.ps1 from any address: $($failures -join '; ')"
+  }
   & $Install $installer $choice.Channel $InstallDir
   $dotnet = Join-Path $InstallDir ($IsWindows ? 'dotnet.exe' : 'dotnet')
   $version = & $GetVersion $dotnet

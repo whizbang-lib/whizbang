@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using HotChocolate.Execution.Configuration;
 using HotChocolate.Types;
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core;
 
 namespace Whizbang.Transports.HotChocolate;
 
@@ -98,7 +99,7 @@ public static class PolymorphicTypeExtensions {
     var polymorphicAttr = baseType.GetCustomAttributes(typeof(JsonPolymorphicAttribute), false);
     if (polymorphicAttr.Length == 0) {
       throw new InvalidOperationException(
-          $"Type '{baseType.Name}' must have [JsonPolymorphic] attribute to use AddPolymorphicType.");
+          $"Type '{TypeNameFormatter.ForLog(baseType)}' must have [JsonPolymorphic] attribute to use AddPolymorphicType.");
     }
 
     // Discover derived types from [JsonDerivedType] attributes
@@ -108,7 +109,7 @@ public static class PolymorphicTypeExtensions {
 
     if (derivedTypeAttrs.Count == 0) {
       throw new InvalidOperationException(
-          $"Type '{baseType.Name}' must have at least one [JsonDerivedType] attribute to use AddPolymorphicType.");
+          $"Type '{TypeNameFormatter.ForLog(baseType)}' must have at least one [JsonDerivedType] attribute to use AddPolymorphicType.");
     }
 
     var derivedTypes = derivedTypeAttrs.Select(a => a.DerivedType).ToArray();

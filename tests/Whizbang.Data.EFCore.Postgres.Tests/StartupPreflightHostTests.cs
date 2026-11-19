@@ -13,8 +13,10 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Security;
+using Whizbang.Core.Signals;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
+using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Notifications;
@@ -44,9 +46,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/CatalogCheckedDdl.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/DbContextInitializationRegistry.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PostgresNotificationsServiceCollectionExtensions.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Core/Signals/SignalBusServiceCollectionExtensions.cs</code-under-test>
 /// <docs>operations/startup/startup-status#what-runs-in-each-stage</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard5")]
 public sealed partial class StartupPreflightHostTests {
   private static readonly TimeSpan _deadline = TimeSpan.FromSeconds(180);
@@ -132,6 +134,55 @@ public sealed partial class StartupPreflightHostTests {
   }
 
   /// <summary>
+  /// The signal bus starts at Elect (#1636), with the notification connection its loopback probe comes back over. An
+  /// instance held in Preflight (another session holds the schema lock, so the bootstrap waits) has started every
+  /// hosted service the host registers, and no signal transport: the probe has sent nothing. Once the lock is
+  /// released the instance registers, enters Elect, and only then is the bus started.
+  /// </summary>
+  /// <remarks>
+  /// "Every hosted service has started" is a marker registered after the whole composition: the host starts its
+  /// services in registration order, so the marker's start means the bus's own start has already been called.
+  /// </remarks>
+  [Test]
+  [Timeout(300000)]
+  public async Task HeldInPreflight_TheSignalBusStartsNoTransport_AndStartsItAtElectAsync(CancellationToken cancellationToken) {
+    var transport = new RecordingSignalTransport();
+    var contended = new SchemaLockContended();
+    var allStarted = new StartedMarker();
+    var instance = new Instance(_database.ConnectionString, services => {
+      services.AddSingleton<ISignalTransport>(transport);
+      services.AddSingleton<ISchemaInitializationObserver>(contended);
+    }, services => services.AddHostedService(_ => allStarted));
+    transport.Gate = instance.Host.Services.GetRequiredService<IStartupStageGate>();
+
+    await using var holder = new NpgsqlConnection(_database.ConnectionString);
+    await holder.OpenAsync(cancellationToken);
+    var held = await holder.BeginTransactionAsync(cancellationToken);
+    await using (var take = new NpgsqlCommand("SELECT pg_advisory_xact_lock($1)", holder, held)) {
+      take.Parameters.AddWithValue(SchemaInitializationLockKey.Compute("public"));
+      await take.ExecuteNonQueryAsync(cancellationToken);
+    }
+    var starting = instance.Host.StartAsync(cancellationToken);
+    try {
+      await allStarted.Started.WaitAsync(_deadline, cancellationToken);
+      await contended.Contended.WaitAsync(_deadline, cancellationToken);
+
+      await Assert.That(transport.Started.IsCompleted).IsFalse()
+        .Because("the bus is started at Elect; in Preflight its probe would send pg_notify for a route that cannot answer yet");
+
+      await held.CommitAsync(cancellationToken);
+      await transport.Started.WaitAsync(_deadline, cancellationToken);
+      await Assert.That(transport.ElectReachedAtStart).IsTrue()
+        .Because("the bus's transports are started once the instance has reached Elect");
+      await starting.WaitAsync(_deadline, cancellationToken);
+    } finally {
+      await held.DisposeAsync();
+      await instance.Host.StopAsync(CancellationToken.None);
+      instance.Host.Dispose();
+    }
+  }
+
+  /// <summary>
   /// A second initialization, called while the host's own is still migrating, joins it and returns only once it has
   /// finished: the schema it hands back is the whole schema. The host's initialization is held open after its first
   /// committed step, so "still migrating" is a fact when the second call is made. The host is not awaited first,
@@ -166,6 +217,132 @@ public sealed partial class StartupPreflightHostTests {
     }
   }
 
+  /// <summary>
+  /// A bootstrap closure that fails for a reason that is not transient fails the initialization attempt, naming what
+  /// failed, at Error (#1636): the instance does not go on to migrate under the schema lock as though nothing happened.
+  /// The closure's record table is stood up in a shape the bootstrap cannot read, which no retry can fix.
+  /// </summary>
+  [Test]
+  [Timeout(300000)]
+  public async Task ABootstrapThatCannotBeApplied_FailsTheInitialization_NamingWhatFailedAsync(CancellationToken cancellationToken) {
+    await _executeAsync("CREATE TABLE public.wh_bootstrap_closure (unrelated int)");
+    var failures = new AttemptFailures();
+    var instance = new Instance(_database.ConnectionString, services => services.AddSingleton<ISchemaInitializationObserver>(failures));
+    // Not awaited: the host's start does not return before the schema is ready, and here it never is. Canceling this
+    // token ends the start, so the host can be stopped.
+    using var start = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    var starting = instance.Host.StartAsync(start.Token);
+    try {
+      var first = await Task.WhenAny(failures.First, instance.Stages.Reached(StartupStage.Running)).WaitAsync(_deadline, cancellationToken);
+      await Assert.That(first == failures.First).IsTrue()
+        .Because("a bootstrap that cannot be applied stops the start in Preflight; it is not skipped on the way to Running");
+      var failed = _chain(await failures.First).OfType<SchemaBootstrapException>().FirstOrDefault();
+      await Assert.That(failed).IsNotNull().Because("the attempt fails with the bootstrap's own failure, not a later symptom");
+      await Assert.That(failed!.Step).IsEqualTo("<closure record>");
+      await Assert.That(instance.Log.Lines.Any(l => l.StartsWith("Error", StringComparison.Ordinal)
+          && l.Contains("<closure record>", StringComparison.Ordinal)))
+        .IsTrue().Because("what failed is said at Error");
+      await Assert.That(instance.Log.Lines.Any(l => l.Contains("Staged startup could not be arranged", StringComparison.Ordinal)))
+        .IsFalse().Because("the failure is not swallowed into a lost election");
+    } finally {
+      await start.CancelAsync();
+      await Task.WhenAny(starting);
+      await instance.Host.StopAsync(CancellationToken.None);
+      instance.Host.Dispose();
+    }
+  }
+
+  /// <summary>
+  /// The instance row is registered at the end of Preflight (#1636), after the bootstrap closure and the instance and
+  /// role table DDL, and before Elect: the first stage the row records is Preflight's last step, written as the row is
+  /// registered, and every stage line before it was log-only. A first instance migrates the database, so the stage
+  /// columns exist when the second registers.
+  /// </summary>
+  [Test]
+  [Timeout(600000)]
+  public async Task TheInstanceRow_IsRegisteredAtTheEndOfPreflight_BeforeElectAsync(CancellationToken cancellationToken) {
+    var migrator = new Instance(_database.ConnectionString);
+    try {
+      await migrator.Host.StartAsync(cancellationToken);
+      await migrator.Stages.Reached(StartupStage.Running).WaitAsync(_deadline, cancellationToken);
+    } finally {
+      await migrator.Host.StopAsync(CancellationToken.None);
+      migrator.Host.Dispose();
+    }
+    // A database one pass built is current (#2194), and a current start registers by the shorter path; this start has
+    // schema work to do, so it registers at the end of the bootstrap closure, before it votes.
+    await _executeAsync("""
+      UPDATE wh_schema_migrations SET content_hash = 'an-earlier-text'
+      WHERE file_name = (SELECT max(file_name) FROM wh_schema_migrations WHERE owner = 'whizbang')
+      """);
+
+    var recorder = new RowAtFirstRecord(_database.ConnectionString);
+    var instance = new Instance(_database.ConnectionString, services => services.AddSingleton<IStartupStageObserver>(recorder));
+    recorder.InstanceId = instance.Host.Services.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>().InstanceId;
+    try {
+      await instance.Host.StartAsync(cancellationToken);
+      await instance.Stages.Reached(StartupStage.Running).WaitAsync(_deadline, cancellationToken);
+
+      var changes = recorder.Changes;
+      var first = changes.FindIndex(c => c.Recorded);
+      await Assert.That(first).IsGreaterThanOrEqualTo(0);
+      await Assert.That(changes[first].Snapshot.Stage).IsEqualTo(StartupStage.Preflight)
+        .Because("the row is registered at the end of Preflight, so Preflight's last step is the first stage it records; "
+          + "changes: " + string.Join(" | ", changes.Select(c => $"{c.Snapshot.Stage}:{c.Snapshot.Message}:{c.Recorded}")));
+      await Assert.That(changes[first].Snapshot.Message)
+        .IsEqualTo("the bootstrap closure is in place; registering this instance");
+      await Assert.That(changes.Take(first).All(c => c.Snapshot.Stage == StartupStage.Preflight && !c.Recorded)).IsTrue()
+        .Because("every stage before the row exists is log-only, and none of them is past Preflight");
+      await Assert.That(recorder.StageOnTheRow).IsEqualTo((int)StartupStage.Preflight)
+        .Because("the row exists, holding Preflight, when its first stage is recorded");
+    } finally {
+      await instance.Host.StopAsync(CancellationToken.None);
+      instance.Host.Dispose();
+    }
+  }
+
+  /// <summary>
+  /// A direct <c>dbContext.EnsureWhizbangDatabaseInitializedAsync()</c> call made while the host's own initialization
+  /// is still migrating waits for it (#1636), and then applies nothing of its own: it bypasses the host's registry, so
+  /// only the barrier inside the generated method can hold it. The host's initialization is held open after its first
+  /// committed step, so "still migrating" is a fact when the direct call is made.
+  /// </summary>
+  [Test]
+  [Timeout(300000)]
+  public async Task ADirectDbContextInitialization_WaitsForTheHostsOwn_AndAppliesNothingAsync(CancellationToken cancellationToken) {
+    var hold = new HoldFirstStep();
+    var instance = new Instance(_database.ConnectionString, services => services.AddSingleton<ISchemaInitializationObserver>(hold));
+    var starting = instance.Host.StartAsync(cancellationToken);
+    try {
+      await hold.Holding.WaitAsync(_deadline, cancellationToken);
+      await using var scope = instance.Host.Services.CreateAsyncScope();
+      var dbContext = scope.ServiceProvider.GetRequiredService<WorkCoordinationDbContext>();
+      var directLog = new SignalingListLogger();
+
+      var direct = dbContext.EnsureWhizbangDatabaseInitializedAsync(directLog, cancellationToken: cancellationToken);
+      var waiting = directLog.WaitForAsync("already running in this host");
+
+      await Assert.That(await Task.WhenAny(waiting, direct).WaitAsync(_deadline, cancellationToken) == waiting).IsTrue()
+        .Because("the direct call waits for the initialization in progress; it does not run a pass beside it");
+      await Assert.That(direct.IsCompleted).IsFalse().Because("the host's initialization is held mid-pass");
+      hold.Release();
+      await direct.WaitAsync(_deadline, cancellationToken);
+
+      var files = MigrationStepTransactionTests.MigrationFiles();
+      await Assert.That(await _scalarAsync<long>(
+          "SELECT count(*) FROM public.wh_schema_migrations WHERE owner = 'whizbang' AND status IN (1, 2) AND file_name = ANY($1)",
+          (object)files))
+        .IsEqualTo((long)files.Length).Because("when the direct call returns, every file has been applied");
+      await Assert.That(directLog.Entries.Where(e => e.Message.Contains("- Succeeded :", StringComparison.Ordinal)))
+        .IsEmpty().Because("the host's pass applied every step; the direct call found the schema current");
+      await starting.WaitAsync(_deadline, cancellationToken);
+    } finally {
+      hold.Release();
+      await instance.Host.StopAsync(CancellationToken.None);
+      instance.Host.Dispose();
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
 
   private static Regex _succeeded(string file) =>
@@ -181,9 +358,69 @@ public sealed partial class StartupPreflightHostTests {
     return (T)(await command.ExecuteScalarAsync())!;
   }
 
+  private async Task _executeAsync(string sql) {
+    await using var connection = new NpgsqlConnection(_database.ConnectionString);
+    await connection.OpenAsync();
+    await using var command = new NpgsqlCommand(sql, connection);
+    await command.ExecuteNonQueryAsync();
+  }
+
+  private static IEnumerable<Exception> _chain(Exception exception) {
+    for (Exception? current = exception; current is not null; current = current.InnerException) {
+      yield return current;
+    }
+  }
+
+  /// <summary>Every stage change and whether the row recorded it; reads the row's stage at the first one it did.</summary>
+  private sealed class RowAtFirstRecord(string connectionString) : IStartupStageObserver {
+    private readonly Lock _lock = new();
+    private readonly List<(StartupStageSnapshot Snapshot, bool Recorded)> _changes = [];
+
+    public Guid InstanceId { get; set; }
+
+    public int? StageOnTheRow { get; private set; }
+
+    public List<(StartupStageSnapshot Snapshot, bool Recorded)> Changes {
+      get {
+        lock (_lock) {
+          return [.. _changes];
+        }
+      }
+    }
+
+    public async ValueTask OnStageChangedAsync(StartupStageSnapshot snapshot, bool recorded, CancellationToken cancellationToken) {
+      bool firstRecorded;
+      lock (_lock) {
+        firstRecorded = recorded && !_changes.Exists(c => c.Recorded);
+        _changes.Add((snapshot, recorded));
+      }
+      if (firstRecorded) {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var read = new NpgsqlCommand(
+          "SELECT startup_stage FROM public.wh_service_instances WHERE instance_id = $1", connection);
+        read.Parameters.AddWithValue(InstanceId);
+        StageOnTheRow = await read.ExecuteScalarAsync(cancellationToken) is short stage ? stage : null;
+      }
+    }
+  }
+
+  /// <summary>Completes with the first initialization attempt's failure.</summary>
+  private sealed class AttemptFailures : ISchemaInitializationObserver {
+    private readonly TaskCompletionSource<Exception> _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task<Exception> First => _first.Task;
+
+    public ValueTask OnAttemptFailedAsync(int attempt, Exception exception, CancellationToken cancellationToken) {
+      _first.TrySetResult(exception);
+      return ValueTask.CompletedTask;
+    }
+  }
+
   /// <summary>One instance of a service, composed as a consumer composes it, on the shared database.</summary>
   private sealed class Instance {
-    public Instance(string connectionString, Action<IServiceCollection>? configure = null) {
+    public Instance(string connectionString, Action<IServiceCollection>? configure = null,
+        Action<IServiceCollection>? configureLast = null) {
       var builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { EnvironmentName = Environments.Production });
       builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
         ["ConnectionStrings:db"] = connectionString,
@@ -199,6 +436,7 @@ public sealed partial class StartupPreflightHostTests {
       builder.Services.RemoveAll<IDutyElector>();
       builder.Services.AddSingleton<IDutyElector>(sp => Elector.Over(
         sp.GetRequiredService<PgRoleElector>(), sp.GetRequiredService<IStartupStageReporter>()));
+      configureLast?.Invoke(builder.Services);
       Host = builder.Build();
     }
 
@@ -286,6 +524,52 @@ public sealed partial class StartupPreflightHostTests {
         await _released.Task.WaitAsync(cancellationToken);
       }
     }
+  }
+
+  /// <summary>A signal transport that records when it was started, and whether the instance had reached Elect then.</summary>
+  private sealed class RecordingSignalTransport : ISignalTransport {
+    private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public IStartupStageGate? Gate { get; set; }
+
+    public Task Started => _started.Task;
+
+    public bool ElectReachedAtStart { get; private set; }
+
+    public Task StartAsync(ISignalSink sink, CancellationToken cancellationToken = default) {
+      ElectReachedAtStart = Gate?.HasReached(StartupStage.Elect) == true;
+      _started.TrySetResult();
+      return Task.CompletedTask;
+    }
+
+    public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target, CancellationToken cancellationToken = default)
+      where TSignal : ISignal => ValueTask.CompletedTask;
+  }
+
+  /// <summary>Completes when the bootstrap finds the schema lock held and waits for it.</summary>
+  private sealed class SchemaLockContended : ISchemaInitializationObserver {
+    private readonly TaskCompletionSource _contended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Contended => _contended.Task;
+
+    public ValueTask OnSchemaLockContendedAsync(string schema, CancellationToken cancellationToken) {
+      _contended.TrySetResult();
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  /// <summary>Registered after the whole composition: its start means every hosted service before it was started.</summary>
+  private sealed class StartedMarker : IHostedService {
+    private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Started => _started.Task;
+
+    public Task StartAsync(CancellationToken cancellationToken) {
+      _started.TrySetResult();
+      return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
   }
 
   /// <summary>Every line the host logs at Information and above, with its level and any exception's message.</summary>

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Npgsql;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.Dapper.Postgres;
 
@@ -48,8 +49,9 @@ internal static class DapperCoordinatorSchema {
   /// <summary>Asks the server which schema the session resolves first; <c>public</c> when it resolves none.</summary>
   /// <param name="connection">An open connection.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  internal static async Task<string> CurrentAsync(NpgsqlConnection connection, CancellationToken cancellationToken) {
-    await using var command = new NpgsqlCommand("SELECT current_schema()", connection);
+  internal static async Task<string> CurrentAsync(System.Data.Common.DbConnection connection, CancellationToken cancellationToken) {
+    await using var command = connection.CreateWhizbangCommand();
+    command.CommandText = "SELECT current_schema()";
     return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string
       ?? Whizbang.Data.Postgres.PgIdentifier.PUBLIC_SCHEMA;
   }

@@ -19,13 +19,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// empty registry for the same reason (it registers a callback first). Resetting the private static
 /// list via reflection — the same technique <see cref="DbContextInitializationRegistryTests"/> uses
 /// for the sibling <c>DbContextInitializationRegistry</c> registry — is the only way to reach the
-/// branch. <see cref="NotInParallelAttribute"/> uses the exact key
-/// <see cref="ModelRegistrationRegistryTests"/> already uses to guard the same static state, so the
-/// two classes serialize against each other instead of racing. It also holds the database tests' key: emptying the
-/// registrars while a database test builds its context leaves that context without its models' physical fields (#1903).
+/// branch. Like <see cref="ModelRegistrationRegistryTests"/>, it runs alone (<see cref="NotInParallelAttribute"/>
+/// with no key): emptying the registrars while a database test builds its context leaves that context without its
+/// models' physical fields (#1903).
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/ModelRegistrationRegistry.cs</code-under-test>
-[NotInParallel(["ModelRegistrationRegistry tests share static state", "EFCorePostgresTests"])]
+[NotInParallel] // Resets a process-wide registry the database tests read (#1903): runs alone, after the parallel tests.
 [Category("Shard1")]
 public class ModelRegistrationRegistryCoverageTests {
   private IDisposable? _restore;

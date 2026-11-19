@@ -584,7 +584,6 @@ public class PerspectiveWorkerDeepPathMiscTests {
       instanceProvider: instanceProvider,
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(options),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: registry,

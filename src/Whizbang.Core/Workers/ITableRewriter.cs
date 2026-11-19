@@ -25,8 +25,8 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#table-rewrites-run-post-ready-under-the-maintainer-duty</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/VacuumFullTableRewriterTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Startup/TableRewriteStartupStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/VacuumFullTableRewriterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/TableRewriteStartupStepTests.cs</tests>
 public interface ITableRewriter {
   /// <summary>The strategy name this rewriter is selected by, for example <see cref="TableRewriteStrategies.VACUUM_FULL"/>.</summary>
   string Strategy { get; }

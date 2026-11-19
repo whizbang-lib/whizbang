@@ -8,7 +8,7 @@ namespace Whizbang.Core.Capabilities;
 
 /// <summary>What the provisioning runner asks a provider to do about one capability in one scope.</summary>
 /// <docs>operations/infrastructure/capabilities#provisioning</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityProvisioningTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityProvisioningTests.cs</tests>
 public enum CapabilityProvisionAction {
   /// <summary>Install or enable it: it is <see cref="CapabilityState.Provisionable"/>.</summary>
   Create,
@@ -19,7 +19,7 @@ public enum CapabilityProvisionAction {
 
 /// <summary>What provisioning did about a required capability on this start, as the verdict line says it.</summary>
 /// <docs>operations/infrastructure/capabilities#provisioning</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityProvisioningTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityProvisioningTests.cs</tests>
 public enum CapabilityProvisioningOutcome {
   /// <summary>The library installed or enabled it (<c>created</c>).</summary>
   Created,
@@ -48,7 +48,7 @@ public enum CapabilityProvisioningOutcome {
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#provisioning</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityProvisioningTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityProvisioningTests.cs</tests>
 public interface ICapabilityProvisioner {
   /// <summary>The provider's name, as <see cref="ICapabilityProvider.Name"/> gives it.</summary>
   string Provider { get; }
@@ -74,7 +74,7 @@ public interface ICapabilityProvisioner {
 /// already present, whatever the switch says.
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#provisioning</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityProvisioningTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityProvisioningTests.cs</tests>
 internal static partial class CapabilityProvisioningRunner {
   /// <summary>Provisions every required capability the switch allows.</summary>
   /// <param name="statuses">The statuses the probe read.</param>
@@ -140,7 +140,7 @@ internal static partial class CapabilityProvisioningRunner {
       return await provisioner.ProvisionAsync(status, action, cancellationToken).ConfigureAwait(false);
     } catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested) {
       LogProvisioningFailed(logger, id, status.Scope, action, ex);
-      return _heldBack(status, action, $"provisioning failed ({ex.GetType().Name}: {ex.Message})");
+      return _heldBack(status, action, $"provisioning failed ({TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message})");
     }
   }
 

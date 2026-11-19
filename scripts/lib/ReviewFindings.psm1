@@ -613,7 +613,8 @@ function Find-PullRequestTypeFindings {
       A fix closes an issue labeled bug and, when it changes the library, changes a test. A library feat, fix
       or perf has a docs-site pull request that is open or merged and links back to this one
       (.github/scripts/Get-DocsPullRequests.ps1 finds it), unless a maintainer added docs:not-needed. A
-      library feat or fix adds a CHANGELOG.md entry.
+      library feat or fix adds a changelog entry: into develop, a fragment, changelog.d/<issue>.md, which the
+      release cut gathers (#2168); into a release branch, which was already cut, an entry in CHANGELOG.md.
       The title itself, and a breaking change's upgrade note, are the "Gate - Pull request type" check's
       (.github/scripts/Test-PullRequestType.ps1); a title that is not a Conventional Commit asks nothing here.
       Bots and the release pull request into main are exempt, as the gates exempt them.
@@ -658,9 +659,16 @@ function Find-PullRequestTypeFindings {
         -Body "The docs-site pull request ($numbers) doesn't name this one. Add ""Docs for whizbang-lib/whizbang#<this pull request>"" to its description, then comment /recheck here."
     }
   }
-  if ($type -ne 'perf' -and $library -and $ChangedPaths -notcontains 'CHANGELOG.md') {
-    New-ReviewFinding -Id 'pr.changelog' -Rule 'pr.changelog' -Severity blocking `
-      -Body 'A library feat or fix adds an entry under Unreleased in CHANGELOG.md, saying what changed for a consumer.'
+  if ($type -ne 'perf' -and $library) {
+    if ($BaseRef -like 'release/*') {
+      if ($ChangedPaths -notcontains 'CHANGELOG.md') {
+        New-ReviewFinding -Id 'pr.changelog' -Rule 'pr.changelog' -Severity blocking `
+          -Body "A library feat or fix into a release branch adds an entry to CHANGELOG.md's section for that version, saying what changed for a consumer. The release was cut, so a changelog.d/ fragment would wait for the next one."
+      }
+    } elseif (-not @($ChangedPaths | Where-Object { $_ -match '^changelog\.d/[^/]+\.md$' -and $_ -ne 'changelog.d/README.md' }).Count) {
+      New-ReviewFinding -Id 'pr.changelog' -Rule 'pr.changelog' -Severity blocking `
+        -Body 'A library feat or fix adds a changelog fragment, changelog.d/<issue>.md, saying what changed for a consumer (changelog.d/README.md). Cutting a release gathers it into CHANGELOG.md.'
+    }
   }
 }
 

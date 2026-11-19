@@ -54,11 +54,8 @@ public class MaintenanceWorkerTests {
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       NullLogger<MaintenanceWorker>.Instance);
 
@@ -83,7 +80,6 @@ public class MaintenanceWorkerTests {
     gate.MarkReady();  // gate ready, but Enabled=false should still skip
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new MaintenanceWorkerOptions { Enabled = false, IntervalMinutes = 1 }),
       NullLogger<MaintenanceWorker>.Instance);
 
@@ -92,34 +88,6 @@ public class MaintenanceWorkerTests {
 
     await Task.WhenAny(coord.FirstCall.Task, Task.Delay(500, CancellationToken.None));
     await Assert.That(coord.FirstCall.Task.IsCompleted).IsFalse();
-
-    await cts.CancelAsync();
-    await worker.StopAsync(CancellationToken.None);
-  }
-
-  [Test]
-  public async Task ExecuteAsync_BlocksOnSchemaGate_UntilMarkedReadyAsync() {
-    var coord = new FakeCoordinator();
-    var services = new ServiceCollection();
-    services.AddSingleton<IWorkCoordinator>(coord);
-    var sp = services.BuildServiceProvider();
-
-    var gate = new SchemaReadyGate();  // not marked ready
-    var worker = new MaintenanceWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
-      Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
-      NullLogger<MaintenanceWorker>.Instance);
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-
-    await Task.WhenAny(coord.FirstCall.Task, Task.Delay(300, CancellationToken.None));
-    await Assert.That(coord.FirstCall.Task.IsCompleted).IsFalse();
-
-    gate.MarkReady();
-    await coord.FirstCall.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Assert.That(coord.CallCount).IsGreaterThanOrEqualTo(1);
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -164,11 +132,8 @@ public class MaintenanceWorkerTests {
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1, LifecycleCompletionRetentionDays = 7 }),
       NullLogger<MaintenanceWorker>.Instance);
 

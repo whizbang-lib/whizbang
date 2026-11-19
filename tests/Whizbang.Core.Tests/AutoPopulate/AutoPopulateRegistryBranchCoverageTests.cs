@@ -60,4 +60,21 @@ public class AutoPopulateRegistryBranchCoverageTests {
       .Because("the nameless registration is skipped, not a reason to abandon the rest of the registry");
     await Assert.That(bySiblingName.Contains(nameless)).IsFalse();
   }
+
+  // #2267: a stored or received name carries the build that wrote it; the registration still matches by the wire form.
+  [Test]
+  public async Task FindRegistrationsByTypeName_ANameFromAnotherBuild_MatchesByTheWireFormAsync() {
+    var named = new AutoPopulateRegistration {
+      MessageType = typeof(NamedProbeMessage),
+      PropertyName = "OtherBuildStamp",
+      PropertyType = typeof(DateTimeOffset?),
+      PopulateKind = PopulateKind.Timestamp
+    };
+    AutoPopulateRegistry.Register(new TwoRegistrationRegistry(named), priority: 9222);
+    var otherBuild = $"{TypeNameFormatter.Format(typeof(NamedProbeMessage))}, Version=9.8.7.6, Culture=neutral, PublicKeyToken=0123456789abcdef";
+
+    var found = AutoPopulateRegistry.FindRegistrationsByTypeName(otherBuild).ToList();
+
+    await Assert.That(found.Contains(named)).IsTrue();
+  }
 }

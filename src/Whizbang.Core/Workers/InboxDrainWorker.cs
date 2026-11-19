@@ -43,11 +43,12 @@ public sealed partial class InboxDrainWorker(
   IServiceInstanceProvider instanceProvider,
   IInboxDrainChannel drainChannel,
   IInboxChannelWriter inboxChannelWriter,
-  ISchemaReadyGate schemaReadyGate,
   IOptions<InboxDrainWorkerOptions> options,
   JsonSerializerOptions jsonOptions,
   ILogger<InboxDrainWorker> logger,
-  ClaimChurnFeedback? churnFeedback = null) : BackgroundService {
+  ClaimChurnFeedback? churnFeedback = null,
+  TimeProvider? timeProvider = null,
+  DatabaseFailureEscalationOptions? databaseFailureEscalation = null) : BackgroundService {
 #pragma warning restore S107
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly ClaimChurnFeedback? _churnFeedback = churnFeedback;
@@ -55,10 +56,16 @@ public sealed partial class InboxDrainWorker(
   private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
   private readonly IInboxDrainChannel _drainChannel = ArgumentGuard.NotNull(drainChannel);
   private readonly IInboxChannelWriter _inboxChannelWriter = ArgumentGuard.NotNull(inboxChannelWriter);
-  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly InboxDrainWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly JsonSerializerOptions _jsonOptions = ArgumentGuard.NotNull(jsonOptions);
   private readonly ILogger<InboxDrainWorker> _logger = ArgumentGuard.NotNull(logger);
+  // #1986: a run of transient database failures logs one Error past the threshold, and one line when it ends.
+  private readonly DatabaseFailureEscalation _databaseFailures = new(
+    nameof(InboxDrainWorker), databaseFailureEscalation ?? new DatabaseFailureEscalationOptions(),
+    timeProvider ?? TimeProvider.System, ArgumentGuard.NotNull(logger));
+
+  /// <summary>The tracker this worker's transient database failures are reported to (#1986).</summary>
+  internal DatabaseFailureEscalation DatabaseFailures => _databaseFailures;
   // Idle-state tracking for fixture cleanup-between-tests coordination. Mirrors the
   // sibling OutboxDrainWorker contract so fixtures can wait deterministically for the
   // inbox drain pipeline to quiesce before truncating tables.
@@ -93,12 +100,6 @@ public sealed partial class InboxDrainWorker(
       return;
     }
 
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-    } catch (OperationCanceledException) {
-      return;
-    }
-
     var batcher = new SlidingWindowBatcher<Guid>(_drainChannel.Reader, _options.Batcher);
     try {
       await foreach (var batch in batcher.ReadBatchesAsync(stoppingToken)) {
@@ -114,6 +115,7 @@ public sealed partial class InboxDrainWorker(
           if (distinctStreams.Count > 0) {
             await _drainStreamBatchAsync([.. distinctStreams], stoppingToken);
           }
+          _databaseFailures.Succeeded();
         } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
           throw;
         } catch (Exception ex) {
@@ -123,8 +125,10 @@ public sealed partial class InboxDrainWorker(
           // continue loses nothing. The shared classifier decides which of the two lines it is, so
           // a deadlock that will pass and a defect that will not read differently in a log.
           WorkerLoopRecovery.Report(ex,
-            (transient, cause) => LogTransientBatchDrainFailed(
-              _logger, transient.Reason, transient.SqlStateOrNone, cause),
+            (transient, cause) => {
+              LogTransientBatchDrainFailed(_logger, transient.Reason, transient.SqlStateOrNone, cause);
+              _databaseFailures.Failed(transient);
+            },
             cause => LogBatchDrainFailed(_logger, cause));
         } finally {
           _setIdleState(active: false);
@@ -343,7 +347,7 @@ public sealed partial class InboxDrainWorker(
       // ceiling/floor calls however many streams are active.
       var plan = _planFetches(streamIds);
       // #1793: rows the working-set budget turned away this cycle, handed back once the streams are done.
-      var deferred = new List<Guid>();
+      var deferred = new TurnedAwayRows();
       var capByStream = new Dictionary<Guid, int>(streamIds.Count);
       var collected = new List<InboxBatchRow>();
       foreach (var group in plan) {
@@ -404,7 +408,7 @@ public sealed partial class InboxDrainWorker(
             try {
               work = _toInboxWork(row);
             } catch (Exception ex) {
-              LogDeserializeFailed(_logger, row.MessageId, ex);
+              await _failUnreadableRowAsync(scope.ServiceProvider, row, ex, ct);
               continue;
             }
             // Retried rows yield to fresh work when they already dominate the set. Deferred rows
@@ -417,7 +421,7 @@ public sealed partial class InboxDrainWorker(
             // the stream's order holds.
             if (full || !_fitsWorkingSet(work)) {
               full = true;
-              deferred.Add(row.MessageId);
+              deferred.Add(row.MessageId, work);
               continue;
             }
             await _inboxChannelWriter.WriteAsync(work, ct);
@@ -440,7 +444,7 @@ public sealed partial class InboxDrainWorker(
           LogDrainError(_logger, sid, ex);
         }
       }
-      if (deferred.Count > 0) {
+      if (deferred.Ids.Count > 0) {
         await _handBackAsync(coordinator, deferred, ct);
       }
     } finally {
@@ -454,7 +458,7 @@ public sealed partial class InboxDrainWorker(
   }
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Per-stream drain loop coordinates fetch + sort + serialize + dispatch + completion enqueue; the loop's invariants depend on the branches staying inline (skip-empty short-circuit, FIFO ordering guarantee, scope lifetime).")]
-  private async Task _drainStreamInnerAsync(Guid streamId, List<Guid> deferred, CancellationToken ct) {
+  private async Task _drainStreamInnerAsync(Guid streamId, TurnedAwayRows deferred, CancellationToken ct) {
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
@@ -504,7 +508,7 @@ public sealed partial class InboxDrainWorker(
         try {
           work = _toInboxWork(row);
         } catch (Exception ex) {
-          LogDeserializeFailed(_logger, row.MessageId, ex);
+          await _failUnreadableRowAsync(scope.ServiceProvider, row, ex, ct);
           continue;
         }
         totalDeserMs += (System.Diagnostics.Stopwatch.GetTimestamp() - deserStart)
@@ -514,7 +518,7 @@ public sealed partial class InboxDrainWorker(
         }
         if (full || !_fitsWorkingSet(work)) {
           full = true;
-          deferred.Add(row.MessageId);
+          deferred.Add(row.MessageId, work);
           continue;
         }
         var writeStart = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -564,12 +568,33 @@ public sealed partial class InboxDrainWorker(
   /// Hands back the rows the working-set budget turned away (#1793), refunding the attempt their claim took. They stay
   /// on streams this instance owns, so the next claim offers them again here once the working set has drained.
   /// </summary>
-  private async Task _handBackAsync(IWorkCoordinator coordinator, List<Guid> deferred, CancellationToken ct) {
-    LogWorkingSetFull(_logger, deferred.Count, _inboxChannelWriter.HeldPayloadBytes, _options.MaxHeldPayloadBytes);
+  /// <remarks>
+  /// First it tells the writer where the working set must drain to before the smallest of them fits (#1853), and the
+  /// claim leases no new inbox rows until then: each would be fetched, turned away and released on every poll. A row
+  /// larger than the budget fits only when nothing is held, so the mark never goes below zero.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.cs:WorkingSetFull_DefersAcquisitionUntilTheSmallestTurnedAwayRowFitsAsync</tests>
+  private async Task _handBackAsync(IWorkCoordinator coordinator, TurnedAwayRows deferred, CancellationToken ct) {
+    LogWorkingSetFull(_logger, deferred.Ids.Count, _inboxChannelWriter.HeldPayloadBytes, _options.MaxHeldPayloadBytes);
+    _inboxChannelWriter.DeferInboxAcquisitionUntilHeldAtMost(Math.Max(0L, _options.MaxHeldPayloadBytes - deferred.SmallestBytes));
     try {
-      await coordinator.ReleaseUnprocessedInboxAsync(_instanceProvider.InstanceId, deferred, ct);
+      await coordinator.ReleaseUnprocessedInboxAsync(_instanceProvider.InstanceId, deferred.Ids, ct);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      LogHandBackFailed(_logger, deferred.Count, ex);
+      LogHandBackFailed(_logger, deferred.Ids.Count, ex);
+    }
+  }
+
+  /// <summary>
+  /// The rows the working-set budget turned away in one drain cycle (#1793), and the payload bytes of the smallest of
+  /// them, which is what the working set must make room for before acquiring more is worthwhile (#1853).
+  /// </summary>
+  private sealed class TurnedAwayRows {
+    public List<Guid> Ids { get; } = [];
+    public long SmallestBytes { get; private set; } = long.MaxValue;
+
+    public void Add(Guid messageId, InboxWork work) {
+      Ids.Add(messageId);
+      SmallestBytes = Math.Min(SmallestBytes, InboxPayload.Bytes(work.Envelope.Payload));
     }
   }
 
@@ -603,6 +628,89 @@ public sealed partial class InboxDrainWorker(
 #pragma warning restore CA1848
     }
   }
+
+  /// <summary>
+  /// Bounds a row whose envelope cannot be read (#1983). Past <see cref="InboxDispatchWorkerOptions.MaxInboxAttempts"/>
+  /// it is moved to the dead-letter store and logged with the one dead-letter record; otherwise it is failed through
+  /// the failure channel, so its retry is backed off, its lease released, and the next claim counts the attempt.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The attempt bound is otherwise applied by the dispatch worker, which a row that cannot be read never reaches.
+  /// Before, the row was skipped with nothing recorded: it stayed leased, was fetched again on every poll, was claimed
+  /// again with another attempt once its lease lapsed, and was never failed or dead-lettered.
+  /// </para>
+  /// <para>
+  /// A move that fails, or a host with no dead-letter store, fails the row instead, so it is backed off and the move
+  /// is tried again on its next attempt. A move that finds the row already gone logs nothing: the path that moved it
+  /// logged its record. The collaborators come from the drain's scope, as the work coordinator does.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/workers/inbox-dispatch-worker#unreadable-rows</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.UnreadableRows.cs:UnreadableRow_BelowTheAttemptBound_IsFailedForBackoff_AndLoggedAtWarningAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.UnreadableRows.cs:UnreadableRow_InTheTailOfAStreamThatFilledItsPage_IsFailedTooAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.UnreadableRows.cs:UnreadableRow_PastTheAttemptBound_IsDeadLetteredWithOneRecord_AndNotFailedAgainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.UnreadableRows.cs:UnreadableRow_PastTheAttemptBound_LogsTheRecordAtTheConfiguredLevelAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.UnreadableRows.cs:UnreadableRow_PastTheAttemptBound_AlreadyGone_LogsNoRecordAndFailsNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.UnreadableRows.cs:UnreadableRow_PastTheAttemptBound_WhenTheMoveFails_IsFailedForAnotherTryAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.UnreadableRows.cs:UnreadableRow_PastTheAttemptBound_WithNoDeadLetterStore_IsFailedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.UnreadableRows.cs:UnreadableRow_WithNoAttemptBound_IsFailedAsync</tests>
+  private async Task _failUnreadableRowAsync(IServiceProvider services, InboxBatchRow row, Exception exception, CancellationToken ct) {
+    var maxAttempts = services.GetRequiredService<IOptions<InboxDispatchWorkerOptions>>().Value.MaxInboxAttempts;
+    if (maxAttempts is int bound && row.Attempts > bound
+        && await _tryDeadLetterUnreadableRowAsync(services, row, bound, exception, ct)) {
+      return;
+    }
+    LogDeserializeFailed(_logger, row.MessageId, row.Attempts, exception);
+    await services.GetRequiredService<IFailureChannel>().EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
+      MessageId = row.MessageId,
+      CompletedStatus = (MessageProcessingStatus)row.Status,
+      Error = exception.Message,
+      Reason = MessageFailureReason.SerializationError,
+    }, ct);
+  }
+
+  /// <summary>
+  /// Moves an unreadable row past its attempt bound to the dead-letter store. True when the row is dealt with (moved,
+  /// or already gone); false when there is no store or the move failed, and the row is to be failed instead.
+  /// </summary>
+  private async Task<bool> _tryDeadLetterUnreadableRowAsync(
+      IServiceProvider services, InboxBatchRow row, int bound, Exception exception, CancellationToken ct) {
+    var store = services.GetRequiredService<IDeadLetterStore>();
+    if (!store.IsConfigured) {
+      return false;
+    }
+    var errorText = $"InboxDrainWorker dead-lettered an inbox row whose envelope cannot be read: attempts={row.Attempts} > max={bound}: {exception.Message}";
+    try {
+      var movedId = await store.MoveAsync(
+        deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
+        sourceTable: DeadLetterSourceTable.INBOX,
+        sourceId: row.MessageId,
+        failureReason: MessageFailureReason.MaxAttemptsExceeded,
+        errorText: errorText,
+        instanceId: _instanceProvider.InstanceId,
+        generation: services.GetRequiredService<IGenerationProvider>().GetGeneration(),
+        ct: ct);
+      if (movedId is not null) {
+        var metrics = services.GetService<DeadLetterMetrics>();
+        metrics?.Added.Add(1,
+          new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
+          new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, nameof(MessageFailureReason.MaxAttemptsExceeded)));
+        metrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)MessageFailureReason.MaxAttemptsExceeded, errorText);
+        DeadLetterLog.MessageDeadLettered(_logger, DeadLetterLog.LevelFrom(services.GetService<DeadLetterLoggingOptions>()),
+          exception, row.MessageId, row.MessageType, nameof(MessageFailureReason.MaxAttemptsExceeded), errorText);
+      }
+      return true;
+    } catch (Exception moveFailure) {
+      LogUnreadableRowDeadLetterFailed(_logger, row.MessageId, moveFailure);
+      return false;
+    }
+  }
+
+  [LoggerMessage(EventId = 64, Level = LogLevel.Warning,
+    Message = "InboxDrainWorker could not dead-letter inbox row {MessageId}, whose envelope cannot be read; it is failed and "
+            + "the move is tried again on its next attempt")]
+  static partial void LogUnreadableRowDeadLetterFailed(ILogger logger, Guid messageId, Exception exception);
 
   private InboxWork _toInboxWork(InboxBatchRow row) {
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
@@ -656,7 +764,7 @@ public sealed partial class InboxDrainWorker(
   /// <summary>The event id of a drain batch lost to a database failure that passes of its own accord.</summary>
   internal const int TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID = 7;
 
-  [LoggerMessage(EventId = TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID, Level = LogLevel.Error,
+  [LoggerMessage(EventId = TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID, Level = LogLevel.Warning,
     Message = "Inbox drain batch failed on a transient database failure ({Reason}, SQLSTATE {SqlState}); "
             + "the streams re-offer via the claim backstop")]
   static partial void LogTransientBatchDrainFailed(
@@ -669,9 +777,10 @@ public sealed partial class InboxDrainWorker(
             + "waiting behind it.")]
   static partial void LogPoisonGateForcedProgress(ILogger logger, int rowCount, int attempts);
 
-  [LoggerMessage(EventId = 5, Level = LogLevel.Error,
-    Message = "InboxDrainWorker: failed to deserialize envelope for {MessageId}")]
-  static partial void LogDeserializeFailed(ILogger logger, Guid messageId, Exception ex);
+  [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
+    Message = "InboxDrainWorker: failed to deserialize envelope for {MessageId} (attempt {Attempts}); the row is failed and "
+            + "retried with backoff, and dead-lettered once its attempts pass MaxInboxAttempts")]
+  static partial void LogDeserializeFailed(ILogger logger, Guid messageId, int attempts, Exception ex);
 
   /// <summary>
   /// Reports fetched rows' attempt counts to the claim window's feedback seam.

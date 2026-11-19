@@ -120,9 +120,28 @@ public class PerspectiveRunnerSplitSnapshotTests {
     var runner = _compact(_runner("SplitClassPerspective"));
 
     // The end of a run, and the end of a rewind: each captures the snapshot before it writes and hands
-    // it to the store in place of one taken afterwards.
-    await Assert.That(runner.Split("snapshotBeforeWrite=snapshotDue?SnapshotBeforeWrite(updatedModel):null;").Length - 1).IsEqualTo(2);
+    // it to the store in place of one taken afterwards. Each prefers the row at its last event when collectives
+    // folded after that event (#1956), which is serialized before the write too.
+    await Assert.That(runner.Split("snapshotBeforeWrite=snapshotDue?modelAtLastEvent??SnapshotBeforeWrite(updatedModel):null;").Length - 1).IsEqualTo(1);
+    await Assert.That(runner.Split("snapshotBeforeWrite=snapshotDue?_takeModelAtLastEvent(outcome)??SnapshotBeforeWrite(updatedModel):null;").Length - 1).IsEqualTo(1);
     await Assert.That(runner.Split("snapshotBeforeWrite??ToSnapshotJson(updatedModel)").Length - 1).IsEqualTo(2);
+  }
+
+  // #1956: the row at its last event is serialized only for a snapshot, so with snapshots off the fold of a collective
+  // costs no serialization. The copy has no other effect a run could observe, so the generated runner is read: each of
+  // its two copies sits behind the snapshots-on condition, and there is no third.
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_CopiesTheRowAtItsLastEvent_OnlyWhenSnapshotsAreOnAsync() {
+    var runner = _compact(_runner("SplitClassPerspective"));
+
+    await Assert.That(runner.Split("modelAtLastEvent=ToSnapshotJson(updatedModel);").Length - 1).IsEqualTo(2)
+      .Because("the rewind's replay and the run each take the copy at one place");
+    await Assert.That(runner).Contains("varsnapshotsOn=_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true;")
+      .Because("the rewind's replay decides once whether snapshots are on");
+    await Assert.That(runner).Contains("if(snapshotsOn&&modelAtLastEventisnull){modelAtLastEvent=ToSnapshotJson(updatedModel);}");
+    await Assert.That(runner).Contains(
+      "if(modelAtLastEventisnull&&_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true){modelAtLastEvent=ToSnapshotJson(updatedModel);}");
   }
 
   [Test]
@@ -133,15 +152,17 @@ public class PerspectiveRunnerSplitSnapshotTests {
     // Issue #1002: the end of a run serializes before the write only when the snapshot after it is due.
     const string RUN_DUE = "varsnapshotDue=_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true"
       + "&&!pendingPurge&&updatedModelisnotnull&&hasWrittenUpdate&&lastSuccessfulEventId.HasValue"
-      + "&&_eventsSinceLastSnapshot+eventsProcessed>=_snapshotCadence().Threshold;";
+      + "&&_eventsSinceSnapshot(state.StreamId)+eventsProcessed>=_snapshotCadence().Threshold"
+      + "&&!collectiveInFlight;";
     await Assert.That(runner).Contains(RUN_DUE);
     await Assert.That(runner.IndexOf(RUN_DUE, StringComparison.Ordinal))
       .IsLessThan(runner.IndexOf("awaitSaveModelAndCheckpointAsync(", StringComparison.Ordinal));
-    await Assert.That(runner).Contains("_eventsSinceLastSnapshot+=eventsProcessed;if(snapshotDue){")
+    await Assert.That(runner).Contains("_eventsSinceLastSnapshot.AddOrUpdate(streamId,eventsProcessed,(_,count)=>count+eventsProcessed);if(snapshotDue){")
       .Because("the snapshot after the write is taken on the same decision, so the two cannot disagree");
-    // The end of a rewind snapshots whenever snapshots are on.
+    // The end of a rewind snapshots whenever snapshots are on, unless it folded a collective still in flight (#1981).
     await Assert.That(runner).Contains(
-      "varsnapshotDue=_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true&&lastSuccessfulEventId.HasValue;");
+      "varsnapshotDue=_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true&&lastSuccessfulEventId.HasValue"
+      + "&&outcome.CollectivesSettled;");
     await Assert.That(runner).Contains("private(intThreshold,intRetention)_snapshotCadence(){");
   }
 }

@@ -141,8 +141,6 @@ public partial class InboxDispatchWorkerTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var composite = new BulkComposite(new InnerImportEvent("J-1"), new InnerImportEvent("J-2"), new InnerImportEvent("J-3"));
     var sp = new ServiceCollection()
@@ -155,7 +153,6 @@ public partial class InboxDispatchWorkerTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 7 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -230,7 +227,6 @@ public partial class InboxDispatchWorkerTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 1 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -316,8 +312,6 @@ public partial class InboxDispatchWorkerTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var sp = new ServiceCollection()
       .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
       .AddSingleton(invoker)
@@ -328,7 +322,6 @@ public partial class InboxDispatchWorkerTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 1 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -392,8 +385,6 @@ public partial class InboxDispatchWorkerTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var emitted = _outboxMsg("batch-received");
     var composite = new BulkComposite(new InnerImportEvent("J-1"), new InnerImportEvent("J-2"));
@@ -408,7 +399,6 @@ public partial class InboxDispatchWorkerTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 1 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -445,8 +435,6 @@ public partial class InboxDispatchWorkerTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
@@ -455,7 +443,6 @@ public partial class InboxDispatchWorkerTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 1234 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -496,8 +483,6 @@ public partial class InboxDispatchWorkerTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
@@ -506,7 +491,6 @@ public partial class InboxDispatchWorkerTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -547,8 +531,6 @@ public partial class InboxDispatchWorkerTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
@@ -557,7 +539,6 @@ public partial class InboxDispatchWorkerTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -594,8 +575,6 @@ public partial class InboxDispatchWorkerTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
@@ -604,7 +583,6 @@ public partial class InboxDispatchWorkerTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -649,7 +627,6 @@ public partial class InboxDispatchWorkerTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { Enabled = false }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -678,59 +655,11 @@ public partial class InboxDispatchWorkerTests {
   }
 
   [Test]
-  public async Task BlocksOnSchemaGate_UntilMarkedReadyAsync() {
-    var instance = new FakeInstanceProvider();
-    var inbox = new FakeInboxChannelWriter();
-    var handlerCommit = new FakeHandlerCommitChannel();
-    var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();  // not marked ready
-
-    var sp = new ServiceCollection().BuildServiceProvider();
-    var worker = new InboxDispatchWorker(
-      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      instanceProvider: instance,
-      inboxChannelWriter: inbox,
-      handlerCommitChannel: handlerCommit,
-      failureChannel: failure,
-      schemaReadyGate: gate,
-      options: Options.Create(new InboxDispatchWorkerOptions()),
-      coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
-      logger: NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new StreamIntegrityOptions()),
-      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
-      receptorRegistry: new PermissiveReceptorRegistryQuery(),
-      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
-      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
-      deadLetterStore: NullDeadLetterStore.Instance,
-      generationProvider: new DefaultGenerationProvider());
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-
-    var work = _makeWork();
-    await inbox.WriteAsync(work, cts.Token);
-
-    await Task.WhenAny(handlerCommit.First.Task, Task.Delay(300, CancellationToken.None));
-    await Assert.That(handlerCommit.First.Task.IsCompleted).IsFalse();
-
-    gate.MarkReady();
-    var routed = await handlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Assert.That(routed.InboxCompletion.MessageId).IsEqualTo(work.MessageId);
-
-    await cts.CancelAsync();
-    await worker.StopAsync(CancellationToken.None);
-  }
-
-  [Test]
   public async Task MultipleMessages_AllRoutedToHandlerCommitChannelAsync() {
     var instance = new FakeInstanceProvider();
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
@@ -739,7 +668,6 @@ public partial class InboxDispatchWorkerTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -798,8 +726,6 @@ public partial class InboxDispatchWorkerTests {
     var inbox = new FakeInboxChannelWriter();
     var hungChannel = new HungHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var fakeTime = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 5, 3, 12, 0, 0, TimeSpan.Zero));
     var registry = new LeaseRegistry();
 
@@ -810,7 +736,6 @@ public partial class InboxDispatchWorkerTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: hungChannel,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -857,8 +782,6 @@ public partial class InboxDispatchWorkerTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var registry = new LeaseRegistry();
 
     var sp = new ServiceCollection().BuildServiceProvider();
@@ -868,7 +791,6 @@ public partial class InboxDispatchWorkerTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,

@@ -30,7 +30,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 ///   WHERE price >= 20.00  // Uses indexed physical column</para>
 /// </remarks>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class UnifiedQuerySyntaxTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
@@ -105,11 +104,8 @@ public class UnifiedQuerySyntaxTests : IAsyncDisposable {
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
 
-    _testDatabaseName = $"unified_test_{Guid.NewGuid():N}";
+    _testDatabaseName = (await PerTestDatabaseFactory.CreateAsync("unified_query")).Name;
 
-    await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-    await adminConnection.OpenAsync();
-    await adminConnection.ExecuteAsync($"CREATE DATABASE {_testDatabaseName}");
 
     var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _testDatabaseName,
@@ -123,7 +119,8 @@ public class UnifiedQuerySyntaxTests : IAsyncDisposable {
     _dataSource = dataSourceBuilder.Build();
 
     // Register physical fields for ProductModel
-    PhysicalFieldRegistry.Clear(); // Clear any previous registrations
+    // This class's own model only, and never a Clear(): the registry is keyed by model type, so registering touches
+    // nothing another test reads, and the class runs in parallel with them (#2167).
     PhysicalFieldRegistry.Register<ProductModel>("Name", "name");
     PhysicalFieldRegistry.Register<ProductModel>("Price", "price");
     PhysicalFieldRegistry.Register<ProductModel>("Category", "category");
@@ -153,20 +150,7 @@ public class UnifiedQuerySyntaxTests : IAsyncDisposable {
     }
 
     if (_testDatabaseName != null) {
-      try {
-        await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await adminConnection.OpenAsync();
-
-        await adminConnection.ExecuteAsync($@"
-          SELECT pg_terminate_backend(pg_stat_activity.pid)
-          FROM pg_stat_activity
-          WHERE pg_stat_activity.datname = '{_testDatabaseName}'
-          AND pid <> pg_backend_pid()");
-
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
-      } catch {
-        // Ignore cleanup errors
-      }
+      await PerTestDatabaseFactory.DropAsync(_testDatabaseName);
 
       _testDatabaseName = null;
     }

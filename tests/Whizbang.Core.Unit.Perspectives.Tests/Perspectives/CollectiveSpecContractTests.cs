@@ -1,0 +1,162 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+#pragma warning disable CA1707
+
+using System.Collections.Generic;
+using System.Linq.Expressions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives;
+
+namespace Whizbang.Core.Tests.Perspectives;
+
+/// <summary>
+/// Locks the collective-events perspective surface: <see cref="ICollectiveSpec{TModel}"/>,
+/// <see cref="ICollectiveSetters{TModel}"/>, <see cref="ICollectiveApplyFor{TModel, TEvent}"/>,
+/// <see cref="ICollectiveScopeResolver"/>, and <see cref="CollectiveApplyForAttribute"/>.
+/// These contracts have no runtime behavior in Slice 1; the tests pin the
+/// shape so the source generator (Slice 5), the EFCore adapter (Slice 6),
+/// and the Dapper adapter (Slice 9) all bind against a stable surface.
+/// </summary>
+/// <docs>fundamentals/messaging/collective-events</docs>
+public class CollectiveSpecContractTests {
+
+  [Test]
+  public async Task ICollectiveSpec_Setters_IsLinqExpressionTreeAsync() {
+    // The spec's only payload is an Expression<Action<ICollectiveSetters<TModel>>>.
+    // Driver adapters (EF, Dapper) walk this expression with ExpressionVisitor —
+    // emitting a delegate instead of an expression would break the adapter
+    // contract and trip AOT trim warnings on reflection-based fallbacks.
+    Expression<Action<ICollectiveSetters<JobModel>>> setters =
+      s => s.SetProperty(j => j.Status, "Archived");
+    ICollectiveSpec<JobModel> spec = new ArchiveSpec(setters);
+
+    await Assert.That(spec.Setters).IsNotNull();
+    await Assert.That(spec.Setters).IsSameReferenceAs(setters)
+      .Because("The spec holds the expression as-passed; adapters depend on the tree being inspectable, not pre-compiled.");
+  }
+
+  [Test]
+  public async Task ICollectiveSetters_ConstantSetProperty_OverloadCompilesAsync() {
+    // Overload (a): SetProperty(selector, value). The constant overload
+    // is the most common shape — "set field X to value V."
+    Expression<Action<ICollectiveSetters<JobModel>>> expr =
+      s => s.SetProperty(j => j.Status, "Archived");
+
+    // The expression compiled — the SetProperty(selector, value) overload
+    // exists with the expected signature. (Runtime expression body
+    // inspection would be a Slice 6 adapter test.)
+    await Assert.That(expr).IsNotNull();
+  }
+
+  [Test]
+  public async Task ICollectiveSetters_ComputedSetProperty_OverloadCompilesAsync() {
+    // Overload (b): SetProperty(selector, computed). The computed overload
+    // accepts an Expression<Func<TModel, TProp>> for the new value, which
+    // lets the spec reference the row's CURRENT property values — needed
+    // for increment, append, conditional-rewrite patterns.
+    Expression<Action<ICollectiveSetters<JobModel>>> expr =
+      s => s.SetProperty(j => j.ViewCount, j => j.ViewCount + 1);
+
+    await Assert.That(expr).IsNotNull();
+  }
+
+  [Test]
+  public async Task ICollectiveApplyFor_TEventConstraint_IsICollectiveEventAsync() {
+    // The generic constraint `where TEvent : ICollectiveEvent` is what
+    // distinguishes the collective Apply path from the existing per-row
+    // IPerspectiveFor.Apply path. Source generators (Slice 5) discover
+    // these handlers by matching on this constraint.
+    ICollectiveApplyFor<JobModel, ArchiveCollectiveEvent> apply = new ArchiveApply();
+
+    // Compile-time proof: the type system accepts a TEvent that implements
+    // ICollectiveEvent. A non-collective TEvent would not compile.
+    await Assert.That(apply).IsNotNull();
+  }
+
+  [Test]
+  public async Task ICollectiveScopeResolver_HasScopeKindDiscriminatorAsync() {
+    // The resolver carries the same ScopeKind discriminator as the scope
+    // payload so DI registration can key on a stable string. Multiple
+    // resolvers for the same kind would be an error at registration time
+    // (deferred to Slice 4); the contract just requires the property.
+    ICollectiveScopeResolver resolver = new TenantResolverStub();
+
+    await Assert.That(resolver.ScopeKind).IsEqualTo("tenant");
+  }
+
+  [Test]
+  public async Task CollectiveApplyForAttribute_CarriesScopeHandlingDefaultAsync() {
+    // Default ScopeHandling is Framework — meaning the framework composes
+    // the resolver's ScopeFilter around the perspective's mutation spec.
+    // The opt-out Custom mode is what lets the perspective consult ambient
+    // ScopeContext and write its own WHERE.
+    var attr = new CollectiveApplyForAttribute();
+
+    await Assert.That(attr.ScopeHandling).IsEqualTo(CollectiveScopeHandling.Framework)
+      .Because("Safe default: framework composes the scope filter so perspectives can't accidentally over-mutate. Custom is the explicit opt-out.");
+    await Assert.That(attr.SpecKind).IsEqualTo(CollectiveSpecKind.Linq)
+      .Because("Default spec kind is LINQ. RawSql is the escape hatch when the LINQ surface can't express the mutation.");
+  }
+
+  [Test]
+  public async Task CollectiveApplyForAttribute_AcceptsExplicitScopeHandlingCustomAsync() {
+    var attr = new CollectiveApplyForAttribute {
+      ScopeHandling = CollectiveScopeHandling.Custom,
+    };
+
+    await Assert.That(attr.ScopeHandling).IsEqualTo(CollectiveScopeHandling.Custom);
+  }
+
+  [Test]
+  public async Task CollectiveApplyForAttribute_AcceptsExplicitSpecKindRawSqlAsync() {
+    var attr = new CollectiveApplyForAttribute {
+      SpecKind = CollectiveSpecKind.RawSql,
+    };
+
+    await Assert.That(attr.SpecKind).IsEqualTo(CollectiveSpecKind.RawSql);
+  }
+
+  // ── Inline test types ──────────────────────────────────────────────────
+
+  private sealed class JobModel {
+    public string Status { get; set; } = "Draft";
+    public int ViewCount { get; }
+  }
+
+  private sealed record ArchiveCollectiveEvent(
+    CollectiveScope Scope,
+    IReadOnlyList<Guid> MatchedStreamIds) : ICollectiveEvent;
+
+  private sealed record ArchiveSpec(Expression<Action<ICollectiveSetters<JobModel>>> Setters)
+    : ICollectiveSpec<JobModel>;
+
+  private sealed class ArchiveApply : ICollectiveApplyFor<JobModel, ArchiveCollectiveEvent> {
+    // A compile-time fixture of the interface's TEvent constraint, never meant to be bound as a handler, so it carries
+    // no [CollectiveApplyFor]; WHIZ116 reports exactly that for a real handler (#1936).
+#pragma warning disable WHIZ116
+    public ICollectiveSpec<JobModel> Apply(ArchiveCollectiveEvent evt, ICollectiveQuery query) =>
+      new ArchiveSpec(s => s.SetProperty(j => j.Status, "Archived"));
+#pragma warning restore WHIZ116
+  }
+
+  private sealed class TenantResolverStub : ICollectiveScopeResolver {
+    public string ScopeKind => "tenant";
+
+    public bool AcceptsPerspective<TModel>() where TModel : class => true;
+
+    public Expression<Func<PerspectiveRow<TModel>, bool>> ScopeFilter<TModel>(ICollectiveScope scope)
+      where TModel : class => _ => true;
+
+    public IDisposable EnterContext(ICollectiveScope scope) => NoopDisposable.Instance;
+  }
+
+  private sealed class NoopDisposable : IDisposable {
+    public static readonly NoopDisposable Instance = new();
+    public void Dispose() { }
+  }
+}

@@ -50,6 +50,14 @@ public class CollectionMemberShapeProbeTests {
   public class ReadOnlyCollectionModel { [StreamId] public Guid Id { get; init; } public IReadOnlyCollection<Tag> Items { get; init; } = []; }
   public class UnconstructibleElementModel { [StreamId] public Guid Id { get; init; } public List<Turn> Turns { get; init; } = []; }
 
+  /// <summary>A tree node holding a list of itself (#2112).</summary>
+  public record TreeNode { public string Label { get; set; } = ""; public List<TreeNode>? Children { get; set; } }
+  public class RecursiveModel { [StreamId] public Guid Id { get; init; } public List<TreeNode>? Skeleton { get; set; } }
+
+  /// <summary>A link holding the next link of its own type, a recursion through a single nested object.</summary>
+  public class ChainLink { public string Label { get; set; } = ""; public ChainLink? Next { get; set; } }
+  public class ChainModel { [StreamId] public Guid Id { get; init; } public ChainLink? Head { get; set; } }
+
   /// <summary>The document mapped property by property, which walks the whole graph.</summary>
   private sealed class MappedContext<TModel>(DbContextOptions<MappedContext<TModel>> options)
     : DbContext(options) where TModel : class {
@@ -139,5 +147,54 @@ public class CollectionMemberShapeProbeTests {
     await Assert.That(_opaque<UnconstructibleElementModel>()).IsNull()
       .Because("the whole document is one value the serializer owns, so the shape inside it stops "
         + "being Entity Framework's problem");
+  }
+
+  /// <summary>
+  /// The mapped path maps a recursive type one level deep and no further, which is why the discovery routes a recursive
+  /// model to the opaque form (#2112).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The model builds without a word: the first <c>Children</c> under <c>Skeleton</c> is mapped, and the
+  /// <c>Children</c> of that element is not, so every level below it is dropped on write and read back as null. Nothing
+  /// fails at model build, save or query, which is what makes it a silent loss rather than a startup failure.
+  /// </para>
+  /// <para>
+  /// If a future Entity Framework maps the recursion all the way down, this fails, and the routing in
+  /// <c>MappedPathDiscovery</c> is re-measured: an opaque recursive model then costs indexing it no longer needs to.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task TheMappedPathMapsARecursiveTypeOneLevelDeepAsync() {
+    await Assert.That(_mapped<RecursiveModel>()).IsNull()
+      .Because("the model builds, so nothing at startup says anything is wrong");
+
+    await using var context = new MappedContext<RecursiveModel>(new DbContextOptionsBuilder<MappedContext<RecursiveModel>>()
+      .UseNpgsql("Host=localhost;Database=probe;Username=u;Password=p").Options);
+    var data = context.Model.FindEntityType(typeof(PerspectiveRow<RecursiveModel>))!.FindComplexProperty("Data")!;
+    var skeleton = data.ComplexType.FindComplexProperty("Skeleton")!;
+    var children = skeleton.ComplexType.FindComplexProperty("Children");
+
+    await Assert.That(children).IsNotNull().Because("the first level of the self-reference is mapped");
+    await Assert.That(children!.ComplexType.FindComplexProperty("Children")).IsNull()
+      .Because("the level below it is not mapped at all, so it is never written and reads back as null");
+  }
+
+  /// <summary>
+  /// A recursion through a single nested object rather than a collection is mapped one level deep too, which is why
+  /// the discovery routes every cycle, not only a collection, to the opaque form (#2112).
+  /// </summary>
+  [Test]
+  public async Task TheMappedPathMapsARecursiveObjectOneLevelDeepAsync() {
+    await Assert.That(_mapped<ChainModel>()).IsNull();
+
+    await using var context = new MappedContext<ChainModel>(new DbContextOptionsBuilder<MappedContext<ChainModel>>()
+      .UseNpgsql("Host=localhost;Database=probe;Username=u;Password=p").Options);
+    var data = context.Model.FindEntityType(typeof(PerspectiveRow<ChainModel>))!.FindComplexProperty("Data")!;
+    var head = data.ComplexType.FindComplexProperty("Head")!;
+    var next = head.ComplexType.FindComplexProperty("Next");
+
+    await Assert.That(next).IsNotNull();
+    await Assert.That(next!.ComplexType.FindComplexProperty("Next")).IsNull();
   }
 }

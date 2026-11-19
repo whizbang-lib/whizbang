@@ -137,9 +137,9 @@ promised depended on which wait the worker happened to be in.
   `_onGateAvailabilityChanged` use it. `RequestImmediatePoll` is unchanged.
 - Tests that prove "prompt" behavior must not race a cadence: `ClaimWorkerGateCadenceTests.
   GateFlipsToAvailable_TriggersImmediatePollAsync` uses an hour-long interval so the only way a poll
-  can arrive inside the safety-net wait is the transition waking the loop. Likewise, tests that
-  prove "nothing before the gate" (`UngatedWorkerAdoptionTests`) use an `ISchemaReadyGate` double
-  that reports when the worker is parked on it instead of sleeping and hoping.
+  can arrive inside the safety-net wait is the transition waking the loop. Likewise, a test that
+  proves a worker does nothing before its start point waits on the wrapper's own signal
+  (`GatedHostedService.Started`, the stage gate it was handed) instead of sleeping and hoping.
 - Both tests failed exactly once each under the coverage-instrumented parallel suite before this
   change and never in isolation; that pattern (timing budget, passes alone) is the signature to look
   for. `ClaimWorkerReemissionBackoffTests` pins that completion feedback still cannot reach the nap.
@@ -204,3 +204,83 @@ health surface telling the same story; each one is pinned by `StartupStageReport
   over `Stopping` until it stops, because the host's stop does not advance the lifecycle; the stage alone already
   keeps the instance out.
 
+
+## Workers start where their registration says (#1636)
+
+A worker never decides for itself when to start. It is registered with its start point and the host
+starts it there; the worker holds no wait on `ISchemaReadyGate`.
+
+- `AddWhizbangWorker<T>(stage)` hosts the worker in `StartupStageGatedService<T>`, started once the
+  instance reaches the stage (Accept commands unless another is named). `AddWhizbangWorkerAtSchemaReady<T>()`
+  hosts it in `SchemaReadyGatedService<T>`, started when the gate opens at the end of Coordinate. Both derive
+  from `GatedHostedService`, whose `Service`, `StartPoint` and `Started` are what audits and tests read.
+- The data plane and the transport consumer start at Accept commands, after the reporter has written the
+  row (the gate's observer is told after the write), so none claims or receives before the row says the
+  instance is eligible. The heartbeat, the lifecycle monitor, the standby watcher, the statistics collectors,
+  the registry reconcilers and the shutdown deregistration start at schema ready.
+- Without a stage gate (a host composed without the worker pipeline), a stage after Coordinate falls back to
+  the schema-ready gate; Coordinate and earlier start with the host, as they did before they were wrapped.
+- A worker whose startup others wait on implements `IStartAbandonedObserver` and settles that signal when
+  the host stops before its start point (subscriptions ready, the perspective startup scan).
+- The five flush workers' `BatchFlusher` is constructed unstarted and started by the worker's `StartAsync` (not
+  `ExecuteAsync`, which the host runs on the thread pool and a prompt stop can preempt), so a flush cannot run
+  before the worker's start point.
+- Two tests keep it that way: `StartupHostedServiceAuditTests` (every hosted service of a turnkey host has a
+  start point or a stated reason it needs none) and `WorkerStartGateSourceGuardTests` (no hosted service in
+  `src` names `ISchemaReadyGate`, except the listed startup machinery; no sample hosts a worker with plain
+  `AddHostedService`; no worker the framework stages is plain-hosted anywhere in `src` or `samples`).
+- `AddHostedService<T>()` activates its own instance, so plain-hosting a worker the framework already stages (the
+  perspective worker via `AddWhizbang()`, the consumer via `AddTransportConsumer()`) runs a second, unstaged copy
+  that starts before migration. Drop the line; a host that builds the worker itself (a hand-named consumer, a test
+  fixture's factory) uses `AddWhizbangWorker(stage, factory)`. The runtime audit sees only its own composition, so the
+  samples are held by the source scan.
+- `GetServices<IHostedService>().OfType<TWorker>()` finds nothing for a staged worker: the hosted service is the wrapper.
+  Tests and fixtures use `Whizbang.Testing.Workers.HostedWorkers.GetHostedWorker<T>()` / `GetHostedWorkers()`; the source
+  guard fails a by-type lookup of a staged worker among the wrappers, and any hosted-service enumeration in a sample. A
+  registration test that filters to `GatedHostedService` to assert a worker is staged is reading the wrapper on purpose.
+- The data plane's gate opens only once the row records Accept commands (the reporter tells observers `recorded`). A
+  failed write is held, and the next accepted heartbeat's registration signal writes it and tells them again; a host
+  whose coordinator keeps no instance rows (`RecordsInstanceTransitions` false, or no coordinator) reports every stage
+  as recorded, so it starts at once.
+- The database refuses such a caller as well (300): `claim_work`, `wh_claim_multi_stream_work` and the coalesce fetch
+  give nothing to a caller whose own row may not claim (`wh_instance_may_claim`: eligible, or draining). A draining
+  caller still claims its share (under a published assignment its partitions would otherwise sit unclaimed until the
+  assigner republishes); an older build that records no phase, and a caller with no row, are served as before.
+  `WorkEligibilitySqlTests.Rank_ACallerThatIsNotYetEligible_StillCountsItselfAsync` keeps 229's name, because 229 links
+  to it and a shipped migration is never edited, and asserts the reversed rule.
+
+
+## Assess is the first stage, and its one verdict binds startup (#1992)
+
+`StartupAssessmentSource` reads the version record once per host; the `Assess` step, the schema initializer and each
+driver's schema pass all read that one verdict (`StartupVerdictBinding.ReadAsync` in a pass). Nothing else reads the
+version record at startup; the standby watcher re-reads the driver's assessor at run time on purpose.
+
+- **First.** `WhizbangDatabaseInitializerService` asks for the verdict before any runner; a runner never starts before
+  it exists (`SchemaInitializationRunnersTests.AnyOtherVerdict_RunsTheRunnersAfterTheVerdict_ThenOpensTheGateAsync`).
+  The EF Core pass reads it too, so a direct `EnsureWhizbangDatabaseInitializedAsync` / `EnsureWhizbangInitializedAsync`
+  on a stood-down host throws `SchemaStandDownException` and applies nothing.
+- **Brand-new vs unreadable.** The assessment probes the catalog first: no `wh_schema_migrations` is a brand-new
+  database (Migrate; the bootstrap that follows is safe because nothing newer can exist), no `wh_schema_versions`
+  records no version (Migrate). A ledger that exists and cannot be read throws: a transient failure
+  (`TransientDatabaseFailure`) is retried within Preflight, anything else is `StartupAssessmentException` and fails the
+  attempt, never a blind migration. A failure is never latched.
+- **Owner column.** The EF Core ledger has `owner`; the Dapper ledger does not and is read whole. The old code took a
+  missing `owner` for "being created" and answered Migrate, which on Dapper would have migrated a newer schema.
+- **StandDown.** No runner, no bootstrap, no election, no pass, no reconcile; the schema-ready gate stays closed (data
+  plane held, readiness 503, process alive). `StartupStandDown` records Preflight + `StandingBy` with the reason through
+  the stage reporter and keeps the row alive with `IWorkCoordinator.RecordHeartbeatAsync` on the heartbeat interval
+  (the heartbeat worker starts at schema ready, which never comes). The bootstrap closure is keyed by hash only, so an
+  older closure would otherwise be re-applied over newer definitions.
+- **Current.** Nothing newer recorded and every registered DbContext's `IsWhizbangSchemaCurrentAsync` (fast-path
+  hashes, duplicate overloads, stale definitions, missing declared objects, and `StoredFormSettlement`) answers true;
+  Dapper: every migration at its hash *and this binary's version*, perspective and application-object hashes, declared
+  keys settled, managed objects present. Current skips bootstrap, election, stored-form rewrite and pass: no schema
+  lock. Converge and Coordinate run. A check that cannot answer is Serve, never Current.
+- **The stored-form rewrite took the schema lock on a current schema.** `CanonicalTemporalRewritePhase.ApplyAsync`
+  filters nothing: any model with a temporal path, stored-form migration or enum column opens a transaction and takes
+  `pg_try_advisory_xact_lock` on the schema key every start, and only then do the DO blocks see "settled". That is why
+  Current needs the settlement check and not only the hashes.
+- Tests: `StartupParityTests` (both drivers: current restart under a held schema lock, stand-down applies nothing,
+  turnkey call refused), `StartupAssessorTests`, `DapperStartupAssessorTests`, `StartupAssessmentSourceTests`,
+  `StartupStandDownTests`, `StartupVerdictBindingTests`.

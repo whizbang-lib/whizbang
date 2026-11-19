@@ -148,6 +148,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // window before consumed bodies are reaped. Resolved at compile time — zero reflection.
     var isEphemeral = eventTypeSymbols.Any(static s => EphemeralResolver.IsEphemeral(s));
 
+    // #2295: whether it keeps a rewind floor is decided by what it consumes. Applying only ephemeral events (and not
+    // opting in with [KeepEphemeralRewindFloor]), it takes no snapshots; the EF Core association generator reads the same
+    // classification to register the marker the reaper reads.
+    var keepsRewindFloor = !EphemeralConsumption.KeepsNoRewindFloor(classSymbol, eventTypeSymbols);
+
     // TtlRow perspective-row expiry (E2-4d): resolved virally like isEphemeral. If ANY applied [Ephemeral]
     // event chose TransientStorage.TtlRow, the perspective's rows expire; the TTL is the LONGEST of its
     // TtlRow events' TtlSeconds (keep the row until its longest-lived contributing data expires). -1 = the
@@ -183,6 +188,13 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var isFullHistory = classSymbol.GetAttributes().Any(
         static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "FullHistoryAttribute" or "FullHistory");
 
+    // #1739: what happens to this perspective's rows when their stream is archived whole. -1 when undeclared, so an
+    // explicit Keep (0) stays distinct from no declaration: an explicit Keep outvotes another perspective that drops.
+    var archivedStreamRowPolicy = _resolveArchivedStreamRows(classSymbol);
+
+    // #2246: the write mode a perspective declares with [PerspectiveWriteMode], or -1 to take the service's.
+    var writeMode = _resolveWriteMode(classSymbol);
+
     // Find StreamId property on model
     var streamKeyPropertyName = _findModelStreamIdProperty(modelType);
     if (streamKeyPropertyName is null) {
@@ -206,12 +218,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var typeArguments = new[] { modelTypeName }.Concat(eventTypes).ToArray();
     var messageTypeNames = _buildMessageTypeNames(eventTypeSymbols);
 
-    // Extract event types with [MustExist] attribute
-    var mustExistEventTypes = _extractMustExistEventTypes(classSymbol, eventTypes);
-
-    // Extract return types for each Apply method
-    var eventReturnTypes = _extractEventReturnTypes(classSymbol, eventTypes);
-    var unconditionalPurges = _extractUnconditionalPurgeEventTypes(classSymbol, eventTypes);
+    // #1936: each event is dispatched through the interface Apply that lists it, and what the runner reads off an
+    // Apply ([MustExist], a body that can only purge) is read off the method that implements that member.
+    var dispatches = _resolveDispatches(classSymbol, combinedSingleStreamInterfaces.Concat(globalInterfaces), eventTypes);
+    string[] mustExistEventTypes = [.. dispatches.Where(static d => _hasMustExist(d.Implementation)).Select(static d => d.Info.EventTypeName)];
+    EventReturnTypeInfo[] eventReturnTypes = [.. dispatches.Select(static d => d.Info)];
+    string[] unconditionalPurges = [.. dispatches.Where(static d => _canOnlyPurge(d.Implementation)).Select(static d => d.Info.EventTypeName)];
     var (isOverwriteOnly, overwriteDecisive) = _extractOverwriteOnly(classSymbol, eventReturnTypes);
 
     // Compute nested-aware simple name for unique hintNames
@@ -257,7 +269,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             EmptyModelInitializer: emptyModelInitializer,
             EventStreamIds: eventStreamIds.Count > 0 ? [.. eventStreamIds] : null,
             MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
-            EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null,
+            EventReturnTypes: eventReturnTypes,
             PhysicalFields: physicalFields.Length > 0 ? physicalFields : null,
             StorageMode: storageMode,
             IsModelRecord: isModelRecord,
@@ -265,9 +277,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             InheritScopeOnCreate: inheritScopeOnCreate,
             InheritScopeAlways: inheritScopeAlways,
             IsEphemeral: isEphemeral,
+            KeepsRewindFloor: keepsRewindFloor,
             TtlRowSeconds: ttlRowSeconds,
-            IsFullHistory: isFullHistory
-,
+            IsFullHistory: isFullHistory,
+            ArchivedStreamRowPolicy: archivedStreamRowPolicy,
             RowCapPerScope: rowCapPerScope,
             RowCapScopeKey: rowCapScopeKey,
             StreamGroupSpec: streamGroupSpec,
@@ -275,7 +288,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             MemberDefaults: memberDefaults.Length > 0 ? memberDefaults : null,
             UnconditionalPurgeEventTypes: unconditionalPurges.Length > 0 ? unconditionalPurges : null,
             IsOverwriteOnly: isOverwriteOnly,
-            OverwriteDecisiveEventTypes: overwriteDecisive),
+            OverwriteDecisiveEventTypes: overwriteDecisive,
+            WriteMode: writeMode),
         Warning: null
     );
   }
@@ -290,8 +304,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     return new PerspectiveOrWarning(
         Info: null,
         Warning: new PerspectiveMissingStreamIdWarning(
-            PerspectiveName: classSymbol.Name,
-            ModelName: modelType.Name,
+            PerspectiveName: TypeNameUtilities.SimpleName(classSymbol),
+            ModelName: TypeNameUtilities.SimpleName(modelType),
             Location: classDeclaration.Identifier.GetLocation()
         )
     );
@@ -300,8 +314,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// <summary>
   /// #1869: whether the perspective is marked [OverwriteOnly] (explicit; the generator never infers it), and the events
   /// whose Apply can decide its row alone. Its rewind applies only the stream's last event, which decides the row alone
-  /// only when its Apply returns the model (or null for no change): an Apply returning an action or an ApplyResult can
-  /// purge. Null when none can, including for every unmarked perspective.
+  /// only when the interface listing it declares the model as Apply's return (IPerspectiveFor, IGlobalPerspectiveFor): an
+  /// IPerspectiveWithActionsFor event can purge. Null when none can, including for every unmarked perspective.
   /// </summary>
   private static (bool IsOverwriteOnly, string[]? DecisiveEventTypes) _extractOverwriteOnly(
       INamedTypeSymbol classSymbol, EventReturnTypeInfo[] eventReturnTypes) {
@@ -309,7 +323,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       return (false, null);
     }
     string[] decisive = [.. eventReturnTypes
-        .Where(static r => r.ReturnType is ApplyReturnType.Model or ApplyReturnType.NullableModel)
+        .Where(static r => r.ReturnType is ApplyReturnType.Model)
         .Select(static r => r.EventTypeName)
         .Distinct(System.StringComparer.Ordinal)];
     return (true, decisive.Length > 0 ? decisive : null);
@@ -362,8 +376,35 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Reads [RowCap] on the perspective class. PerScope is the more specific partition, so it outranks
-  /// PerTenant when both are declared. Returns (-1, null) when no cap is declared.
+  /// Reads [ArchivedStreamRows] on the perspective class (#1739): the policy's value, or -1 when the class declares none
+  /// or the declaration carries no policy (a declaration that does not compile registers nothing).
+  /// </summary>
+  private static int _resolveArchivedStreamRows(INamedTypeSymbol classSymbol) =>
+    classSymbol.GetAttributes()
+      .Where(static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "ArchivedStreamRowsAttribute" or "ArchivedStreamRows")
+      .Select(static a => a.ConstructorArguments is [{ Value: int policy }] ? policy : -1)
+      .DefaultIfEmpty(-1)
+      .First();
+
+  /// <summary>
+  /// Reads [PerspectiveWriteMode] on the perspective class (#2246): the declared mode's value, or -1 when the class
+  /// declares none (it then takes the service's mode).
+  /// </summary>
+  private static int _resolveWriteMode(INamedTypeSymbol classSymbol) =>
+    classSymbol.GetAttributes()
+      .Where(static a => TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is "PerspectiveWriteModeAttribute" or "PerspectiveWriteMode")
+      // The attribute's one argument is the mode; an attribute that binds no argument (code that does not compile)
+      // declares nothing, and the class takes the service's mode.
+      .Select(static a => a.ConstructorArguments)
+      .Where(static arguments => arguments.Length == 1)
+      .Select(static arguments => arguments[0].Value)
+      .OfType<int>()
+      .DefaultIfEmpty(-1)
+      .First();
+
+  /// <summary>
+  /// Reads [RowCap] on the perspective class. PerProperty (with Max) is the most specific partition, then PerScope, then
+  /// PerTenant. Returns (-1, null) when no cap is declared.
   /// </summary>
   private static (int PerScope, string? ScopeKey) _resolveRowCap(INamedTypeSymbol classSymbol) {
     var rowCapAttribute = classSymbol.GetAttributes().FirstOrDefault(
@@ -373,12 +414,28 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     }
     var perScope = -1;
     var perTenant = -1;
+    var max = -1;
+    string? perProperty = null;
     foreach (var namedArg in rowCapAttribute.NamedArguments) {
-      if (namedArg.Key == "PerScope" && namedArg.Value.Value is int ps) {
-        perScope = ps;
-      } else if (namedArg.Key == "PerTenant" && namedArg.Value.Value is int pt) {
-        perTenant = pt;
+      switch (namedArg.Key) {
+        case "PerScope" when namedArg.Value.Value is int ps:
+          perScope = ps;
+          break;
+        case "PerTenant" when namedArg.Value.Value is int pt:
+          perTenant = pt;
+          break;
+        case "Max" when namedArg.Value.Value is int m:
+          max = m;
+          break;
+        case "PerProperty" when namedArg.Value.Value is string prop && !string.IsNullOrWhiteSpace(prop):
+          perProperty = prop;
+          break;
       }
+    }
+    // #2330: a per-property cap is the most specific partition: the newest Max rows per value of that model property,
+    // read by the sweep from the stored document (data ->> name).
+    if (perProperty is not null && max >= 0) {
+      return (max, "data:" + perProperty);
     }
     if (perScope >= 0) {
       return (perScope, "u");
@@ -530,6 +587,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
     // Generate upsert call - either simple UpsertAsync or UpsertWithPhysicalFieldsAsync
     var upsertCode = _generateUpsertCode(perspective);
+    var prepareWriteCode = _generatePrepareWriteCode(perspective);
 
     // Generate scope event handling code
     var scopeEventCode = _generateScopeEventHandlingCode(perspective);
@@ -547,6 +605,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_APPLY_CASES", applyCases.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EXTRACT_STREAM_ID_METHODS", extractStreamIdMethods.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "UPSERT_CALL", upsertCode);
+    result = TemplateUtilities.ReplaceRegion(result, "PREPARE_WRITE_CALL", prepareWriteCode);
     result = TemplateUtilities.ReplaceRegion(result, "SCOPE_EVENT_HANDLING", scopeEventCode);
     result = TemplateUtilities.ReplaceRegion(
         result,
@@ -568,7 +627,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           ? $"@event is {string.Join(" or ", decisive)};"
           : "false;"));
     result = TemplateUtilities.ReplaceRegion(result, "IS_EPHEMERAL",
-        $"private const bool _isEphemeralPerspective = {_csharpBool(perspective.IsEphemeral)};");
+        $"private const bool _isEphemeralPerspective = {_csharpBool(perspective.IsEphemeral)};\n"
+        + $"  private const bool _keepsRewindFloor = {_csharpBool(perspective.KeepsRewindFloor)};");
     // E2-4d: a TtlRow perspective registers its row TTL via a [ModuleInitializer] so the upsert stamps
     // expires_at. Non-TtlRow perspectives emit nothing (their rows never expire).
     result = TemplateUtilities.ReplaceRegion(result, "TTL_REGISTRATION", perspective.TtlRowSeconds >= 0
@@ -584,6 +644,22 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "FULL_HISTORY_REGISTRATION", perspective.IsFullHistory
         ? $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerFullHistory() =>\n      global::Whizbang.Core.Perspectives.FullHistoryPerspectiveRegistry.Register(\"{perspective.ClrTypeName}\");"
         : "");
+    // #1739: every runner knows its perspective's name in the form cursors are keyed by, and its missing-row probe asks
+    // the policy registry under it, so a policy configured on a perspective that declares none reaches the probe too. A
+    // declaration registers itself the same turnkey way the cap does; no declaration emits no registration.
+    result = TemplateUtilities.ReplaceRegion(result, "ARCHIVED_STREAM_ROWS",
+        $"private const string _archivedStreamRowsName = \"{perspective.ClrTypeName}\";"
+        + (perspective.ArchivedStreamRowPolicy >= 0
+          ? "\n  [global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerArchivedStreamRows() =>\n"
+            + $"      global::Whizbang.Core.Archival.ArchivedStreamRowPolicies.Register(_archivedStreamRowsName, (global::Whizbang.Core.Archival.ArchivedStreamRowPolicy){perspective.ArchivedStreamRowPolicy});"
+          : ""));
+    // #2246: every generated runner registers its perspective's write mode, so the worker chooses each pair's path
+    // without resolving the runner: the declared mode, or null to take the service's. A perspective with no generated
+    // runner is never registered and is always written per stream.
+    result = TemplateUtilities.ReplaceRegion(result, "WRITE_MODE_REGISTRATION",
+        "[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerWriteMode() =>\n"
+        + "      global::Whizbang.Core.Perspectives.PerspectiveWriteModes.Register(_archivedStreamRowsName, "
+        + (perspective.WriteMode >= 0 ? $"(global::Whizbang.Core.Perspectives.PerspectiveWriteMode){perspective.WriteMode});" : "null);"));
     // Stream groups register turnkey like the TTL and the cap — one [ModuleInitializer] per
     // membership, decoded from the compact spec, so the maintenance cascade can compute the
     // eviction closure without reflection.
@@ -615,63 +691,37 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Builds the AOT-compatible switch cases that dispatch each event type to its Apply method,
-  /// wrapping each return shape into a (model, action) tuple.
+  /// Builds the AOT-compatible switch cases that dispatch each event type to its Apply method through the interface
+  /// that lists the event (#1936): a direct interface call, nothing allocated, and never a call by the method's name on
+  /// the class, so an explicit implementation runs like an implicit one. The interface declares the return, so each
+  /// case wraps the model (with no action) or unpacks the ApplyResult into a (model, action) tuple.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerInterfaceDispatchTests.cs:EachEvent_IsAppliedThroughTheInterfaceThatListsItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ExplicitApplyRunnerTests.cs:APerspectiveThatImplementsApplyOnlyExplicitly_IsRunThroughItsInterfacesAsync</tests>
   private static StringBuilder _buildApplyCases(PerspectiveInfo perspective, string modelSimpleName, string perspectiveSimpleName) {
     var mustExistEvents = perspective.MustExistEventTypes ?? [];
-    var eventReturnTypes = perspective.EventReturnTypes ?? [];
-    var returnTypeLookup = eventReturnTypes.ToDictionary(x => x.EventTypeName, x => x.ReturnType);
+    // The runner generator resolves a dispatch for every routed event (_resolveDispatches).
+    var dispatches = perspective.EventReturnTypes!.ToDictionary(static x => x.EventTypeName);
     var applyCases = new StringBuilder();
     foreach (var eventType in perspective.EventTypes) {
-      var isMustExist = mustExistEvents.Contains(eventType);
       var eventSimpleName = TypeNameUtilities.GetSimpleName(eventType);
-
-      // Get return type for this event, default to Model
-      var returnType = returnTypeLookup.TryGetValue(eventType, out var rt) ? rt : ApplyReturnType.Model;
+      var dispatch = dispatches[eventType];
+      var call = $"(({dispatch.InterfaceName})perspective).Apply(currentModel!, typedEvent)";
 
       applyCases.AppendLine($"        case {eventType} typedEvent:");
-      if (isMustExist) {
+      if (mustExistEvents.Contains(eventType)) {
         applyCases.AppendLine("          if (currentModel == null)");
         applyCases.AppendLine("            throw new global::System.InvalidOperationException(");
         applyCases.AppendLine($"              \"{modelSimpleName} must exist when applying {eventSimpleName} in {perspectiveSimpleName}\");");
       }
 
-      // Generate case code based on return type
-      // Note: currentModel is nullable in template, but user's Apply methods may expect non-nullable
-      // For Model/NullableModel returns, we use null-forgiving operator since these signatures
-      // typically have a non-nullable first parameter
-      switch (returnType) {
-        case ApplyReturnType.Model:
-          // Standard return: TModel - wrap with None action
-          // Use ! because user's Apply(TModel current, TEvent) expects non-nullable
-          applyCases.AppendLine("          return (perspective.Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
-          break;
-
-        case ApplyReturnType.NullableModel:
-          // Nullable return: TModel? - null means no change, wrap with None action
-          // Pass nullable since Apply(TModel? current, TEvent) accepts nullable
-          applyCases.AppendLine("          return (perspective.Apply(currentModel, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
-          break;
-
-        case ApplyReturnType.Action:
-          // Action return: ModelAction - keep current model, return the action
-          // Use ! because Apply(TModel current, TEvent) for deletion expects existing model
-          applyCases.AppendLine("          return (currentModel, perspective.Apply(currentModel!, typedEvent));");
-          break;
-
-        case ApplyReturnType.Tuple:
-          // Tuple return: (TModel?, ModelAction) - return as-is
-          // Use ! because Apply(TModel current, TEvent) expects existing model
-          applyCases.AppendLine("          return perspective.Apply(currentModel!, typedEvent);");
-          break;
-
-        case ApplyReturnType.ApplyResult:
-          // ApplyResult return: Extract model and action from result
-          // Use ! because Apply(TModel current, TEvent) expects existing model
-          applyCases.AppendLine($"          var result_{eventSimpleName} = perspective.Apply(currentModel!, typedEvent);");
-          applyCases.AppendLine($"          return (result_{eventSimpleName}.Model, result_{eventSimpleName}.Action);");
-          break;
+      // currentModel is nullable in the template; the interface's Apply takes the model, which the runner never passes
+      // as null (a stream with no row gets an empty model).
+      if (dispatch.ReturnType == ApplyReturnType.ApplyResult) {
+        applyCases.AppendLine($"          var result_{eventSimpleName} = {call};");
+        applyCases.AppendLine($"          return (result_{eventSimpleName}.Model, result_{eventSimpleName}.Action);");
+      } else {
+        applyCases.AppendLine($"          return ({call}, global::Whizbang.Core.Perspectives.ModelAction.None);");
       }
       applyCases.AppendLine();
     }
@@ -857,6 +907,38 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Generates the body of the runner's PrepareRowWrite, the set-based twin of the upsert (#2246): the same physical
+  /// values and Split stripping the upsert code emits, from the same helpers, handed to the store's PrepareWrite.
+  /// </summary>
+  private static string _generatePrepareWriteCode(PerspectiveInfo perspective) {
+    var sb = new StringBuilder();
+    var hasPhysicalFields = perspective.PhysicalFields is { Length: > 0 };
+
+    if (hasPhysicalFields) {
+      _appendPhysicalFieldValuesDictionary(sb, perspective);
+      if (perspective.StorageMode == 2) {
+        _appendSplitModePhysicalFieldStripping(sb, perspective);
+      }
+    }
+
+    sb.AppendLine("    // Prepare the row write the upsert would make, with the same document, physical values and scope;");
+    sb.AppendLine("    // the batch's write sink writes it with the rest of the batch.");
+    sb.AppendLine("    return _perspectiveStore.PrepareWrite(");
+    sb.AppendLine("        streamId,");
+    sb.AppendLine("        model,");
+    sb.AppendLine("        scope ?? new global::Whizbang.Core.Lenses.PerspectiveScope(),");
+    // The upsert without physical fields writes a null scope as an empty one that forces no update; the one with
+    // physical fields passes the flag through. Each prepared write does what its upsert does.
+    sb.AppendLine(hasPhysicalFields ? "        forceUpdateScope," : "        scope != null && forceUpdateScope,");
+    sb.AppendLine("        metadata,");
+    sb.AppendLine("        expectedVersion,");
+    sb.AppendLine(hasPhysicalFields ? "        physicalFieldValues" : "        null");
+    sb.AppendLine("    );");
+
+    return sb.ToString().TrimEnd('\r', '\n');
+  }
+
+  /// <summary>
   /// Emits the no-physical-fields branch: a simple UpsertAsync call with a scope-aware if/else
   /// so zero-scope perspectives can use the scope-less overload.
   /// </summary>
@@ -922,7 +1004,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static void _appendPhysicalFieldValuesDictionary(StringBuilder sb, PerspectiveInfo perspective) {
     sb.AppendLine("    // Extract physical field values from model (including vector fields)");
     sb.AppendLine("    // Vector fields are converted from float[] to Pgvector.Vector for EF Core compatibility");
-    sb.AppendLine("    var physicalFieldValues = new System.Collections.Generic.Dictionary<string, object?>");
+    sb.AppendLine("    var physicalFieldValues = new global::System.Collections.Generic.Dictionary<string, object?>");
     sb.AppendLine("    {");
 
     for (int i = 0; i < perspective.PhysicalFields!.Length; i++) {
@@ -952,19 +1034,19 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     sb.AppendLine("    // Split mode: exclude physical fields from JSONB — values stored in physical columns only");
     if (perspective.IsModelRecord) {
       var withProps = string.Join(", ", perspective.PhysicalFields!.Select(f =>
-        f.IsVectorField ? $"{f.PropertyName} = System.Array.Empty<float>()" : $"{f.PropertyName} = default!"));
+        f.IsVectorField ? $"{f.PropertyName} = global::System.Array.Empty<float>()" : $"{f.PropertyName} = default!"));
       sb.AppendLine($"    model = model with {{ {withProps} }};");
     } else if (perspective.ModelCopy is { Problem: null } copy) {
       // An init-only field cannot be assigned once the instance exists, so the document is written from a copy, and
       // the instance the runner applied keeps its fields for the snapshot taken after the write (issue #1002).
       var stripped = perspective.PhysicalFields!.ToDictionary(
-          f => f.PropertyName, f => f.IsVectorField ? "System.Array.Empty<float>()" : "default!", StringComparer.Ordinal);
+          f => f.PropertyName, f => f.IsVectorField ? "global::System.Array.Empty<float>()" : "default!", StringComparer.Ordinal);
       sb.AppendLine($"    model = {ModelCopy.Render(perspective.InterfaceTypeArguments[0], copy, "model", stripped)};");
     } else {
       // An init-only field of a class that cannot be copied is reported (WHIZ808) rather than assigned.
       foreach (var field in perspective.PhysicalFields!.Where(f => !f.IsInitOnly)) {
         if (field.IsVectorField) {
-          sb.AppendLine($"    model.{field.PropertyName} = System.Array.Empty<float>();");
+          sb.AppendLine($"    model.{field.PropertyName} = global::System.Array.Empty<float>();");
         } else {
           sb.AppendLine($"    model.{field.PropertyName} = default!;");
         }
@@ -1223,85 +1305,47 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     return [.. eventTypeSymbols.Select(TypeNameUtilities.FormatTypeNameForRuntime)];
   }
 
-  /// <summary>
-  /// Extracts event types whose Apply methods have [MustExist] attribute.
-  /// These events require the model to already exist before the Apply method is called.
-  /// </summary>
-  private static string[] _extractMustExistEventTypes(
-      INamedTypeSymbol classSymbol,
-      List<string> eventTypes) {
-    var mustExistEvents = new List<string>();
-
-    // Use shared utility to include inherited Apply methods from base classes
-    foreach (var method in classSymbol.GetAllMethodsByName("Apply")) {
-      var hasMustExist = method.GetAttributes()
-          .Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, MUST_EXIST_ATTRIBUTE_NAME));
-
-      if (hasMustExist && method.Parameters.Length >= 2) {
-        // Second parameter is the event type
-        var eventType = TypeNameUtilities.FullyQualified(method.Parameters[1].Type);
-        if (eventTypes.Contains(eventType)) {
-          mustExistEvents.Add(eventType);
-        }
-      }
-    }
-
-    return [.. mustExistEvents];
-  }
+  /// <summary>One routed event: how the runner calls its Apply, and the method that implements that Apply.</summary>
+  private readonly record struct EventDispatch(EventReturnTypeInfo Info, IMethodSymbol? Implementation);
 
   /// <summary>
-  /// Extracts return type information for each Apply method.
-  /// Determines how to handle the result (model update, action, tuple, etc.).
+  /// For each routed event, the interface <c>Apply</c> that declares it (the first interface listing the event), the
+  /// shape that interface declares, and the class's implementation of it, explicit or not (#1936). Every event comes
+  /// from these interfaces' type arguments, so each one has a declaring member. The implementation is null only for
+  /// code that does not compile.
   /// </summary>
-  private static EventReturnTypeInfo[] _extractEventReturnTypes(
-      INamedTypeSymbol classSymbol,
-      List<string> eventTypes
-      ) {
-
-    var returnTypes = new List<EventReturnTypeInfo>();
-
-    // Use shared utility to include inherited Apply methods from base classes
-    foreach (var method in classSymbol.GetAllMethodsByName("Apply")) {
-      if (method.Parameters.Length < 2) {
-        continue;
-      }
-
-      // Second parameter is the event type
-      var eventType = TypeNameUtilities.FullyQualified(method.Parameters[1].Type);
-      if (!eventTypes.Contains(eventType)) {
-        continue;
-      }
-
-      var returnType = _classifyReturnType(method.ReturnType);
-      returnTypes.Add(new EventReturnTypeInfo(eventType, returnType));
-    }
-
-    return [.. returnTypes];
+  private static List<EventDispatch> _resolveDispatches(
+      INamedTypeSymbol classSymbol, IEnumerable<INamedTypeSymbol> interfaces, List<string> eventTypes) {
+    var declared = interfaces
+      .SelectMany(static i => i.GetMembers("Apply").OfType<IMethodSymbol>().Select(m => (Interface: i, Member: m)))
+      .ToList();
+    return eventTypes.ConvertAll(eventType => {
+      var (iface, member) = declared.First(d => TypeNameUtilities.FullyQualified(d.Member.Parameters[1].Type) == eventType);
+      var returnType = TypeNameUtilities.Display(iface.OriginalDefinition).StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE_NAME, StringComparison.Ordinal)
+        ? ApplyReturnType.ApplyResult
+        : ApplyReturnType.Model;
+      return new EventDispatch(
+        new EventReturnTypeInfo(eventType, returnType, TypeNameUtilities.FullyQualified(iface)),
+        classSymbol.FindImplementationForInterfaceMember(member) as IMethodSymbol);
+    });
   }
+
+  /// <summary>Whether the implementing Apply carries [MustExist]: the model has to exist before it runs.</summary>
+  private static bool _hasMustExist(IMethodSymbol? implementation) =>
+    implementation?.GetAttributes().Any(static a => TypeNameUtilities.IsNamed(a.AttributeClass, MUST_EXIST_ATTRIBUTE_NAME)) == true;
 
   /// <summary>
-  /// The event types whose Apply can do nothing but purge the row (#1151): a body that is exactly
-  /// <c>ApplyResult&lt;T&gt;.Purge()</c>, <c>ModelAction.Purge</c> or <c>(null, ModelAction.Purge)</c>, as an expression body
-  /// or a block holding only that return. Anything else, a condition, another statement, is left out: a wrong call
-  /// deletes a row that should have survived, so the analysis only says yes when the body leaves no other outcome.
+  /// Whether the implementing Apply can do nothing but purge the row (#1151): a body that is exactly
+  /// <c>ApplyResult&lt;T&gt;.Purge()</c>, <c>ModelAction.Purge</c> or <c>(null, ModelAction.Purge)</c> (the last two convert
+  /// to <c>ApplyResult&lt;T&gt;</c>), as an expression body or a block holding only that return. Anything else, a condition,
+  /// another statement, is left out: a wrong call deletes a row that should have survived, so the analysis only says
+  /// yes when the body leaves no other outcome.
   /// </summary>
-  private static string[] _extractUnconditionalPurgeEventTypes(INamedTypeSymbol classSymbol, List<string> eventTypes) {
-    var purges = new List<string>();
-    foreach (var method in classSymbol.GetAllMethodsByName("Apply")) {
-      if (method.Parameters.Length < 2) {
-        continue;
-      }
-      var eventType = TypeNameUtilities.FullyQualified(method.Parameters[1].Type);
-      if (eventTypes.Contains(eventType) && !purges.Contains(eventType)
-          && method.DeclaringSyntaxReferences.Length == 1
-          && method.DeclaringSyntaxReferences[0].GetSyntax() is MethodDeclarationSyntax declaration
-          && _onlyReturned(declaration) is { } returned
-          && _isPurge(returned)) {
-        purges.Add(eventType);
-      }
-    }
-    return [.. purges];
-  }
+  private static bool _canOnlyPurge(IMethodSymbol? implementation) =>
+    implementation is { DeclaringSyntaxReferences.Length: 1 }
+    && implementation.DeclaringSyntaxReferences[0].GetSyntax() is MethodDeclarationSyntax declaration
+    && _onlyReturned(declaration) is { } returned
+    && _isPurge(returned);
 
   private static ExpressionSyntax? _onlyReturned(MethodDeclarationSyntax declaration) =>
     declaration.ExpressionBody?.Expression
@@ -1337,41 +1381,6 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static bool _names(ExpressionSyntax receiver, string typeName) =>
     (receiver is MemberAccessExpressionSyntax qualified ? qualified.Name : receiver as SimpleNameSyntax)?.Identifier.ValueText
       == typeName;
-
-  /// <summary>
-  /// Classifies the return type of an Apply method.
-  /// </summary>
-  private static ApplyReturnType _classifyReturnType(ITypeSymbol returnType) {
-    var returnTypeName = TypeNameUtilities.FullyQualified(returnType);
-
-    // Check for ModelAction
-    if (returnTypeName == "global::Whizbang.Core.Perspectives.ModelAction") {
-      return ApplyReturnType.Action;
-    }
-
-    // Check for ApplyResult<TModel>
-    if (returnTypeName.StartsWith("global::Whizbang.Core.Perspectives.ApplyResult<", StringComparison.Ordinal)) {
-      return ApplyReturnType.ApplyResult;
-    }
-
-    // Check for tuple (TModel?, ModelAction)
-    if (returnType is INamedTypeSymbol namedType &&
-        namedType.IsTupleType &&
-        namedType.TupleElements.Length == 2) {
-      var secondElement = TypeNameUtilities.FullyQualified(namedType.TupleElements[1].Type);
-      if (secondElement == "global::Whizbang.Core.Perspectives.ModelAction") {
-        return ApplyReturnType.Tuple;
-      }
-    }
-
-    // Check for nullable model (TModel?)
-    if (returnType.NullableAnnotation == Microsoft.CodeAnalysis.NullableAnnotation.Annotated) {
-      return ApplyReturnType.NullableModel;
-    }
-
-    // Default: standard model return
-    return ApplyReturnType.Model;
-  }
 
   /// <summary>
   /// Gets the runner class name from a perspective simple name.

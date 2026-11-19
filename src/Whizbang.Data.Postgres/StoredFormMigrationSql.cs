@@ -253,7 +253,14 @@ public static class StoredFormMigrationSql {
           rows_converted = wh_j.rows_converted + EXCLUDED.rows_converted,
           settled_at = EXCLUDED.settled_at;
 
-      """;
+      """ + _recordApplier(journal, name, kind);
+  }
+
+  // #2131: a pass that converted rows, or ran a custom migration (never assumed reversible), records who applied it; a
+  // pass that converted nothing keeps what is recorded.
+  private static string _recordApplier(string journal, string name, string kind) {
+    var record = StoredFormApplier.RecordSql(journal, "name", SqlText.Literal(name), "      ");
+    return kind == CUSTOM ? record : $"    IF v_touched > 0 THEN\n{record}    END IF;\n";
   }
 
   private static string _freeTag(string tag, string sql) {

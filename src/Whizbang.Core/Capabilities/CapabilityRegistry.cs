@@ -15,7 +15,7 @@ namespace Whizbang.Core.Capabilities;
 /// provider cannot probe it, its capabilities read <see cref="CapabilityState.Unknown"/>.
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityRegistryTests.cs</tests>
 public interface ICapabilityRegistry {
   /// <summary>The registered providers.</summary>
   IReadOnlyList<ICapabilityProvider> Providers { get; }
@@ -61,7 +61,7 @@ public interface ICapabilityRegistry {
 /// <c>whizbang.capability.state</c> gauge when given metrics.
 /// </summary>
 /// <docs>operations/infrastructure/capabilities</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityRegistryTests.cs</tests>
 public sealed partial class CapabilityRegistry : ICapabilityRegistry {
 #pragma warning disable CA1707
   /// <summary>The reason a capability reads Unknown before its scope's first probe.</summary>
@@ -146,7 +146,7 @@ public sealed partial class CapabilityRegistry : ICapabilityRegistry {
     try {
       return await provider.ProbeAsync(scope, cancellationToken).ConfigureAwait(false);
     } catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested) {
-      var reason = $"{ex.GetType().Name}: {ex.Message}";
+      var reason = $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}";
       LogProbeFailed(_logger, provider.Name, scope, reason);
       return CapabilityStatus.Unknown(provider.Descriptors, scope, reason);
     }

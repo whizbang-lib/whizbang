@@ -19,47 +19,33 @@ public class PartitionAssignerTests {
   private static readonly Guid _b = new("00000000-0000-0000-0000-00000000000b");
   private static readonly PartitionAssignerOptions _options = new();
 
+  // #2027: the database's one liveness rule answers IsLive; these fixtures state its answer for the case they describe.
   private static PartitionAssignmentCandidate _direct(Guid id, bool lockHeld, int heartbeatAgeSeconds) =>
-    new(id, InstanceConnectionMode.Direct, lockHeld, TimeSpan.FromSeconds(heartbeatAgeSeconds));
+    new(id, InstanceConnectionMode.Direct, lockHeld, TimeSpan.FromSeconds(heartbeatAgeSeconds), IsLive: lockHeld || heartbeatAgeSeconds < 60);
 
   private static PartitionAssignmentCandidate _pooled(Guid id, int heartbeatAgeSeconds) =>
-    new(id, InstanceConnectionMode.Pooled, AliveLockHeld: false, TimeSpan.FromSeconds(heartbeatAgeSeconds));
+    new(id, InstanceConnectionMode.Pooled, AliveLockHeld: false, TimeSpan.FromSeconds(heartbeatAgeSeconds), IsLive: heartbeatAgeSeconds < 60);
 
   private static PartitionAssignment _published(long epoch, params Guid[] members) =>
     new(epoch, 1, _self, members, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddMinutes(2));
 
-  // --- liveness per connection mode ------------------------------------------------------------
+  // --- liveness: the rule's answer -------------------------------------------------------------
 
   [Test]
-  public async Task IsLive_ADirectInstanceHoldingItsLock_IsLiveWhateverItsHeartbeatAsync() {
-    await Assert.That(PartitionAssigner.IsLive(_direct(_a, lockHeld: true, heartbeatAgeSeconds: 3600), _options)).IsTrue();
-  }
+  public async Task IsLive_IsTheRulesAnswer_WhateverTheLockOrTheHeartbeatAsync() {
+    // #2027: one liveness rule, in SQL. A copy here, with windows of its own, could call an instance live that the
+    // claim and the reap call dead, and the assigner would hand out a share nobody claims.
+    var deadThoughLockedAndFresh = new PartitionAssignmentCandidate(_a, InstanceConnectionMode.Direct, AliveLockHeld: true, TimeSpan.Zero, IsLive: false);
+    var liveThoughOldAndUnlocked = new PartitionAssignmentCandidate(_b, InstanceConnectionMode.Pooled, AliveLockHeld: false, TimeSpan.FromHours(1), IsLive: true);
 
-  [Test]
-  public async Task IsLive_ADirectInstanceWithoutItsLock_FallsBackToItsHeartbeatAsync() {
-    await Assert.That(PartitionAssigner.IsLive(_direct(_a, lockHeld: false, heartbeatAgeSeconds: 179), _options)).IsTrue()
-      .Because("a lost lock is judged by the heartbeat, over the window that covers the slow beats a lock holder makes");
-    await Assert.That(PartitionAssigner.IsLive(_direct(_a, lockHeld: false, heartbeatAgeSeconds: 181), _options)).IsFalse();
-  }
-
-  [Test]
-  public async Task IsLive_APooledInstance_IsJudgedByItsHeartbeatAloneAsync() {
-    await Assert.That(PartitionAssigner.IsLive(_pooled(_a, 89), _options)).IsTrue();
-    await Assert.That(PartitionAssigner.IsLive(_pooled(_a, 91), _options)).IsFalse();
-  }
-
-  [Test]
-  public async Task IsLive_APooledInstanceReportedHoldingALock_IsStillJudgedByItsHeartbeatAsync() {
-    var candidate = new PartitionAssignmentCandidate(_a, InstanceConnectionMode.Pooled, AliveLockHeld: true, TimeSpan.FromMinutes(10));
-
-    await Assert.That(PartitionAssigner.IsLive(candidate, _options)).IsFalse()
-      .Because("the lock is the authority only for an instance that registered a direct connection");
+    await Assert.That(PartitionAssigner.IsLive(deadThoughLockedAndFresh)).IsFalse();
+    await Assert.That(PartitionAssigner.IsLive(liveThoughOldAndUnlocked)).IsTrue();
   }
 
   [Test]
   public async Task LiveMembers_AreTheLiveInstancesAndTheAssigner_InIdOrderAsync() {
     var members = PartitionAssigner.LiveMembers(
-      [_pooled(_b, 1), _pooled(_a, 600), _direct(_a, true, 600), _pooled(_self, 600)], _self, _options);
+      [_pooled(_b, 1), _pooled(_a, 600), _direct(_a, true, 600), _pooled(_self, 600)], _self);
 
     await Assert.That(members).IsEquivalentTo([_self, _a, _b], TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the assigner is running the evaluation, and an instance listed twice is one member");
@@ -67,14 +53,14 @@ public class PartitionAssignerTests {
 
   [Test]
   public async Task LiveMembers_WithNoLivePeer_IsTheAssignerAloneAsync() {
-    var members = PartitionAssigner.LiveMembers([_pooled(_a, 600), _pooled(_self, 1)], _self, _options);
+    var members = PartitionAssigner.LiveMembers([_pooled(_a, 600), _pooled(_self, 1)], _self);
 
     await Assert.That(members).IsEquivalentTo([_self]);
   }
 
   [Test]
   public async Task LiveMembers_TheAssignerAmongTheCandidates_IsAMemberWhateverItsHeartbeatAsync() {
-    var members = PartitionAssigner.LiveMembers([_pooled(_self, 3600), _pooled(_a, 1)], _self, _options);
+    var members = PartitionAssigner.LiveMembers([_pooled(_self, 3600), _pooled(_a, 1)], _self);
 
     await Assert.That(members).IsEquivalentTo([_self, _a], TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the assigner is running the evaluation, so a late beat of its own does not count it out");
@@ -84,7 +70,7 @@ public class PartitionAssignerTests {
   public async Task LiveMembers_TheAssignerNotAmongTheCandidates_IsNotAMemberAsync() {
     // #1638: the candidates are the instances eligible for work. An assigner elected while it is still migrating (or
     // once it is draining) is alive but not eligible, so it is not a candidate and must not give itself a share.
-    var members = PartitionAssigner.LiveMembers([_pooled(_a, 1)], _self, _options);
+    var members = PartitionAssigner.LiveMembers([_pooled(_a, 1)], _self);
 
     await Assert.That(members).IsEquivalentTo([_a])
       .Because("a share assigned to an instance that cannot claim it stalls until the instance is ready");
@@ -92,7 +78,7 @@ public class PartitionAssignerTests {
 
   [Test]
   public async Task LiveMembers_WithNoCandidateAtAll_IsEmptyAsync() {
-    var members = PartitionAssigner.LiveMembers([], _self, _options);
+    var members = PartitionAssigner.LiveMembers([], _self);
 
     await Assert.That(members).IsEmpty()
       .Because("with nobody eligible every claimer ranks itself, which an empty assignment leaves it to do");
@@ -155,18 +141,6 @@ public class PartitionAssignerTests {
   [Test]
   public async Task Validate_ALeaseNoLongerThanTheSlowHeartbeat_IsRefusedAsync() {
     var options = new PartitionAssignerOptions { AssignmentLease = TimeSpan.FromSeconds(60) };
-
-    await Assert.That(options.Validate).Throws<InvalidOperationException>();
-  }
-
-  [Test]
-  [Arguments(0, 90)]
-  [Arguments(90, 0)]
-  public async Task Validate_ANonPositiveWindow_IsRefusedAsync(int pooledSeconds, int directSeconds) {
-    var options = new PartitionAssignerOptions {
-      PooledHeartbeatWindow = TimeSpan.FromSeconds(pooledSeconds),
-      DirectHeartbeatWindow = TimeSpan.FromSeconds(directSeconds),
-    };
 
     await Assert.That(options.Validate).Throws<InvalidOperationException>();
   }

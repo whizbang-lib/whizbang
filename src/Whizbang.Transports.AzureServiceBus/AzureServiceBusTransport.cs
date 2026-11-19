@@ -46,6 +46,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
   /// </remarks>
   internal AsbReceiveDecisionMaker DecisionMaker { get; init; } = new();
   private readonly Whizbang.Core.Messaging.IRawReceptorRegistry? _rawReceptorRegistry;
+  private readonly Whizbang.Core.Security.ReceptorInterceptorPipeline? _receptorInterceptors;
   private readonly Whizbang.Core.Messaging.IMessageTypeBinder _typeBinder;
   private readonly Whizbang.Core.Routing.IPoisonMessageDetector? _poisonDetector;
 
@@ -115,8 +116,11 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     IMessageDiscardPolicy? discardPolicy = null,
     IReadOnlySet<string>? absorbedNamespaces = null,
     TimeProvider? timeProvider = null,
-    Whizbang.Core.Routing.IPoisonMessageDetector? poisonDetector = null
+    Whizbang.Core.Routing.IPoisonMessageDetector? poisonDetector = null,
+    Whizbang.Core.Security.ReceptorInterceptorPipeline? receptorInterceptors = null
   ) {
+    // #1996: held only when an interceptor is registered, so a raw receptor otherwise costs one null check
+    _receptorInterceptors = receptorInterceptors is { IsEmpty: false } ? receptorInterceptors : null;
     using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");
 
     ArgumentNullException.ThrowIfNull(client);
@@ -267,7 +271,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
       return;
     }
     _lastPeekFailureLogged[entity] = now;
-    LogBacklogHeadPeekFailed(_logger, exception, entity, exception.GetType().Name, exception.Message, depth);
+    LogBacklogHeadPeekFailed(_logger, exception, entity, TypeNameFormatter.ForLog(exception.GetType()), exception.Message, depth);
   }
 
   [LoggerMessage(Level = LogLevel.Warning, Message = "Backlog head peek failed for {Entity} ({ExceptionType}: {ExceptionMessage}); reporting depth {Depth} with no age")]
@@ -292,10 +296,44 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
   /// Runs the raw receptor the decision names, if any, with the envelope's payload: once the handler has stored the
   /// message, so a raw receptor never replaces storing it (#1720).
   /// </summary>
-  private static Task _invokeRawReceptorAsync(AsbReceiveDecision decision, CancellationToken cancellationToken) =>
-    decision.RawReceptor is { } receptor && decision.RawPayload is { } payload
-      ? receptor.HandleAsync(payload, cancellationToken)
-      : Task.CompletedTask;
+  /// <remarks>
+  /// The registered receptor interceptors are asked first (#1996), with the message's envelope and the scope it carries.
+  /// A quiet drop skips the raw receptor and the message completes; any other denial throws
+  /// <see cref="Whizbang.Core.Security.Exceptions.ReceptorInvocationDeniedException"/>, which the settlement step turns
+  /// into a broker dead-letter (dead-letter, quarantine) or a redelivery (throw).
+  /// </remarks>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusRawReceptorInterceptorTests.cs</tests>
+  private async Task _invokeRawReceptorAsync(AsbReceiveDecision decision, CancellationToken cancellationToken) {
+    if (decision.RawReceptor is not { } receptor) {
+      return;
+    }
+    // The decision maker sets the payload whenever it names a raw receptor
+    var payload = decision.RawPayload!.Value;
+    if (_receptorInterceptors is not null) {
+      // The decision maker sets the received envelope whenever it names a raw receptor
+      var envelope = decision.Envelope!;
+      if (!await _receptorInterceptors.AdmitAsync(receptor.GetType(), envelope, envelope.GetCurrentScope(), _logger, cancellationToken)) {
+        return;
+      }
+    }
+    await receptor.HandleAsync(payload, cancellationToken);
+  }
+
+  /// <summary>
+  /// A raw receptor an interceptor denied with dead-letter or quarantine (#1996): dead-lettered at the broker under the
+  /// action's own reason, without redelivery, where the dead-letter drain takes it into custody. Returns false for any
+  /// other failure, which keeps the redelivery policy.
+  /// </summary>
+  private static bool _isDeadLetteringDenial(Exception ex, out string reason) {
+    reason = ex is Whizbang.Core.Security.Exceptions.ReceptorInvocationDeniedException denied
+      ? denied.Action switch {
+        Whizbang.Core.Security.Attributes.DeniedAction.DeadLetter => nameof(Whizbang.Core.Messaging.MessageFailureReason.ReceptorDenied),
+        Whizbang.Core.Security.Attributes.DeniedAction.Quarantine => nameof(Whizbang.Core.Messaging.MessageFailureReason.ReceptorQuarantined),
+        _ => string.Empty,
+      }
+      : string.Empty;
+    return reason.Length > 0;
+  }
 
   /// <summary>
   /// Logs a message handed on as received (one this service cannot read as its typed envelope) at Information, so the
@@ -362,6 +400,59 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
       ObjectDisposedException => "the processor was disposed",
       _ => null,
     };
+  }
+
+  /// <summary>
+  /// Takes a subscription off the receive-liveness watch while it is paused and puts it back, with a fresh window, when
+  /// it is resumed (#2406): a subscription paused on purpose is not a stall.
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#paused-subscriptions</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportLivenessWiringTests.cs:SessionSubscription_PausedPastTheSilenceThreshold_IsNotRecoveredAndTakesNoSessionsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusPausedSubscriptionTests.cs:SessionBatch_ResumedAfterAPause_StartsItsProcessorAndHandlesDeliveriesAsync</tests>
+  private void _watchWhileActive(AzureServiceBusSubscription subscription, string topicName, string subscriptionName) {
+    subscription.Paused = () => LivenessWatchdog?.Pause(topicName, subscriptionName);
+    subscription.Resumed = () => LivenessWatchdog?.Resume(topicName, subscriptionName);
+  }
+
+  /// <summary>
+  /// A delivery has arrived (#2406). One past the first is an Information line naming it, so a message whose earlier
+  /// deliveries were lost before reaching this code is visible before the broker dead-letters it.
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#receive-diagnostics</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusReceiveDiagnosticsTests.cs:Redelivery_HandledNormally_WritesOneInformationLineNamingItAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusReceiveDiagnosticsTests.cs:FirstDelivery_WritesNoRedeliveryLineAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusReceiveDiagnosticsTests.cs:Redelivery_WithInformationOff_WritesAndFormatsNothingAsync</tests>
+  private void _recordArrival(ServiceBusReceivedMessage message, TransportDestination destination) {
+    if (message.DeliveryCount > 1 && _logger.IsEnabled(LogLevel.Information)) {
+      var messageType = AsbReceiveLog.MessageTypeOf(message);
+      var subscription = _subscriptionOf(destination);
+      AsbReceiveLog.Redelivered(_logger, message.MessageId, messageType, destination.Address, subscription,
+        message.DeliveryCount);
+    }
+  }
+
+  /// <summary>A delivery is handed to the handler (#2406): a Debug line with its id and delivery count.</summary>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusReceiveDiagnosticsTests.cs:SessionBatch_HandsADeliveryToTheHandler_LogsItsIdAndDeliveryCountAtDebugAsync</tests>
+  private void _logHandedToHandler(ServiceBusReceivedMessage message, TransportDestination destination) {
+    if (_logger.IsEnabled(LogLevel.Debug)) {
+      var subscription = _subscriptionOf(destination);
+      AsbReceiveLog.HandedToHandler(_logger, message.MessageId, message.DeliveryCount, destination.Address, subscription);
+    }
+  }
+
+  /// <summary>
+  /// A delivery goes back to the broker neither completed nor dead-lettered (#2406): a Warning naming it and the reason.
+  /// </summary>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusReceiveDiagnosticsTests.cs:SessionBatch_PausedSubscription_LogsUnsettledWarningNamingTheMessageAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusReceiveDiagnosticsTests.cs:NonSessionBatch_HandlerFails_LogsUnsettledWarningNamingTheMessageAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusReceiveDiagnosticsTests.cs:ReturnedUnsettled_WithWarningOff_WritesAndFormatsNothingAsync</tests>
+  private void _logReturnedUnsettled(ServiceBusReceivedMessage message, TransportDestination destination, string reason) {
+    if (_logger.IsEnabled(LogLevel.Warning)) {
+      var messageType = AsbReceiveLog.MessageTypeOf(message);
+      var subscription = _subscriptionOf(destination);
+      AsbReceiveLog.ReturnedUnsettled(_logger, message.MessageId, messageType, destination.Address, subscription,
+        message.DeliveryCount, reason);
+    }
   }
 
   /// <summary>
@@ -578,7 +669,9 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
       // Use provided envelope type name if available, otherwise get it from runtime type
       // IMPORTANT: The envelope object is already correctly typed (MessageEnvelope<JsonElement>), so we serialize using envelope.GetType()
       //            But for METADATA, we use the provided envelopeType string which preserves the original payload type information
+#pragma warning disable RS0030 // versioned on purpose: the envelope type the subscriber resolves the message body from (#2267)
       var envelopeTypeName = envelopeType ?? TypeNameFormatter.AssemblyQualifiedName(envelope.GetType());
+#pragma warning restore RS0030
 
       // For serialization, always use the actual runtime type of the envelope object (AOT-safe)
       var envelopeRuntimeType = envelope.GetType();
@@ -693,7 +786,8 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
       var completedTask = await Task.WhenAny(sendTask, timeoutTask).ConfigureAwait(false);
 
       if (completedTask == timeoutTask) {
-        _logger.LogError("DIAGNOSTIC [PublishAsync]: SendMessageAsync timed out after {SendTimeout} for {MessageId} - emulator may not be ready", _options.SendTimeout, envelope.MessageId);
+        // #1976: rethrown to the outbox, which retries the publish and dead-letters it at the bound, so a Warning.
+        _logger.LogWarning("DIAGNOSTIC [PublishAsync]: SendMessageAsync timed out after {SendTimeout} for {MessageId} - emulator may not be ready", _options.SendTimeout, envelope.MessageId);
         throw new TimeoutException($"SendMessageAsync timed out after {_options.SendTimeout} for message {envelope.MessageId}. The Azure Service Bus emulator may not be ready or topics/subscriptions may not exist.");
       }
 
@@ -723,7 +817,8 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
       throw new UnroutableDestinationException(destination.Address, sbEx);
 #pragma warning disable S2139 // Intentional log-and-rethrow: transport errors cross async/DI boundaries where the original exception context may be lost.
     } catch (Exception ex) {
-      _logger.LogError(
+      // #1976: rethrown to the outbox, which retries the publish and dead-letters it at the bound, so a Warning.
+      _logger.LogWarning(
         ex,
         "Failed to publish message {MessageId} to {Destination}",
         envelope.MessageId,
@@ -809,7 +904,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
             localResults.Add(new BulkPublishItemResult {
               MessageId = item.MessageId,
               Success = false,
-              Error = $"{ex.GetType().Name}: {ex.Message}",
+              Error = $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}",
               Reason = TransportFailureClassifier.Classify(ex),
             });
           }
@@ -851,7 +946,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         results.Add(new BulkPublishItemResult {
           MessageId = id,
           Success = false,
-          Error = $"{ex.GetType().Name}: {ex.Message}",
+          Error = $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}",
           Reason = reason,
         });
       }
@@ -860,7 +955,9 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
 
   private ServiceBusMessage _createServiceBusMessage(BulkPublishItem item, TransportDestination destination) {
     var envelope = item.Envelope;
+#pragma warning disable RS0030 // versioned on purpose: the envelope type the subscriber resolves the message body from (#2267)
     var envelopeTypeName = item.EnvelopeType ?? TypeNameFormatter.AssemblyQualifiedName(envelope.GetType());
+#pragma warning restore RS0030
 
     var envelopeRuntimeType = envelope.GetType();
 
@@ -1017,9 +1114,11 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
   ) {
     var sessionProcessor = _createGovernedSessionProcessor(topicName, subscriptionName, destination);
     var subscription = new AzureServiceBusSubscription(sessionProcessor, _logger);
+    _watchWhileActive(subscription, topicName, subscriptionName);
 
     sessionProcessor.ProcessMessageAsync += args => {
       LivenessWatchdog?.RecordActivity(topicName, subscriptionName);
+      _recordArrival(args.Message, destination);
       return _handleSessionBatchMessageAsync(args, batchHandler, destination, subscription);
     };
     // CancellationToken.None is deliberate: the throttle pause runs detached and must complete
@@ -1273,6 +1372,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     AzureServiceBusSubscription subscription
   ) {
     if (!subscription.IsActive) {
+      _logReturnedUnsettled(args.Message, destination, AsbReceiveLog.PAUSED_OR_DISPOSED);
       await _safeAbandonAsync(args);
       return;
     }
@@ -1283,6 +1383,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         return;
       }
 
+      _logHandedToHandler(args.Message, destination);
       await batchHandler([new TransportMessage(envelope, envelopeTypeName)], args.CancellationToken);
       // #1720: a raw receptor runs once the handler has stored the message, never instead of storing it.
       await _invokeRawReceptorAsync(decision, args.CancellationToken);
@@ -1363,11 +1464,14 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
 
     var processor = Client.CreateProcessor(topicName, subscriptionName, processorOptions);
     var subscription = new AzureServiceBusSubscription(processor, _logger);
+    _watchWhileActive(subscription, topicName, subscriptionName);
 
     // Non-blocking: enqueue to collector, return immediately
     processor.ProcessMessageAsync += args => {
       LivenessWatchdog?.RecordActivity(topicName, subscriptionName);
+      _recordArrival(args.Message, destination);
       if (!subscription.IsActive) {
+        _logReturnedUnsettled(args.Message, destination, AsbReceiveLog.PAUSED_OR_DISPOSED);
         return args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
       }
       collector.Enqueue(new PendingServiceBusMessage(args));
@@ -1422,6 +1526,10 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     var (transportMessages, successfulArgs) = await _deserializePendingBatchAsync(batch, destination);
     if (transportMessages.Count == 0) {
       return;
+    }
+
+    foreach (var (args, _) in successfulArgs) {
+      _logHandedToHandler(args.Message, destination);
     }
 
     try {
@@ -1524,16 +1632,13 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         var sessionProcessor = _createGovernedSessionProcessor(topicName, subscriptionName, destination);
 
         subscription = new AzureServiceBusSubscription(sessionProcessor, _logger);
+        _watchWhileActive(subscription, topicName, subscriptionName);
 
         sessionProcessor.ProcessMessageAsync += async args => {
           LivenessWatchdog?.RecordActivity(topicName, subscriptionName);
+          _recordArrival(args.Message, destination);
           if (!subscription.IsActive) {
-            _logger.LogWarning(
-              "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
-              args.Message.MessageId,
-              destination.Address,
-              _subscriptionOf(destination)
-            );
+            _logReturnedUnsettled(args.Message, destination, AsbReceiveLog.PAUSED_OR_DISPOSED);
             await _safeAbandonAsync(args);
             return;
           }
@@ -1566,16 +1671,13 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         );
 
         subscription = new AzureServiceBusSubscription(processor, _logger);
+        _watchWhileActive(subscription, topicName, subscriptionName);
 
         processor.ProcessMessageAsync += async args => {
           LivenessWatchdog?.RecordActivity(topicName, subscriptionName);
+          _recordArrival(args.Message, destination);
           if (!subscription.IsActive) {
-            _logger.LogWarning(
-              "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
-              args.Message.MessageId,
-              destination.Address,
-              _subscriptionOf(destination)
-            );
+            _logReturnedUnsettled(args.Message, destination, AsbReceiveLog.PAUSED_OR_DISPOSED);
             await _safeAbandonAsync(args);
             return;
           }
@@ -1629,6 +1731,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         return; // Not a readable envelope: dead-lettered at the broker by _deserializeReceivedMessageAsync
       }
 
+      _logHandedToHandler(args.Message, destination);
       await handler(envelope, envelopeTypeName, args.CancellationToken);
       // #1720: a raw receptor runs once the handler has stored the message, never instead of storing it.
       await _invokeRawReceptorAsync(decision, args.CancellationToken);
@@ -1661,6 +1764,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         return;
       }
 
+      _logHandedToHandler(args.Message, destination);
       await handler(envelope, envelopeTypeName, args.CancellationToken);
       await _invokeRawReceptorAsync(decision, args.CancellationToken);
       await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
@@ -1877,7 +1981,15 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     Exception ex,
     TransportDestination destination
   ) {
-    _logger.LogError(
+    if (_isDeadLetteringDenial(ex, out var deniedReason)) {
+      _logger.LogWarning(ex, "DEAD-LETTER reason: {Reason} for session message {MessageId}: a receptor interceptor denied its raw receptor",
+        deniedReason, args.Message.MessageId);
+      await _safeDeadLetterAsync(args, deniedReason, ex.Message);
+      return;
+    }
+    // #1976: the message is abandoned for redelivery, or dead-lettered at the delivery limit and recorded when the
+    // dead-letter drain takes it into custody, so each attempt is a Warning carrying its exception.
+    _logger.LogWarning(
       ex,
       "Error processing session message {MessageId} (SessionId={SessionId}) from {TopicName}/{SubscriptionName}",
       args.Message.MessageId,
@@ -1890,6 +2002,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     if (deliveryCount >= _options.MaxDeliveryAttempts) {
       await _safeDeadLetterAsync(args, "MaxDeliveryAttemptsExceeded", ex.Message);
     } else {
+      _logReturnedUnsettled(args.Message, destination, AsbReceiveLog.HANDLER_FAILED);
       await _safeAbandonAsync(args);
     }
   }
@@ -1899,7 +2012,15 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     Exception ex,
     TransportDestination destination
   ) {
-    _logger.LogError(
+    if (_isDeadLetteringDenial(ex, out var deniedReason)) {
+      _logger.LogWarning(ex, "DEAD-LETTER reason: {Reason} for message {MessageId}: a receptor interceptor denied its raw receptor",
+        deniedReason, args.Message.MessageId);
+      await _safeDeadLetterAsync(args, deniedReason, ex.Message);
+      return;
+    }
+    // #1976: the message is abandoned for redelivery, or dead-lettered at the delivery limit and recorded when the
+    // dead-letter drain takes it into custody, so each attempt is a Warning carrying its exception.
+    _logger.LogWarning(
       ex,
       "Error processing message {MessageId} from {TopicName}/{SubscriptionName}",
       args.Message.MessageId,
@@ -1916,7 +2037,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         args.Message.MessageId,
         destination.Address,
         _subscriptionOf(destination),
-        ex.GetType().Name,
+        TypeNameFormatter.ForLog(ex.GetType()),
         ex.Message
       );
       await _safeDeadLetterAsync(args, "MaxDeliveryAttemptsExceeded", ex.Message);
@@ -1928,9 +2049,10 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         args.Message.MessageId,
         destination.Address,
         _subscriptionOf(destination),
-        ex.GetType().Name,
+        TypeNameFormatter.ForLog(ex.GetType()),
         ex.Message
       );
+      _logReturnedUnsettled(args.Message, destination, AsbReceiveLog.HANDLER_FAILED);
       await _safeAbandonAsync(args);
     }
   }
@@ -1957,10 +2079,20 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
   private readonly (CancellationTokenSource Source, CancellationToken Stopped) _throttlePauseStop = _newThrottlePauseStop();
   private Task _throttlePause = Task.CompletedTask;
 
+  /// <summary>
+  /// The throttle pause in progress, or a completed task when none is. It completes after the pause has released its
+  /// single-flight claim, which its own log lines come before, so a caller that must know the claim is free waits on this.
+  /// </summary>
+  internal Task ThrottlePause => Volatile.Read(ref _throttlePause);
+
   private static (CancellationTokenSource Source, CancellationToken Stopped) _newThrottlePauseStop() {
     var source = new CancellationTokenSource();
     return (source, source.Token);
   }
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Throttle pause for {TopicName}/{SubscriptionName} ended while the subscription is paused, so its processor stays stopped until it is resumed")]
+  private static partial void LogThrottlePauseEndedWhilePaused(ILogger logger, string topicName, string subscriptionName);
 
   [LoggerMessage(Level = LogLevel.Information,
     Message = "Throttle pause for {TopicName}/{SubscriptionName} ended by transport disposal; the processor stays stopped")]
@@ -2027,29 +2159,49 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
       // the transport ends the pause early, and then the processor is not restarted (#1721).
       // The pause runs on the transport's clock, like every other time this transport measures.
       var pauseStopped = _throttlePauseStop.Stopped;
-      Volatile.Write(ref _throttlePause, Task.Run(async () => {
-        try {
-          await stopProcessingAsync();
-          await Task.Delay(pause, _timeProvider, pauseStopped);
-          await startProcessingAsync();
-          if (_logger.IsEnabled(LogLevel.Information)) {
-            _logger.LogInformation(
-              "Resumed Service Bus processor for {TopicName}/{SubscriptionName} after throttle pause",
-              destination.Address,
-              _subscriptionOf(destination));
-          }
-        } catch (OperationCanceledException ended) when (pauseStopped.IsCancellationRequested) {
-          var subscription = _subscriptionOf(destination);
-          LogThrottlePauseEndedByDisposal(_logger, ended, destination.Address, subscription);
-        } catch (Exception ex) {
-          _logger.LogError(ex,
-            "Throttle pause/resume failed for {TopicName}/{SubscriptionName} — the receive-liveness watchdog is the backstop",
-            destination.Address,
-            _subscriptionOf(destination));
-        } finally {
-          _throttlePolicy.EndPause();
-        }
-      }, CancellationToken.None));
+      Volatile.Write(ref _throttlePause, Task.Run(
+        () => _runThrottlePauseAsync(pause, destination, subscription, stopProcessingAsync, startProcessingAsync, pauseStopped),
+        CancellationToken.None));
+    }
+  }
+
+  // The detached throttle pause: stop accepting, wait out the pause on the transport's clock, then restart unless the
+  // subscription was paused meanwhile or the transport was disposed.
+  private async Task _runThrottlePauseAsync(
+    TimeSpan pause,
+    TransportDestination destination,
+    AzureServiceBusSubscription subscription,
+    Func<Task> stopProcessingAsync,
+    Func<Task> startProcessingAsync,
+    CancellationToken pauseStopped
+  ) {
+    try {
+      await stopProcessingAsync();
+      await Task.Delay(pause, _timeProvider, pauseStopped);
+      // A subscription paused meanwhile stays stopped until it is resumed (#2406): restarting it here would put a
+      // standing-down instance back to taking deliveries it can only hand back.
+      if (!subscription.IsActive) {
+        var pausedSubscription = _subscriptionOf(destination);
+        LogThrottlePauseEndedWhilePaused(_logger, destination.Address, pausedSubscription);
+        return;
+      }
+      await startProcessingAsync();
+      if (_logger.IsEnabled(LogLevel.Information)) {
+        _logger.LogInformation(
+          "Resumed Service Bus processor for {TopicName}/{SubscriptionName} after throttle pause",
+          destination.Address,
+          _subscriptionOf(destination));
+      }
+    } catch (OperationCanceledException ended) when (pauseStopped.IsCancellationRequested) {
+      var endedSubscription = _subscriptionOf(destination);
+      LogThrottlePauseEndedByDisposal(_logger, ended, destination.Address, endedSubscription);
+    } catch (Exception ex) {
+      _logger.LogError(ex,
+        "Throttle pause/resume failed for {TopicName}/{SubscriptionName}; the receive-liveness watchdog is the backstop",
+        destination.Address,
+        _subscriptionOf(destination));
+    } finally {
+      _throttlePolicy.EndPause();
     }
   }
 
@@ -2090,6 +2242,52 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
 
     // Apply CorrelationFilter if specified in metadata (production without Aspire)
     await _applyCorrelationFilterFromMetadataAsync(destination, topicName, subscriptionName, cancellationToken);
+
+    // Converge an event subscription on the event types this service opts out of (#2175)
+    await _applyExcludedEventTypesFromMetadataAsync(destination, topicName, subscriptionName, cancellationToken);
+  }
+
+  /// <summary>
+  /// Converges an event subscription on the subjects its destination excludes (#2175). Only an event destination
+  /// carries the key (<see cref="TransportSubscriptionBuilder.ExcludedEventSubjectsMetadataKey"/>), so an inbox or a
+  /// custom destination is never touched. Rule writes need the management plane and auto-provisioning, like every
+  /// other rule this transport writes; without them a non-empty list is logged and the subscription keeps delivering
+  /// everything.
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#excluded-event-types</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusExcludedEventTypesSubscribeTests.cs:Subscribe_ExcludedSubjects_AppliesTheRuleAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusExcludedEventTypesSubscribeTests.cs:Subscribe_DestinationWithoutTheKey_NeverReadsRulesAsync</tests>
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Event subscription {TopicName}/{SubscriptionName} opts out of {Count} excluded event types, but this transport has no management client or AutoProvisionInfrastructure is off, so the rule is not applied and every event is still delivered")]
+  private static partial void LogExcludedEventTypesNotApplied(ILogger logger, string topicName, string subscriptionName, int count);
+
+  private async Task _applyExcludedEventTypesFromMetadataAsync(
+    TransportDestination destination,
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken
+  ) {
+    if (destination.Metadata?.TryGetValue(TransportSubscriptionBuilder.ExcludedEventSubjectsMetadataKey, out var element) != true
+        || element.ValueKind != JsonValueKind.Array) {
+      return;
+    }
+
+    var subjects = new List<string>();
+    foreach (var entry in element.EnumerateArray()) {
+      if (entry.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(entry.GetString())) {
+        subjects.Add(entry.GetString()!);
+      }
+    }
+
+    if (_adminClient == null || !_options.AutoProvisionInfrastructure) {
+      if (subjects.Count > 0) {
+        LogExcludedEventTypesNotApplied(_logger, topicName, subscriptionName, subjects.Count);
+      }
+      return;
+    }
+
+    await ServiceBusEntityProvisioning.ApplyExcludedEventTypesAsync(
+      _adminClient, topicName, subscriptionName, subjects, _logger, cancellationToken);
   }
 
   private async Task _applyRoutingPatternsFromMetadataAsync(

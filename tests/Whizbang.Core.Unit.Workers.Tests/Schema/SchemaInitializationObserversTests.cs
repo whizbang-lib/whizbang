@@ -1,0 +1,159 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using Microsoft.Extensions.DependencyInjection;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Data.Postgres;
+
+namespace Whizbang.Core.Tests.Schema;
+
+/// <summary>
+/// The EF Core schema pass reports a held schema lock through the host's observers; with no provider it reports to
+/// nobody rather than failing the start.
+/// </summary>
+/// <docs>data/turnkey-initialization#watching-initialization</docs>
+/// <code-under-test>src/Whizbang.Data.Postgres/SchemaInitializationObservers.cs</code-under-test>
+public class SchemaInitializationObserversTests {
+  [Test]
+  public async Task LockContended_TellsEveryRegisteredObserverAsync() {
+    var first = new Recorder();
+    var second = new Recorder();
+    var services = new ServiceCollection();
+    services.AddSingleton<ISchemaInitializationObserver>(first);
+    services.AddSingleton<ISchemaInitializationObserver>(second);
+    await using var provider = services.BuildServiceProvider();
+
+    await SchemaInitializationObservers.LockContendedAsync(provider, "orders", CancellationToken.None);
+
+    await Assert.That(first.Schemas).IsEquivalentTo(["orders"]);
+    await Assert.That(second.Schemas).IsEquivalentTo(["orders"]);
+  }
+
+  [Test]
+  public async Task LockContended_WithNoProvider_TellsNobodyAsync() {
+    await Assert.That(async () => await SchemaInitializationObservers.LockContendedAsync(null, "orders", CancellationToken.None))
+      .ThrowsNothing();
+  }
+
+  [Test]
+  public async Task StepCommitted_TellsEveryRegisteredObserverWhichStepAsync() {
+    var first = new Recorder();
+    var second = new Recorder();
+    var services = new ServiceCollection();
+    services.AddSingleton<ISchemaInitializationObserver>(first);
+    services.AddSingleton<ISchemaInitializationObserver>(second);
+    await using var provider = services.BuildServiceProvider();
+
+    await SchemaInitializationObservers.StepCommittedAsync(provider, "orders", "110_StandbyHandshake.sql", CancellationToken.None);
+
+    await Assert.That(first.Steps).IsEquivalentTo(["orders/110_StandbyHandshake.sql"]);
+    await Assert.That(second.Steps).IsEquivalentTo(["orders/110_StandbyHandshake.sql"]);
+  }
+
+  [Test]
+  public async Task StepCommitted_WithNoProvider_TellsNobodyAsync() {
+    await Assert.That(async () => await SchemaInitializationObservers.StepCommittedAsync(null, "orders", "constraints", CancellationToken.None))
+      .ThrowsNothing();
+  }
+
+  [Test]
+  public async Task StepCommitted_IsANoOpForAnObserverThatDoesNotWatchItAsync() {
+    ISchemaInitializationObserver observer = new Silent();
+
+    await Assert.That(async () => await observer.OnSchemaStepCommittedAsync("orders", "constraints", CancellationToken.None))
+      .ThrowsNothing();
+  }
+
+  [Test]
+  public async Task PreLockPhasesStarting_TellsEveryRegisteredObserverAsync() {
+    var first = new Recorder();
+    var second = new Recorder();
+    var services = new ServiceCollection();
+    services.AddSingleton<ISchemaInitializationObserver>(first);
+    services.AddSingleton<ISchemaInitializationObserver>(second);
+    await using var provider = services.BuildServiceProvider();
+
+    await SchemaInitializationObservers.PreLockPhasesStartingAsync(provider, "orders", CancellationToken.None);
+
+    await Assert.That(first.PreLock).IsEquivalentTo(["orders"]);
+    await Assert.That(second.PreLock).IsEquivalentTo(["orders"]);
+  }
+
+  [Test]
+  public async Task PreLockPhasesStarting_WithNoProvider_TellsNobodyAsync() {
+    await Assert.That(async () => await SchemaInitializationObservers.PreLockPhasesStartingAsync(null, "orders", CancellationToken.None))
+      .ThrowsNothing();
+  }
+
+  [Test]
+  public async Task PreLockPhasesStarting_IsANoOpForAnObserverThatDoesNotWatchItAsync() {
+    ISchemaInitializationObserver observer = new Silent();
+
+    await Assert.That(async () => await observer.OnPreLockPhasesStartingAsync("orders", CancellationToken.None))
+      .ThrowsNothing();
+  }
+
+  [Test]
+  public async Task BootstrapRetryScheduled_TellsEveryRegisteredObserverTheAttemptAndTheDelayAsync() {
+    var first = new Recorder();
+    var second = new Recorder();
+    var services = new ServiceCollection();
+    services.AddSingleton<ISchemaInitializationObserver>(first);
+    services.AddSingleton<ISchemaInitializationObserver>(second);
+    await using var provider = services.BuildServiceProvider();
+    var failure = new TimeoutException("the server did not answer");
+
+    await SchemaInitializationObservers.BootstrapRetryScheduledAsync(
+      provider, "orders", 2, failure, TimeSpan.FromSeconds(2), CancellationToken.None);
+
+    await Assert.That(first.Retries).IsEquivalentTo(["orders/2/the server did not answer/00:00:02"]);
+    await Assert.That(second.Retries).IsEquivalentTo(["orders/2/the server did not answer/00:00:02"]);
+  }
+
+  [Test]
+  public async Task BootstrapRetryScheduled_WithNoProvider_TellsNobodyAsync() {
+    await Assert.That(async () => await SchemaInitializationObservers.BootstrapRetryScheduledAsync(
+      null, "orders", 1, new TimeoutException(), TimeSpan.FromSeconds(1), CancellationToken.None)).ThrowsNothing();
+  }
+
+  [Test]
+  public async Task BootstrapRetryScheduled_IsANoOpForAnObserverThatDoesNotWatchItAsync() {
+    ISchemaInitializationObserver observer = new Silent();
+
+    await Assert.That(async () => await observer.OnBootstrapRetryScheduledAsync(
+      "orders", 1, new TimeoutException(), TimeSpan.FromSeconds(1), CancellationToken.None)).ThrowsNothing();
+  }
+
+  /// <summary>Watches nothing, so every member is the interface's default.</summary>
+  private sealed class Silent : ISchemaInitializationObserver;
+
+  private sealed class Recorder : ISchemaInitializationObserver {
+    public List<string> Schemas { get; } = [];
+    public List<string> Steps { get; } = [];
+    public List<string> Retries { get; } = [];
+    public List<string> PreLock { get; } = [];
+
+    public ValueTask OnPreLockPhasesStartingAsync(string schema, CancellationToken cancellationToken) {
+      PreLock.Add(schema);
+      return ValueTask.CompletedTask;
+    }
+
+    public ValueTask OnBootstrapRetryScheduledAsync(
+        string schema, int attempt, Exception exception, TimeSpan delay, CancellationToken cancellationToken) {
+      Retries.Add($"{schema}/{attempt}/{exception.Message}/{delay}");
+      return ValueTask.CompletedTask;
+    }
+
+    public ValueTask OnSchemaLockContendedAsync(string schema, CancellationToken cancellationToken) {
+      Schemas.Add(schema);
+      return ValueTask.CompletedTask;
+    }
+
+    public ValueTask OnSchemaStepCommittedAsync(string schema, string stepName, CancellationToken cancellationToken) {
+      Steps.Add($"{schema}/{stepName}");
+      return ValueTask.CompletedTask;
+    }
+  }
+}

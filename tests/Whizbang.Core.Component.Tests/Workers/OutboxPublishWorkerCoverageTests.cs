@@ -172,7 +172,6 @@ public class OutboxPublishWorkerCoverageTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
@@ -180,7 +179,6 @@ public class OutboxPublishWorkerCoverageTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions()),
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -204,59 +202,6 @@ public class OutboxPublishWorkerCoverageTests {
   }
 
   // ============================================================
-  // OutboxPublishWorker.cs:137 — schema-ready-gate cancellation catch
-  // ============================================================
-
-  [Test]
-  public async Task ExecuteAsync_StoppedWhileWaitingOnSchemaGate_ReturnsWithoutEnteringPublishLoopAsync() {
-    // If this catch stopped swallowing the cancellation (or the early return were removed), a
-    // shutdown that arrives before the schema is ready would either hang StopAsync waiting on a
-    // task that never observes cancellation, or surface as a faulted ExecuteTask instead of a
-    // clean stop — and the publish loop must never have been entered at all.
-    var channel = new FakeWorkChannelWriter();
-    var completion = new FakeOutboxCompletionChannel();
-    var failure = new FakeFailureChannel();
-    var strategy = new FakeSingularStrategy();
-    var gate = new SchemaReadyGate(); // never marked ready
-
-    var sp = new ServiceCollection().BuildServiceProvider();
-    var worker = new OutboxPublishWorker(
-      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      workChannelWriter: channel,
-      outboxCompletionChannel: completion,
-      failureChannel: failure,
-      schemaReadyGate: gate,
-      options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
-      logger: NullLogger<OutboxPublishWorker>.Instance,
-      instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      publishStrategy: strategy,
-      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
-      deadLetterStore: NullDeadLetterStore.Instance,
-      generationProvider: new DefaultGenerationProvider(),
-      pinnedPool: NoOpPinnedConnectionPool.Instance,
-      occurrenceGate: new NoOpOccurrencePublishGate());
-
-    await worker.StartAsync(CancellationToken.None);
-
-    // ExecuteAsync runs synchronously up to the first incomplete await (the gate wait, since the
-    // gate is never marked ready), so by the time StartAsync returns the worker is parked there.
-    // Stopping now races the exact "shutdown before schema ready" window this catch exists for.
-    // Bounded explicitly: if the premise is wrong (cancellation never reaches the gate wait),
-    // this must fail with a timeout, not hang the suite.
-    await worker.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
-
-    await Assert.That(worker.ExecuteTask!.IsCompleted).IsTrue()
-      .Because("the gate-wait catch must let ExecuteAsync return promptly on stop, not hang");
-    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
-      .Because("the cancellation must be caught internally, not surfaced as a fault");
-    await Assert.That(strategy.Published).IsEmpty()
-      .Because("shutdown before the schema gate opened must never let the publish loop start");
-  }
-
-  // ============================================================
   // OutboxPublishWorker.cs:145,242 — singular loop graceful completion
   // OutboxPublishWorker.cs:145,343 — bulk loop graceful completion
   // ============================================================
@@ -271,8 +216,6 @@ public class OutboxPublishWorkerCoverageTests {
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
     var strategy = new FakeSingularStrategy();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
@@ -280,7 +223,6 @@ public class OutboxPublishWorkerCoverageTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -314,8 +256,6 @@ public class OutboxPublishWorkerCoverageTests {
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
     var strategy = new FakeBulkStrategy();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
@@ -323,7 +263,6 @@ public class OutboxPublishWorkerCoverageTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxBulkPublishBatchSize = 10 }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -360,8 +299,6 @@ public class OutboxPublishWorkerCoverageTests {
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
     var strategy = new FakeThrowingStrategy();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new OutboxPublishWorker(
@@ -369,7 +306,6 @@ public class OutboxPublishWorkerCoverageTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
@@ -436,15 +372,12 @@ public class OutboxPublishWorkerCoverageTests {
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
     var strategy = new FakeSingularStrategy();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var worker = new OutboxPublishWorker(
       scopeFactory: receptorProvider.GetRequiredService<IServiceScopeFactory>(),
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),

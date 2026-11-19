@@ -12,7 +12,6 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Returns connections that are already opened to ensure proper async initialization.
 /// </summary>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresTestBase.cs:SetupAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreTestBase.cs:InitializeDatabaseAsync</tests>
 public class PostgresConnectionFactory : IDbConnectionFactory {
   private readonly string _connectionString;
 
@@ -28,7 +27,7 @@ public class PostgresConnectionFactory : IDbConnectionFactory {
   /// <summary>
   /// Creates and opens a new PostgreSQL database connection asynchronously.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreTestBase.cs:InitializeDatabaseAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresTestBase.cs:_initializeDatabaseAsync</tests>
   public async Task<IDbConnection> CreateConnectionAsync(CancellationToken cancellationToken = default) {
     var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);

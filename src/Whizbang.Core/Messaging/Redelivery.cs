@@ -34,6 +34,13 @@ public sealed record RedeliveryRequest {
   /// <summary>Stream filter; null = all streams matching the other criteria.</summary>
   public IReadOnlyList<Guid>? StreamIds { get; init; }
 
+  /// <summary>
+  /// #2103: event filter; null = every event matching the other criteria. A repair that could name the one event a
+  /// bucket is missing selects only it; the other criteria still apply.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#one-missing-event-is-named</docs>
+  public IReadOnlyList<Guid>? EventIds { get; init; }
+
   /// <summary>Exclusive commit-sequence floor; null = from the beginning.</summary>
   public long? FromCommitSequence { get; init; }
 
@@ -53,6 +60,27 @@ public sealed record RedeliveryRequest {
 
   /// <summary>Keyset continuation partner of <see cref="AfterStreamId"/>.</summary>
   public long? AfterVersion { get; init; }
+
+  /// <summary>
+  /// The answering service's name. When set, only events that service authored are selected: no origin recorded, and
+  /// a stored first hop that names this service, names no service, or is absent (#2032). An event received from
+  /// another service, whether it carries that origin or only a first hop naming it, is refused by every receiver, so
+  /// shipping it is pure cost. Null selects as before.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#redelivery-ships-only-what-the-origin-wrote</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SelectRedeliveryEventsTests.cs:Select_AuthoredBy_ShipsOnlyEventsTheAnsweringServiceWroteAsync</tests>
+  public string? AuthoredBy { get; init; }
+
+  /// <summary>
+  /// True selects in commit-sequence order instead of (stream, version) order, and only stamped rows (#2092): a
+  /// windowed backfill walks one type's history by the owner's commit sequence, continuing from
+  /// <see cref="FromCommitSequence"/>, so the last row of a window is exactly where the next one starts. The keyset
+  /// continuation (<see cref="AfterStreamId"/>) does not apply in this order; page with
+  /// <see cref="FromCommitSequence"/> instead.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SelectRedeliveryEventsTests.cs:Select_ByCommitSequence_WalksStampedRowsInCommitOrderAsync</tests>
+  public bool OrderByCommitSequence { get; init; }
 }
 
 /// <summary>
@@ -108,11 +136,11 @@ public sealed record RedeliveryEvent {
 [PinnedId("4f8e2b7a-9d31-4c6e-8b5f-2a1d0c9e7f43")]
 [SystemControlTag(Tag = Tags.SystemTags.CONTROL, Properties = [])]
 public sealed record RequestRedeliveryCommand : ICommand, IControlPlaneMessage, Audit.IBoundedCommandAudit {
-  private static readonly string[] _idLists = [nameof(StreamIds)];
+  private static readonly string[] _idLists = [nameof(StreamIds), nameof(EventIds)];
 
   /// <inheritdoc />
   /// <docs>fundamentals/security/audit-logging#bounded-command-audit</docs>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/CommandAuditListLengthsTests.cs:ARedeliveryRequest_IsAuditedWithItsStreamCountAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/CommandAuditListLengthsTests.cs:ARedeliveryRequest_IsAuditedWithItsStreamCountAsync</tests>
   public IReadOnlyCollection<string> ListsAuditedAsLengths() => _idLists;
 
   /// <summary>Optional tenant filter (scope <c>t</c> key), as in <see cref="RedeliveryRequest.TenantScope"/>.</summary>
@@ -123,6 +151,16 @@ public sealed record RequestRedeliveryCommand : ICommand, IControlPlaneMessage, 
 
   /// <summary>Optional stream filter; null = all streams.</summary>
   public IReadOnlyList<Guid>? StreamIds { get; init; }
+
+  /// <summary>
+  /// #2103: the events the requester is missing, when its comparison could name them: per stream in
+  /// <see cref="StreamIds"/>, the one event the origin holds and it does not. The owner ships exactly those, and for a
+  /// stream whose named event it does not hold, answers the stream over the window instead. Null asks for the streams
+  /// over the window. An owner that predates the field ignores it and answers the streams over the window, which is
+  /// why the streams and window always ride along.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#one-missing-event-is-named</docs>
+  public IReadOnlyList<Guid>? EventIds { get; init; }
 
   /// <summary>Exclusive commit-sequence floor; null = from the beginning.</summary>
   public long? FromCommitSequence { get; init; }
@@ -153,4 +191,99 @@ public sealed record RequestRedeliveryCommand : ICommand, IControlPlaneMessage, 
   /// repair mode on either side; the bundles carry the flag as <see cref="Minting.RedeliveryComposite.OperatorRequested"/>.
   /// </summary>
   public bool OperatorRequested { get; init; }
+
+  /// <summary>
+  /// True when the requester files each child of a redelivery bundle under the stream the child names, so the origin
+  /// may answer with bundles that span streams (#2268). Every request this release sends sets it. A requester on a
+  /// release that predates the field leaves it false, which a JSON payload without it also reads as, and is answered
+  /// one stream per bundle, because it would file every child of a bundle under the bundle's own stream.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repair-answers-bundle-across-streams</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryWindowAnswerTests.cs</tests>
+  public bool AcceptsStreamSpanningBundles { get; init; }
+
+  /// <summary>
+  /// Set by a paced backfill (#2092): the request is one WINDOW of that backfill. The origin selects in commit-sequence
+  /// order from <see cref="FromCommitSequence"/>, up to <see cref="MaxEvents"/> (clamped by its own cap), ships the
+  /// events in as few bundles as its size bounds allow, all on this id's session, and then sends a
+  /// <see cref="BackfillWindowAnswer"/> saying where the window stopped and whether more remains. Null (the default) is
+  /// an ordinary request. An origin on a release that predates the field ignores it and answers the ordinary way.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryWindowAnswerTests.cs</tests>
+  public Guid? BackfillId { get; init; }
+
+  /// <summary>The window's number within its backfill (1 for the first), echoed on the answer so a late answer to an
+  /// earlier window is recognized and ignored (#2092).</summary>
+  /// <docs>resilience/stream-integrity#paced-backfill</docs>
+  public long BackfillWindow { get; init; }
+
+  /// <summary>
+  /// #2362: the sender's eligibility rules for the event types this message is about. The receiver compares them with its
+  /// own over the types both name, and halts the pair on a mismatch. Null from a sender on a release that predates the
+  /// field, which the receiver treats as a mismatch: it may count differently.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  public RuleFingerprint? RuleFingerprint { get; init; }
+
+  /// <summary>
+  /// #2365: this request's id, echoed on every answer to it, so a trace or a log line ties an answer to its request.
+  /// Null from a sender on a release that predates the field.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  public Guid? RequestId { get; init; }
+
+  /// <summary>
+  /// #2365: the W3C <c>traceparent</c> of the span that sent this request. The origin's answer starts under it, so the
+  /// answer joins the requester's trace across services. Null when the sender had no span, or predates the field.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  public string? TraceParent { get; init; }
+}
+
+/// <summary>
+/// The origin's answer to one window of a paced backfill (#2092), sent to the requester after the window's bundles. It
+/// says where the window stopped (<see cref="StoppedAtCommitSequence"/>) and whether more remains (<see cref="HasMore"/>):
+/// an answer that stops at the origin's bound never truncates silently, and the requester asks for the next window from
+/// exactly that point (#2098). Rides the backfill's session, after its bundles.
+/// </summary>
+/// <docs>resilience/stream-integrity#paced-backfill</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryWindowAnswerTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BackfillWindowAnswerReceptorTests.cs</tests>
+/// <remarks>
+/// Not in the control class (no <c>SystemControlTag</c>): it travels as the window's bundles do, on the backfill's
+/// session and in order behind them, and is not superseded by a later message.
+/// </remarks>
+[PinnedId("84fb00a5-2cc2-416b-88e2-132982c701f3")]
+public sealed record BackfillWindowAnswer : ICommand, IControlPlaneMessage {
+  /// <summary>The backfill this answers, from <see cref="RequestRedeliveryCommand.BackfillId"/>.</summary>
+  public required Guid BackfillId { get; init; }
+
+  /// <summary>The window this answers, from <see cref="RequestRedeliveryCommand.BackfillWindow"/>.</summary>
+  public required long Window { get; init; }
+
+  /// <summary>The answering origin's service id.</summary>
+  public Guid OriginServiceId { get; init; }
+
+  /// <summary>The answering origin's service name.</summary>
+  public string? OriginServiceName { get; init; }
+
+  /// <summary>Events the window selected (shipped or, for a type another service owns, passed over).</summary>
+  public int EventCount { get; init; }
+
+  /// <summary>The commit sequence of the first event the window selected; null when it selected none.</summary>
+  public long? FirstCommitSequence { get; init; }
+
+  /// <summary>
+  /// The commit sequence of the last event the window selected: the next window starts after it. Null when the window
+  /// selected nothing, in which case the requester's position does not move.
+  /// </summary>
+  public long? StoppedAtCommitSequence { get; init; }
+
+  /// <summary>True when the window stopped at its bound, so more of the type's history may remain.</summary>
+  public bool HasMore { get; init; }
+
+  /// <summary>The highest commit sequence of the requested types in the origin's store when it answered, for the
+  /// requester's estimate of what remains; null when unknown.</summary>
+  public long? HeadCommitSequence { get; init; }
 }

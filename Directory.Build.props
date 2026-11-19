@@ -1,6 +1,23 @@
 <Project>
+  <!-- Target frameworks (#2135): develop on .NET 11, release for .NET 10 and .NET 11.
+       Day to day (local builds, PRs into develop, develop itself) tests, samples and tools target net11.0 only;
+       the library projects always target both (src/Directory.Build.props), so every package, alphas included,
+       carries net10.0. A release build targets both everywhere. It is detected from the branch CI runs on, so no workflow has to
+       remember to ask for it: a push to main or release/*, a v* tag, or a pull request into main or
+       release/*. Set WhizbangReleaseBuild=true (or false) to override, e.g. to reproduce a release
+       build locally. Projects never name a framework themselves; source generators and analyzers,
+       which Roslyn requires to be netstandard2.0, override TargetFrameworks in their own .csproj.
+       Restore always covers both frameworks, so the committed packages.lock.json files are the same
+       whichever build restores them, and CI's locked-mode restore passes on every branch. -->
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <WhizbangReleaseBuild Condition="'$(WhizbangReleaseBuild)' == '' and ('$(GITHUB_REF)' == 'refs/heads/main' or $([System.String]::Copy('$(GITHUB_REF)').StartsWith('refs/heads/release/')) or $([System.String]::Copy('$(GITHUB_REF)').StartsWith('refs/tags/v')) or '$(GITHUB_BASE_REF)' == 'main' or $([System.String]::Copy('$(GITHUB_BASE_REF)').StartsWith('release/')))">true</WhizbangReleaseBuild>
+    <WhizbangDevelopmentTargetFramework>net11.0</WhizbangDevelopmentTargetFramework>
+    <WhizbangReleaseTargetFrameworks>net10.0;net11.0</WhizbangReleaseTargetFrameworks>
+    <TargetFrameworks Condition="'$(WhizbangReleaseBuild)' == 'true' or '$(MSBuildIsRestoring)' == 'true'">$(WhizbangReleaseTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks Condition="'$(TargetFrameworks)' == ''">$(WhizbangDevelopmentTargetFramework)</TargetFrameworks>
+  </PropertyGroup>
+
+  <PropertyGroup>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -26,8 +43,8 @@
 
     <!-- Code analysis (CA rules), recommended set, pinned to the .NET 10 rule set rather than "latest".
          global.json rolls forward to the newest installed SDK, and "latest" would turn on each newer SDK's
-         rules locally while CI builds on SDK 10 (#1678). Move it when CI moves; SDK 11's CA2026 findings
-         are tracked in #1679. -->
+         rules on whichever machine has it (#1678). The build now runs on SDK 11 (#2135), but the rule set
+         stays pinned until the move to the 11.0 rule set is made deliberately, with its findings fixed. -->
     <AnalysisLevel>10.0-recommended</AnalysisLevel>
 
     <!-- Treat code analysis warnings as errors (separate from compiler warnings) -->
@@ -48,7 +65,7 @@
     <!-- Use SoftwareExtravaganza prefix to avoid NuGet naming conflicts -->
     <PackageId>SoftwareExtravaganza.$(MSBuildProjectName)</PackageId>
     <!-- Local-only version — CI/CD build server overrides this. Do NOT commit non-local versions. -->
-    <Version>0.2626.0</Version>
+    <Version>0.4457.0</Version>
     <Authors>Phil Carbone</Authors>
     <Company>whizbang-lib</Company>
     <Product>Whizbang</Product>
@@ -132,6 +149,14 @@
     <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2075</WarningsAsErrors>
   </PropertyGroup>
 
+  <!-- CA2263 (prefer the generic overload) is off while net10.0 is a release target (#2135). .NET 11 added
+       JsonSerializerOptions.GetTypeInfo<T>(), so the rule flags every GetTypeInfo(typeof(T)) on the net11.0 build,
+       but .NET 10 has no such overload and the same source must compile for both. Turn it back on, and move those
+       calls to GetTypeInfo<T>(), when net10.0 is no longer targeted. -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);CA2263</NoWarn>
+  </PropertyGroup>
+
   <!-- XML documentation warnings suppression -->
   <!-- CS1570/CS1573/CS1574/CS0419 are XML doc quality warnings that need separate cleanup -->
   <PropertyGroup>
@@ -177,10 +202,24 @@
   <!-- Repository-only analyzers (tools/Whizbang.RepoAnalyzers, never packed): rules this repository enforces on
        its own source before the SDK it builds with can. Loaded as an analyzer only, so no project references
        its assembly or carries it into a package. The analyzer project and its tests reference it directly instead.
-       WHZ0005 stands in for CA2026 until SDK 11 (#1679). -->
+       WHIZ604 stands in for CA2026 until SDK 11 (#1679). -->
   <ItemGroup Condition="!$(MSBuildProjectName.StartsWith('Whizbang.RepoAnalyzers'))">
     <ProjectReference Include="$(MSBuildThisFileDirectory)tools/Whizbang.RepoAnalyzers/Whizbang.RepoAnalyzers.csproj"
                       OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- WHIZ607/WHIZ608 (#2267) apply to the library only: every project outside src/ turns them off. -->
+  <ItemGroup Condition="!$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/').StartsWith($([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)src/'))))">
+    <GlobalAnalyzerConfigFiles Include="$(MSBuildThisFileDirectory)TypeNaming.OutsideLibrary.globalconfig" />
+  </ItemGroup>
+
+  <!-- Hang dumps (#2402). Every test module a suite runs can take a hang dump: Run-Tests.ps1 -HangDumpTimeout
+       passes `dotnet test` the platform's hang dump options, and a module without this extension would reject
+       them as unknown. Keyed on WhizbangTestType, which every suite selects projects by, so a new test project
+       gets it without anyone remembering to add it (MSBuild evaluates item conditions after every property,
+       the project's own included). Benchmarks run under BenchmarkDotNet, not the testing platform. -->
+  <ItemGroup Condition="'$(WhizbangTestType)' != '' and '$(WhizbangTestType)' != 'Benchmark'">
+    <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />
   </ItemGroup>
 
   <!-- Analyzers. SonarAnalyzer is here so Sonar's own rules fail the build locally and in CI

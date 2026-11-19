@@ -63,7 +63,7 @@ public class ImmediateDetachedLifecycleTests {
 
     // Act - Use hook to wait for perspective processing (ImmediateDetached fires before perspectives)
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -88,7 +88,7 @@ public class ImmediateDetachedLifecycleTests {
 
     // Act - Use hook to wait for perspective processing
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -125,9 +125,10 @@ public class ImmediateDetachedLifecycleTests {
       }
     };
 
-    // Act - Wait for all perspective processing (3 commands x 2 inventory perspectives = 6)
+    // Act - Wait for all perspective processing on these products' streams
+    // (3 commands x 3 events each: ProductCreated x2 perspectives + InventoryRestocked x1 = 9)
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 6, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 9, streamIds: [.. commands.Select(c => c.ProductId.Value)], timeoutMilliseconds: 45000, hostFilter: "inventory");
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
     }
@@ -152,7 +153,7 @@ public class ImmediateDetachedLifecycleTests {
 
     // Act - Use hook to wait for perspective processing
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
 
@@ -180,7 +181,7 @@ public class ImmediateDetachedLifecycleTests {
 
     // Act - Use hook to wait for perspective processing
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }

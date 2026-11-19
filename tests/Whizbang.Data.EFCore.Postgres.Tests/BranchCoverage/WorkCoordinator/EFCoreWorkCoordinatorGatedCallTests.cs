@@ -46,7 +46,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.WorkCoordinator;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Integration")]
-[Category("Shard4")]
+[Category("Shard1")]
 public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
   // A fixed instant, not the host clock: the tests compare instants they pass themselves (review check tests.real-time).
   private static readonly DateTimeOffset _fixedNow = new(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
@@ -112,10 +112,10 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
     });
     register("NotifyScheduledRetryDue", "NotifyScheduledRetryDueAsync", async (c, _) =>
       await Assert.That(await c.NotifyScheduledRetryDueAsync()).IsEqualTo(0));
-    register("RecordInstanceState", "RecordInstanceStateAsync", async (c, _) =>
-      await Assert.That(await c.RecordInstanceStateAsync(_newId(), "Running")).IsFalse());
-    register("RecordStartupStage", "RecordStartupStageAsync", async (c, _) =>
-      await Assert.That(await ((Whizbang.Core.Messaging.IWorkCoordinator)c).RecordStartupStageAsync(_newId(), Whizbang.Core.Startup.StartupStage.Running, "serving")).IsFalse());
+    register("RecordInstanceTransition", "RecordInstanceTransitionAsync", async (c, _) =>
+      await Assert.That(await ((Whizbang.Core.Messaging.IWorkCoordinator)c).RecordInstanceTransitionAsync(
+        new Whizbang.Core.Startup.InstanceTransition(_newId(), Whizbang.Core.Startup.StartupStage.Running, "serving",
+          Whizbang.Core.RunControl.LifecyclePhase.Running, null))).IsFalse());
     register("GetStandbyRequest", "GetStandbyRequestAsync", async (c, _) =>
       await Assert.That(await c.GetStandbyRequestAsync()).IsNull());
     register("ClearStandbyRequest", "_scalarFunctionAsync", (c, _) => c.ClearStandbyRequestAsync(_newId()));
@@ -141,6 +141,9 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
       await c.RecordDefinitionLineageAsync(from.DefinitionId, to.DefinitionId, DefinitionRelationship.SchemaUpgradedTo, migrationRef: null);
     });
     register("GetStateBasedStreamIds", "GetStateBasedStreamIdsAsync", (c, _) => c.GetStateBasedStreamIdsAsync([_newId()]));
+    register("GetStateBasedStreamIdsIgnoring", "GetStateBasedStreamIdsAsync", (c, _) => c.GetStateBasedStreamIdsAsync([_newId()], [EVENT_TYPE]));
+    register("SyncMixedStreamAllowances", "SyncMixedStreamAllowancesAsync", (c, _) =>
+      c.SyncMixedStreamAllowancesAsync([new Whizbang.Core.Perspectives.MixedStreamPair(EVENT_TYPE, EVENT_TYPE + "2")]));
     register("SyncEphemeralTypeGrace", "SyncEphemeralTypeGraceAsync", (c, _) =>
       c.SyncEphemeralTypeGraceAsync([new EphemeralTypeGrace(EVENT_TYPE, 60)]));
     register("SyncPerspectiveRetention", "SyncPerspectiveRetentionAsync", (c, _) =>
@@ -148,7 +151,7 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
     register("GetEphemeralPairsNeedingSnapshot", "GetEphemeralPairsNeedingSnapshotAsync", (c, _) => c.GetEphemeralPairsNeedingSnapshotAsync());
 
     // ── Integrity ledger and audit ─────────────────────────────────────────
-    register("IntegrityTryBeginReport", "_integrityLedgerBoolAsync", (c, _) =>
+    register("IntegrityTryBeginReport", "_integrityLedgerOutcomeAsync", (c, _) =>
       c.IntegrityTryBeginReportAsync(_key(), 1, 10, 1, 5, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5)));
     register("IntegrityTryBeginReportBatch", "_integrityLedgerBoolArrayAsync", (c, _) =>
       c.IntegrityTryBeginReportBatchAsync(_origin(), [new IntegrityReportObservation(_key(), 1, 10, 1, 5, IsDeficit: true)], _fixedNow, TimeSpan.FromMinutes(5)));
@@ -159,6 +162,9 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
     register("IntegrityMarkHealedBatchWithAges", "IntegrityMarkHealedBatchWithAgesAsync", (c, _) =>
       c.IntegrityMarkHealedBatchWithAgesAsync(_origin(), [_key()]));
     register("GetIntegrityLedgerSummary", "GetIntegrityLedgerSummaryAsync", (c, _) => c.GetIntegrityLedgerSummaryAsync(5));
+    register("IntegrityAddLedgerTally", "_withCoordinatorCommandAsync", (c, _) =>
+      c.IntegrityAddLedgerTallyAsync(_fixedNow, 1, 1, _fixedNow.AddHours(-2)));
+    register("GetIntegrityLedgerTally", "_withCoordinatorCommandAsync", (c, _) => c.GetIntegrityLedgerTallyAsync(_fixedNow.AddHours(-1)));
     register("AdvanceIntegrityCheckpoint", "AdvanceIntegrityCheckpointAsync", (c, _) => c.AdvanceIntegrityCheckpointAsync());
     register("CountReceivedFromOrigin", "CountReceivedFromOriginAsync", (c, _) => c.CountReceivedFromOriginAsync(_origin(), 0, 10));
     register("TryClaimIntegrityAuditCycle", "_tryClaimWatermarkAsync", async (c, _) =>
@@ -168,6 +174,8 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
 
     // ── Maintenance ────────────────────────────────────────────────────────
     register("GetTablesNeedingRewrite", "GetTablesNeedingRewriteAsync", (c, _) => c.GetTablesNeedingRewriteAsync());
+    register("GetTableRewriteQueueStatus", "GetTableRewriteQueueStatusAsync", (c, _) => c.GetTableRewriteQueueStatusAsync());
+    register("GetTableTotalBytes", "GetTableTotalBytesAsync", (c, _) => c.GetTableTotalBytesAsync("wh_settings"));
     register("RewriteTable", "RewriteTableAsync", (c, _) => c.RewriteTableAsync("wh_settings"));
     register("SqueezeTable", "SqueezeTableAsync", async (c, _) =>
       await Assert.That(await c.SqueezeTableAsync("wh_settings")).IsNull()
@@ -189,9 +197,22 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
       await Assert.That((await c.ReindexQueueIndexAsync("wh_active_streams_pkey")).HasValue).IsTrue());
     register("PruneAncientEphemeralPointers", "PruneAncientEphemeralPointersAsync", (c, _) => c.PruneAncientEphemeralPointersAsync());
     register("CloseDigestEpochs", "CloseDigestEpochsAsync", (c, _) => c.CloseDigestEpochsAsync(60, 10));
+    // #2354: the operational retention sweep takes the gate before its connection.
+    register("SweepOperationalRetention", "SweepOperationalRetentionAsync", async (c, _) =>
+      await Assert.That(await c.SweepOperationalRetentionAsync(
+        new Dictionary<Whizbang.Core.Workers.OperationalCategory, TimeSpan> {
+          [Whizbang.Core.Workers.OperationalCategory.RewriteLog] = TimeSpan.FromDays(14),
+        }, batchSize: 10)).IsNotEmpty());
     register("FindStuckOutboxRows", "_findStuckRowsAsync", async (c, _) =>
       await Assert.That(await c.FindStuckOutboxRowsAsync(5, 10)).IsEmpty());
     register("CleanupCompletedStreams", "CleanupCompletedStreamsAsync", (c, _) => c.CleanupCompletedStreamsAsync([_newId()]));
+    // #2273: the handled ledger's lookup (a non-empty batch; an empty one answers before the gate) and its sweep.
+    register("LookupHandledEvents", "LookupHandledEventsAsync", async (c, _) =>
+      await Assert.That((await c.LookupHandledEventsAsync([_newId()])).Handled).IsEmpty()
+        .Because("no completion recorded this event, so the ledger answers it as not handled"));
+    register("SweepHandledLedger", "SweepHandledLedgerAsync", async (c, _) =>
+      await Assert.That(await c.SweepHandledLedgerAsync(_fixedNow, TimeSpan.FromDays(7))).IsEqualTo(0L)
+        .Because("the ledger is empty, so the sweep removes nothing"));
 
     // ── Streams and event bodies ───────────────────────────────────────────
     register("TruncateStreamPrefix", "TruncateStreamPrefixAsync", async (c, conn) => {
@@ -250,6 +271,8 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
     });
     register("ReleaseUnprocessedInbox", "ReleaseUnprocessedInboxAsync", async (c, _) =>
       await Assert.That(await c.ReleaseUnprocessedInboxAsync(_newId(), [_newId()])).IsEqualTo(0));
+    register("DropExhaustedInboxRows", "DropExhaustedInboxRowsAsync", async (c, _) =>
+      await Assert.That(await ((IWorkCoordinator)c).DropExhaustedInboxRowsAsync([_newId()], maxAttempts: 10)).IsEqualTo(0));
     register("ReleaseUnstartedLeases", "ReleaseUnstartedLeasesAsync", (c, _) =>
       c.ReleaseUnstartedLeasesAsync(_newId(), [_newId()], []));
     register("ImportBrokerDeadLetter", "ImportBrokerDeadLetterAsync", async (c, _) => {

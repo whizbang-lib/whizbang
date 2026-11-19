@@ -30,7 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 ///   <item><description>Stale-instance cleanup emits exactly one NOTIFY per live instance
 ///   (deduplication is implicit in the SQL: one row per live instance, one NOTIFY each).</description></item>
 ///   <item><description>Channel name format is <c>wh_work_i_&lt;live_instance_id&gt;</c>
-///   (matches <c>PgWorkNotificationListener.ChannelName</c>).</description></item>
+///   (the instance channel the signal bus listens on).</description></item>
 ///   <item><description>Payload is literal <c>'orphan'</c> (parsed by the listener into
 ///   <c>WorkSignalCategory.OrphanRedistribute</c>).</description></item>
 ///   <item><description>If no instances are stale (nothing to delete), no NOTIFY fires.</description></item>
@@ -73,7 +73,7 @@ public class CleanupStaleInstancesOrphanNotifySqlTests : EFCoreTestBase {
     await Assert.That(received).Count().IsEqualTo(1)
       .Because("exactly one orphan NOTIFY for the one live instance");
     await Assert.That(received[0].Channel).IsEqualTo($"wh_work_i_{live}")
-      .Because("channel naming must match PgWorkNotificationListener.ChannelName");
+      .Because("channel naming must match the instance channel the signal bus listens on");
     await Assert.That(received[0].Payload).IsEqualTo("orphan")
       .Because("payload is parsed by the listener into WorkSignalCategory.OrphanRedistribute");
   }

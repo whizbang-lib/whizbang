@@ -22,6 +22,7 @@ namespace Whizbang.Core.Tests;
 public class EventMarkerResolverCoverageTests {
   private sealed class KnownType;
   private sealed class TerminalType;
+  private sealed class SupersedingType;
   private sealed class UnknownType;
 
   private sealed class Catalog : IMessageTypeCatalog {
@@ -37,6 +38,9 @@ public class EventMarkerResolverCoverageTests {
       new(typeof(KnownType), TypeNameFormatter.FormatClrTypeName(typeof(KnownType)), "event", null),
       new(typeof(TerminalType), TypeNameFormatter.FormatClrTypeName(typeof(TerminalType)), "event", null) {
         IsTerminal = true,
+      },
+      new(typeof(SupersedingType), TypeNameFormatter.FormatClrTypeName(typeof(SupersedingType)), "event", null) {
+        IsSuperseding = true,
       },
     ];
   }
@@ -62,6 +66,15 @@ public class EventMarkerResolverCoverageTests {
     await Assert.That(resolver.Resolve(TypeNameFormatter.FormatClrTypeName(typeof(TerminalType)))).IsEqualTo(EventFlags.Terminal)
       .Because("the receive path resolves by name, and a received terminal event must seal the receiver's copy of its stream");
     await Assert.That(resolver.Resolve(typeof(KnownType))).IsEqualTo(EventFlags.None);
+  }
+
+  [Test]
+  public async Task Resolve_ASupersedingEntry_StampsTheSupersedingBitAsync() {
+    var resolver = new EventMarkerResolver(new TerminalCatalog());
+
+    await Assert.That(resolver.Resolve(typeof(SupersedingType))).IsEqualTo(EventFlags.Superseding);
+    await Assert.That(resolver.Resolve(TypeNameFormatter.FormatClrTypeName(typeof(SupersedingType)))).IsEqualTo(EventFlags.Superseding)
+      .Because("the receive path resolves by name, so a received superseding event is reaped on the receiver too (#1729)");
   }
 
   [Test]

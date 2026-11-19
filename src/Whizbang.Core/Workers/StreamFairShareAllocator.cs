@@ -41,7 +41,7 @@ public readonly record struct StreamDemand(Guid StreamId, int KnownDepth);
 /// </para>
 /// </remarks>
 /// <docs>operations/workers/claim-backpressure</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/StreamFairShareAllocatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/StreamFairShareAllocatorTests.cs</tests>
 public sealed class StreamFairShareAllocator {
 
   /// <summary>Tuning for <see cref="StreamFairShareAllocator"/>.</summary>

@@ -84,7 +84,7 @@ public sealed partial class StreamCompactor(
     // 5. Truncate the folded detail (discard — the data was ephemeral, so there is no archive). The Compacted
     //    event sits above throughVersion, so it survives as the head origin; the A1 prefix truncator's consumption gate
     //    ensures the folded detail was actually consumed before it goes.
-    var truncate = await _truncator.TruncateAsync(streamId, throughVersion.Value, archive: false, cancellationToken)
+    var truncate = await _truncator.TruncateAsync(streamId, throughVersion.Value, Disposition.Delete, cancellationToken)
       .ConfigureAwait(false);
 
     var status = string.Equals(truncate.Status, "truncated", StringComparison.Ordinal) ? "compacted" : truncate.Status;

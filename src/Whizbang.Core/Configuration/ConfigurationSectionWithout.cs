@@ -16,7 +16,7 @@ namespace Whizbang.Core.Configuration;
 /// field fails startup). Hiding the child from it, rather than copying the rest into a new
 /// configuration, keeps every read going to the real section.
 /// </remarks>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryPolicyBindingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterRecoveryPolicyBindingTests.cs</tests>
 internal sealed class ConfigurationSectionWithout(IConfigurationSection section, string hiddenChild) : IConfigurationSection {
   private static readonly IConfigurationSection _empty = new ConfigurationBuilder().Build().GetSection("hidden");
 

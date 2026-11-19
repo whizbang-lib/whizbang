@@ -1,16 +1,15 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
 /// <summary>
-/// EFCore + Npgsql implementation of <see cref="IDeadLetterRecoveryService"/>. Thin
-/// wrapper over the 6 recovery SQL functions in migration 051.
+/// EFCore + Npgsql implementation of <see cref="IDeadLetterRecoveryService"/>: the recovery SQL both Postgres drivers
+/// share (<c>PostgresDeadLetterRecoveryService</c>, over the functions migration 051 and later define), run on the
+/// context's connection. The connection is the context's: a call opens it when it is closed and leaves it open.
 /// </summary>
 /// <param name="dbContext">The context whose connection the recovery functions run on.</param>
 /// <param name="gate">The gate bounding concurrent coordinator calls, when one is registered.</param>
@@ -20,267 +19,85 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// absent, the claim's default.
 /// </param>
 /// <docs>operations/dead-letter-queue/recovery</docs>
-[SuppressMessage("csharpsquid", "S2077:Formatting SQL queries is security-sensitive",
-  Justification = "The only interpolated value is a schema-qualified SQL identifier (\"schema\".fn) " +
-    "resolved from the EF Core model's configured schema (HasDefaultSchema), not user input. SQL " +
-    "identifiers cannot be parameterized; there is no injection vector. All row values are @parameters.")]
 public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
   TDbContext dbContext,
   WorkCoordinatorGate? gate = null,
   int? partitionCount = null
 ) : IDeadLetterRecoveryService where TDbContext : DbContext {
-  private readonly TDbContext _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
-  private readonly WorkCoordinatorGate? _gate = gate;
-  private readonly int _partitionCount = partitionCount ?? new Whizbang.Core.Workers.ClaimWorkerOptions().PartitionCount;
+  private readonly Whizbang.Data.Postgres.PostgresDeadLetterRecoveryService _recovery = _create(
+    dbContext ?? throw new ArgumentNullException(nameof(dbContext)),
+    gate,
+    partitionCount ?? new Whizbang.Core.Workers.ClaimWorkerOptions().PartitionCount);
 
   // The DLQ functions are created in the service schema (__SCHEMA__.<fn>, migration 051). Callers
   // must schema-qualify them the same way EFCoreWorkCoordinator qualifies its SQL — a bare call only
   // resolves when the connection's search_path happens to include the service schema, which is not
   // guaranteed (e.g. the ECommerce per-service schemas: 42883 "function ... does not exist").
-  private string _fn(string name) {
-    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
-    return Whizbang.Data.Postgres.PgIdentifier.Qualify(schema, name);
-  }
+  private static Whizbang.Data.Postgres.PostgresDeadLetterRecoveryService _create(TDbContext context, WorkCoordinatorGate? gate, int partitions) =>
+    new(
+      async ct => {
+        var conn = context.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open) {
+          await conn.OpenAsync(ct).ConfigureAwait(false);
+        }
+        return conn;
+      },
+      ownsConnection: false,
+      name => Whizbang.Data.Postgres.PgIdentifier.Qualify(context.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), name),
+      gate,
+      partitions);
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<DeadLetterEntry>> FetchDueAsync(int maxCount, CancellationToken ct = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT dead_letter_id, source_table, source_id, stream_id, message_type, failure_reason, attempts_when_dlq, dead_lettered_at, recovery_status, recovery_attempts, generation, error_fingerprint FROM {_fn("fetch_dead_letters_due")}(NOW(), @max)";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("max", NpgsqlTypes.NpgsqlDbType.Integer) { Value = maxCount });
-    var results = new List<DeadLetterEntry>();
-    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
-    while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
-      results.Add(new DeadLetterEntry(
-        DeadLetterId: reader.GetGuid(0),
-        SourceTable: reader.GetString(1),
-        SourceId: reader.GetGuid(2),
-        StreamId: await reader.IsDBNullAsync(3, ct) ? null : reader.GetGuid(3),
-        MessageType: reader.GetString(4),
-        FailureReason: (MessageFailureReason)reader.GetInt32(5),
-        AttemptsWhenDlq: reader.GetInt32(6),
-        DeadLetteredAt: await reader.GetFieldValueAsync<DateTimeOffset>(7, ct),
-        RecoveryStatus: (DeadLetterRecoveryStatus)reader.GetInt32(8),
-        RecoveryAttempts: reader.GetInt32(9),
-        Generation: reader.GetString(10),
-        ErrorFingerprint: await reader.IsDBNullAsync(11, ct) ? null : reader.GetString(11)));
-    }
-    return results;
-  }
+  public Task<IReadOnlyList<DeadLetterEntry>> FetchDueAsync(int maxCount, CancellationToken ct = default) =>
+    _recovery.FetchDueAsync(maxCount, ct);
 
   /// <inheritdoc />
-  public async Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT {_fn("purge_undeliverable_held_dead_letters")}()";
-    return (int)(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
-  }
+  public Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) => _recovery.PurgeUndeliverableHeldAsync(ct);
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<HeldCohort>> ListHeldCohortsAsync(CancellationToken ct = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT fingerprint, row_count, message_type_count FROM {_fn("list_held_dead_letter_cohorts")}()";
-    var results = new List<HeldCohort>();
-    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
-    while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
-      results.Add(new HeldCohort(reader.GetString(0), reader.GetInt64(1), reader.GetInt32(2)));
-    }
-    return results;
-  }
+  public Task<IReadOnlyList<HeldCohort>> ListHeldCohortsAsync(CancellationToken ct = default) => _recovery.ListHeldCohortsAsync(ct);
 
   /// <inheritdoc />
-  public async Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, int generationBudget, CancellationToken ct = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT {_fn("begin_canary_probes")}(@fp, @gen, @size, @budget)";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("fp", NpgsqlTypes.NpgsqlDbType.Varchar) { Value = fingerprint });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("gen", NpgsqlTypes.NpgsqlDbType.Text) { Value = generation });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("size", NpgsqlTypes.NpgsqlDbType.Integer) { Value = probeSize });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("budget", NpgsqlTypes.NpgsqlDbType.Integer) { Value = generationBudget });
-    return (int)(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
-  }
+  public Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, int generationBudget, CancellationToken ct = default) =>
+    _recovery.BeginCanaryProbesAsync(fingerprint, generation, probeSize, generationBudget, ct);
 
   /// <inheritdoc />
-  public async Task<CanaryVerdict> EvaluateCampaignAsync(string fingerprint, string generation, CancellationToken ct = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT verdict, probes_succeeded, probes_failed, probes_outstanding FROM {_fn("evaluate_canary_campaign")}(@fp, @gen)";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("fp", NpgsqlTypes.NpgsqlDbType.Varchar) { Value = fingerprint });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("gen", NpgsqlTypes.NpgsqlDbType.Text) { Value = generation });
-    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
-    if (!await reader.ReadAsync(ct).ConfigureAwait(false)) {
-      return new CanaryVerdict(CanaryVerdictKind.Pending, 0, 0, 0);
-    }
-    return new CanaryVerdict(
-      (CanaryVerdictKind)reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt32(3));
-  }
+  public Task<CanaryVerdict> EvaluateCampaignAsync(string fingerprint, string generation, CancellationToken ct = default) =>
+    _recovery.EvaluateCampaignAsync(fingerprint, generation, ct);
 
   /// <inheritdoc />
-  public async Task<int> ReleaseHeldCohortAsync(string fingerprint, TimeSpan stagger, CancellationToken ct = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT {_fn("release_held_dead_letter_cohort")}(@fp, @stagger)";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("fp", NpgsqlTypes.NpgsqlDbType.Varchar) { Value = fingerprint });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(nameof(stagger), NpgsqlTypes.NpgsqlDbType.Integer) { Value = (int)stagger.TotalSeconds });
-    return (int)(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
-  }
+  public Task<int> ReleaseHeldCohortAsync(string fingerprint, TimeSpan stagger, CancellationToken ct = default) =>
+    _recovery.ReleaseHeldCohortAsync(fingerprint, stagger, ct);
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<string>> GetPassedCampaignFingerprintsAsync(string generation, CancellationToken ct = default) {
-    ArgumentException.ThrowIfNullOrEmpty(generation);
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT fingerprint FROM {_fn("get_passed_campaign_fingerprints")}(@gen)";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("gen", NpgsqlTypes.NpgsqlDbType.Text) { Value = generation });
-    var results = new List<string>();
-    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
-    while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
-      results.Add(reader.GetString(0));
-    }
-    return results;
-  }
+  public Task<IReadOnlyList<string>> GetPassedCampaignFingerprintsAsync(string generation, CancellationToken ct = default) =>
+    _recovery.GetPassedCampaignFingerprintsAsync(generation, ct);
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<UnstackedDeadLetter>> FetchUnstackedAsync(int maxCount, CancellationToken ct = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT dead_letter_id, error_text FROM {_fn("fetch_unstacked_dead_letters")}(@max)";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("max", NpgsqlTypes.NpgsqlDbType.Integer) { Value = maxCount });
-    var results = new List<UnstackedDeadLetter>();
-    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
-    while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
-      results.Add(new UnstackedDeadLetter(reader.GetGuid(0), reader.GetString(1)));
-    }
-    return results;
-  }
+  public Task<IReadOnlyList<UnstackedDeadLetter>> FetchUnstackedAsync(int maxCount, CancellationToken ct = default) =>
+    _recovery.FetchUnstackedAsync(maxCount, ct);
 
   /// <inheritdoc />
-  public async Task<int> RecordStacksAsync(
+  public Task<int> RecordStacksAsync(
       IReadOnlyList<(Guid DeadLetterId, Whizbang.Core.DeadLetters.StackIdentity Stack)> entries,
-      CancellationToken ct = default) {
-    ArgumentNullException.ThrowIfNull(entries);
-    if (entries.Count == 0) {
-      return 0;
-    }
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    // Hand-built JSON: JsonNode.Add is not AOT/trim-safe (IL2026/IL3050), and every value
-    // here is a string/bool, so a StringBuilder is both correct and reflection-free.
-    var sb = new System.Text.StringBuilder("[");
-    for (var i = 0; i < entries.Count; i++) {
-      var (id, stack) = entries[i];
-      if (i > 0) { sb.Append(','); }
-      sb.Append("{\"dead_letter_id\":\"").Append(id.ToString())
-        .Append("\",\"stack_id\":\"").Append(System.Text.Json.JsonEncodedText.Encode(stack.SequenceHash)).Append('"')
-        .Append(",\"is_prose\":").Append(stack.IsProse ? "true" : "false")
-        .Append(",\"frames\":[");
-      for (var j = 0; j < stack.Frames.Count; j++) {
-        if (j > 0) { sb.Append(','); }
-        sb.Append('"').Append(System.Text.Json.JsonEncodedText.Encode(stack.Frames[j])).Append('"');
-      }
-      sb.Append("]}");
-    }
-    sb.Append(']');
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT {_fn("record_dead_letter_stacks")}(@entries::jsonb)";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(nameof(entries), NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = sb.ToString() });
-    return (int)(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
-  }
+      CancellationToken ct = default) =>
+    _recovery.RecordStacksAsync(entries, ct);
 
   /// <inheritdoc />
-  public async Task<int> PruneStackHistoryAsync(int retentionDays, CancellationToken ct = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT {_fn("prune_stack_history")}(@days)";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("days", NpgsqlTypes.NpgsqlDbType.Integer) { Value = retentionDays });
-    return (int)(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
-  }
+  public Task<int> PruneStackHistoryAsync(int retentionDays, CancellationToken ct = default) =>
+    _recovery.PruneStackHistoryAsync(retentionDays, ct);
 
   /// <inheritdoc />
-  public async Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default) {
-    ArgumentNullException.ThrowIfNull(stack);
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT {_fn("record_dead_letter_stack")}(@id, @sid, @prose, @frames)";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = deadLetterId });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("sid", NpgsqlTypes.NpgsqlDbType.Varchar) { Value = stack.SequenceHash });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("prose", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = stack.IsProse });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("frames", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) { Value = stack.Frames.ToArray() });
-    await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-  }
+  public Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default) =>
+    _recovery.RecordStackAsync(deadLetterId, stack, ct);
 
   /// <inheritdoc />
-  public async Task<int> BeginTrickleWaveAsync(string fingerprint, string generation, int waveSize, CancellationToken ct = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT {_fn("begin_trickle_wave")}(@fp, @gen, @size)";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("fp", NpgsqlTypes.NpgsqlDbType.Varchar) { Value = fingerprint });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("gen", NpgsqlTypes.NpgsqlDbType.Text) { Value = generation });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("size", NpgsqlTypes.NpgsqlDbType.Integer) { Value = waveSize });
-    return (int)(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
-  }
+  public Task<int> BeginTrickleWaveAsync(string fingerprint, string generation, int waveSize, CancellationToken ct = default) =>
+    _recovery.BeginTrickleWaveAsync(fingerprint, generation, waveSize, ct);
 
   /// <inheritdoc />
-  public async Task<int> CountWaveRequarantinesAsync(string fingerprint, string generation, CancellationToken ct = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT {_fn("count_wave_requarantines")}(@fp, @gen)";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("fp", NpgsqlTypes.NpgsqlDbType.Varchar) { Value = fingerprint });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("gen", NpgsqlTypes.NpgsqlDbType.Text) { Value = generation });
-    return (int)(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
-  }
+  public Task<int> CountWaveRequarantinesAsync(string fingerprint, string generation, CancellationToken ct = default) =>
+    _recovery.CountWaveRequarantinesAsync(fingerprint, generation, ct);
 
   /// <inheritdoc />
   /// <remarks>
@@ -289,104 +106,28 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredOutboxDeadLetterPublishTests.cs:ARecoveredOutboxEvent_IsPublishedAsTheEventItWasStoredAs_AndReadsRecoveredOncePublishedAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredPerspectiveDeadLetterApplyTests.cs:ARecoveredPerspectiveWorkRow_IsApplied_AndReadsRecoveredOnceAppliedAsync</tests>
-  public async Task<bool> RecoverAsync(Guid deadLetterId, CancellationToken ct = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT {_fn("wh_recover_dead_letter")}(@id, @partitions)";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = deadLetterId });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("partitions", NpgsqlTypes.NpgsqlDbType.Integer) { Value = _partitionCount });
-    var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
-    return result is bool b && b;
-  }
+  public Task<bool> RecoverAsync(Guid deadLetterId, CancellationToken ct = default) => _recovery.RecoverAsync(deadLetterId, ct);
 
   /// <inheritdoc />
-  public async Task<DeadLetterRedelivery?> ReadRedeliveryAsync(Guid deadLetterId, CancellationToken ct = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT source_table, source_id, message_type, (envelope -> 'event_data')::text FROM {_fn("wh_dead_letters")} "
-      + "WHERE dead_letter_id = @id AND source_table IN ('wh_inbox', 'broker') AND envelope -> 'event_data' IS NOT NULL";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = deadLetterId });
-    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
-    if (!await reader.ReadAsync(ct).ConfigureAwait(false)) {
-      return null;
-    }
-    return new DeadLetterRedelivery(
-      DeadLetterId: deadLetterId,
-      SourceTable: reader.GetString(0),
-      SourceId: reader.GetGuid(1),
-      MessageType: reader.GetString(2),
-      EnvelopeJson: reader.GetString(3));
-  }
+  public Task<DeadLetterRedelivery?> ReadRedeliveryAsync(Guid deadLetterId, CancellationToken ct = default) =>
+    _recovery.ReadRedeliveryAsync(deadLetterId, ct);
 
   /// <inheritdoc />
-  public Task MarkHoldingAsync(Guid deadLetterId, CancellationToken ct = default)
-    => _execAsync($"SELECT {_fn("mark_dead_letter_holding")}(@id)", deadLetterId, ct);
+  public Task MarkHoldingAsync(Guid deadLetterId, CancellationToken ct = default) => _recovery.MarkHoldingAsync(deadLetterId, ct);
 
   /// <inheritdoc />
-  public Task MarkPermanentlyFailedAsync(Guid deadLetterId, CancellationToken ct = default)
-    => _execAsync($"SELECT {_fn("mark_dead_letter_permanently_failed")}(@id)", deadLetterId, ct);
+  public Task MarkPermanentlyFailedAsync(Guid deadLetterId, CancellationToken ct = default) =>
+    _recovery.MarkPermanentlyFailedAsync(deadLetterId, ct);
 
   /// <inheritdoc />
-  public async Task MarkDiscardedAsync(Guid deadLetterId, string note, CancellationToken ct = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT {_fn("mark_dead_letter_discarded")}(@id, @note)";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = deadLetterId });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(nameof(note), NpgsqlTypes.NpgsqlDbType.Text) { Value = note ?? (object)DBNull.Value });
-    await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-  }
+  public Task MarkDiscardedAsync(Guid deadLetterId, string note, CancellationToken ct = default) =>
+    _recovery.MarkDiscardedAsync(deadLetterId, note, ct);
 
   /// <inheritdoc />
-  public async Task ScheduleNextAttemptAsync(Guid deadLetterId, DateTimeOffset nextAt, CancellationToken ct = default) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT {_fn("schedule_next_dead_letter_attempt")}(@id, @at)";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = deadLetterId });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("at", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = nextAt });
-    await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-  }
+  public Task ScheduleNextAttemptAsync(Guid deadLetterId, DateTimeOffset nextAt, CancellationToken ct = default) =>
+    _recovery.ScheduleNextAttemptAsync(deadLetterId, nextAt, ct);
 
   /// <inheritdoc />
-  public async Task<int> ResetForGenerationAsync(string currentGeneration, int staggerMinutes, CancellationToken ct = default) {
-    ArgumentException.ThrowIfNullOrEmpty(currentGeneration);
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT {_fn("reset_dead_letters_for_generation")}(@gen, @stagger)";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("gen", NpgsqlTypes.NpgsqlDbType.Text) { Value = currentGeneration });
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("stagger", NpgsqlTypes.NpgsqlDbType.Integer) { Value = staggerMinutes });
-    var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
-    return result is int n ? n : 0;
-  }
-
-  private async Task _execAsync(string sql, Guid id, CancellationToken ct) {
-    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
-    var conn = _dbContext.Database.GetDbConnection();
-    if (conn.State != System.Data.ConnectionState.Open) {
-      await conn.OpenAsync(ct).ConfigureAwait(false);
-    }
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = sql;
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(nameof(id), NpgsqlTypes.NpgsqlDbType.Uuid) { Value = id });
-    await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-  }
+  public Task<int> ResetForGenerationAsync(string currentGeneration, int staggerMinutes, CancellationToken ct = default) =>
+    _recovery.ResetForGenerationAsync(currentGeneration, staggerMinutes, ct);
 }

@@ -564,6 +564,44 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
     await Assert.That((string)record.application_version).IsEqualTo("MyApp/1.2.3");
   }
 
+  [Test]
+  public async Task InitializeSchemaAsync_RecordsTheLedgerApplicationVersion_OverTheConstructorsAsync() {
+    // #2027: the ledger records the application version as the instance rows do.
+    var entries = new[] {
+      new KeyValuePair<string, string>("OrderPerspective",
+        "CREATE TABLE IF NOT EXISTS wh_per_order (id UUID PRIMARY KEY, model_data JSONB NOT NULL);")
+    };
+    var initializer = new PostgresSchemaInitializer(_testConnectionString, entries, applicationVersion: "MyApp/1.2.3") {
+      LedgerApplicationVersion = "deploy:41",
+    };
+
+    await initializer.InitializeSchemaAsync();
+
+    await using var connection = new NpgsqlConnection(_testConnectionString);
+    await connection.OpenAsync();
+    await Assert.That(await connection.ExecuteScalarAsync<string>("SELECT application_version FROM wh_schema_versions LIMIT 1"))
+      .IsEqualTo("deploy:41");
+  }
+
+  [Test]
+  public async Task InitializeSchemaAsync_WithNoApplicationVersion_RecordsUnknown_NeverNullAsync() {
+    // A NULL in the ledger's unique key is distinct from every other NULL, so each pass would add a row.
+    var entries = new[] {
+      new KeyValuePair<string, string>("OrderPerspective",
+        "CREATE TABLE IF NOT EXISTS wh_per_order (id UUID PRIMARY KEY, model_data JSONB NOT NULL);")
+    };
+
+    await new PostgresSchemaInitializer(_testConnectionString, entries).InitializeSchemaAsync();
+    await new PostgresSchemaInitializer(_testConnectionString, entries).InitializeSchemaAsync();
+
+    await using var connection = new NpgsqlConnection(_testConnectionString);
+    await connection.OpenAsync();
+    await Assert.That(await connection.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_schema_versions WHERE application_version = 'unknown'"))
+      .IsEqualTo(1L);
+    await Assert.That(await connection.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_schema_versions WHERE application_version IS NULL"))
+      .IsEqualTo(0L);
+  }
+
   // --- Preview / Dry-Run Tests ---
 
   /// <summary>

@@ -18,7 +18,7 @@ namespace Whizbang.Core.Capabilities;
 /// <see cref="ICapabilityProvider"/>, so a host gets the probe, the verdict and the gauge with no wiring.
 /// </summary>
 /// <docs>operations/infrastructure/capabilities#adding-a-capability-provider</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityServiceCollectionExtensionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityServiceCollectionExtensionsTests.cs</tests>
 public static class CapabilityServiceCollectionExtensions {
   /// <summary>
   /// Registers, once per container, the <see cref="ICapabilityRegistry"/> over every registered
@@ -40,6 +40,8 @@ public static class CapabilityServiceCollectionExtensions {
 
     services.AddMetrics();
     services.TryAddSingleton<WhizbangMetrics>();
+    // #2126: the enforcer exits through the one exit path (idempotent; it halts through run control where the host has it).
+    Whizbang.Core.RunControl.WhizbangRunControlServiceCollectionExtensions.TryAddWhizbangInstanceExit(services);
     services.TryAddSingleton<ICapabilityRegistry>(sp => new CapabilityRegistry(
       sp.GetServices<ICapabilityProvider>(),
       sp.GetRequiredService<ILogger<CapabilityRegistry>>(),
@@ -56,9 +58,8 @@ public static class CapabilityServiceCollectionExtensions {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, CapabilityVerdictEnforcer>(sp =>
       new CapabilityVerdictEnforcer(
         sp.GetRequiredService<ICapabilityRegistry>(),
-        CapabilityVerdictEnforcer.StopApplicationOf(sp),
-        sp.GetRequiredService<ILogger<CapabilityVerdictEnforcer>>(),
-        CapabilityVerdictEnforcer.SetProcessExitCode)));
+        // #2126: the one exit path, registered with the run-control path it halts through.
+        sp.GetRequiredService<Whizbang.Core.RunControl.IWhizbangInstanceExit>())));
     // A health entry is registered by name and a second one by the same name fails at run time, so it is added
     // only on the first call: the one that registered the registry.
     if (firstCall) {
@@ -78,7 +79,7 @@ public static class CapabilityServiceCollectionExtensions {
 /// assignments: no reflection reaches the AOT path. A host without configuration keeps the code values.
 /// </summary>
 /// <docs>operations/infrastructure/capabilities#configuration</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityServiceCollectionExtensionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilityServiceCollectionExtensionsTests.cs</tests>
 internal sealed class ConfigureCapabilityOptions(IConfiguration? configuration) : IConfigureOptions<CapabilityOptions> {
   public void Configure(CapabilityOptions options) {
     if (configuration is null) {

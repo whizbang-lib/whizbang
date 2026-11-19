@@ -83,12 +83,9 @@ public class PerspectiveCompletionFlushWorkerTests {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     return new PerspectiveCompletionFlushWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: gate,
       options: Options.Create(new PerspectiveCompletionFlushWorkerOptions {
         Enabled = enabled,
         Flusher = flusher ?? new BatchFlusherOptions {
@@ -352,21 +349,18 @@ public class PerspectiveCompletionFlushWorkerTests {
   [Test]
   public async Task Constructor_RejectsItsRequiredCollaboratorsAsync() {
     var services = new ServiceCollection().BuildServiceProvider();
-    var gate = new SchemaReadyGate();
     var options = Options.Create(new PerspectiveCompletionFlushWorkerOptions());
     var coordOptions = Options.Create(new WorkCoordinatorOptions());
     var logger = NullLogger<PerspectiveCompletionFlushWorker>.Instance;
     var scopeFactory = services.GetRequiredService<IServiceScopeFactory>();
 
-    await Assert.That(() => new PerspectiveCompletionFlushWorker(scopeFactory: null!, schemaReadyGate: gate, options: options, coordinatorOptions: coordOptions, logger: logger, pinnedPool: NoOpPinnedConnectionPool.Instance))
+    await Assert.That(() => new PerspectiveCompletionFlushWorker(scopeFactory: null!, options: options, coordinatorOptions: coordOptions, logger: logger, pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
-    await Assert.That(() => new PerspectiveCompletionFlushWorker(scopeFactory: scopeFactory, schemaReadyGate: null!, options: options, coordinatorOptions: coordOptions, logger: logger, pinnedPool: NoOpPinnedConnectionPool.Instance))
+    await Assert.That(() => new PerspectiveCompletionFlushWorker(scopeFactory: scopeFactory, options: null!, coordinatorOptions: coordOptions, logger: logger, pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
-    await Assert.That(() => new PerspectiveCompletionFlushWorker(scopeFactory: scopeFactory, schemaReadyGate: gate, options: null!, coordinatorOptions: coordOptions, logger: logger, pinnedPool: NoOpPinnedConnectionPool.Instance))
+    await Assert.That(() => new PerspectiveCompletionFlushWorker(scopeFactory: scopeFactory, options: options, coordinatorOptions: null!, logger: logger, pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
-    await Assert.That(() => new PerspectiveCompletionFlushWorker(scopeFactory: scopeFactory, schemaReadyGate: gate, options: options, coordinatorOptions: null!, logger: logger, pinnedPool: NoOpPinnedConnectionPool.Instance))
-      .Throws<ArgumentNullException>();
-    await Assert.That(() => new PerspectiveCompletionFlushWorker(scopeFactory: scopeFactory, schemaReadyGate: gate, options: options, coordinatorOptions: coordOptions, logger: null!, pinnedPool: NoOpPinnedConnectionPool.Instance))
+    await Assert.That(() => new PerspectiveCompletionFlushWorker(scopeFactory: scopeFactory, options: options, coordinatorOptions: coordOptions, logger: null!, pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
   }
 

@@ -117,15 +117,15 @@ public class PacedRepairDrainSqlTests : EFCoreTestBase {
     var exhausted = await coordinator.IntegrityClaimRepairDrainAsync(
       [learned], now.AddMinutes(10), TimeSpan.FromSeconds(300), maxAttempts: 1, limit: 10);
     await Assert.That(exhausted.Count).IsEqualTo(1)
-      .Because("only the never-attempted third row is eligible — the two capped rows hold the "
-               + "terminal wait (300s x 2^6), far past the ten-minute mark");
+      .Because("only the never-attempted third row is eligible; the two capped rows are never claimed again");
   }
 
   [Test]
   public async Task Claim_PastCap_RetriesAtTerminalCadenceAsync() {
-    // The drain twin of the burst-path terminal cadence: a capped row is not shadow-banned
-    // forever — it re-enters the claimable pool once per terminal interval (base x 2^6), so a
-    // deficit whose budget burned against a down origin still converges after the origin returns.
+    // The name is pinned by the <tests> link in migration 251, which shipped the terminal cadence this test once
+    // asserted. #2029 (migration 320) replaced it with a real cap: re-asking every terminal interval, forever, re-shipped
+    // the same events about four times a day per bucket. A capped row is now never claimed again until a change repair
+    // can act on resets it (a moved local digest or a deficit that grew, #2030).
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
     var origin = Guid.NewGuid();
@@ -138,20 +138,15 @@ public class PacedRepairDrainSqlTests : EFCoreTestBase {
       [origin], now.AddSeconds(1), TimeSpan.FromSeconds(300), maxAttempts: 1, limit: 10);
     await Assert.That(first.Count).IsEqualTo(1).Because("precondition: the row's budget is now spent");
 
-    var inside = await coordinator.IntegrityClaimRepairDrainAsync(
-      [origin], now.AddSeconds(1) + terminal - TimeSpan.FromMinutes(1), TimeSpan.FromSeconds(300), maxAttempts: 1, limit: 10);
-    await Assert.That(inside.Count).IsEqualTo(0)
-      .Because("inside the terminal wait a capped row stays out of the pool");
-
-    var atCadence = await coordinator.IntegrityClaimRepairDrainAsync(
+    var atTheOldCadence = await coordinator.IntegrityClaimRepairDrainAsync(
       [origin], now.AddSeconds(1) + terminal, TimeSpan.FromSeconds(300), maxAttempts: 1, limit: 10);
-    await Assert.That(atCadence.Count).IsEqualTo(1)
-      .Because("each terminal interval earns the capped row exactly one more claim");
+    var muchLater = await coordinator.IntegrityClaimRepairDrainAsync(
+      [origin], now.AddSeconds(1) + (terminal * 100), TimeSpan.FromSeconds(300), maxAttempts: 1, limit: 10);
 
-    var rightAfter = await coordinator.IntegrityClaimRepairDrainAsync(
-      [origin], now.AddSeconds(2) + terminal, TimeSpan.FromSeconds(300), maxAttempts: 1, limit: 10);
-    await Assert.That(rightAfter.Count).IsEqualTo(0)
-      .Because("the terminal grant is a cadence, not a reopened floodgate");
+    await Assert.That(atTheOldCadence.Count).IsEqualTo(0)
+      .Because("a capped row no longer earns a claim per terminal interval");
+    await Assert.That(muchLater.Count).IsEqualTo(0)
+      .Because("the cap is the end of asking, not a slower cadence");
   }
 
   [Test]
@@ -304,7 +299,7 @@ public class PacedRepairDrainSqlTests : EFCoreTestBase {
     var plan = await _planOfOneClaimAsync(origin, now.AddSeconds(1));
 
     await Assert.That(plan.Claimed).IsEqualTo(DEFICIT_ROWS);
-    await Assert.That(plan.Nodes.Any(n => n.Index == "idx_integrity_ledger_repair_drain")).IsTrue()
+    await Assert.That(plan.Nodes.Any(n => n.Index == "idx_integrity_ledger_repair_drain_open")).IsTrue()
       .Because("the eligible rows are found through the deficits-only index, in the order the claim takes them");
     await Assert.That(plan.Nodes.Where(n => n.Type == "Seq Scan" && n.Relation == "wh_integrity_ledger")).IsEmpty()
       .Because($"a scan of the table reads every one of the {SURPLUS_ROWS} rows the drain may never claim");

@@ -1,7 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
@@ -32,5 +31,6 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Whizbang.Transports.HotChocolate.Tests" />
     <InternalsVisibleTo Include="Whizbang.Transports.HotChocolate.Component.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Transports.HotChocolate.Ids.Tests" />
   </ItemGroup>
 </Project>

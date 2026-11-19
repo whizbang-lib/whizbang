@@ -211,8 +211,6 @@ public class DrainWorkerIdleSignalTests {
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     return new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -220,7 +218,6 @@ public class DrainWorkerIdleSignalTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -247,15 +244,12 @@ public class DrainWorkerIdleSignalTests {
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     return new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       new FakeInstance(),
       drainChannel,
       inboxWriter,
-      gate,
       Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       NullLogger<InboxDrainWorker>.Instance);

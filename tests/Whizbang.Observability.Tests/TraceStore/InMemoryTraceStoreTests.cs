@@ -437,4 +437,38 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     await Assert.That(results.Select(e => e.MessageId)).Contains(child.MessageId)
       .Because("the descent is what pulls in everything caused by it");
   }
+
+  // ========================================
+  // GetRouteIdAsync (#1725)
+  // ========================================
+
+  [Test]
+  public async Task GetRouteIdAsync_HeldMessage_IsItsRouteId_AndAnUnknownOneIsNullAsync() {
+    var store = new InMemoryTraceStore();
+    var sent = new DateTimeOffset(2026, 3, 1, 9, 30, 0, TimeSpan.Zero);
+    var envelope = _createEnvelope(timestamp: sent);
+    await store.StoreAsync(envelope);
+
+    var routeId = await store.GetRouteIdAsync(envelope.MessageId);
+
+    await Assert.That(routeId).IsEqualTo(RouteNormalizer.RouteId(Whizbang.Core.TypeNameFormatter.Format(typeof(TestCommand)), envelope.Hops))
+      .Because("the in-memory store names the route the write paths would stamp for the same type and hops");
+    await Assert.That(await store.GetRouteIdAsync(MessageId.New())).IsNull();
+  }
+
+  [Test]
+  public async Task GetRouteIdAsync_OnAStoreWithoutRoutes_IsNullAsync() {
+    ITraceStore store = new StoreWithoutRoutes();
+
+    await Assert.That(await store.GetRouteIdAsync(MessageId.New())).IsNull()
+      .Because("the default method answers null, so a store written before routes needs no change");
+  }
+
+  private sealed class StoreWithoutRoutes : ITraceStore {
+    public Task StoreAsync(IMessageEnvelope envelope, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<IMessageEnvelope?> GetByMessageIdAsync(MessageId messageId, CancellationToken ct = default) => Task.FromResult<IMessageEnvelope?>(null);
+    public Task<List<IMessageEnvelope>> GetByCorrelationAsync(CorrelationId correlationId, CancellationToken ct = default) => Task.FromResult(new List<IMessageEnvelope>());
+    public Task<List<IMessageEnvelope>> GetCausalChainAsync(MessageId messageId, CancellationToken ct = default) => Task.FromResult(new List<IMessageEnvelope>());
+    public Task<List<IMessageEnvelope>> GetByTimeRangeAsync(DateTimeOffset from, DateTimeOffset toTime, CancellationToken ct = default) => Task.FromResult(new List<IMessageEnvelope>());
+  }
 }

@@ -120,7 +120,7 @@ Spillover (if priority 0 doesn't consume its full budget) flows to audit automat
 - `src/Whizbang.Core/Perspectives/PerspectivePriorityAttribute.cs` — new attribute
 - `src/Whizbang.Core/Perspectives/PerspectivePriorityOptions.cs` — new options class
 - Migration: new file (e.g. `043_AddPerspectivePriorityTier.sql`) OR edit 009/029 in place per pre-v1 mutable-migrations convention
-- Tests: `tests/Whizbang.Data.Postgres.Tests/` for SQL behavior; `tests/Whizbang.Core.Tests/Perspectives/` for attribute → registration propagation
+- Tests: `tests/Whizbang.Data.Postgres.Tests/` for SQL behavior; `tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/` for attribute → registration propagation
 - Docs: new page `docs/fundamentals/perspectives/priority-tiers.md` in `whizbang-lib.github.io`
 
 ## Starting-point questions for the next session

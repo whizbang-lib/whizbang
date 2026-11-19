@@ -30,7 +30,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// shadow-property routing but doesn't exercise the raw-SQL atomic UPSERT path.
 /// </remarks>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
 public class AtomicUpsertPhysicalFieldsIntegrationTests : IAsyncDisposable {
   static AtomicUpsertPhysicalFieldsIntegrationTests() {
@@ -69,10 +68,7 @@ public class AtomicUpsertPhysicalFieldsIntegrationTests : IAsyncDisposable {
   [Before(Test)]
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
-    _testDatabaseName = $"test_{Guid.NewGuid():N}";
-    await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-    await admin.OpenAsync();
-    await admin.ExecuteAsync($"CREATE DATABASE {_testDatabaseName}");
+    _testDatabaseName = (await PerTestDatabaseFactory.CreateAsync("atomic_upsert")).Name;
     var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _testDatabaseName,
       Timezone = "UTC",
@@ -87,9 +83,7 @@ public class AtomicUpsertPhysicalFieldsIntegrationTests : IAsyncDisposable {
   [After(Test)]
   public async Task TeardownAsync() {
     if (!string.IsNullOrEmpty(_testDatabaseName)) {
-      await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-      await admin.OpenAsync();
-      await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
+      await PerTestDatabaseFactory.DropAsync(_testDatabaseName);
     }
   }
 

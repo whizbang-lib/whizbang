@@ -54,7 +54,9 @@ public static class CollectiveEventApplier<TModel> where TModel : class {
   /// <param name="evt">The collective event being applied.</param>
   /// <param name="resolver">DI-resolved <see cref="ICollectiveScopeResolver"/> whose <see cref="ICollectiveScopeResolver.ScopeKind"/> matches <paramref name="evt"/>.</param>
   /// <param name="dbContext">EF Core context that holds the perspective table.</param>
-  /// <param name="collectiveEventId">Unique id of this collective event; emitted in the apply-completion telemetry (which event mutated how many rows).</param>
+  /// <param name="collectiveEventId">Unique id of this collective event: the apply's progress record is kept under it and the entry's
+  /// <see cref="CollectiveApplyEntry.EntryKey"/>, so a retry resumes after the last committed batch (#1969), and it is emitted in
+  /// the apply-completion telemetry (which event mutated how many rows).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Number of rows the SQL UPDATE mutated.</returns>
 #pragma warning disable S107 // Apply-chain seam threads the full dispatch context (entry, session, hooks, per-batch callback) — a parameter object would ripple through every driver and fake for no call-site gain
@@ -87,7 +89,7 @@ public static class CollectiveEventApplier<TModel> where TModel : class {
     }
     if (entry.ModelType != typeof(TModel)) {
       throw new ArgumentException(
-        $"Entry's ModelType {TypeNameFormatter.DisplayName(entry.ModelType)} does not match TModel {TypeNameFormatter.DisplayName(typeof(TModel))}. The dispatcher should fan out to CollectiveEventApplier<{entry.ModelType.Name}> instead.",
+        $"Entry's ModelType {TypeNameFormatter.DisplayName(entry.ModelType)} does not match TModel {TypeNameFormatter.DisplayName(typeof(TModel))}. The dispatcher should fan out to CollectiveEventApplier<{TypeNameFormatter.ForLog(entry.ModelType)}> instead.",
         nameof(entry));
     }
 
@@ -110,7 +112,7 @@ public static class CollectiveEventApplier<TModel> where TModel : class {
     var query = new EFCoreCollectiveQuery(dbContext);
     if (entry.Invoker(handlerInstance, evt, query) is not ICollectiveSpec<TModel> spec) {
       throw new InvalidOperationException(
-        $"Handler {TypeNameFormatter.DisplayName(entry.HandlerType)}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<>)}<{typeof(TModel).Name}> instance. The generator's Invoker shape is broken or the handler is misconfigured.");
+        $"Handler {TypeNameFormatter.DisplayName(entry.HandlerType)}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<>)}<{TypeNameFormatter.ForLog(typeof(TModel))}> instance. The generator's Invoker shape is broken or the handler is misconfigured.");
     }
 
     // Resolve the apply-hook plan (store columns incl. the default updated_at/version stamping, model-field
@@ -143,6 +145,7 @@ public static class CollectiveEventApplier<TModel> where TModel : class {
       effectiveOptions,
       scopeKey,
       collectiveEventId,
+      entry.EntryKey,
       onBatchApplied, cancellationToken).ConfigureAwait(false);
   }
 }

@@ -394,6 +394,37 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
   }
 
   /// <summary>
+  /// #2347: both pools the generator builds honor Whizbang:Postgres:&lt;name&gt;:TransactionPooler, so a connection
+  /// behind a transaction-mode pooler stops sending DISCARD ALL on every return.
+  /// </summary>
+  /// <docs>operations/configuration/configuration-reference#transaction-mode-poolers</docs>
+  [Test]
+  public async Task Generator_EachPool_HonorsItsTransactionPoolerKeyAsync() {
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_SNIPPET}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    var turnkey = result.GeneratedSources.First(s => s.HintName.Contains("TestDbContextExtensions")).SourceText.ToString();
+    var registration = result.GeneratedSources.First(s => s.HintName.Contains("EFCoreModelRegistration")).SourceText.ToString();
+    await Assert.That(turnkey).Contains("PostgresTransactionPooler.Apply(config, resolvedConnectionStringKey, connStringBuilder)");
+    await Assert.That(registration).Contains("PostgresTransactionPooler.Apply(config, resolvedConnectionStringKey, connStringBuilder)");
+  }
+
+  /// <summary>
   /// The derived name earlier releases used strips "DbContext" only when the class name ends with it;
   /// any other class name is lowercased with "-db" appended.
   /// </summary>

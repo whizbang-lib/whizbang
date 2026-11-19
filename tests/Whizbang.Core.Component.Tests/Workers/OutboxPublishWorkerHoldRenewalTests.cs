@@ -289,8 +289,6 @@ public class OutboxPublishWorkerHoldRenewalTests {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var channel = new WorkChannel();
     var completion = new CompletionChannel();
     var failure = new FailureChannel();
@@ -300,7 +298,6 @@ public class OutboxPublishWorkerHoldRenewalTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions {
         Enabled = true,
         MaxOutboxAttempts = null,

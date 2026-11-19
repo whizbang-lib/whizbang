@@ -10,7 +10,7 @@ namespace Whizbang.Generators.Tests;
 
 /// <summary>
 /// The runner of a perspective marked <c>[OverwriteOnly]</c> knows it is overwrite-only and which of its events can decide
-/// the row alone (#1869): the ones whose Apply returns the model. The marker is the developer's: a perspective whose
+/// the row alone (#1869): the ones whose interface declares that Apply returns the model (#1936). The marker is the developer's: a perspective whose
 /// Applies happen to ignore their model is not treated as overwrite-only without it (owner decision, 2026-10-29).
 /// </summary>
 /// <docs>fundamentals/perspectives/rewind#overwrite-only</docs>
@@ -79,16 +79,17 @@ namespace TestNamespace {
   public async Task AMarkedPerspectiveWhoseAppliesAllReturnActions_DecidesNothingAloneAsync() {
     var source = TEMPLATE
       .Replace("__MARKER__", "[OverwriteOnly]")
+      .Replace("IPerspectiveFor<GrantsModel, GrantedEvent, NotedEvent>,", "IPerspectiveWithActionsFor<GrantsModel, GrantedEvent, NotedEvent>,")
       .Replace("public GrantsModel Apply(GrantsModel currentData, GrantedEvent @event) => new() { Id = @event.Id };",
-        "public (GrantsModel?, ModelAction) Apply(GrantsModel currentData, GrantedEvent @event) => (new() { Id = @event.Id }, ModelAction.None);")
+        "public ApplyResult<GrantsModel> Apply(GrantsModel currentData, GrantedEvent @event) => (new() { Id = @event.Id }, ModelAction.None);")
       .Replace("public GrantsModel? Apply(GrantsModel currentData, NotedEvent @event) => null;",
-        "public ModelAction Apply(GrantsModel currentData, NotedEvent @event) => ModelAction.None;");
+        "public ApplyResult<GrantsModel> Apply(GrantsModel currentData, NotedEvent @event) => ModelAction.None;");
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runner = GeneratorTestHelper.GetGeneratedSource(result, "GrantsPerspectiveRunner.g.cs")!;
 
     await Assert.That(runner).Contains("private static readonly bool _isOverwriteOnly = true;");
     await Assert.That(runner).Contains("DecidesTheRowAlone(global::Whizbang.Core.IEvent @event) => false;")
-      .Because("with no Apply that returns the model, every rewind folds the stream in full");
+      .Because("with every event under IPerspectiveWithActionsFor, any Apply can purge, so every rewind folds the stream in full");
   }
 
   private static string _runnerFor(string marker) {

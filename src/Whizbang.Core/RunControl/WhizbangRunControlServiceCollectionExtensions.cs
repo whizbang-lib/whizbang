@@ -4,6 +4,7 @@
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.RunControl;
 
@@ -17,6 +18,7 @@ namespace Whizbang.Core.RunControl;
 /// <docs>resilience/managed-resource-run-control</docs>
 /// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunControlDiTests.cs:AddWhizbangRunControl_RegistersCoordinatorAndStateAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunControlDiTests.cs:AddWhizbangRunControl_BroadcastsToRegisteredAdaptersAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangInstanceExitTests.cs:TheRunControlRegistration_ProvidesOneExitPath_AndTheProcessExitCodeAsync</tests>
 public static class WhizbangRunControlServiceCollectionExtensions {
   /// <summary>Registers the lifecycle coordinator + options + state (idempotent). <paramref name="configure"/> tunes the ack timeout / fault window.</summary>
   public static IServiceCollection AddWhizbangRunControl(
@@ -34,9 +36,49 @@ public static class WhizbangRunControlServiceCollectionExtensions {
       sp.GetRequiredService<WhizbangLifecycleCoordinator>(),
       sp.GetRequiredService<WhizbangLifecycleOptions>(),
       sp.GetService<TimeProvider>()));
-    services.TryAddSingleton<IWhizbangKillswitch>(static sp => new WhizbangKillswitch(
+    // #2045: the instance's one run permit, and the one path that closes and reopens it. Every claiming worker, the
+    // transport consumer and the role elector take this permit; held work and roles are released through the
+    // registered IReleasesHeldWork and IReleasesHeldRoles, resolved when the path is first used.
+    services.TryAddSingleton<WhizbangRunPermit>();
+    services.TryAddSingleton<IWhizbangRunController>(static sp => new WhizbangRunController(
+      sp.GetRequiredService<WhizbangRunPermit>(),
       sp.GetRequiredService<IWhizbangLifecycleState>(),
-      sp.GetRequiredService<WhizbangLifecycleCoordinator>()));
+      sp.GetServices<IReleasesHeldWork>(),
+      sp.GetServices<IReleasesHeldRoles>(),
+      sp.GetRequiredService<WhizbangLifecycleOptions>(),
+      sp.GetService<TimeProvider>(),
+      sp.GetLoggerOrNullLogger<WhizbangRunController>()));
+    TryAddWhizbangInstanceExit(services);
+    services.TryAddSingleton<IWhizbangKillswitch>(static sp => new WhizbangKillswitch(
+      sp.GetRequiredService<IWhizbangRunController>(),
+      sp.GetRequiredService<IWhizbangLifecycleState>(),
+      sp.GetRequiredService<WhizbangLifecycleCoordinator>(),
+      sp.GetRequiredService<IWhizbangInstanceExit>()));
+    return services;
+  }
+
+  /// <summary>
+  /// Registers the one exit path (#2126) and the one place the exit code is set (idempotent). The run-control
+  /// registration and every other registration that can end the process (the capability enforcer) call it, so no host
+  /// that can exit lacks the path. The exit halts through the run-control path when the host registers one.
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <returns>The same collection.</returns>
+  /// <docs>operations/startup/instance-exits</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangInstanceExitTests.cs:TheRunControlRegistration_ProvidesOneExitPath_AndTheProcessExitCodeAsync</tests>
+  public static IServiceCollection TryAddWhizbangInstanceExit(this IServiceCollection services) {
+    ArgumentNullException.ThrowIfNull(services);
+    // A test host registers its own IProcessExitCode first so the test process keeps its own exit code.
+    services.TryAddSingleton<IProcessExitCode>(ProcessExitCode.Instance);
+    // #2126: a crash on any thread takes the exit path too; a test registers its own events instead of crashing.
+    services.TryAddSingleton<IProcessCrashEvents>(ProcessCrashEvents.Instance);
+    services.TryAddSingleton<IWhizbangInstanceExit>(static sp => new WhizbangInstanceExit(
+      sp,
+      sp.GetService<IWhizbangRunController>(),
+      sp.GetRequiredService<IProcessExitCode>(),
+      sp.GetService<TimeProvider>(),
+      sp.GetLoggerOrNullLogger<WhizbangInstanceExit>(),
+      sp.GetRequiredService<IProcessCrashEvents>()));
     return services;
   }
 

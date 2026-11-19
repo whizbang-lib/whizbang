@@ -66,7 +66,7 @@ public class RestockInventoryWorkflowTests {
     };
     // 3 perspective events: ProductCreated x2 (ProductCatalog + InventoryLevels) + InventoryRestocked x1.
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -77,7 +77,7 @@ public class RestockInventoryWorkflowTests {
       QuantityToAdd = 50
     };
     perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 1, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(restockCommand);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -116,7 +116,7 @@ public class RestockInventoryWorkflowTests {
     };
     // 3 perspective events for non-zero stock.
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -131,7 +131,7 @@ public class RestockInventoryWorkflowTests {
 
     foreach (var restockCommand in restockCommands) {
       perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-        expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+        expectedCompletions: 1, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
       await fixture.Dispatcher.SendAsync(restockCommand);
       await perspectiveTask;
     }
@@ -169,7 +169,7 @@ public class RestockInventoryWorkflowTests {
       InitialStock = 0
     };
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 2, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -180,7 +180,7 @@ public class RestockInventoryWorkflowTests {
       QuantityToAdd = 100
     };
     perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 1, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(restockCommand);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -217,7 +217,7 @@ public class RestockInventoryWorkflowTests {
     };
     // 3 perspective events for non-zero stock.
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(createCommand);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -228,7 +228,7 @@ public class RestockInventoryWorkflowTests {
       QuantityToAdd = 0
     };
     perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 1, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 1, streamId: createCommand.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(restockCommand);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();

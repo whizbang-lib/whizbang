@@ -21,7 +21,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreInfrastructureRegistration.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/ReadModelsReadyGate.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class LensReadModelBarrierTests : EFCoreTestBase {
 

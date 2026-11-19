@@ -19,7 +19,7 @@ namespace Whizbang.Core.Messaging;
 /// <see cref="Enum.TryParse{TEnum}(string, bool, out TEnum)"/>.
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsWireFormTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventFlagsWireFormTests.cs</tests>
 public sealed class EventFlagsNumberJsonConverter : JsonConverter<EventFlags> {
   /// <inheritdoc />
   public override EventFlags Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {

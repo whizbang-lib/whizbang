@@ -28,7 +28,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Hosting.AspNet/ApplyStackEndpoints.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCorePostgresApplyStackQuery.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class ApplyStackEndToEndTests : EFCoreTestBase {
 

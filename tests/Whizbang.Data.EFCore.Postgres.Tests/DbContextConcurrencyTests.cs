@@ -4,6 +4,7 @@
 #pragma warning disable CS0618
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -26,7 +27,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>lenses/lens-query-factory</docs>
 [Category("Integration")]
 [Category("Concurrency")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class DbContextConcurrencyTests : EFCoreTestBase {
   private const int ParallelQueryCount = 10;
@@ -40,30 +40,37 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
   /// </summary>
   [Test]
   public async Task ConcurrentQueries_OnSameDbContext_ThrowsConcurrencyErrorAsync() {
-    // Arrange - Create a single DbContext and query it concurrently
+    // Arrange - one DbContext, and a second connection holding an advisory lock so the
+    // context's first operation is provably still running when the second one starts.
+    // (A race between Task.Run queries was not deterministic, and two operations sharing
+    // one connection could hang the test host instead of throwing.)
     await using var context = CreateDbContext();
-
-    // Seed some data
     await SeedOrderAsync(context, TestOrderId.New(), 100.00m, "Created");
     await context.SaveChangesAsync();
+    await context.Database.OpenConnectionAsync();
 
-    // Act - Run multiple queries concurrently on the same context
-    var tasks = new List<Task<int>>();
-    for (var i = 0; i < ParallelQueryCount; i++) {
-      // Each task queries the same context concurrently - this is NOT thread-safe
-      tasks.Add(Task.Run(async () => {
-        // Add small delay to increase chance of concurrent access
-        await Task.Delay(Random.Shared.Next(1, 5));
-        return await context.Set<PerspectiveRow<Order>>().CountAsync();
-      }));
+    var lockKey = BitConverter.ToInt64(Guid.NewGuid().ToByteArray(), 0);
+    await using var holder = new NpgsqlConnection(ConnectionString);
+    await holder.OpenAsync();
+    await using (var take = new NpgsqlCommand("SELECT pg_advisory_lock(@k)", holder)) {
+      take.Parameters.AddWithValue("k", lockKey);
+      await take.ExecuteNonQueryAsync();
     }
 
-    // Assert - Should throw InvalidOperationException about concurrent access
+    // The first operation enters EF's concurrency guard before it waits on the lock
+    var first = context.Database.ExecuteSqlRawAsync("SELECT pg_advisory_lock({0}), pg_advisory_unlock({0})", lockKey);
+
+    // Act - a second operation on the same context while the first is in progress
     Exception? caughtException = null;
     try {
-      await Task.WhenAll(tasks);
+      await context.Set<PerspectiveRow<Order>>().CountAsync();
     } catch (Exception ex) {
       caughtException = ex;
+    } finally {
+      await using var release = new NpgsqlCommand("SELECT pg_advisory_unlock(@k)", holder);
+      release.Parameters.AddWithValue("k", lockKey);
+      await release.ExecuteNonQueryAsync();
+      await first;
     }
 
     await Assert.That(caughtException).IsNotNull()
@@ -108,24 +115,34 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
       await seedContext.SaveChangesAsync();
     }
 
-    // Act - Create a scope and run parallel queries
+    // Act - in one scope, the lens and a direct use of the scoped context run at once.
+    // An advisory lock held on a second connection keeps the first operation running, so
+    // the overlap is certain rather than a race between Task.Run queries.
     using var scope = serviceProvider.CreateScope();
     var lens = scope.ServiceProvider.GetRequiredService<ILensQuery<Order>>();
+    var scopedContext = scope.ServiceProvider.GetRequiredService<WorkCoordinationDbContext>();
+    await scopedContext.Database.OpenConnectionAsync();
 
-    var tasks = new List<Task<int>>();
-    for (var i = 0; i < ParallelQueryCount; i++) {
-      tasks.Add(Task.Run(async () => {
-        await Task.Delay(Random.Shared.Next(1, 5));
-        return await lens.Query.CountAsync();
-      }));
+    var lockKey = BitConverter.ToInt64(Guid.NewGuid().ToByteArray(), 0);
+    await using var holder = new NpgsqlConnection(ConnectionString);
+    await holder.OpenAsync();
+    await using (var take = new NpgsqlCommand("SELECT pg_advisory_lock(@k)", holder)) {
+      take.Parameters.AddWithValue("k", lockKey);
+      await take.ExecuteNonQueryAsync();
     }
+    var first = scopedContext.Database.ExecuteSqlRawAsync("SELECT pg_advisory_lock({0}), pg_advisory_unlock({0})", lockKey);
 
     // Assert - Should throw due to concurrent access on shared DbContext
     Exception? caughtException = null;
     try {
-      await Task.WhenAll(tasks);
+      await lens.Query.CountAsync();
     } catch (Exception ex) {
       caughtException = ex;
+    } finally {
+      await using var release = new NpgsqlCommand("SELECT pg_advisory_unlock(@k)", holder);
+      release.Parameters.AddWithValue("k", lockKey);
+      await release.ExecuteNonQueryAsync();
+      await first;
     }
 
     await Assert.That(caughtException).IsNotNull()
@@ -203,7 +220,6 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
       tasks.Add(Task.Run(async () => {
         // Each task gets its own lens with its own DbContext
         var lens = serviceProvider.GetRequiredService<ILensQuery<Order>>();
-        await Task.Delay(Random.Shared.Next(1, 5));
         return await lens.Query.CountAsync();
       }));
     }
@@ -249,7 +265,6 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
     for (var i = 0; i < HighConcurrencyCount; i++) {
       tasks.Add(Task.Run(async () => {
         var lens = serviceProvider.GetRequiredService<ILensQuery<Order>>();
-        await Task.Delay(Random.Shared.Next(1, 10));
         return await lens.Query.CountAsync();
       }));
     }
@@ -279,7 +294,6 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
       tasks.Add(Task.Run(async () => {
         // Each task creates its own context - thread-safe
         await using var context = CreateDbContext();
-        await Task.Delay(Random.Shared.Next(1, 5));
         return await context.Set<PerspectiveRow<Order>>().CountAsync();
       }));
     }
@@ -467,7 +481,6 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
     for (var i = 0; i < 30; i++) {
       tasks.Add(Task.Run(async () => {
         await using var context = factory.CreateDbContext();
-        await Task.Delay(Random.Shared.Next(5, 20));
         return await context.Set<PerspectiveRow<Order>>().CountAsync();
       }));
     }

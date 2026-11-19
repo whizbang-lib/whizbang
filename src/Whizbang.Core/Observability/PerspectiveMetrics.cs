@@ -66,7 +66,7 @@ public sealed class PerspectiveMetrics {
   /// Events skipped because their stream was purged and the Apply did not resurrect it. Tags: perspective_name.
   /// </summary>
   /// <docs>fundamentals/perspectives/perspectives-with-actions#purge-stays-purged</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PurgeStaysPurgedTests.cs:LaterBatch_AfterPurge_IsSkipped_AndNoRowIsRecreatedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PurgeStaysPurgedTests.cs:LaterBatch_AfterPurge_IsSkipped_AndNoRowIsRecreatedAsync</tests>
   public PassiveCounter<long> PurgedEventsSkipped { get; }
 
   // Batch composition
@@ -96,7 +96,7 @@ public sealed class PerspectiveMetrics {
   /// health. This rising while the gauge holds still says the gauge is stale; the worker's warning names the cause.
   /// </remarks>
   /// <docs>operations/observability/metrics#perspectives</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PendingEventsStatisticsRefreshTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PendingEventsStatisticsRefreshTests.cs</tests>
   public PassiveCounter<long> PendingEventsRefreshFailures { get; }
 
   // Rewind
@@ -124,6 +124,18 @@ public sealed class PerspectiveMetrics {
   /// <docs>fundamentals/perspectives/rewind#metrics</docs>
   public PassiveCounter<long> RewindsTriggered { get; }
 
+  /// <summary>
+  /// Rewinds asked for again with the same trigger on a stream that has not changed since the last one, and settled
+  /// without running (#2366). Tags: perspective_name.
+  /// </summary>
+  /// <remarks>
+  /// The same input replays to the same state, so running it again could change nothing. A steady rate here names a
+  /// stream something keeps flagging; the worker logs it once, with the perspective and the stream, when it repeats
+  /// <see cref="Whizbang.Core.Perspectives.PerspectiveRewindOptions.RepeatWarningThreshold"/> times.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/rewind#a-repeated-rewind-is-settled</docs>
+  public PassiveCounter<long> RewindRepeats { get; }
+
   /// <summary>Rewinds that threw. Tags: perspective_name.</summary>
   /// <remarks>
   /// Distinct from the generic <see cref="Errors"/> counter, which mixes every processing failure
@@ -143,6 +155,19 @@ public sealed class PerspectiveMetrics {
   /// </remarks>
   /// <docs>fundamentals/events/ephemeral-events</docs>
   public PassiveCounter<long> StragglersDropped { get; }
+
+  /// <summary>
+  /// Snapshots of a row with collectives that were due and not taken, because a collective of the row was in flight when
+  /// the row was read, or moved before the row was written (#1963). Tags: perspective_name.
+  /// </summary>
+  /// <remarks>
+  /// A deferred snapshot stays due, so the next apply of the stream takes it once its collectives are complete. A count
+  /// that keeps rising for a perspective says its tenant's collectives are almost never at rest, and its rewinds start
+  /// from older snapshots.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/snapshots#collectives</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveReplayRunnerTests.cs:ALiveSnapshot_IsDeferred_WhenACollectiveOfTheRowIsInFlightBeforeTheReadAsync</tests>
+  public PassiveCounter<long> SnapshotsDeferred { get; }
 
   /// <summary>Rewinds running right now (observable gauge).</summary>
   private long _rewindsInFlightValue;
@@ -197,8 +222,12 @@ public sealed class PerspectiveMetrics {
     Rewinds = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds", description: "Rewind operations that completed");
     RewindsTriggered = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds_triggered", description: "Rewinds started");
     RewindsFailed = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds_failed", description: "Rewinds that threw");
+    RewindRepeats = meter.CreatePassiveCounter<long>("whizbang.perspective.rewind_repeats",
+      description: "Rewinds asked for again with the same trigger on an unchanged stream, settled without running");
     StragglersDropped = meter.CreatePassiveCounter<long>("whizbang.perspective.stragglers_dropped",
       description: "Late events an ephemeral perspective dropped instead of rewinding for them");
+    SnapshotsDeferred = meter.CreatePassiveCounter<long>("whizbang.perspective.snapshots_deferred",
+      description: "Due snapshots of a row with collectives not taken because a collective of the row was in flight");
 
     // Pinned at the concurrency limit means rewinds are queueing behind it, which no counter shows.
     meter.CreateObservableGauge("whizbang.perspective.rewinds_in_flight",

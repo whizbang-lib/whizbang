@@ -86,8 +86,6 @@ internal static class OutboxDrainHarness {
     var completion = new SignalingCompletionChannel();
     var failure = new RecordingFailureChannel();
     var publish = new SucceedingPublishStrategy(bulkPublish);
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var options = new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 };
     var worker = new OutboxDrainWorker(
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -95,7 +93,6 @@ internal static class OutboxDrainHarness {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(options),
       jsonOptions: jsonOptions,
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -140,8 +137,6 @@ internal static class OutboxDrainHarness {
     var failure = new RecordingFailureChannel();
     var publish = new SucceedingPublishStrategy(supportsBulkPublish: false);
     publish.SetReady(false);
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var options = new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 };
     var worker = new OutboxDrainWorker(
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -149,7 +144,6 @@ internal static class OutboxDrainHarness {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(options),
       jsonOptions: jsonOptions,
       logger: NullLogger<OutboxDrainWorker>.Instance,

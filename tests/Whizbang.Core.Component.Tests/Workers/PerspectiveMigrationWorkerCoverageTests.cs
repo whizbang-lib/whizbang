@@ -41,8 +41,7 @@ public class PerspectiveMigrationWorkerCoverageTests {
   public async Task ExecuteAsync_CallbacksNotWired_ReturnsWithoutFaultingAsync() {
     var worker = new PerspectiveMigrationWorker(
       rebuilder: new ThrowingRebuilder(),
-      logger: NullLogger<PerspectiveMigrationWorker>.Instance,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady());
+      logger: NullLogger<PerspectiveMigrationWorker>.Instance);
 
     // The unwired path touches no collaborator, so it emits no signal of its own — the settled
     // state of the worker's own task IS the signal. Awaiting it BEFORE anything cancels means the
@@ -63,8 +62,7 @@ public class PerspectiveMigrationWorkerCoverageTests {
     var rebuilder = new FakeRebuilder();
     var worker = new PerspectiveMigrationWorker(
       rebuilder: rebuilder,
-      logger: NullLogger<PerspectiveMigrationWorker>.Instance,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady());
+      logger: NullLogger<PerspectiveMigrationWorker>.Instance);
 
     await worker.StartAsync(CancellationToken.None);
     await worker.ExecuteTask!.WaitAsync(_wait);
@@ -80,41 +78,6 @@ public class PerspectiveMigrationWorkerCoverageTests {
   // If host shutdown cancels the schema-ready wait, the worker must abandon the run cleanly
   // instead of either hanging StopAsync or barreling ahead to query tables that were never
   // confirmed ready — either failure mode turns a clean shutdown into a startup-ordering bug.
-  [Test]
-  public async Task ExecuteAsync_SchemaReadyWaitCanceled_ReturnsWithoutProcessingAsync() {
-    var rebuilder = new FakeRebuilder();
-    var fetchCalled = false;
-    // A gate that never opens AND announces the moment a worker begins waiting on it. The plain
-    // never-ready SchemaReadyGate this used to hold could not do that: StartAsync only schedules
-    // ExecuteAsync, so StopAsync's cancellation could beat the worker to the gate entirely and the
-    // zero-rebuild assertion would be answered by a body that never waited on anything.
-    var neverReadyGate = new ParkedGate();
-    var worker = new PerspectiveMigrationWorker(
-      rebuilder: rebuilder,
-      logger: NullLogger<PerspectiveMigrationWorker>.Instance,
-      schemaReadyGate: neverReadyGate) {
-      GetPendingRebuilds = _ => {
-        Volatile.Write(ref fetchCalled, true);
-        return Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
-          new PendingMigrationRebuild("ShouldNotRun", "perspective:ShouldNotRun")
-        ]);
-      },
-      UpdateMigrationStatus = (_, _, _, _) => Task.CompletedTask
-    };
-
-    await worker.StartAsync(CancellationToken.None);
-    await neverReadyGate.Entered.WaitAsync(_wait);
-    await worker.StopAsync(CancellationToken.None);
-
-    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
-      .Because("a host stopped mid-migration is an ordinary shutdown, not a faulted hosted service");
-    await Assert.That(Volatile.Read(ref fetchCalled)).IsFalse()
-      .Because("the canceled wait must RETURN at the gate — even the pending-rebuild query reads "
-             + "a table the migration may not have created yet");
-    await Assert.That(rebuilder.RebuildCount).IsEqualTo(0)
-      .Because("a canceled schema-ready wait must abandon the run before touching any rebuild — never process pending migrations against a schema that was never confirmed ready.");
-  }
-
   // Two failures in a row (rebuild throws, then the best-effort status update ALSO throws) must
   // not propagate out of ExecuteAsync. If it did, the background service's unhandled-exception
   // path would tear down this one-shot startup sweep mid-loop, abandoning every remaining pending
@@ -125,8 +88,7 @@ public class PerspectiveMigrationWorkerCoverageTests {
     var rebuilder = new ThrowingRebuilder();
     var worker = new PerspectiveMigrationWorker(
       rebuilder: rebuilder,
-      logger: NullLogger<PerspectiveMigrationWorker>.Instance,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady()) {
+      logger: NullLogger<PerspectiveMigrationWorker>.Instance) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
         new PendingMigrationRebuild("CrashPerspective", "perspective:CrashPerspective")
       ]),
@@ -165,8 +127,7 @@ public class PerspectiveMigrationWorkerCoverageTests {
     var rebuilder = new FakeRebuilder();
     var worker = new PerspectiveMigrationWorker(
       rebuilder: rebuilder,
-      logger: NullLogger<PerspectiveMigrationWorker>.Instance,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady()) {
+      logger: NullLogger<PerspectiveMigrationWorker>.Instance) {
       GetPendingRebuilds = _ => {
         // Same reasoning as the status-update test: the throwing callback is the signal that the
         // sweep actually started. Stopping without waiting for it cancels the stopping token
@@ -187,25 +148,6 @@ public class PerspectiveMigrationWorkerCoverageTests {
   }
 
   // ===== fakes =====
-
-  /// <summary>
-  /// A schema gate that never opens and announces the moment a worker begins waiting on it.
-  /// <see cref="Entered"/> is the deterministic "the worker is parked at the barrier" signal; the
-  /// infinite delay then observes the stopping token exactly as the real gate's
-  /// <c>Task.WaitAsync</c> does.
-  /// </summary>
-  private sealed class ParkedGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Entered => _entered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-    }
-  }
 
   private sealed class FakeRebuilder : IPerspectiveRebuilder {
     public int RebuildCount { get; private set; }

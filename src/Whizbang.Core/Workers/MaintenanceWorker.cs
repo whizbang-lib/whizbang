@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Core.Workers;
 
@@ -23,22 +24,27 @@ namespace Whizbang.Core.Workers;
 /// dead-letter cleanup, dedup pruning) light up automatically.
 /// </remarks>
 /// <docs>fundamentals/workers/maintenance-steps</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
 public sealed partial class MaintenanceWorker(
   IServiceScopeFactory scopeFactory,
-  ISchemaReadyGate schemaReadyGate,
   IOptions<MaintenanceWorkerOptions> options,
   ILogger<MaintenanceWorker> logger,
   Whizbang.Core.Observability.MaintenanceMetrics? metrics = null,
   HousekeepingCoordinator? housekeeping = null) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
-  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly MaintenanceWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<MaintenanceWorker> _logger = ArgumentGuard.NotNull(logger);
 
   // Optional by design: a host that constructs this worker directly keeps prior behavior rather
   // than failing to start. A missing collaborator must never silently switch maintenance OFF.
   private readonly HousekeepingCoordinator? _housekeeping = housekeeping;
+
+  /// <summary>The wait between ticks. A test replaces it to observe the loop reaching its wait and to release the next
+  /// tick on a signal, instead of waiting out a real interval.</summary>
+  internal Func<TimeSpan, CancellationToken, Task> DelayAsync { get; init; } = RealDelayAsync;
+
+  /// <summary>The production wait between ticks.</summary>
+  internal static readonly Func<TimeSpan, CancellationToken, Task> RealDelayAsync = static (delay, ct) => Task.Delay(delay, ct);
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -47,12 +53,6 @@ public sealed partial class MaintenanceWorker(
     if (!_options.Enabled) {
       LogDisabled(_logger);
       try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
-      return;
-    }
-
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-    } catch (OperationCanceledException) {
       return;
     }
 
@@ -66,7 +66,7 @@ public sealed partial class MaintenanceWorker(
       }
 
       try {
-        await Task.Delay(TimeSpan.FromMinutes(_options.IntervalMinutes), stoppingToken);
+        await DelayAsync(TimeSpan.FromMinutes(_options.IntervalMinutes), stoppingToken);
       } catch (OperationCanceledException) {
         break;
       }
@@ -80,28 +80,198 @@ public sealed partial class MaintenanceWorker(
   /// which case only on its holder (#1377).
   /// </summary>
   private static bool _isThisInstancesTurn(IServiceProvider services) =>
-    services.GetService<Startup.DutyHolderWorker>() is not { } holder
-    || !holder.Roles.Contains(Startup.StartupDuties.MAINTAINER, StringComparer.Ordinal)
-    || holder.Holds(Startup.StartupDuties.MAINTAINER);
+    Startup.MaintainerDuty.IsThisInstancesTurn(services);
 
   [LoggerMessage(Level = LogLevel.Debug, Message = "Maintenance cycle skipped: another instance holds the maintainer duty")]
   private static partial void LogSkippedNotMaintainer(ILogger logger);
 
+  /// <summary>
+  /// Publishes the integrity ledger's reading to the convergence gauges (#2024): unhealed buckets, those past their
+  /// repair budget, the age of the oldest, and the per-origin verified watermarks.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Runs at the start of every tick, on every instance, ahead of the maintainer check and the idle gate. Every
+  /// instance exports these gauges and every instance reads the same ledger, so a refresh that only the maintainer's
+  /// unblocked sweep made left the others reporting the empty reading, 0 unhealed, indefinitely, and left all of them
+  /// at 0 for up to <c>MaxDeferral</c> after a restart under load: the value of a fully healed service, exactly when a
+  /// backlog of divergences most needs watching. Reading the ledger is not the fleet-wide work the duty guards.
+  /// </para>
+  /// <para>
+  /// It rides the tick's scope rather than a timer of its own: a standalone collector would be one more background
+  /// service acquiring a connection on a schedule in every host, and small pools feel that immediately. One query
+  /// against two small tables per tick. Best-effort: a failed read is logged and leaves the previous reading, and never
+  /// fails the tick; a canceled read is a stopping host and propagates.
+  /// </para>
+  /// </remarks>
+  /// <docs>resilience/stream-integrity</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerIntegrityGaugeTests.cs:AnInstanceThatIsNotTheMaintainer_StillPublishesTheLedgerReadingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerIntegrityGaugeTests.cs:ATickTheIdleGateDefers_StillPublishesTheLedgerReadingAsync</tests>
+  private async Task _refreshLedgerGaugesAsync(IServiceProvider sp, CancellationToken ct) {
+    var integrity = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>()?.Value;
+    var integrityMetrics = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+    if (integrity is null || integrityMetrics is null) {
+      return;
+    }
+    var coordinator = sp.GetRequiredService<IWorkCoordinator>();   // the tick requires one anyway, just below
+    try {
+      var summary = await coordinator.GetIntegrityLedgerSummaryAsync(integrity.MaxRepairAttemptsPerBucket, ct).ConfigureAwait(false);
+      integrityMetrics.UpdateLedgerGauges(summary);
+      // #2365: whether each opt-in check is on, so an alert can tell a check that is off from one that stopped.
+      integrityMetrics.UpdateChecksEnabled(integrity.SealRecheck.Enabled, integrity.FullHistoryCompare.Enabled);
+      // #2261: derived from the seals just read, on every instance as sealed_through is.
+      integrityMetrics.UpdateVerifiedPercent(integrity.VerifiedPercentGaugeEnabled
+        ? Whizbang.Core.Observability.IntegrityCompletion.Verified(summary.Seals)
+        : null);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogLedgerGaugeRefreshFailed(_logger, ex);
+    }
+  }
+
+  /// <summary>
+  /// Publishes the open repair backlog to its gauges (#2256): the ledger's buckets by origin and state, and the integrity
+  /// delivery queue's depth, from one grouped read.
+  /// </summary>
+  /// <remarks>
+  /// Unlike the convergence gauges above, read only on the instance whose turn it is to do the maintainer's work, ahead
+  /// of the idle gate. The backlog gauges are meant to be summed or read as one series per service, and every instance
+  /// reads the same ledger: N reporters would report the backlog N times, and run the grouped read N times for one
+  /// answer. An instance without the turn withdraws its reading instead (no series, never a zero). Best-effort: a failed
+  /// read is logged and withdraws the reading, since a frozen one would read as progress stopped; a canceled read is a
+  /// stopping host and propagates.
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#repair-backlog-and-eta</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerIntegrityBacklogTests.cs</tests>
+  private async Task _refreshLedgerBacklogAsync(IServiceProvider sp, CancellationToken ct) {
+    var integrity = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>()?.Value;
+    var integrityMetrics = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+    if (integrity is null || integrityMetrics is null) {
+      return;
+    }
+    try {
+      var coordinator = sp.GetRequiredService<IWorkCoordinator>();
+      var backlog = await coordinator.GetIntegrityLedgerBacklogAsync(integrity.MaxRepairAttemptsPerBucket, ct).ConfigureAwait(false);
+      integrityMetrics.UpdateLedgerBacklog(backlog);
+      integrityMetrics.UpdateRepairProgress(await _readRepairProgressAsync(sp, coordinator, integrity, backlog, ct).ConfigureAwait(false));
+      // #2365: each lane's seal and the re-check's coverage, read by the holder as the backlog is.
+      var clock = sp.GetService<TimeProvider>() ?? TimeProvider.System;
+      integrityMetrics.UpdateSealReading(await coordinator.GetIntegritySealReadingAsync(
+        integrity.SealRecheck.Lookback, integrity.SealRecheck.RecheckEvery, clock.GetUtcNow(), ct).ConfigureAwait(false));
+      // #2365: the streams due for a cut that the seal gate holds, a bounded count per task.
+      sp.GetService<Whizbang.Core.Observability.MaintenanceMetrics>()?.UpdateCutsAwaitingSeal(
+        await coordinator.GetCutsAwaitingSealAsync(CUTS_AWAITING_SEAL_COUNT_CAP, ct).ConfigureAwait(false));
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      integrityMetrics.UpdateLedgerBacklog(null);
+      integrityMetrics.UpdateRepairProgress(null);
+      integrityMetrics.UpdateSealReading(null);
+      sp.GetService<Whizbang.Core.Observability.MaintenanceMetrics>()?.UpdateCutsAwaitingSeal(null);
+      LogLedgerBacklogRefreshFailed(_logger, ex);
+    }
+  }
+
+  // #2261: progress and ETA over the rolling window, from the service's shared tally; null (no reading) when both are
+  // switched off or the tally cannot be read.
+  private static async Task<Whizbang.Core.Observability.RepairProgressReading?> _readRepairProgressAsync(
+      IServiceProvider sp, IWorkCoordinator coordinator, Whizbang.Core.Messaging.StreamIntegrityOptions integrity,
+      Whizbang.Core.Observability.LedgerBacklogSnapshot backlog, CancellationToken ct) {
+    if (!_tallies(integrity)) {
+      return null;
+    }
+    var window = TimeSpan.FromMinutes(integrity.RepairProgressWindowMinutes);
+    var now = (sp.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow();
+    if (await coordinator.GetIntegrityLedgerTallyAsync(now - window, ct).ConfigureAwait(false) is not { } tally) {
+      return null;
+    }
+    var open = Whizbang.Core.Observability.IntegrityCompletion.RepairableOpenBuckets(backlog);
+    return new Whizbang.Core.Observability.RepairProgressReading {
+      Reported = true,
+      ProgressPercent = integrity.RepairProgressGaugeEnabled
+        ? Whizbang.Core.Observability.IntegrityCompletion.RepairProgressPercent(tally.Opened, tally.Closed)
+        : null,
+      EtaSeconds = integrity.BacklogEtaGaugeEnabled && open is { } buckets
+        ? Whizbang.Core.Observability.IntegrityCompletion.BacklogEtaSeconds(buckets, tally.Opened, tally.Closed, window)
+        : null,
+    };
+  }
+
+  /// <summary>#2365: the most rows one task's count of the cuts the seal holds reads; at the cap it reads as at least that.</summary>
+  private const int CUTS_AWAITING_SEAL_COUNT_CAP = 100_000;
+
+  private static bool _tallies(Whizbang.Core.Messaging.StreamIntegrityOptions integrity) =>
+    integrity.RepairProgressGaugeEnabled || integrity.BacklogEtaGaugeEnabled;
+
+  /// <summary>
+  /// Adds the ledger buckets this instance's counters opened and closed since its last write to the service's shared
+  /// tally (#2261), on every instance and every tick, ahead of the maintainer check.
+  /// </summary>
+  /// <remarks>
+  /// The opened and closed counters are per process and start over on a restart; the progress and ETA gauges are per
+  /// service and read a rolling window, so each instance contributes its own counts to one table the reporting instance
+  /// reads. Only what the counters moved is written, and nothing when they did not move. A write that does not land is
+  /// retried on the next tick with the counts it carried, so none are lost while the process lives; the counts of a
+  /// process that stops between two ticks are. Skipped when both derived gauges are switched off.
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerIntegrityCompletionTests.cs</tests>
+  private async Task _flushLedgerTallyAsync(IServiceProvider sp, CancellationToken ct) {
+    var integrity = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>()?.Value;
+    var integrityMetrics = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+    if (integrity is null || integrityMetrics is null || !_tallies(integrity)) {
+      return;
+    }
+    var (opened, closed) = integrityMetrics.PendingLedgerTally();
+    if (opened == 0 && closed == 0) {
+      return;
+    }
+    var now = (sp.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow();
+    var keepSince = now - (2 * TimeSpan.FromMinutes(integrity.RepairProgressWindowMinutes));
+    try {
+      if (await sp.GetRequiredService<IWorkCoordinator>()
+            .IntegrityAddLedgerTallyAsync(now, opened, closed, keepSince, ct).ConfigureAwait(false)) {
+        integrityMetrics.MarkLedgerTallied(opened, closed);
+      }
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogLedgerTallyWriteFailed(_logger, ex);
+    }
+  }
+
   internal async Task RunMaintenanceOnceAsync(CancellationToken ct) {
     using var scope = _scopeFactory.CreateScope();
     var sp = scope.ServiceProvider;
+    // #2024: the integrity gauges first, on every instance and every tick, ahead of the duty check and the idle gate.
+    await _refreshLedgerGaugesAsync(sp, ct).ConfigureAwait(false);
+    // #2261: this instance's opened and closed buckets into the service's tally, whoever reports it.
+    await _flushLedgerTallyAsync(sp, ct).ConfigureAwait(false);
     // The sweep is fleet-wide work on shared tables: with the maintainer duty assigned, its holder does it
     // once, rather than every instance sweeping the same rows (#1377), as the vacuum already does
     if (!_isThisInstancesTurn(sp)) {
+      // #2256: the backlog is the holder's to report; a reading left from when this instance had the turn is withdrawn.
+      var withdrawn = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+      withdrawn?.UpdateLedgerBacklog(null);
+      withdrawn?.UpdateRepairProgress(null);
+      withdrawn?.UpdateSealReading(null);
+      sp.GetService<Whizbang.Core.Observability.MaintenanceMetrics>()?.UpdateCutsAwaitingSeal(null);
       LogSkippedNotMaintainer(_logger);
       return;
     }
+    await _refreshLedgerBacklogAsync(sp, ct).ConfigureAwait(false);
     var coordinator = sp.GetRequiredService<IWorkCoordinator>();
 
     // #1738: the append-to-archived policies, on every tick and ahead of the idle gate below. A background write to an
     // archived stream is refused inside the store, which reads the stored policy, so a policy must be in force soon after
     // a start even on a service too busy for the sweep. One small statement, and nothing to contend with.
     await _syncStreamTypePoliciesAsync(coordinator, sp, ct).ConfigureAwait(false);
+    // #1725: the stored-metadata settings, for the same reason: every write path decides each event's metadata from them.
+    await _syncEventStoreMetadataSettingsAsync(coordinator, sp, ct).ConfigureAwait(false);
+    // #1739: the policies for rows of archived streams, for the same reason: an archive can run at any time, and it reads
+    // them inside the database.
+    await _syncArchivedStreamRowPoliciesAsync(coordinator, sp, ct).ConfigureAwait(false);
 
     if (_housekeeping is null) {
       await _runMaintenanceCycleAsync(coordinator, sp, ct).ConfigureAwait(false);
@@ -124,12 +294,14 @@ public sealed partial class MaintenanceWorker(
     }
 
     var decision = _housekeeping.TryBegin(HousekeepingCoordinator.Activity.Maintenance, backlog);
+    // #2288: the first deferral of a run goes to the store, so the forced-pass ceiling survives a restart.
+    await HousekeepingDeferralStore.RecordAsync(coordinator, decision, _logger, ct).ConfigureAwait(false);
     if (!decision.Granted) {
       var logged = _orUnmeasured(backlog);
       LogMaintenanceDeferred(
         _logger, decision.Reason,
         logged.UnprocessedInboxRows, logged.ActiveLeasedRows,
-        logged.PendingOutboxRows, logged.PendingPerspectiveRows);
+        logged.PendingOutboxRows, logged.PendingPerspectiveRows, logged.PendingIdleRows, logged.NonIntegrityWorkRows ?? -1);
       return;
     }
 
@@ -139,7 +311,7 @@ public sealed partial class MaintenanceWorker(
       var logged = _orUnmeasured(backlog);
       LogMaintenanceForcedAfterDeferrals(
         _logger, logged.UnprocessedInboxRows, logged.ActiveLeasedRows,
-        logged.PendingOutboxRows, logged.PendingPerspectiveRows);
+        logged.PendingOutboxRows, logged.PendingPerspectiveRows, logged.PendingIdleRows, logged.NonIntegrityWorkRows ?? -1);
     }
 
     try {
@@ -148,6 +320,8 @@ public sealed partial class MaintenanceWorker(
       // In a finally: a sweep that throws and never releases its slot would disable maintenance
       // for the lifetime of the process.
       _housekeeping.End(HousekeepingCoordinator.Activity.Maintenance);
+      // A pass that ended re-arms the stored ceiling for every instance (#2288), as End re-arms the in-memory one.
+      await HousekeepingDeferralStore.ClearAsync(coordinator, decision, _logger).ConfigureAwait(false);
     }
   }
 
@@ -164,6 +338,8 @@ public sealed partial class MaintenanceWorker(
     ActiveLeasedRows = -1,
     PendingOutboxRows = -1,
     PendingPerspectiveRows = -1,
+    PendingIdleRows = -1,
+    NonIntegrityWorkRows = -1,
   };
 
   // The backlog a log line reports. One place, because only a deferral can see an unmeasured backlog (a
@@ -218,104 +394,237 @@ public sealed partial class MaintenanceWorker(
       new KeyValuePair<string, object?>("role", "maintenance_sweep"), new KeyValuePair<string, object?>("table", table));
   }
 
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One maintenance cycle: each guarded task is a documented sweep and their order is the contract.")]
+  /// <summary>
+  /// One maintenance cycle: its tasks in order, each run through <see cref="_isolatedAsync"/>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// #2174: a task that threw used to end the cycle, so every task after it was skipped. When the maintenance call timed
+  /// out on a large backlog, a service ran none of the perspective row sweeps, the lifecycle-completion cleanup, the
+  /// offload sweep, bloat detection, the stuck-row sentinel or the registered steps for days, although none of them
+  /// depended on it. The cycle is therefore a list of named tasks and the loop isolates each one: a failure is logged by
+  /// the task's name with its exception and the next task runs. A task added to the list is isolated without asking.
+  /// </para>
+  /// <para>
+  /// The one dependency is kept in the data, not in the order: the reap may delete only what the destruction hooks were
+  /// given, so the batch starts empty and a failed read leaves it empty (nothing is reaped this cycle), and the
+  /// PostDestruction hooks fire only after a maintenance call that committed.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/infrastructure/maintenance#a-failed-task-does-not-stop-the-cycle</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs</tests>
   private async Task _runMaintenanceCycleAsync(
       IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
-    // Publish debug retention and every configured retention window BEFORE the sweep reads them. The sweep
-    // decides from stored settings, not from this process's options, and nothing used to write them, so
-    // enabling debug retention marked rows the sweep then deleted, and every other window needed hand-written
-    // SQL. One write per cycle rather than at startup, so a configuration change takes effect without a
-    // restart and a stale value cannot outlive the option that set it.
-    await _syncRetentionSettingsAsync(coordinator, sp, ct).ConfigureAwait(false);
-
-    // Reap-driven ephemeral snapshots — run BEFORE perform_maintenance so a snapshot rewind-floor exists for
-    // every (stream, perspective) whose consumed, aged-past-grace ephemeral bodies the reaper (Task 8) is
-    // about to delete. This is what makes the coverage gate safe on low-volume / idle streams.
-    await _reapDrivenEphemeralSnapshotAsync(coordinator, sp, ct);
-
-    // E2 PreDestruction hooks — run BEFORE the reap so a registered IDestructionHook can preserve / compact /
-    // archive each ephemeral body before Task 8 deletes it. Its preserve-work commits before the subsequent
-    // PerformMaintenanceAsync (a separate call), satisfying the "durable before delete" ordering. Returns the
-    // targets so PostDestruction can fire after the delete. Inert without a registered hook.
-    var destruction = await _runPreDestructionHooksAsync(coordinator, sp, ct);
-
-    // Stream-integrity convergence gauges. Deliberately folded into THIS cycle rather than given
-    // their own timer: a standalone collector would be one more background service acquiring a
-    // connection on a schedule in every host, and small pools feel that immediately (the sample
-    // harnesses run with Max Pool Size 2). This rides a scope and a cadence that already exist, so
-    // it costs one extra query rather than a new periodic connection. Best-effort — a metrics read
-    // must never fail a maintenance cycle.
+    // The ledger gauges are published at the start of every tick (_refreshLedgerGaugesAsync, #2024), not here.
     var integrity = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>()?.Value;
+    // #2174: empty until the destruction read succeeds, so a failed read reaps nothing rather than everything.
+    var destruction = DestructionBatch.Seen([]);
+
+    (string Name, Func<Task> Run)[] tasks = [
+      // Publish debug retention and every configured retention window BEFORE the sweep reads them. The sweep decides
+      // from stored settings, not from this process's options, and nothing used to write them, so enabling debug
+      // retention marked rows the sweep then deleted, and every other window needed hand-written SQL. One write per
+      // cycle rather than at startup, so a configuration change takes effect without a restart and a stale value cannot
+      // outlive the option that set it.
+      ("retention_settings_sync", () => _syncRetentionSettingsAsync(coordinator, sp, ct)),
+      // Reap-driven ephemeral snapshots: run BEFORE perform_maintenance so a snapshot rewind-floor exists for every
+      // (stream, perspective) whose consumed, aged-past-grace ephemeral bodies the reaper (Task 8) is about to delete.
+      // This is what makes the coverage gate safe on low-volume / idle streams.
+      ("reap_driven_snapshots", () => _reapDrivenEphemeralSnapshotAsync(coordinator, sp, ct)),
+      // E2 PreDestruction hooks: run BEFORE the reap so a registered IDestructionHook can preserve / compact / archive
+      // each ephemeral body before Task 8 deletes it. Its preserve-work commits before the subsequent
+      // PerformMaintenanceAsync (a separate call), satisfying the "durable before delete" ordering. Inert without a
+      // registered hook.
+      ("ephemeral_destruction_hooks", async () => destruction = await _runPreDestructionHooksAsync(coordinator, sp, ct)),
+      ("digest_epoch_closure", () => _closeDigestEpochsAsync(
+        coordinator, integrity, sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>(), ct)),
+      ("integrity_traffic_sweep", () => _sweepIntegrityTrafficAsync(coordinator, sp, integrity, ct)),
+      // The maintenance call, then the E2 PostDestruction hooks (detached, after the reap committed).
+      ("perform_maintenance", () => _performMaintenanceAsync(coordinator, sp, destruction, ct)),
+      ("lifecycle_completion_cleanup", () => _cleanupLifecycleCompletionsAsync(coordinator, ct)),
+      // #2354: what cleanup and integrity record about their own work rests for its category's period, then goes.
+      ("operational_retention", () => _sweepOperationalRetentionAsync(coordinator, sp, ct)),
+      // #2273: the handled ledger, kept to the repair receptor lookback. The completion records every handled event on
+      // any driver, so this runs whether or not integrity is on. Before the steps, so the coverage start moves before the
+      // partition step drops the partitions behind it.
+      ("handled_ledger_sweep", () => _sweepHandledLedgerAsync(coordinator, sp, integrity, ct)),
+      ("ephemeral_pointer_prune", () => _pruneAncientEphemeralPointersAsync(coordinator, ct)),
+      // Passive offload-claim sweep: drain the expired half of the blob ledger (delete the blob, then remove the row,
+      // successes only). Age-based (fan-out safe: no consumer's action can break a sibling's download) and fleet-elected
+      // (settings CAS watermark), so N replicas never issue N delete storms against one container.
+      ("offload_claim_sweep", () => _sweepExpiredOffloadClaimsAsync(coordinator, sp, ct)),
+      // The perspective-row retention sweeps (the [RowTtl]/max-age ladder and the [RowCap] overflow eviction), fronted by
+      // the pre-destruction seam: registered guards are offered the exact set the sweeps would destroy and may defer or
+      // cancel per row before anything dies. This is the sweeps' production invocation; the SQL alone has no caller.
+      ("perspective_row_sweeps", () => _sweepPerspectiveRowsAsync(coordinator, sp, ct)),
+      // Detect space held but unusable: churn leaves free space inside pages that autovacuum returns to the free space
+      // map but never to the OS, and a dropped column leaves bytes that autovacuum can never reclaim at all. Detection
+      // RECORDS the rewrite request; the post-ready Rewrite startup step performs it.
+      ("table_rewrite_detection", () => _rewriteBloatedTablesAsync(coordinator, sp, ct)),
+      // v0.657 slice 5: structural stuck-row sentinel, after the regular maintenance cycle so backings that don't
+      // implement it (default no-op returning empty list) pay zero cost.
+      ("stuck_row_sentinel", () => _options.StuckRowSentinelEnabled ? _runStuckRowSentinelAsync(coordinator, ct) : Task.CompletedTask),
+      // #2117: the rows the sentinel reports past the dispatcher's ceiling are concluded here, since the dispatcher that
+      // enforces it never saw them.
+      ("exhausted_inbox_conclusion",
+        () => _options.ConcludeExhaustedInboxRows ? _concludeExhaustedInboxRowsAsync(coordinator, sp, ct) : Task.CompletedTask),
+      // Steps other packages add. Last, so everything they read has been through this cycle's own housekeeping first.
+      ("maintenance_steps", () => _runMaintenanceStepsAsync(sp, ct)),
+    ];
+
+    foreach (var (name, run) in tasks) {
+      await _isolatedAsync(name, run).ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>
+  /// Runs one task of the cycle. A failure is logged with the task's name and its exception, and the cycle goes on to
+  /// the next task (#2174); cancellation is shutdown and propagates.
+  /// </summary>
+  /// <docs>operations/infrastructure/maintenance#a-failed-task-does-not-stop-the-cycle</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs:AFailedTask_IsLoggedByName_AndEveryLaterTaskStillRunsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs:Cancellation_StillStopsTheCycleAsync</tests>
+  private async Task _isolatedAsync(string taskName, Func<Task> run) {
     try {
-      var integrityMetrics = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
-      if (integrity is not null && integrityMetrics is not null) {
-        integrityMetrics.UpdateLedgerGauges(
-          await coordinator.GetIntegrityLedgerSummaryAsync(integrity.MaxRepairAttemptsPerBucket, ct));
-      }
+      await run().ConfigureAwait(false);
     } catch (OperationCanceledException) {
+      // Shutdown, as every step of the cycle treats it: it ends the cycle instead of being logged and passed over.
       throw;
     } catch (Exception ex) {
-      LogLedgerGaugeRefreshFailed(_logger, ex);
+      LogMaintenanceTaskFailed(_logger, taskName, ex);
     }
+  }
 
-    // Digest-epoch closure (migration 092). The substrate is inert without a caller — nothing
-    // else advances the frontier, and an unclosed frontier means manifests keep re-aggregating
-    // live history. The settle window is the AUDIT's settle window on purpose: closure and the
-    // audit must agree on what "settled" means, or a seal could disagree with a manifest folded
-    // over the same range. Best-effort — the frontier just advances on a later cycle.
-    if (integrity is { EpochClosureEnabled: true }) {
-      try {
-        var closed = await coordinator.CloseDigestEpochsAsync(
-          integrity.AuditSettleWindowMinutes * 60, integrity.MaxEpochClosuresPerMaintenanceCycle, ct);
-        if (closed > 0) {
-          LogEpochsClosed(_logger, closed);
-        }
-      } catch (OperationCanceledException) {
-        throw;
-      } catch (Exception ex) {
-        LogEpochClosureFailed(_logger, ex);
-      }
-    }
-
-    await _sweepIntegrityTrafficAsync(coordinator, sp, integrity, ct).ConfigureAwait(false);
-    var results = await coordinator.PerformMaintenanceAsync(ct);
+  /// <summary>
+  /// The maintenance call, its per-task report, and the PostDestruction hooks once the reap it ran has committed. A task
+  /// the database reports failed (status <c>failed: ...</c>, #2174) is a warning by name; the call's other tasks ran.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs:ATaskTheDatabaseReportsFailed_IsLoggedAsAWarningByNameAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerTaskIsolationTests.cs:TheDestructionReadFailing_GivesTheReapNothing_AndTheCycleGoesOnAsync</tests>
+  private async Task _performMaintenanceAsync(
+      IWorkCoordinator coordinator, IServiceProvider sp, DestructionBatch destruction, CancellationToken ct) {
+    var results = destruction.ReapOnly is null
+      ? await coordinator.PerformMaintenanceAsync(ct)
+      : await coordinator.PerformMaintenanceAsync(destruction.ReapOnly, ct);
     var sweptRows = 0L;
     foreach (var r in results) {
       sweptRows += Math.Max(0, r.RowsAffected);
-      LogMaintenanceResult(_logger, r.TaskName, r.RowsAffected, r.DurationMs);
+      if (r.Status.StartsWith(FAILED_STATUS, StringComparison.Ordinal)) {
+        LogMaintenanceTaskFailedInDatabase(_logger, r.TaskName, r.DurationMs, r.Status);
+      } else {
+        LogMaintenanceResult(_logger, r.TaskName, r.RowsAffected, r.DurationMs);
+      }
       // Fleet-visible per-task outcomes (row retention's "is it working" signal rides
-      // task=reap_expired_perspective_rows). Optional — null when metrics aren't registered.
+      // task=reap_expired_perspective_rows). Optional: null when metrics aren't registered.
       metrics?.Record(r.TaskName, r.RowsAffected, r.DurationMs);
+      _recordLedgerTrim(sp, r);
     }
     // Volume rollup: total rows the sweep touched, on the cross-activity housekeeping meter.
     sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>()
       ?.RecordItems(HousekeepingCoordinator.Activity.Maintenance, sweptRows);
 
-    // E2 PostDestruction hooks — detached, after the reap committed.
     await _firePostDestructionHooksAsync(sp, destruction, ct);
+  }
 
-    // Lifecycle-completion markers. IWorkCoordinator has always exposed this sweep and migration 035
-    // documented the table as periodically cleaned, but no production path ever called it, so the
-    // table grew once per event forever while appearing to have retention. Best-effort: a failed
-    // sweep must not fail the cycle, but it is logged with the retention it was trying to apply so a
-    // permanently detached sweep is visible instead of silently reverting to unbounded growth.
-    if (_options.LifecycleCompletionRetentionDays > 0) {
-      try {
-        var retention = TimeSpan.FromDays(_options.LifecycleCompletionRetentionDays);
-        var removed = await coordinator.CleanupLifecycleCompletionsAsync(retention, ct);
-        if (removed > 0) {
-          LogLifecycleCompletionsPurged(_logger, removed, _options.LifecycleCompletionRetentionDays);
-        }
-      } catch (OperationCanceledException) {
-        throw;
-      } catch (Exception ex) {
-        LogLifecycleCompletionPurgeFailed(_logger, _options.LifecycleCompletionRetentionDays, ex);
+  /// <summary>
+  /// Digest-epoch closure (migration 092). The substrate is inert without a caller: nothing else advances the frontier,
+  /// and an unclosed frontier means manifests keep re-aggregating live history. The settle window is the AUDIT's settle
+  /// window on purpose: closure and the audit must agree on what "settled" means, or a seal could disagree with a
+  /// manifest folded over the same range. Best-effort: the frontier just advances on a later cycle.
+  /// </summary>
+  private async Task _closeDigestEpochsAsync(
+      IWorkCoordinator coordinator, Whizbang.Core.Messaging.StreamIntegrityOptions? integrity,
+      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics, CancellationToken ct) {
+    if (integrity is null) {
+      return;
+    }
+    try {
+      // #2363: a cut waits for the seal only while sealing runs, so turning sealing off never leaves cuts waiting for a
+      // seal that cannot come. Written every cycle; the store rewrites a setting only when it changed.
+      await coordinator.SetCutGatesAsync(integrity.Sealing.Enabled, integrity.Sealing.CutWaitsForConsumers, ct)
+        .ConfigureAwait(false);
+      if (!integrity.Sealing.Enabled) {
+        return;
+      }
+      var closed = await coordinator.CloseDigestEpochsAsync(
+        integrity.AuditSettleWindowMinutes * 60, integrity.Sealing.MaxClosuresPerCycle, integrity.Sealing.EpochWidth, ct);
+      if (closed > 0) {
+        metrics?.EpochsSealed.Add(closed);
+        LogEpochsClosed(_logger, closed);
+      }
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogEpochClosureFailed(_logger, ex);
+    }
+  }
+
+  /// <summary>
+  /// #2354: the operational retention sweep. Each batch removes, per Rolling table, the closed rows past their
+  /// category's resting period; the cycle repeats while a table came back with a full batch, up to
+  /// <see cref="OperationalRetentionOptions.MaxBatchesPerCycle"/>, so a backlog drains over several cycles instead of
+  /// holding one. The last batch's reading is what the per-category gauges report. A host that registered no options
+  /// sweeps with the defaults, so bookkeeping rolls off without configuration.
+  /// </summary>
+  private static async Task _sweepOperationalRetentionAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    var options = sp.GetService<IOptions<OperationalRetentionOptions>>()?.Value ?? new OperationalRetentionOptions();
+    if (!options.Enabled) {
+      return;
+    }
+    var metrics = sp.GetService<MaintenanceMetrics>();
+    var retention = options.RetentionByCategory();
+    IReadOnlyList<OperationalRetentionSweepResult> reading = [];
+    for (var batch = 0; batch < options.MaxBatchesPerCycle; batch++) {
+      reading = await coordinator.SweepOperationalRetentionAsync(retention, options.BatchSize, ct).ConfigureAwait(false);
+      foreach (var result in reading) {
+        metrics?.RecordOperationalRowsExpired(result.Category, result.Expired);
+      }
+      if (!reading.Any(r => r.Expired >= options.BatchSize)) {
+        break;
       }
     }
+    metrics?.UpdateOperationalRetention(reading);
+    // #2363: the carried detail of cuts rests like every operational record, then rolls off. It is columns on digest
+    // buckets that stay, not rows the table sweep removes, so it has its own bounded pass.
+    var carriedRest = options.RetentionFor(OperationalCategory.CarriedDetail);
+    for (var batch = 0; batch < options.MaxBatchesPerCycle; batch++) {
+      var cleared = await coordinator.RollOffCarriedDetailAsync(carriedRest, options.BatchSize, ct).ConfigureAwait(false);
+      metrics?.RecordOperationalRowsExpired(OperationalCategory.CarriedDetail, cleared);
+      if (cleared < options.BatchSize) {
+        break;
+      }
+    }
+  }
 
-    // Tier-2 deep maintenance (E1 #13b3): prune ancient ephemeral pointers. The backing SQL self-gates on
-    // the opt-in flag (disabled by default) and a ~monthly interval, so this per-cycle call is a cheap
-    // no-op when disabled or not due. Best-effort: a prune failure is logged and never fails the cycle.
+  /// <summary>
+  /// Lifecycle-completion markers. IWorkCoordinator has always exposed this sweep and migration 035 documented the table
+  /// as periodically cleaned, but no production path ever called it, so the table grew once per event forever while
+  /// appearing to have retention. Best-effort: a failed sweep is logged with the retention it was trying to apply so a
+  /// permanently detached sweep is visible instead of silently reverting to unbounded growth.
+  /// </summary>
+  private async Task _cleanupLifecycleCompletionsAsync(IWorkCoordinator coordinator, CancellationToken ct) {
+    if (_options.LifecycleCompletionRetentionDays <= 0) {
+      return;
+    }
+    try {
+      var retention = TimeSpan.FromDays(_options.LifecycleCompletionRetentionDays);
+      var removed = await coordinator.CleanupLifecycleCompletionsAsync(retention, ct);
+      if (removed > 0) {
+        LogLifecycleCompletionsPurged(_logger, removed, _options.LifecycleCompletionRetentionDays);
+      }
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogLifecycleCompletionPurgeFailed(_logger, _options.LifecycleCompletionRetentionDays, ex);
+    }
+  }
+
+  /// <summary>
+  /// Tier-2 deep maintenance (E1 #13b3): prune ancient ephemeral pointers. The backing SQL self-gates on the opt-in flag
+  /// (disabled by default) and a ~monthly interval, so this per-cycle call is a cheap no-op when disabled or not due.
+  /// Best-effort: a prune failure is logged and never fails the cycle.
+  /// </summary>
+  private async Task _pruneAncientEphemeralPointersAsync(IWorkCoordinator coordinator, CancellationToken ct) {
     try {
       var prune = await coordinator.PruneAncientEphemeralPointersAsync(ct);
       if (prune.RowsPruned > 0) {
@@ -326,36 +635,28 @@ public sealed partial class MaintenanceWorker(
     } catch (Exception ex) {
       LogPointerPruneFailed(_logger, ex);
     }
+  }
 
-    // Passive offload-claim sweep: drain the expired half of the blob ledger — delete the blob,
-    // then remove the row, successes only. Age-based (fan-out safe: no consumer's action can break
-    // a sibling's download) and fleet-elected (settings CAS watermark), so N replicas never issue
-    // N delete storms against one container. Best-effort — a failed sweep retries next cycle.
-    await _sweepExpiredOffloadClaimsAsync(coordinator, sp, ct);
-
-    // The perspective-row retention sweeps (the [RowTtl]/max-age ladder and the [RowCap] overflow
-    // eviction), fronted by the pre-destruction seam: registered guards are offered the exact set
-    // the sweeps would destroy and may defer or cancel per row before anything dies. This is the
-    // sweeps' production invocation — the SQL alone has no caller.
-    await _sweepPerspectiveRowsAsync(coordinator, sp, ct);
-
-    // Detect space held but unusable — churn leaves free space inside pages that autovacuum
-    // returns to the free space map but never to the OS, and a dropped column leaves bytes that
-    // autovacuum can never reclaim at all. Detection RECORDS the rewrite request; the post-ready
-    // Rewrite startup step performs it, in the window it should always have had.
-    await _rewriteBloatedTablesAsync(coordinator, sp, ct);
-
-    // v0.657 slice 5: structural stuck-row sentinel. Runs after the regular
-    // maintenance cycle so backings that don't implement it (default no-op
-    // returning empty list) pay zero cost; Postgres backends use the partial
-    // indexes added in migration 054 for O(log N) scan on a ~0-sized index.
-    if (_options.StuckRowSentinelEnabled) {
-      await _runStuckRowSentinelAsync(coordinator, ct);
+  /// <summary>
+  /// Keeps the handled ledger to the repair receptor lookback (#2273). Best-effort: a failed sweep is logged with the
+  /// window it was applying and retried next cycle; cancellation is shutdown and propagates.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerBestEffortStepsTests.cs:HandledLedger_IsSweptEveryCycle_ToTheRepairReceptorLookback_AtTheHostsTimeAsync</tests>
+  private async Task _sweepHandledLedgerAsync(
+      IWorkCoordinator coordinator, IServiceProvider sp, Whizbang.Core.Messaging.StreamIntegrityOptions? integrity, CancellationToken ct) {
+    var keep = (integrity ?? new Whizbang.Core.Messaging.StreamIntegrityOptions()).RepairReceptorLookback;
+    var now = (sp.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow();
+    try {
+      var removed = await coordinator.SweepHandledLedgerAsync(now, keep, ct).ConfigureAwait(false);
+      if (removed > 0) {
+        LogHandledLedgerSwept(_logger, removed, keep);
+      }
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogHandledLedgerSweepFailed(_logger, keep, ex);
     }
-
-    // Steps other packages add. Last, so everything they read has been through this cycle's own
-    // housekeeping first.
-    await _runMaintenanceStepsAsync(sp, ct).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -770,13 +1071,13 @@ public sealed partial class MaintenanceWorker(
       if (ct.IsCancellationRequested) {
         return;
       }
+      if (c.Reason == Whizbang.Core.Messaging.TableRewriteReason.FillFactorDecrease) {
+        // Queued and compact: it waits for one online rewrite at its lowered fillfactor (#2300), so it is not
+        // reported as holding space it cannot use.
+        continue;
+      }
       if (c.Requested) {
-        // Already on the books. Reported either way: an operator who never looks at this still gets the bloat gauge,
-        // and a row queued with a measurement keeps reporting it while it waits.
-        LogRewriteNeeded(_logger, c.TableName, c.BloatRatio);
-        if (c.Method != Whizbang.Core.Observability.BloatMeasurementMethod.Estimate) {
-          measured[c.TableName] = new(c.BloatRatio, c.Method);
-        }
+        _reportQueuedRewrite(c, measured);
         continue;
       }
       try {
@@ -788,6 +1089,19 @@ public sealed partial class MaintenanceWorker(
       }
     }
     sp.GetService<Whizbang.Core.Observability.TableStatisticsMetrics>()?.UpdateMeasuredTableBloat(measured);
+  }
+
+  /// <summary>
+  /// Reports a table already on the books. Reported either way: an operator who never looks at this still gets the bloat
+  /// gauge, and a row queued with a measurement keeps reporting it while it waits.
+  /// </summary>
+  private void _reportQueuedRewrite(
+      Whizbang.Core.Messaging.TableRewriteCandidate candidate,
+      Dictionary<string, Whizbang.Core.Observability.BloatMeasurement> measured) {
+    LogRewriteNeeded(_logger, candidate.TableName, candidate.BloatRatio);
+    if (candidate.Method != Whizbang.Core.Observability.BloatMeasurementMethod.Estimate) {
+      measured[candidate.TableName] = new(candidate.BloatRatio, candidate.Method);
+    }
   }
 
   /// <summary>
@@ -832,8 +1146,20 @@ public sealed partial class MaintenanceWorker(
         continue;
       }
       try {
-        await runner.BootstrapSnapshotAsync(target.StreamId, target.PerspectiveName, target.LastEventId, ct);
-        LogReapDrivenSnapshot(_logger, target.PerspectiveName, target.StreamId);
+        // #2294: success is reported only for a snapshot that was written. A bootstrap that found no row used to be
+        // logged as one, and the bodies it was meant to cover were held for good.
+        var outcome = await runner.TryBootstrapSnapshotAsync(target.StreamId, target.PerspectiveName, target.LastEventId, ct);
+        switch (outcome) {
+          case SnapshotBootstrapOutcome.Written:
+            LogReapDrivenSnapshot(_logger, target.PerspectiveName, target.StreamId);
+            break;
+          case SnapshotBootstrapOutcome.RowMissing:
+            LogReapDrivenSnapshotRowMissing(_logger, target.PerspectiveName, target.StreamId);
+            break;
+          default:
+            LogReapDrivenSnapshotNotWritten(_logger, target.PerspectiveName, target.StreamId, outcome);
+            break;
+        }
       } catch (Exception ex) {
         LogReapDrivenSnapshotFailed(_logger, ex, target.PerspectiveName, target.StreamId);
       }
@@ -845,11 +1171,19 @@ public sealed partial class MaintenanceWorker(
   // are logged, never fatal (the retry policy lands in a later increment). Returns the targets so the
   // detached PostDestruction step can fire after the reap. The hook's Cancel/Defer decision is captured and
   // logged; ENFORCEMENT (holding the body / rescheduling) lands in the next increment via a SQL hold-gate.
-  /// <summary>The events about to be reaped this cycle, and those loaded for the destruction-stage receptors (#1381).</summary>
+  /// <summary>
+  /// The events about to be reaped this cycle, those loaded for the destruction-stage receptors (#1381), and the only
+  /// bodies the reap may delete (#1999): every body read for the hook, whatever it decided, or <c>null</c> when no batch
+  /// was read because nothing is registered to see one.
+  /// </summary>
   private sealed record DestructionBatch(
       IReadOnlyList<Whizbang.Core.Messaging.EphemeralDestructionTarget> Targets,
-      IReadOnlyList<Whizbang.Core.Observability.MessageEnvelope<IEvent>> Envelopes) {
-    public static readonly DestructionBatch None = new([], []);
+      IReadOnlyList<Whizbang.Core.Observability.MessageEnvelope<IEvent>> Envelopes,
+      IReadOnlyCollection<Guid>? ReapOnly) {
+    public static readonly DestructionBatch None = new([], [], null);
+
+    /// <summary>A batch was read but nothing in it may be reaped this cycle (held, deferred, failed or empty).</summary>
+    public static DestructionBatch Seen(IReadOnlyCollection<Guid> reapOnly) => new([], [], reapOnly);
   }
 
   private async Task<DestructionBatch> _runPreDestructionHooksAsync(
@@ -861,32 +1195,37 @@ public sealed partial class MaintenanceWorker(
       return DestructionBatch.None;
     }
     var targets = await coordinator.GetEphemeralBodiesAboutToReapAsync(ct);
+    // #1999: the reap deletes only what was read here, so a body that becomes eligible while the hook or the compaction
+    // handler runs waits for the next cycle's read instead of going unseen. Held bodies stay in the list: their hold keeps
+    // them, and a forced delete after a failing hook must still reach them.
+    var seen = new List<Guid>(targets.Count);
+    foreach (var t in targets) {
+      seen.Add(t.EventId);
+    }
     if (targets.Count == 0) {
-      return DestructionBatch.None;
+      return DestructionBatch.Seen(seen);
     }
     // Batched: fire the hook ONCE for the whole set of about-to-reap events, then HONOR its decision.
     try {
       // Loaded before the delete: the Post stages run after the data is gone
       var envelopes = await Whizbang.Core.Lifecycle.DestructionStageReceptors.LoadAsync(sp, targets, stageTypes, ct).ConfigureAwait(false);
+      var context = _destructionContext(targets);
       var result = hook is null
         ? Whizbang.Core.Lifecycle.DestructionResult.Proceed()
-        : await hook.OnBeforeDestructionAsync(_destructionContext(targets), ct).ConfigureAwait(false);
+        : await hook.OnBeforeDestructionAsync(context, ct).ConfigureAwait(false);
       LogPreDestruction(_logger, targets.Count, result.Cancel, result.DeferUntil.HasValue);
       if (result.Cancel || result.DeferUntil.HasValue) {
         // E2-3: hold the whole batch — Cancel keeps it far-future, Defer holds it to that instant. Task 8
         // skips held bodies, so nothing is reaped this cycle and PostDestruction does NOT fire (return []).
-        var eventIds = new List<Guid>(targets.Count);
-        foreach (var t in targets) {
-          eventIds.Add(t.EventId);
-        }
         var until = result.DeferUntil ?? DateTimeOffset.MaxValue;
-        await coordinator.HoldEphemeralDestructionAsync(eventIds, until, ct).ConfigureAwait(false);
-        return DestructionBatch.None;
+        await coordinator.HoldEphemeralDestructionAsync(seen, until, ct).ConfigureAwait(false);
+        return DestructionBatch.Seen(seen);
       }
-      // Proceed: the Pre stages run, then the reap deletes the batch and PostDestruction fires for it. A
-      // throwing Pre Inline receptor takes the failure path below, as a throwing hook does
-      await Whizbang.Core.Lifecycle.DestructionStageReceptors.FirePreAsync(sp, envelopes, ct).ConfigureAwait(false);
-      return new DestructionBatch(targets, envelopes);
+      // #1735: the disposition runs, or the batch is held when the reaper cannot carry it out
+      if (!await _runDispositionAsync(coordinator, sp, context, result, envelopes, ct).ConfigureAwait(false)) {
+        return DestructionBatch.Seen(seen);
+      }
+      return new DestructionBatch(targets, envelopes, seen);
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
@@ -895,14 +1234,10 @@ public sealed partial class MaintenanceWorker(
       // so a permanently-broken hook can never leak storage. RecordDestructionFailureAsync increments the
       // batch's attempt count and returns its highest; on engines without the hold infra it returns int.MaxValue
       // (⇒ forced delete ⇒ the prior fail-open behaviour). No PostDestruction fires on failure.
-      var eventIds = new List<Guid>(targets.Count);
-      foreach (var t in targets) {
-        eventIds.Add(t.EventId);
-      }
       var retryUntil = DateTimeOffset.UtcNow.AddSeconds(_options.DestructionRetryBackoffSeconds);
       var policy = _options.OnDestroyFailure;
       var attempt = await coordinator.RecordDestructionFailureAsync(
-        eventIds, retryUntil, _options.MaxDestructionRetries, policy, ct).ConfigureAwait(false);
+        seen, retryUntil, _options.MaxDestructionRetries, policy, ct).ConfigureAwait(false);
       var exhausted = attempt > _options.MaxDestructionRetries;
       var outcome = policy switch {
         Lifecycle.OnDestroyFailure.ForceDeleteImmediately => "FORCED DELETE (policy=ForceDeleteImmediately)",
@@ -911,9 +1246,56 @@ public sealed partial class MaintenanceWorker(
         _ => "held for retry",
       };
       LogPreDestructionFailed(_logger, ex, targets.Count, attempt, _options.MaxDestructionRetries, outcome);
-      return DestructionBatch.None;
+      return DestructionBatch.Seen(seen);
     }
   }
+
+  // #1735: the disposition the hook returned, or the declared one (Delete: every Destruction value that names another
+  // disposition is refused at compile time by WHIZ137). One the reaper cannot carry out holds the batch and returns false;
+  // otherwise the Pre stages run, then the compaction handler for Compact, and the reap may proceed. A throwing Pre Inline
+  // receptor or compaction handler propagates to the caller's failure path, as a throwing hook does.
+  private async Task<bool> _runDispositionAsync(IWorkCoordinator coordinator, IServiceProvider sp,
+      Whizbang.Core.Lifecycle.DestructionContext context, Whizbang.Core.Lifecycle.DestructionResult result,
+      IReadOnlyList<Whizbang.Core.Observability.MessageEnvelope<IEvent>> envelopes, CancellationToken ct) {
+    var disposition = result.Disposition ?? context.DeclaredDefault;
+    var compactor = disposition == Whizbang.Core.Lifecycle.Disposition.Compact
+      ? sp.GetService<Whizbang.Core.Lifecycle.ICompactionHandler>()
+      : null;
+    if (disposition != Whizbang.Core.Lifecycle.Disposition.Delete && compactor is null) {
+      await _holdUnavailableDispositionAsync(coordinator, sp, context.Targets, disposition, ct).ConfigureAwait(false);
+      return false;
+    }
+    await Whizbang.Core.Lifecycle.DestructionStageReceptors.FirePreAsync(sp, envelopes, ct).ConfigureAwait(false);
+    if (compactor is not null) {
+      await compactor.CompactAsync(context, ct).ConfigureAwait(false);
+    }
+    return true;
+  }
+
+  // #1735: a disposition the reaper cannot carry out keeps the batch: Compact with no ICompactionHandler registered,
+  // Archive (the archive store moves a stream's prefix or whole stream, never event bodies across streams), CryptoShred
+  // (not shipped). Held for the retry backoff on the host's clock, so a handler registered later picks it up, and logged
+  // each time with the reason.
+  private async Task _holdUnavailableDispositionAsync(IWorkCoordinator coordinator, IServiceProvider sp,
+      IReadOnlyList<Whizbang.Core.Messaging.EphemeralDestructionTarget> targets, Whizbang.Core.Lifecycle.Disposition disposition,
+      CancellationToken ct) {
+    var eventIds = new List<Guid>(targets.Count);
+    foreach (var t in targets) {
+      eventIds.Add(t.EventId);
+    }
+    var until = (sp.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow().AddSeconds(_options.DestructionRetryBackoffSeconds);
+    await coordinator.HoldEphemeralDestructionAsync(eventIds, until, ct).ConfigureAwait(false);
+    var reason = disposition switch {
+      Whizbang.Core.Lifecycle.Disposition.Compact => "it needs an ICompactionHandler registered, and none is",
+      Whizbang.Core.Lifecycle.Disposition.Archive => "the reaper cannot archive event bodies; archive a stream through IArchiveStore or a prefix truncate",
+      _ => "it has not shipped",
+    };
+    LogDispositionUnavailable(_logger, targets.Count, disposition, reason, until);
+  }
+
+  [LoggerMessage(EventId = 64, Level = LogLevel.Warning,
+    Message = "Ephemeral reap of {Count} event(s) held until {Until}: their disposition is {Disposition}, which the reaper cannot carry out: {Reason}")]
+  private static partial void LogDispositionUnavailable(ILogger logger, int count, Whizbang.Core.Lifecycle.Disposition disposition, string reason, DateTimeOffset until);
 
   // E2 PostDestruction: fire the registered IDestructionHook's detached post-hook ONCE for the reaped batch,
   // after the reap committed. Failure is logged, never fatal.
@@ -956,6 +1338,93 @@ public sealed partial class MaintenanceWorker(
     }
   }
 
+  /// <summary>
+  /// Concludes the inbox rows past <c>MaxInboxAttempts</c> that no dispatcher concluded (#2117): a domain message is
+  /// moved to the dead-letter store as <see cref="MessageFailureReason.MaxAttemptsExceeded"/>, where its last recorded
+  /// error is kept, and control-plane traffic, which is never stored (<see cref="DeadLetterDropPolicy"/>), is dropped.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The ceiling is enforced where a row is dispatched. A row the claim acquires and charges an attempt but never hands to
+  /// a dispatcher (a stream the re-offer passed over, an event held back behind its stream's unheld head) lapsed, was
+  /// taken again by the next claim, and climbed attempts for days without completing or being dead-lettered, while the
+  /// stuck-row sentinel only reported it. A row past the ceiling never runs a handler anywhere, since the dispatcher
+  /// concludes it before dispatch, so concluding it here cannot race a handler; a row its dispatcher concluded in the
+  /// meantime is found gone and left alone.
+  /// </para>
+  /// <para>
+  /// A host with no inbox dispatch, or with no ceiling, has nothing to conclude. A domain row on a host with no
+  /// dead-letter store is kept and reported. A failed move or drop is logged and retried on the next cycle; cancellation
+  /// is shutdown and propagates.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/observability/stuck-row-sentinel#exhausted-rows-are-concluded</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerExhaustedInboxConclusionTests.cs</tests>
+  private async Task _concludeExhaustedInboxRowsAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    if (sp.GetService<IOptions<InboxDispatchWorkerOptions>>()?.Value.MaxInboxAttempts is not int maxAttempts) {
+      return;
+    }
+    var exhausted = await coordinator.FindStuckInboxRowsAsync(maxAttempts, _options.ExhaustedInboxConcludeLimit, ct).ConfigureAwait(false);
+    var controlPlane = new List<Whizbang.Core.Messaging.StuckRow>();
+    var domain = new List<Whizbang.Core.Messaging.StuckRow>();
+    foreach (var row in exhausted) {
+      (DeadLetterDropPolicy.ShouldDropInsteadOfStore(row.MessageType) ? controlPlane : domain).Add(row);
+    }
+    if (controlPlane.Count > 0) {
+      await _dropExhaustedControlPlaneAsync(coordinator, controlPlane, maxAttempts, ct).ConfigureAwait(false);
+    }
+    if (domain.Count > 0) {
+      await _deadLetterExhaustedAsync(sp, domain, maxAttempts, ct).ConfigureAwait(false);
+    }
+  }
+
+  private async Task _dropExhaustedControlPlaneAsync(
+      IWorkCoordinator coordinator, List<Whizbang.Core.Messaging.StuckRow> rows, int maxAttempts, CancellationToken ct) {
+    try {
+      var dropped = await coordinator.DropExhaustedInboxRowsAsync([.. rows.Select(r => r.MessageId)], maxAttempts, ct).ConfigureAwait(false);
+      LogExhaustedControlPlaneDropped(_logger, dropped, rows.Count, maxAttempts);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogExhaustedDropFailed(_logger, rows.Count, ex);
+    }
+  }
+
+  private async Task _deadLetterExhaustedAsync(
+      IServiceProvider sp, List<Whizbang.Core.Messaging.StuckRow> rows, int maxAttempts, CancellationToken ct) {
+    var store = sp.GetService<IDeadLetterStore>();
+    if (store?.IsConfigured != true) {
+      LogExhaustedNotStored(_logger, rows.Count, maxAttempts);
+      return;
+    }
+    var instanceId = sp.GetService<IServiceInstanceProvider>()?.InstanceId ?? Guid.Empty;
+    var generation = (sp.GetService<IGenerationProvider>() ?? new DefaultGenerationProvider()).GetGeneration();
+    var dlqMetrics = sp.GetService<DeadLetterMetrics>();
+    foreach (var row in rows) {
+      var errorText = "MaintenanceWorker dead-lettered an inbox row the claim kept charging and no dispatcher concluded: "
+        + $"attempts={row.Attempts} > max={maxAttempts}";
+      try {
+        var moved = await store.MoveAsync(
+          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
+          sourceTable: DeadLetterSourceTable.INBOX,
+          sourceId: row.MessageId,
+          failureReason: MessageFailureReason.MaxAttemptsExceeded,
+          errorText: errorText,
+          instanceId: instanceId,
+          generation: generation,
+          ct: ct).ConfigureAwait(false);
+        if (moved is null) {
+          continue;   // its dispatcher concluded it meanwhile and logged its record there
+        }
+        dlqMetrics?.Added.Add(1,
+          new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
+          new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, nameof(MessageFailureReason.MaxAttemptsExceeded)));
+        dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)MessageFailureReason.MaxAttemptsExceeded, errorText);
+        LogExhaustedDeadLettered(_logger, row.MessageId, row.MessageType, row.Attempts, maxAttempts);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogExhaustedMoveFailed(_logger, row.MessageId, ex);
+      }
+    }
+  }
+
   private static bool _coordinatorDebugMode(IServiceProvider sp) =>
     sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.WorkCoordinatorOptions>>()
       ?.Value.DebugMode ?? false;
@@ -991,7 +1460,7 @@ public sealed partial class MaintenanceWorker(
   /// is shutdown and propagates.
   /// </summary>
   /// <docs>fundamentals/events/archive-store#the-policy-per-stream-type</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStreamTypePolicySyncTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStreamTypePolicySyncTests.cs</tests>
   private async Task _syncStreamTypePoliciesAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     var policies = (sp.GetService<IOptions<Whizbang.Core.Archival.StreamLifecycleOptions>>()?.Value
       ?? new Whizbang.Core.Archival.StreamLifecycleOptions()).AppendToArchivedPolicies();
@@ -1004,6 +1473,63 @@ public sealed partial class MaintenanceWorker(
     }
   }
 
+  /// <summary>
+  /// Publishes the stored-metadata write form, the full-for list (configuration joined with the
+  /// <c>[StoredMetadata(StoredMetadataForm.Full)]</c> types) and the staging window. Best-effort: the write paths keep
+  /// the values already stored, so a failed write is logged with the keys it left unpublished and the tick goes on.
+  /// Cancellation is shutdown and propagates.
+  /// </summary>
+  /// <docs>data/event-store#stored-metadata</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerEventStoreMetadataSyncTests.cs</tests>
+  private async Task _syncEventStoreMetadataSettingsAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    string? published = null;
+    try {
+      // Resolved inside the guard: options that fail validation are reported here rather than failing the tick.
+      var metadataOptions = sp.GetService<IOptions<Whizbang.Core.Messaging.EventStoreMetadataOptions>>()?.Value
+        ?? new Whizbang.Core.Messaging.EventStoreMetadataOptions();
+      var settings = Whizbang.Core.Messaging.EventStoreMetadataSettings.SettingsFor(
+        metadataOptions, Whizbang.Core.Messaging.StoredMetadataRegistry.FullTypeNames());
+      published = string.Join(", ", settings.Select(s => $"{s.Key}={s.Value}"));
+      await coordinator.SyncRetentionSettingsAsync(settings, ct).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogEventStoreMetadataSyncFailed(_logger, published ?? "none; settings not resolved", ex);
+    }
+  }
+
+  /// <summary>
+  /// Publishes the per-perspective policies for rows of archived streams (the declarations joined with
+  /// <c>Whizbang:Perspectives:ArchivedStreamRows</c>) to <c>wh_settings</c>, where the whole-stream archive reads them.
+  /// Best-effort: the archive keeps the policies already stored, so a failed write is logged with the policies it left
+  /// unstored and the tick goes on. Cancellation is shutdown and propagates.
+  /// </summary>
+  /// <docs>fundamentals/events/archive-store#perspective-rows</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerArchivedStreamRowsSyncTests.cs</tests>
+  private async Task _syncArchivedStreamRowPoliciesAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    string? published = null;
+    try {
+      // Resolved inside the guard: options that cannot be bound are reported here rather than failing the tick.
+      var overrides = sp.GetService<IOptions<Whizbang.Core.Archival.ArchivedStreamRowsOptions>>()?.Value.Perspectives;
+      var setting = Whizbang.Core.Archival.ArchivedStreamRowPolicies.SettingFor(
+        Whizbang.Core.Archival.ArchivedStreamRowPolicies.Effective(overrides));
+      published = setting.Value.Replace('\n', ' ');
+      await coordinator.SyncRetentionSettingsAsync([setting], ct).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogArchivedStreamRowPolicySyncFailed(_logger, published ?? "none; policies not resolved", ex);
+    }
+  }
+
+  [LoggerMessage(EventId = 65, Level = LogLevel.Warning,
+    Message = "Failed to publish the policies for rows of archived streams to wh_settings ({Policies}); a whole-stream archive keeps the policies already stored until a later tick succeeds.")]
+  static partial void LogArchivedStreamRowPolicySyncFailed(ILogger logger, string policies, Exception ex);
+
+  [LoggerMessage(EventId = 63, Level = LogLevel.Warning,
+    Message = "Failed to publish the stored-metadata settings to wh_settings ({Settings}); the write paths keep the settings already stored until a later tick succeeds.")]
+  static partial void LogEventStoreMetadataSyncFailed(ILogger logger, string settings, Exception ex);
+
   [LoggerMessage(EventId = 62, Level = LogLevel.Warning,
     Message = "Failed to store the append-to-archived policies in wh_stream_type_policies (configured: {Policies}); the write paths keep the policies already stored until a later tick succeeds.")]
   static partial void LogStreamTypePolicySyncFailed(ILogger logger, string policies, Exception ex);
@@ -1013,12 +1539,13 @@ public sealed partial class MaintenanceWorker(
   static partial void LogRetentionSettingsSyncFailed(ILogger logger, string keys, Exception ex);
 
   [LoggerMessage(EventId = 47, Level = LogLevel.Information,
-    Message = "Maintenance sweep deferred ({Reason}): service has {UnprocessedRows} unprocessed inbox row(s), {ActiveLeases} active lease(s), {PendingOutboxRows} pending outbox row(s) and {PendingPerspectiveRows} pending perspective event(s). The sweep contends with the statements that publish, apply and mark work complete, so it waits for the service to settle. -1 means unmeasured.")]
-  static partial void LogMaintenanceDeferred(ILogger logger, HousekeepingCoordinator.Verdict reason, long unprocessedRows, long activeLeases, long pendingOutboxRows, long pendingPerspectiveRows);
+    Message = "Maintenance sweep deferred ({Reason}): service has {UnprocessedRows} unprocessed inbox row(s), {ActiveLeases} active lease(s), {PendingOutboxRows} pending outbox row(s), {PendingPerspectiveRows} pending perspective event(s) and {PendingIdleRows} idle-band row(s); work besides the framework's integrity traffic: {NonIntegrityWorkRows}. The sweep contends with the statements that publish, apply and mark work complete, so it waits for the service to settle. -1 means unmeasured.")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "A generated log method: each count is its own structured field, which operators filter and chart on. A parameter object would log as one opaque value.")]
+  static partial void LogMaintenanceDeferred(ILogger logger, HousekeepingCoordinator.Verdict reason, long unprocessedRows, long activeLeases, long pendingOutboxRows, long pendingPerspectiveRows, long pendingIdleRows, long nonIntegrityWorkRows);
 
   [LoggerMessage(EventId = 48, Level = LogLevel.Warning,
-    Message = "Maintenance sweep forced through after repeated deferrals: the service has not settled once across the deferral window ({UnprocessedRows} unprocessed inbox row(s), {ActiveLeases} active lease(s), {PendingOutboxRows} pending outbox row(s), {PendingPerspectiveRows} pending perspective event(s)). Cleanup has no deadline but it does have a limit — space still has to be reclaimed. Sustained busyness at every cycle is itself worth investigating.")]
-  static partial void LogMaintenanceForcedAfterDeferrals(ILogger logger, long unprocessedRows, long activeLeases, long pendingOutboxRows, long pendingPerspectiveRows);
+    Message = "Maintenance sweep forced through after repeated deferrals: the service has not settled once across the deferral window ({UnprocessedRows} unprocessed inbox row(s), {ActiveLeases} active lease(s), {PendingOutboxRows} pending outbox row(s), {PendingPerspectiveRows} pending perspective event(s), {PendingIdleRows} idle-band row(s); work besides the framework's integrity traffic: {NonIntegrityWorkRows}). Cleanup has no deadline but it does have a limit: space still has to be reclaimed. Sustained busyness at every cycle is itself worth investigating.")]
+  static partial void LogMaintenanceForcedAfterDeferrals(ILogger logger, long unprocessedRows, long activeLeases, long pendingOutboxRows, long pendingPerspectiveRows, long pendingIdleRows, long nonIntegrityWorkRows);
 
   [LoggerMessage(EventId = 49, Level = LogLevel.Warning,
     Message = "Service-settledness probe failed; maintenance proceeds UNGATED for this cycle rather than deferring, so a failing probe cannot disable cleanup.")]
@@ -1038,8 +1565,16 @@ public sealed partial class MaintenanceWorker(
   static partial void LogError(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 20, Level = LogLevel.Debug,
-    Message = "Reap-driven ephemeral snapshot for perspective {Perspective} on stream {StreamId}")]
+    Message = "Reap-driven ephemeral snapshot written for perspective {Perspective} on stream {StreamId}")]
   static partial void LogReapDrivenSnapshot(ILogger logger, string perspective, Guid streamId);
+
+  [LoggerMessage(EventId = 71, Level = LogLevel.Information,
+    Message = "Reap-driven ephemeral snapshot not taken for perspective {Perspective} on stream {StreamId}: the stream has no row to snapshot")]
+  static partial void LogReapDrivenSnapshotRowMissing(ILogger logger, string perspective, Guid streamId);
+
+  [LoggerMessage(EventId = 72, Level = LogLevel.Debug,
+    Message = "Reap-driven ephemeral snapshot not written for perspective {Perspective} on stream {StreamId} ({Outcome})")]
+  static partial void LogReapDrivenSnapshotNotWritten(ILogger logger, string perspective, Guid streamId, SnapshotBootstrapOutcome outcome);
 
   [LoggerMessage(EventId = 21, Level = LogLevel.Warning,
     Message = "Reap-driven ephemeral snapshot failed for perspective {Perspective} on stream {StreamId} (non-fatal — body held for a later cycle)")]
@@ -1060,6 +1595,38 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 52, Level = LogLevel.Warning,
     Message = "Lifecycle-completion purge failed at {RetentionDays}-day retention; wh_lifecycle_completions keeps growing until a later cycle succeeds")]
   static partial void LogLifecycleCompletionPurgeFailed(ILogger logger, int retentionDays, Exception ex);
+
+  /// <summary>The maintenance task that trims the integrity ledger to its row cap (migration 221).</summary>
+  private const string TRIM_INTEGRITY_LEDGER_TASK = "trim_integrity_ledger";
+  // #2174: the status prefix wh_perform_maintenance reports for a task it rolled back alone.
+  private const string FAILED_STATUS = "failed";
+
+  // #2256: rows the ledger's row-cap trim removed are buckets closed without a heal. The trim counts every row it removes,
+  // so a row already closed by an unhealable mark is counted again; the cap is reached only by a ledger past
+  // integrity_ledger_max_entries rows, and the open gauge stays exact either way.
+  private static void _recordLedgerTrim(IServiceProvider sp, MaintenanceResult result) {
+    if (result.TaskName != TRIM_INTEGRITY_LEDGER_TASK || result.RowsAffected <= 0) {
+      return;
+    }
+    sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()?.LedgerBucketsClosed.Add(result.RowsAffected,
+      new KeyValuePair<string, object?>(
+        Whizbang.Core.Observability.StreamIntegrityMetrics.HOW_TAG, Whizbang.Core.Observability.StreamIntegrityMetrics.CLOSED_FORGOTTEN));
+  }
+
+  [LoggerMessage(EventId = 75, Level = LogLevel.Debug,
+    Message = "Stream-integrity ledger tally write failed; this instance's opened and closed buckets are written on the next cycle")]
+  static partial void LogLedgerTallyWriteFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 76, Level = LogLevel.Debug,
+    Message = "Stream-integrity repair backlog read failed; the backlog gauges report nothing until the next cycle")]
+  static partial void LogLedgerBacklogRefreshFailed(ILogger logger, Exception ex);
+  [LoggerMessage(EventId = 77, Level = LogLevel.Information,
+    Message = "Removed {Removed} handled ledger records older than the {Lookback} repair receptor lookback")]
+  static partial void LogHandledLedgerSwept(ILogger logger, long removed, TimeSpan lookback);
+
+  [LoggerMessage(EventId = 78, Level = LogLevel.Warning,
+    Message = "The handled ledger sweep failed at the {Lookback} repair receptor lookback; the ledger keeps its records until a later cycle succeeds")]
+  static partial void LogHandledLedgerSweepFailed(ILogger logger, TimeSpan lookback, Exception ex);
 
   [LoggerMessage(EventId = 24, Level = LogLevel.Debug,
     Message = "Stream-integrity ledger gauge refresh failed — convergence gauges will read stale until the next cycle")]
@@ -1103,7 +1670,6 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 34, Level = LogLevel.Debug, Message = "Could not scan for tables needing rewrite")]
   static partial void LogRewriteScanFailed(ILogger logger, Exception ex);
 
-
   [LoggerMessage(EventId = 56, Level = LogLevel.Debug,
     Message = "PreDestruction hook ran for a batch of {TargetCount} ephemeral events (cancel={Cancel}, defer={Defer}) — decision not yet enforced (E2-2)")]
   static partial void LogPreDestruction(ILogger logger, int targetCount, bool cancel, bool defer);
@@ -1115,6 +1681,16 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 58, Level = LogLevel.Warning,
     Message = "PostDestruction hook threw for a batch of {TargetCount} ephemeral events (non-fatal)")]
   static partial void LogPostDestructionFailed(ILogger logger, Exception ex, int targetCount);
+
+  // #2174: a task of the cycle failed; the cycle's other tasks still run.
+  [LoggerMessage(EventId = 79, Level = LogLevel.Warning,
+    Message = "Maintenance task '{TaskName}' failed; the cycle's other tasks still run, and this one is tried again next cycle")]
+  private static partial void LogMaintenanceTaskFailed(ILogger logger, string taskName, Exception exception);
+
+  // #2174: a task inside the maintenance call failed and was rolled back alone; the call's other tasks committed.
+  [LoggerMessage(EventId = 80, Level = LogLevel.Warning,
+    Message = "Maintenance task '{TaskName}' failed in the database after {DurationMs}ms and was rolled back alone; the other tasks committed: {Status}")]
+  private static partial void LogMaintenanceTaskFailedInDatabase(ILogger logger, string taskName, double durationMs, string status);
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Information,
     Message = "Maintenance task '{TaskName}' affected {RowsAffected} rows in {DurationMs}ms")]
@@ -1182,6 +1758,29 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
     Message = "Stuck inbox row sentinel: message_id={MessageId} type={MessageType} stream={StreamId} attempts={Attempts} since={ClaimedSince:o} — row claimed past MaxInboxAttempts but never drained. Investigate; see operations/observability/stuck-row-sentinel.")]
   static partial void LogStuckInboxRow(ILogger logger, Guid messageId, string messageType, Guid? streamId, int attempts, DateTime claimedSince);
+
+  [LoggerMessage(EventId = 66, Level = LogLevel.Warning,
+    Message = "Exhausted inbox row {MessageId} ({MessageType}) dead-lettered by maintenance: attempts={Attempts} > max={MaxAttempts}, "
+            + "and no dispatcher concluded it; its last recorded error is kept on the dead letter")]
+  static partial void LogExhaustedDeadLettered(ILogger logger, Guid messageId, string messageType, int attempts, int maxAttempts);
+
+  [LoggerMessage(EventId = 67, Level = LogLevel.Warning,
+    Message = "Maintenance could not dead-letter exhausted inbox row {MessageId}; it is tried again next cycle")]
+  static partial void LogExhaustedMoveFailed(ILogger logger, Guid messageId, Exception exception);
+
+  [LoggerMessage(EventId = 68, Level = LogLevel.Warning,
+    Message = "Maintenance dropped {Dropped} of {Count} exhausted control-plane inbox row(s) past max={MaxAttempts} that no "
+            + "dispatcher concluded; control-plane traffic is never stored and its sender re-issues it")]
+  static partial void LogExhaustedControlPlaneDropped(ILogger logger, int dropped, int count, int maxAttempts);
+
+  [LoggerMessage(EventId = 69, Level = LogLevel.Warning,
+    Message = "Maintenance could not drop {Count} exhausted control-plane inbox row(s); they are tried again next cycle")]
+  static partial void LogExhaustedDropFailed(ILogger logger, int count, Exception exception);
+
+  [LoggerMessage(EventId = 70, Level = LogLevel.Warning,
+    Message = "{Count} exhausted inbox row(s) past max={MaxAttempts} were not concluded: no dead-letter store is configured, "
+            + "so they are kept and reported by the stuck-row sentinel")]
+  static partial void LogExhaustedNotStored(ILogger logger, int count, int maxAttempts);
 }
 
 /// <summary>Configuration for <see cref="MaintenanceWorker"/>.</summary>
@@ -1211,8 +1810,9 @@ public sealed class MaintenanceWorkerOptions {
   /// <summary>
   /// How the post-ready <c>Rewrite</c> step reclaims the space of recorded tables
   /// (<c>Whizbang:Workers:Maintenance:TableRewriteStrategy</c>). Default <see cref="Workers.TableRewriteStrategy.Auto"/>:
-  /// <c>VACUUM FULL</c> at boot when <see cref="AllowTableRewrite"/> permits it, otherwise detect and report, and
-  /// never an online rewrite. <see cref="Workers.TableRewriteStrategy.PgSqueeze"/> requires the pg_squeeze extension.
+  /// an online rewrite from the maintenance cycle when pg_squeeze, or pg_repack with its client in process, is Ready
+  /// (#2319); otherwise <c>VACUUM FULL</c> at boot when <see cref="AllowTableRewrite"/> permits it, and otherwise detect
+  /// and report. <see cref="Workers.TableRewriteStrategy.PgSqueeze"/> requires the pg_squeeze extension.
   /// </summary>
   /// <docs>operations/infrastructure/storage-maintenance#table-rewrite-strategy</docs>
   public TableRewriteStrategy TableRewriteStrategy { get; set; } = TableRewriteStrategy.Auto;
@@ -1229,6 +1829,16 @@ public sealed class MaintenanceWorkerOptions {
   public long OnlineRewriteMaxBytesPerCycle { get; set; } = 1L << 30;
 
   /// <summary>
+  /// The most perspective tables one maintenance cycle rewrites by a blue-green rebuild when
+  /// <see cref="TableRewriteStrategy"/> is <see cref="Workers.TableRewriteStrategy.Online"/> and no online extension is
+  /// usable (<c>Whizbang:Workers:Maintenance:BlueGreenRewriteMaxPerCycle</c>). Default 1: a rebuild replays every
+  /// stream of its perspective, so several large perspectives are not rebuilt at once. The heap bytes still count
+  /// against <see cref="OnlineRewriteMaxBytesPerCycle"/>. <c>0</c> rebuilds nothing.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#blue-green-rewrite</docs>
+  public int BlueGreenRewriteMaxPerCycle { get; set; } = 1;
+
+  /// <summary>
   /// How many times its expected size an index on a queue table that churns to empty may grow before the maintenance
   /// cycle rebuilds it with <c>REINDEX INDEX CONCURRENTLY</c> (<c>Whizbang:Workers:Maintenance:ReindexBloatThreshold</c>).
   /// Default <c>3.0</c>, the same line a table is queued for rewrite at; <c>0</c> turns the rebuild off. Any other value
@@ -1236,8 +1846,52 @@ public sealed class MaintenanceWorkerOptions {
   /// One index is rebuilt per cycle, fleet-wide, the one with the most bytes to give back (#1746).
   /// </summary>
   /// <docs>operations/infrastructure/storage-maintenance#queue-index-rebuild</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/QueueIndexReindexStepTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/QueueIndexReindexStepTests.cs</tests>
   public double ReindexBloatThreshold { get; set; } = QueueIndexReindexStep.DEFAULT_THRESHOLD;
+
+  /// <summary>
+  /// The bloat ratio at or above which a table is offered for rewrite
+  /// (<c>Whizbang:Workers:Maintenance:TableRewriteBloatThreshold</c>, written to <c>wh_settings.table_rewrite_bloat_threshold</c>).
+  /// Unset (the default), it is 2.0 when this start rewrites with an online tool (pg_squeeze, pg_repack,
+  /// <see cref="Workers.TableRewriteStrategy.Online"/>, or <see cref="Workers.TableRewriteStrategy.Auto"/> resolved to one)
+  /// and 3.0 for <c>VACUUM FULL</c> or detection only. When set it must be finite and greater than 1.
+  /// </summary>
+  /// <remarks>
+  /// Configuration is the source of truth: the boot-time <c>Rewrite</c> step writes the effective value to
+  /// <c>wh_settings</c> on every start, so a value edited there by hand is put back on the next start (#2319).
+  /// </remarks>
+  /// <docs>operations/infrastructure/storage-maintenance#rewrite-thresholds</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteSettingsTests.cs</tests>
+  public double? TableRewriteBloatThreshold { get; set; }
+
+  /// <summary>
+  /// The fewest rows a table must hold to be measured for rewrite (<c>Whizbang:Workers:Maintenance:TableRewriteMinRows</c>,
+  /// written to <c>wh_settings.table_rewrite_min_rows</c>). Unset (the default), 1,000: with fewer rows the per-row
+  /// average is dominated by page overhead. A TOAST relation is measured against at least this many chunks. When set it
+  /// must be zero or greater. Written on every start, as <see cref="TableRewriteBloatThreshold"/> is.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#rewrite-thresholds</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteSettingsTests.cs</tests>
+  public long? TableRewriteMinRows { get; set; }
+
+  /// <summary>
+  /// How far past the ratio its last rewrite left it a table must regrow before it is offered again
+  /// (<c>Whizbang:Workers:Maintenance:TableRewriteRegrowthFactor</c>, written to
+  /// <c>wh_settings.table_rewrite_regrowth_factor</c>). Unset (the default), 1.5. When set it must be finite and
+  /// greater than 1. Written on every start, as <see cref="TableRewriteBloatThreshold"/> is.
+  /// </summary>
+  /// <remarks>
+  /// The estimate cannot see page headers, alignment or the fillfactor reserve, so a table rewritten a moment ago can read
+  /// 1.5x to 2x and stay there. With a threshold below that it would be rewritten every cycle for nothing. A table whose
+  /// last rewrite (<c>wh_table_rewrite_history.bloat_after</c>) left it at F is offered only once it reads
+  /// F times this factor, or the threshold if that is higher: the churn stops, and real regrowth is still caught. A
+  /// table with no recorded rewrite is offered at the threshold, and a lowered fillfactor is owed its rewrite whatever
+  /// the floor says (#2319).
+  /// </remarks>
+  /// <docs>operations/infrastructure/storage-maintenance#post-rewrite-floor</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TableRewriteSettingsTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RewriteRegrowthFloorSqlTests.cs</tests>
+  public double? TableRewriteRegrowthFactor { get; set; }
 
   /// <summary>
   /// Settings of the individual rewrite strategies (<c>Whizbang:Workers:Maintenance:TableRewrite</c>): today, how
@@ -1259,8 +1913,21 @@ public sealed class MaintenanceWorkerOptions {
   /// next cold start counts as a reassignment too.
   /// </remarks>
   /// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkTableVacuumOnAcquisitionTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/WorkTableVacuumOnAcquisitionTests.cs</tests>
   public bool MaintainOnReassignment { get; set; } = true;
+
+  /// <summary>
+  /// A work table vacuumed (by any instance, or by autovacuum) within this long is not vacuumed again when an instance
+  /// acquires the maintainer duty (#2140). Default 10 minutes; <see cref="TimeSpan.Zero"/> vacuums on every acquisition.
+  /// </summary>
+  /// <remarks>
+  /// A restart can move the duty more than once in a minute; each acquisition used to vacuum every work table again. The
+  /// database records when each table was last vacuumed, for the whole fleet, so a hand-off that follows a takeover
+  /// finds the tables just vacuumed and leaves them.
+  /// </remarks>
+  /// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/WorkTableVacuumOnAcquisitionTests.cs:SkipAcquisitionVacuumWithin_DefaultsToTenMinutesAsync</tests>
+  public TimeSpan SkipAcquisitionVacuumWithin { get; set; } = TimeSpan.FromMinutes(10);
 
   /// <summary>
   /// Interval between maintenance runs, in minutes. Default 10.
@@ -1284,8 +1951,8 @@ public sealed class MaintenanceWorkerOptions {
   /// noisy and you want to disable it independently of the rest of maintenance.
   /// </summary>
   /// <docs>operations/observability/stuck-row-sentinel</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_SentinelDisabled_DoesNotInvokeSentinelMethodsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_NoStuckRows_EmitsNoSentinelWarningsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_SentinelDisabled_DoesNotInvokeSentinelMethodsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_NoStuckRows_EmitsNoSentinelWarningsAsync</tests>
   public bool StuckRowSentinelEnabled { get; set; } = true;
 
   /// <summary>
@@ -1295,9 +1962,9 @@ public sealed class MaintenanceWorkerOptions {
   /// <see cref="OutboxDrainWorkerOptions.MaxOutboxAttempts"/> default.
   /// </summary>
   /// <docs>operations/observability/stuck-row-sentinel</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_StuckOutboxRow_EmitsWarningPerRowAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_NoStuckRows_EmitsNoSentinelWarningsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_SentinelDisabled_DoesNotInvokeSentinelMethodsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_StuckOutboxRow_EmitsWarningPerRowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_NoStuckRows_EmitsNoSentinelWarningsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_SentinelDisabled_DoesNotInvokeSentinelMethodsAsync</tests>
   public int StuckRowSentinelMaxAttempts { get; set; } = 10;
 
   /// <summary>
@@ -1306,10 +1973,27 @@ public sealed class MaintenanceWorkerOptions {
   /// low enough that log volume stays manageable.
   /// </summary>
   /// <docs>operations/observability/stuck-row-sentinel</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_StuckOutboxRow_EmitsWarningPerRowAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_MultipleStuckRows_OneWarningEachAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_SentinelDisabled_DoesNotInvokeSentinelMethodsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_StuckOutboxRow_EmitsWarningPerRowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_MultipleStuckRows_OneWarningEachAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerStuckRowSentinelTests.cs:MaintenanceTick_SentinelDisabled_DoesNotInvokeSentinelMethodsAsync</tests>
   public int StuckRowSentinelLimit { get; set; } = 50;
+
+  /// <summary>
+  /// Whether each maintenance cycle concludes the inbox rows past <c>MaxInboxAttempts</c> that no dispatcher concluded
+  /// (#2117): a domain message is moved to the dead-letter store, keeping its last recorded error, and control-plane
+  /// traffic is dropped. Default <c>true</c>. The attempt ceiling is enforced where a row is dispatched, so a row the
+  /// claim keeps charging that never reaches a dispatcher is otherwise retried for ever.
+  /// </summary>
+  /// <docs>operations/observability/stuck-row-sentinel#exhausted-rows-are-concluded</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerExhaustedInboxConclusionTests.cs:Disabled_ConcludesNothingAsync</tests>
+  public bool ConcludeExhaustedInboxRows { get; set; } = true;
+
+  /// <summary>
+  /// The most exhausted inbox rows one maintenance cycle concludes. Default 500; the rest are concluded on later cycles.
+  /// </summary>
+  /// <docs>operations/observability/stuck-row-sentinel#exhausted-rows-are-concluded</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/MaintenanceWorkerExhaustedInboxConclusionTests.cs:ExhaustedDomainRow_IsMovedToTheDeadLetterStore_AsMaxAttemptsExceededAsync</tests>
+  public int ExhaustedInboxConcludeLimit { get; set; } = 500;
 
   /// <summary>
   /// Backoff (seconds) before a FAILED destruction batch (a throwing <c>PreDestruction</c> hook) is retried.
@@ -1384,7 +2068,7 @@ public sealed class MaintenanceWorkerOptions {
   /// <c>Whizbang:Workers:Maintenance:Retention</c>. Every window is unset by default, which leaves the stored value alone.
   /// </summary>
   /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBindingTests.cs:MaintenanceRetention_BindsFromItsEnvironmentVariablesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBindingTests.cs:MaintenanceRetention_BindsFromItsEnvironmentVariablesAsync</tests>
   public MaintenanceRetentionOptions Retention { get; set; } = new();
 
   /// <summary>
@@ -1392,6 +2076,6 @@ public sealed class MaintenanceWorkerOptions {
   /// intervals created ahead. See <see cref="MaintenancePartitioningOptions"/>.
   /// </summary>
   /// <docs>operations/infrastructure/partitioned-ledgers#enabling-it</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PartitioningOptionsTests.cs:Partitioning_BindsFromItsEnvironmentVariablesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PartitioningOptionsTests.cs:Partitioning_BindsFromItsEnvironmentVariablesAsync</tests>
   public MaintenancePartitioningOptions Partitioning { get; set; } = new();
 }

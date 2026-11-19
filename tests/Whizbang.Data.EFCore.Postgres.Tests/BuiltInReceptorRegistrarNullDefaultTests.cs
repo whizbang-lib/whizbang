@@ -10,6 +10,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -29,14 +30,14 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <para>
 /// It only bites a host that declares no receptors, because any assembly that declares one gets a
 /// generated registry that replaces the default — which is why it reached a deployed service
-/// (JDX's system-management service, a pure API surface) rather than a test. The host died before
+/// (a pure API surface) rather than a test. The host died before
 /// binding its port, so the platform saw only a refused connection on the startup probe.
 /// </para>
 /// </remarks>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/ScheduledStreamCloseReceptorRegistrar.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/ScheduledPrefixTruncateReceptorRegistrar.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityManifestReceptors.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RedeliveryRequestReceptorRegistrar.cs</code-under-test>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RebuildCommandReceptorRegistrar.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/RebuildCommandReceptorRegistrar.cs</code-under-test>
 [Category("Shard1")]
 public class BuiltInReceptorRegistrarNullDefaultTests {
 
@@ -55,10 +56,10 @@ public class BuiltInReceptorRegistrarNullDefaultTests {
   }
 
   [Test]
-  public async Task ScheduledStreamClose_WhenTheRegistryIsTheNullDefault_StartsWithoutThrowingAsync() {
+  public async Task ScheduledPrefixTruncate_WhenTheRegistryIsTheNullDefault_StartsWithoutThrowingAsync() {
     await using var sp = _hostWithoutReceptors();
-    var registrar = new ScheduledStreamCloseReceptorRegistrar(
-      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledStreamCloseReceptor>.Instance);
+    var registrar = new ScheduledPrefixTruncateReceptorRegistrar(
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledPrefixTruncateReceptor>.Instance);
 
     await registrar.StartAsync(CancellationToken.None);
   }
@@ -78,7 +79,8 @@ public class BuiltInReceptorRegistrarNullDefaultTests {
   public async Task RedeliveryRequest_WhenTheRegistryIsTheNullDefault_StartsWithoutThrowingAsync() {
     await using var sp = _hostWithoutReceptors();
     var registrar = new RedeliveryRequestReceptorRegistrar(
-      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance,
+      NullLogger<AuditRebuildRequestReceptor>.Instance, NullLogger<BackfillWindowAnswerReceptor>.Instance);
 
     await registrar.StartAsync(CancellationToken.None);
   }
@@ -86,8 +88,7 @@ public class BuiltInReceptorRegistrarNullDefaultTests {
   [Test]
   public async Task RebuildCommand_WhenTheRegistryIsTheNullDefault_StartsWithoutThrowingAsync() {
     await using var sp = _hostWithoutReceptors();
-    var registrar = new RebuildCommandReceptorRegistrar(
-      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RebuildPerspectiveCommandReceptor>.Instance);
+    var registrar = new RebuildCommandReceptorRegistrar(sp);
 
     await registrar.StartAsync(CancellationToken.None);
   }
@@ -132,8 +133,10 @@ public class BuiltInReceptorRegistrarNullDefaultTests {
     await using var sp = _hostWithoutReceptors();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
-    var registrars = typeof(IntegrityCheckpointReceptorRegistrar).Assembly
-      .GetTypes()
+    // Both assemblies that ship a registrar: this driver's, and the shared Postgres one the scheduled prefix truncate
+    // moved to so the Dapper driver registers it too (#2043).
+    var registrars = new[] { typeof(IntegrityCheckpointReceptorRegistrar).Assembly, typeof(ScheduledPrefixTruncateReceptorRegistrar).Assembly }
+      .SelectMany(assembly => assembly.GetTypes())
       .Where(t => t is { IsClass: true, IsAbstract: false } && typeof(IHostedService).IsAssignableFrom(t))
       .Select(t => (Type: t, Ctor: t.GetConstructors().FirstOrDefault()))
       // The registrar shape, stated precisely: it needs the provider, a scope factory and loggers,
@@ -210,8 +213,8 @@ public class BuiltInReceptorRegistrarNullDefaultTests {
     // A real built-in receptor rather than a local fake: the receptor-discovery generator registers
     // every IReceptor<> it finds in an assembly, so declaring one here would change this very test
     // project from "declares no receptors" into one that does.
-    var receptor = new ScheduledStreamCloseReceptor(
-      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledStreamCloseReceptor>.Instance);
+    var receptor = new ScheduledPrefixTruncateReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledPrefixTruncateReceptor>.Instance);
 
     await Assert.That(() => NullReceptorRegistry.Instance.Register(receptor, LifecycleStage.LocalImmediateInline))
       .Throws<InvalidOperationException>()

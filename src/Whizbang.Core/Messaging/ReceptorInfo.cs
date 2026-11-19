@@ -64,8 +64,20 @@ namespace Whizbang.Core.Messaging;
 /// The receptor's <c>[DefaultRouting]</c>, if it declares one: where a message it returns goes when the
 /// message carries no route of its own. A cascade from a lifecycle stage applies it, as a local call does.
 /// </param>
+/// <param name="ReceptorType">
+/// The receptor class, which a receptor interceptor is asked about before the receptor runs. Generated entries set it;
+/// a runtime registration leaves it null and is identified by <paramref name="RuntimeInstance"/>'s type instead.
+/// </param>
+/// <param name="RunOnRepair">
+/// Whether this receptor runs for a repaired event this service can prove it never handled, set when it is decorated
+/// with <see cref="RunOnRepairAttribute"/>. Default false: a repaired event never runs the receptor (#2273).
+/// </param>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
+/// <docs>fundamentals/security/security#receptor-permission-gate</docs>
+/// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/ReceptorInvokerInterceptorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerRepairTests.cs</tests>
 public sealed record ReceptorInfo(
     Type MessageType,
     string ReceptorId,
@@ -76,7 +88,9 @@ public sealed record ReceptorInfo(
     bool IsIdempotent = false,
     bool IsOnceAcrossServices = false,
     object? RuntimeInstance = null,
-    Dispatch.DispatchModes? DefaultRouting = null
+    Dispatch.DispatchModes? DefaultRouting = null,
+    Type? ReceptorType = null,
+    bool RunOnRepair = false
 );
 
 /// <summary>
@@ -90,9 +104,9 @@ public sealed record ReceptorInfo(
 /// <param name="TimeoutMs">The raw timeout in milliseconds. Use -1 for default.</param>
 /// <param name="FireBehavior">The behavior when sync completes or times out.</param>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_ReceptorWithSyncAttribute_AwaitsBeforeInvokingAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_SyncAttribute_PassesCorrectOptionsToAwaiterAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_MultipleSyncAttributes_AwaitsAllInOrderAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_ReceptorWithSyncAttribute_AwaitsBeforeInvokingAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_SyncAttribute_PassesCorrectOptionsToAwaiterAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerTests.cs:InvokeAsync_MultipleSyncAttributes_AwaitsAllInOrderAsync</tests>
 public sealed record ReceptorSyncAttributeInfo(
     Type PerspectiveType,
     IReadOnlyList<Type>? EventTypes,

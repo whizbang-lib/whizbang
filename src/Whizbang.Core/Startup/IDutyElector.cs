@@ -19,8 +19,9 @@ public static class StartupDuties {
 }
 
 /// <summary>
-/// A duty currently held. Dispose to release cleanly; death releases server-side without a call
-/// (the session ends, the primitive frees, the recorded holding is reaped with the instance row).
+/// A duty currently held. Dispose to release cleanly; a holder that dies without a call stops
+/// renewing, and the duty goes to the next vote once its lease lapses or the one liveness rule has
+/// the instance reaped (the recorded holding is reaped with the instance row).
 /// </summary>
 /// <docs>operations/startup/capabilities-and-duties</docs>
 public interface IDutyGrant : IAsyncDisposable {
@@ -31,10 +32,9 @@ public interface IDutyGrant : IAsyncDisposable {
   DateTimeOffset AcquiredAt { get; }
 
   /// <summary>
-  /// Fencing: verifies the grant is still actually held by round-tripping the session that holds
-  /// the primitive. A long-tenure holder calls this before each unit of exclusive work — a grant
-  /// whose session died is a grant another instance may already hold. Returns false (and marks
-  /// the grant lost) instead of throwing.
+  /// Fencing: verifies the grant is still actually held, renewing its lease when due. A long-tenure
+  /// holder calls this before each unit of exclusive work: a grant that lapsed or was taken over is
+  /// a grant another instance may already hold. Returns false instead of throwing.
   /// </summary>
   Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken);
 
@@ -49,7 +49,7 @@ public interface IDutyGrant : IAsyncDisposable {
   /// what it meant: no fencing token, rather than a made-up one.
   /// </remarks>
   /// <docs>proposals/duty-role-assignment</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/DutyGrantContractTests.cs</tests>
   long? Epoch => null;
 
   /// <summary>
@@ -65,7 +65,7 @@ public interface IDutyGrant : IAsyncDisposable {
   /// from the last instance that held the duty.
   /// </remarks>
   /// <docs>operations/startup/capabilities-and-duties#acquiring-a-duty</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/DutyGrantContractTests.cs</tests>
   Guid? PreviousHolderInstanceId => null;
 
   /// <summary>
@@ -76,22 +76,43 @@ public interface IDutyGrant : IAsyncDisposable {
   /// </summary>
   /// <remarks>A default member: a grant that cannot be asked to drain is never asked.</remarks>
   /// <docs>proposals/duty-role-assignment</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/DutyGrantContractTests.cs</tests>
   bool DrainRequested => false;
+
+  /// <summary>
+  /// Canceled the moment this grant stops holding the duty: the elector observed it was lost (a
+  /// role-assignment grant checks once per renew interval, without waiting for a
+  /// <see cref="VerifyStillHeldAsync"/>), or it was released or disposed (#2140). Exclusive work links
+  /// its token to this one, so it stops before another holder's work could overlap it.
+  /// </summary>
+  /// <remarks>A default member: a grant that cannot observe a loss on its own offers a token that is never canceled.</remarks>
+  /// <docs>proposals/duty-role-assignment</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/DutyGrantContractTests.cs:LostToken_OfAGrantThatCannotObserveALoss_IsNeverCanceledAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleHolderLivenessE2ETests.cs:TheOldHolder_ObservesItsLossWithinOneRenewInterval_SoExclusiveWorkNeverOverlapsAsync</tests>
+  CancellationToken LostToken => CancellationToken.None;
+
+  /// <summary>
+  /// How often this grant's lease has to be renewed to stay held, or <see langword="null"/> when it has no lease
+  /// that can lapse. A holder whose exclusive work runs for longer than this between verifies keeps the grant
+  /// alive with a <see cref="DutyGrantKeepalive"/>, which verifies on this interval for as long as it runs.
+  /// </summary>
+  /// <remarks>A default member: a grant without a lease never lapses, so nothing has to renew it.</remarks>
+  /// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyGrantKeepaliveTests.cs</tests>
+  TimeSpan? RenewInterval => null;
 }
 
 /// <summary>
 /// Wins duties. An instance never looks up whether it has been <em>assigned</em> a capability —
-/// it attempts acquisition, and the primitive grants or refuses. <b>The lock decides, the row
-/// reports</b>: implementations record the holding after winning, and if the record and the lock
-/// ever disagree, the lock is right.
+/// it attempts acquisition, and the vote grants or refuses. <b>The vote decides, the row
+/// reports</b>: implementations record the holding after winning. In Postgres every duty is a role
+/// assignment with a lease and an epoch (#2044); no duty is held by an advisory lock.
 /// </summary>
 /// <remarks>
 /// Election is deliberately not membership: the primitive is linearizable against the database
 /// every instance already depends on, with no timeout to tune and no split-brain window. Liveness
 /// (heartbeats, <c>InstanceDiedSignal</c>) only prompts <em>re-attempts</em> — it never decides.
-/// The eviction fence reaches here too: an evicted instance is refused at acquisition even when
-/// it wins the primitive, and the implementation releases what it won.
+/// The eviction fence reaches here too: an evicted instance is refused at acquisition.
 /// </remarks>
 /// <docs>operations/startup/capabilities-and-duties</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DutyElectionE2ETests.cs</tests>
@@ -116,7 +137,7 @@ public interface IDutyElector {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>One attempt per duty, in the order of <paramref name="duties"/>.</returns>
   /// <docs>proposals/duty-role-assignment</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/DutyGrantContractTests.cs</tests>
   async Task<IReadOnlyList<DutyAttempt>> TryAcquireManyAsync(IReadOnlyList<string> duties, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(duties);
     var attempts = new List<DutyAttempt>(duties.Count);
@@ -147,6 +168,12 @@ public enum DutyRefusal {
   /// restart, not a retry.
   /// </summary>
   Refused,
+
+  /// <summary>
+  /// This instance's run permit is closed (#2045): it is paused, standing down or stopping, so it holds no role. A
+  /// resume reopens the permit and the next vote is answered as usual; a stop is final.
+  /// </summary>
+  Halted,
 }
 
 /// <summary>

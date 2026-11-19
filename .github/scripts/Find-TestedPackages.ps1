@@ -32,7 +32,11 @@
     The tested release-branch commit.
 
 .PARAMETER Version
-    The stable version being released (X.Y.Z); the release branch is release/vX.Y.Z.
+    The release line (X.Y.Z): the release branch is release/vX.Y.Z and its packages carry this version.
+
+.PARAMETER PublishVersion
+    The stable version being published, when it differs from the line because betas or rcs rolled it up
+    (#2136; Get-ReleaseVersion.ps1). Only the recovery dispatch it names uses it. Default: -Version.
 
 .PARAMETER Repo
     owner/name.
@@ -53,6 +57,9 @@ param(
 
     [Parameter(Mandatory)]
     [string]$Repo,
+
+    [Parameter()]
+    [string]$PublishVersion = '',
 
     [Parameter()]
     [int[]]$Delays = @(10, 20, 30, 60)
@@ -96,6 +103,7 @@ function Find-TestedPackage {
       [Parameter(Mandatory)][string]$Sha,
       [Parameter(Mandatory)][string]$Version,
       [Parameter(Mandatory)][string]$Repo,
+      [string]$PublishVersion = '',
       [int[]]$Delays = @(10, 20, 30, 60),
       [scriptblock]$GhApi = { param($p) Invoke-GhApi -Path $p },
       [scriptblock]$Sleep = { param($s) Start-Sleep -Seconds $s },
@@ -105,7 +113,7 @@ function Find-TestedPackage {
   $attempts = $Delays.Count + 1
   $waited = ($Delays | Measure-Object -Sum).Sum
   $rerunThis = if ($ThisRunId) { "gh run rerun $ThisRunId --failed" } else { 'gh run rerun <this release run> --failed' }
-  $dispatch = "gh workflow run release.yml --ref main -f version=$Version -f release_type=auto -f dry_run=false"
+  $dispatch = "gh workflow run release.yml --ref main -f version=$(if ($PublishVersion) { $PublishVersion } else { $Version }) -f release_type=auto -f dry_run=false"
   $result = { param($outcome, $message, $run, $via, $n)
     [pscustomobject]@{
       Outcome = $outcome; Message = $message; Attempts = $n; Via = $via
@@ -165,7 +173,7 @@ function Find-TestedPackage {
 # Dot-sourcing for tests loads the functions without running the lookup.
 if ($MyInvocation.InvocationName -eq '.') { return }
 
-$found = Find-TestedPackage -Sha $Sha -Version $Version -Repo $Repo -Delays $Delays -ThisRunId "$env:GITHUB_RUN_ID"
+$found = Find-TestedPackage -Sha $Sha -Version $Version -PublishVersion $PublishVersion -Repo $Repo -Delays $Delays -ThisRunId "$env:GITHUB_RUN_ID"
 if ($found.Outcome -ne 'found') {
   Write-Output "::error::$($found.Message)"
   exit 1

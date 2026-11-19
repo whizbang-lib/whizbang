@@ -9,125 +9,17 @@ namespace Whizbang.Core.Tests.Common;
 /// </summary>
 public static class TestConstants {
   /// <summary>
-  /// <para>Expected total receptor count across all test assemblies.</para>
+  /// <para>Expected number of receptors the generator discovers in this assembly. Each Core unit test project has its own
+  /// generated registry, so this counts only the receptors compiled into Whizbang.Core.Tests; the dispatcher, messaging,
+  /// perspective and worker tests, with most of the receptors, moved to the Whizbang.Core.Unit.*.Tests projects (#2392).</para>
   ///
-  /// <para>Breakdown by source:
-  /// - 7 receptors from VoidReceptorExamples.cs (LogUserActionReceptor, SendNotificationReceptor,
-  ///     UpdateCacheReceptor, ProcessPaymentReceptor, AuditOrderReceptor, AnalyticsOrderReceptor, EmailOrderReceptor)
-  /// - 5 receptors from ReceptorTests.cs (OrderReceptor, OrderBusinessReceptor, OrderAuditReceptor,
-  ///     PaymentReceptor, NotificationReceptor)
-  /// - 3 receptors from VoidReceptorTests.cs (ProcessPaymentReceptor, SendEmailReceptor, LogEventReceptor)
-  /// - 9 receptors from DispatcherCascadeTests.cs (TupleReturningReceptor, ArrayReturningReceptor,
-  ///     MultiEventTupleReceptor, NestedTupleReceptor, NonEventReturningReceptor, EmptyArrayReceptor,
-  ///     EventTrackingReceptor, ShippedEventTrackingReceptor, NotificationEventTrackingReceptor)
-  /// - 4 receptors from DispatcherSyncTests.cs (AsyncOrderReceptor, SyncOrderReceptor, SyncTupleReceptor, VoidSyncLogReceptor)
-  /// - 3 receptors from SyncReceptorTests.cs (SyncOrderReceptor, SyncTupleReceptor, VoidSyncReceptor)
-  /// - 2 receptors from DispatcherVoidCascadeTests.cs (ProcessOrderReceptor, OrderProcessedEventTracker)
-  /// - 5 receptors from DispatcherRpcExtractionTests.cs (TupleReturningReceptor, MultiEventReceptor,
-  ///     SimpleReceptor, InventoryReservedTracker, PaymentInitiatedTracker)
-  /// - 2 receptors from DispatcherDeliveryReceiptTests.cs (CreateOrderReceptor, ProcessPaymentReceptor)
-  /// - 1 receptor from DispatcherCascadeSecurityPropagationTests.cs (CascadeTestCommandReceptor)
-  /// - 1 receptor from DispatcherSecurityPropagationTests.cs (SecurityPropagationTestCommandReceptor)
-  /// - 2 receptors from DispatcherSecurityBuilderTests.cs (DispatcherSecurityBuilderTestCommandReceptor,
-  ///     DispatcherSecurityBuilderVoidReceptor)
-  /// - 2 receptors from DispatcherTagProcessingTests.cs (TestCommandReceptor, ThrowingReceptor)
-  /// - 4 receptors from LifecycleContextTests/FireAtAttributeTests/LifecycleStageIsolationTests/LifecycleReceptorRegistryTests
-  ///     (TestReceptorWithContext, TestReceptorWithFireAt, TestReceptorWithMultipleFireAt, InvocationTrackingReceptor,
-  ///     TestReceptor, AnotherTestReceptor)
-  /// - 2 receptors from DispatcherOptionsAndRoutingTests.cs (TestCommandReceptor, TestCommandVoidReceptor)
-  /// - 2 receptors from DispatcherLocalInvokeAndSyncTests.cs (CreateOrderReceptor, VoidCommandReceptor)
-  /// - 2 receptors from DispatcherLocalInvokeAndSyncCallbackTests.cs (CallbackTestCommandReceptor, CallbackTestCommandWithResultReceptor)
-  /// - 6 receptors from new test files added during cascade security context implementation
-  /// - 3 receptors added during ScopeDelta/unified scope propagation changes
-  /// - 6 receptors from DispatcherStreamIdGenerationTests.cs (GenerateStreamIdCommandReceptor,
-  ///     GenerateStreamIdOnlyIfEmptyCommandReceptor, NoGenerateStreamIdCommandReceptor, SimpleCommandReceptor,
-  ///     InheritedStreamIdCommandReceptor, InheritedOnlyIfEmptyCommandReceptor)</para>
+  /// <para>- 5 receptors from Receptors/ReceptorTests.cs
+  /// - 3 receptors from Receptors/SyncReceptorTests.cs
+  /// - 3 receptors from Receptors/VoidReceptorTests.cs
+  /// - 4 receptors from Dispatcher/DispatcherSyncTests.cs
+  /// - 7 receptors from Examples/VoidReceptorExamples.cs</para>
   ///
-  /// <para>- 7 receptors from DispatcherNewCodeCoverageTests.cs (SyncOnlyCommandReceptor, PropagateStreamIdCommandReceptor,
-  ///     PropagatedStreamIdEventTrackerReceptor, VoidOptionsCommandReceptor, VoidOptionsEventTrackerReceptor,
-  ///     SyncOptionsCommandReceptor, EmptyStreamIdEventReceptor)
-  /// - 2 receptors from DispatcherInvokeWithReceiptTests.cs (ReceiptTestCommandReceptor, ReceiptTestVoidCommandReceptor)</para>
-  ///
-  /// <para>- 3 receptors from DispatcherOwnedDomainTests.cs + DispatcherCascadeFireCountTests.cs
-  ///     (CascadeTestCommandHandler, FireCountCommandHandler, FireCountEventReceptor)
-  /// - 3 receptors from DispatcherStageFireTests.cs
-  ///     (StageTestCommandHandler, DefaultStageTestReceptor, ExplicitPostAllPerspectivesReceptor)
-  /// - 2 receptors from DispatcherOwnedEventSelfEchoTests.cs
-  ///     (SelfEchoCommandHandler, SelfEchoEventReceptor)</para>
-  ///
-  /// <para>- 2 receptors from DispatcherConcurrentOutboxTests.cs
-  ///     (BlockingTestEventReceptor, ThrowingTestEventReceptor)</para>
-  ///
-  /// <para>- 1 receptor from DispatcherCascadeFlushTests.cs
-  ///     (CascadeFlushCommandHandler — pins that cascade uses fire-and-forget FlushAsync)</para>
-  ///
-  /// <para>- 2 receptors from OrphanInboxJanitorExtensionsTests.cs
-  ///     (FakeVoidReceptor, FakeResultReceptor — fixtures for janitor auto-wire test)</para>
-  ///
-  /// <para>- 1 receptor from DispatcherPublishOnceTests.cs
-  ///     (PublishOnceTestEventReceptor — verifies winning the claim proceeds to PublishAsync,
-  ///     which invokes the in-process receptor, in the saga-completion race fix lock-in)</para>
-  ///
-  /// <para>- 1 receptor from DispatcherScheduledForLocalReceptorTests.cs
-  ///     (ScheduledForCascadeProbeReceptor — proves PublishAsync(event, options.ScheduledFor)
-  ///     gates local-receptor invocation on scheduled time, fixing a production saga watchdog
-  ///     cascade-abandon)</para>
-  ///
-  /// <para>- 1 receptor from DispatcherErrorBranchTests.cs
-  ///     (ErrorBranchCommandReceptor — target for RoutedNone rejection and Routed&lt;T&gt;
-  ///     unwrap tests on the IMessageContext-taking dispatcher overloads)</para>
-  ///
-  /// <para>- 1 receptor from Workers/OrphanInboxJanitorExtensionsCoverageTests.cs
-  ///     (FakeVoidReceptor — a real IReceptor&lt;&gt; registration the janitor's snapshot must
-  ///     keep, pinning that a generic NON-receptor registration alongside it contributes
-  ///     nothing)</para>
-  ///
-  ///
-  /// <para>- 1 receptor from Dispatcher/DispatcherEdgeCaseCoverageTests.cs
-  ///     (TestCascadeEventReceptor — a real receptor for the cascade event, so the
-  ///     "DispatchModes.None dispatched nothing" assertion cannot pass merely because no
-  ///     receptor was ever wired)</para>
-  ///
-  /// <para>- 1 receptor from DispatcherSecurityBuilderPublishOnceTests.cs
-  ///     (SecuredOnceEventReceptor — observes the security context a publish-once runs under)</para>
-  ///
-  /// <para>- 1 receptor from Dispatcher/DispatcherKeyedCollectiveStreamTests.cs
-  ///     (EmitKeyedFlipReceptor — returns a collective with an ordering key, so its cascade is tracked on the
-  ///     key's stream)</para>
-  ///
-  /// <para>- 1 receptor from Dispatcher/DispatcherLocalDispatchRecordTests.cs
-  ///     (LocalDispatchRecordProbeReceptor — a default-stage receptor whose local firing the stored
-  ///     envelope must record)</para>
-  ///
-  /// <para>- 2 receptors from Dispatcher/DispatcherLocalDispatchRecordTests.cs
-  ///     (SharedHandlerProbeReceptor and OnceOverallProbeReceptor — a receptor shared by two services,
-  ///     and one marked to run once across services)</para>
-  ///
-  /// <para>- 2 receptors from Dispatcher/DispatcherObservabilityTests.cs
-  ///     (ObservedReceptor and ObservedFailingReceptor — the dispatch spans and dispatcher metrics of a
-  ///     succeeding and a failing receptor)</para>
-  ///
-  /// <para>- 1 receptor from Tags/DispatcherTagProcessingTests.cs
-  ///     (TestVoidCommandReceptor — a void receptor SendAsync reaches since #1379, so tag processing
-  ///     must follow it)</para>
-  ///
-  /// <para>DispatcherTests.cs (3 receptors) and DispatcherLocalInvokeAndSyncTimingTests.cs (2) moved to
-  /// Whizbang.Core.Component.Tests with the Core test separation (#1264), so their receptors are
-  /// discovered in that assembly, not this one.</para>
-  ///
-  /// <para>DispatcherDisposalTests.cs adds 1 (HandledDisposalEventReceptor: the host shutting down while a
-  /// published event's handler runs).</para>
-  ///
-  /// <para>DispatcherLocalDispatchRecordTests.cs adds 1 (LocalDispatchRecordTriggerReceptor: a receptor whose
-  /// returned event the dispatcher cascades and runs locally).</para>
-  ///
-  /// <para>DispatcherPublishOnceTests.cs adds 1 (PublishOnceFailingEventReceptor: a publish that fails after
-  /// its claim was won, #1414).</para>
-  ///
-  /// <para>HopScopeDispatchParityTests.cs adds 1 (HopScopeParityLocalCommandReceptor: a local receptor that
-  /// records the scope it ran under and returns an event the dispatcher cascades, #1854).</para>
-  ///
-  /// <para>Total: 130 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>Total: 22 receptors</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 130;
+  public const int EXPECTED_RECEPTOR_COUNT = 22;
 }

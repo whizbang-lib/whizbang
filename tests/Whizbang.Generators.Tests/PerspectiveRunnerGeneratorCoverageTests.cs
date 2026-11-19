@@ -386,8 +386,8 @@ namespace TestNamespace {
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "HelperPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource)
-      .Contains("return (perspective.Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);")
-      .Because("the real (model, event) overload must still classify and generate normally despite the unrelated single-parameter overload sharing its name.");
+      .Contains("return (((global::Whizbang.Core.Perspectives.IPerspectiveFor<global::TestNamespace.HelperModel, global::TestNamespace.HelperEvent>)perspective).Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);")
+      .Because("the event is applied through its interface, whatever other methods share the name Apply.");
   }
 
   [Test]
@@ -437,12 +437,8 @@ namespace TestNamespace {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task PerspectiveRunnerGenerator_TupleReturnWithNonModelActionSecondElement_FallsThroughToModelCaseAsync() {
-    // Only a 2-tuple whose SECOND element is exactly ModelAction is recognized as the hybrid
-    // (TModel?, ModelAction) return shape. A 2-tuple with any other second element type must not
-    // match that shape: it falls through to the plain "Model" classification, which assumes Apply
-    // returns TModel directly — here Apply actually returns a tuple, so the generated case
-    // silently wraps a tuple where TModel is expected instead of surfacing a diagnostic about the
-    // mismatched Apply signature.
+    // The class's own Apply returns something its interface does not declare (WHIZ115 reports it). The runner calls
+    // the interface's Apply (#1936), so the shape of the class's method never reaches the generated code.
     const string source = """
 
 using Whizbang.Core;
@@ -469,8 +465,8 @@ namespace TestNamespace {
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "MislabeledPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource)
-      .Contains("return (perspective.Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);")
-      .Because("a 2-tuple whose second element isn't ModelAction must be classified as the plain Model case, not the Tuple case.");
+      .Contains("return (((global::Whizbang.Core.Perspectives.IPerspectiveFor<global::TestNamespace.MislabeledModel, global::TestNamespace.MislabeledEvent>)perspective).Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);")
+      .Because("the interface declares the model, so the case wraps the model whatever the class's own method returns.");
   }
 
   #endregion

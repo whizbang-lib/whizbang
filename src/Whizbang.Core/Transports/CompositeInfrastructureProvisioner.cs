@@ -29,7 +29,7 @@ namespace Whizbang.Core.Transports;
 /// </para>
 /// </remarks>
 /// <docs>messaging/transports/transports#transport-namespaces</docs>
-/// <tests>tests/Whizbang.Core.Tests/Transports/CompositeInfrastructureProvisionerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Transports/CompositeInfrastructureProvisionerTests.cs</tests>
 public sealed class CompositeInfrastructureProvisioner : IInfrastructureProvisioner {
   private readonly IReadOnlyList<IInfrastructureProvisioner> _provisioners;
 

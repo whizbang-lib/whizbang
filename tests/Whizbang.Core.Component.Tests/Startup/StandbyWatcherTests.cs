@@ -3,7 +3,6 @@
 
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
@@ -91,14 +90,6 @@ public class StandbyWatcherTests {
     public ValueTask FaultAsync(CancellationToken cancellationToken) => ValueTask.CompletedTask;
   }
 
-  private sealed class RecordingHostLifetime : IHostApplicationLifetime {
-    public int StopCalls { get; private set; }
-    public CancellationToken ApplicationStarted => CancellationToken.None;
-    public CancellationToken ApplicationStopping => CancellationToken.None;
-    public CancellationToken ApplicationStopped => CancellationToken.None;
-    public void StopApplication() => StopCalls++;
-  }
-
   private sealed class StubAssessor(StartupVerdict verdict, string reason = "test") : IStartupAssessor {
     public int Calls { get; private set; }
     public Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken) {
@@ -106,6 +97,28 @@ public class StandbyWatcherTests {
       return Task.FromResult(new StartupAssessment(verdict, reason));
     }
   }
+
+  /// <summary>Answers each assessment with the next scripted one, repeating the last.</summary>
+  private sealed class SequenceAssessor(params StartupAssessment[] assessments) : IStartupAssessor {
+    private int _next;
+    public int Calls { get; private set; }
+    public Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken) {
+      Calls++;
+      return Task.FromResult(assessments[Math.Min(_next++, assessments.Length - 1)]);
+    }
+  }
+
+  private const string ROLLBACK_REASON = "every one can be reversed: rolling back 386_X.sql";
+
+  /// <summary>#2122: the verdict a newer peer that applied only reversible changes, then died, leaves behind.</summary>
+  private static StartupAssessment _rollbackOwed() =>
+    new(StartupVerdict.Migrate, ROLLBACK_REASON) {
+      Rollback = new RollbackPlan(
+        [new Whizbang.Core.Versioning.AppliedSchemaChange("386_X.sql", Whizbang.Core.Versioning.SchemaChangeKind.Platform, "2.0.0", null) {
+          Reversal = Whizbang.Core.Versioning.SchemaChangeReversal.Reversible,
+        }],
+        AllowLossy: false),
+    };
 
   /// <summary>The posted request, which the migrator withdraws when the handshake ends.</summary>
   private sealed class StandbyCoordinator(StandbyRequest? request) : IWorkCoordinator {
@@ -163,8 +176,9 @@ public class StandbyWatcherTests {
 
   private sealed record Harness(
     StandbyWatcher Watcher,
+    WhizbangRunController RunControl,
     RecordingLifecycle Lifecycle,
-    RecordingHostLifetime Host,
+    Whizbang.Testing.Lifecycle.RecordingInstanceExit Exit,
     StandbyCoordinator? Coordinator,
     ServiceProvider Provider) : IDisposable {
     public void Dispose() => Provider.Dispose();
@@ -184,16 +198,14 @@ public class StandbyWatcherTests {
     var sp = services.BuildServiceProvider();
 
     var lifecycle = new RecordingLifecycle();
-    var host = new RecordingHostLifetime();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
+    var host = new Whizbang.Testing.Lifecycle.RecordingInstanceExit();
 
+    var runControl = _path(lifecycle);
     var watcher = new StandbyWatcher(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      lifecycle: lifecycle,
-      hostLifetime: host,
+      runControl: runControl,
+      instanceExit: host,
       instanceProvider: new StubInstanceProvider(),
-      schemaReadyGate: gate,
       versionProvider: new StubVersionProvider(ourVersion),
       assessor: assessor ?? NullStartupAssessor.Instance,
       logger: NullLogger<StandbyWatcher>.Instance,
@@ -201,12 +213,16 @@ public class StandbyWatcherTests {
       pipelineRunner: null,
       options: options ?? new StandbyWatcherOptions());
 
-    return new Harness(watcher, lifecycle, host, coordinator, sp);
+    return new Harness(watcher, runControl, lifecycle, host, coordinator, sp);
   }
 
-  private static StandbyRequest _request(
-      Guid? by = null, string version = "2.0.0", int heartbeatSecondsAgo = 1) =>
-    new(by ?? _peer, version, _now, _now.AddSeconds(-heartbeatSecondsAgo));
+  /// <summary>The one run-control path (#2045), reporting through the recording lifecycle.</summary>
+  private static WhizbangRunController _path(RecordingLifecycle lifecycle) => new(
+    new WhizbangRunPermit(), lifecycle, [], [], new WhizbangLifecycleOptions(), null, NullLogger<WhizbangRunController>.Instance);
+
+  // #2027: whether the requester is live is the database's one liveness rule; the request carries its answer.
+  private static StandbyRequest _request(Guid? by = null, string version = "2.0.0", bool live = true) =>
+    new(by ?? _peer, version, _now, RequesterIsLive: live);
 
   // ============================================================
   // Standing by
@@ -220,6 +236,20 @@ public class StandbyWatcherTests {
 
     await Assert.That(h.Lifecycle.Advanced).Contains(LifecyclePhase.StandingBy)
       .Because("a newer binary is migrating the schema this instance is serving against");
+  }
+
+  [Test]
+  public async Task ANewerLivePeersRequest_StandsDownThroughTheRunControlPathAsync() {
+    // #2045: standing by is the same path as a pause or a stop: the permit closes, held work and roles are released, and
+    // StandingBy confirms it. The phase alone, without the permit, would leave every worker claiming.
+    using var h = _harness(_request(version: "2.0.0"), ourVersion: "1.0.0");
+
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    await Assert.That(h.RunControl.HaltedFor).IsEqualTo(RunHaltReason.StandDown);
+    await Assert.That(h.RunControl.Permit.State).IsEqualTo(RunState.Paused);
+    await Assert.That(h.Lifecycle.Advanced).IsEquivalentTo([LifecyclePhase.Pausing, LifecyclePhase.StandingBy],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
 
   [Test]
@@ -239,7 +269,7 @@ public class StandbyWatcherTests {
     // A migrator that crashed mid-deploy leaves its request behind. Honoring it would drain the
     // fleet on behalf of a process that is not coming back.
     using var h = _harness(
-      _request(version: "2.0.0", heartbeatSecondsAgo: 600), ourVersion: "1.0.0");
+      _request(version: "2.0.0", live: false), ourVersion: "1.0.0");
 
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
 
@@ -248,38 +278,17 @@ public class StandbyWatcherTests {
   }
 
   [Test]
-  public async Task ARequesterHoldingItsAliveLock_BindsUs_BetweenItsSlowBeatsAsync() {
-    // #1286: a migrator holding its alive-lock beats on the slow cadence, so its heartbeat is past the
-    // liveness window for half of every beat. It is alive; voiding its request would resume this
-    // instance in the middle of the migration it asked us to make way for.
-    var request = _request(version: "2.0.0", heartbeatSecondsAgo: 45) with { RequesterAliveLockHeld = true };
-    using var h = _harness(request, ourVersion: "1.0.0");
+  public async Task ARequesterTheRuleCallsLive_BindsUs_AndOneItCallsDead_IsVoidAsync() {
+    // #2027: the watcher keeps no liveness window of its own (it once compared the requester's heartbeat with the host's
+    // clock); it takes the rule's answer, which also counts a migrator holding its alive-lock between slow beats.
+    using var live = _harness(_request(version: "2.0.0", live: true), ourVersion: "1.0.0");
+    using var dead = _harness(_request(version: "2.0.0", live: false), ourVersion: "1.0.0");
 
-    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+    await live.Watcher.TickForTestsAsync(CancellationToken.None);
+    await dead.Watcher.TickForTestsAsync(CancellationToken.None);
 
-    await Assert.That(h.Lifecycle.Advanced).Contains(LifecyclePhase.StandingBy)
-      .Because("a requester live by its lock is alive, whatever its heartbeat's age");
-  }
-
-  [Test]
-  public async Task ARequesterPastTheWindowWithoutItsLock_IsVoidAsync() {
-    using var h = _harness(_request(version: "2.0.0", heartbeatSecondsAgo: 45), ourVersion: "1.0.0");
-
-    await h.Watcher.TickForTestsAsync(CancellationToken.None);
-
-    await Assert.That(h.Lifecycle.Advanced).IsEmpty()
-      .Because("without its lock a requester is judged by its heartbeat, which is past the window");
-  }
-
-  [Test]
-  public async Task ARequestWithNoHeartbeatAtAll_IsVoidAsync() {
-    using var h = _harness(
-      new StandbyRequest(_peer, "2.0.0", _now, RequesterLastHeartbeatAt: null),
-      ourVersion: "1.0.0");
-
-    await h.Watcher.TickForTestsAsync(CancellationToken.None);
-
-    await Assert.That(h.Lifecycle.Advanced).IsEmpty();
+    await Assert.That(live.Lifecycle.Advanced).Contains(LifecyclePhase.StandingBy);
+    await Assert.That(dead.Lifecycle.Advanced).IsEmpty();
   }
 
   [Test]
@@ -326,7 +335,7 @@ public class StandbyWatcherTests {
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
 
     await Assert.That(h.Lifecycle.Advanced).IsEmpty();
-    await Assert.That(h.Host.StopCalls).IsEqualTo(0);
+    await Assert.That(h.Exit.Requests.Count).IsEqualTo(0);
   }
 
   [Test]
@@ -354,7 +363,7 @@ public class StandbyWatcherTests {
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
 
     await Assert.That(h.Lifecycle.Advanced).IsEmpty();
-    await Assert.That(h.Host.StopCalls).IsEqualTo(0);
+    await Assert.That(h.Exit.Requests.Count).IsEqualTo(0);
   }
 
   [Test]
@@ -370,8 +379,11 @@ public class StandbyWatcherTests {
     h.Coordinator!.Request = null;
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
 
-    await Assert.That(h.Host.StopCalls).IsEqualTo(1)
+    await Assert.That(h.Exit.Requests.Count).IsEqualTo(1)
       .Because("the handshake promised to shut down once the migration committed");
+    // #2126: through the one exit path, as an intended exit (code 0) that names the reason.
+    await Assert.That(h.Exit.Requests[0].Cause).IsEqualTo(ExitCause.UpgradeStandDown);
+    await Assert.That(h.Exit.Requests[0].Reason).EndsWith("schema is ahead of this binary");
   }
 
   [Test]
@@ -386,9 +398,29 @@ public class StandbyWatcherTests {
     h.Coordinator!.Request = null;
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
 
-    await Assert.That(h.Host.StopCalls).IsEqualTo(0);
+    await Assert.That(h.Exit.Requests.Count).IsEqualTo(0);
     await Assert.That(h.Lifecycle.Advanced).Contains(LifecyclePhase.Running)
       .Because("a rollback resumes the instance rather than costing the fleet its capacity");
+    await Assert.That(h.Lifecycle.Advanced).IsEquivalentTo([LifecyclePhase.Resuming, LifecyclePhase.Running],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("revival is the run-control path's resume (#2045): the permit reopens before Running is written");
+    await Assert.That(h.RunControl.Permit.IsRunning).IsTrue();
+  }
+
+  [Test]
+  public async Task ARevival_WhileAnOperatorsPauseHolds_LeavesTheInstancePausedAsync() {
+    // #2045: the stand-down and the pause are separate reasons; the revival lifts only its own.
+    var assessor = new StubAssessor(StartupVerdict.Serve, "ledger unchanged");
+    using var h = _harness(_request(version: "2.0.0"), ourVersion: "1.0.0", assessor: assessor);
+    await h.RunControl.HaltAsync(RunHaltReason.Pause, CancellationToken.None);
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    h.Coordinator!.Request = null;
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    await Assert.That(h.RunControl.Permit.State).IsEqualTo(RunState.Paused);
+    await Assert.That(h.RunControl.HaltedFor).IsEqualTo(RunHaltReason.Pause);
+    await Assert.That(h.Lifecycle.Phase).IsEqualTo(LifecyclePhase.Paused);
   }
 
   [Test]
@@ -418,7 +450,7 @@ public class StandbyWatcherTests {
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
     h.Lifecycle.Advanced.Clear();
 
-    h.Coordinator!.Request = _request(version: "2.0.0", heartbeatSecondsAgo: 600);
+    h.Coordinator!.Request = _request(version: "2.0.0", live: false);
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
 
     await Assert.That(h.Lifecycle.Advanced).Contains(LifecyclePhase.Running)
@@ -471,12 +503,13 @@ public class StandbyWatcherTests {
   }
 
   [Test]
-  public async Task OnceStoodDown_FurtherTicksDoNothingAsync() {
-    // Alive but not ready and reapable: replacing it is the orchestrator's decision, and
-    // re-advancing the phase every tick would churn the lifecycle for no reason.
+  public async Task OnceStoodDown_FurtherTicksInsideTheSlowCadence_DoNothingAsync() {
+    // Alive but not ready: re-advancing the phase every tick would churn the lifecycle for no reason, and reading the
+    // ledger every poll would cost a query per instance. #2022: a stood-down instance still asks again on the slow
+    // cadence (or a signal), so it resumes when nothing newer remains; StandbyWatcherUpgradeStandDownTests covers that.
     var assessor = new StubAssessor(StartupVerdict.StandDown, "schema moved");
     using var h = _harness(request: null, assessor: assessor,
-      options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.Zero });
+      options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.FromHours(1) });
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
     var callsAfterFirst = assessor.Calls;
     h.Lifecycle.Advanced.Clear();
@@ -485,7 +518,21 @@ public class StandbyWatcherTests {
 
     await Assert.That(h.Lifecycle.Advanced).IsEmpty();
     await Assert.That(assessor.Calls).IsEqualTo(callsAfterFirst)
-      .Because("a stood-down instance waits for the orchestrator, it does not keep re-assessing");
+      .Because("inside the slow cadence, with nothing signaled, a stood-down instance does not re-assess");
+  }
+
+  [Test]
+  public async Task OnceStoodDown_AVerdictThatStillSaysStandDown_ChangesNothingAsync() {
+    var assessor = new StubAssessor(StartupVerdict.StandDown, "schema moved");
+    using var h = _harness(request: null, assessor: assessor,
+      options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.Zero });
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+    h.Lifecycle.Advanced.Clear();
+
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    await Assert.That(h.Lifecycle.Advanced).IsEmpty().Because("the schema stays newer than this binary: the instance stays down");
+    await Assert.That(h.RunControl.HaltedFor).IsEqualTo(RunHaltReason.StandDown);
   }
 
   [Test]
@@ -504,44 +551,6 @@ public class StandbyWatcherTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task ExecuteAsync_CanceledBeforeSchemaReady_ReturnsCleanlyAsync(
-      CancellationToken testToken) {
-    // A host that fails during migration stops everything it built. The watcher reads the
-    // standby table, which may not exist yet, so it waits on the schema gate first.
-    var services = new ServiceCollection();
-    services.AddScoped<IWorkCoordinator>(_ => new StandbyCoordinator(null));
-    await using var sp = services.BuildServiceProvider();
-
-    var gate = new BlockingSchemaGate();
-    var watcher = new StandbyWatcher(
-      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      lifecycle: new RecordingLifecycle(),
-      hostLifetime: new RecordingHostLifetime(),
-      instanceProvider: new StubInstanceProvider(),
-      schemaReadyGate: gate,
-      versionProvider: new StubVersionProvider("1.0.0"),
-      assessor: NullStartupAssessor.Instance,
-      logger: NullLogger<StandbyWatcher>.Instance,
-      timeProvider: new FakeTimeProvider(_now));
-
-    using var cts = new CancellationTokenSource();
-    await watcher.StartAsync(cts.Token);
-    // StartAsync returning does not mean ExecuteAsync has run -- the host starts it on the thread
-    // pool. Cancelling before it reaches the gate would leave a task that was cancelled before it
-    // began, and "not faulted" is true of that too, so the assertions below would hold without the
-    // watcher ever having handled anything.
-    await gate.WaitEntered.WaitAsync(testToken);
-    var executeTask = watcher.ExecuteTask;
-    await cts.CancelAsync();
-    await watcher.StopAsync(CancellationToken.None);
-
-    await Assert.That(executeTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
-      .Because("the watcher absorbs the cancellation and returns; a faulted or cancelled task "
-             + "turns an ordinary shutdown into a reported crash");
-  }
-
-  [Test]
-  [Timeout(30000)]
   public async Task ExecuteAsync_ATickThatThrows_DoesNotKillTheWatcherAsync(
       CancellationToken testToken) {
     // The watcher is the only thing that answers a standby request. If one failed ledger read
@@ -553,16 +562,13 @@ public class StandbyWatcherTests {
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     await using var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var options = new StandbyWatcherOptions();
     var clock = new ArmedTimerClock();
     var watcher = new StandbyWatcher(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      lifecycle: new RecordingLifecycle(),
-      hostLifetime: new RecordingHostLifetime(),
+      runControl: _path(new RecordingLifecycle()),
+      instanceExit: new Whizbang.Testing.Lifecycle.RecordingInstanceExit(),
       instanceProvider: new StubInstanceProvider(),
-      schemaReadyGate: gate,
       versionProvider: new StubVersionProvider("1.0.0"),
       assessor: NullStartupAssessor.Instance,
       logger: NullLogger<StandbyWatcher>.Instance,
@@ -600,14 +606,11 @@ public class StandbyWatcherTests {
     await using var sp = services.BuildServiceProvider();
 
     var lifecycle = new RecordingLifecycle();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var watcher = new StandbyWatcher(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      lifecycle: lifecycle,
-      hostLifetime: new RecordingHostLifetime(),
+      runControl: _path(lifecycle),
+      instanceExit: new Whizbang.Testing.Lifecycle.RecordingInstanceExit(),
       instanceProvider: null!,
-      schemaReadyGate: gate,
       versionProvider: new StubVersionProvider("1.0.0"),
       assessor: NullStartupAssessor.Instance,
       logger: NullLogger<StandbyWatcher>.Instance,
@@ -639,14 +642,11 @@ public class StandbyWatcherTests {
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     await using var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var watcher = new StandbyWatcher(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      lifecycle: new RecordingLifecycle(),
-      hostLifetime: new RecordingHostLifetime(),
+      runControl: _path(new RecordingLifecycle()),
+      instanceExit: new Whizbang.Testing.Lifecycle.RecordingInstanceExit(),
       instanceProvider: new StubInstanceProvider(),
-      schemaReadyGate: gate,
       versionProvider: new StubVersionProvider("1.0.0"),
       assessor: NullStartupAssessor.Instance,
       logger: NullLogger<StandbyWatcher>.Instance,
@@ -662,20 +662,82 @@ public class StandbyWatcherTests {
       .Because("a cancellation arriving mid-tick is a shutdown, not a tick failure");
   }
 
-  /// <summary>A schema gate that never opens, and says when the watcher started waiting on it.</summary>
-  private sealed class BlockingSchemaGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _waitEntered =
-      new(TaskCreationOptions.RunContinuationsAsynchronously);
+  // ============================================================
+  // #2122: a verdict that owes a rollback never resumes in place
+  // ============================================================
 
-    /// <summary>Completes once the watcher has actually reached the gate.</summary>
-    public Task WaitEntered => _waitEntered.Task;
+  /// <summary>
+  /// The rollback runs in schema initialization, on the elected migrator, and a revival does not re-run it (the schema
+  /// gate is sticky-open). An instance whose verdict owes one exits through the one exit path, as an intended exit, so
+  /// its restart runs startup and rolls the schema back before anything serves over it.
+  /// </summary>
+  private static async Task _assertExitsForTheRollbackAsync(Harness h) {
+    await Assert.That(h.Exit.Requests.Count).IsEqualTo(1)
+      .Because("serving on would run this version over the newer version's schema with nothing rolled back");
+    await Assert.That(h.Exit.Requests[0].Cause).IsEqualTo(ExitCause.UpgradeStandDown)
+      .Because("an intended exit (code 0): the orchestrator restarts it, and the restart's migrator rolls the schema back");
+    await Assert.That(h.Exit.Requests[0].Reason).Contains(ROLLBACK_REASON);
+    await Assert.That(h.Lifecycle.Advanced).DoesNotContain(LifecyclePhase.Resuming);
+    await Assert.That(h.Lifecycle.Advanced).DoesNotContain(LifecyclePhase.Running);
+    await Assert.That(h.RunControl.Permit.IsRunning).IsFalse();
+  }
 
-    public bool IsReady => false;
-    public void MarkReady() { }
+  [Test]
+  public async Task AWithdrawnRequest_WithARollbackOwed_ExitsInsteadOfRevivingAsync() {
+    var assessor = new SequenceAssessor(_rollbackOwed());
+    using var h = _harness(_request(version: "2.0.0"), ourVersion: "1.0.0", assessor: assessor);
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+    h.Lifecycle.Advanced.Clear();
 
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _waitEntered.TrySetResult();
-      await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
-    }
+    h.Coordinator!.Request = null;
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    await _assertExitsForTheRollbackAsync(h);
+  }
+
+  [Test]
+  public async Task AMigratorThatDied_WithARollbackOwed_ExitsInsteadOfRevivingAsync() {
+    var assessor = new SequenceAssessor(_rollbackOwed());
+    using var h = _harness(_request(version: "2.0.0"), ourVersion: "1.0.0", assessor: assessor);
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+    h.Lifecycle.Advanced.Clear();
+
+    h.Coordinator!.Request = _request(version: "2.0.0", live: false);
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    await _assertExitsForTheRollbackAsync(h);
+  }
+
+  [Test]
+  public async Task StoodDownAsObsolete_ThenAVerdictThatOwesARollback_ExitsInsteadOfResumingAsync() {
+    var assessor = new SequenceAssessor(new StartupAssessment(StartupVerdict.StandDown, "a newer version is online"), _rollbackOwed());
+    using var h = _harness(request: null, assessor: assessor,
+      options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.Zero });
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+    await Assert.That(h.Lifecycle.Advanced).Contains(LifecyclePhase.StandingBy);
+    h.Lifecycle.Advanced.Clear();
+
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    await _assertExitsForTheRollbackAsync(h);
+  }
+
+  [Test]
+  public async Task AServingInstance_WhoseVerdictComesToOweARollback_ExitsAsync() {
+    // A newer version that migrated reversible changes and died before it served never stood this instance down; the
+    // verdict now owes a rollback, and this instance must not go on serving over that schema either.
+    var assessor = new SequenceAssessor(new StartupAssessment(StartupVerdict.Current, "current"), _rollbackOwed());
+    using var h = _harness(request: null, assessor: assessor,
+      options: new StandbyWatcherOptions { ObsolescenceInterval = TimeSpan.Zero });
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+    h.Lifecycle.Advanced.Clear();
+
+    await h.Watcher.TickForTestsAsync(CancellationToken.None);
+
+    await Assert.That(h.Exit.Requests.Count).IsEqualTo(1);
+    await Assert.That(h.Exit.Requests[0].Cause).IsEqualTo(ExitCause.UpgradeStandDown);
+    await Assert.That(h.Exit.Requests[0].Reason).Contains(ROLLBACK_REASON);
   }
 }

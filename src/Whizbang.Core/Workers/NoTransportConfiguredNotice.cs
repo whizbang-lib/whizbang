@@ -16,13 +16,13 @@ namespace Whizbang.Core.Workers;
 /// </summary>
 /// <docs>messaging/transports/transport-consumer</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWithoutATransportStartupTests.cs:Startup_WithNoTransport_LogsOnceThatCrossServiceMessagingIsOffAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithNoTransport_ReadinessDoesNotWaitForAConsumerAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithNoTransport_ReadinessDoesNotWaitForAConsumerAsync</tests>
 internal sealed partial class NoTransportConfiguredNotice(ILogger<NoTransportConfiguredNotice> logger)
     : IHostedService, IStartupReadinessContributor {
 
   /// <summary>The readiness name the consumer it stands in for reports under.</summary>
   /// <docs>messaging/transports/transport-consumer</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithNoTransport_ReadinessDoesNotWaitForAConsumerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithNoTransport_ReadinessDoesNotWaitForAConsumerAsync</tests>
   public string ContributorName => "transport-consumer";
 
   /// <summary>Logs that cross-service messaging is off because no transport is configured.</summary>
@@ -40,7 +40,7 @@ internal sealed partial class NoTransportConfiguredNotice(ILogger<NoTransportCon
 
   /// <summary>Ready at once: with no transport there are no subscriptions to wait for.</summary>
   /// <docs>messaging/transports/transport-consumer</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithNoTransport_ReadinessDoesNotWaitForAConsumerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportConsumerWithoutATransportTests.cs:AddTransportConsumer_WithNoTransport_ReadinessDoesNotWaitForAConsumerAsync</tests>
   public Task WaitForContributorReadyAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,

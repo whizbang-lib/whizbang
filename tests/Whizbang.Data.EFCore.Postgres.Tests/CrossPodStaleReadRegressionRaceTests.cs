@@ -54,7 +54,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Integration")]
 [Category("Regression")]
 [Category("Storage")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class CrossPodStaleReadRegressionRaceTests : EFCoreTestBase {
   private static PerspectiveMetadata Meta(string eventType) =>

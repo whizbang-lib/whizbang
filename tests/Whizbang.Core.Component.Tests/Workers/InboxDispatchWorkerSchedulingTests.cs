@@ -137,15 +137,13 @@ public class InboxDispatchWorkerSchedulingTests {
       FakeInstanceProvider instance,
       FakeInboxChannelWriter inbox,
       FakeHandlerCommitChannel handlerCommit,
-      FakeFailureChannel failure,
-      SchemaReadyGate gate) =>
+      FakeFailureChannel failure) =>
     new(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: instance,
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -172,14 +170,12 @@ public class InboxDispatchWorkerSchedulingTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     await using var sp = services.BuildServiceProvider();
-    var worker = _buildWorker(sp, instance, inbox, handlerCommit, failure, gate);
+    var worker = _buildWorker(sp, instance, inbox, handlerCommit, failure);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
     await worker.StartAsync(cts.Token);
@@ -210,15 +206,13 @@ public class InboxDispatchWorkerSchedulingTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     services.AddSingleton<IMessageSecurityContextProvider>(counter);
     await using var sp = services.BuildServiceProvider();
-    var worker = _buildWorker(sp, instance, inbox, handlerCommit, failure, gate);
+    var worker = _buildWorker(sp, instance, inbox, handlerCommit, failure);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
     await worker.StartAsync(cts.Token);

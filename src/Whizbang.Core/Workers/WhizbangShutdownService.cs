@@ -21,7 +21,12 @@ namespace Whizbang.Core.Workers;
 ///
 /// <para>K8s compatible: Dockerfile uses <c>exec dotnet</c> (PID 1), so SIGTERM triggers
 /// <c>IHostedService.StopAsync</c>. Default <c>terminationGracePeriodSeconds</c> is 30s.</para>
+///
+/// <para>Hosted to start when the schema-ready gate opens (#1991), so it is stopped, and deregisters, only on an
+/// instance that got that far: a host stopped during Preflight or Migrate runs nothing against instance tables that
+/// may not exist yet, and ends quietly.</para>
 /// </summary>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupStopBeforeReadyTests.cs</tests>
 public sealed partial class WhizbangShutdownService(
   IServiceProvider serviceProvider,
   IServiceInstanceProvider instanceProvider,

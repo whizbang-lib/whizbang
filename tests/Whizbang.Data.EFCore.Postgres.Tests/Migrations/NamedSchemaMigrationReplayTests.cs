@@ -41,7 +41,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </remarks>
 /// <docs>operations/infrastructure/migrations</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
 public class NamedSchemaMigrationReplayTests {
   private const string SCHEMA = NamedSchemaDbContext.SCHEMA;
@@ -92,6 +91,9 @@ public class NamedSchemaMigrationReplayTests {
         $"SELECT count(*) FROM {SCHEMA}.wh_schema_migrations WHERE owner = 'whizbang' AND content_hash = 'an-earlier-release'"))
       .IsEqualTo(0L)
       .Because("every edited migration ran again and recorded its current hash");
+    await Assert.That(await _scalarAsync<bool>($"SELECT to_regclass('{SCHEMA}.wh_receptor_processing') IS NULL")).IsTrue()
+      .Because("the bootstrap gave migration 031 the table it indexes, since the drop's recorded hash was stale too, and the "
+             + "drop ran again after it");
   }
 
   /// <summary>
@@ -112,6 +114,7 @@ public class NamedSchemaMigrationReplayTests {
     await Assert.That(await _scalarAsync<long>(
         "SELECT count(*) FROM public.wh_schema_migrations WHERE owner = 'whizbang' AND content_hash = 'an-earlier-release'"))
       .IsEqualTo(0L);
+    await Assert.That(await _scalarAsync<bool>("SELECT to_regclass('public.wh_receptor_processing') IS NULL")).IsTrue();
   }
 
   /// <summary>

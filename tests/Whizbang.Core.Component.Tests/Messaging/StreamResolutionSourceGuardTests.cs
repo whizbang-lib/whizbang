@@ -29,7 +29,7 @@ public partial class StreamResolutionSourceGuardTests {
 
   private const string HELPER = "src/Whizbang.Core/Messaging/StreamIdentity.cs";
 
-  private const string PARITY_TABLE = "tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs";
+  private const string PARITY_TABLE = "tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs";
 
   /// <summary>The inbox-row builders, each a row of the parity table.</summary>
   private static readonly string[] _inboxBuilders = [
@@ -43,7 +43,7 @@ public partial class StreamResolutionSourceGuardTests {
     ["src/Whizbang.Core/SystemEvents/AuditOutboxMessageBuilder.cs"] = "the tenant's audit ledger lane; the hop names the record's own stream, which the receiver stores it on",
     ["src/Whizbang.Core/SystemEvents/AuditingEventStoreDecorator.cs"] = "the tenant's audit ledger lane; the hop names the record's own stream, which the receiver stores it on",
     ["src/Whizbang.Core/Workers/CoalesceShipWorker.cs"] = "the bundle's own stream; transport only, each child carries its own",
-    ["src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs"] = "reads stored rows back; decides nothing",
+    ["src/Whizbang.Data.Postgres/CoalesceSql.cs"] = "reads stored rows back for both drivers; decides nothing",
   };
 
   [GeneratedRegex(@"""AggregateId""")]

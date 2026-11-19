@@ -6,7 +6,7 @@
 # A test suite that downloads the build and collects coverage must point the build's hidden
 # .msCoverageExtensionSourceRootsMapping_* files at its own checkout before its tests run
 # (Update-CoverageSourceRoots.ps1). The mapping names the BUILD job's checkout, so when the build and the
-# suite land on different runner kinds (a GitHub-hosted build, Blacksmith suites) the collector finds no
+# suite land on different runner kinds (a GitHub-hosted build, self-hosted suites) the collector finds no
 # sources, skips every assembly and the suite fails "No coverage report measured any library assembly"
 # while every test passes (#1948). Only the unit and component suites did it; the six integration suites
 # did not. The list of suites is derived from the files, so a new reusable-test-*.yml is checked as well.

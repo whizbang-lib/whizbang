@@ -26,5 +26,5 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/ControlPlaneSecurityExemptionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ControlPlaneSecurityExemptionTests.cs</tests>
 public interface IControlPlaneMessage;

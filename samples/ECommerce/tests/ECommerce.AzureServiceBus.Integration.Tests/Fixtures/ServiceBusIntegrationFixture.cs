@@ -28,6 +28,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
@@ -505,7 +506,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     builder.Services.ApplyTestTimings();
 
     // Register background workers
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
+    // AddWhizbang() hosts the perspective worker, starting at Accept commands.
 
     // Azure Service Bus consumer for InventoryWorker
     // CRITICAL: InventoryWorker MUST subscribe to receive its own published events to store them in local event store
@@ -522,7 +523,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       RoutingKey: "sub-01-b"
     ));
     builder.Services.AddSingleton(inventoryConsumerOptions);
-    builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
+    builder.Services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp =>
       new TransportConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         options: inventoryConsumerOptions,
@@ -533,7 +534,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         metrics: sp.GetService<TransportMetrics>(),
         logger: sp.GetRequiredService<ILogger<TransportConsumerWorker>>(),
         serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         routingOptions: Options.Create(new RoutingOptions()),
         workChannelWriter: new WorkChannelWriter(),
         claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -616,15 +616,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // - AddDbContext<BffDbContext> with UseNpgsql
     // - IDbContextFactory<BffDbContext> singleton registration
     // Connection string is provided via config ("ConnectionStrings:db" above)
-    //
-    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang(), as the
-    // RabbitMQ and InMemory fixtures do. A module initializer in another test assembly overwrites
-    // ServiceRegistrationCallbacks.Dispatcher with a callback that registers InventoryWorker
-    // receptors; those need IInventoryLens, which the BFF host does not register. Under
-    // DOTNET_ENVIRONMENT=Development the host builder validates on build and refuses the graph
-    // ("Unable to resolve service for type 'IInventoryLens'"), so every test in the fixture fails.
-    // The BFF dispatcher is registered explicitly below, so the auto-registration is not needed.
-    ServiceRegistrationCallbacks.Dispatcher = null;
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
@@ -703,7 +694,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     });
 
     // Register background workers
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
+    // AddWhizbang() hosts the perspective worker, starting at Accept commands.
 
     // Azure Service Bus consumer with generic topic subscriptions (emulator compatibility)
     // BFF subscribes to generic topics with generic subscriptions (sub-00-a, sub-01-a)
@@ -719,7 +710,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       RoutingKey: "sub-01-a"
     ));
     builder.Services.AddSingleton(consumerOptions);
-    builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
+    builder.Services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp =>
       new TransportConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         options: consumerOptions,
@@ -730,7 +721,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         metrics: sp.GetService<TransportMetrics>(),
         logger: sp.GetRequiredService<ILogger<TransportConsumerWorker>>(),
         serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         routingOptions: Options.Create(new RoutingOptions()),
         workChannelWriter: new WorkChannelWriter(),
         claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -928,95 +918,85 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       Console.WriteLine("[ServiceBusFixture] Workers not idle before cleanup — proceeding with truncation");
     }
 
-    // CRITICAL: Pause ALL TransportConsumerWorkers BEFORE draining to prevent competing consumers
-    // This ensures the transport receivers are inactive while we drain stale messages
-    Console.WriteLine("[ServiceBusFixture] Pausing consumer workers before draining...");
-    var inventoryConsumer = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<Whizbang.Core.Workers.TransportConsumerWorker>()
-      .FirstOrDefault();
-    var bffConsumer = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-      .OfType<Whizbang.Core.Workers.TransportConsumerWorker>()
-      .FirstOrDefault();
-
-    if (inventoryConsumer != null) {
-      await inventoryConsumer.PauseAllSubscriptionsAsync();
-      Console.WriteLine("[ServiceBusFixture] Inventory consumer paused.");
-    }
-    if (bffConsumer != null) {
-      await bffConsumer.PauseAllSubscriptionsAsync();
-      Console.WriteLine("[ServiceBusFixture] BFF consumer paused.");
-    }
+    // CRITICAL: Pause both hosts BEFORE draining to prevent competing consumers. The pause is the one run-control path
+    // (#2045): the consumers' subscriptions pause, nothing is claimed, and the resume reopens both.
+    Console.WriteLine("[ServiceBusFixture] Pausing both hosts before draining...");
+    var inventoryRunControl = _inventoryHost!.Services.GetRequiredService<Whizbang.Core.RunControl.IWhizbangKillswitch>();
+    var bffRunControl = _bffHost!.Services.GetRequiredService<Whizbang.Core.RunControl.IWhizbangKillswitch>();
+    await inventoryRunControl.PauseAsync(cancellationToken);
+    await bffRunControl.PauseAsync(cancellationToken);
+    Console.WriteLine("[ServiceBusFixture] Both hosts paused.");
 
     // Drain Service Bus subscriptions to prevent cross-contamination between tests
     Console.WriteLine("[ServiceBusFixture] Draining subscriptions between tests...");
     await _drainSubscriptionsAsync(cancellationToken);
     Console.WriteLine("[ServiceBusFixture] Subscriptions drained.");
 
-    // Resume consumer workers after draining
-    if (inventoryConsumer != null) {
-      await inventoryConsumer.ResumeAllSubscriptionsAsync();
-      Console.WriteLine("[ServiceBusFixture] Inventory consumer resumed.");
-    }
-    if (bffConsumer != null) {
-      await bffConsumer.ResumeAllSubscriptionsAsync();
-      Console.WriteLine("[ServiceBusFixture] BFF consumer resumed.");
-    }
+    // Truncate all Whizbang tables in the shared database while both hosts are still paused, then resume. Truncating
+    // after the resume raced the hosts' own workers for the tables: the TRUNCATE deadlocked against a claim and was
+    // retried, and the work tables and in-flight state were wiped under workers that had already resumed, which could
+    // leave the next test's first messages unprocessed until its wait timed out. Paused, no worker claims, so nothing
+    // races the truncation and the next test starts from empty tables and empty in-flight state.
+    // Both InventoryWorker and BFF share the same database, so we only need to truncate once.
+    // A deadlock is still retried, for a worker that is mid-statement when the pause lands.
+    try {
+      const int maxRetries = 3;
+      for (var attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          using var scope = _inventoryHost!.Services.CreateScope();
+          var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-    // Truncate all Whizbang tables in the shared database
-    // Both InventoryWorker and BFF share the same database, so we only need to truncate once
-    // Retry on deadlock: with shared fixtures, workers may still hold row locks when cleanup runs.
-    // TRUNCATE requires ACCESS EXCLUSIVE locks, so deadlocks are transient — retry after a short delay.
-    const int maxRetries = 3;
-    for (var attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        using var scope = _inventoryHost!.Services.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+          // Each schema group gets its own DO block so that a missing table in one group
+          // doesn't roll back truncations in other groups (PL/pgSQL EXCEPTION rolls back the
+          // entire BEGIN...END block's savepoint).
+          Console.WriteLine("[ServiceBusFixture] Truncating inventory infrastructure tables...");
+          await dbContext.Database.ExecuteSqlRawAsync(@"
+              DO $$ BEGIN
+                TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
+              EXCEPTION WHEN undefined_table THEN NULL; END $$;
+            ", cancellationToken);
 
-        // Each schema group gets its own DO block so that a missing table in one group
-        // doesn't roll back truncations in other groups (PL/pgSQL EXCEPTION rolls back the
-        // entire BEGIN...END block's savepoint).
-        Console.WriteLine("[ServiceBusFixture] Truncating inventory infrastructure tables...");
-        await dbContext.Database.ExecuteSqlRawAsync(@"
-            DO $$ BEGIN
-              TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
-            EXCEPTION WHEN undefined_table THEN NULL; END $$;
-          ", cancellationToken);
+          Console.WriteLine("[ServiceBusFixture] Truncating inventory perspective tables...");
+          await dbContext.Database.ExecuteSqlRawAsync(@"
+              DO $$ BEGIN
+                TRUNCATE TABLE inventory.wh_per_inventory_level, inventory.wh_per_product CASCADE;
+              EXCEPTION WHEN undefined_table THEN NULL; END $$;
+            ", cancellationToken);
 
-        Console.WriteLine("[ServiceBusFixture] Truncating inventory perspective tables...");
-        await dbContext.Database.ExecuteSqlRawAsync(@"
-            DO $$ BEGIN
-              TRUNCATE TABLE inventory.wh_per_inventory_level, inventory.wh_per_product CASCADE;
-            EXCEPTION WHEN undefined_table THEN NULL; END $$;
-          ", cancellationToken);
+          Console.WriteLine("[ServiceBusFixture] Truncating BFF infrastructure tables...");
+          await dbContext.Database.ExecuteSqlRawAsync(@"
+              DO $$ BEGIN
+                TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
+              EXCEPTION WHEN undefined_table THEN NULL; END $$;
+            ", cancellationToken);
 
-        Console.WriteLine("[ServiceBusFixture] Truncating BFF infrastructure tables...");
-        await dbContext.Database.ExecuteSqlRawAsync(@"
-            DO $$ BEGIN
-              TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
-            EXCEPTION WHEN undefined_table THEN NULL; END $$;
-          ", cancellationToken);
+          Console.WriteLine("[ServiceBusFixture] Truncating BFF perspective tables...");
+          await dbContext.Database.ExecuteSqlRawAsync(@"
+              DO $$ BEGIN
+                TRUNCATE TABLE bff.wh_per_inventory_level, bff.wh_per_product CASCADE;
+              EXCEPTION WHEN undefined_table THEN NULL; END $$;
+            ", cancellationToken);
+          Console.WriteLine("[ServiceBusFixture] All tables truncated.");
 
-        Console.WriteLine("[ServiceBusFixture] Truncating BFF perspective tables...");
-        await dbContext.Database.ExecuteSqlRawAsync(@"
-            DO $$ BEGIN
-              TRUNCATE TABLE bff.wh_per_inventory_level, bff.wh_per_product CASCADE;
-            EXCEPTION WHEN undefined_table THEN NULL; END $$;
-          ", cancellationToken);
-        Console.WriteLine("[ServiceBusFixture] All tables truncated.");
-
-        // Clear publisher in-flight state via the channel writer (the new path tracks in-flight
-        // on IWorkChannelWriter directly; the legacy worker just exposed a wrapper).
-        _inventoryHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
-        _bffHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
-        break; // Success
-      } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
-        // 40P01 = deadlock_detected — workers still hold locks, retry after delay
-        Console.WriteLine($"[ServiceBusFixture] Deadlock during cleanup (attempt {attempt}/{maxRetries}), retrying...");
-        await Task.Delay(500 * attempt, cancellationToken);
-      } catch (Npgsql.NpgsqlException ex) when (ex.Message.Contains("Failed to connect")) {
-        Console.WriteLine("[ServiceBusFixture] Database cleanup skipped - container already stopped");
-        break;
+          // Clear publisher in-flight state via the channel writer (the new path tracks in-flight
+          // on IWorkChannelWriter directly; the legacy worker just exposed a wrapper).
+          _inventoryHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
+          _bffHost!.Services.GetService<Whizbang.Core.Messaging.IWorkChannelWriter>()?.ClearInFlight();
+          break; // Success
+        } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
+          // 40P01 = deadlock_detected: workers still hold locks, retry after delay
+          Console.WriteLine($"[ServiceBusFixture] Deadlock during cleanup (attempt {attempt}/{maxRetries}), retrying...");
+          await Task.Delay(500 * attempt, cancellationToken);
+        } catch (Npgsql.NpgsqlException ex) when (ex.Message.Contains("Failed to connect")) {
+          Console.WriteLine("[ServiceBusFixture] Database cleanup skipped - container already stopped");
+          break;
+        }
       }
+    } finally {
+      // Resume both hosts only once the tables and the in-flight state are clean, and whatever the cleanup threw.
+      await inventoryRunControl.ResumeAsync(cancellationToken);
+      await bffRunControl.ResumeAsync(cancellationToken);
+      Console.WriteLine("[ServiceBusFixture] Both hosts resumed.");
     }
   }
 
@@ -1479,7 +1459,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // Post-Phase-H: OutboxDrainWorker is the active publish path (OutboxPublishWorker
     // defaults disabled). Both expose OnOutboxMessagePublished; subscribe to whichever
     // is registered as IHostedService so the fixture works on either configuration.
-    var hostedServices = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>().ToList();
+    var hostedServices = InventoryHost.Services.GetHostedWorkers().ToList();
     var drainWorker = hostedServices.OfType<OutboxDrainWorker>().FirstOrDefault();
     var publishWorker = hostedServices.OfType<OutboxPublishWorker>().FirstOrDefault();
     if (drainWorker is null && publishWorker is null) {
@@ -1509,60 +1489,79 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Waits for a specific number of perspective completions using the
-  /// OnPerspectiveEventProcessed hook. Deterministic — fires directly from the worker's processing loop.
+  /// Waits until this fixture's perspective workers have applied
+  /// <paramref name="expectedCompletions"/> events belonging to <paramref name="streamId"/>.
   /// </summary>
-  /// <param name="expectedCompletions">Total event-applications to wait for.</param>
+  /// <remarks>
+  /// The stream filter is REQUIRED and no unfiltered wait exists, by design: the shared fixture's
+  /// workers keep applying a previous test's in-flight events after that test ends, and an
+  /// unfiltered counter let those stale fires satisfy the wait before this test's events were
+  /// applied (the InventoryWorker_Perspectives_Materialize and UpdateProduct_PriceOnly flakes).
+  /// See <see cref="PerspectiveProcessingWaiter"/> for the counting semantics (sums EventCount).
+  /// </remarks>
+  /// <param name="expectedCompletions">Total event applications on <paramref name="streamId"/> to wait for.</param>
+  /// <param name="streamId">The stream whose events count (for product workflows, the ProductId).</param>
   /// <param name="timeoutMilliseconds">Caller-side wait timeout.</param>
   /// <param name="hostFilter">"inventory", "bff", or null for both.</param>
-  /// <param name="streamId">When non-null, only count events for this stream id. Recommended
-  /// for every workflow test — otherwise stale events from prior tests' in-flight processing
-  /// can satisfy the wait early (the perpetual UpdateProduct_PriceOnly flake's root cause).</param>
-  public async Task WaitForPerspectiveProcessingAsync(
+  public Task WaitForPerspectiveProcessingAsync(
       int expectedCompletions,
+      Guid streamId,
       int timeoutMilliseconds = 30000,
-      string? hostFilter = null,
-      Guid? streamId = null) {
-    // Sum EventCount (not fire count): the handler fires ONCE per (perspective, stream)
-    // batch with EventCount = number of events processed in that batch. The caller's intent
-    // is "wait until N event-applications complete," and per-batch fires can represent 1 or
-    // many events depending on drain timing. Mirror of the fix in
-    // RabbitMqIntegrationFixture.WaitForPerspectiveProcessingAsync — see commit 4d8a28d5
-    // for the rationale and regression history.
-    var eventCount = 0;
-    var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    void WireWorker(PerspectiveWorker? worker) {
-      if (worker is null) {
-        return;
-      }
+      string? hostFilter = null) =>
+    WaitForPerspectiveProcessingAsync(expectedCompletions, [streamId], timeoutMilliseconds, hostFilter);
 
-      void handler(PerspectiveEventProcessedEvent e) {
-        // Stream-id filter eliminates cross-test contamination: prior test's in-flight
-        // events keep firing on the worker after cleanup; without this filter their
-        // EventCount satisfied the wait before THIS test's command had committed.
-        if (streamId.HasValue && e.StreamId != streamId.Value) {
-          return;
-        }
-        var current = Interlocked.Add(ref eventCount, e.EventCount);
-        if (current >= expectedCompletions) {
-          tcs.TrySetResult(true);
-        }
-      }
-
-      worker.OnPerspectiveEventProcessed += handler;
-    }
+  /// <summary>
+  /// Waits until this fixture's perspective workers have applied
+  /// <paramref name="expectedCompletions"/> events whose stream is in <paramref name="streamIds"/>,
+  /// for tests that wait on events from several streams at once (seeding, batches).
+  /// </summary>
+  /// <remarks>
+  /// The stream filter is REQUIRED and no unfiltered wait exists, by design: see the single-stream
+  /// overload and <see cref="PerspectiveProcessingWaiter"/>.
+  /// </remarks>
+  /// <param name="expectedCompletions">Total event applications across all <paramref name="streamIds"/>.</param>
+  /// <param name="streamIds">The streams whose events count; must not be empty.</param>
+  /// <param name="timeoutMilliseconds">Caller-side wait timeout.</param>
+  /// <param name="hostFilter">"inventory", "bff", or null for both.</param>
+  public Task WaitForPerspectiveProcessingAsync(
+      int expectedCompletions,
+      IReadOnlyCollection<Guid> streamIds,
+      int timeoutMilliseconds = 30000,
+      string? hostFilter = null) {
+    var workers = new List<PerspectiveWorker?>();
     if (hostFilter is null or "inventory") {
-      var inventoryWorker = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault();
-      WireWorker(inventoryWorker);
+      workers.Add(InventoryHost.Services.GetHostedWorker<PerspectiveWorker>());
     }
     if (hostFilter is null or "bff") {
-      var bffWorker = BffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault();
-      WireWorker(bffWorker);
+      workers.Add(BffHost.Services.GetHostedWorker<PerspectiveWorker>());
     }
-    var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
-    await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+    return PerspectiveProcessingWaiter.WaitAsync(workers, expectedCompletions, streamIds, timeoutMilliseconds);
+  }
+
+  /// <summary>
+  /// Waits until, on every stream in <paramref name="streamIds"/>, each perspective in <paramref name="expectations"/> has
+  /// applied its distinct events (#2237). Prefer it to the summed wait when a test reads every stream's rows afterward:
+  /// reports that are not new applies cannot meet it, and a pair that is never applied fails it by name.
+  /// </summary>
+  /// <param name="streamIds">The streams whose rows the test reads; must not be empty.</param>
+  /// <param name="expectations">What each perspective must apply per stream.</param>
+  /// <param name="timeoutMilliseconds">Caller-side wait timeout, scaled by <see cref="Whizbang.Testing.TestTimeouts"/>.</param>
+  /// <param name="hostFilter">"inventory", "bff", or null for both.</param>
+  public async Task WaitForPerspectiveAppliesAsync(
+      IReadOnlyCollection<Guid> streamIds,
+      IReadOnlyList<PerspectiveApplyExpectation> expectations,
+      int timeoutMilliseconds = 30000,
+      string? hostFilter = null) {
+    var sources = new List<IPerspectiveEventProcessedSource?>();
+    if (hostFilter is null or "inventory") {
+      sources.Add(PerspectiveWorkerEventSource.Of(InventoryHost.Services.GetHostedWorker<PerspectiveWorker>()));
+    }
+    if (hostFilter is null or "bff") {
+      sources.Add(PerspectiveWorkerEventSource.Of(BffHost.Services.GetHostedWorker<PerspectiveWorker>()));
+    }
+    using var timeout = new CancellationTokenSource(
+      TimeSpan.FromMilliseconds(Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds)));
+    await PerspectiveProcessingWaiter.WaitForAppliedAsync(sources, streamIds, expectations, timeout.Token);
   }
 
   /// <summary>
@@ -1595,8 +1594,8 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     void WireInboxDrain(InboxDrainWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
     void WirePerspective(PerspectiveWorker? w) => WireOnce(w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
 
-    var inventoryHostedServices = _inventoryHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>().ToList();
-    var bffHostedServices = _bffHost!.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>().ToList();
+    var inventoryHostedServices = _inventoryHost!.Services.GetHostedWorkers().ToList();
+    var bffHostedServices = _bffHost!.Services.GetHostedWorkers().ToList();
 
     WireOutboxPublish(inventoryHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
     WireOutboxPublish(bffHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
@@ -1656,12 +1655,10 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     }
 
     if (hostFilter is null or "inventory") {
-      WireWorker(InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault());
+      WireWorker(InventoryHost.Services.GetHostedWorker<PerspectiveWorker>());
     }
     if (hostFilter is null or "bff") {
-      WireWorker(BffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault());
+      WireWorker(BffHost.Services.GetHostedWorker<PerspectiveWorker>());
     }
 
     using var watchdogCts = new CancellationTokenSource();

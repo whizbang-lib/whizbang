@@ -174,8 +174,35 @@ Original slice text:
 
 ### S5. P1: final snapshot and scheduled disposition
 
-**Status (2026-10-24):** open. No disposition step and no `Whizbang:StreamLifecycle` options. Depends on S3 and
-S4.
+**Status (2026-11-01):** implemented on `feat/1734-storage` (#1734, bundled with #1735 and #1933), migration
+`280_FinalSnapshotAndScheduledDisposition.sql` (281 to 284, also reserved, are unused). Owner decisions of 2026-11-01:
+the default disposition of a sealed stream is to archive it whole, with no enable flag; NewGeneration ships here. As
+built:
+
+- **Scheduling** is done by the step, not by the seal: `wh_schedule_stream_dispositions` sets `disposition_due_at` to the
+  later of `sealed_at` and the step's clock, plus `FinalizeGrace`, for up to `SweepBatchSize` `Sealed` streams with none
+  (partial index `idx_stream_lifecycle_unscheduled`). Counting from the later of the two gives streams sealed before the
+  release, and sealed streams someone restored, a full grace; the seal paths (finalizer, terminal events on three write
+  paths) stay untouched.
+- **The step** (`StreamDispositionStep`, Core, registered by both drivers with `PostgresStreamDispositionLedger`) reads
+  the due streams with their readiness (`wh_due_stream_dispositions`: blocked, held, done, ready), defers blocked and held
+  ones for `DestructionRetryBackoffSeconds`, takes the **final snapshot** at each perspective cursor through the runner's
+  `BootstrapSnapshotAsync` (at disposition time, once consumption is complete, not at the seal), runs the PreDestruction
+  hook (cancel and throw defer for the backoff, defer moves the due time), then the disposition (default Archive whole;
+  Delete purges; Compact runs `ICompactionHandler` then purges; CryptoShred defers).
+- **NewGeneration** (`AppendToArchivedPolicy.NewGeneration`): an append to a stream archived whole is stored at the
+  tombstone's last version plus one and the stream becomes Active with its archive as a prefix, when every parked cursor
+  has a snapshot at its event; otherwise it acts as AutoRestore. Decided once in `_wh_archived_stream_refusals`, started by
+  `_wh_start_new_generations`, numbered from the ledger only for a stream with nothing hot in a write that held an
+  archived stream. Parked cursors stay; `wh_perspective_resume_cursors` (both coordinators) resumes a perspective after its
+  parked cursor until it has a live one. A whole-stream archive written straight through `IArchiveStore` takes no final
+  snapshot (the store sits below the runners), so a NewGeneration append to it falls back to AutoRestore.
+
+Docs: `stream-end-of-life.md#scheduled-disposition`, `#the-final-snapshot`, `archive-store.md#new-generation`, the
+configuration reference (docs branch `docs/1734`).
+
+Original slice text:
+
 
 - **Change.** On seal, request a final snapshot for each consuming snapshotting perspective
   (`IPerspectiveSnapshotStore`, `src/Whizbang.Core/Perspectives/IPerspectiveSnapshotStore.cs:16`) and
@@ -190,9 +217,22 @@ S4.
 
 ### S6. Wire `Disposition`
 
-**Status (2026-10-24):** open. No code routes on `DestructionResult.Disposition`; `Destruction.OnCompaction` and
-`Archived` are still documented as planned and inert (`src/Whizbang.Core/Attributes/Destruction.cs:10`). The
-ephemeral events page this slice was to promote is already published. Depends on S7 for `Archive`.
+**Status (2026-11-01):** implemented on `feat/1734-storage` (#1735, bundled with #1734). Owner decisions of 2026-11-01:
+the ephemeral reaper refuses `Archive` (held for the retry backoff and logged), WHIZ137 flags `Destruction.Archived` as
+well as `OnCompaction`, and an event-level archive is #1975; `DestructionResult.Disposition` is nullable and
+`Proceed()` runs the declared disposition. As built: `IStreamPrefixTruncator.TruncateAsync(streamId, throughVersion,
+Disposition)` replaces the `archive` flag (the stored `ScheduledStreamClose` keeps its flag, mapped to Archive or
+Delete); the full-history guard runs on the disposition that will run; `ICompactionHandler` is the developer's Compact
+(truncate: handler then discard, `compaction_unavailable` without one; reaper: handler then reap, held without one);
+CryptoShred is refused everywhere (`crypto_shred_unavailable`). `DestructionContext.ThroughVersion` tells a stream hook the
+cut. Docs: `stream-end-of-life.md#dispositions`, `operations/diagnostics/whiz137.md`, `ephemeral-events.md`.
+
+**Follow-up (2026-11-02):** #1999 fixed: the ephemeral reap deletes only the bodies the hook and the compaction handler
+were given (migration 310, `wh_perform_maintenance(p_ephemeral_reap_event_ids)`; `perform_maintenance()` calls it with
+no restriction). Event-level archive (#1975) is waiting on owner questions posted on the issue.
+
+Original slice text:
+
 
 - **Change.** The reaper (`MaintenanceWorker.cs:805`) and the stream disposition step route on
   `DestructionResult.Disposition`: `Delete` as today, `Archive` through `IArchiveStore` (S7) before
@@ -246,7 +286,8 @@ reuse 262's SQL; archives the table store wrote stay readable and move into obje
 `ServiceUri` with a host-registered `TokenCredential`, or `ConnectionString` (Azurite). Migration
 `269_ArchiveObjectDeletionQueue.sql` (owner decision on #1737): a trigger on the manifest queues every object a row stops
 naming (purge, restore, delete) in the removing transaction, and `ArchiveObjectDeletionStep` (maintenance, maintainer
-duty) deletes them with confirm-then-clear and backoff retries. Open: no access-tier setting yet. Docs:
+duty) deletes them with confirm-then-clear and backoff retries. Access tier (#1897, 2026-11-01): `AccessTier`
+(`Hot`, `Cool`, `Cold`; unset keeps the account default; `Archive` refused at bind, construction and host start). Docs:
 `archive-store.md#the-azure-blob-store` (docs branch `docs/1737`).
 
 - **Change.** New package `Whizbang.Archive.AzureBlob` (reusing `Azure.Storage.Blobs`, already pinned
@@ -265,7 +306,7 @@ duty) deletes them with confirm-then-clear and backoff retries. Open: no access-
 ### S9. Read-through, restore, and the append-to-archived policy
 
 **Status (2026-10-30):** implemented on `feat/1738-archive-read-through` (#1738), migration
-`271_ArchiveReadThroughAndAppendPolicy.sql` (272 and 273, also reserved, are unused). Owner decisions of 2026-10-30 on
+`271_ArchiveReadThroughAndAppendPolicy.sql` (272 and 273, first reserved for it, were later used by #1955 for the archived-collective index and the parked rebuild cursor; 274 by #1958 for the deleted-archive record). Owner decisions of 2026-10-30 on
 #1738, as built:
 
 - **Read-through by gap detection** (`ArchiveAwareEventStoreDecorator`, innermost in the event store's decorator chain
@@ -295,7 +336,8 @@ duty) deletes them with confirm-then-clear and backoff retries. Open: no access-
   restore completes the request and makes its dead letters due for the recovery worker (policy `AfterRestore`); a
   failure holds them for review with the error.
 
-Left for later: NewGeneration (#1734, S5); the Dapper driver has no dead-letter recovery service, so on Dapper an
+NewGeneration shipped with #1734 (S5, see there). #1933 (bundled with #1734): `GetLastSequenceAsync` and
+`HasStreamEventsBeforeAsync` read the ledger in the one statement each runs (`ArchivedStreamHistorySql`, both drivers). Left for later: the Dapper driver has no dead-letter recovery service, so on Dapper an
 `AwaitingRestore` dead letter becomes due but nothing redrives it until that service exists. Docs:
 `archive-store.md#read-through`, `#appending-to-an-archived-stream`, `#restore-requests`, `rewind.md`, `rebuild.md`
 (docs branch `docs/1738`).
@@ -316,8 +358,29 @@ Original slice text:
 
 ### S10. Per-perspective policy for rows of archived streams
 
-**Status (2026-10-24):** open. No `[ArchivedStreamRows]`. Depends on S7; reuses the WS-5 S1 companion cleanup,
-which is done.
+**Status (2026-11-02):** implemented on `feat/1739-storage` (#1739), migration `299_ArchivedStreamRows.sql`. As built:
+
+- `[ArchivedStreamRows(ArchivedStreamRowPolicy.Keep | Drop | Archive)]`, registered by the perspective-runner generator
+  under the perspective's CLR type name; `Whizbang:Perspectives:ArchivedStreamRows:<Perspective>` overrides it (applied
+  at startup by `ArchivedStreamRowsConfigurator`). The maintenance worker publishes the effective policies every tick to
+  `wh_settings` (`archived_stream_rows`, one `name=policy` per line), which `wh_archive_stream` reads; no new
+  coordinator API.
+- Only a whole-stream archive applies it. Per table the least destructive declared policy wins (Keep, Archive, Drop); a
+  perspective that declares nothing does not vote; an active row hold keeps the row.
+- `Drop` reuses `_wh_evict_perspective_row_companions` (latest snapshot kept) and deletes the parked cursors of the
+  model's perspectives; the generated runner's missing-row probe runs for Drop and Archive perspectives, so the row is
+  rebuilt when the stream comes back.
+- `Archive` parks the whole row (`to_jsonb`) in `wh_event_archive_rows` (FK to the ledger, `ON DELETE CASCADE`), in the
+  service's database for every store, as the parked cursors are; a restore and a new generation put it back over the
+  table's current shape, keeping a row written since; deleting the archive deletes it; a row whose table is gone is
+  discarded.
+- Open: the archived rows of an Azure Blob archive stay in the database (not in the blob objects); a column added with
+  `NOT NULL` and no default since the archive makes the restore fail.
+
+Docs: `archive-store.md#perspective-rows` (docs branch `docs/1739`), `stream-end-of-life.md`, `row-retention.md`,
+`rebuild.md`, the configuration reference.
+
+Original slice text:
 
 - **Change.** `[ArchivedStreamRows(Keep | Drop | Archive)]` on a perspective, with a config override.
   `Drop` deletes the row and its cursor and snapshots (shares the companion cleanup from WS-5);
@@ -328,7 +391,23 @@ which is done.
 
 ### S11. B1: policy-driven end-of-life
 
-**Status (2026-10-24):** open. Nothing is built. Depends on S3 and S5.
+**Status (2026-11-02):** implemented on `feat/1740-storage` (#1740), migration `297_StreamEndOfLifePolicies.sql`, by
+configuration only (the attribute and registration builder are an open question for the owner, see below). As built:
+
+- `Whizbang:StreamLifecycle:Enabled` (default `false`) turns on the triggers; per type `IdleTtl`, `MaxAge`,
+  `TenantByteCap`, `KeepTailVersions` and `Action` (`Archive` default, `Compact`, `Purge`; `CloseBooks` refused at start
+  naming #1741). A type's `Action` is also the disposition of its sealed streams (`wh_due_stream_dispositions` now
+  returns the stream type), so finalized plus grace is one of the type's triggers.
+- `wh_stream_policy_candidates` reads only the ledger (no new index): Active, unsealed, unscheduled streams of a
+  policy's type, first trigger of idle (from the end of the newest append's hour), age (exact), tenant byte cap (per type
+  and tenant, null tenant one group, least recently appended go until the newest fit), version cap (above
+  `truncated_through_version`, a new unindexed column written by the step after a cut); least recently appended first,
+  at most `SweepBatchSize`.
+- Whole-stream picks go the S5 way (readiness, final snapshot, hook with `IdleTtlElapsed`, `MaxAgeReached` or
+  `TenantByteCapExceeded`); an archive does not seal; a purge, or a compaction that will run, first seals with
+  `wh_seal_stream_if_unchanged` (append lock, version unchanged), so a stream revived since the pick is left open.
+  The version cap goes through `IStreamPrefixTruncator` with the new `DestructionReason.VersionCapExceeded`.
+- Not built: the "explicit" trigger (finalize and truncate already are), the attribute and builder.
 
 - **Change.** A stream type declares a lifecycle policy (attribute plus a registration builder,
   source-generated), overridable from config. Triggers: sliding idle TTL, absolute age,
@@ -346,7 +425,15 @@ which is done.
 
 ### S12. B6: close the books
 
-**Status (2026-10-24):** open. `src/` has no `IBookCloser`. Depends on S4 and S11.
+**Status (2026-11-03):** implemented on top of `feat/1740-storage` (#1741), migration `315_CloseTheBooks.sql`. Owner
+decisions of 2026-11-02: a successor stream (not the same stream); the opening event derives from `OpeningBalance`
+(`SuccessorStreamId`, `PredecessorStreamId`, `PredecessorFinalVersion`, all set by the framework); the framework picks the
+successor id (`TrackedGuid`) and returns it; close, seal and open in one SQL function (`wh_close_books`, calling
+`wh_append_event` twice and `wh_finalize_stream`); `CloseBooks` as a policy action needs an `IBookClosingHandler` (start
+refused without one). As built: the closer reads the newest Sourced version and the SQL re-checks it under the append
+lock (`StreamChanged` otherwise); each driver stores both events as its direct append does (`IDirectAppendRowBuilder`);
+closing by policy runs no gate or hook (it destroys nothing); `CloseBooks` maps to the Archive disposition for the sealed
+predecessor. Docs: new `v1.0.0/fundamentals/events/closing-the-books.md`; the proposal page records the decision.
 
 - **Change.** `IBookCloser.CloseBooksAsync(streamId, closingSummary, openingBalance)`: (1) append the
   closing summary as a durable event, (2) seal (S4), (3) open a successor stream whose first event is

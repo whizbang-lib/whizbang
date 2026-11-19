@@ -9,8 +9,8 @@ using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Signals;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Tests.Observability;
 
@@ -35,6 +35,8 @@ public class DutyHolderWorkerTests {
     public long? Epoch => epoch;
     public bool DrainRequested { get; set; }
     public Guid? PreviousHolderInstanceId { get; init; }
+    public CancellationTokenSource Lost { get; } = new();
+    public CancellationToken LostToken => Lost.Token;
     public Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken) =>
       Task.FromResult(!Disposed && (Verifications.Count == 0 || Verifications.Dequeue()));
     public ValueTask DisposeAsync() {
@@ -114,16 +116,11 @@ public class DutyHolderWorkerTests {
     }
   }
 
-  private sealed class Notify : ISharedNotifyConnection {
-    public INotifySubscription? Subscription { get; private set; }
-    public bool Unsubscribed { get; private set; }
-    public IDisposable Subscribe(INotifySubscription subscription) {
-      Subscription = subscription;
-      return new Handle(this);
-    }
-    private sealed class Handle(Notify owner) : IDisposable {
-      public void Dispose() => owner.Unsubscribed = true;
-    }
+  /// <summary>The signal bus over the in-memory transport: a publish reaches every subscriber before it returns.</summary>
+  private sealed class Notify {
+    public SignalBus Bus { get; } = new([new InMemorySignalTransport()], []);
+    public Notify() => Bus.StartAsync().GetAwaiter().GetResult();
+    public void Release(string role) => Bus.PublishAsync(new RoleReleasedSignal(role)).AsTask().GetAwaiter().GetResult();
   }
 
   private static PendingDutyWork _owed(string key, bool due = true) =>
@@ -132,10 +129,10 @@ public class DutyHolderWorkerTests {
   private static Handler _done(string key) => new(key, _ => ValueTask.FromResult(DutyWorkResult.Done()));
 
   private static DutyHolderWorker _worker(Elector elector, Store store, IEnumerable<IDutyWorkHandler> handlers,
-      ISharedNotifyConnection? notify = null, RoleAssignmentMetrics? metrics = null, TimeProvider? time = null,
+      Notify? notify = null, RoleAssignmentMetrics? metrics = null, TimeProvider? time = null,
       IEnumerable<IDutyAcquisitionHandler>? acquisitionHandlers = null, ILogger<DutyHolderWorker>? logger = null) =>
     new(elector, store, handlers, acquisitionHandlers ?? [], Options.Create(new RoleAssignmentOptions()),
-      logger ?? NullLogger<DutyHolderWorker>.Instance, notify, metrics, time);
+      logger ?? NullLogger<DutyHolderWorker>.Instance, notify?.Bus, metrics, time);
 
   private sealed class OnAcquired(Func<IDutyGrant, CancellationToken, ValueTask>? run = null, string role = ROLE) : IDutyAcquisitionHandler {
     public List<IDutyGrant> Acquisitions { get; } = [];
@@ -504,17 +501,16 @@ public class DutyHolderWorkerTests {
     elector.Attempted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     var wakes = 0;
     worker.OnWakeRequested += () => Interlocked.Increment(ref wakes);
-    notify.Subscription!.OnNotification("some-other-role");
+    notify.Release("some-other-role");
     await Assert.That(Volatile.Read(ref wakes)).IsEqualTo(0)
       .Because("a release of a role this worker holds no work for must not wake a pass");
-    await Assert.That(notify.Subscription.ChannelName).IsEqualTo(DutyHolderWorker.RELEASE_CHANNEL);
     // The grant is held back between the attempt and its processing, which is the window #1707 raced:
     // "an attempt was made" is not "the role is held". Only the held-role signal proves the latter.
     var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var becameHolder = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     worker.OnBecameHolder += role => becameHolder.TrySetResult(role);
     elector.Proceed = proceed.Task;
-    notify.Subscription.OnNotification(ROLE);
+    notify.Release(ROLE);
     await Assert.That(Volatile.Read(ref wakes)).IsEqualTo(1).Because("a release of our role wakes the next pass");
     await Assert.That(await elector.Attempted.Task).IsEqualTo(3);
     await Assert.That(becameHolder.Task.IsCompleted).IsFalse()
@@ -525,7 +521,9 @@ public class DutyHolderWorkerTests {
 
     await worker.StopAsync(CancellationToken.None);
     await Assert.That(grant.Disposed).IsTrue().Because("a graceful stop releases the role, so the next holder takes it at once");
-    await Assert.That(notify.Unsubscribed).IsTrue();
+    notify.Release(ROLE);
+    await Assert.That(Volatile.Read(ref wakes)).IsEqualTo(1)
+      .Because("a stopped worker has left the bus: a later release wakes nothing");
     worker.Dispose();
   }
 
@@ -542,7 +540,7 @@ public class DutyHolderWorkerTests {
 
     await worker.StartAsync(CancellationToken.None);
     await elector.Attempted.Task;   // the loop subscribes before its first pass
-    notify.Subscription!.OnNotification(ROLE);
+    notify.Release(ROLE);
 
     await Assert.That(Volatile.Read(ref wakes)).IsEqualTo(1)
       .Because("the role is one this worker votes for, so its release wakes a pass at once");
@@ -670,6 +668,118 @@ public class DutyHolderWorkerTests {
 
     await Assert.That(async () => await worker.RunOnceAsync(cts.Token)).Throws<OperationCanceledException>();
     await Assert.That(worker.Holds(ROLE)).IsTrue().Because("a canceled pass releases nothing; the host's stop does");
+  }
+
+  // --- #2140: a grant that is lost stops the exclusive work running under it -----------------------
+
+  [Test]
+  public async Task AGrantLostMidAcquisitionWork_CancelsThatWork_AndTheWorkerLetsTheRoleGoAsync() {
+    // The elector learned the role is gone while the holder was inside its acquisition work: that work is canceled
+    // through the grant's token, so it never runs beside the next holder's.
+    var grant = new Grant();
+    var elector = new Elector();
+    elector.Answers.Enqueue(() => DutyAttempt.Granted(grant));
+    var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var canceled = false;
+    var onAcquired = new OnAcquired(async (_, token) => {
+      started.TrySetResult();
+      try {
+        await _untilCanceledAsync(token);
+      } catch (OperationCanceledException) {
+        canceled = true;
+        throw;
+      }
+    });
+    var store = new Store();
+    store.Owed.Add(_owed("Rewrite"));
+    var rewrite = _done("Rewrite");
+    var worker = _worker(elector, store, [rewrite], acquisitionHandlers: [onAcquired]);
+
+    var pass = worker.RunOnceAsync(CancellationToken.None);
+    await started.Task;
+    await grant.Lost.CancelAsync();
+    await pass;
+
+    await Assert.That(canceled).IsTrue();
+    await Assert.That(rewrite.Runs).IsEqualTo(0).Because("no exclusive work starts under a lost grant");
+    await Assert.That(worker.Holds(ROLE)).IsFalse();
+    await Assert.That(grant.Disposed).IsTrue();
+  }
+
+  [Test]
+  public async Task AGrantLostMidOwedWork_CancelsThatWork_AndRunsNoMoreAsync() {
+    var grant = new Grant();
+    var elector = new Elector();
+    elector.Answers.Enqueue(() => DutyAttempt.Granted(grant));
+    var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var first = new Handler("First", async token => {
+      started.TrySetResult();
+      await _untilCanceledAsync(token);
+      return DutyWorkResult.Done();
+    });
+    var second = _done("Second");
+    var store = new Store();
+    store.Owed.Add(_owed("First"));
+    store.Owed.Add(_owed("Second"));
+    var worker = _worker(elector, store, [first, second]);
+
+    var pass = worker.RunOnceAsync(CancellationToken.None);
+    await started.Task;
+    await grant.Lost.CancelAsync();
+    await pass;
+
+    await Assert.That(second.Runs).IsEqualTo(0);
+    await Assert.That(store.Completed).IsEmpty();
+    await Assert.That(worker.Holds(ROLE)).IsFalse();
+  }
+
+  [Test]
+  public async Task Holds_TurnsFalseTheMomentTheGrantIsLost_WithoutWaitingForAPassAsync() {
+    // MaintainerDuty asks Holds before each piece of fleet-wide work; it must not wait for the next pass to learn.
+    var grant = new Grant();
+    var elector = new Elector();
+    elector.Answers.Enqueue(() => DutyAttempt.Granted(grant));
+    var worker = _worker(elector, new Store(), [_done("Rewrite")]);
+    await worker.RunOnceAsync(CancellationToken.None);
+    await Assert.That(worker.Holds(ROLE)).IsTrue();
+
+    await grant.Lost.CancelAsync();
+
+    await Assert.That(worker.Holds(ROLE)).IsFalse();
+  }
+
+  [Test]
+  public async Task StoppingDuringWork_IsNotMistakenForALostGrant_AndKeepsTheRoleForTheHostsStopAsync() {
+    var grant = new Grant();
+    var elector = new Elector();
+    elector.Answers.Enqueue(() => DutyAttempt.Granted(grant));
+    var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var store = new Store();
+    store.Owed.Add(_owed("Rewrite"));
+    var worker = _worker(elector, store, [new Handler("Rewrite", async token => {
+      started.TrySetResult();
+      await _untilCanceledAsync(token);
+      return DutyWorkResult.Done();
+    })]);
+    using var stop = new CancellationTokenSource();
+
+    var pass = worker.RunOnceAsync(stop.Token);
+    await started.Task;
+    await stop.CancelAsync();
+
+    await Assert.That(async () => await pass).Throws<OperationCanceledException>();
+    await Assert.That(worker.Holds(ROLE)).IsTrue();
+    await Assert.That(grant.Disposed).IsFalse();
+  }
+
+  /// <summary>
+  /// Completes, canceled, the moment <paramref name="token"/> is canceled: work that stands still until the code under
+  /// test cancels it, waiting on that exact transition rather than on any clock.
+  /// </summary>
+  private static Task _untilCanceledAsync(CancellationToken token) {
+    var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    _ = token.Register(() => canceled.TrySetCanceled(token));
+    return canceled.Task;
   }
 
   /// <summary>Grants once; the token is canceled by the time the pass reaches the drain.</summary>

@@ -20,7 +20,6 @@ namespace Whizbang.Core.Observability;
 /// <docs>operations/observability/metrics#table-statistics</docs>
 /// <param name="scopeFactory">Resolves the provider for each cycle.</param>
 /// <param name="metrics">The meter the readings are reported on.</param>
-/// <param name="schemaReadyGate">Holds the first cycle until the schema exists; null starts at once.</param>
 /// <param name="logger">Optional logger.</param>
 /// <param name="options">The interval between cycles; an unset interval is thirty seconds.</param>
 /// <param name="timeProvider">The clock the interval is measured on; null is the system clock.</param>
@@ -29,10 +28,10 @@ namespace Whizbang.Core.Observability;
 public sealed partial class TableStatisticsCollector(
   IServiceScopeFactory scopeFactory,
   TableStatisticsMetrics metrics,
-  Whizbang.Core.Workers.ISchemaReadyGate schemaReadyGate,
   ILogger<TableStatisticsCollector> logger,
   Microsoft.Extensions.Options.IOptions<TableStatisticsOptions> options,
-  TimeProvider? timeProvider = null
+  TimeProvider? timeProvider = null,
+  Random? random = null
 ) : BackgroundService {
 
   private readonly ILogger<TableStatisticsCollector> _logger =
@@ -55,7 +54,18 @@ public sealed partial class TableStatisticsCollector(
   private string? _database;
 
   private readonly TimeSpan _interval = options.Value.CollectionInterval;
+  // #2349: each wait is lengthened by a random share of the interval, so a fleet started together spreads its readings.
+  private readonly double _jitter = Math.Clamp(options.Value.CollectionJitter, 0, 1);
+  private readonly Random _random = random ?? Random.Shared;
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
+
+  /// <summary>
+  /// The wait before the next reading (#2349): the interval, lengthened by up to <see cref="TableStatisticsOptions.CollectionJitter"/>
+  /// of it, drawn from the collector's random source.
+  /// </summary>
+  /// <remarks>Whole milliseconds: a timer is armed in milliseconds, so the wait asked for is the wait armed.</remarks>
+  internal TimeSpan NextWait() =>
+    _interval + TimeSpan.FromMilliseconds(Math.Floor(_interval.TotalMilliseconds * _jitter * _random.NextDouble()));
 
   /// <summary>
   /// Raised once every collection cycle, after every metric cache has been written.
@@ -76,13 +86,6 @@ public sealed partial class TableStatisticsCollector(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     // Wait for schema readiness (replaces IDatabaseReadinessCheck — same intent: don't query
     // statistics tables before migrations have created them).
-    if (schemaReadyGate is not null) {
-      try {
-        await schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        return;
-      }
-    }
 
     while (!stoppingToken.IsCancellationRequested) {
       try {
@@ -147,6 +150,9 @@ public sealed partial class TableStatisticsCollector(
         metrics.UpdateUnusedIndexes(unused);
         _reportUnusedIndexes(unused);
 
+        // Where each table's last rewrite left it: the floor the post-rewrite guard measures regrowth from (#2319).
+        metrics.UpdateRewriteFloors(await provider.GetRewriteFloorsAsync(stoppingToken));
+
         CycleCompleted?.Invoke();
       } catch (ObjectDisposedException) {
         break;  // Host is shutting down — exit the collection loop
@@ -155,7 +161,7 @@ public sealed partial class TableStatisticsCollector(
       }
 
       try {
-        await Task.Delay(_interval, _time, stoppingToken);
+        await Task.Delay(NextWait(), _time, stoppingToken);
       } catch (OperationCanceledException) {
         break;
       }

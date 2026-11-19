@@ -8,7 +8,7 @@ namespace Whizbang.Core.Archival;
 /// (<c>Whizbang__Archive__ReadThrough</c>).
 /// </summary>
 /// <docs>fundamentals/events/archive-store#read-through</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
 public sealed class ArchiveOptions {
   /// <summary>The configuration section the options bind from.</summary>
   public const string SECTION = "Whizbang:Archive";

@@ -233,7 +233,7 @@ public static class StoredFormDiscovery {
     }
     var from = _unwrap(previously);
     if (SymbolEqualityComparer.Default.Equals(from, current)) {
-      walk.Problem(CANNOT_GENERATE, path, $"Previously is the property's current type ({current.Name})");
+      walk.Problem(CANNOT_GENERATE, path, $"Previously is the property's current type ({TypeNameUtilities.SimpleName(current)})");
       return;
     }
 
@@ -263,16 +263,16 @@ public static class StoredFormDiscovery {
         }
         // The enum column rewrite already converts a text column of names to numbers.
         action = StoredFormColumnAction.None;
-        step = $"{STEP}ToEnumNumber({_literal(path)}, {_literal(current.Name)}, {NUMBER}{toNumber}, {_members(current)}, "
+        step = $"{STEP}ToEnumNumber({_literal(path)}, {_literal(TypeNameUtilities.SimpleName(current))}, {NUMBER}{toNumber}, {_members(current)}, "
           + (PhysicalFieldScalar.IsFlagsEnum(current) ? "true" : "false") + ")";
         break;
     }
 
     if (step is null) {
-      walk.Problem(CANNOT_GENERATE, path, $"no generated conversion from {from.Name} to {current.Name}");
+      walk.Problem(CANNOT_GENERATE, path, $"no generated conversion from {TypeNameUtilities.SimpleName(from)} to {TypeNameUtilities.SimpleName(current)}");
       return;
     }
-    walk.Migrations.Add(new StoredFormInfo(1, $"{path}:{from.Name}->{current.Name}", step,
+    walk.Migrations.Add(new StoredFormInfo(1, $"{path}:{TypeNameUtilities.SimpleName(from)}->{TypeNameUtilities.SimpleName(current)}", step,
       column, column is null ? StoredFormColumnAction.None : action, number, enumNames,
       Path: path, IsTypeChange: true, IndexStoreType: JsonIndexSql.StoreType(JsonIndexDiscovery.CastFor(current) ?? JsonIndexCast.None)));
   }
@@ -292,7 +292,7 @@ public static class StoredFormDiscovery {
       return;
     }
     if (_json(value, kind, number, current) is not { } json) {
-      walk.Problem(CANNOT_GENERATE, path, $"the default {value.ToCSharpString()} is not a value of the property's type ({current.Name})");
+      walk.Problem(CANNOT_GENERATE, path, $"the default {value.ToCSharpString()} is not a value of the property's type ({TypeNameUtilities.SimpleName(current)})");
       return;
     }
     walk.Migrations.Add(new StoredFormInfo(2, $"{path}:default", $"{STEP}DefaultWhenMissing({_literal(path)}, {_literal(json)})"));
@@ -312,15 +312,19 @@ public static class StoredFormDiscovery {
       string or char when kind == Scalar.Text => _jsonString(Convert.ToString(value.Value, CultureInfo.InvariantCulture)!),
       bool flag when kind == Scalar.Bool => flag ? "true" : "false",
       string or char or bool => null,
-      _ when kind is Scalar.Number or Scalar.Enum => _jsonNumber(value.Value, kind, number),
+      _ when kind is Scalar.Number or Scalar.Enum => _jsonNumber(value.Value, number),
       _ => null,
     };
   }
 
+  // The numeric types that hold a fraction. An enum's underlying type is never one of them, so an enum default is
+  // integral by the same lookup; a lookup rather than a pattern, whose null test no number ever takes.
+  private static readonly HashSet<string?> _fractional = new(StringComparer.Ordinal) { "Decimal", "Single", "Double" };
+
   // A numeric default as JSON, or null when it is not finite or has a fraction the property's type cannot hold.
-  private static string? _jsonNumber(object? raw, Scalar kind, string? number) {
+  private static string? _jsonNumber(object? raw, string? number) {
     var d = Convert.ToDouble(raw, CultureInfo.InvariantCulture);
-    var integral = kind == Scalar.Enum || number is not ("Decimal" or "Single" or "Double");
+    var integral = !_fractional.Contains(number);
     if (double.IsNaN(d) || double.IsInfinity(d) || (integral && Math.Abs(d % 1) > 0)) {
       return null;
     }
@@ -389,7 +393,7 @@ public static class StoredFormDiscovery {
       return array.ElementType;
     }
     if (type is INamedTypeSymbol { IsGenericType: true } named && type.SpecialType != SpecialType.System_String
-        && TypeNameUtilities.Display(named.ContainingNamespace).StartsWith("System.Collections", StringComparison.Ordinal)) {
+        && TypeNameUtilities.Display(TypeNameUtilities.NamespaceOf(named)).StartsWith("System.Collections", StringComparison.Ordinal)) {
       return named.TypeArguments[^1];
     }
     return null;

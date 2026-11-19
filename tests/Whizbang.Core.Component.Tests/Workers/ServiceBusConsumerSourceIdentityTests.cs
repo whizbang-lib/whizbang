@@ -116,7 +116,6 @@ public class ServiceBusConsumerSourceIdentityTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new StubEnvelopeSerializer(),
       receptorRegistry: new SubscribedRegistry(),

@@ -22,7 +22,7 @@ namespace Whizbang.Core.Security.Attributes;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/security#masking-strategies</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/FieldPermissionMaskingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/FieldPermissionMaskingTests.cs</tests>
 public static class FieldPermissionMasking {
   /// <summary>The placeholder <see cref="MaskingStrategy.Mask"/> returns.</summary>
   public const string MASKED_VALUE = "****";

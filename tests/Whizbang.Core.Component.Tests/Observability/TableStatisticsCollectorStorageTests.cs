@@ -37,7 +37,6 @@ public class TableStatisticsCollectorStorageTests {
     var worker = new TableStatisticsCollector(
       container.GetRequiredService<IServiceScopeFactory>(),
       metrics,
-      Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       NullLogger<TableStatisticsCollector>.Instance,
       Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions()));
     var cycled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

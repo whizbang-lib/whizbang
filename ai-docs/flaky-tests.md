@@ -10,6 +10,7 @@ When a test fails intermittently, check these patterns in order:
 2. **Missing event waiters** → Wait for ALL events that affect asserted data
 3. **Insufficient timeouts** → Increase waiter/delay timeouts for parallel load
 4. **Timing-sensitive operations** → Use deterministic synchronization instead of delays
+5. **A fake-clock advance that is lost** → Check the clock double reports a timer only after it registers it (Pattern 10)
 
 ---
 
@@ -45,6 +46,26 @@ public class PolicyContextPoolTests {
 await Assert.That(reusedCount).IsGreaterThanOrEqualTo(970)  // Not exactly 1024
   .Because("Pool should reuse approximately 1024 contexts");
 ```
+
+### Prefer removing the read over serializing it
+
+When the static is a value the code under test *reads* (a process-wide setting), the better fix is to stop
+reading it: pass the value explicitly so the test never depends on what another test last wrote. Serialize
+only the tests that are about the static itself.
+
+Worked example: every `AddWhizbangSagas` call sets `SagaItemStreams.AppDefaultNamespace`, the process-wide
+per-item stream namespace. `SagaItemCompletionReconcilerTests` derived each item's stream id twice through
+it, once in the reconciler and once in its stub reader, and failed with "Reconciler queried unknown per-item
+stream" whenever a parallel test registered sagas in between. The fix:
+
+- **Readers stop reading it.** The reconciler tests pass an explicit `ISagaItemStreamIdDeriver`; the
+  watchdog tests give their service host-registered options with a namespace of their own.
+- **The race is reproduced, not hoped away.** `ProcessWideSagaNamespace.RegisterElsewhere()` registers
+  sagas in a throwaway container between the two derivations, so a test that still reads the global fails
+  every run, and the test asserts that the registration happened.
+- **Writers share one key and restore.** Every test that calls `AddWhizbangSagas` or asserts on the global
+  runs under `[NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]` and puts the prior value back
+  (`using var _ = new ProcessWideSagaNamespace();`).
 
 ### When to Use `[NotInParallel]`
 - Tests that modify static state
@@ -230,11 +251,12 @@ var unitId2 = await strategy.QueueMessageAsync(message2);
 Many parallel tests competing for PostgreSQL connections can exhaust the connection pool, causing cancellation tokens to trigger.
 
 ### Fix
-```csharp
-// Add NotInParallel for test classes that heavily use PostgreSQL
-[NotInParallel("PostgresWorkCoordinator")]
-public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
-```
+Size the parallelism to the container, not the other way round, and never serialize a class because it "uses
+PostgreSQL". Each test owns a database, so the container's capacity is what tests share: the EF Core project runs
+under one assembly-wide `[ParallelLimiter<EFCorePostgresParallelism>]` sized to `max_connections`, and a guard test
+reads the live container's `max_connections` against that limit. A class serializes only on what it really shares,
+with a key named for that resource and the reason on the attribute's line. See
+[efcore-test-parallelism.md](efcore-test-parallelism.md) (#2069).
 
 ---
 
@@ -373,6 +395,126 @@ fence) are written before the transaction opens. Examples: `NotifyDebounceSqlTes
 
 ---
 
+## Pattern 9: A Catalog Lookup Answered From a Cache Older Than Another Session's Commit
+
+### Symptoms
+- A test where one session waits (on an advisory lock, a signal) while another commits DDL, and the waiter then asks
+  whether the new object exists, fails sometimes: the waiter says "missing" and does the work a second time
+- It passes almost every run, and passes more often the more DDL the other session committed
+
+### Root Cause
+`to_regclass`, `to_regprocedure` and every other name lookup are answered from the session's catalog cache, including
+a cached "no such object". A session refreshes that cache when a transaction **starts** and when it **locks a
+relation**. A statement inside an open transaction that touches no relation, such as `SELECT to_regclass(...)` after
+`pg_advisory_xact_lock`, refreshes nothing, so it keeps the answer the session cached before the other commit. It
+passes sometimes only because a commit that fills the shared invalidation queue makes the server signal lagging
+sessions to catch up, and whether the waiter is the one signaled is a race. The bootstrap's recheck under the schema
+lock had exactly this defect (`SchemaBootstrapPhaseTests.AWaiterWhoseHolderAppliedTheClosureMeanwhile_AppliesNothingAsync`
+flaked; see `schema-initialization-connections.md`, Trap 4).
+
+### Fix - CORRECT
+Ask the catalog tables, which a statement reads under its own snapshot, and make sure that snapshot is fresh:
+
+```sql
+SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class AS c
+                 JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                WHERE n.nspname = $1 AND c.relname = 'wh_bootstrap_closure')
+```
+
+and begin the transaction as read committed explicitly, since a repeatable read default takes the snapshot at the
+first statement. To reproduce it deterministically, keep the other session's commit small (a table or two) so it
+never fills the queue; then the stale answer comes back every time.
+
+---
+
+## Pattern 10: A Fake Clock That Reports a Timer Before It Holds It
+
+### Symptoms
+- A test that owns a `FakeTimeProvider` waits for a wait to be "armed", advances the clock, and then runs out its
+  `[Timeout]`, ending in `TaskCanceledException` from the test method itself
+- Almost every run passes; the one that fails shows the worker parked on a wait the test already advanced past
+
+### Root Cause
+A clock double that overrides `CreateTimer` (or wraps `ITimer.Change`) and signals "armed" **before** calling
+`base.CreateTimer` / `inner.Change`. The signal releases the test on another thread, and if the test's
+`clock.Advance(due)` runs before the base call registers the timer, `FakeTimeProvider` has nothing to fire. The timer
+is then registered against the advanced time and is due one more interval later, which no test step ever supplies.
+`PerspectiveWorkerInjectedClockTests.BlockingRewindScan_RepollsOnTheInjectedClock_AndReportsTheWaitItMeasuredAsync`
+failed this way in a merge-queue run (#2020); the production worker was correct.
+
+### Example - WRONG
+```csharp
+public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
+  _onArmed(dueTime);                                  // the test may advance right here
+  return base.CreateTimer(callback, state, dueTime, period);
+}
+```
+
+### Fix - CORRECT
+```csharp
+public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
+  var timer = base.CreateTimer(callback, state, dueTime, period);
+  _onArmed(dueTime);                                  // an advance from here on fires it
+  return timer;
+}
+```
+
+The same order applies to a wrapped `Change`: call `inner.Change` first, then report. The shared
+`tests/Whizbang.Core.Component.Tests/Workers/ArmingClock.cs` already does this; prefer it to a private copy.
+
+### Rule
+A clock double reports a wait only once an advance would end it. To prove the order, advance the clock from inside
+the report itself (the earliest any test could) and assert the timer fired; with the wrong order that test fails every
+run rather than once in a thousand.
+
+---
+
+## Pattern 11: Coverage of an Await's Resume That Depends on Who Wins a Race
+
+### Symptoms
+- The library-wide coverage gate fails on a line no pull request in the queue touched, for example
+  `(3/4 conditions) if (campaignMode != RetryHeldOnStartupMode.Off) {`
+- Every test passes; the same gate passed on an earlier queue run with the same tests
+- The Cobertura line has a second `jump` condition the source does not show, at 50%
+
+### Root Cause
+An `await` inside a `try` in an async method compiles a hidden state dispatch at the start of the `try`: one
+outcome for the first pass, the other for resuming after the awaited task suspended. The collector attributes
+that hidden branch to the nearest visible line, often the `if` above the `try`. The resume outcome is taken only
+when the awaited call genuinely suspends. If one test alone suspends there, and it signals "started" before it
+reaches its wait, the test thread can cancel in that window: the wait then completes canceled synchronously, the
+await never suspends, the test still passes, and the outcome goes untaken. `DeadLetterRecoveryWorker`'s startup
+campaign lost a merge-queue run this way (PR #2212's queue run): its cancellation test signalled
+`PurgeStartedSignal` and then called `Task.Delay(Timeout.Infinite, ct)`, while the worker body ran on the thread
+pool through `StartAsync`.
+
+### Fix - CORRECT
+Run the worker body on the test thread through a test subclass that calls the protected `ExecuteAsync`, so the
+call returns only at the first real suspension, then assert that suspension before acting:
+
+```csharp
+var run = worker.RunBodyAsync(cts.Token);                 // returns at the first real suspension
+await Assert.That(svc.PurgeStartedSignal.Task.IsCompleted).IsTrue();
+await Assert.That(run.IsCompleted).IsFalse();             // the await suspended, so cancel resumes it
+await cts.CancelAsync();
+await run.WaitAsync(timeout);
+```
+
+The same shape hides in a worker loop's `while (!stoppingToken.IsCancellationRequested)`: its false outcome is
+taken only when an iteration finishes normally after the stop, while tests usually stop the worker inside a wait and
+leave through the cancellation catch. `HeartbeatWorker`'s beat loop lost PR #2209's queue run this way; the fix is a
+collaborator that cancels the stop token and then completes normally, so the loop always returns to its condition
+canceled.
+
+To find others, compare per-line condition coverage across several queue runs' `coverage-unit` and
+`coverage-component` artifacts: on an unchanged line, a count that differs between runs is timing-dependent.
+
+### Rule
+When a single test is the only one that makes an await suspend, make the suspension structural (same-thread body,
+asserted `IsCompleted == false`) rather than a signal raced against a cancellation on another thread.
+
+---
+
 ## Files Modified in Flaky Test Fixes (January 2025)
 
 | File | Fix Applied |
@@ -381,4 +523,5 @@ fence) are written before the transaction opens. Examples: `NotifyDebounceSqlTes
 | `samples/ECommerce/tests/ECommerce.Integration.Tests/Workflows/SeedProductsWorkflowTests.cs` | Increased waiter timeouts to 200s |
 | `samples/ECommerce/tests/ECommerce.Integration.Tests/Infrastructure/ServiceBusIntegrationFixtureSanityTests.cs` | Added `InventoryRestockedEvent` waiter |
 | `tests/Whizbang.Core.Component.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs` | Increased delay from 300ms to 600ms |
-| `tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs` | `[NotInParallel]` for PostgreSQL connection pool |
+| `tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs` | `[NotInParallel]` for PostgreSQL connection pool (superseded by #2069: parallel under a container-sized limit) |
+| `tests/Whizbang.Sagas.Tests/SagaItemCompletionReconcilerTests.cs` | Explicit per-item stream deriver instead of the process-wide namespace; the race reproduced by `ProcessWideSagaNamespace` |

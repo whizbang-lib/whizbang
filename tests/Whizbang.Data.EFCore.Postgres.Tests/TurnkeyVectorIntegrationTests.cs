@@ -22,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Integration")]
 [Category("TurnkeyVector")]
 [Category("Shard4")]
-public class TurnkeyVectorIntegrationTests : IAsyncDisposable {
+public class TurnkeyVectorIntegrationTests {
   private string? _testDatabaseName;
   private string _connectionString = null!;
   private static readonly float[] _testVector = [1.0f, 2.0f, 3.0f];
@@ -37,56 +37,40 @@ public class TurnkeyVectorIntegrationTests : IAsyncDisposable {
   // Setup
   // ========================================
 
+  /// <summary>
+  /// Gives the test a database of its own with the vector extension in it.
+  /// </summary>
+  /// <remarks>
+  /// Through <see cref="PerTestDatabaseFactory"/> rather than a <c>CREATE DATABASE</c> of its own (#1940): issued
+  /// here on a connection with the default 30-second command timeout, the drop (which waits for a forced checkpoint
+  /// of the whole shared cluster) was canceled whenever another shard was writing, and the failure escaped. The
+  /// factory's drop waits for the checkpoint under a hang guard and never fails the test.
+  /// </remarks>
   [Before(Test)]
-  public async Task SetupAsync() {
+  public async Task SetupAsync(CancellationToken cancellationToken) {
     AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
 
-    await SharedPostgresContainer.InitializeAsync();
+    await SharedPostgresContainer.InitializeAsync(cancellationToken);
 
-    _testDatabaseName = $"turnkey_vector_test_{Guid.NewGuid():N}";
-
-    await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-    await adminConnection.OpenAsync();
-    await adminConnection.ExecuteAsync($"CREATE DATABASE {_testDatabaseName}");
-
-    var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
-      Database = _testDatabaseName,
-      Timezone = "UTC",
+    var database = await PerTestDatabaseFactory.CreateAsync("turnkey_vector", cancellationToken: cancellationToken);
+    _testDatabaseName = database.Name;
+    _connectionString = new NpgsqlConnectionStringBuilder(database.ConnectionString) {
       IncludeErrorDetail = true
-    };
-    _connectionString = builder.ConnectionString;
+    }.ConnectionString;
 
     // Create pgvector extension
-    await using var conn = new NpgsqlConnection(_connectionString);
-    await conn.OpenAsync();
-    await conn.ExecuteAsync("CREATE EXTENSION IF NOT EXISTS vector");
+    await using var conn = new NpgsqlConnection(PerTestDatabaseFactory.ForSetup(_connectionString));
+    await conn.OpenAsync(cancellationToken);
+    await using var createExtension = new NpgsqlCommand("CREATE EXTENSION IF NOT EXISTS vector", conn);
+    await createExtension.ExecuteNonQueryAsync(cancellationToken);
   }
 
+  /// <summary>Drops the test's database, once.</summary>
   [After(Test)]
-  public async Task TearDownAsync() {
-    if (_testDatabaseName != null) {
-      try {
-        await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await adminConnection.OpenAsync();
-
-        await adminConnection.ExecuteAsync($@"
-          SELECT pg_terminate_backend(pg_stat_activity.pid)
-          FROM pg_stat_activity
-          WHERE pg_stat_activity.datname = '{_testDatabaseName}'
-          AND pid <> pg_backend_pid()");
-
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
-      } catch {
-        // Ignore cleanup errors
-      }
-
-      _testDatabaseName = null;
+  public async Task TearDownAsync(CancellationToken cancellationToken) {
+    if (Interlocked.Exchange(ref _testDatabaseName, null) is { } database) {
+      await PerTestDatabaseFactory.DropAsync(database, cancellationToken: cancellationToken);
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TearDownAsync();
-    GC.SuppressFinalize(this);
   }
 
   // ========================================
@@ -256,40 +240,26 @@ public class TurnkeyVectorIntegrationTests : IAsyncDisposable {
   /// correctly returns null, allowing CREATE to proceed.
   /// </summary>
   [Test]
-  public async Task ExtensionCheck_WhenExtensionDoesNotExist_ReturnsNullAsync() {
+  public async Task ExtensionCheck_WhenExtensionDoesNotExist_ReturnsNullAsync(CancellationToken cancellationToken) {
     // Arrange - Create a fresh database without the vector extension
-    var freshDbName = $"no_vector_test_{Guid.NewGuid():N}";
-
-    await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-    await adminConnection.OpenAsync();
-    await adminConnection.ExecuteAsync($"CREATE DATABASE {freshDbName}");
+    var fresh = await PerTestDatabaseFactory.CreateAsync("no_vector", cancellationToken: cancellationToken);
 
     try {
-      var freshBuilder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
-        Database = freshDbName,
-        Timezone = "UTC"
-      };
-      var freshConnectionString = freshBuilder.ConnectionString;
+      var freshConnectionString = fresh.ConnectionString;
 
       await using var connection = new NpgsqlConnection(freshConnectionString);
-      await connection.OpenAsync();
+      await connection.OpenAsync(cancellationToken);
 
       // Act - Check if extension exists
       await using var checkCmd = connection.CreateCommand();
       checkCmd.CommandText = "SELECT 1 FROM pg_extension WHERE extname = 'vector'";
-      var exists = await checkCmd.ExecuteScalarAsync() != null;
+      var exists = await checkCmd.ExecuteScalarAsync(cancellationToken) != null;
 
       // Assert - Extension should not be detected
       await Assert.That(exists).IsFalse()
         .Because("Extension was not created, check should return null");
     } finally {
-      // Cleanup
-      await adminConnection.ExecuteAsync($@"
-        SELECT pg_terminate_backend(pg_stat_activity.pid)
-        FROM pg_stat_activity
-        WHERE pg_stat_activity.datname = '{freshDbName}'
-        AND pid <> pg_backend_pid()");
-      await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {freshDbName} WITH (FORCE)");
+      await PerTestDatabaseFactory.DropAsync(fresh.Name, cancellationToken: cancellationToken);
     }
   }
 
@@ -299,51 +269,37 @@ public class TurnkeyVectorIntegrationTests : IAsyncDisposable {
   /// used by the source generator for Azure PostgreSQL compatibility.
   /// </summary>
   [Test]
-  public async Task ExtensionCheckThenCreate_FullFlow_WorksCorrectlyAsync() {
+  public async Task ExtensionCheckThenCreate_FullFlow_WorksCorrectlyAsync(CancellationToken cancellationToken) {
     // Arrange - Create a fresh database without the vector extension
-    var freshDbName = $"check_create_test_{Guid.NewGuid():N}";
-
-    await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-    await adminConnection.OpenAsync();
-    await adminConnection.ExecuteAsync($"CREATE DATABASE {freshDbName}");
+    var fresh = await PerTestDatabaseFactory.CreateAsync("check_create", cancellationToken: cancellationToken);
 
     try {
-      var freshBuilder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
-        Database = freshDbName,
-        Timezone = "UTC"
-      };
-      var freshConnectionString = freshBuilder.ConnectionString;
+      var freshConnectionString = fresh.ConnectionString;
 
       await using var connection = new NpgsqlConnection(freshConnectionString);
-      await connection.OpenAsync();
+      await connection.OpenAsync(cancellationToken);
 
       // Act - Execute the exact check-then-create pattern from the generator
       await using var checkCmd = connection.CreateCommand();
       checkCmd.CommandText = "SELECT 1 FROM pg_extension WHERE extname = 'vector'";
-      var extensionExists = await checkCmd.ExecuteScalarAsync() != null;
+      var extensionExists = await checkCmd.ExecuteScalarAsync(cancellationToken) != null;
 
       if (!extensionExists) {
         await using var createCmd = connection.CreateCommand();
         createCmd.CommandText = "CREATE EXTENSION vector";
-        await createCmd.ExecuteNonQueryAsync();
+        await createCmd.ExecuteNonQueryAsync(cancellationToken);
       }
 
       // Verify extension now exists
       await using var verifyCmd = connection.CreateCommand();
       verifyCmd.CommandText = "SELECT 1 FROM pg_extension WHERE extname = 'vector'";
-      var nowExists = await verifyCmd.ExecuteScalarAsync() != null;
+      var nowExists = await verifyCmd.ExecuteScalarAsync(cancellationToken) != null;
 
       // Assert
       await Assert.That(nowExists).IsTrue()
         .Because("Extension should exist after check-then-create flow");
     } finally {
-      // Cleanup
-      await adminConnection.ExecuteAsync($@"
-        SELECT pg_terminate_backend(pg_stat_activity.pid)
-        FROM pg_stat_activity
-        WHERE pg_stat_activity.datname = '{freshDbName}'
-        AND pid <> pg_backend_pid()");
-      await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {freshDbName} WITH (FORCE)");
+      await PerTestDatabaseFactory.DropAsync(fresh.Name, cancellationToken: cancellationToken);
     }
   }
 
@@ -384,23 +340,15 @@ public class TurnkeyVectorIntegrationTests : IAsyncDisposable {
   /// This is the pattern used in generated migration scripts for Azure compatibility.
   /// </summary>
   [Test]
-  public async Task SqlDoBlock_CheckThenCreate_WorksForMigrationsAsync() {
+  public async Task SqlDoBlock_CheckThenCreate_WorksForMigrationsAsync(CancellationToken cancellationToken) {
     // Arrange - Create a fresh database without the vector extension
-    var freshDbName = $"do_block_test_{Guid.NewGuid():N}";
-
-    await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-    await adminConnection.OpenAsync();
-    await adminConnection.ExecuteAsync($"CREATE DATABASE {freshDbName}");
+    var fresh = await PerTestDatabaseFactory.CreateAsync("do_block", cancellationToken: cancellationToken);
 
     try {
-      var freshBuilder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
-        Database = freshDbName,
-        Timezone = "UTC"
-      };
-      var freshConnectionString = freshBuilder.ConnectionString;
+      var freshConnectionString = fresh.ConnectionString;
 
       await using var connection = new NpgsqlConnection(freshConnectionString);
-      await connection.OpenAsync();
+      await connection.OpenAsync(cancellationToken);
 
       // Act - Execute the DO block pattern used in generated migrations
       const string doBlockSql = @"
@@ -416,7 +364,7 @@ public class TurnkeyVectorIntegrationTests : IAsyncDisposable {
       // Verify extension now exists
       await using var verifyCmd = connection.CreateCommand();
       verifyCmd.CommandText = "SELECT 1 FROM pg_extension WHERE extname = 'vector'";
-      var exists = await verifyCmd.ExecuteScalarAsync() != null;
+      var exists = await verifyCmd.ExecuteScalarAsync(cancellationToken) != null;
 
       // Assert
       await Assert.That(exists).IsTrue()
@@ -426,17 +374,11 @@ public class TurnkeyVectorIntegrationTests : IAsyncDisposable {
       await connection.ExecuteAsync(doBlockSql);
 
       // Verify still exists (no error thrown)
-      var stillExists = await verifyCmd.ExecuteScalarAsync() != null;
+      var stillExists = await verifyCmd.ExecuteScalarAsync(cancellationToken) != null;
       await Assert.That(stillExists).IsTrue()
         .Because("DO block should be idempotent when extension exists");
     } finally {
-      // Cleanup
-      await adminConnection.ExecuteAsync($@"
-        SELECT pg_terminate_backend(pg_stat_activity.pid)
-        FROM pg_stat_activity
-        WHERE pg_stat_activity.datname = '{freshDbName}'
-        AND pid <> pg_backend_pid()");
-      await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {freshDbName} WITH (FORCE)");
+      await PerTestDatabaseFactory.DropAsync(fresh.Name, cancellationToken: cancellationToken);
     }
   }
 

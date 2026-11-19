@@ -134,7 +134,7 @@ public interface ILifecycleCoordinator {
   /// <param name="inactivityThreshold">How long an entry must be inactive before cleanup.</param>
   /// <returns>Number of entries removed.</returns>
   /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/LifecycleCoordinatorTests.cs:CleanupStaleTracking_RemovesInactiveEntries_WhenOlderThanThresholdAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleTrackingEndsTests.cs:Sweep_NeverRetainsACompletedEntry_HoweverRecentAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/LifecycleTrackingEndsTests.cs:Sweep_NeverRetainsACompletedEntry_HoweverRecentAsync</tests>
   int CleanupStaleTracking(TimeSpan inactivityThreshold);
 }
 
@@ -145,7 +145,7 @@ public interface ILifecycleCoordinator {
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator#whenall</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/LifecycleCoordinatorTests.cs:WhenAll_ThreeSources_RequiresAllAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/LifecycleCoordinatorTests.cs:WhenAll_BothComplete_FiresPostLifecycleOnceAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Lifecycle/PostLifecyclePipelineTests.cs:Dispatcher_WhenAll_WaitsForDistributedPathAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/PostLifecyclePipelineTests.cs:Dispatcher_WhenAll_WaitsForDistributedPathAsync</tests>
 public enum PostLifecycleCompletionSource {
   /// <summary>Local dispatch path completed.</summary>
   Local,

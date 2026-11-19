@@ -20,7 +20,7 @@ namespace Whizbang.Core.Workers;
 /// <see cref="MessageFailureReason"/>, and a value that does not parse, change nothing.
 /// </remarks>
 /// <docs>operations/configuration/configuration-reference#deadletterrecoveryoptions</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryPolicyBindingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterRecoveryPolicyBindingTests.cs</tests>
 internal static class DeadLetterRecoveryPolicyBinder {
   internal const string SECTION = "PolicyByReason";
 

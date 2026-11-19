@@ -746,7 +746,6 @@ public class PerspectiveApplyExactlyOnceTests {
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       // One consumer, so the worker going idle means no batch is in flight (see _whenIdleAsync).
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50, MaxConcurrentDrainConsumers = 1 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
       eventTypeProvider: registry,
@@ -1143,7 +1142,6 @@ public class PerspectiveApplyExactlyOnceTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(options),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
       eventTypeProvider: registry,

@@ -168,8 +168,6 @@ public class InboxDispatchWorkerParallelismTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var invoker = new TrackingReceptorInvoker();
     var deserializer = new CountingDeserializer();
 
@@ -184,7 +182,6 @@ public class InboxDispatchWorkerParallelismTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = maxConcurrent }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,

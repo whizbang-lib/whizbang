@@ -185,9 +185,9 @@ description: "A receptor implementation was discovered and will be registered."
 
 | Band | Area |
 |------|------|
-| WHIZ001-015 | Discovery: receptors, stream ids, perspectives, JSON-serializable types, generic message types |
-| WHIZ020-028 | Strongly-typed ids, topic filters, perspective runners |
-| WHIZ030-033 | Perspective events and models: stream ids, name collisions |
+| WHIZ001-019 | Discovery: receptors, stream ids, perspectives, JSON-serializable types, generic message types; stream id overrides and inheritance |
+| WHIZ020-029 | Strongly-typed ids, topic filters, perspective runners |
+| WHIZ030-035 | Perspective events and models: stream ids, name collisions; strong-id stream inheritance |
 | WHIZ040-041 | User service discovery |
 | WHIZ053-059 | Documentation maps, Guid usage and interception |
 | WHIZ060-063 | Serializable properties |
@@ -196,10 +196,11 @@ description: "A receptor implementation was discovered and will be registered."
 | WHIZ100-108 | Perspective purity and the current model (Apply methods) |
 | WHIZ110-122 | Pinned type identity and the pinned-type ledger |
 | WHIZ130-171 | Ephemeral events, stream groups, minted composites, command ownership, type-name keys, scope inheritance |
-| WHIZ200 | Perspective model shape |
+| WHIZ200-202 | Perspective model shape: opaque storage, circular references |
 | WHIZ300-309 | Perspective model consistency and indexes |
 | WHIZ400-402 | Lens queries (EF Core) |
 | WHIZ500-501 | Dependency injection |
+| WHIZ600-605 | Repository-internal checks, never shipped: MSBuild test-project checks, test analyzers, repository analyzers |
 | WHIZ701-703 | EF Core generator notices |
 | WHIZ801-833 | Perspective storage: vector and physical fields, model shapes, identifier lengths, stored-form migrations |
 | WHIZ900 | Perspective sync in receptors |
@@ -208,8 +209,10 @@ description: "A receptor implementation was discovered and will be registered."
 
 ### Allocation Guidelines
 
-Take the next free number in your area's band (`git grep 'id: "WHIZ' -- src` lists every taken ID). Never reuse
-an ID in `DiagnosticDescriptors.RETIRED_IDS`. Every descriptor carries `<docs>operations/diagnostics/whizNNN</docs>`
+Take the next free number in your area's band from `diagnostic-ids.txt` at the repository root, which lists every
+ID (shipped, repository-internal and MSBuild checks) with its owner and meaning, and add the row in the same change;
+`.github/scripts/Test-DiagnosticIds.ps1` fails an ID that is not listed or not of the form WHIZ and three digits.
+Never reuse an ID in `DiagnosticDescriptors.RETIRED_IDS` (marked retired in the registry). Every descriptor carries `<docs>operations/diagnostics/whizNNN</docs>`
 and a `<tests>` link to a test that asserts it, and gets a page at that path on the docs site
 (`DiagnosticDescriptorLinkTests` fails a descriptor without the links).
 

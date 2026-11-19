@@ -17,7 +17,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <docs>fundamentals/perspectives/managed-schema-objects</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/201_IndexEquivalents.sql</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class IndexEquivalentsTests {
   private const string TABLE = "wh_per_equiv_probe";

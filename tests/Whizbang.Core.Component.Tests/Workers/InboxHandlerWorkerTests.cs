@@ -81,7 +81,6 @@ public sealed class InboxHandlerWorkerTests {
     var worker = new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(new StubCoordinator()),
       failureChannel: new CapturingFailureChannel(),
-      schemaReadyGate: new SchemaReadyGate(),
       options: Options.Create(new InboxHandlerWorkerOptions { Enabled = false }),
       logger: log,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -104,7 +103,6 @@ public sealed class InboxHandlerWorkerTests {
     var worker = new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(new StubCoordinator()),
       failureChannel: new CapturingFailureChannel(),
-      schemaReadyGate: new SchemaReadyGate(),
       options: Options.Create(new InboxHandlerWorkerOptions { Enabled = false }),
       logger: log,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -154,7 +152,6 @@ public sealed class InboxHandlerWorkerTests {
     await Assert.That(() => new InboxHandlerWorker(
       scopeFactory: null!,
       failureChannel: new CapturingFailureChannel(),
-      schemaReadyGate: new SchemaReadyGate(),
       options: options,
       logger: NullLogger<InboxHandlerWorker>.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -168,21 +165,6 @@ public sealed class InboxHandlerWorkerTests {
     await Assert.That(() => new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(new StubCoordinator()),
       failureChannel: null!,
-      schemaReadyGate: new SchemaReadyGate(),
-      options: options,
-      logger: NullLogger<InboxHandlerWorker>.Instance,
-      pinnedPool: NoOpPinnedConnectionPool.Instance,
-      inboxChannelWriter: new InboxChannelWriter()))
-      .Throws<ArgumentNullException>();
-  }
-
-  [Test]
-  public async Task Constructor_ThrowsOnNullSchemaGateAsync() {
-    var options = Options.Create(_enabledOptions());
-    await Assert.That(() => new InboxHandlerWorker(
-      scopeFactory: new StubScopeFactory(new StubCoordinator()),
-      failureChannel: new CapturingFailureChannel(),
-      schemaReadyGate: null!,
       options: options,
       logger: NullLogger<InboxHandlerWorker>.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -195,7 +177,6 @@ public sealed class InboxHandlerWorkerTests {
     await Assert.That(() => new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(new StubCoordinator()),
       failureChannel: new CapturingFailureChannel(),
-      schemaReadyGate: new SchemaReadyGate(),
       options: null!,
       logger: NullLogger<InboxHandlerWorker>.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -209,7 +190,6 @@ public sealed class InboxHandlerWorkerTests {
     await Assert.That(() => new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(new StubCoordinator()),
       failureChannel: new CapturingFailureChannel(),
-      schemaReadyGate: new SchemaReadyGate(),
       options: options,
       logger: null!,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -223,7 +203,6 @@ public sealed class InboxHandlerWorkerTests {
     await Assert.That(() => new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(new StubCoordinator()),
       failureChannel: new CapturingFailureChannel(),
-      schemaReadyGate: new SchemaReadyGate(),
       options: options,
       logger: NullLogger<InboxHandlerWorker>.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -246,7 +225,6 @@ public sealed class InboxHandlerWorkerTests {
     var worker = new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(coordinator),
       failureChannel: new CapturingFailureChannel(),
-      schemaReadyGate: _markedReadyGate(),
       options: Options.Create(opts),
       logger: log,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -288,7 +266,6 @@ public sealed class InboxHandlerWorkerTests {
     var worker = new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(coordinator),
       failureChannel: failures,
-      schemaReadyGate: _markedReadyGate(),
       options: Options.Create(_enabledOptions()),
       logger: NullLogger<InboxHandlerWorker>.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -318,7 +295,6 @@ public sealed class InboxHandlerWorkerTests {
     var worker = new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(coordinator),
       failureChannel: failures,
-      schemaReadyGate: _markedReadyGate(),
       options: Options.Create(_enabledOptions()),
       logger: NullLogger<InboxHandlerWorker>.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -350,7 +326,6 @@ public sealed class InboxHandlerWorkerTests {
     var worker = new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(coordinator),
       failureChannel: failures,
-      schemaReadyGate: _markedReadyGate(),
       options: Options.Create(_enabledOptions()),
       logger: NullLogger<InboxHandlerWorker>.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -401,7 +376,6 @@ public sealed class InboxHandlerWorkerTests {
     var worker = new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(coordinator),
       failureChannel: failures,
-      schemaReadyGate: _markedReadyGate(),
       options: Options.Create(_enabledOptions()),
       logger: log,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -436,7 +410,6 @@ public sealed class InboxHandlerWorkerTests {
     var worker = new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(coordinator),
       failureChannel: new CapturingFailureChannel(),
-      schemaReadyGate: _markedReadyGate(),
       options: Options.Create(_enabledOptions()),
       logger: log,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -470,7 +443,6 @@ public sealed class InboxHandlerWorkerTests {
     var worker = new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(coordinator),
       failureChannel: failures,
-      schemaReadyGate: _markedReadyGate(),
       options: Options.Create(options),
       logger: log,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -531,7 +503,6 @@ public sealed class InboxHandlerWorkerTests {
     var worker = new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(coordinator),
       failureChannel: new CapturingFailureChannel(),
-      schemaReadyGate: _markedReadyGate(),
       options: Options.Create(_enabledOptions()),
       logger: NullLogger<InboxHandlerWorker>.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -553,7 +524,6 @@ public sealed class InboxHandlerWorkerTests {
     var worker = new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(new StubCoordinator()),
       failureChannel: new CapturingFailureChannel(),
-      schemaReadyGate: _markedReadyGate(),
       options: Options.Create(new InboxHandlerWorkerOptions { Enabled = false }),
       logger: NullLogger<InboxHandlerWorker>.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -587,7 +557,6 @@ public sealed class InboxHandlerWorkerTests {
     var worker = new InboxHandlerWorker(
       scopeFactory: new StubScopeFactory(new StubCoordinator()),
       failureChannel: new CapturingFailureChannel(),
-      schemaReadyGate: _markedReadyGate(),
       options: Options.Create(_enabledOptions()),
       logger: NullLogger<InboxHandlerWorker>.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
@@ -599,12 +568,6 @@ public sealed class InboxHandlerWorkerTests {
   // ==========================================================================
   // Test doubles
   // ==========================================================================
-
-  private static SchemaReadyGate _markedReadyGate() {
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
-    return gate;
-  }
 
   private sealed class CapturingFailureChannel : IFailureChannel, IDisposable {
     public List<CategorizedFailure> Enqueued { get; } = [];

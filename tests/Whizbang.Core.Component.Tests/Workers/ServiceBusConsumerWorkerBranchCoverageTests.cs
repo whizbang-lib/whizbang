@@ -301,7 +301,6 @@ public class ServiceBusConsumerWorkerBranchCoverageTests {
       scopeFactory: scopeFactory,
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: envelopeSerializer ?? new EnvelopeSerializer(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),

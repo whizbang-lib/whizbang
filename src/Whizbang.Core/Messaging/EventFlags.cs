@@ -48,9 +48,9 @@ namespace Whizbang.Core.Messaging;
 /// </list>
 /// </remarks>
 /// <docs>fundamentals/messaging/composite-events#treatment-flags</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/NoRebroadcastGuardTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventFlagsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventFlagsTransportTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/NoRebroadcastGuardTests.cs</tests>
 [Flags]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1711:Identifiers should not have incorrect suffix", Justification = "EventFlags is the natural name for the [Flags] enum stored in the wh_event_store / wh_outbox / wh_inbox 'flags' column. CA1711's 'Flags' suffix rule is exactly the case where the suffix carries semantic meaning that the rule was not designed for.")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S2344:Enumeration type names should not have Flags or Enum suffixes", Justification = "Public API; the rename is scheduled with the other 1.0 breaking changes.")]
@@ -125,6 +125,18 @@ public enum EventFlags {
   /// </summary>
   /// <docs>fundamentals/events/stream-end-of-life#terminal-events</docs>
   Terminal = 1 << 6,
+
+  /// <summary>
+  /// Treatment flag: this event is <strong>superseding</strong> (latest wins). Its type carries
+  /// <see cref="Attributes.SupersedingAttribute"/>, which the message-type catalog generator registers, so the flag is
+  /// stamped without reflection on every path that stores the event, with the event's key
+  /// (<see cref="Attributes.SupersedingKeyAttribute"/>) in <c>wh_event_store.supersede_key</c>. Maintenance deletes an
+  /// event carrying it, with its body and its digest contribution, once a newer event of the same type and key is stored
+  /// on its stream and every consumer has processed it. It is not StateBased (<see cref="EventFlagsExtensions.IsStateBased"/>):
+  /// the newest event of each key stays in the log, so a rebuild or a rewind replays it.
+  /// </summary>
+  /// <docs>fundamentals/events/superseding-events</docs>
+  Superseding = 1 << 7,
 
   // Future flags add new values here without requiring schema migrations.
 }

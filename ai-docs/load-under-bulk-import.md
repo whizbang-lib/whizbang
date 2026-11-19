@@ -243,6 +243,21 @@ index), one index entry per lane: 107 buffers. A local lane none of whose events
 is not found until one is folded; `DigestEpochLaneDiscoverySqlTests` pins both the cost and that
 decision.
 
+### Finding 2, round two: the live-lease count read every row the inbox state table retains (#2129)
+
+`ServiceBacklog.ActiveLeasedRows` was counted with `instance_id IS NOT NULL AND lease_expiry > now()` and no
+`processed_at IS NULL`. Every index on `wh_inbox_state` is partial on unprocessed rows, so none could answer it, and
+the count was a parallel sequential scan of the whole table: on a service retaining 1.6 million processed rows,
+126 ms and 33,400 buffers per call, about 1.3 calls a second (the integrity checkpoint asks on every checkpoint), which
+cost that service more each five minutes than its claim poll did. The predicate now reads unprocessed rows only, which
+is also the correct question: a processed row is finished whatever lease it still carries (the store pass completes a
+refused event where it stands, lease and all). Same copy of the table, the whole count: 27 ms to 1 ms; the live-lease
+part 31,000 buffers to 1. `CountServiceBacklogSqlTests` pins the plan (no read of the table without an index, however
+many processed rows it retains) and the semantics.
+
+**Rule:** a count over a work table carries the predicate of the partial index that is meant to answer it, and the
+test seeds the rows the predicate excludes, because an empty table hides the scan.
+
 ## Finding 3: the stamper sorted every unstamped row on every wake
 
 `stamp_pending_commit_sequences` and its eligibility CTE ran 1,090 times in nine minutes at 118 to

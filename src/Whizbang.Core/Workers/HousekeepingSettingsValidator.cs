@@ -15,8 +15,8 @@ namespace Whizbang.Core.Workers;
 /// defer nothing. Registered with the coordinator and checked at host start.
 /// </remarks>
 /// <docs>operations/workers/housekeeping-arbitration#precedence-over-the-legacy-count</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:ANonPositiveMaxDeferral_IsRejectedByNameAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:TheTurnkeyPipeline_RejectsANonPositiveMaxDeferralAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingDeferralCeilingTests.cs:ANonPositiveMaxDeferral_IsRejectedByNameAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HousekeepingDeferralCeilingTests.cs:TheTurnkeyPipeline_RejectsANonPositiveMaxDeferralAsync</tests>
 public sealed class HousekeepingSettingsValidator : IValidateOptions<HousekeepingCoordinator.Settings> {
   /// <inheritdoc />
   public ValidateOptionsResult Validate(string? name, HousekeepingCoordinator.Settings options) {

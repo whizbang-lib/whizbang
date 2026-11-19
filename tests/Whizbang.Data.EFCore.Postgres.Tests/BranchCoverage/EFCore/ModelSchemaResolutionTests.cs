@@ -51,8 +51,8 @@ public class ModelSchemaResolutionTests : EFCoreTestBase {
     var standing = await new EFCorePostgresStartupAssessor(
       unmapped.GetRequiredService<IServiceScopeFactory>(), typeof(BareContext)).AssessAsync(CancellationToken.None);
 
-    await Assert.That(serving.Verdict).IsEqualTo(StartupVerdict.Serve)
-      .Because("nothing recorded in the ledger is newer than this binary");
+    await Assert.That(serving.Verdict).IsEqualTo(StartupVerdict.Current)
+      .Because("nothing recorded in the ledger is newer than this binary, and the schema one pass built is current (#2194)");
     await Assert.That(standing.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(standing.Reason).Contains("no ILibraryVersionProvider")
       .Because("the ledger was read without error through the search path; the stand-down names the missing provider");

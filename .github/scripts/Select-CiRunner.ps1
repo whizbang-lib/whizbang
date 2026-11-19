@@ -6,14 +6,15 @@
 
 <#
 .SYNOPSIS
-    Chooses where each class of CI job runs: an idle machine in the team's self-hosted pool, then
-    Blacksmith, then a GitHub-hosted runner.
+    Chooses where each class of CI job runs: an idle machine in the team's self-hosted pool, else a
+    GitHub-hosted runner.
 
 .DESCRIPTION
     Writes one output per job class to $GITHUB_OUTPUT, each a JSON value a job reads with
     `runs-on: ${{ fromJSON(needs.pick-runner.outputs.<class>) }}`: a label set such as
     ["self-hosted","whizbang","Linux","X64"], or a single quoted label such as "ubuntu-latest". A line per
-    class goes to $GITHUB_STEP_SUMMARY saying which tier was chosen and why each higher tier was skipped.
+    class goes to $GITHUB_STEP_SUMMARY saying which tier was chosen and, for GitHub-hosted, why the pool was
+    skipped.
 
     Tiers, in order; the first whose every check passes wins:
 
@@ -22,14 +23,10 @@
          read the runner group; the group is open to this repository; an online, idle runner carries every
          label of the class; and the jobs of other runs already queued for those runners leave more than
          -QueueThreshold of them spare.
-      2. Blacksmith. CI_BLACKSMITH_RUNNER (or CI_BLACKSMITH_RUNNER_<CLASS>) names a label that fits the class;
-         the run is trusted, or it is a fork or Dependabot pull request and CI_BLACKSMITH_FORKS is 'true';
-         and, when CI_BLACKSMITH_MAX_QUEUED is set above 0, fewer jobs than that are queued for the label.
-      3. ubuntu-latest.
+      2. ubuntu-latest.
 
-    Fallback is the default: a missing token, an unset or malformed variable, an API error, a timeout, an
-    unexpected response, or an exception anywhere sends the class to the next tier, and in the end to
-    ubuntu-latest. The script never fails the job; it always exits 0 and always writes every output.
+    Fallback is the default: a missing token, an API error, a timeout, an unexpected response, or an
+    exception anywhere sends the class to ubuntu-latest. The script never fails the job; it always exits 0 and always writes every output.
 
     The compile of a push run stays on GitHub-hosted runners whatever the tiers say: a push run is the one
     whose build is packed and published, with provenance attested by GitHub-hosted infrastructure.
@@ -80,8 +77,7 @@
     pwsh .github/scripts/Select-CiRunner.ps1 -EventName push -Repository whizbang-lib/whizbang -Organization whizbang-lib
 
     Tokens come from the environment only: RUNNER_POOL_TOKEN (the GitHub App installation token that can
-    read the organization's runners) and GH_TOKEN (this repository's actions, for the queue). The
-    CI_BLACKSMITH_* variables come from the environment as well.
+    read the organization's runners) and GH_TOKEN (this repository's actions, for the queue).
 #>
 
 param(
@@ -105,32 +101,32 @@ $ErrorActionPreference = 'Stop'
 
 $script:HostedRunner = 'ubuntu-latest'
 $script:SetupHint = 'See .github/WORKFLOWS.md, "Runner selection".'
-$script:BlacksmithVariables = @('CI_BLACKSMITH_RUNNER', 'CI_BLACKSMITH_RUNNER_ANY_OS', 'CI_BLACKSMITH_RUNNER_LINUX',
-  'CI_BLACKSMITH_RUNNER_COMPILE', 'CI_BLACKSMITH_RUNNER_ANALYZE', 'CI_BLACKSMITH_RUNNER_LINUX_DOCKER', 'CI_BLACKSMITH_FORKS', 'CI_BLACKSMITH_MAX_QUEUED')
 
 <#
     The job classes, in output order. Labels pick pool machines; a machine is never named. any-os jobs
     run the framework-dependent build (dotnet test --test-modules on the .dll) or build from source, so
     any OS and architecture serves them. compile is Linux X64 because its determinism manifest is
     compared byte for byte with the GitHub-hosted x64 rebuild; linux and linux-docker are kept to X64, the
-    architecture their bash steps and service images are verified on. Os and X64 are what a Blacksmith label must fit. HostedOn lists the events whose jobs of the class skip
-    tiers 1 and 2. Pool is false for a class whose job waits on other jobs of the run (the analysis waits
-    up to hours for the suites' coverage): on a pool machine it would hold the machine those jobs need.
+    architecture their bash steps and service images are verified on. HostedOn lists the events whose
+    jobs of the class skip the pool. Pool is false for analyze: its second half (Analyze · Quality) still
+    waits up to hours for another run's coverage on a release PR, which on a pool machine would hold a
+    machine the suites need, and both halves must check out at the same path (the scan's state names files absolutely),
+    which GitHub-hosted runners guarantee and pool machines do not.
 #>
 function Get-CiRunnerClass {
   $linux = @('self-hosted', 'whizbang', 'Linux', 'X64')
   $classes = [ordered]@{}
-  $classes['any-os'] = [pscustomobject]@{ Labels = @('self-hosted', 'whizbang'); Os = ''; X64 = $false; HostedOn = @(); Pool = $true }
-  $classes['linux'] = [pscustomobject]@{ Labels = $linux; Os = 'Linux'; X64 = $true; HostedOn = @(); Pool = $true }
-  $classes['compile'] = [pscustomobject]@{ Labels = $linux; Os = 'Linux'; X64 = $true; HostedOn = @('push'); Pool = $true }
-  $classes['analyze'] = [pscustomobject]@{ Labels = $linux; Os = 'Linux'; X64 = $true; HostedOn = @(); Pool = $false }
-  $classes['linux-docker'] = [pscustomobject]@{ Labels = @($linux + 'docker'); Os = 'Linux'; X64 = $true; HostedOn = @(); Pool = $true }
+  $classes['any-os'] = [pscustomobject]@{ Labels = @('self-hosted', 'whizbang'); HostedOn = @(); Pool = $true }
+  $classes['linux'] = [pscustomobject]@{ Labels = $linux; HostedOn = @(); Pool = $true }
+  $classes['compile'] = [pscustomobject]@{ Labels = $linux; HostedOn = @('push'); Pool = $true }
+  $classes['analyze'] = [pscustomobject]@{ Labels = $linux; HostedOn = @(); Pool = $false }
+  $classes['linux-docker'] = [pscustomobject]@{ Labels = @($linux + 'docker'); HostedOn = @(); Pool = $true }
   return $classes
 }
 
 <#
-    Whether the run may use the pool: Kind is 'trusted', 'external' (a fork or Dependabot pull request,
-    which only Blacksmith may serve, and only when allowed), or 'ineligible'. Author association is not
+    Whether the run may use the pool: Kind is 'trusted', 'external' (a fork or Dependabot pull request),
+    or 'ineligible' (an event the picker does not know); only a trusted run may. Author association is not
     used: a private organization member shows as CONTRIBUTOR.
 #>
 function Get-CiRunTrust {
@@ -201,61 +197,11 @@ function Get-CompetingJobCount {
   return $count
 }
 
-# The queued jobs that ask for the label.
-function Get-LabelQueueCount {
-  param([object[]]$QueuedJobs, [string]$Label)
-  return @($QueuedJobs | Where-Object { $_.status -eq 'queued' -and @($_.labels) -contains $Label }).Count
-}
-
 # A runs-on value as JSON: a single label as a string, a label set as an array.
 function ConvertTo-RunsOnJson {
   param([Parameter(Mandatory)][object]$Value)
   if ($Value -is [array]) { return (ConvertTo-Json -InputObject @($Value) -Compress) }
   return (ConvertTo-Json -InputObject ([string]$Value) -Compress)
-}
-
-<#
-    The Blacksmith settings, from repository variables (name -> value). Problem is set when a value is
-    malformed, which turns the tier off.
-#>
-function Get-BlacksmithConfig {
-  param([hashtable]$Variables)
-  $read = { param($name) if ($Variables.ContainsKey($name) -and $null -ne $Variables[$name]) { ([string]$Variables[$name]).Trim() } else { '' } }
-  $perClass = @{}
-  foreach ($class in (Get-CiRunnerClass).Keys) {
-    $perClass[$class] = & $read ('CI_BLACKSMITH_RUNNER_' + $class.ToUpperInvariant().Replace('-', '_'))
-  }
-  $problem = ''
-  $maxQueued = 0
-  $rawMax = & $read 'CI_BLACKSMITH_MAX_QUEUED'
-  if ($rawMax) {
-    if ($rawMax -match '^\d+$') { $maxQueued = [int]$rawMax }
-    else { $problem = "CI_BLACKSMITH_MAX_QUEUED '$rawMax' is not a whole number" }
-  }
-  return [pscustomobject]@{
-    Default   = & $read 'CI_BLACKSMITH_RUNNER'
-    PerClass  = $perClass
-    Forks     = (& $read 'CI_BLACKSMITH_FORKS') -eq 'true'
-    MaxQueued = $maxQueued
-    Problem   = $problem
-  }
-}
-
-# The Blacksmith label for a class: its own variable, else the default; empty when neither is set.
-function Get-BlacksmithLabel {
-  param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)][string]$Class)
-  if ($Config.PerClass.ContainsKey($Class) -and $Config.PerClass[$Class]) { return $Config.PerClass[$Class] }
-  return $Config.Default
-}
-
-# Why a Blacksmith label cannot serve a class, or empty when it can.
-function Test-BlacksmithLabel {
-  param([string]$Label, [string]$Class)
-  if ($Label -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { return "'$Label' is not a runner label" }
-  $spec = (Get-CiRunnerClass)[$Class]
-  if ($spec.Os -eq 'Linux' -and $Label -notmatch 'ubuntu') { return "'$Label' is not a Linux (ubuntu) label, which $Class needs" }
-  if ($spec.X64 -and $Label -match '-arm') { return "'$Label' is an ARM label, and $Class needs X64" }
-  return ''
 }
 
 <#
@@ -271,8 +217,7 @@ function Select-CiRunner {
       [string]$PoolUnavailable = '',
       [AllowNull()][object[]]$QueuedJobs,
       [string]$QueueUnavailable = '',
-      [int]$QueueThreshold = 0,
-      [Parameter(Mandatory)]$Blacksmith
+      [int]$QueueThreshold = 0
   )
   $trust = Get-CiRunTrust -EventName $Context.EventName -Repository $Context.Repository -HeadRepository $Context.HeadRepository `
     -Actor $Context.Actor -PrAuthor $Context.PrAuthor
@@ -316,38 +261,11 @@ function Select-CiRunner {
         continue
       }
     }
-    $poolWhy = "self-hosted pool skipped: $why"
 
-    # Tier 2: Blacksmith.
-    $label = Get-BlacksmithLabel -Config $Blacksmith -Class $name
-    $bsWhy = ''
-    $queued = 0
-    if (-not $label) { $bsWhy = 'CI_BLACKSMITH_RUNNER is not set' }
-    elseif ($Blacksmith.Problem) { $bsWhy = $Blacksmith.Problem }
-    elseif ($trust.Kind -eq 'ineligible') { $bsWhy = $trust.Reason }
-    elseif ($trust.Kind -eq 'external' -and -not $Blacksmith.Forks) { $bsWhy = "$($trust.Reason), and CI_BLACKSMITH_FORKS is not 'true'" }
-    else {
-      $bsWhy = Test-BlacksmithLabel -Label $label -Class $name
-      if (-not $bsWhy -and $Blacksmith.MaxQueued -gt 0) {
-        if ($null -eq $QueuedJobs) { $bsWhy = "the queue could not be read: $QueueUnavailable" }
-        else {
-          $queued = Get-LabelQueueCount -QueuedJobs $QueuedJobs -Label $label
-          if ($queued -ge $Blacksmith.MaxQueued) { $bsWhy = "$queued queued for $label, and CI_BLACKSMITH_MAX_QUEUED is $($Blacksmith.MaxQueued)" }
-        }
-      }
-    }
-    if (-not $bsWhy) {
-      $limit = if ($Blacksmith.MaxQueued -gt 0) { "; $queued queued, limit $($Blacksmith.MaxQueued)" } else { '' }
-      $decisions[$name] = [pscustomobject]@{
-        RunsOn = ConvertTo-RunsOnJson $label; Tier = 'blacksmith'; Reason = "Blacksmith ($label)$limit; $poolWhy"
-      }
-      continue
-    }
-
-    # Tier 3.
+    # Tier 2: GitHub-hosted.
     $decisions[$name] = [pscustomobject]@{
       RunsOn = ConvertTo-RunsOnJson $script:HostedRunner; Tier = 'github-hosted'
-      Reason = "GitHub-hosted ($script:HostedRunner); $poolWhy; Blacksmith skipped: $bsWhy"
+      Reason = "GitHub-hosted ($script:HostedRunner); self-hosted pool skipped: $why"
     }
   }
   return $decisions
@@ -405,13 +323,6 @@ function Get-QueuedJob {
   }
 }
 
-# The CI_BLACKSMITH_* variables from the environment.
-function Get-EnvironmentVariables {
-  $table = @{}
-  foreach ($name in $script:BlacksmithVariables) { $table[$name] = [Environment]::GetEnvironmentVariable($name) }
-  return $table
-}
-
 # Appends lines to a file the runner gave us; a write that fails is reported and never stops the picker.
 function Write-RunnerFile {
   param([string]$Path, [string[]]$Lines)
@@ -429,7 +340,7 @@ function Invoke-SelectCiRunner {
       [string]$EventName, [string]$Repository, [string]$HeadRepository = '', [string]$Actor = '', [string]$PrAuthor = '',
       [string]$RepositoryPrivate = 'false', [string]$Organization = '', [string]$GroupName = 'Default', [string]$RunId = '',
       [string]$PoolToken = '', [string]$RepoToken = '', [string]$Disabled = '', [int]$QueueThreshold = 0,
-      [int]$BudgetSeconds = 60, [hashtable]$Variables = @{}, [string]$OutputFile = '', [string]$SummaryFile = '',
+      [int]$BudgetSeconds = 60, [string]$OutputFile = '', [string]$SummaryFile = '',
       [scriptblock]$InvokeApi
   )
   try {
@@ -439,7 +350,6 @@ function Invoke-SelectCiRunner {
       PrAuthor = $PrAuthor; RepositoryPrivate = ($RepositoryPrivate -eq 'true')
     }
     $trust = Get-CiRunTrust -EventName $EventName -Repository $Repository -HeadRepository $HeadRepository -Actor $Actor -PrAuthor $PrAuthor
-    $blacksmith = Get-BlacksmithConfig -Variables $Variables
 
     $poolState = $null; $poolUnavailable = ''
     if ($Disabled -eq 'true') { $poolUnavailable = 'the RUNNER_POOL_DISABLED variable is true' }
@@ -453,16 +363,15 @@ function Invoke-SelectCiRunner {
       if ($poolState -and $null -eq $poolState.Group) { $poolState = $null; $poolUnavailable = "runner group '$GroupName' not found" }
     }
 
-    # The queue matters to the pool (when it could serve) and to a Blacksmith queue limit.
+    # The queue matters only when the pool could serve (its token checks above ensure $RepoToken is set).
     $queuedJobs = $null; $queueUnavailable = 'not read'
-    $needQueue = $poolState -or ($blacksmith.MaxQueued -gt 0 -and $trust.Kind -ne 'ineligible')
-    if ($needQueue -and $RepoToken) {
+    if ($poolState) {
       try { $queuedJobs = @(Get-QueuedJob -InvokeApi $InvokeApi -Repository $Repository -RunId $RunId -RepoToken $RepoToken) }
       catch { $queueUnavailable = $_.Exception.Message }
-    } elseif ($needQueue) { $queueUnavailable = 'no repository token' }
+    }
 
     $decisions = Select-CiRunner -Context $context -PoolState $poolState -PoolUnavailable $poolUnavailable -QueuedJobs $queuedJobs `
-      -QueueUnavailable $queueUnavailable -QueueThreshold $QueueThreshold -Blacksmith $blacksmith
+      -QueueUnavailable $queueUnavailable -QueueThreshold $QueueThreshold
   }
   catch {
     $message = $_.Exception.Message
@@ -489,5 +398,5 @@ if ($MyInvocation.InvocationName -eq '.') { return }
 $null = Invoke-SelectCiRunner -EventName $EventName -Repository $Repository -HeadRepository $HeadRepository -Actor $Actor `
   -PrAuthor $PrAuthor -RepositoryPrivate $RepositoryPrivate -Organization $Organization -GroupName $GroupName -RunId $RunId `
   -PoolToken $env:RUNNER_POOL_TOKEN -RepoToken $env:GH_TOKEN -Disabled $Disabled -QueueThreshold $QueueThreshold `
-  -Variables (Get-EnvironmentVariables) -OutputFile $OutputFile -SummaryFile $SummaryFile
+  -OutputFile $OutputFile -SummaryFile $SummaryFile
 exit 0

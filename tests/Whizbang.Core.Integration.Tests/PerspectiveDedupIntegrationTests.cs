@@ -476,6 +476,58 @@ public class PerspectiveDedupIntegrationTests {
       .Because("LOCK-IN: Each perspective must be processed exactly once despite re-delivery.");
   }
 
+  /// <summary>
+  /// The two tests above pump their 20 items through the channel one write at a time, so the
+  /// consumer can take them in more than one batch: on a starved machine it wakes on the first write
+  /// and reads only what has landed. "PostLifecycle once" must hold however the claim is split, and
+  /// what holds it is the WhenAll gate the worker builds from the registry's event types. This drives
+  /// the split directly, ten perspectives per batch, so it does not depend on scheduling.
+  /// </summary>
+  [Test]
+  public async Task Contract_20Perspectives_SplitAcrossTwoBatches_PostLifecycleFiresExactlyOnce_Async() {
+    var streamId = Guid.CreateVersion7();
+    var eventId = Guid.CreateVersion7();
+    var perspectiveNames = Enumerable.Range(1, 20).Select(i => $"Test.Perspective{i:D2}").ToList();
+
+    var postLifecycleSpy = new PostLifecycleSpyInvoker();
+    var eventStore = new FakeEventStore();
+    eventStore.EventsPerStream[streamId] = [_createFakeEnvelope(eventId)];
+    var workItems = perspectiveNames.ConvertAll(name => new PerspectiveWork {
+      WorkId = Guid.CreateVersion7(),
+      StreamId = streamId,
+      PerspectiveName = name,
+      LastProcessedEventId = null,
+      PartitionNumber = 1
+    });
+    var runner = new FixedEventIdRunner(eventId);
+
+    var (worker, _) = _createWorker(
+      new SequentialWorkCoordinator(), new MultiPerspectiveRunnerRegistry(perspectiveNames, runner),
+      lifecycleCoordinator: new LifecycleCoordinator(logger: NullLogger<LifecycleCoordinator>.Instance),
+      receptorInvoker: postLifecycleSpy,
+      eventStore: eventStore,
+      eventTypeProvider: new FakeEventTypeProvider());
+
+    using var cts = new CancellationTokenSource();
+    // Started so the worker reads the registry (the WhenAll expectations come from it); nothing is
+    // pumped, so the consumer loops stay idle and the batches below are the only work.
+    await worker.StartAsync(cts.Token);
+    await worker.StartupScanComplete.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await worker.ProcessChannelBatchAsync(workItems.GetRange(0, 10), cts.Token);
+    await (worker.PendingPostLifecycle ?? Task.CompletedTask);
+    await worker.ProcessChannelBatchAsync(workItems.GetRange(10, 10), cts.Token);
+    await (worker.PendingPostLifecycle ?? Task.CompletedTask);
+    await _stopWorkerAsync(worker, cts);
+
+    await Assert.That(runner.CallCount).IsEqualTo(20);
+    // LOCK-IN: the first batch completes ten of the event's twenty perspectives, which must not open
+    // its gate; the second completes the rest and fires the stages once.
+    await Assert.That(postLifecycleSpy.PostLifecycleInlineCount).IsEqualTo(1)
+      .Because("LOCK-IN: PostLifecycleInline fires once per event after ALL its perspectives complete, "
+             + "however many batches they were claimed in.");
+  }
+
   [Test]
   public async Task Contract_SinglePerspective_PostLifecycleFiresImmediately_Async() {
     // Degenerate case: 1 perspective. PostLifecycle fires at batch end.
@@ -679,7 +731,6 @@ public class PerspectiveDedupIntegrationTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
       eventTypeProvider: eventTypeProvider ?? NullEventTypeProvider.Instance,
@@ -1128,7 +1179,15 @@ public class PerspectiveDedupIntegrationTests {
   /// Registry that maps multiple perspective names to a shared runner.
   /// Used by lifecycle tests where many perspectives share the same behavior.
   /// </summary>
+  /// <remarks>
+  /// Every perspective declares <see cref="FakeEvent"/> under the key the generated registry uses,
+  /// so the worker expects all of them to complete an event before its post-perspective stages fire
+  /// (the WhenAll gate). A key that matches no stored event type registers no expectation, and the
+  /// stages then fire for each batch that applied the event: "once" would hold only when the whole
+  /// claim happened to land in one batch.
+  /// </remarks>
   private sealed class MultiPerspectiveRunnerRegistry(IEnumerable<string> perspectiveNames, IPerspectiveRunner runner) : IPerspectiveRunnerRegistry {
+    private static readonly string _fakeEventTypeKey = TypeNameFormatter.Format(typeof(FakeEvent));
     private readonly HashSet<string> _knownNames = [.. perspectiveNames];
     private readonly IPerspectiveRunner _runner = runner;
 
@@ -1136,7 +1195,7 @@ public class PerspectiveDedupIntegrationTests {
       _knownNames.Contains(perspectiveName) ? _runner : null;
 
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
-      [.. _knownNames.Select(name => new PerspectiveRegistrationInfo(name, $"global::{name}", "global::Test.Model", ["global::Test.Event"]))];
+      [.. _knownNames.Select(name => new PerspectiveRegistrationInfo(name, $"global::{name}", "global::Test.Model", [_fakeEventTypeKey]))];
 
     public IReadOnlyList<Type> GetEventTypes() => [];
 
@@ -1274,6 +1333,40 @@ public class PerspectiveDedupIntegrationTests {
       .Because("LOCK-IN: Guid.Empty is a sentinel, not an identity. Reserving it would let the "
              + "first empty-id item claim it and silently drop work on every other stream.");
   }
+
+  /// <summary>
+  /// The sentinel guard above, across batches. The completion path recorded every applied work id,
+  /// Guid.Empty included, in the processed-event cache, and the filter consults that cache before it
+  /// looks at the sentinel: once one empty-id item had been applied, every later batch's empty-id items
+  /// were dropped as already processed. Within one batch the reservation guard kept them apart, so the
+  /// test above only failed when the consumer happened to take its five items in more than one batch.
+  /// This drives the split directly.
+  /// </summary>
+  [Test]
+  public async Task Contract_EmptyWorkIds_InSeparateBatches_AreNotDedupedAgainstEachOther_Async() {
+    var runner = new ApplyTrackingRunner();
+    var (worker, harness) = _createWorker(new SequentialWorkCoordinator(), new SingleRunnerRegistry(runner));
+    var firstStream = Guid.CreateVersion7();
+    var secondStream = Guid.CreateVersion7();
+
+    await worker.ProcessChannelBatchAsync([_sentinelWork(firstStream)], CancellationToken.None);
+    await worker.ProcessChannelBatchAsync([_sentinelWork(secondStream)], CancellationToken.None);
+    // A batch flushes the completions the batch before it buffered.
+    await worker.ProcessChannelBatchAsync([], CancellationToken.None);
+
+    await Assert.That(runner.UniqueStreamIds).IsEquivalentTo([firstStream, secondStream])
+      .Because("LOCK-IN: an applied empty-id item must not make every later empty-id item a duplicate.");
+    await Assert.That(harness.CompletionCapture.EventWorkIds).DoesNotContain(Guid.Empty)
+      .Because("Guid.Empty names no work row, so there is no row to complete for it.");
+  }
+
+  private static PerspectiveWork _sentinelWork(Guid streamId) => new() {
+    WorkId = Guid.Empty,
+    StreamId = streamId,
+    PerspectiveName = "Test.SentinelWorkIdPerspective",
+    LastProcessedEventId = null,
+    PartitionNumber = 1
+  };
 
   /// <summary>
   /// Cancels <paramref name="cts"/> and then waits for the worker's BODY to finish.

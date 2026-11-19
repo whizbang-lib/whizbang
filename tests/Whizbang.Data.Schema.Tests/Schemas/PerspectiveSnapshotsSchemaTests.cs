@@ -28,7 +28,7 @@ public class PerspectiveSnapshotsSchemaTests {
   public async Task Table_HasCorrectColumnsAsync() {
     var columns = PerspectiveSnapshotsSchema.Table.Columns;
 
-    await Assert.That(columns).Count().IsEqualTo(9);
+    await Assert.That(columns).Count().IsEqualTo(10);
 
     var streamId = columns.First(c => c.Name == "stream_id");
     await Assert.That(streamId.DataType).IsEqualTo(WhizbangDataType.UUID);
@@ -78,6 +78,13 @@ public class PerspectiveSnapshotsSchemaTests {
     var archivedThrough = columns.First(c => c.Name == "archived_through_version");
     await Assert.That(archivedThrough.DataType).IsEqualTo(WhizbangDataType.BIG_INT);
     await Assert.That(archivedThrough.Nullable).IsTrue();
+
+    // #1963: the commit sequence through which the row's collectives were complete when the snapshot was taken. Nullable:
+    // a snapshot taken before the mark existed records none and keeps the snapshot-event rule, and migration 275 adds it
+    // to existing tables without rewriting a row. Not indexed: it is read with the snapshot, never searched by.
+    var collectivesThrough = columns.First(c => c.Name == "collectives_through_sequence");
+    await Assert.That(collectivesThrough.DataType).IsEqualTo(WhizbangDataType.BIG_INT);
+    await Assert.That(collectivesThrough.Nullable).IsTrue();
   }
 
   [Test]

@@ -17,7 +17,7 @@ namespace Whizbang.Core.Routing;
 /// (<c>Whizbang__Routing__ControlClass__Enabled</c>) without a redeploy. Absent section = no-op.
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#control-class</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/ControlClassOptionsTests.cs:Options_BindFromConfigurationAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/ControlClassOptionsTests.cs:Options_BindFromConfigurationAsync</tests>
 internal sealed class ControlClassOptionsConfigurationBinder(IConfiguration? configuration)
   : IPostConfigureOptions<ControlClassOptions> {
 

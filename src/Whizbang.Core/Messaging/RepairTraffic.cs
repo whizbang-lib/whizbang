@@ -15,7 +15,7 @@ namespace Whizbang.Core.Messaging;
 /// Detection traffic (checkpoints, manifests, gap reports) is never in this set: report-only still reports.
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/RepairTrafficTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RepairTrafficTests.cs</tests>
 public static class RepairTraffic {
   /// <summary>
   /// Normalized (version-stripped) assembly-qualified names of the repair message types, in the form
@@ -24,8 +24,10 @@ public static class RepairTraffic {
   /// containment, not equality.
   /// </summary>
   public static IReadOnlyList<string> InboxMessageTypeNames { get; } = [
-    EventTypeMatchingHelper.NormalizeTypeName(TypeNameFormatter.AssemblyQualifiedName(typeof(RequestRedeliveryCommand))),
-    EventTypeMatchingHelper.NormalizeTypeName(TypeNameFormatter.AssemblyQualifiedName(typeof(RedeliveryComposite))),
+    TypeNameFormatter.Format(typeof(RequestRedeliveryCommand)),
+    TypeNameFormatter.Format(typeof(RedeliveryComposite)),
+    // #2092: a paced backfill window's answer is repair traffic too; a report-only service applies none.
+    TypeNameFormatter.Format(typeof(BackfillWindowAnswer)),
   ];
 
   /// <summary>

@@ -9,12 +9,14 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.Startup;
+using Whizbang.Data.EFCore.Postgres.Tests.TestSupport;
 using Whizbang.Data.Postgres.Notifications;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Coverage for four <see cref="PgCommitOrderStamperWorker"/> lines that
+/// Coverage for <see cref="PgCommitOrderStamperWorker"/> lines that
 /// <see cref="PgCommitOrderStamperWorkerIntegrationTests"/>'s full leader-election/stamping
 /// scenarios never happen to exercise. A commit-order stamper decides the order events are
 /// read back in; if the leader loop can silently die on an unhandled iteration failure, or the
@@ -24,19 +26,76 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard1")]
 public class PgCommitOrderStamperWorkerCoverageTests {
 
-  private sealed class NoOpSharedNotifyConnection : ISharedNotifyConnection {
-    public IDisposable Subscribe(INotifySubscription subscription) => new NoOpDisposable();
-    private sealed class NoOpDisposable : IDisposable {
-      public void Dispose() { }
-    }
+  /// <summary>Records the event ids a worker logs.</summary>
+  private sealed class EventIdRecordingLogger : ILogger<PgCommitOrderStamperWorker> {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<int> _ids = new();
+
+    public IReadOnlyCollection<int> EventIds => [.. _ids];
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter) => _ids.Enqueue(eventId.Id);
   }
 
-  private sealed class ThrowingSchemaReadyGate : Whizbang.Core.Workers.ISchemaReadyGate {
-    public bool IsReady => false;
-    public void MarkReady() { }
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) =>
-      Task.FromException(new OperationCanceledException("schema never became ready"));
+  /// <summary>
+  /// Production impact if this guard regresses: a host whose notification options name no database (no connection
+  /// string and no registered data source) would try to elect a stamper leader over a connection it cannot open. The
+  /// worker instead says why it is disabled, in a warning an operator can act on, and ends without electing.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_WithNoConnectionStringAndNoDataSource_SaysSoAndEndsWithoutElectingAsync(
+      CancellationToken testToken) {
+    var logger = new EventIdRecordingLogger();
+    var worker = _newWorker(directConnectionString: null, logger: logger);
+
+    await worker.StartAsync(testToken);
+    // The body returns on its own here, so the execute task completing is the signal that it ran.
+    await worker.ExecuteTask!.WaitAsync(testToken);
+
+    await Assert.That(worker.ExecuteTask.Status).IsEqualTo(TaskStatus.RanToCompletion);
+    await Assert.That(logger.EventIds).Contains(DISABLED_NO_CONNECTION_EVENT_ID)
+      .Because("the worker must say it is disabled for want of a connection, not end silently");
+    await Assert.That(worker.IsLeader).IsFalse();
+
+    await worker.StopAsync(testToken);
   }
+
+  private const int DISABLED_NO_CONNECTION_EVENT_ID = 2;
+
+  /// <summary>
+  /// #2044: the stamper leads only through a duty elector; there is no lock of its own to fall back to. With none
+  /// registered it says so, in a warning an operator can act on, and ends without leading.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task ExecuteAsync_WithNoDutyElector_SaysSoAndEndsWithoutLeadingAsync(bool theNullDefault, CancellationToken testToken) {
+    // No elector at all, or the framework's null default, which is registered when nothing supplies one.
+    var logger = new EventIdRecordingLogger();
+    var worker = _newWorker(directConnectionString: "Host=stamper-has-no-elector;Database=none", logger: logger,
+      withElector: theNullDefault, elector: NullDutyElector.Instance);
+
+    await worker.StartAsync(testToken);
+    await worker.ExecuteTask!.WaitAsync(testToken);
+
+    await Assert.That(worker.ExecuteTask.Status).IsEqualTo(TaskStatus.RanToCompletion);
+    await Assert.That(logger.EventIds).Contains(NO_DUTY_ELECTOR_EVENT_ID)
+      .Because("a stamper that cannot lead must say why rather than end silently");
+    await Assert.That(worker.IsLeader).IsFalse();
+
+    await worker.StopAsync(testToken);
+  }
+
+  private const int NO_DUTY_ELECTOR_EVENT_ID = 20;
 
   /// <summary>
   /// Captures only EventId 6 (<c>LogIterationError</c>) so a test can wait for a deterministic
@@ -75,10 +134,43 @@ public class PgCommitOrderStamperWorkerCoverageTests {
     public Task WaitForTwoIterationErrorsAsync(TimeSpan timeout) => _sawTwo.Task.WaitAsync(timeout);
   }
 
+  /// <summary>
+  /// #2046: the stamper hears commits and its role's release on the signal bus, never on a channel of its own. A commit
+  /// wakes the stamping loop; a release of the stamper's role (and only that role) frees a waiting non-holder to vote,
+  /// and the same release delivered twice (the notification, then the durable log's replay) is harmless.
+  /// </summary>
+  [Test]
+  public async Task TheBus_WakesTheStamperOnACommit_AndAWaiterOnItsRolesReleaseAsync() {
+    var bus = new Whizbang.Core.Signals.SignalBus([new Whizbang.Core.Signals.InMemorySignalTransport()], []);
+    await bus.StartAsync();
+    var worker = _newWorker(bus: bus);
+    var listening = worker.ListenForWakes();
+    await Assert.That(await worker.PendingWakes.WaitAsync(0)).IsTrue().Because("the loop starts with one wake pending");
+
+    await bus.PublishAsync(new Whizbang.Core.Signals.RowsCommittedSignal());
+    await Assert.That(worker.PendingWakes.CurrentCount).IsEqualTo(1).Because("a commit wakes the stamping loop");
+    await bus.PublishAsync(new Whizbang.Core.Signals.RowsCommittedSignal());
+    await Assert.That(worker.PendingWakes.CurrentCount).IsEqualTo(1).Because("wakes coalesce");
+
+    await bus.PublishAsync(new Whizbang.Core.Signals.RoleReleasedSignal("whizbang:some-other-role"));
+    await Assert.That(worker.Vacancies.CurrentCount).IsEqualTo(0).Because("another role's release is not the stamper's");
+    await bus.PublishAsync(new Whizbang.Core.Signals.RoleReleasedSignal(CommitOrderStamperOptions.ROLE));
+    await Assert.That(worker.Vacancies.CurrentCount).IsEqualTo(1).Because("the stamper's release frees a waiter to vote");
+    await bus.PublishAsync(new Whizbang.Core.Signals.RoleReleasedSignal(CommitOrderStamperOptions.ROLE));
+    await Assert.That(worker.Vacancies.CurrentCount).IsEqualTo(1).Because("a release heard twice is one vacancy");
+
+    listening.Dispose();
+    await Assert.That(await worker.PendingWakes.WaitAsync(0)).IsTrue();
+    await bus.PublishAsync(new Whizbang.Core.Signals.RowsCommittedSignal());
+    await Assert.That(worker.PendingWakes.CurrentCount).IsEqualTo(0).Because("a stopped listener wakes nothing");
+  }
+
   private static PgCommitOrderStamperWorker _newWorker(
       string? directConnectionString = null,
       ILogger<PgCommitOrderStamperWorker>? logger = null,
-      Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate = null) {
+      bool withElector = true,
+      IDutyElector? elector = null,
+      Whizbang.Core.Signals.ISignalBus? bus = null) {
     var notificationOptions = new WhizbangNotificationOptions {
       DirectConnectionString = directConnectionString,
     };
@@ -91,10 +183,9 @@ public class PgCommitOrderStamperWorkerCoverageTests {
       Options.Create(notificationOptions),
       Options.Create(stamperOptions),
       config,
-      new NoOpSharedNotifyConnection(),
+      bus ?? Whizbang.Core.Signals.NullSignalBus.Instance,
       logger ?? NullLogger<PgCommitOrderStamperWorker>.Instance,
-      dutyElector: null,
-      schemaReadyGate: schemaReadyGate);
+      dutyElector: withElector ? elector ?? new GrantingDutyElector() : null);
   }
 
   /// <summary>
@@ -108,29 +199,6 @@ public class PgCommitOrderStamperWorkerCoverageTests {
 
     await Assert.That(worker.TotalStamped).IsEqualTo(0)
       .Because("nothing has stamped yet — a fresh worker's cumulative counter must read zero, not garbage or a stale value");
-  }
-
-  /// <summary>
-  /// Production impact if this guard regresses: a cancellation raised while the stamper is still
-  /// waiting for the schema to finish migrating would otherwise crash the worker (or worse, be
-  /// swallowed by the host as a startup failure) instead of shutting down cleanly like every
-  /// other cooperative-cancellation path in this loop.
-  /// </summary>
-  [Test]
-  public async Task ExecuteAsync_SchemaGateThrowsOperationCanceled_ShutsDownCleanlyAsync() {
-    var worker = _newWorker(schemaReadyGate: new ThrowingSchemaReadyGate());
-
-    await worker.StartAsync(CancellationToken.None);
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
-      .Because("the worker must finish (not hang) once the schema-ready wait is canceled");
-    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
-      .Because("a canceled schema-ready wait is a clean-shutdown signal, not a fault the host should see as a crash");
-    await Assert.That(worker.IsLeader).IsFalse()
-      .Because("the worker returned before ever attempting leader election");
-
-    await worker.StopAsync(CancellationToken.None);
   }
 
   /// <summary>

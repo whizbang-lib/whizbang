@@ -655,6 +655,46 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
 
   [Test]
   [Timeout(30000)]
+  public async Task DrainMode_ProcessedHook_NamesOnlyTheEventsTheBatchAppliedAsync(CancellationToken cancellationToken) {
+    // #2237: the hook carries the ids of the events it reports, so a listener counts distinct applies instead of summing
+    // batch sizes. A cooled event is not applied by this batch and is not named.
+    var streamId = Guid.CreateVersion7();
+    var cooledEventId = Guid.CreateVersion7();
+    var freshEventId = Guid.CreateVersion7();
+    var cooledWorkId = Guid.CreateVersion7();
+    var cooldownCache = new RecentlyProcessedEventCache(new SystemTimeProvider());
+    cooldownCache.MarkProcessed(cooledWorkId);
+    var coordinator = new DrainWorkCoordinator();
+    coordinator.EnqueueStreamEvents([
+      _raw(streamId, cooledEventId, cooledWorkId),
+      _raw(streamId, freshEventId, Guid.CreateVersion7())
+    ]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([
+      _envelope(cooledEventId, new DrainDeepEvent("cooled")),
+      _envelope(freshEventId, new DrainDeepEvent("fresh"))
+    ]);
+    var (worker, harness, _) = _createWorker(
+      coordinator, eventStore, _registry(new DrainRunner()), configure: opts => opts.DrainLoopMaxIterations = 1,
+      cooldownCache: cooldownCache);
+    var processed = new TaskCompletionSource<PerspectiveEventProcessedEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnPerspectiveEventProcessed += e => processed.TrySetResult(e);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    var reported = await processed.Task.WaitAsync(cancellationToken);
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(reported.StreamId).IsEqualTo(streamId);
+    await Assert.That(reported.EventIds).IsEquivalentTo([freshEventId]);
+    await Assert.That(reported.EventCount).IsEqualTo(reported.EventIds.Count)
+      .Because("the count and the ids describe the same events");
+  }
+
+  [Test]
+  [Timeout(30000)]
   public async Task DrainMode_ACommittedApply_MarksItsEventsAppliedAsync(CancellationToken cancellationToken) {
     // #959: a waiter for an event that arrived from another service wakes on this mark, so it is made
     // for a committed apply and names the events the runner applied.
@@ -985,20 +1025,32 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       StoredFormFailureRegistry? storedFormFailures = null,
       ISyncEventTracker? syncEventTracker = null,
       Func<IServiceProvider, IPerspectiveRunnerRegistry>? registryFactory = null,
-      IPerspectiveDrainChannel? drainChannel = null) {
+      IPerspectiveDrainChannel? drainChannel = null,
+      CompositeMetrics? compositeMetrics = null,
+      bool withoutRegistry = false,
+      bool withoutEventStore = false,
+      IConsumerRegistry? consumerRegistry = null) {
     var instanceProvider = new FakeInstanceProvider();
     var harness = new PerspectiveWorkerTestHarness();
 
     var services = new ServiceCollection();
+    if (consumerRegistry is not null) {
+      // Registered before the defaults, whose consumer registry is a TryAdd.
+      services.AddSingleton(consumerRegistry);
+    }
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
+    // withoutRegistry is a host with no perspectives: the generator emits no registry, so none is registered and
+    // the event type provider is the defaults' null provider.
     if (registryFactory is not null) {
       services.AddTransient(registryFactory);
-    } else {
+    } else if (!withoutRegistry) {
       services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     }
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
-    services.AddSingleton<IEventStore>(eventStore);
+    if (!withoutEventStore) {
+      services.AddSingleton<IEventStore>(eventStore);
+    }
     if (lifecycleCoordinator is not null) {
       services.AddSingleton(lifecycleCoordinator);
     }
@@ -1022,7 +1074,6 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       instanceProvider: instanceProvider,
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(options),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: useBatchedStrategy
         ? new BatchedCompletionStrategy(
@@ -1030,7 +1081,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
             backoffMultiplier: options.RetryOptions switch { { EnableExponentialBackoff: true } r => r.BackoffMultiplier, _ => 1.0 },
             maxTimeout: TimeSpan.FromSeconds(options.RetryOptions.MaxBackoffSeconds))
         : new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
-      eventTypeProvider: registry,
+      eventTypeProvider: withoutRegistry ? provider.GetRequiredService<IEventTypeProvider>() : registry,
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
       syncEventTracker: syncEventTracker ?? new SyncEventTracker(),
       logger: logger ?? NullLogger<PerspectiveWorker>.Instance,
@@ -1055,6 +1106,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       metrics: metrics,
       timeProvider: timeProvider,
       recentlyProcessedEventCache: cooldownCache,
+      compositeMetrics: compositeMetrics,
       storedFormFailures: storedFormFailures);
     return (worker, harness, provider);
   }
@@ -1174,6 +1226,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     private int _deserializeCallCount;
 
     public bool ThrowOnDeserialize { get; init; }
+    /// <summary>A call that is given any of these events throws, as a store or decorator does on one row it cannot read.</summary>
+    public HashSet<Guid> ThrowForEventIds { get; init; } = [];
     public int DeserializeCallCount => Volatile.Read(ref _deserializeCallCount);
 
     public void EnqueueDeserialized(List<MessageEnvelope<IEvent>> envelopes) =>
@@ -1181,7 +1235,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
 
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
       Interlocked.Increment(ref _deserializeCallCount);
-      if (ThrowOnDeserialize) {
+      if (ThrowOnDeserialize || streamEvents.Any(row => ThrowForEventIds.Contains(row.EventId))) {
         throw new InvalidOperationException("simulated deserialization failure");
       }
       if (_deserializedResponses.TryDequeue(out var next)) {
@@ -1366,8 +1420,15 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       Frontier is null
         ? _completed(streamId, perspectiveName, triggeringEventId)
         : _completed(streamId, perspectiveName, Frontier.Value.EventId) with {
-          LastCommitSequence = Frontier.Value.CommitSequence
+          LastCommitSequence = Frontier.Value.CommitSequence,
+          ReplayedThroughCommitSequence = ReplayedThrough
         };
+
+    /// <summary>
+    /// #2366: what a replay from the stream's start reports it read through. Null for a replay from a snapshot, which
+    /// reads only the events after the snapshot's id.
+    /// </summary>
+    public long? ReplayedThrough { get; init; }
 
     public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;

@@ -35,6 +35,8 @@ public class ServiceRegistrationCallbacksBranchCoverageTests {
       await Assert.That(services.Any(d => d.ServiceType == typeof(RawReceptorMarker))).IsTrue()
         .Because("the raw-receptor callback is how a consumer assembly's discovered raw receptors reach the container");
     } finally {
+      // The slot accumulates (#2198): clear the test's callback before putting the saved ones back.
+      ServiceRegistrationCallbacks.RawReceptors = null;
       ServiceRegistrationCallbacks.RawReceptors = saved;
     }
   }

@@ -53,45 +53,61 @@ public readonly record struct SchemaStaging(SchemaStage Stage, IDutyGrant? Grant
 /// than migrating without a duty, and it is a failure an operator has to clear by hand.
 /// </para>
 /// <para>
-/// The duty rides a session advisory lock on its own connection, so the holder's death releases it
-/// with no timeout to tune, and a waiter watching that lock sees the takeover become available the
-/// moment the holder stops existing.
+/// The duty is a role assignment (#2044): a holder that dies stops renewing, and its assignment is
+/// voided once the lease lapses or the one liveness rule has the instance reaped, so a waiter
+/// watching the assignment (<see cref="MigratorWatch"/>) sees the takeover become available.
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorDutyStagingTests.cs</tests>
 public static class MigratorDutyStaging {
   /// <summary>
-  /// Registers this instance and contends for the migrator duty.
+  /// Puts this instance in the registry: the last step of Preflight (#1636), once the bootstrap closure and the
+  /// instance and role tables are in place, so nothing registers before its tables are ready.
   /// </summary>
-  /// <param name="elector">The elector, or <see langword="null"/> when none is registered.</param>
-  /// <param name="registerAsync">Puts this instance in the registry. Must run before electing.</param>
+  /// <param name="registerAsync">Puts this instance in the registry.</param>
   /// <param name="schema">The schema being staged, for reporting.</param>
   /// <param name="logger">Optional logger.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <returns>What this instance does next. Never throws for anything the elector reports.</returns>
-  public static async Task<SchemaStaging> ElectAsync(
-      IDutyElector? elector,
+  /// <returns>Whether this instance joined the registry. A failure is logged and answered, never thrown.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorDutyStagingTests.cs:Register_RunsTheRegistration_AndAnswersThatTheInstanceJoinedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorDutyStagingTests.cs:Register_ThatFails_IsSaidAndAnsweredAsNotJoinedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorDutyStagingTests.cs:Register_ThatFails_WithNoLogger_IsAnsweredAsNotJoinedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupPreflightHostTests.cs:TheInstanceRow_IsRegisteredAtTheEndOfPreflight_BeforeElectAsync</tests>
+  public static async Task<bool> RegisterAsync(
       Func<CancellationToken, Task> registerAsync,
       string schema,
       ILogger? logger = null,
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(registerAsync);
     cancellationToken.ThrowIfCancellationRequested();
+    try {
+      await registerAsync(cancellationToken).ConfigureAwait(false);
+      return true;
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      // Electing now would be refused anyway, and the refusal would say "unregistered" rather than
+      // what actually went wrong. Report the real reason; the caller falls back.
+      MigratorDutyStagingLog.RegistrationFailed(logger ?? NullLogger.Instance, ex, schema);
+      return false;
+    }
+  }
+
+  /// <summary>Contends for the migrator duty, once this instance has joined the registry.</summary>
+  /// <param name="elector">The elector, or <see langword="null"/> when none is registered.</param>
+  /// <param name="schema">The schema being staged, for reporting.</param>
+  /// <param name="logger">Optional logger.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>What this instance does next. Never throws for anything the elector reports.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorDutyStagingTests.cs:Elect_AfterRegistering_AsksTheElectorOnce_AndHandsOverTheGrantAsync</tests>
+  public static async Task<SchemaStaging> ElectAsync(
+      IDutyElector? elector,
+      string schema,
+      ILogger? logger = null,
+      CancellationToken cancellationToken = default) {
+    cancellationToken.ThrowIfCancellationRequested();
 
     // Non-null so the log calls below need no guard. NullLogger discards, at no cost.
     var log = logger ?? NullLogger.Instance;
-
-    // Joining the registry comes first, elector or not: an instance that starts after this one reads this one's
-    // managed-object declarations only while it is registered, and the Dapper driver registers at start the same way.
-    try {
-      await registerAsync(cancellationToken).ConfigureAwait(false);
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
-      // Electing now would be refused anyway, and the refusal would say "unregistered" rather than
-      // what actually went wrong. Report the real reason and fall back.
-      MigratorDutyStagingLog.RegistrationFailed(log, ex, schema);
-      return new SchemaStaging(SchemaStage.Unstaged, null, "this instance could not join the registry");
-    }
 
     if (elector is null) {
       // A deployment that never wired the notification services. The lock is the only guard, as
@@ -101,14 +117,23 @@ public static class MigratorDutyStaging {
     }
 
     DutyAttempt attempt;
-    try {
-      attempt = await elector.TryAcquireAsync(StartupDuties.MIGRATOR, cancellationToken)
-        .ConfigureAwait(false);
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
-      // A database with no capability function yet answers this way, and so does one where the
-      // elector has no connection of its own. Either is a reason to stop electing, not to stop.
-      MigratorDutyStagingLog.ElectorFailed(log, ex, schema);
-      return new SchemaStaging(SchemaStage.Unstaged, null, "the elector could not be asked");
+    while (true) {
+      try {
+        attempt = await elector.TryAcquireAsync(StartupDuties.MIGRATOR, cancellationToken)
+          .ConfigureAwait(false);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        // A database with no capability function yet answers this way, and so does one where the
+        // elector has no connection of its own. Either is a reason to stop electing, not to stop.
+        MigratorDutyStagingLog.ElectorFailed(log, ex, schema);
+        return new SchemaStaging(SchemaStage.Unstaged, null, "the elector could not be asked");
+      }
+      if (attempt.Refusal != DutyRefusal.Halted || elector is not Whizbang.Core.RunControl.IObeysRunPermit { RunPermit: var permit }) {
+        break;
+      }
+      // #2045: this instance's run permit is closed. Not permanent: wait for it to reopen, on its own signal, and vote
+      // again. A stopped permit is final, and ends the election as canceled: the instance is stopping.
+      MigratorDutyStagingLog.Halted(log, schema, attempt.Detail!);
+      await permit.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     if (attempt.Grant is { } grant) {
@@ -132,8 +157,40 @@ public static class MigratorDutyStaging {
       return new SchemaStaging(SchemaStage.Unstaged, null, detail);
     }
 
+    if (attempt.Refusal == DutyRefusal.Halted) {
+      // An elector with no run permit to wait on: said as halted, and the lock still guards, as for any other answer.
+      MigratorDutyStagingLog.Halted(log, schema, detail);
+      return new SchemaStaging(SchemaStage.Unstaged, null, detail);
+    }
+
     MigratorDutyStagingLog.Unavailable(log, schema, detail);
     return new SchemaStaging(SchemaStage.Unstaged, null, detail);
+  }
+
+  /// <summary>
+  /// Registers this instance and contends for the migrator duty.
+  /// </summary>
+  /// <param name="elector">The elector, or <see langword="null"/> when none is registered.</param>
+  /// <param name="registerAsync">Puts this instance in the registry. Must run before electing.</param>
+  /// <param name="schema">The schema being staged, for reporting.</param>
+  /// <param name="logger">Optional logger.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>What this instance does next. Never throws for anything the elector reports.</returns>
+  public static async Task<SchemaStaging> ElectAsync(
+      IDutyElector? elector,
+      Func<CancellationToken, Task> registerAsync,
+      string schema,
+      ILogger? logger = null,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(registerAsync);
+    cancellationToken.ThrowIfCancellationRequested();
+
+    // Joining the registry comes first, elector or not: an instance that starts after this one reads this one's
+    // managed-object declarations only while it is registered, and the Dapper driver registers at start the same way.
+    if (!await RegisterAsync(registerAsync, schema, logger, cancellationToken).ConfigureAwait(false)) {
+      return new SchemaStaging(SchemaStage.Unstaged, null, "this instance could not join the registry");
+    }
+    return await ElectAsync(elector, schema, logger, cancellationToken).ConfigureAwait(false);
   }
 }
 
@@ -187,4 +244,11 @@ internal static partial class MigratorDutyStagingLog {
       Message = "The duty elector for schema {Schema} could not be asked, so this instance is "
               + "migrating under the advisory lock alone")]
   public static partial void ElectorFailed(ILogger logger, Exception exception, string schema);
+
+  [LoggerMessage(
+      EventId = 8,
+      Level = LogLevel.Information,
+      Message = "The migrator duty for schema {Schema} was refused because this instance is halted (paused, standing down or "
+              + "stopping): {Detail}")]
+  public static partial void Halted(ILogger logger, string schema, string detail);
 }

@@ -212,8 +212,6 @@ public class SecurityContextTimeoutTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IMessageSecurityContextProvider>(hangingProvider);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var channel = new FakeInboxChannelWriter();
     var failure = new FakeFailureChannel();
@@ -223,7 +221,6 @@ public class SecurityContextTimeoutTests {
       inboxChannelWriter: channel,
       handlerCommitChannel: new FakeHandlerCommitChannel(),
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions {
         Enabled = true,
         SecurityContextTimeoutSeconds = 1,
@@ -264,8 +261,6 @@ public class SecurityContextTimeoutTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IMessageSecurityContextProvider>(hangingProvider);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var worker = new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -273,7 +268,6 @@ public class SecurityContextTimeoutTests {
       drainChannel: new FakeOutboxDrainChannel(),
       completionChannel: new FakeOutboxCompletionChannel(),
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,

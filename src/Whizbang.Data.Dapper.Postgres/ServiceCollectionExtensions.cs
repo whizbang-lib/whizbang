@@ -100,6 +100,8 @@ public static class ServiceCollectionExtensions {
   /// </param>
   /// <param name="configureOptions">Configures the driver's options.</param>
   /// <docs>fundamentals/perspectives/managed-schema-objects</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperScheduledPrefixTruncateTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperRebuildCommandTests.cs</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperManagedObjectsTests.cs</tests>
   [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup logging doesn't need high performance optimization")]
   public static IServiceCollection AddWhizbangPostgres(
@@ -135,6 +137,9 @@ public static class ServiceCollectionExtensions {
         ManagedObjectSettings = ManagedSchemaSettings.Read(sp.GetService<IConfiguration>()),
         Logger = sp.GetRequiredService<ILogger<PostgresSchemaInitializer>>(),
         Instance = sp.GetRequiredService<IServiceInstanceProvider>(),
+        // #2126: the registration records the connection mode and the liveness window the rule judges it by.
+        RegistrationLiveness = Whizbang.Data.Postgres.InstanceRegistrationLiveness.Of(sp),
+        LedgerApplicationVersion = Whizbang.Data.Postgres.SchemaLedgerVersion.ApplicationVersionOf(sp),
         Observers = [.. sp.GetServices<ISchemaInitializationObserver>()],
       });
     if (initializeSchema && managedObjects is not null) {
@@ -165,6 +170,7 @@ public static class ServiceCollectionExtensions {
         sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
         sp.GetService<TimeProvider>()));
     _addStreamLifecycleBackfill(services, connectionString);
+    _addUnsequencedDigestCompaction(services, connectionString);
     _addPartitionMaintenance(services, connectionString);
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
@@ -183,23 +189,16 @@ public static class ServiceCollectionExtensions {
     // Registered as a FACTORY, not a type. A type-based registration is activated reflectively,
     // both by the container and by the decoration path that has to rebuild the inner store when
     // wrapping it. Naming the constructor here keeps that path free of reflection.
-    services.AddScoped<IEventStore>(sp => new DapperPostgresEventStore(
-      sp.GetRequiredService<IDbConnectionFactory>(),
-      sp.GetRequiredService<IDbExecutor>(),
-      sp.GetRequiredService<JsonSerializerOptions>(),
-      sp.GetRequiredService<IJsonbPersistenceAdapter<Whizbang.Core.Observability.IMessageEnvelope>>(),
-      sp.GetRequiredService<JsonbSizeValidator>(),
-      sp.GetRequiredService<IPolicyEngine>(),
-      sp.GetService<IPerspectiveInvoker>(),
-      sp.GetRequiredService<ILogger<DapperPostgresEventStore>>(),
-      // #1546: an appended event's kind is the one the dispatch path stamps, [Ephemeral] on a type included.
-      sp.GetService<Whizbang.Core.IEphemeralModeResolver>()));
+    services.AddScoped<IEventStore>(_newEventStore);
     services.AddSingleton<IWorkCoordinator>(sp =>
       new DapperWorkCoordinator(
         connectionString,
         jsonOptions,
         sp.GetService<ILogger<DapperWorkCoordinator>>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
+    // #2359: records past their own expiry are removed every maintenance cycle; the store's expiry had no caller.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep,
+      global::Whizbang.Core.Workers.RequestResponseExpiryStep>());
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
 
     // Register perspective snapshot and rewind options
@@ -242,11 +241,21 @@ public static class ServiceCollectionExtensions {
     // rows into wh_dead_letters. The store is singleton-safe (only stashes the
     // connection string at construction; opens connections on demand).
     _addDeadLetterStore(services, connectionString);
+    _addDeadLetterRecoveryService(services, connectionString);
     _addPerspectiveTableSwapper(services, connectionString);
     _addTableStatistics(services, connectionString);
 
     // #1358: multi-stream commands, over this connection string; the worker polls, as there is no listen connection.
     services.AddWhizbangMultiStreamCommands(connectionString);
+
+    // TURNKEY: the scheduled prefix truncate, as the EF Core driver registers it (#2043): a fired schedule occurrence
+    // drives IStreamPrefixTruncator.TruncateAsync. It had no receptor on this driver, so the schedule truncated nothing.
+    services.AddScheduledPrefixTruncate();
+
+    // TURNKEY: the rebuild command, as the EF Core driver registers it (#1959): RebuildPerspectiveCommand reaches a
+    // receptor that rebuilds the requested perspectives, and a whole-perspective blue-green rebuild runs on the
+    // background rebuild worker. It had no handler on this driver, so the command rebuilt nothing.
+    services.AddRebuildCommandHandling();
 
     // Reconcile wh_message_type_registry against the compile-time IMessageTypeCatalog.
     // Runs only when the schema was just initialized here (we know the table exists) and
@@ -258,7 +267,7 @@ public static class ServiceCollectionExtensions {
     // gracefully no-ops when IMessageTypeCatalog isn't registered (matches the prior null-
     // catalog log line).
     if (initializeSchema) {
-      services.AddHostedService<MessageTypeRegistryReconciliationHostedService>();
+      Whizbang.Core.Startup.WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorkerAtSchemaReady<MessageTypeRegistryReconciliationHostedService>(services);
     }
 
     return services;
@@ -277,6 +286,8 @@ public static class ServiceCollectionExtensions {
   /// <param name="perspectiveSchemaSql">Optional perspective schema SQL generated by PerspectiveSchemaGenerator.</param>
   /// <param name="configureOptions">Optional configuration callback for PostgreSQL options (retry settings, etc.).</param>
   /// <returns>The service collection for chaining.</returns>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperScheduledPrefixTruncateTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperRebuildCommandTests.cs</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperGateWiringTests.cs</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperGatePrecedenceTests.cs</tests>
   [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup logging doesn't need high performance optimization")]
@@ -301,6 +312,9 @@ public static class ServiceCollectionExtensions {
         DeclaredKeyTables = Whizbang.Data.Postgres.Perspectives.DeclaredKeyTable.ForSerializedModels(
           Whizbang.Core.Perspectives.PerspectiveDocumentModels.Registered, jsonOptions),
         Instance = sp.GetRequiredService<IServiceInstanceProvider>(),
+        // #2126: the registration records the connection mode and the liveness window the rule judges it by.
+        RegistrationLiveness = Whizbang.Data.Postgres.InstanceRegistrationLiveness.Of(sp),
+        LedgerApplicationVersion = Whizbang.Data.Postgres.SchemaLedgerVersion.ApplicationVersionOf(sp),
         Observers = [.. sp.GetServices<ISchemaInitializationObserver>()],
       });
 
@@ -321,6 +335,7 @@ public static class ServiceCollectionExtensions {
         sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
         sp.GetService<TimeProvider>()));
     _addStreamLifecycleBackfill(services, connectionString);
+    _addUnsequencedDigestCompaction(services, connectionString);
     _addPartitionMaintenance(services, connectionString);
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
@@ -346,23 +361,16 @@ public static class ServiceCollectionExtensions {
     // Registered as a FACTORY, not a type. A type-based registration is activated reflectively,
     // both by the container and by the decoration path that has to rebuild the inner store when
     // wrapping it. Naming the constructor here keeps that path free of reflection.
-    services.AddScoped<IEventStore>(sp => new DapperPostgresEventStore(
-      sp.GetRequiredService<IDbConnectionFactory>(),
-      sp.GetRequiredService<IDbExecutor>(),
-      sp.GetRequiredService<JsonSerializerOptions>(),
-      sp.GetRequiredService<IJsonbPersistenceAdapter<Whizbang.Core.Observability.IMessageEnvelope>>(),
-      sp.GetRequiredService<JsonbSizeValidator>(),
-      sp.GetRequiredService<IPolicyEngine>(),
-      sp.GetService<IPerspectiveInvoker>(),
-      sp.GetRequiredService<ILogger<DapperPostgresEventStore>>(),
-      // #1546: an appended event's kind is the one the dispatch path stamps, [Ephemeral] on a type included.
-      sp.GetService<Whizbang.Core.IEphemeralModeResolver>()));
+    services.AddScoped<IEventStore>(_newEventStore);
     services.AddSingleton<IWorkCoordinator>(sp =>
       new DapperWorkCoordinator(
         connectionString,
         jsonOptions,
         sp.GetService<ILogger<DapperWorkCoordinator>>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
+    // #2359: records past their own expiry are removed every maintenance cycle; the store's expiry had no caller.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep,
+      global::Whizbang.Core.Workers.RequestResponseExpiryStep>());
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
 
     // Register perspective snapshot and rewind options
@@ -408,21 +416,47 @@ public static class ServiceCollectionExtensions {
     // rows into wh_dead_letters. The store is singleton-safe (only stashes the
     // connection string at construction; opens connections on demand).
     _addDeadLetterStore(services, connectionString);
+    _addDeadLetterRecoveryService(services, connectionString);
     _addPerspectiveTableSwapper(services, connectionString);
     _addTableStatistics(services, connectionString);
 
     // #1358: multi-stream commands, over this connection string; the worker polls, as there is no listen connection.
     services.AddWhizbangMultiStreamCommands(connectionString);
 
+    // TURNKEY: the scheduled prefix truncate, as the EF Core driver registers it (#2043): a fired schedule occurrence
+    // drives IStreamPrefixTruncator.TruncateAsync. It had no receptor on this driver, so the schedule truncated nothing.
+    services.AddScheduledPrefixTruncate();
+
+    // TURNKEY: the rebuild command, as the EF Core driver registers it (#1959): RebuildPerspectiveCommand reaches a
+    // receptor that rebuilds the requested perspectives, and a whole-perspective blue-green rebuild runs on the
+    // background rebuild worker. It had no handler on this driver, so the command rebuilt nothing.
+    services.AddRebuildCommandHandling();
+
     // See the first overload for the rationale: the prior `services.BuildServiceProvider()`
     // + `using` pattern silently disposed the host's shared ConfigurationManager. Defer
     // the populator run to host startup via an IHostedService that uses the REAL provider.
     if (initializeSchema) {
-      services.AddHostedService<MessageTypeRegistryReconciliationHostedService>();
+      Whizbang.Core.Startup.WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorkerAtSchemaReady<MessageTypeRegistryReconciliationHostedService>(services);
     }
 
     return services;
   }
+
+  /// <summary>
+  /// The driver's assessor (#1992), with this instance's application version and id (#2022) so the one version rule
+  /// compares both versions and never counts the instance's own row.
+  /// </summary>
+  /// <remarks>
+  /// The instance identity is required, not optional: <c>_addSchemaInitialization</c> registers it alongside this
+  /// assessor, so there is always one to read.
+  /// </remarks>
+  private static DapperPostgresStartupAssessor _assessor(
+      IServiceProvider sp, string connectionString, Func<IServiceProvider, PostgresSchemaInitializer> createInitializer) =>
+    new(connectionString, () => createInitializer(sp),
+      sp.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>()?.ApplicationVersion.Recorded,
+      sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>().InstanceId,
+      Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()),
+      Whizbang.Core.Versioning.UpgradeOrder.IsLossyRollbackAllowed(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
 
   /// <summary>
   /// Records the schema work for host start: the shared schema initializer runs this driver's runner, then opens the
@@ -440,7 +474,13 @@ public static class ServiceCollectionExtensions {
   private static void _addSchemaInitialization(
       IServiceCollection services, string connectionString, PostgresOptions options, bool initializeSchema,
       Func<IServiceProvider, PostgresSchemaInitializer> createInitializer) {
+    _addUnsupportedFeatureRefusals(services);
     services.AddWhizbangInstanceIdentity();
+    // #1992: the Assess verdict, as the EF Core driver gives it, so a Dapper instance stands down rather than migrate a
+    // newer schema, and skips the election and the migration on a current one.
+    services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IStartupAssessor>(sp => _assessor(sp, connectionString, createInitializer));
+    // #2022: the online instances' versions, from the same read, for a newer instance's announcement.
+    services.TryAddSingleton<Whizbang.Core.Versioning.IOnlineVersionReader>(sp => _assessor(sp, connectionString, createInitializer));
     if (initializeSchema) {
       services.AddSingleton<ISchemaInitializationRunner>(sp => new DapperSchemaInitializationRunner(
         connectionString,
@@ -451,6 +491,38 @@ public static class ServiceCollectionExtensions {
     }
     services.AddWhizbangSchemaInitialization();
   }
+
+  /// <summary>
+  /// Defaults off, and refuses at start when configuration turns on, every feature this driver cannot serve (#2051): the
+  /// stream-integrity switches. Validated through the options pipeline at host start, as the other option checks are.
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <docs>data/drivers#what-dapper-refuses-at-startup</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamIntegrityRefusalTests.cs</tests>
+  private static void _addUnsupportedFeatureRefusals(IServiceCollection services) {
+    services.AddOptions<StreamIntegrityOptions>().ValidateOnStart();
+    // A host that registers no configuration gets an empty one (as the core registration does), so the defaults always
+    // read a configuration and an unset key reads as off.
+    services.TryAddSingleton<IConfiguration>(_ => new ConfigurationBuilder().Build());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Microsoft.Extensions.Options.IConfigureOptions<StreamIntegrityOptions>, DapperStreamIntegrityDefaults>(
+      sp => new DapperStreamIntegrityDefaults(sp.GetRequiredService<IConfiguration>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Microsoft.Extensions.Options.IValidateOptions<StreamIntegrityOptions>, DapperStreamIntegrityRefusal>());
+  }
+
+  // The event store, by its constructor (a type-based registration is activated reflectively). The book closer (#1741)
+  // builds one of its own to store its events as the direct append does.
+  private static DapperPostgresEventStore _newEventStore(IServiceProvider sp) =>
+    new(
+      sp.GetRequiredService<IDbConnectionFactory>(),
+      sp.GetRequiredService<IDbExecutor>(),
+      sp.GetRequiredService<JsonSerializerOptions>(),
+      sp.GetRequiredService<IJsonbPersistenceAdapter<Whizbang.Core.Observability.IMessageEnvelope>>(),
+      sp.GetRequiredService<JsonbSizeValidator>(),
+      sp.GetRequiredService<IPolicyEngine>(),
+      sp.GetService<IPerspectiveInvoker>(),
+      sp.GetRequiredService<ILogger<DapperPostgresEventStore>>(),
+      // #1546: an appended event's kind is the one the dispatch path stamps, [Ephemeral] on a type included.
+      sp.GetService<Whizbang.Core.IEphemeralModeResolver>());
 
   /// <summary>
   /// Registers the purge markers that keep a purged perspective row purged (<see cref="IPerspectivePurgeMarkerStore"/>)
@@ -471,10 +543,17 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<IStreamPurger>(sp =>
       new PostgresStreamPurger(
         ct => OpenConnectionAsync(connectionString, ct),
-        logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+        logger: sp.GetService<ILogger<PostgresStreamPurger>>(),
+        integrityMetrics: sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()));
     // The built-in archive store (WS-3 S7): the prefix truncate's archive path writes through it; a blob store
     // registered first wins.
     services.TryAddSingleton(_ => new PostgresArchiveConnection(ct => OpenConnectionAsync(connectionString, ct), Schema: null));
+    // What a rebuild knows of each stream's archive (#1931), read from the lifecycle ledger.
+    services.TryAddSingleton<global::Whizbang.Core.Archival.IArchivedStreamExtents>(sp =>
+      new PostgresArchivedStreamExtents(sp.GetRequiredService<PostgresArchiveConnection>()));
+    // What a snapshot of a row with collectives reads to record how far they are complete (#1963).
+    services.TryAddSingleton<global::Whizbang.Core.Perspectives.ICollectiveSnapshotFence>(sp =>
+      new PostgresCollectiveSnapshotFence(sp.GetRequiredService<PostgresArchiveConnection>()));
     services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(sp => {
       var database = sp.GetRequiredService<PostgresArchiveConnection>();
       return new PostgresTableArchiveStore(database.Open, database.Schema, sp.GetService<ILogger<PostgresTableArchiveStore>>());
@@ -483,6 +562,29 @@ public static class ServiceCollectionExtensions {
     // is registered.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, ArchiveRestoreRequestStep>(
       ArchiveRestoreRequestStep.FromServices));
+    // The maintenance step that distills staged event metadata into routes and traces (#1726).
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataDistillationStep>(
+      MetadataDistillationStep.FromServices));
+    // The maintenance step that converts rows written with full metadata before slim stored metadata (#1727).
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
+      MetadataHistoryConversionStep.FromServices));
+    // #2326: the maintenance step that converts audit records written before the pointer default to the pointer form.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, AuditBodyConversionStep>(
+      AuditBodyConversionStep.FromServices));
+    // #2110: the maintenance step that brings the history a superseding type stored before its declaration under the rule.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, SupersedingHistoryReconcileStep>(
+      SupersedingHistoryReconcileStep.FromServices));
+    // #2206: the maintenance step that reclassifies the history an [Ephemeral] type stored before its declaration, opt-in.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, EphemeralHistoryReclassifyStep>(
+      EphemeralHistoryReclassifyStep.FromServices));
+    // #2116: the maintenance step that re-attributes stored events recorded under an origin that does not own their type.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MisattributedOriginCorrectionStep>(
+      MisattributedOriginCorrectionStep.FromServices));
+    // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
+    services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
+      new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, global::Whizbang.Core.Lifecycle.StreamDispositionStep>(
+      global::Whizbang.Core.Lifecycle.StreamDispositionStep.FromServices));
     // The stream finalizer (WS-3 S4), on the host's clock: sealing a stream is a developer's call, and every write path
     // then refuses the stream's appends.
     services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamFinalizer>(sp =>
@@ -490,6 +592,13 @@ public static class ServiceCollectionExtensions {
         ct => OpenConnectionAsync(connectionString, ct),
         timeProvider: sp.GetService<TimeProvider>(),
         logger: sp.GetService<ILogger<PostgresStreamFinalizer>>()));
+    // Closing the books (#1741), storing its events exactly as this driver's direct append does.
+    services.TryAddScoped<global::Whizbang.Core.Lifecycle.IBookCloser>(sp =>
+      new PostgresBookCloser(
+        ct => OpenConnectionAsync(connectionString, ct),
+        schema: null,
+        _newEventStore(sp),
+        sp.GetService<TimeProvider>()));
     services.TryAddSingleton<IFanoutChildRefiler>(sp =>
       new PostgresFanoutChildRefiler(
         ct => OpenConnectionAsync(connectionString, ct),
@@ -538,6 +647,14 @@ public static class ServiceCollectionExtensions {
       new DapperStreamLifecycleBackfillMaintenanceStep(
         connectionString,
         sp.GetService<ILogger<DapperStreamLifecycleBackfillMaintenanceStep>>()));
+
+  // TURNKEY (#2351): the fold that keeps the held-without-sequence change log bounded, the same one the EF Core driver
+  // runs, so the event store's row triggers never grow the log on a Dapper service.
+  private static void _addUnsequencedDigestCompaction(IServiceCollection services, string connectionString) =>
+    services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+      new DapperUnsequencedDigestCompactionStep(
+        connectionString,
+        sp.GetService<ILogger<DapperUnsequencedDigestCompactionStep>>()));
 
   private static void _addPartitionMaintenance(IServiceCollection services, string connectionString) {
     services.AddFrameworkPartitionedTables();
@@ -605,4 +722,23 @@ public static class ServiceCollectionExtensions {
         connectionString,
         sp.GetService<WorkCoordinatorGate>()));
   }
+
+  /// <summary>
+  /// Registers <see cref="IDeadLetterRecoveryService"/>: the recovery SQL both Postgres drivers share, over a connection
+  /// opened per call. The dead-letter recovery worker drives it, so a dead letter this driver writes is redriven, held or
+  /// failed by policy as on the EF Core driver; an <see cref="MessageFailureReason.AwaitingRestore"/> dead letter is
+  /// redriven once its stream's restore makes it due (#1934). Scoped, as the EF Core driver's: the worker resolves it
+  /// from a scope per scan. A recovered outbox or perspective row is stored with the claim's partition count (#1722).
+  /// </summary>
+  /// <docs>operations/dead-letter-queue/recovery</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveRestoreRedriveTests.cs:AddWhizbangPostgres_AnAwaitingRestoreDeadLetter_IsRedrivenThroughTheOutbox_OnceItsRestoreCompletesAsync</tests>
+  internal static void _addDeadLetterRecoveryService(IServiceCollection services, string connectionString) =>
+    services.TryAddScoped<IDeadLetterRecoveryService>(sp =>
+      new Whizbang.Data.Postgres.PostgresDeadLetterRecoveryService(
+        async ct => await OpenConnectionAsync(connectionString, ct).ConfigureAwait(false),
+        ownsConnection: true,
+        // This driver's SQL names the framework's objects bare and reaches them through the connection's search path.
+        static name => name,
+        sp.GetService<WorkCoordinatorGate>(),
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Workers.ClaimWorkerOptions>>().Value.PartitionCount));
 }

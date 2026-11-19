@@ -10,7 +10,7 @@ using Microsoft.CodeAnalysis.Operations;
 namespace Whizbang.TestAnalyzers;
 
 /// <summary>
-/// WHZ0004: reports TUnit's <c>IsNotNull()</c> called on a <c>Nullable&lt;T&gt;</c> subject, an assertion
+/// WHIZ603: reports TUnit's <c>IsNotNull()</c> called on a <c>Nullable&lt;T&gt;</c> subject, an assertion
 /// that passes when the subject is null under the TUnit this repository pins.
 /// </summary>
 /// <remarks>
@@ -38,11 +38,12 @@ public sealed class NullableIsNotNullAnalyzer : DiagnosticAnalyzer {
   private const string ASSERT_THAT = "That";
 
   /// <summary>
-  /// WHZ0004: Error. <c>IsNotNull()</c> on a <c>Nullable&lt;T&gt;</c> subject cannot fail under the pinned TUnit.
+  /// WHIZ603: Error. <c>IsNotNull()</c> on a <c>Nullable&lt;T&gt;</c> subject cannot fail under the pinned TUnit.
   /// </summary>
-  /// <tests>tests/Whizbang.TestAnalyzers.Tests/NullableIsNotNullAnalyzerTests.cs:IsNotNull_OnNullableInt_ReportsWhz0004Async</tests>
+  /// <docs>operations/diagnostics/whiz603</docs>
+  /// <tests>tests/Whizbang.TestAnalyzers.Tests/NullableIsNotNullAnalyzerTests.cs:IsNotNull_OnNullableInt_ReportsWhiz603Async</tests>
   public static readonly DiagnosticDescriptor IsNotNullOnNullable = new(
-    id: "WHZ0004",
+    id: "WHIZ603",
     title: "IsNotNull() on a Nullable<T> subject cannot fail",
     messageFormat: "'{0}' is a Nullable<{1}>, and IsNotNull() on it passes when it is null; assert "
       + "Assert.That({0}.HasValue).IsTrue() or assert on the value",
@@ -55,7 +56,7 @@ public sealed class NullableIsNotNullAnalyzer : DiagnosticAnalyzer {
       + "value. Assert .HasValue with IsTrue(), or assert on the value itself (IsEqualTo, IsGreaterThan), "
       + "which a null subject fails. TUnit 1.13.8 fixed the check; this rule can be retired once the "
       + "repository is past it.",
-    helpLinkUri: "https://github.com/whizbang-lib/whizbang/blob/develop/ai-docs/testing-tunit.md#isnotnull-on-a-nullable-value-type-whz0004");
+    helpLinkUri: "https://github.com/whizbang-lib/whizbang/blob/develop/ai-docs/testing-tunit.md#isnotnull-on-a-nullable-value-type-whiz603");
 
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => [IsNotNullOnNullable];
@@ -84,6 +85,7 @@ public sealed class NullableIsNotNullAnalyzer : DiagnosticAnalyzer {
   private static bool _isNullableValueTypeOverload(IMethodSymbol method) =>
     method.TypeParameters.Length == 1 && method.TypeParameters[0].HasValueTypeConstraint;
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "WHIZ607:A type name is read outside the shared naming code", Justification = "A test-code analyzer, which does not reference the generator naming helpers; the type is named only in the diagnostic message it reports (#2267)")]
   private static void _analyzeInvocation(OperationAnalysisContext context, ImmutableArray<IMethodSymbol> overloads) {
     var invocation = (IInvocationOperation)context.Operation;
     // The operation tree presents an extension call in its static form, receiver first, however the source spells it.

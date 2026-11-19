@@ -1,46 +1,25 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.Signals;
 using Whizbang.Data.Postgres.Notifications;
 
 namespace Whizbang.Core.Tests.Notifications;
 
 /// <summary>
-/// Slice 33.4 — verifies <see cref="PgWorkNotificationListener"/>'s subscriber behavior
-/// (parses payloads → fires <see cref="IWorkNotificationListener.OnSignal"/>, mirrors the
-/// gate's availability, registers/unregisters via <see cref="IHostedService.StartAsync"/>
-/// /<see cref="IHostedService.StopAsync"/>). Replaces the pre-slice-33 startup-branching
-/// tests (PgWorkNotificationListenerSignalingModeTests) that asserted the listener's own
-/// <c>BackgroundService</c> lifecycle — that lifecycle moved to <c>PgSharedNotifyConnection</c>
-/// (slice 33.2 tests cover the SignalingMode branching against the shared connection).
+/// #2046: <see cref="PgWorkNotificationListener"/> is a subscriber of the signal bus. The work doorbells (outbox, inbox,
+/// perspective, orphaned work, a dead letter) arrive as signals; the listener turns each into its
+/// <see cref="WorkSignalCategory"/>, mirrors the gate's availability, and subscribes and unsubscribes with the host.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
 public class PgWorkNotificationListenerTests {
-
-  private sealed class FakeSharedConnection : ISharedNotifyConnection {
-    public readonly List<INotifySubscription> Active = [];
-    public readonly List<string> SubscribeChannels = [];
-    public readonly List<string> DisposeChannels = [];
-    public IDisposable Subscribe(INotifySubscription subscription) {
-      Active.Add(subscription);
-      SubscribeChannels.Add(subscription.ChannelName);
-      return new Handle(this, subscription);
-    }
-    private sealed class Handle(FakeSharedConnection owner, INotifySubscription sub) : IDisposable {
-      public void Dispose() {
-        owner.Active.Remove(sub);
-        owner.DisposeChannels.Add(sub.ChannelName);
-      }
-    }
-  }
-
   private sealed class FakeGate : INotifySignalingGate {
     public bool IsAvailable { get; private set; }
     public DateTimeOffset? LastVerifiedAt => null;
@@ -58,58 +37,83 @@ public class PgWorkNotificationListenerTests {
     }
   }
 
-  private static (PgWorkNotificationListener Listener, FakeSharedConnection Conn, FakeGate Gate, Guid InstanceId) _build() {
-    var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
-    var instanceProvider = new Whizbang.Core.Observability.ServiceInstanceProvider(cfg);
-    var conn = new FakeSharedConnection();
+  private static (PgWorkNotificationListener Listener, SignalBus Bus, FakeGate Gate, FakeTimeProvider Time) _build() {
+    var bus = new SignalBus([new InMemorySignalTransport()], []);
+    bus.StartAsync().GetAwaiter().GetResult();
     var gate = new FakeGate();
-    var listener = new PgWorkNotificationListener(
-      conn, gate, instanceProvider, NullLogger<PgWorkNotificationListener>.Instance);
-    return (listener, conn, gate, instanceProvider.InstanceId);
+    var time = new FakeTimeProvider(new DateTimeOffset(2026, 11, 4, 12, 0, 0, TimeSpan.Zero));
+    var listener = new PgWorkNotificationListener(bus, gate, NullLogger<PgWorkNotificationListener>.Instance, time);
+    return (listener, bus, gate, time);
+  }
+
+  private static async Task<List<WorkSignalCategory>> _startedAsync(PgWorkNotificationListener listener) {
+    var received = new List<WorkSignalCategory>();
+    listener.OnSignal += received.Add;
+    await ((IHostedService)listener).StartAsync(CancellationToken.None);
+    return received;
   }
 
   [Test]
-  public async Task ChannelName_IsInstanceRoutedAsync() {
-    var (listener, _, _, instanceId) = _build();
+  public async Task EveryWorkDoorbell_FiresOnSignalWithItsCategoryAsync() {
+    var (listener, bus, _, _) = _build();
+    var received = await _startedAsync(listener);
+    var stream = SignalTarget.Streams([Guid.CreateVersion7()]);
 
-    await Assert.That(((INotifySubscription)listener).ChannelName).IsEqualTo($"wh_work_i_{instanceId:D}");
+    await bus.PublishAsync(new WorkOutboxAvailableSignal(), stream);
+    await bus.PublishAsync(new WorkInboxAvailableSignal(), stream);
+    await bus.PublishAsync(new WorkPerspectiveAvailableSignal(), stream);
+    // The reap wakes each live instance after it released a dead one's leases (cleanup_stale_instances).
+    await bus.PublishAsync(new WorkOrphanedSignal(), stream);
+    // The dead-letter table's insert trigger.
+    await bus.PublishAsync(new DeadLetterReadySignal(), stream);
+
+    await Assert.That(received).IsEquivalentTo([
+      WorkSignalCategory.Outbox, WorkSignalCategory.Inbox, WorkSignalCategory.Perspective,
+      WorkSignalCategory.OrphanRedistribute, WorkSignalCategory.DeadLetterReady,
+    ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
 
   [Test]
-  public async Task StartAsync_SubscribesToSharedConnection_OnInstanceChannelAsync() {
-    var (listener, conn, _, instanceId) = _build();
-
+  public async Task ASignal_WithNoOnSignalHandler_IsHarmless_AndStillStampsLastSignalAtAsync() {
+    // A host can start the listener before any worker attaches to OnSignal; a doorbell arriving then must not throw on
+    // the bus's dispatch path.
+    var (listener, bus, _, time) = _build();
     await ((IHostedService)listener).StartAsync(CancellationToken.None);
 
-    await Assert.That(conn.SubscribeChannels).IsEquivalentTo([$"wh_work_i_{instanceId:D}"]);
-    await Assert.That(conn.Active).Count().IsEqualTo(1);
+    await Assert.That(async () => await bus.PublishAsync(new DeadLetterReadySignal(), SignalTarget.Streams([Guid.CreateVersion7()])))
+      .ThrowsNothing();
+    await Assert.That(listener.LastSignalAt).IsEqualTo(time.GetUtcNow());
   }
 
   [Test]
-  public async Task StopAsync_DisposesSubscriptionAsync() {
-    var (listener, conn, _, instanceId) = _build();
+  public async Task BeforeStart_AndAfterStop_NothingIsHeardAsync() {
+    var (listener, bus, _, _) = _build();
+    var received = new List<WorkSignalCategory>();
+    listener.OnSignal += received.Add;
+    var stream = SignalTarget.Streams([Guid.CreateVersion7()]);
 
+    await bus.PublishAsync(new WorkOutboxAvailableSignal(), stream);
     await ((IHostedService)listener).StartAsync(CancellationToken.None);
     await ((IHostedService)listener).StopAsync(CancellationToken.None);
+    await ((IHostedService)listener).StopAsync(CancellationToken.None);
+    await bus.PublishAsync(new WorkOutboxAvailableSignal(), stream);
 
-    await Assert.That(conn.DisposeChannels).IsEquivalentTo([$"wh_work_i_{instanceId:D}"]);
-    await Assert.That(conn.Active).IsEmpty();
+    await Assert.That(received).IsEmpty();
   }
 
   /// <summary>
-  /// A host torn down without a clean stop still releases the subscription: disposing a started
-  /// listener unsubscribes it from the shared connection, so the connection does not keep a LISTEN
-  /// for a listener that no longer exists.
+  /// A host torn down without a clean stop still releases the subscription: disposing a started listener leaves the
+  /// bus, so the bus does not keep calling a listener that no longer exists.
   /// </summary>
   [Test]
-  public async Task Dispose_WithoutStop_ReleasesTheSubscriptionAsync() {
-    var (listener, conn, _, instanceId) = _build();
+  public async Task Dispose_WithoutStop_LeavesTheBusAsync() {
+    var (listener, bus, _, _) = _build();
+    var received = await _startedAsync(listener);
 
-    await ((IHostedService)listener).StartAsync(CancellationToken.None);
     listener.Dispose();
+    await bus.PublishAsync(new WorkInboxAvailableSignal(), SignalTarget.Streams([Guid.CreateVersion7()]));
 
-    await Assert.That(conn.DisposeChannels).IsEquivalentTo([$"wh_work_i_{instanceId:D}"]);
-    await Assert.That(conn.Active).IsEmpty();
+    await Assert.That(received).IsEmpty();
   }
 
   [Test]
@@ -138,71 +142,20 @@ public class PgWorkNotificationListenerTests {
   }
 
   [Test]
-  public async Task OnNotification_OutboxPayload_FiresOnSignalWithOutboxAsync() {
-    var (listener, _, _, _) = _build();
-    var received = new List<WorkSignalCategory>();
-    listener.OnSignal += received.Add;
+  public async Task ASignal_StampsLastSignalAt_FromTheListenersClockAsync() {
+    var (listener, bus, _, time) = _build();
+    _ = await _startedAsync(listener);
+    await Assert.That(listener.LastSignalAt).IsNull();
 
-    ((INotifySubscription)listener).OnNotification("outbox");
+    await bus.PublishAsync(new WorkPerspectiveAvailableSignal(), SignalTarget.Streams([Guid.CreateVersion7()]));
 
-    await Assert.That(received).IsEquivalentTo([WorkSignalCategory.Outbox]);
+    await Assert.That(listener.LastSignalAt).IsEqualTo(time.GetUtcNow());
   }
 
   [Test]
-  public async Task OnNotification_InboxPayload_FiresOnSignalWithInboxAsync() {
-    var (listener, _, _, _) = _build();
-    var received = new List<WorkSignalCategory>();
-    listener.OnSignal += received.Add;
-
-    ((INotifySubscription)listener).OnNotification("inbox");
-
-    await Assert.That(received).IsEquivalentTo([WorkSignalCategory.Inbox]);
-  }
-
-  [Test]
-  public async Task OnNotification_PerspectivePayload_FiresOnSignalWithPerspectiveAsync() {
-    var (listener, _, _, _) = _build();
-    var received = new List<WorkSignalCategory>();
-    listener.OnSignal += received.Add;
-
-    ((INotifySubscription)listener).OnNotification("perspective");
-
-    await Assert.That(received).IsEquivalentTo([WorkSignalCategory.Perspective]);
-  }
-
-  [Test]
-  public async Task OnNotification_OrphanPayload_FiresOnSignalWithOrphanRedistributeAsync() {
-    // v0.502 slice B.3 — cleanup_stale_instances emits 'orphan' on wh_work_i_X for each
-    // live instance when it releases the leases of a dead pod. The listener routes that
-    // through the same shared multiplex path as outbox/inbox/perspective.
-    var (listener, _, _, _) = _build();
-    var received = new List<WorkSignalCategory>();
-    listener.OnSignal += received.Add;
-
-    ((INotifySubscription)listener).OnNotification("orphan");
-
-    await Assert.That(received).IsEquivalentTo([WorkSignalCategory.OrphanRedistribute]);
-  }
-
-  [Test]
-  public async Task OnNotification_UnknownPayload_IsIgnoredAsync() {
-    var (listener, _, _, _) = _build();
-    var received = new List<WorkSignalCategory>();
-    listener.OnSignal += received.Add;
-
-    ((INotifySubscription)listener).OnNotification("bogus");
-
-    await Assert.That(received).IsEmpty();
-  }
-
-  [Test]
-  public async Task OnNotification_UpdatesLastSignalAtAsync() {
-    var (listener, _, _, _) = _build();
-    var before = DateTimeOffset.UtcNow;
-
-    ((INotifySubscription)listener).OnNotification("outbox");
-
-    await Assert.That(listener.LastSignalAt.HasValue).IsTrue();
-    await Assert.That(listener.LastSignalAt!.Value >= before).IsTrue();
+  public async Task Constructor_RequiresABusAndAGateAsync() {
+    var bus = new SignalBus([], []);
+    await Assert.That(() => new PgWorkNotificationListener(null!, new FakeGate())).Throws<ArgumentNullException>();
+    await Assert.That(() => new PgWorkNotificationListener(bus, null!)).Throws<ArgumentNullException>();
   }
 }

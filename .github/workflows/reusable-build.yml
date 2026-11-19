@@ -18,6 +18,40 @@ on:
         required: false
         type: string
         default: ''
+      run-analyzers:
+        description: >-
+          Run the Roslyn analyzers during the build. CI turns them off here and enforces them in its separate
+          Build · Analyzers job, off the suites' critical path (#2068). Source generators run either way: the
+          compiler's /skipanalyzers skips diagnostic analyzers only.
+        required: false
+        type: boolean
+        default: true
+      integration-slices:
+        description: >-
+          Upload the integration suites' slices. False on a pull request into develop, which runs only the unit
+          and component suites (the integration suites run in the merge queue).
+        required: false
+        type: boolean
+        default: true
+      upload-slices:
+        description: >-
+          Upload the per-suite build slices. False when no suite will run in this run (a push that reuses an
+          already-tested run's results), so nothing would download them.
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      test-frameworks:
+        description: >-
+          The target frameworks the tests were built for, as a JSON array: ["net10.0","net11.0"] on a release build,
+          ["net11.0"] otherwise. Each suite runs one leg per framework (#2427).
+        value: ${{ jobs.build.outputs.test-frameworks }}
+      sample-test-frameworks:
+        description: >-
+          The target frameworks the sample tests were built for, as a JSON array: samples/ECommerce/Directory.Build.props
+          pins its own, ["net11.0"] on every branch. A suite leg that selects only sample tests runs one leg per
+          framework in this list instead (#2427).
+        value: ${{ jobs.build.outputs.sample-test-frameworks }}
 
 env:
   DOTNET_VERSION: '10.0.x'
@@ -33,9 +67,12 @@ jobs:
   build:
     name: Compile and hash
     runs-on: ${{ fromJSON(inputs.runs-on || '"ubuntu-latest"') }}
-    # The analyzers run in every project now, which roughly doubles the solution build on a
-    # hosted runner (16 minutes observed); the artifact upload follows it.
-    timeout-minutes: 35
+    # With the analyzers on (any caller but CI) they roughly double the solution build on a hosted
+    # runner (16 minutes observed); the artifact upload follows it.
+    timeout-minutes: 50
+    outputs:
+      test-frameworks: ${{ steps.frameworks.outputs.test-frameworks }}
+      sample-test-frameworks: ${{ steps.frameworks.outputs.sample-test-frameworks }}
 
     steps:
       - name: Checkout
@@ -48,6 +85,24 @@ jobs:
 
       - name: Display .NET Info
         run: dotnet --info
+
+      # Directory.Build.props decides the frameworks from the branch (WhizbangReleaseBuild), as Run-Tests.ps1 reads
+      # them, so the suites split into the same frameworks this build compiles. The samples' own props pin theirs.
+      - name: Name the frameworks the tests target
+        id: frameworks
+        shell: pwsh
+        run: |
+          foreach ($output in @(
+              @{ Name = 'test-frameworks'; Props = 'Directory.Build.props' },
+              @{ Name = 'sample-test-frameworks'; Props = 'samples/ECommerce/Directory.Build.props' })) {
+            $evaluated = ((dotnet msbuild $output.Props -getProperty:TargetFramework -getProperty:TargetFrameworks) | Out-String | ConvertFrom-Json).Properties
+            $frameworks = @("$($evaluated.TargetFrameworks);$($evaluated.TargetFramework)" -split ';' |
+                ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique)
+            if ($frameworks.Count -eq 0) { throw "Could not read the target frameworks from $($output.Props)." }
+            $json = ConvertTo-Json -Compress -InputObject $frameworks
+            Write-Host "$($output.Name): $json"
+            "$($output.Name)=$json" >> $env:GITHUB_OUTPUT
+          }
 
       - name: Cache NuGet packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -64,10 +119,27 @@ jobs:
           # Env-var indirection (githubactions:S7630): never interpolate workflow inputs
           # directly into a run block — the shell sees only the variable, not the value.
           VERSION: ${{ inputs.version }}
+          RUN_ANALYZERS: ${{ inputs.run-analyzers }}
+          # The compiler server runs server GC and holds on to what one project's compile grew to while it compiles the
+          # next, so the largest test projects stack: a cold full build peaked at 19.3 GB. Told to conserve memory it
+          # compacts instead, and the same build peaked at 12.8 GB (#2388).
+          DOTNET_GCConserveMemory: '7'
         run: |
-          BUILD_ARGS=(--no-restore --configuration Release)
+          # One build node and no -mt: the libraries build net10.0 and net11.0, and with two nodes the hosted runner ran
+          # out of memory and was shut down mid-build in the merge queue (#2135), as the other full builds were.
+          BUILD_ARGS=(--no-restore --configuration Release -mt:false -maxcpucount:1 -nodeReuse:false)
           if [ -n "$VERSION" ]; then BUILD_ARGS+=("-p:Version=$VERSION"); fi
-          dotnet build "${BUILD_ARGS[@]}"
+          # Analyzers change no output: every assembly, and so the determinism manifest, is the same either way.
+          if [ "$RUN_ANALYZERS" != true ]; then BUILD_ARGS+=("-p:RunAnalyzers=false"); fi
+          # A hosted runner has 16 GB, and a build that needs more hangs until the job times out with no log (#2388).
+          # The guard samples the build's processes and the compiler server while the build runs and fails a build whose
+          # peak passes 13 GB, 3 GB under the runner, so growth shows up as a failed check while there is still room
+          # to find it. Measured cold on develop after #2388: this build 9.7 GB with the analyzers off, 11.6 GB as the
+          # Analyzers job runs it. The command goes through a file,
+          # one argument a line, because pwsh -File would split an argument such as -mt:false.
+          BUILD_COMMAND="$RUNNER_TEMP/build-command"
+          printf '%s\n' dotnet build "${BUILD_ARGS[@]}" > "$BUILD_COMMAND"
+          pwsh -NoProfile -File .github/scripts/Invoke-BuildWithinMemory.ps1 -BudgetMb 13312 -CommandFile "$BUILD_COMMAND"
 
       # Formatting verification runs as a separate parallel job (ci.yml `format`) so it
       # stays off the build -> test-suites critical path.
@@ -139,7 +211,7 @@ jobs:
           # drops hidden files unless told otherwise. The mapping names THIS job's checkout, so every
           # test job that downloads the build rewrites it first with
           # .github/scripts/Update-CoverageSourceRoots.ps1, whatever runner it lands on: a GitHub-hosted
-          # build and Blacksmith suites check out at different paths (#1948), and
+          # build and self-hosted suites check out at different paths (#1948), and
           # TestSuiteSourceRoots.Tests.ps1 fails a suite that skips it. The only other hidden files
           # under these paths are obj/'s generated AssemblyAttributes sources.
           include-hidden-files: true
@@ -147,15 +219,18 @@ jobs:
       # Per-suite slices. Every test job downloaded the whole build above (about 2.4 GB) though an
       # integration suite runs one or two projects, and the download took anywhere from 40 seconds
       # to over 5 minutes. A test project's bin/Release holds its whole dependency closure, so each
-      # integration suite gets only its projects' output; the unit suite, which runs most projects,
-      # keeps the full build. The slices are derived from the projects' tags, the same way
-      # Run-Tests.ps1 selects them, and a slice missing a selected project fails that suite.
+      # suite gets only its projects' output; the unit suite too, since #2068 (it spent 4.2 minutes
+      # downloading for 1.5 minutes of tests). The full build above is what pack reads. The slices are
+      # derived from the projects' types and tags, the same way Run-Tests.ps1 selects them, and a
+      # slice missing a selected project fails that suite.
       - name: Define per-suite build slices
+        if: inputs.upload-slices
         id: slices
         shell: pwsh
         run: pwsh -NoProfile -File .github/scripts/Get-TestSlice.ps1 -GitHubOutput
 
       - name: Upload build slice (postgres)
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-postgres-${{ github.run_id }}
@@ -166,6 +241,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (inmemory)
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-inmemory-${{ github.run_id }}
@@ -176,6 +252,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (rabbitmq)
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-rabbitmq-${{ github.run_id }}
@@ -186,6 +263,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (servicebus)
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-servicebus-${{ github.run_id }}
@@ -196,6 +274,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (integration)
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-integration-${{ github.run_id }}
@@ -206,6 +285,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (component)
+        if: inputs.upload-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-component-${{ github.run_id }}
@@ -215,7 +295,19 @@ jobs:
           compression-level: 1
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
+      - name: Upload build slice (unit)
+        if: inputs.upload-slices
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-unit-${{ github.run_id }}
+          path: ${{ steps.slices.outputs.unit }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
+          include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
+
       - name: Upload build slice (azureblob)
+        if: inputs.upload-slices && inputs.integration-slices
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-azureblob-${{ github.run_id }}

@@ -142,9 +142,17 @@ public class PerspectiveRunnerTemplateInvariantTests {
     var rewindIdx = template.IndexOf("async Task<PerspectiveCursorCompletion> RewindAndRunAsync", StringComparison.Ordinal);
     var guardIdx = template.IndexOf("_isEphemeralPerspective && !hasSnapshot", rewindIdx, StringComparison.Ordinal);
     var replayCallIdx = template.IndexOf("result = await _replayCheckedAsync(", guardIdx, StringComparison.Ordinal);
-    var namedIdx = template.IndexOf("DroppedStragglers = [triggeringEventId]", guardIdx, StringComparison.Ordinal);
+    // The skip branch builds its completion with the shared dropped-straggler helper (#1964 refuses the same way).
+    var namedIdx = template.IndexOf("result = _droppedStraggler(streamId, perspectiveName, triggeringEventId)", guardIdx, StringComparison.Ordinal);
     await Assert.That(namedIdx).IsGreaterThan(guardIdx)
       .Because("the skipped rewind's completion names the dropped straggler");
+    var helperIdx = template.IndexOf("private static PerspectiveCursorCompletion _droppedStraggler(", StringComparison.Ordinal);
+    await Assert.That(helperIdx).IsGreaterThan(0);
+    var helperEnd = template.IndexOf("};", helperIdx, StringComparison.Ordinal);
+    await Assert.That(template[helperIdx..helperEnd]).Contains("DroppedStragglers = [triggeringEventId]")
+      .Because("the helper's completion names the late event, so the worker retires its work");
+    await Assert.That(template[helperIdx..helperEnd]).Contains("LastEventId = Guid.Empty")
+      .Because("nothing was replayed, so the cursor is not moved");
     await Assert.That(namedIdx).IsLessThan(replayCallIdx)
       .Because("it is the skip branch, not the replay, that names it");
     var skipBranch = template[guardIdx..replayCallIdx];
@@ -213,15 +221,18 @@ public class PerspectiveRunnerTemplateInvariantTests {
       .Because("resurrection delegates to the lock-free rewind core");
 
     // Deadlock guard: exactly ONE _applyCoordinator acquisition may exist in each public entry
-    // (RunAsync + RewindAndRunAsync); the rewind CORE itself must not acquire it.
+    // (the apply, RewindAndRunAsync, and the rebuild from the newest snapshot, #1931, which replays
+    // through the rewind's replay); the rewind CORE itself must not acquire it.
     var acquisitions = 0;
     var idx = 0;
     while ((idx = template.IndexOf("_applyCoordinator.AcquireAsync", idx, StringComparison.Ordinal)) >= 0) {
       acquisitions++;
       idx++;
     }
-    await Assert.That(acquisitions).IsEqualTo(2)
-      .Because("only the two public entry points acquire the apply lock; the shared core assumes it is held");
+    await Assert.That(acquisitions).IsEqualTo(3)
+      .Because("only the three public entry points acquire the apply lock; the shared core assumes it is held");
+    await Assert.That(template).Contains("public async Task<IReadOnlyList<PerspectiveCursorCompletion>?> RunRebuildFromLatestSnapshotAsync(")
+      .Because("the third acquisition is the rebuild from the newest snapshot, which calls the lock-free replay");
   }
 
   [Test]
@@ -234,9 +245,9 @@ public class PerspectiveRunnerTemplateInvariantTests {
 
     await Assert.That(template).Contains("#region HANDLED_EVENT_TYPES")
       .Because("the generator fills the perspective's handled event types into a static array");
-    await Assert.That(template).Contains("HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, _handledEventTypes, cancellationToken)")
+    await Assert.That(template).Contains("HasStreamEventsBeforeAsync(streamId, beforeEventId, _handledEventTypes, cancellationToken)")
       .Because("the resurrection probe asks about the handled event types only");
-    await Assert.That(template).DoesNotContain("HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, cancellationToken)")
+    await Assert.That(template).DoesNotContain("HasStreamEventsBeforeAsync(streamId, beforeEventId, cancellationToken)")
       .Because("the untyped probe is the false positive");
   }
 
@@ -330,5 +341,42 @@ public class PerspectiveRunnerTemplateInvariantTests {
       + template.Split("streamId, perspectiveName, updatedModel, producedByApply,").Length - 1;
     await Assert.That(provenance).IsEqualTo(calls)
       .Because("every write passes whether an Apply produced the model: the live, partial and rewind writes");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task SaveModelAndCheckpoint_DatesARowItInsertsAtTheStreamsStart_BeforeTheUpsertAsync() {
+    // #2152 regression lock: the one write method resolves the stream's start for the row and begins it before the
+    // upsert, so every write (live, partial, rewind and rebuild) dates a row it inserts at the stream's start once the
+    // stream's first event is gone. The behavior is pinned end to end by RebuildCreatedAtIntegrationTests. The start is
+    // resolved by _rowWriteStartAsync, which the set-based write's preparation shares (#2246), so both begin the same
+    // start before the store sees the row.
+    var template = _loadTemplate();
+    var method = template.IndexOf("private async Task<bool> SaveModelAndCheckpointAsync(", StringComparison.Ordinal);
+    var start = template.IndexOf("await _rowWriteStartAsync(", method, StringComparison.Ordinal);
+    var begin = template.IndexOf("PerspectiveRowStart.Begin(streamId, rowStartedAt)", method, StringComparison.Ordinal);
+    var upsert = template.IndexOf("#region UPSERT_CALL", method, StringComparison.Ordinal);
+    var helper = template.IndexOf("_rowWriteStartAsync(\n      Guid streamId,", StringComparison.Ordinal);
+    var resolve = template.IndexOf("PerspectiveRowStart.ResolveAsync(", helper, StringComparison.Ordinal);
+    var helperEnd = template.IndexOf("\n  }\n", helper, StringComparison.Ordinal);
+    var prepare = template.IndexOf("private async Task<global::Whizbang.Core.Perspectives.PendingPerspectiveWrite?> _prepareRowWriteAsync(", StringComparison.Ordinal);
+    var prepareStart = template.IndexOf("await _rowWriteStartAsync(", prepare, StringComparison.Ordinal);
+    var prepareBegin = template.IndexOf("PerspectiveRowStart.Begin(streamId, rowStartedAt)", prepare, StringComparison.Ordinal);
+    var prepareCall = template.IndexOf("return PrepareRowWrite(", prepare, StringComparison.Ordinal);
+
+    await Assert.That(start).IsGreaterThan(method).Because("the start is resolved inside the write method");
+    await Assert.That(begin).IsGreaterThan(start).Because("the resolved start is begun for the row being written");
+    await Assert.That(upsert).IsGreaterThan(begin).Because("the start is in force when the store inserts the row");
+    await Assert.That(resolve).IsGreaterThan(helper).Because("the shared start resolves the stream's start");
+    await Assert.That(resolve).IsLessThan(helperEnd);
+    await Assert.That(prepareStart).IsGreaterThan(prepare).Because("the set-based write's preparation dates the row the same way");
+    await Assert.That(prepareBegin).IsGreaterThan(prepareStart);
+    await Assert.That(prepareCall).IsGreaterThan(prepareBegin).Because("the start is in force when the store prepares the row");
+    var calls = template.Split("await SaveModelAndCheckpointAsync(").Length - 1;
+    var rowFacts = template.Split("modelLoadedFromDb,\n              processedEvents,").Length - 1
+      + template.Split("modelLoadedFromDb,\n                processedEvents,").Length - 1
+      + template.Split("outcome.FirstStreamEvent is { } firstStreamEvent ? [firstStreamEvent] : [],").Length - 1;
+    await Assert.That(rowFacts).IsEqualTo(calls)
+      .Because("every write says whether the row exists and which events it folded: the live, partial and rewind writes");
   }
 }

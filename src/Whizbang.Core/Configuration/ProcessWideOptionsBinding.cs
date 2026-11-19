@@ -138,11 +138,101 @@ internal static class ProcessWideOptionsBinding {
 #pragma warning restore IL2026
       }));
 
+    AddDeadLetterLogging(services);
+    AddDatabaseFailureEscalation(services);
+    AddEventStoreMetadata(services);
+
+    services.AddOptions<SupersedingOptions>();
+    services.AddSingleton<IConfigureOptions<SupersedingOptions>>(sp =>
+      new ConfigureOptions<SupersedingOptions>(options => {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+        Section(sp, SupersedingOptions.SECTION).Bind(options);
+#pragma warning restore IL2026
+      }));
+
     // The IOptions<WhizbangCoreOptions> view (read by the EF Core lens queries and work coordinator)
     // is a separate object from the singleton AddWhizbang registers; both read the same section.
     services.AddOptions<WhizbangCoreOptions>();
     services.AddSingleton<IConfigureOptions<WhizbangCoreOptions>>(sp =>
       new ConfigureOptions<WhizbangCoreOptions>(options => BindCore(sp, options)));
+  }
+
+  /// <summary>
+  /// Registers <see cref="DeadLetterLoggingOptions"/>, bound from <c>Whizbang:DeadLetterLogging</c> and validated when
+  /// the host starts (#1901). Idempotent: the worker pipeline and the transport consumer both call it, since a host can
+  /// register the consumer without the pipeline, and each dead-letter path reads the same bound value.
+  /// </summary>
+  /// <docs>operations/configuration/configuration-reference#dead-letter-logging</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterLoggingOptionsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DeadLetterLoggingWiringTests.cs</tests>
+  internal static void AddDeadLetterLogging(IServiceCollection services) {
+    services.AddOptions<DeadLetterLoggingOptions>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<DeadLetterLoggingOptions>, DeadLetterLoggingOptionsValidator>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<DeadLetterLoggingOptions>, DeadLetterLoggingBinding>());
+    // The dead-letter paths take the bound, validated instance itself, not IOptions<T>: an optional interface
+    // parameter is what WHIZ501 reports, and the plain instance resolves here for every type-activated worker.
+    services.TryAddSingleton(sp => sp.GetRequiredService<IOptions<DeadLetterLoggingOptions>>().Value);
+  }
+
+  /// <summary>
+  /// Registers <see cref="EventStoreMetadataOptions"/>, bound from <c>Whizbang:EventStore:Metadata</c> and validated when
+  /// the host starts (#1725). Idempotent: the binding and the validator are each registered once however often this
+  /// runs, so <see cref="EventStoreMetadataOptions.FullFor"/>, a list the binder appends to, is bound once.
+  /// </summary>
+  /// <docs>data/event-store#stored-metadata</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/ProcessWideOptionsBindingTests.cs:EventStoreMetadata_BindsFromItsSectionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/ProcessWideOptionsBindingTests.cs:EventStoreMetadata_RegisteredTwice_BindsTheListOnceAsync</tests>
+  internal static void AddEventStoreMetadata(IServiceCollection services) {
+    services.AddOptions<EventStoreMetadataOptions>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<EventStoreMetadataOptions>, EventStoreMetadataOptionsValidator>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<EventStoreMetadataOptions>, EventStoreMetadataBinding>());
+  }
+
+  /// <summary>Applies <c>Whizbang:EventStore:Metadata</c> to <see cref="EventStoreMetadataOptions"/>.</summary>
+  /// <param name="services">The provider the host's configuration is read from.</param>
+  private sealed class EventStoreMetadataBinding(IServiceProvider services) : IConfigureOptions<EventStoreMetadataOptions> {
+    public void Configure(EventStoreMetadataOptions options) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+      Section(services, "Whizbang:EventStore:Metadata").Bind(options);
+#pragma warning restore IL2026
+    }
+  }
+
+  /// <summary>Applies <c>Whizbang:DeadLetterLogging</c> to <see cref="DeadLetterLoggingOptions"/>.</summary>
+  /// <param name="services">The provider the host's configuration is read from.</param>
+  private sealed class DeadLetterLoggingBinding(IServiceProvider services) : IConfigureOptions<DeadLetterLoggingOptions> {
+    public void Configure(DeadLetterLoggingOptions options) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+      Section(services, DeadLetterLoggingOptions.SECTION).Bind(options);
+#pragma warning restore IL2026
+    }
+  }
+
+  /// <summary>
+  /// Registers <see cref="DatabaseFailureEscalationOptions"/>, bound from <c>Whizbang:DatabaseFailureEscalation</c> and
+  /// validated when the host starts (#1986). Idempotent, and the plain bound instance is registered too, so every
+  /// type-activated worker loop that reports a transient database failure takes the configured threshold.
+  /// </summary>
+  /// <docs>fundamentals/workers/transient-database-failures#when-the-database-keeps-failing</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationOptionsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/DatabaseFailureEscalationWiringTests.cs</tests>
+  internal static void AddDatabaseFailureEscalation(IServiceCollection services) {
+    services.AddOptions<DatabaseFailureEscalationOptions>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<DatabaseFailureEscalationOptions>, DatabaseFailureEscalationOptionsValidator>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<DatabaseFailureEscalationOptions>, DatabaseFailureEscalationBinding>());
+    // The workers take the bound, validated instance itself, not IOptions<T>: an optional interface parameter is what
+    // WHIZ501 reports, and the plain instance resolves here for every type-activated worker.
+    services.TryAddSingleton(sp => sp.GetRequiredService<IOptions<DatabaseFailureEscalationOptions>>().Value);
+  }
+
+  /// <summary>Applies <c>Whizbang:DatabaseFailureEscalation</c> to <see cref="DatabaseFailureEscalationOptions"/>.</summary>
+  /// <param name="services">The provider the host's configuration is read from.</param>
+  private sealed class DatabaseFailureEscalationBinding(IServiceProvider services) : IConfigureOptions<DatabaseFailureEscalationOptions> {
+    public void Configure(DatabaseFailureEscalationOptions options) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+      Section(services, DatabaseFailureEscalationOptions.SECTION).Bind(options);
+#pragma warning restore IL2026
+    }
   }
 
   /// <summary>Applies <c>Whizbang:SystemEvents</c> to <paramref name="options"/>.</summary>

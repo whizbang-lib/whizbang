@@ -1,0 +1,97 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+#
+# Prometheus alert rules for Whizbang stream integrity (#2365). Load with `rule_files:` in prometheus.yml, or convert to
+# a PrometheusRule resource. Every metric named here is declared by a meter in the library; a test fails the build when
+# one is renamed (tests/Whizbang.Documentation.Component.Tests/IntegrityDashboardTests.cs). Docs:
+# resilience/stream-integrity#integrity-dashboard-and-alerts.
+#
+# Thresholds are the library's defaults. Change a threshold here when the service's configuration changes it, beside
+# the setting each rule names.
+groups:
+  - name: whizbang-integrity
+    rules:
+      # The pair guard counts a halted pair once it has stayed halted past its own threshold,
+      # Whizbang:StreamIntegrity:PairGuard:HaltedAlertAfter (2 hours by default), so this rule follows the service's
+      # setting and writes no duration of its own. It fires for an hour after each such count; the dashboard's
+      # "How long each pair has been halted" panel says whether the pair is still halted.
+      - alert: WhizbangIntegrityPairHalted
+        expr: sum by (job, side) (increase(whizbang_stream_integrity_pair_halt_alerts_total[1h])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.job }} has held an integrity pair halted past PairGuard:HaltedAlertAfter ({{ $labels.side }} side)"
+          description: "The two services apply different eligibility rules to the event types they share, so no comparison, repair or redelivery runs for the pair. The service's error log names the peer and the differing types. Finish the rollout so both run the same rules; the pair resumes on its own."
+
+      # Missing events that repair can still act on, standing for longer than repair normally takes.
+      - alert: WhizbangIntegritySustainedDeficit
+        expr: max by (job) (whizbang_stream_integrity_unhealed_deficit_events) > 0
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.job }} has been missing {{ $value }} events for over 2 hours"
+          description: "The integrity ledger holds deficits that repair has not healed. Check the repair drain, the origin's answers (redelivery_requests_ignored) and the pair guard."
+
+      # Repair has stopped asking for some buckets: they spent their attempt budget.
+      - alert: WhizbangIntegrityRepairExhausted
+        expr: max by (job) (whizbang_stream_integrity_repair_exhausted_buckets) > 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.job }} has {{ $value }} buckets that repair has stopped asking for"
+          description: "These buckets spent MaxRepairAttemptsPerBucket and need an operator, not patience."
+
+      # The seal re-check or the full-history compare found drift: a write path changed digests outside the shared fold.
+      - alert: WhizbangIntegrityRecheckDrift
+        expr: sum by (job, check) (increase(whizbang_stream_integrity_check_drift_found_total[1h])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.job }}: the {{ $labels.check }} check found drift"
+          description: "A sealed epoch or a stored digest disagreed with a recompute. Anything above zero is an unaccounted write path."
+
+      # A lane whose epoch frontier has not advanced for a day. Sealing closes an epoch once it fills, so a quiet lane also
+      # stops advancing; read it beside the lane's traffic before acting.
+      - alert: WhizbangIntegritySealNotAdvancing
+        expr: max by (job, origin_service_id) (whizbang_stream_integrity_seal_age_seconds) > 86400
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "{{ $labels.job }}: the seal of lane {{ $labels.origin_service_id }} has not advanced for a day"
+          description: "No digest epoch of the lane was sealed in 24 hours. Expected on a quiet lane; on a busy one, sealing has stopped."
+
+      # The seal re-check is on but has covered less than 90% of the epochs sealed within its lookback in its interval:
+      # the re-check is not keeping up (SealRecheck:MaxEpochsPerRun or its schedule).
+      - alert: WhizbangIntegrityRecheckBehind
+        expr: |
+          max by (job, check) (whizbang_stream_integrity_recheck_coverage_ratio) < 0.9
+          and on (job, check) max by (job, check) (whizbang_stream_integrity_recheck_enabled) == 1
+        for: 1d
+        labels:
+          severity: info
+        annotations:
+          summary: "{{ $labels.job }}: the {{ $labels.check }} has covered {{ $value | humanizePercentage }} of its lookback"
+          description: "Raise SealRecheck:MaxEpochsPerRun or run the re-check more often, or accept the slower rotation."
+
+      # Whizbang:OperationalRetention:Default, 14 days; twice that (28 days, 2419200 seconds) means the
+      # operational retention sweep is not keeping up with what it should remove.
+      - alert: WhizbangOperationalRetentionBehind
+        expr: max by (job, category) (whizbang_maintenance_operational_oldest_age_seconds) > 2419200
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.job }}: the oldest {{ $labels.category }} record is past twice its retention"
+          description: "The operational retention sweep is not keeping up. Check the maintenance cycle's duration and the sweep's batch size."
+
+      # The archive orphan sweep refused to delete because it could not prove the container is this database's alone.
+      - alert: WhizbangArchiveOrphanSweepRefused
+        expr: sum by (job, reason) (increase(whizbang_archive_orphan_sweep_refused_total[1h])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.job }}: the archive orphan sweep was refused ({{ $labels.reason }})"
+          description: "Orphaned archive objects are not being removed. Give each database its own container, or fix the owner marker."

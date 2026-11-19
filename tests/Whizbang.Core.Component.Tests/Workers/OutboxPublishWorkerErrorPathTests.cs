@@ -448,7 +448,6 @@ public class OutboxPublishWorkerErrorPathTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(options),
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),

@@ -34,7 +34,7 @@ namespace Whizbang.Core.Minting;
 /// events are.
 /// </para>
 /// </remarks>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeEventBaseTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeEventBaseTests.cs</tests>
 /// <docs>fundamentals/messaging/composite-events</docs>
 public abstract class CompositeEventBase : ICompositeEvent {
   /// <summary>
@@ -87,7 +87,7 @@ public abstract class CompositeEventBase : ICompositeEvent {
     var count = Inner.Count;
     if (count > MaxInnerEventsAllowed) {
       throw new InvalidOperationException(
-        $"Composite '{GetType().Name}' carries {count} inner events, exceeding MaxInnerEventsAllowed ({MaxInnerEventsAllowed}).");
+        $"Composite '{TypeNameFormatter.ForLog(GetType())}' carries {count} inner events, exceeding MaxInnerEventsAllowed ({MaxInnerEventsAllowed}).");
     }
   }
 }

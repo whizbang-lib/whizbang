@@ -9,12 +9,12 @@ BeforeAll {
   # A run where every job the gate looks at succeeded, with no reuse. Tests override from here.
   function Get-GreenNeed {
     $needs = @{}
-    foreach ($job in @('changes', 'format', 'build', 'unit-tests', 'component-tests', 'postgres-integration', 'inmemory-integration',
+    foreach ($job in @('changes', 'format', 'build', 'analyzers', 'unit-tests', 'component-tests', 'postgres-integration', 'inmemory-integration',
         'rabbitmq-integration', 'servicebus-integration', 'azureblob-integration', 'general-integration', 'quality', 'pack')) {
       $needs[$job] = @{ result = 'success'; outputs = @{} }
     }
     $needs['changes'].outputs = @{ code = 'true' }
-    foreach ($job in @('release-pr', 'ff-validated', 'queue-validated', 'verify-rebuild', 'reupload-reports')) {
+    foreach ($job in @('release-pr', 'ff-validated', 'queue-validated', 'verify-rebuild', 'reupload-reports', 'queue-quality')) {
       $needs[$job] = @{ result = 'skipped'; outputs = @{} }
     }
     return $needs
@@ -56,6 +56,19 @@ Describe 'tested here' {
     $v.Problems.Count | Should -Be (1 + $AllSuites.Count) -Because 'the build and every suite are each reported'
   }
 
+  It 'fails when the analyzers did not run with nothing proving the tree was analyzed elsewhere' {
+    # Compile builds with the analyzers off (#2068), so Build - Analyzers is the only analyzer gate.
+    $n = Get-GreenNeed; Skip-Job $n @('analyzers')
+    $v = Get-CiVerdict -NeedsTable $n -EventName pull_request -Actor someone
+    $v.Pass | Should -BeFalse
+    $v.Problems | Should -Contain 'analyzers is skipped, but nothing proves this tree was tested anywhere else'
+  }
+
+  It 'requires the analyzers on a Dependabot PR too, which skips only Quality' {
+    $n = Get-GreenNeed; Skip-Job $n @('quality', 'analyzers')
+    (Get-CiVerdict -NeedsTable $n -EventName pull_request -Actor 'dependabot[bot]').Pass | Should -BeFalse
+  }
+
   It 'fails when Quality is skipped on an ordinary PR' {
     $n = Get-GreenNeed; Skip-Job $n @('quality')
     (Get-CiVerdict -NeedsTable $n -EventName pull_request -Actor someone).Pass | Should -BeFalse
@@ -87,6 +100,68 @@ Describe 'tested here' {
   }
 }
 
+Describe 'tested here, in the merge queue (#2070)' {
+  # The queue reports the quality gate to each pull request in its group from queue-quality; quality itself
+  # does not run there.
+  It 'passes when queue-quality is green and quality skipped' {
+    $n = Get-GreenNeed; Skip-Job $n @('quality'); $n['queue-quality'].result = 'success'
+    $v = Get-CiVerdict -NeedsTable $n -EventName merge_group
+    $v.Path | Should -Be 'tested here'
+    $v.Pass | Should -BeTrue
+  }
+
+  It 'fails when queue-quality did not run' {
+    $n = Get-GreenNeed; Skip-Job $n @('quality')
+    $v = Get-CiVerdict -NeedsTable $n -EventName merge_group
+    $v.Pass | Should -BeFalse
+    $v.Problems | Should -Contain 'queue-quality is skipped, but nothing proves this tree was tested anywhere else'
+  }
+
+  It 'fails when one pull request''s leg failed' {
+    $n = Get-GreenNeed; Skip-Job $n @('quality'); $n['queue-quality'].result = 'failure'
+    (Get-CiVerdict -NeedsTable $n -EventName merge_group).Problems | Should -Contain 'queue-quality failure'
+  }
+}
+
+Describe 'pr-fast: a pull request into develop (#2070)' {
+  # A pull request into develop runs the fast gates; the integration suites, Quality and pack run once, in the
+  # merge queue, which every change into develop passes through.
+  BeforeEach {
+    $script:n = Get-GreenNeed
+    Skip-Job $n @('quality', 'pack', 'postgres-integration', 'inmemory-integration', 'rabbitmq-integration',
+      'servicebus-integration', 'azureblob-integration', 'general-integration')
+  }
+
+  It 'passes with build, the analyzers, the unit and component suites green and the rest left to the queue' {
+    $v = Get-CiVerdict -NeedsTable $n -EventName pull_request -BaseRef develop -Actor someone
+    $v.Path | Should -Be 'pr-fast'
+    $v.Pass | Should -BeTrue
+  }
+
+  It 'fails when <job> did not run' -ForEach @(@{ job = 'build' }, @{ job = 'analyzers' }, @{ job = 'unit-tests' }, @{ job = 'component-tests' }) {
+    Skip-Job $n @($job)
+    $v = Get-CiVerdict -NeedsTable $n -EventName pull_request -BaseRef develop
+    $v.Pass | Should -BeFalse
+    $v.Problems | Should -Contain "$job is skipped, but a pull request into develop runs the fast gates itself"
+  }
+
+  It 'still fails on a failed job the queue would also run' {
+    $n['postgres-integration'].result = 'failure'
+    (Get-CiVerdict -NeedsTable $n -EventName pull_request -BaseRef develop).Problems | Should -Contain 'postgres-integration failure'
+  }
+
+  It 'is not taken by a pull request into <base>, which has no merge queue' -ForEach @(@{ base = 'main' }, @{ base = 'release/v1.2.3' }, @{ base = '' }) {
+    $v = Get-CiVerdict -NeedsTable $n -EventName pull_request -BaseRef $base -Actor someone
+    $v.Path | Should -Be 'tested here'
+    $v.Pass | Should -BeFalse
+  }
+
+  It 'leaves a docs-only pull request into develop on the docs-only path' {
+    $n['changes'].outputs.code = 'false'; Skip-Job $n @('build', 'analyzers', 'unit-tests', 'component-tests')
+    (Get-CiVerdict -NeedsTable $n -EventName pull_request -BaseRef develop).Path | Should -Be 'docs-only'
+  }
+}
+
 Describe 'docs-only' {
   It 'passes a <event> with only inert paths and nothing built' -ForEach @(@{ event = 'push' }, @{ event = 'pull_request' }) {
     $n = Get-GreenNeed; $n['changes'].outputs.code = 'false'; Skip-Job $n (@('build', 'quality', 'pack') + $AllSuites)
@@ -114,7 +189,7 @@ Describe 'reused (queue-validated)' {
     $n['queue-validated'] = @{ result = 'success'; outputs = @{ validated = 'true' } }
     $n['verify-rebuild'].result = 'success'
     $n['reupload-reports'].result = 'success'
-    Skip-Job $n (@('quality') + $AllSuites)
+    Skip-Job $n (@('quality', 'analyzers') + $AllSuites)
   }
 
   It 'passes when build, verify-rebuild and reupload-reports are green' {
@@ -147,7 +222,7 @@ Describe 'fast-forward (ff-validated)' {
   It 'passes a queue run whose tree the PR run already covered' {
     $n = Get-GreenNeed
     $n['ff-validated'] = @{ result = 'success'; outputs = @{ skip = 'true' } }
-    Skip-Job $n (@('format', 'build', 'quality') + $AllSuites)
+    Skip-Job $n (@('format', 'build', 'analyzers', 'quality') + $AllSuites)
     $v = Get-CiVerdict -NeedsTable $n -EventName merge_group
     $v.Path | Should -Be 'fast-forward'
     $v.Pass | Should -BeTrue

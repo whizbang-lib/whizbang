@@ -77,12 +77,16 @@ Describe 'ConvertTo-DocsPullRequestsJson' {
       [pscustomobject]@{ Number = 21; State = 'OPEN'; ReferencesThis = $true; UpdatedAt = [datetimeoffset]'2026-10-27T03:40:17Z' }
       [pscustomobject]@{ Number = 22; State = 'CLOSED'; ReferencesThis = $false; UpdatedAt = $null }
     )
-    $read = ConvertTo-DocsPullRequestsJson -DocsPullRequests $docs | ConvertFrom-Json -DateKind String
-    $read.number | Should -Be @(21, 22)
-    $read.state | Should -Be @('OPEN', 'CLOSED')
-    $read.referencesThis | Should -Be @($true, $false)
-    $read[0].updatedAt | Should -Be '2026-10-27T03:40:17.0000000+00:00'
-    $read[1].updatedAt | Should -BeNullOrEmpty
+    # Read with System.Text.Json, not ConvertFrom-Json: the timestamp is checked as the exact string written,
+    # on every pwsh 7 a runner may carry (ConvertFrom-Json turns it into a date unless -DateKind String,
+    # which only 7.5+ has; the self-hosted runners had 7.4).
+    $read = [System.Text.Json.JsonDocument]::Parse((ConvertTo-DocsPullRequestsJson -DocsPullRequests $docs)).RootElement
+    $read.GetArrayLength() | Should -Be 2
+    $read[0].GetProperty('number').GetInt32(), $read[1].GetProperty('number').GetInt32() | Should -Be @(21, 22)
+    $read[0].GetProperty('state').GetString(), $read[1].GetProperty('state').GetString() | Should -Be @('OPEN', 'CLOSED')
+    $read[0].GetProperty('referencesThis').GetBoolean(), $read[1].GetProperty('referencesThis').GetBoolean() | Should -Be @($true, $false)
+    $read[0].GetProperty('updatedAt').GetString() | Should -Be '2026-10-27T03:40:17.0000000+00:00'
+    $read[1].GetProperty('updatedAt').ValueKind | Should -Be ([System.Text.Json.JsonValueKind]::Null)
   }
 
   It 'writes an empty list when there are none' {

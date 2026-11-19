@@ -31,6 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
 [Category("Benchmark")]
+[NotInParallel] // A measurement: runs alone so it measures the code, not its neighbors.
 [Category("Performance")]
 public class LivenessUnderLoadScenarioTests : EFCoreTestBase {
   private const string STAMPER_ROLE = "commit-stamper";

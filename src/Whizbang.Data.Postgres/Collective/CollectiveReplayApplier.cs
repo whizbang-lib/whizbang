@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
@@ -27,6 +28,12 @@ namespace Whizbang.Data.Postgres.Collective;
 /// G in tenant A must never fold into tenant B's row for the same G.
 /// </para>
 /// <para>
+/// <strong>Archived collectives.</strong> A collective stream archived whole has no row in the hot store. When the
+/// driver hands the applier its database, the tenant's archived streams of every registered collective type are listed
+/// from the stream lifecycle ledger as well, and read through the event store's archive seam like the hot ones (#1932):
+/// always on a rewind, and on a rebuild only under <see cref="RebuildArchivedData.IncludeAll"/> (#1931).
+/// </para>
+/// <para>
 /// <strong>Apply.</strong> For each matching <c>[CollectiveApplyFor]</c> entry it invokes the handler to get the
 /// spec and hands it to the per-model <see cref="ICollectiveInMemoryExecutor"/>, which evaluates the
 /// self-referential <c>Where</c> and applies the setters to the one in-memory row. The <see cref="ICollectiveQuery"/>
@@ -41,9 +48,16 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
   private readonly IEventStore _eventStore;
   private readonly IEventStoreQuery _eventStoreQuery;
   private readonly IReadOnlyList<ICollectiveInMemoryExecutor> _executors;
+  private readonly Func<IReadOnlyList<string>, string?, CancellationToken, Task<IReadOnlyList<Guid>>>? _archivedStreams;
+  private readonly IReadOnlyList<string> _collectiveStreamTypes;
+  private readonly Func<IReadOnlyList<Guid>, CancellationToken, Task<IReadOnlyDictionary<Guid, CollectiveApplyReach>>>? _reach;
 
-  /// <summary>Creates a replay applier.</summary>
-  /// <param name="entries">The consumer's <c>CollectiveApplyRegistry.Entries</c>.</param>
+  // The reach each collective a replay merged in was read with, by the event instance the replay folds (#1970). Weak, so
+  // an event the replay is done with takes its reach with it.
+  private readonly ConditionalWeakTable<IEvent, CollectiveApplyReach> _reaches = [];
+
+  /// <summary>Creates a replay applier that finds collective streams through the hot event store only.</summary>
+  /// <param name="entries">The host's collective apply handlers, every assembly's (<c>GetCollectiveApplyEntries</c>).</param>
   /// <param name="services">For resolving handler instances by <see cref="CollectiveApplyEntry.HandlerType"/>.</param>
   /// <param name="eventStore">Reads the collective events (deserialized) by stream id.</param>
   /// <param name="eventStoreQuery">Finds the collective event stream ids for a tenant.</param>
@@ -53,7 +67,58 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
       IServiceProvider services,
       IEventStore eventStore,
       IEventStoreQuery eventStoreQuery,
-      IReadOnlyList<ICollectiveInMemoryExecutor> executors) {
+      IReadOnlyList<ICollectiveInMemoryExecutor> executors)
+    : this(entries, services, eventStore, eventStoreQuery, executors, archivedStreams: null) {
+  }
+
+  /// <summary>
+  /// Creates a replay applier that also finds the collective streams archived whole (#1932). Such a stream has no hot
+  /// row, so it is listed from the stream lifecycle ledger in <paramref name="archive"/>'s database and read through
+  /// <paramref name="eventStore"/>, whose archive seam serves its events. Both Postgres drivers register the applier
+  /// this way.
+  /// </summary>
+  /// <param name="entries">The host's collective apply handlers, every assembly's (<c>GetCollectiveApplyEntries</c>).</param>
+  /// <param name="services">For resolving handler instances by <see cref="CollectiveApplyEntry.HandlerType"/>.</param>
+  /// <param name="eventStore">Reads the collective events (deserialized) by stream id, archived ones included.</param>
+  /// <param name="eventStoreQuery">Finds the hot collective event stream ids for a tenant.</param>
+  /// <param name="executors">The per-model in-memory executors (one per <c>TModel</c>).</param>
+  /// <param name="archive">The service's database, whose ledger lists the archived streams; null finds the hot
+  /// streams only.</param>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rebuild_IncludeAll_FoldsACollectiveArchivedWhole_ThatIsTheRowsLastEvent_AndCheckpointsOnTheRowsOwnEventAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperArchivedCollectiveReplayTests.cs:AddCollectiveEventsDapper_TheReplayReadsTheTenantsArchivedCollectiveStreams_ListedFromTheLedgerAsync</tests>
+  public CollectiveReplayApplier(
+      IReadOnlyList<CollectiveApplyEntry> entries,
+      IServiceProvider services,
+      IEventStore eventStore,
+      IEventStoreQuery eventStoreQuery,
+      IReadOnlyList<ICollectiveInMemoryExecutor> executors,
+      PostgresArchiveConnection? archive)
+    : this(entries, services, eventStore, eventStoreQuery, executors,
+        archivedStreams: archive is null
+          ? null
+          : (streamTypes, tenant, ct) => ArchivedCollectiveStreams.ListAsync(archive, streamTypes, tenant, ct),
+        reach: archive is null
+          ? null
+          : (eventIds, ct) => CollectiveApplyReach.ReadAsync(archive, eventIds, ct)) {
+  }
+
+  /// <summary>Creates a replay applier whose archived collective streams come from <paramref name="archivedStreams"/>.</summary>
+  /// <param name="entries">The host's collective apply handlers, every assembly's (<c>GetCollectiveApplyEntries</c>).</param>
+  /// <param name="services">For resolving handler instances by <see cref="CollectiveApplyEntry.HandlerType"/>.</param>
+  /// <param name="eventStore">Reads the collective events (deserialized) by stream id.</param>
+  /// <param name="eventStoreQuery">Finds the hot collective event stream ids for a tenant.</param>
+  /// <param name="executors">The per-model in-memory executors (one per <c>TModel</c>).</param>
+  /// <param name="archivedStreams">Lists the archived streams of the given stream types in a tenant; null lists none.</param>
+  /// <param name="reach">Reads how far the live sink applied the given collectives (#1970); null folds every one in full.</param>
+  internal CollectiveReplayApplier(
+      IReadOnlyList<CollectiveApplyEntry> entries,
+      IServiceProvider services,
+      IEventStore eventStore,
+      IEventStoreQuery eventStoreQuery,
+      IReadOnlyList<ICollectiveInMemoryExecutor> executors,
+      Func<IReadOnlyList<string>, string?, CancellationToken, Task<IReadOnlyList<Guid>>>? archivedStreams,
+      Func<IReadOnlyList<Guid>, CancellationToken, Task<IReadOnlyDictionary<Guid, CollectiveApplyReach>>>? reach = null) {
     ArgumentNullException.ThrowIfNull(entries);
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(eventStore);
@@ -64,6 +129,12 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     _eventStore = eventStore;
     _eventStoreQuery = eventStoreQuery;
     _executors = executors;
+    _archivedStreams = archivedStreams;
+    _reach = reach;
+    // Every registered collective type, not only one model's: collectives sharing an ordering key share a stream, and
+    // the ledger records a stream's type as its first event's, which can be another model's collective. A registered
+    // collective's type is a concrete type a generated registration names with typeof, so it always has a full name.
+    _collectiveStreamTypes = [.. entries.Select(e => TypeNameFormatter.FormatClrTypeName(e.EventType)).Distinct(StringComparer.Ordinal)];
   }
 
   /// <inheritdoc/>
@@ -81,6 +152,40 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
       return streamEvents;
     }
 
+    var tenantId = streamEvents[0].GetCurrentScope()?.Scope.TenantId;
+    return await _interleaveAsync(modelType, streamEvents, new CollectiveReplayStart(tenantId), cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// The collectives are found as <see cref="InterleaveForReplayAsync"/> finds them, the collective streams archived whole
+  /// included on a rewind and, in a rebuild, only under <see cref="RebuildArchivedData.IncludeAll"/>; those
+  /// <paramref name="start"/> does not <see cref="CollectiveReplayStart.Follows"/> are left out before they are ordered.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveReplayApplierCoverageTests.cs:InterleaveAfterAsync_OutsideARebuild_MergesTheCollectivesAfterTheStart_OnlyAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveReplayApplierCoverageTests.cs:InterleaveAfterAsync_WithNoStreamEvents_ReturnsTheCollectivesAloneAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveReplayApplierCoverageTests.cs:InterleaveAfterAsync_RefusesNullArgumentsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rewind_FromASnapshot_DoesNotFoldAgainACollectiveCommittedBeforeItAsync</tests>
+  public Task<IReadOnlyList<MessageEnvelope<IEvent>>> InterleaveAfterAsync(
+      Type modelType,
+      IReadOnlyList<MessageEnvelope<IEvent>> streamEvents,
+      CollectiveReplayStart start,
+      CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(modelType);
+    ArgumentNullException.ThrowIfNull(streamEvents);
+    ArgumentNullException.ThrowIfNull(start);
+    return _interleaveAsync(modelType, streamEvents, start, cancellationToken);
+  }
+
+  /// <summary>
+  /// Merges into <paramref name="streamEvents"/> the collectives of <paramref name="start"/>'s tenant for
+  /// <paramref name="modelType"/> committed after <paramref name="start"/>.
+  /// </summary>
+  private async Task<IReadOnlyList<MessageEnvelope<IEvent>>> _interleaveAsync(
+      Type modelType,
+      IReadOnlyList<MessageEnvelope<IEvent>> streamEvents,
+      CollectiveReplayStart start,
+      CancellationToken cancellationToken) {
     var collectiveTypes = _entries
       .Where(e => e.ModelType == modelType)
       .Select(e => e.EventType)
@@ -90,7 +195,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
       return streamEvents;
     }
 
-    var tenantId = streamEvents[0].GetCurrentScope()?.Scope.TenantId;
+    var tenantId = start.TenantId;
     // The event store persists EventType via TypeNameFormatter ("Namespace.TypeName, AssemblyName"), not
     // Type.FullName — match that format so the filter finds the collective streams.
     var typeNames = collectiveTypes.ConvertAll(TypeNameFormatter.Format);
@@ -100,17 +205,26 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     var positions = await _toListAsync(
       CollectivePositions(_eventStoreQuery.Query, typeNames, tenantId),
       cancellationToken).ConfigureAwait(false);
-    if (positions.Count == 0) {
+    var streamIds = positions.Select(p => p.StreamId).Distinct().ToList();
+    if (_archivedStreams is not null && _foldsStreamsArchivedWhole()) {
+      // A collective stream archived whole has no hot row; the ledger lists it, and the read below goes through the
+      // archive. A stream the hot store already named is read once.
+      var named = new HashSet<Guid>(streamIds);
+      streamIds.AddRange((await _archivedStreams(_collectiveStreamTypes, tenantId, cancellationToken).ConfigureAwait(false))
+        .Where(named.Add));
+    }
+    if (streamIds.Count == 0) {
       return streamEvents;
     }
 
     var allCollectives = new List<MessageEnvelope<IEvent>>();
     var byStream = new List<List<MessageEnvelope<IEvent>>>();
-    foreach (var streamId in positions.Select(p => p.StreamId).Distinct()) {
+    foreach (var streamId in streamIds) {
       var collectives = new List<MessageEnvelope<IEvent>>();
       await foreach (var envelope in _eventStore
           .ReadPolymorphicAsync(streamId, null, collectiveTypes, cancellationToken)
           .Where(e => e.Payload is ICollectiveEvent)
+          .Where(start.Follows)
           .ConfigureAwait(false)) {
         collectives.Add(envelope);
       }
@@ -118,10 +232,43 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
       byStream.Add(collectives);
     }
 
+    await _readReachAsync(allCollectives, cancellationToken).ConfigureAwait(false);
     var orderedCollectives = allCollectives.OrderByMessageId().ToList();
     _putSharedStreamsInCommitOrder(orderedCollectives, byStream, positions);
     return _mergeIntoStreamOrder(streamEvents, orderedCollectives);
   }
+
+  /// <summary>
+  /// Reads how far the live sink applied each collective the replay merges in (#1970), and keeps it with the event the
+  /// replay folds, so <see cref="ApplyInMemory"/> folds each handler's apply only into the rows it reached.
+  /// </summary>
+  private async Task _readReachAsync(List<MessageEnvelope<IEvent>> collectives, CancellationToken cancellationToken) {
+    if (_reach is null || collectives.Count == 0) {
+      return;
+    }
+    var reaches = await _reach([.. collectives.Select(c => c.MessageId.Value)], cancellationToken).ConfigureAwait(false);
+    foreach (var collective in collectives) {
+      if (reaches.TryGetValue(collective.MessageId.Value, out var reach)) {
+        _reaches.AddOrUpdate(collective.Payload, reach);
+      }
+    }
+  }
+
+  /// <inheritdoc/>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/CollectiveReplayRebuildIntegrationTests.cs:Rewind_ThatMeetsACollectiveStillInFlight_TakesNoSnapshotAsync</tests>
+  public bool IsInFlight(IEvent collectiveEvent) {
+    ArgumentNullException.ThrowIfNull(collectiveEvent);
+    return _reaches.TryGetValue(collectiveEvent, out var reach) && reach.Queued;
+  }
+
+  /// <summary>
+  /// Whether this replay folds the collective streams archived whole (#1931): a rewind (a replay) always does, as rewinds
+  /// read through the archive; a rebuild only under <see cref="RebuildArchivedData.IncludeAll"/>, the choice that
+  /// includes streams archived whole.
+  /// </summary>
+  private static bool _foldsStreamsArchivedWhole() =>
+    ProcessingModeAccessor.Current is not ProcessingMode.Rebuild
+    || RebuildArchivedDataAccessor.Current == RebuildArchivedData.IncludeAll;
 
   /// <summary>
   /// Merges the collectives into the stream's own events without reordering the stream's events: the runner hands
@@ -155,13 +302,18 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
   /// (<c>wh_collective_sink_queue</c>: <c>commit_sequence</c>, an unstamped event last, <c>event_id</c> breaking the
   /// tie). An event id is minted before commit, so two of them can have ids in the opposite order; left in id order
   /// the replay would fold the earlier commit last and end where live did not. They change places among themselves
-  /// only, in the slots their ids gave them, so every other event keeps its place in the fold.
+  /// only, in the slots their ids gave them, so every other event keeps its place in the fold. A collective whose stream
+  /// is archived whole has no hot position, and its commit sequence is the one its event carries back from the archive.
   /// </summary>
   private static void _putSharedStreamsInCommitOrder(
       List<MessageEnvelope<IEvent>> ordered, List<List<MessageEnvelope<IEvent>>> byStream, List<CollectivePosition> positions) {
     var commitSequence = new Dictionary<Guid, long?>();
     foreach (var position in positions) {
       commitSequence.TryAdd(position.EventId, position.CommitSequence);
+    }
+    // A collective with no hot row, read back through the archive (#1932), carries its commit sequence on its event.
+    foreach (var collective in byStream.SelectMany(c => c)) {
+      commitSequence.TryAdd(collective.MessageId.Value, collective.LocalCommitSequence);
     }
 
     foreach (var collectives in byStream.Where(c => c.Count > 1)) {
@@ -218,11 +370,15 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     var eventType = collectiveEvent.GetType();
     var executor = _resolveExecutor(modelType);
     var model = currentModel;
+    // How far the live sink applied it, when the replay read that (#1970): each handler's apply folds only into the rows
+    // it reached, or that it will never reach.
+    _reaches.TryGetValue(collectiveEvent, out var reach);
 
     // Every [CollectiveApplyFor] entry for this (event, model) runs — mirrors the live dispatcher, which fans
     // out to all matching entries (e.g. two applies on one model).
     foreach (var entry in _entries) {
-      if (entry.ModelType != modelType || entry.EventType != eventType) {
+      if (entry.ModelType != modelType || entry.EventType != eventType
+          || reach?.Reaches(entry.EntryKey, streamId) == false) {
         continue;
       }
       var handler = _services.GetRequiredService(entry.HandlerType);
@@ -252,7 +408,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     }
     throw new InvalidOperationException(
       $"No ICollectiveInMemoryExecutor registered for ModelType='{TypeNameFormatter.DisplayName(modelType)}'. " +
-      $"AddCollectiveExecutorEFCore<{modelType.Name}>()/AddCollectiveExecutorDapper<{modelType.Name}>() registers it " +
+      $"AddCollectiveExecutorEFCore<{TypeNameFormatter.ForLog(modelType)}>()/AddCollectiveExecutorDapper<{TypeNameFormatter.ForLog(modelType)}>() registers it " +
       "alongside the SQL executor — required so this model's collective events survive a perspective rebuild.");
   }
 

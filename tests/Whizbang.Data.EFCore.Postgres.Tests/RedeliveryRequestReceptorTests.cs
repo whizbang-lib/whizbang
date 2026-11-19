@@ -35,7 +35,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RedeliveryRequestReceptorRegistrar.cs</code-under-test>
 [NotInParallel("RedeliveryBuildGate")]   // the receptor's per-process build gate is shared state
 [Category("Shard1")]
-public class RedeliveryRequestReceptorTests {
+public partial class RedeliveryRequestReceptorTests {
 
   [Test]
   public async Task Receptor_MapsSelectionAndPublishesTargetedCompositesAsync() {
@@ -53,6 +53,7 @@ public class RedeliveryRequestReceptorTests {
     var typeFilter = new List<string> { "Contracts.ProbeHappened" };
     var streamFilter = new List<Guid> { streamId };
     await receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       TenantScope = "tenant-a",
       EventTypes = typeFilter,
       StreamIds = streamFilter,
@@ -76,6 +77,8 @@ public class RedeliveryRequestReceptorTests {
     await Assert.That(transport.Published.Count).IsEqualTo(1);
     var (envelope, destination, _) = transport.Published[0];
     await Assert.That(destination.Address).IsEqualTo("events-topic");
+    await Assert.That(ControlMessageTtl.FromMetadata(destination.Metadata)).IsEqualTo(TimeSpan.FromMinutes(60))
+      .Because("#2078: a redelivery answer is an integrity control message, so it expires at the broker");
     await Assert.That(envelope.Target).IsEqualTo("damaged-svc")
       .Because("re-delivery bundles are DIRECTED at the requester — every other consumer discards them.");
     var composite = serializer.Captured[0].Payload;
@@ -100,6 +103,7 @@ public class RedeliveryRequestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       MaxEvents = 50_000,
       RequesterService = "svc",
       Topic = "t"
@@ -109,6 +113,7 @@ public class RedeliveryRequestReceptorTests {
                "(SelectPageSize defaults above this cap, so the first page IS the cap).");
 
     await receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       MaxEvents = null,
       RequesterService = "svc",
       Topic = "t"
@@ -137,7 +142,7 @@ public class RedeliveryRequestReceptorTests {
     var receptor = new RedeliveryRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestRedeliveryCommand { RequesterService = "svc", Topic = "t" });
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "svc", Topic = "t" });
 
     // Memory bound: every select asked for at most one page.
     foreach (var request in coordinator.Requests) {
@@ -167,6 +172,7 @@ public class RedeliveryRequestReceptorTests {
 
     // A enters its select synchronously and parks on the gate INSIDE the build.
     var taskA = receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       EventTypes = ["A"],
       RequesterService = "svc-a",
       Topic = "t"
@@ -176,6 +182,7 @@ public class RedeliveryRequestReceptorTests {
     // B starts while A holds the build gate: without the gate it would enter its select
     // synchronously right here and the log would already show "B".
     var taskB = receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       EventTypes = ["B"],
       RequesterService = "svc-b",
       Topic = "t"
@@ -200,7 +207,7 @@ public class RedeliveryRequestReceptorTests {
     var receptor = new RedeliveryRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestRedeliveryCommand { RequesterService = "svc", Topic = "t" });
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "svc", Topic = "t" });
 
     await Assert.That(transport.Published.Count).IsEqualTo(0)
       .Because("nothing selected means nothing to repair — no empty bundles on the wire.");
@@ -221,7 +228,7 @@ public class RedeliveryRequestReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
     // Must not throw — a host without the re-delivery infrastructure ignores the command.
-    await receptor.HandleAsync(new RequestRedeliveryCommand { RequesterService = "svc", Topic = "t" });
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "svc", Topic = "t" });
 
     await Assert.That(transport.Published).IsEmpty()
       .Because("an origin that cannot select anything has nothing to repair with — it must ignore the "
@@ -236,14 +243,15 @@ public class RedeliveryRequestReceptorTests {
     services.AddSingleton<IReceptorRegistry>(registry);
     await using var sp = services.BuildServiceProvider();
     var registrar = new RedeliveryRequestReceptorRegistrar(
-      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance,
+      NullLogger<AuditRebuildRequestReceptor>.Instance, NullLogger<BackfillWindowAnswerReceptor>.Instance);
 
     await registrar.StartAsync(CancellationToken.None);
 
-    await Assert.That(registry.Registered.Count).IsEqualTo(3);
+    var redelivery = registry.Registered.Where(r => r.Msg == typeof(RequestRedeliveryCommand)).ToList();
+    await Assert.That(redelivery.Count).IsEqualTo(3);
     var stages = new HashSet<LifecycleStage>();
-    foreach (var (msg, stage) in registry.Registered) {
-      await Assert.That(msg).IsEqualTo(typeof(RequestRedeliveryCommand));
+    foreach (var (_, stage) in redelivery) {
       stages.Add(stage);
     }
     await Assert.That(stages.Contains(LifecycleStage.LocalImmediateInline)).IsTrue();
@@ -251,6 +259,25 @@ public class RedeliveryRequestReceptorTests {
     await Assert.That(stages.Contains(LifecycleStage.PostInboxInline)).IsTrue()
       .Because("A receptor without [FireAt] fires at all three default stages, so the command reaches it " +
                "in-process (operator) and over the inbox (damaged consumer).");
+  }
+
+  [Test]
+  public async Task Registrar_RegistersTheAuditRebuildReceptorAtTheSameThreeStagesAsync() {
+    var registry = new RecordingRegistry();
+    var services = new ServiceCollection();
+    services.AddSingleton<IReceptorRegistry>(registry);
+    await using var sp = services.BuildServiceProvider();
+    var registrar = new RedeliveryRequestReceptorRegistrar(
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance,
+      NullLogger<AuditRebuildRequestReceptor>.Instance, NullLogger<BackfillWindowAnswerReceptor>.Instance);
+
+    await registrar.StartAsync(CancellationToken.None);
+
+    var stages = registry.Registered.Where(r => r.Msg == typeof(Whizbang.Core.Commands.System.RequestAuditRebuildCommand))
+      .Select(r => r.Stage).ToList();
+    await Assert.That(stages).IsEquivalentTo([
+      LifecycleStage.LocalImmediateInline, LifecycleStage.PreOutboxInline, LifecycleStage.PostInboxInline])
+      .Because("an audit rebuild is asked of the origin in-process by an operator or over the inbox by the audit service (#1724)");
   }
 
   /// <summary>
@@ -269,7 +296,8 @@ public class RedeliveryRequestReceptorTests {
     await Assert.That(sp.GetService<IReceptorRegistry>()).IsNull();
 
     var registrar = new RedeliveryRequestReceptorRegistrar(
-      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance,
+      NullLogger<AuditRebuildRequestReceptor>.Instance, NullLogger<BackfillWindowAnswerReceptor>.Instance);
 
     await registrar.StartAsync(CancellationToken.None);   // must not throw
   }
@@ -277,6 +305,7 @@ public class RedeliveryRequestReceptorTests {
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static RequestRedeliveryCommand _request(Guid streamId) => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     TenantScope = "tenant-a",
     EventTypes = ["Contracts.ProbeHappened"],
     StreamIds = [streamId],
@@ -345,6 +374,28 @@ public class RedeliveryRequestReceptorTests {
     await Assert.That(coordinator.Requests).IsEmpty();
   }
 
+  /// <summary>
+  /// An operator request is served even with no integrity options registered (#1028), and its answer still expires at
+  /// the broker, after the default integrity time to live (#2078).
+  /// </summary>
+  [Test]
+  public async Task Receptor_AnOperatorRequest_WithNoIntegrityOptions_AnswersWithTheDefaultTimeToLiveAsync() {
+    var coordinator = new SelectingCoordinator();
+    var transport = new CaptureTransport();
+    var streamId = TrackedGuid.New().Value;
+    coordinator.Selection = [_evt(streamId, TrackedGuid.New().Value, 1)];
+    await using var sp = _buildProvider(coordinator, transport, repairMode: null);
+    var receptor = new RedeliveryRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(_request(streamId) with { OperatorRequested = true });
+
+    await Assert.That(transport.Published).Count().IsEqualTo(1);
+    await Assert.That(ControlMessageTtl.FromMetadata(transport.Published[0].Destination.Metadata))
+      .IsEqualTo(TimeSpan.FromMinutes(new StreamIntegrityOptions().ControlMessageTimeToLiveMinutes))
+      .Because("with no options registered the answer takes the default integrity time to live");
+  }
+
   private static ServiceProvider _buildProvider(
       SelectingCoordinator coordinator, CaptureTransport transport,
       CaptureSerializer? serializer = null, RedeliveryPumpOptions? options = null,
@@ -388,6 +439,8 @@ public class RedeliveryRequestReceptorTests {
     public List<string> SelectLog { get; } = [];
     public TaskCompletionSource? BlockFirstSelect { get; set; }
     public IReadOnlyList<RedeliveryEvent> Selection { get; set; } = [];
+    /// <summary>Filter by the request's streams, as the real selection does (off for the tests that predate it).</summary>
+    public bool HonorStreams { get; set; }
     public Guid LocalServiceId { get; } = TrackedGuid.New().Value;
     private int _selectCalls;
 
@@ -401,6 +454,13 @@ public class RedeliveryRequestReceptorTests {
         await gate.Task;
       }
       IEnumerable<RedeliveryEvent> query = Selection;
+      // #2103: the event and stream filters the real selection applies.
+      if (request.EventIds is { } eventIds) {
+        query = query.Where(e => eventIds.Contains(e.EventId));
+      }
+      if (HonorStreams && request.StreamIds is { } streamIds) {
+        query = query.Where(e => streamIds.Contains(e.StreamId));
+      }
       if (request.AfterStreamId is { } afterStream) {
         var afterVersion = request.AfterVersion ?? 0L;
         query = query.Where(e => e.StreamId.CompareTo(afterStream) > 0
@@ -474,5 +534,221 @@ public class RedeliveryRequestReceptorTests {
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) => [];
     public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+  }
+
+  // ── #2032: redelivery ships only what this origin authored ──────────────
+
+  private static ServiceProvider _buildOwningProvider(
+      SelectingCoordinator coordinator, CaptureTransport transport, CaptureSerializer serializer, string serviceName,
+      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null, params string[] ownedDomains) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<ITransport>(transport);
+    services.AddSingleton<IEnvelopeSerializer>(serializer);
+    services.AddSingleton(new RedeliveryPumpOptions { SelectPageSize = 2, MaxEventsPerRequest = 100 });
+    services.AddSingleton(Options.Create(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped }));
+    services.AddSingleton<IServiceInstanceProvider>(new NamedInstance(serviceName));
+    services.AddSingleton(Options.Create(new Whizbang.Core.Routing.RoutingOptions().OwnDomains(ownedDomains)));
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
+    }
+    return services.BuildServiceProvider();
+  }
+
+  [Test]
+  public async Task Receptor_ARequestThisServiceMadeItself_IsIgnoredAsync() {
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    var ignored = new List<(long Value, string? Reason)>();
+    using var listener = new System.Diagnostics.Metrics.MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (ReferenceEquals(instrument.Meter, metrics.GapsDetected.Meter) && instrument.Name == "whizbang.stream_integrity.redelivery_requests_ignored") {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
+      string? reason = null;
+      foreach (var tag in tags) {
+        if (tag.Key == "reason") {
+          reason = tag.Value as string;
+        }
+      }
+      lock (ignored) {
+        ignored.Add((value, reason));
+      }
+    });
+    listener.Start();
+    var coordinator = new SelectingCoordinator { Selection = [_evt(TrackedGuid.New().Value, TrackedGuid.New().Value, 1)] };
+    var transport = new CaptureTransport();
+    await using var sp = _buildOwningProvider(coordinator, transport, new CaptureSerializer(), "orders-svc", metrics);
+    var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "Orders-Svc", Topic = "inbox", StateOnly = true });
+    listener.RecordObservableInstruments();
+
+    await Assert.That(coordinator.Requests).IsEmpty()
+      .Because("a backfill broadcast on a shared topic reaches its sender too; answering it re-ships the sender's own store to itself");
+    await Assert.That(transport.Published).IsEmpty();
+    await Assert.That(ignored[^1]).IsEqualTo((1L, (string?)"own_request"));
+  }
+
+  [Test]
+  public async Task Receptor_ARequestThisServiceMadeItself_IsIgnored_OnAHostWithoutMetricsAsync() {
+    var coordinator = new SelectingCoordinator { Selection = [_evt(TrackedGuid.New().Value, TrackedGuid.New().Value, 1)] };
+    var transport = new CaptureTransport();
+    await using var sp = _buildOwningProvider(coordinator, transport, new CaptureSerializer(), "orders-svc");
+    var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "orders-svc", Topic = "inbox", StateOnly = true });
+
+    await Assert.That(coordinator.Requests).IsEmpty();
+    await Assert.That(transport.Published).IsEmpty();
+  }
+
+  [Test]
+  public async Task Receptor_AsksTheSelectionForEventsThisServiceAuthoredAsync() {
+    var coordinator = new SelectingCoordinator { Selection = [_evt(TrackedGuid.New().Value, TrackedGuid.New().Value, 1)] };
+    await using var sp = _buildOwningProvider(coordinator, new CaptureTransport(), new CaptureSerializer(), "orders-svc");
+    var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "damaged-svc", Topic = "inbox" });
+
+    await Assert.That(coordinator.Requests[0].AuthoredBy).IsEqualTo("orders-svc")
+      .Because("the bundle names this service as origin, so it may carry only events this service wrote");
+  }
+
+  [Test]
+  public async Task Receptor_ShipsOnlyEventsOfOwnedTypes_AndPagesPastTheRestAsync() {
+    var coordinator = new SelectingCoordinator();
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    var s1 = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    var s2 = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    var foreign1 = TrackedGuid.New().Value;
+    var foreign2 = TrackedGuid.New().Value;
+    var owned = TrackedGuid.New().Value;
+    coordinator.Selection = [
+      _evt(s1, foreign1, 1) with { EventType = "App.Contracts.Billing.Raised, App.Contracts" },
+      _evt(s1, foreign2, 2) with { EventType = "App.Contracts.Billing.Raised, App.Contracts" },
+      _evt(s2, owned, 1) with { EventType = "App.Contracts.Orders.Placed, App.Contracts" },
+    ];
+    await using var sp = _buildOwningProvider(coordinator, transport, serializer, "orders-svc", ownedDomains: "App.Contracts.Orders");
+    var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "damaged-svc", Topic = "inbox" });
+
+    await Assert.That(serializer.Captured.SelectMany(c => c.Payload.InnerEventIds)).IsEquivalentTo([owned])
+      .Because("events of a type this service does not own were authored elsewhere; receivers refuse them (#1844)");
+    await Assert.That(coordinator.Requests.Count).IsGreaterThanOrEqualTo(2)
+      .Because("a page of only foreign events still advances the keyset, so the owned events behind it are reached");
+  }
+
+  private sealed class NamedInstance(string serviceName) : IServiceInstanceProvider {
+    public Guid InstanceId { get; } = Guid.Parse("0d000000-0000-0000-0000-00000000000d");
+    public string ServiceName => serviceName;
+    public string HostName => "test-host";
+    public int ProcessId => 1;
+    public ServiceInstanceInfo ToInfo() => new() { InstanceId = InstanceId, ServiceName = ServiceName, HostName = HostName, ProcessId = ProcessId };
+  }
+
+  // ── #2103: a repair that names its missing events ──────────────────────
+
+  [Test]
+  public async Task Receptor_NamedEvents_ShipsExactlyThoseEventsAsync() {
+    var coordinator = new SelectingCoordinator { HonorStreams = true };
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    var stream = TrackedGuid.New().Value;
+    var (held, missing) = (TrackedGuid.New().Value, TrackedGuid.New().Value);
+    coordinator.Selection = [_evt(stream, held, 1), _evt(stream, missing, 2)];
+    await using var sp = _buildProvider(coordinator, transport, serializer);
+    var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
+      StreamIds = [stream],
+      EventIds = [missing],
+      FromCommitSequence = 0,
+      ToCommitSequence = 99,
+      RequesterService = "damaged-svc",
+      Topic = "events-topic",
+    });
+
+    await Assert.That(serializer.Captured.SelectMany(c => c.Payload.InnerEventIds).ToList()).IsEquivalentTo([missing])
+      .Because("the stream missing one event receives exactly that event");
+    await Assert.That(coordinator.Requests.All(r => r.EventIds is { Count: 1 } ids && ids[0] == missing)).IsTrue()
+      .Because("every page of the selection names the missing event; no stream is asked for whole");
+  }
+
+  [Test]
+  public async Task Receptor_ANamedEventItDoesNotHold_AnswersThatStreamOverTheWindowAsync() {
+    var coordinator = new SelectingCoordinator { HonorStreams = true };
+    var transport = new CaptureTransport();
+    var serializer = new CaptureSerializer();
+    var (named, unnamed) = (TrackedGuid.New().Value, TrackedGuid.New().Value);
+    var (e1, e2, e3) = (TrackedGuid.New().Value, TrackedGuid.New().Value, TrackedGuid.New().Value);
+    coordinator.Selection = [_evt(named, e1, 1), _evt(unnamed, e2, 1), _evt(unnamed, e3, 2)];
+    await using var sp = _buildProvider(coordinator, transport, serializer);
+    var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
+      StreamIds = [named, unnamed],
+      EventIds = [e1, TrackedGuid.New().Value],
+      FromCommitSequence = 0,
+      ToCommitSequence = 99,
+      RequesterService = "damaged-svc",
+      Topic = "events-topic",
+    });
+
+    await Assert.That(serializer.Captured.SelectMany(c => c.Payload.InnerEventIds).Order().ToList())
+      .IsEquivalentTo(new[] { e1, e2, e3 }.Order().ToList())
+      .Because("the named event ships alone; a stream whose named event this store does not hold is synced whole");
+    var fallback = coordinator.Requests.First(r => r.EventIds is null);
+    await Assert.That(fallback.StreamIds).IsEquivalentTo([unnamed]);
+    await Assert.That(fallback.ToCommitSequence).IsEqualTo(99L).Because("over the request's window");
+  }
+
+  [Test]
+  public async Task Receptor_EveryNamedEventFound_SyncsNoStreamWholeAsync() {
+    var coordinator = new SelectingCoordinator { HonorStreams = true };
+    var serializer = new CaptureSerializer();
+    var stream = TrackedGuid.New().Value;
+    var e1 = TrackedGuid.New().Value;
+    coordinator.Selection = [_evt(stream, e1, 1)];
+    await using var sp = _buildProvider(coordinator, new CaptureTransport(), serializer);
+    var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
+      StreamIds = [stream],
+      EventIds = [e1],
+      RequesterService = "damaged-svc",
+      Topic = "events-topic",
+    });
+
+    await Assert.That(coordinator.Requests.Any(r => r.EventIds is null)).IsFalse().Because("nothing is left to sync by range");
+  }
+
+  [Test]
+  public async Task Receptor_NamedEventsWithoutStreams_ShipsWhatItFinds_AndSyncsNothingWholeAsync() {
+    var coordinator = new SelectingCoordinator { HonorStreams = true };
+    var serializer = new CaptureSerializer();
+    var stream = TrackedGuid.New().Value;
+    var e1 = TrackedGuid.New().Value;
+    coordinator.Selection = [_evt(stream, e1, 1)];
+    await using var sp = _buildProvider(coordinator, new CaptureTransport(), serializer);
+    var receptor = new RedeliveryRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
+      EventIds = [e1, TrackedGuid.New().Value],
+      RequesterService = "damaged-svc",
+      Topic = "events-topic",
+    });
+
+    await Assert.That(serializer.Captured.SelectMany(c => c.Payload.InnerEventIds).ToList()).IsEquivalentTo([e1]);
+    await Assert.That(coordinator.Requests.Any(r => r.EventIds is null)).IsFalse()
+      .Because("with no streams named there is no stream to answer over the window");
   }
 }

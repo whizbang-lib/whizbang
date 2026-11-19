@@ -35,7 +35,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#statements-that-need-a-commit-between-them</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
   private const long LOCK_ID = 987654321;

@@ -44,7 +44,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests {
   /// <code-under-test>src/Whizbang.Core/Workers/ReceiveConsumerGate.cs</code-under-test>
   /// <docs>fundamentals/dispatcher/routing#owned-and-subscribed</docs>
   [Category("Integration")]
-  [NotInParallel("EFCorePostgresTests")]
   [Category("Shard3")]
   public class AbsorbedEventReachesEventStoreTests : EFCoreTestBase {
     private const string SERVICE = "absorb-svc";
@@ -70,13 +69,25 @@ namespace Whizbang.Data.EFCore.Postgres.Tests {
         .IsEqualTo("discarded on receive: " + InboxReceiveDiscard.NO_LOCAL_CONSUMER);
     }
 
+    /// <summary>
+    /// #2074: with no perspective list to name it, an absorbed event that arrives as JSON (the transport's form) is
+    /// still an event, because the message type catalog declares it one, so it is copied into the event store.
+    /// </summary>
+    [Test]
+    public async Task AnAbsorbedEventReceivedAsJson_WithOnlyTheCatalogToNameIt_IsCopiedIntoTheEventStoreAsync() {
+      var messageId = await _receiveAndClaimAsync(absorb: typeof(AbsorbedShipmentNoted).Namespace!, perspectiveList: false);
+
+      await Assert.That(await _scalarAsync<bool>("SELECT EXISTS (SELECT 1 FROM wh_event_store WHERE event_id = @id)", messageId))
+        .IsTrue().Because("an absorbed event is stored on purpose; the catalog, not the perspective list, says it is an event");
+    }
+
     // ===== Helpers =====
 
     /// <summary>
     /// Delivers one event with no local consumer through the transport consumer worker of a service whose routing absorbs
     /// <paramref name="absorb"/>, then runs the claim the way the claim worker does. Returns the event's id.
     /// </summary>
-    private async Task<Guid> _receiveAndClaimAsync(string absorb) {
+    private async Task<Guid> _receiveAndClaimAsync(string absorb, bool perspectiveList = true) {
       var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
       var routing = new RoutingOptions().AbsorbNamespaces(absorb);
       var noConsumer = new NoConsumerRegistry();
@@ -85,7 +96,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests {
       services.AddScoped(_ => CreateDbContext());
       services.AddScoped<IWorkCoordinator>(sp =>
         new EFCoreWorkCoordinator<WorkCoordinationDbContext>(sp.GetRequiredService<WorkCoordinationDbContext>(), jsonOptions));
-      services.AddSingleton<IEventTypeProvider>(new EventTypes(typeof(AbsorbedShipmentNoted)));
+      if (perspectiveList) {
+        services.AddSingleton<IEventTypeProvider>(new EventTypes(typeof(AbsorbedShipmentNoted)));
+      } else {
+        // The catalog the generator emits for the contracts assembly: it declares the type an event.
+        services.AddSingleton<IMessageTypeCatalog>(new DeclaresAbsorbedEvent());
+      }
       services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
       // The shared discard policy, registered the way the worker pipeline registers it.
       services.AddSingleton<IMessageDiscardPolicy>(new MessageDiscardPolicy(
@@ -107,7 +123,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests {
         metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance,
         serviceInstanceProvider: new ServiceInstanceProvider((Guid)TrackedGuid.New(), SERVICE, "host", 1),
-        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
         routingOptions: Options.Create(routing),
         workChannelWriter: new WorkChannelWriter(),
         claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -183,6 +198,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests {
       public bool HasReceptors(LifecycleStage stage, string messageType) => false;
       public bool HasInboxHandler(string messageType) => false;
       public bool HasAnyConsumer(string messageType) => false;
+    }
+
+    private sealed class DeclaresAbsorbedEvent : IMessageTypeCatalog {
+      public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => [
+        new(typeof(AbsorbedShipmentNoted), TypeNameFormatter.FormatClrTypeName(typeof(AbsorbedShipmentNoted)), "event", PinnedId: null),
+      ];
     }
 
     private sealed class EventTypes(params Type[] types) : IEventTypeProvider {

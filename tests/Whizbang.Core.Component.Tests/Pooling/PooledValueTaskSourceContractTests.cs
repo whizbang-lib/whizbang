@@ -52,12 +52,13 @@ public class PooledValueTaskSourceContractTests {
   [Test]
   public async Task OnCompleted_CalledTwice_RejectsTheSecondRegistrationAsync() {
     var source = new PooledValueTaskSource<int>();
-    var firstRan = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var firstRan = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
     var secondRan = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var firstState = new object();
 
-    source.OnCompleted(_ => firstRan.TrySetResult(), state: null, source.Token, ValueTaskSourceOnCompletedFlags.None);
+    source.OnCompleted(state => firstRan.TrySetResult(state), firstState, source.Token, ValueTaskSourceOnCompletedFlags.None);
 
-    await Assert.That(() => source.OnCompleted(_ => secondRan.TrySetResult(), state: null, source.Token, ValueTaskSourceOnCompletedFlags.None))
+    await Assert.That(() => source.OnCompleted(_ => secondRan.TrySetResult(), state: new object(), source.Token, ValueTaskSourceOnCompletedFlags.None))
       .ThrowsExactly<InvalidOperationException>()
       .Because("a second continuation would overwrite the first, and the first awaiter — already "
              + "suspended on this source — would never be resumed");
@@ -65,7 +66,11 @@ public class PooledValueTaskSourceContractTests {
     source.SetResult(7);
 
     // The source dispatches continuations through the thread pool, so this is a wait, not a poll.
-    await firstRan.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    var resumedWith = await firstRan.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(resumedWith).IsSameReferenceAs(firstState)
+      .Because("the refused registration must not leave its state behind: the first awaiter's state is its state "
+             + "machine, and resuming it with another's is resuming the wrong code");
 
     await Assert.That(secondRan.Task.IsCompleted).IsFalse()
       .Because("the rejected continuation must never be installed OR invoked — the guard has to "

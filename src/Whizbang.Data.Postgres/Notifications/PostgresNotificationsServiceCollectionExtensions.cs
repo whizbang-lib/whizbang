@@ -12,7 +12,6 @@ using Microsoft.Extensions.Options;
 using Npgsql;
 using Whizbang.Core;
 using Whizbang.Core.Notifications;
-using Whizbang.Core.Notifications.AppSignals;
 using Whizbang.Core.Signals;
 using Whizbang.Core.Startup;
 
@@ -121,8 +120,8 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.TryAddSingletonOverNullDefault<IWorkNotificationListener>(sp => sp.GetRequiredService<PgWorkNotificationListener>());
     services.AddHostedService(sp => sp.GetRequiredService<PgWorkNotificationListener>());
 
-    // Slice 26.12: register the commit-order stamper worker. Singleton per pod via
-    // pg_try_advisory_lock — every instance hosts it, only the lock-holder actively stamps.
+    // Slice 26.12: register the commit-order stamper worker. Every instance hosts it; only the
+    // holder of the stamper's role (a role assignment, #2044) actively stamps.
     // Bound to CommitOrderStamperOptions via the same Whizbang:Database section.
     services.AddOptions<CommitOrderStamperOptions>();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
@@ -131,10 +130,12 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // Register as singleton AND as a hosted service so the worker is also
     // resolvable directly (tests and diagnostics rely on this).
     services.TryAddSingleton<PgCommitOrderStamperWorker>();
-    services.AddHostedService(sp => sp.GetRequiredService<PgCommitOrderStamperWorker>());
+    // Hosted to start at Accept commands (#1636): it stamps the message tables the data plane fills.
+    services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp => sp.GetRequiredService<PgCommitOrderStamperWorker>());
 
-    // App-signal channel (publishes pg_notify on wh_app_<topic>).
-    services.TryAddSingleton<IAppSignalChannel, PgAppSignalChannel>();
+    // App signals ride the signal bus (#2046), whose Postgres transport carries each topic on wh_app_<topic>. The channel
+    // is resolved per scope over the bus (#2076), so a publish inside the scope's transaction is delivered on its commit.
+    services.AddWhizbangAppSignalChannel();
 
     // System Signal Bus — ensure the bus itself is registered before we add the Postgres transport
     // and the hosted services that DEPEND on it (PgDurableSignalTailWorker needs ISignalSink —
@@ -195,7 +196,8 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // ScheduleWorker wakes on the ScheduleDueSignal doorbell (poll source / arm-on-mutation NOTIFY)
     // and reconciles on its backstop interval, draining due schedules through the claimer.
     services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleClaimer, PgScheduleClaimer>();
-    services.AddHostedService<Whizbang.Core.Temporal.ScheduleWorker>();
+    // Hosted to start at Accept commands (#1636): firing a schedule publishes into the message tables.
+    services.AddWhizbangWorker<Whizbang.Core.Temporal.ScheduleWorker>();
     // Temporal engine (F2): the schedule management API (create / pause / resume / cancel / trigger / update).
     services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleManager, PgScheduleManager>();
     // Saga deadlines ride the same engine — a deadline is a keyed one-shot schedule.
@@ -211,22 +213,25 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // on a per-instance cursor. Must-not-miss signals (e.g. InstanceDied → orphan takeover)
     // ride this tail as insurance against NOTIFY drops.
     services.TryAddSingleton<PgDurableSignalTailWorker>();
-    services.AddHostedService(sp => sp.GetRequiredService<PgDurableSignalTailWorker>());
+    // Hosted to start at Accept commands (#1636).
+    services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp => sp.GetRequiredService<PgDurableSignalTailWorker>());
 
     // Instance lifecycle monitor — scans wh_service_instances for stale heartbeats and
     // publishes the durable InstanceDiedSignal so live pods drive orphan takeover.
     services.TryAddSingleton<PgInstanceLifecycleMonitor>();
-    services.AddHostedService(sp => sp.GetRequiredService<PgInstanceLifecycleMonitor>());
+    // Hosted to start when the schema-ready gate opens (#1636): death detection is coordination, not work, and runs
+    // while this instance is alive but not yet eligible for work.
+    services.AddWhizbangWorkerAtSchemaReady(sp => sp.GetRequiredService<PgInstanceLifecycleMonitor>());
 
     // Retention sweep for wh_signals — deletes rows older than the retention window that every
     // pod's tail has already consumed. Runs hourly; a stalled tail keeps its rows alive because
     // the delete is gated by MIN(last_delivered_signal_id) across all cursors.
     services.TryAddSingleton<PgDurableSignalRetentionWorker>();
-    services.AddHostedService(sp => sp.GetRequiredService<PgDurableSignalRetentionWorker>());
+    // Hosted to start at Accept commands (#1636).
+    services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp => sp.GetRequiredService<PgDurableSignalRetentionWorker>());
 
-    // Duty election (#966 phase 3): duties are held by role assignment by default — a vote decides,
-    // the row is the role, with an epoch that fences exclusive work. The session-lock elector stays
-    // as the delegate for any duty not held by assignment, and a host's own elector is left alone.
+    // Duty election (#966 phase 3, #2044): every duty is held by role assignment; a vote decides,
+    // the row is the role, with an epoch that fences exclusive work. A host's own elector is left alone.
     // The commit-order stamper's leadership is one of the roles while the stamper is enabled.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       IPostConfigureOptions<Whizbang.Core.Startup.RoleAssignmentOptions>, CommitOrderStamperRoleOptions>());
@@ -292,7 +297,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       _applySearchPath(builder, options, sp);
       // Pool sizing for notification workers:
       //   - PgSharedNotifyConnection holds one long-lived LISTEN connection
-      //   - PgCommitOrderStamperWorker holds one long-lived advisory-lock connection
+      //   - PgCommitOrderStamperWorker holds one long-lived stamping connection while it leads
       //   - Both also issue short-lived stamp + probe + LISTEN-resync commands
       // 8 gives the long-held pair plus headroom for the burst connections under
       // contention. A smaller pool (we tried 4) starved test runs that drove
@@ -402,7 +407,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.AddSingleton<INotificationDataSource>(sp => {
       // Independent data source — its pool is NOT shared with EF Core.
       // 4 connections is plenty: one for the LISTEN/NOTIFY shared connection,
-      // one for the commit-order stamper's advisory-lock holder, plus headroom
+      // one for the commit-order stamper's stamping connection, plus headroom
       // for the leader-election retry and probe paths.
       var builder = new NpgsqlDataSourceBuilder(connectionString);
       var explicitOptions = sp.GetService<Microsoft.Extensions.Options.IOptions<WhizbangNotificationOptions>>()?.Value
@@ -410,7 +415,7 @@ public static class PostgresNotificationsServiceCollectionExtensions {
       _applySearchPath(builder, explicitOptions, sp);
       // Pool sizing for notification workers:
       //   - PgSharedNotifyConnection holds one long-lived LISTEN connection
-      //   - PgCommitOrderStamperWorker holds one long-lived advisory-lock connection
+      //   - PgCommitOrderStamperWorker holds one long-lived stamping connection while it leads
       //   - Both also issue short-lived stamp + probe + LISTEN-resync commands
       // 8 gives the long-held pair plus headroom for the burst connections under
       // contention. A smaller pool (we tried 4) starved test runs that drove
@@ -485,11 +490,6 @@ internal sealed class ConfigureCommitOrderStamperOptionsFromConfiguration(IConfi
       options.DisableStamper = disable;
     }
 
-    if (long.TryParse(section["AdvisoryLockKey"], System.Globalization.NumberStyles.Integer,
-        System.Globalization.CultureInfo.InvariantCulture, out var lockKey)) {
-      options.AdvisoryLockKey = lockKey;
-    }
-
     if (TimeSpan.TryParse(section["FencedRetryInterval"], System.Globalization.CultureInfo.InvariantCulture, out var fencedRetry)) {
       options.FencedRetryInterval = fencedRetry;
     }
@@ -530,10 +530,7 @@ internal sealed class ConfigureWhizbangNotificationOptionsFromConfiguration(ICon
       options.ConnectionStringKey = key;
     }
 
-    var direct = section["DirectConnectionString"];
-    if (!string.IsNullOrWhiteSpace(direct)) {
-      options.DirectConnectionString = direct;
-    }
+    Whizbang.Core.Configuration.ConfigurationValueBinder.BindSensitive(section, "DirectConnectionString", value => options.DirectConnectionString = value);
 
     if (bool.TryParse(section["DisableNotifications"], out var disable)) {
       options.DisableNotifications = disable;

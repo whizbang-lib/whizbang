@@ -21,9 +21,6 @@ namespace Whizbang.Data.Postgres.MultiStream;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandStoreSqlTests.cs:ClaimAsync_UnderAPublishedAssignment_EachInstanceClaimsOnlyItsPartitionShareAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandStoreSqlTests.cs:CompleteAsync_TheLastStream_CompletesTheRunOnceAsync</tests>
 public sealed class PgMultiStreamCommandStore : IMultiStreamCommandStore {
-  /// <summary>The channel a newly recorded run is announced on; the payload is the run id.</summary>
-  public const string CHANNEL = MultiStreamCommandWorker.CHANNEL;
-
   private readonly WhizbangNotificationOptions _options;
   private readonly IConfiguration _configuration;
   private readonly int _partitionCount;
@@ -57,7 +54,7 @@ public sealed class PgMultiStreamCommandStore : IMultiStreamCommandStore {
     ArgumentNullException.ThrowIfNull(run);
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using var connectionScope = connection.ConfigureAwait(false);
-    await using var cmd = connection.CreateCommand();
+    await using var cmd = connection.CreateWhizbangCommand();
     cmd.CommandText = "SELECT wh_record_multi_stream_run(@run_id, @type, @payload, @scope, @streams, @partitions)";
     cmd.Parameters.AddWithValue("run_id", run.RunId);
     cmd.Parameters.AddWithValue("type", run.CommandType);
@@ -74,7 +71,7 @@ public sealed class PgMultiStreamCommandStore : IMultiStreamCommandStore {
     var items = new List<MultiStreamWorkItem>();
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
-      await using var cmd = connection.CreateCommand();
+      await using var cmd = connection.CreateWhizbangCommand();
       cmd.CommandText = "SELECT run_id, stream_id, command_type, payload, scope, attempt "
         + "FROM wh_claim_multi_stream_work(@instance, @batch, @lease, @epoch, @revision)";
       cmd.Parameters.AddWithValue("instance", claim.InstanceId);
@@ -120,7 +117,7 @@ public sealed class PgMultiStreamCommandStore : IMultiStreamCommandStore {
     }
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
-      await using var cmd = connection.CreateCommand();
+      await using var cmd = connection.CreateWhizbangCommand();
       cmd.CommandText = "SELECT run_id, command_type, stream_count, succeeded, failed "
         + "FROM wh_complete_multi_stream_work(@instance, @runs, @streams, @errors, @released, @attempts, @release)";
       cmd.Parameters.AddWithValue("instance", instanceId);
@@ -147,7 +144,7 @@ public sealed class PgMultiStreamCommandStore : IMultiStreamCommandStore {
   public async Task<MultiStreamRunStatus?> ReadRunAsync(Guid runId, CancellationToken cancellationToken) {
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using var connectionScope = connection.ConfigureAwait(false);
-    await using var cmd = connection.CreateCommand();
+    await using var cmd = connection.CreateWhizbangCommand();
     cmd.CommandText = "SELECT run_id, command_type, stream_count, succeeded, failed, pending, created_at, completed_at "
       + "FROM wh_read_multi_stream_run(@run)";
     cmd.Parameters.AddWithValue("run", runId);
@@ -170,7 +167,7 @@ public sealed class PgMultiStreamCommandStore : IMultiStreamCommandStore {
   public async Task<int> PurgeCompletedAsync(DateTimeOffset completedBefore, CancellationToken cancellationToken) {
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using var connectionScope = connection.ConfigureAwait(false);
-    await using var cmd = connection.CreateCommand();
+    await using var cmd = connection.CreateWhizbangCommand();
     cmd.CommandText = "SELECT wh_purge_multi_stream_runs(@before)";
     cmd.Parameters.AddWithValue("before", completedBefore);
     return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);

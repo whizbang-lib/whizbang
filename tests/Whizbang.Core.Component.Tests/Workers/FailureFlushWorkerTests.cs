@@ -101,7 +101,6 @@ public class FailureFlushWorkerTests {
 
     var worker = new FailureFlushWorker(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       options: Options.Create(new FailureFlushWorkerOptions { Enabled = enabled }),
       logger: logger ?? NullLogger<FailureFlushWorker>.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance);
@@ -232,21 +231,12 @@ public class FailureFlushWorkerTests {
 
     await Assert.That(() => new FailureFlushWorker(
         scopeFactory: null!,
-        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
         options: options,
         logger: NullLogger<FailureFlushWorker>.Instance,
         pinnedPool: NoOpPinnedConnectionPool.Instance))
       .Throws<ArgumentNullException>();
     await Assert.That(() => new FailureFlushWorker(
         scopeFactory: scopeFactory,
-        schemaReadyGate: null!,
-        options: options,
-        logger: NullLogger<FailureFlushWorker>.Instance,
-        pinnedPool: NoOpPinnedConnectionPool.Instance))
-      .Throws<ArgumentNullException>();
-    await Assert.That(() => new FailureFlushWorker(
-        scopeFactory: scopeFactory,
-        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
         options: null!,
         logger: NullLogger<FailureFlushWorker>.Instance,
         pinnedPool: NoOpPinnedConnectionPool.Instance))

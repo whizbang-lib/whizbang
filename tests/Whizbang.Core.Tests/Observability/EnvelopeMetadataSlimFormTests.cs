@@ -41,6 +41,8 @@ public class EnvelopeMetadataSlimFormTests {
   private static EnvelopeMetadata _full() => new() {
     MessageId = _id,
     EphemeralTtlSeconds = 3600,
+    SupersedingKey = "model-a",
+    SupersedingGroup = "model-state",
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
     ReceptorInvocations = [],
     Hops = [
@@ -87,6 +89,10 @@ public class EnvelopeMetadataSlimFormTests {
 
     await Assert.That(slim.MessageId).IsEqualTo(_id);
     await Assert.That(slim.EphemeralTtlSeconds).IsEqualTo(3600);
+    await Assert.That(slim.SupersedingKey).IsEqualTo("model-a")
+      .Because("the emit chain stamps the superseding key from the stored metadata, so the slim form must keep it");
+    await Assert.That(slim.SupersedingGroup).IsEqualTo("model-state")
+      .Because("#2124: the group is stamped beside the key, and the SQL slim form keeps every key it does not know");
     await Assert.That(slimEnvelope.GetMessageTimestamp()).IsEqualTo(fullEnvelope.GetMessageTimestamp());
     await Assert.That(slimEnvelope.GetCorrelationId()).IsEqualTo(fullEnvelope.GetCorrelationId());
     await Assert.That(slimEnvelope.GetCausationId()).IsEqualTo(fullEnvelope.GetCausationId());
@@ -108,7 +114,8 @@ public class EnvelopeMetadataSlimFormTests {
     await Assert.That(hop.Type).IsEqualTo(HopType.Current);
     await Assert.That(hop.StreamId).IsEqualTo("order-1");
     await Assert.That(hop.ServiceInstance).IsEqualTo(ServiceInstanceInfo.Unknown);
-    await Assert.That(hop.TraceParent).IsNull();
+    await Assert.That(hop.TraceParent).IsEqualTo("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
+      .Because("#1725: the first hop's trace parent is kept, so perspective spans keep joining the event's trace");
     await Assert.That(hop.CallerMemberName).IsNull();
     await Assert.That(hop.Topic).IsEmpty();
     await Assert.That(slim.DispatchContext).IsNull();
@@ -128,6 +135,8 @@ public class EnvelopeMetadataSlimFormTests {
     var read = JsonSerializer.Deserialize(json, _metadataInfo)!;
 
     await Assert.That(read.MessageId).IsEqualTo(_id);
+    await Assert.That(read.SupersedingGroup).IsEqualTo("model-state");
+    await Assert.That(json).Contains("\"sg\":\"model-state\"").Because("the emit chains read the group as 'sg'");
     await Assert.That(read.Hops.Single().ServiceInstance).IsEqualTo(ServiceInstanceInfo.Unknown);
     await Assert.That(read.Hops.Single().CorrelationId).IsEqualTo(_correlation);
     await Assert.That(read.Hops.Single().Timestamp).IsEqualTo(_sent);
@@ -136,13 +145,15 @@ public class EnvelopeMetadataSlimFormTests {
 
   [Test]
   public async Task ToSlim_NoHopsOrNoScope_KeepsTheMessageIdAloneAsync() {
-    var empty = new EnvelopeMetadata { MessageId = _id, Hops = [] }.ToSlim();
+    var empty = new EnvelopeMetadata { MessageId = _id, Hops = [], SupersedingKey = "k", SupersedingGroup = "g" }.ToSlim();
     var unscoped = new EnvelopeMetadata {
       MessageId = _id,
       Hops = [new MessageHop { ServiceInstance = _instance, Timestamp = _sent }],
     }.ToSlim();
 
     await Assert.That(empty.Hops).IsEmpty();
+    await Assert.That(empty.SupersedingKey).IsEqualTo("k").Because("a hop-less document keeps the superseding key too");
+    await Assert.That(empty.SupersedingGroup).IsEqualTo("g");
     await Assert.That(unscoped.Hops.Single().Scope).IsNull();
     await Assert.That(unscoped.Hops.Single().Timestamp).IsEqualTo(_sent);
   }

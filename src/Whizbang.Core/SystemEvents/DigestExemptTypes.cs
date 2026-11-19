@@ -19,7 +19,7 @@ namespace Whizbang.Core.SystemEvents;
 /// </para>
 /// </remarks>
 /// <docs>resilience/stream-integrity#what-is-digested</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/DigestExemptTypesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/DigestExemptTypesTests.cs</tests>
 public static class DigestExemptTypes {
   /// <summary>The full type names (namespace and type, no assembly) of the event types left out of every digest.</summary>
   public static IReadOnlyList<string> TypeNames { get; } = [

@@ -163,4 +163,70 @@ public class StreamIntegrityMetricsCoverageTests {
     await Assert.That(oldestAge).Contains(125.5)
       .Because("the oldest unhealed age distinguishes a transient blip from a divergence that has been stuck for a long time");
   }
+
+  // #2029 and #2035: buckets waiting on an answer, buckets answered and waiting for the next comparison, and the
+  // integrity deliveries waiting for the maintainer. Values come from the same snapshot as the ledger gauges, read on
+  // every maintenance tick on every instance.
+  [Test]
+  public async Task AnswerAndDeliveryGauges_ReportLiveSnapshotValuesAsync() {
+    var longs = new List<(string Name, long Value)>();
+    var doubles = new List<(string Name, double Value)>();
+    using var listener = new MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (instrument.Meter.Name == StreamIntegrityMetrics.METER_NAME) {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((instrument, value, _, _) => {
+      lock (longs) { longs.Add((instrument.Name, value)); }
+    });
+    listener.SetMeasurementEventCallback<double>((instrument, value, _, _) => {
+      lock (doubles) { doubles.Add((instrument.Name, value)); }
+    });
+    listener.Start();
+
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    metrics.UpdateLedgerGauges(new LedgerGaugeSnapshot {
+      AnswerPendingBuckets = 11,
+      AnsweredBuckets = 13,
+      IntegrityDeliveriesPending = 17,
+      OldestIntegrityDeliveryAgeSeconds = 42.5,
+    });
+    listener.RecordObservableInstruments();
+
+    await Assert.That(longs).Contains(("whizbang.stream_integrity.repair_answer_pending_buckets", 11L));
+    await Assert.That(longs).Contains(("whizbang.stream_integrity.repair_answered_buckets", 13L));
+    await Assert.That(longs).Contains(("whizbang.stream_integrity.deliveries_pending", 17L))
+      .Because("a delivery queue that grows faster than the maintainer drains it must be visible");
+    await Assert.That(doubles).Contains(("whizbang.stream_integrity.oldest_delivery_age_seconds", 42.5));
+  }
+
+  // #2203: the data left to heal (deficit events in buckets repair can still act on) and the unhealable buckets, so
+  // the unhealed_buckets headline splits into repairable and unhealable. Same snapshot, same read as the gauges above.
+  [Test]
+  public async Task HealRemainingGauges_ReportLiveSnapshotValuesAsync() {
+    var longs = new List<(string Name, long Value)>();
+    using var listener = new MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (instrument.Meter.Name == StreamIntegrityMetrics.METER_NAME) {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((instrument, value, _, _) => {
+      lock (longs) { longs.Add((instrument.Name, value)); }
+    });
+    listener.Start();
+
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    metrics.UpdateLedgerGauges(new LedgerGaugeSnapshot {
+      UnhealedDeficitEvents = 100_019,
+      UnhealableBuckets = 23,
+    });
+    listener.RecordObservableInstruments();
+
+    await Assert.That(longs).Contains(("whizbang.stream_integrity.unhealed_deficit_events", 100_019L))
+      .Because("one bucket can be missing one event or a hundred thousand; the bucket count alone hides how much is left");
+    await Assert.That(longs).Contains(("whizbang.stream_integrity.unhealable_buckets", 23L))
+      .Because("unhealable buckets need an operator, not patience, and the headline count mixes them with repairable ones");
+  }
 }

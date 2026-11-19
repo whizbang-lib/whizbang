@@ -58,6 +58,7 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// </summary>
   private sealed class EventRow {
     public Guid Id { get; init; }
+    public Guid StreamId { get; init; }
     public string EventType { get; init; } = string.Empty;
     public int Version { get; init; }
     public bool IsFirstInStream { get; init; }
@@ -85,6 +86,7 @@ public sealed class EFCoreEventStore<TDbContext>(
     from b in bodies.DefaultIfEmpty()
     select new EventRow {
       Id = e.Id,
+      StreamId = e.StreamId,
       EventType = e.EventType,
       Version = e.Version,
       // The first event in its stream (#1878): version 0, or version 1 when the stream holds no version 0. The
@@ -130,21 +132,9 @@ public sealed class EFCoreEventStore<TDbContext>(
   public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(message);
 
-    // Create a minimal envelope - registry-based lookup would require constructor injection
-    var envelope = new MessageEnvelope<TMessage> {
-      MessageId = MessageId.New(),
-      Payload = message,
-      Hops = [
-        new MessageHop {
-          ServiceInstance = ServiceInstanceInfo.Unknown,
-          Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = System.Diagnostics.Activity.Current?.Id
-        }
-      ],
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
-    };
-
-    return AppendAsync(streamId, envelope, cancellationToken);
+    // Create a minimal envelope - registry-based lookup would require constructor injection. The book closer (#1741)
+    // stores its events with the same one.
+    return AppendAsync(streamId, EFCoreEventStoreRows.MinimalEnvelope(message), cancellationToken);
   }
 
   private async Task _appendCoreAsync<TMessage>(
@@ -157,10 +147,7 @@ public sealed class EFCoreEventStore<TDbContext>(
 
     // Envelope metadata is bound as the same POCO EF Core's jsonb mapping wrote, so the stored
     // document is produced by the same serializer as before (the data source's JSON options).
-    var metadata = new EnvelopeMetadata {
-      MessageId = envelope.MessageId,
-      Hops = envelope.Hops?.ToList() ?? []
-    };
+    var metadata = EFCoreEventStoreRows.MetadataOf(envelope);
 
     // The append used to ride SaveChangesAsync, which also flushed whatever else the shared, scoped
     // context was tracking. Callers may depend on that, so pending changes are still saved first.
@@ -332,6 +319,27 @@ public sealed class EFCoreEventStore<TDbContext>(
   }
 
   /// <summary>
+  /// The commit sequences of many events in one statement (#2246): what a set-based batch records for the last event of
+  /// each of its pairs, read once for the batch instead of once per pair.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs:GetCommitSequencesAsync_AnswersEveryEventInOneQueryAsync</tests>
+  public async Task<IReadOnlyDictionary<Guid, long?>> GetCommitSequencesAsync(
+      IReadOnlyCollection<Guid> eventIds, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventIds);
+    if (eventIds.Count == 0) {
+      return new Dictionary<Guid, long?>();
+    }
+    var ids = eventIds.ToArray();
+    var records = await _context.Set<EventStoreRecord>()
+      .AsNoTracking()
+      .Where(e => ids.Contains(e.Id))
+      .Select(e => new { e.Id, e.CommitSequence })
+      .ToListAsync(cancellationToken);
+    return records.ToDictionary(r => r.Id, r => r.CommitSequence);
+  }
+
+  /// <summary>
   /// Perspective row retention — the resurrection-on-wake history probe: does this stream hold
   /// any event ordered before the given id? An indexed EXISTS over the stream's pointer rows;
   /// UUIDv7 ordering is safe at this granularity (a reaped row's history predates the waking
@@ -339,10 +347,15 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// </summary>
   /// <docs>fundamentals/perspectives/row-retention</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchivedStreamHistoryProbeSqlTests.cs</tests>
   public async Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) {
-    return await _context.Set<EventStoreRecord>()
-      .AsNoTracking()
-      .AnyAsync(e => e.StreamId == streamId && e.Id.CompareTo(beforeEventId) < 0, cancellationToken);
+    // #1933: one statement that also reads the stream's ledger row, so archived history counts and a stream never
+    // archived costs the one round trip it always did.
+    return await _queryHistoryAsync(Whizbang.Data.Postgres.ArchivedStreamHistorySql.HasEventsBefore, streamId, beforeEventId,
+      async reader => {
+        _ = await reader.ReadAsync(cancellationToken);
+        return reader.GetBoolean(0);
+      }, cancellationToken);
   }
 
   /// <summary>
@@ -355,28 +368,113 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// </summary>
   /// <docs>fundamentals/perspectives/row-retention</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchivedStreamHistoryProbeSqlTests.cs</tests>
   public async Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(eventTypes);
     if (eventTypes.Count == 0) {
       return false;
     }
-    var storedTypes = await _context.Set<EventStoreRecord>()
-      .AsNoTracking()
-      .Where(e => e.StreamId == streamId && e.Id.CompareTo(beforeEventId) < 0)
-      .Select(e => e.EventType)
-      .Distinct()
-      .ToListAsync(cancellationToken);
-    return _anyStoredTypeIsHandled(storedTypes, eventTypes);
+    var storedTypes = await _queryHistoryAsync(Whizbang.Data.Postgres.ArchivedStreamHistorySql.EventTypesBefore, streamId, beforeEventId,
+      async reader => {
+        var rows = new List<string?>();
+        while (await reader.ReadAsync(cancellationToken)) {
+          rows.Add(await reader.IsDBNullAsync(0, cancellationToken) ? null : reader.GetString(0));
+        }
+        return rows;
+      }, cancellationToken);
+    return Whizbang.Data.Postgres.ArchivedStreamHistorySql.AnyHandledOrArchived(storedTypes, eventTypes);
   }
 
-  private static bool _anyStoredTypeIsHandled(IEnumerable<string> storedTypes, IReadOnlyList<Type> eventTypes) {
-    var lookup = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
-    foreach (var stored in storedTypes) {
-      if (EventTypeMatchingHelper.TryResolveType(lookup, stored, out _)) {
-        return true;
+  /// <summary>
+  /// The typed history probe for many streams in one statement (#2246): the batched probe a set-based batch asks for
+  /// the streams whose rows it found missing. Each stream's stored types are matched exactly as the per-stream probe
+  /// matches them, and archived history counts the same way.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs:StreamsWithEventsBeforeAsync_AnswersEveryStreamInOneQueryAsync</tests>
+  public async Task<IReadOnlySet<Guid>> StreamsWithEventsBeforeAsync(
+      IReadOnlyList<(Guid StreamId, Guid BeforeEventId)> probes, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(probes);
+    ArgumentNullException.ThrowIfNull(eventTypes);
+    var found = new HashSet<Guid>();
+    if (probes.Count == 0 || eventTypes.Count == 0) {
+      return found;
+    }
+    var prefix = Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(
+      EFCoreWorkCoordinator<TDbContext>.ResolveSchema(_context.Model, typeof(EventStoreRecord), logger: null));
+    var storedByStream = new Dictionary<Guid, List<string?>>();
+    await _context.Database.OpenConnectionAsync(cancellationToken);
+    try {
+      await using var command = _context.Database.GetDbConnection().CreateCommand();
+      command.Transaction = _context.Database.CurrentTransaction?.GetDbTransaction();
+#pragma warning disable S2077 // The schema prefix is quoted from the EF model, never from input; values are parameters.
+      command.CommandText = Whizbang.Data.Postgres.ArchivedStreamHistorySql.EventTypesBeforeMany(prefix);
+#pragma warning restore S2077
+      command.Parameters.Add(new NpgsqlParameter("StreamIds", NpgsqlDbType.Array | NpgsqlDbType.Uuid) {
+        Value = probes.Select(p => p.StreamId).ToArray()
+      });
+      command.Parameters.Add(new NpgsqlParameter("BeforeEventIds", NpgsqlDbType.Array | NpgsqlDbType.Uuid) {
+        Value = probes.Select(p => p.BeforeEventId).ToArray()
+      });
+      await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+      while (await reader.ReadAsync(cancellationToken)) {
+        var streamId = reader.GetGuid(0);
+        if (!storedByStream.TryGetValue(streamId, out var stored)) {
+          storedByStream[streamId] = stored = [];
+        }
+        stored.Add(await reader.IsDBNullAsync(1, cancellationToken) ? null : reader.GetString(1));
+      }
+    } finally {
+      await _context.Database.CloseConnectionAsync();
+    }
+    foreach (var (streamId, stored) in storedByStream) {
+      if (Whizbang.Data.Postgres.ArchivedStreamHistorySql.AnyHandledOrArchived(stored, eventTypes)) {
+        found.Add(streamId);
       }
     }
-    return false;
+    return found;
+  }
+
+  /// <summary>
+  /// The stream's start once its first event is gone (#2152): the business time the superseding reaper or a prefix
+  /// truncate recorded on the stream's ledger row when it removed that event. Null while the stream holds it.
+  /// </summary>
+  /// <docs>fundamentals/events/superseding-events#what-a-rebuild-keeps</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamStartedAtSqlTests.cs:EventStore_GetStreamStartedAt_ReadsTheStreamsStartAsync</tests>
+  public Task<DateTime?> GetStreamStartedAtAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+    _queryHistoryAsync(Whizbang.Data.Postgres.StreamStartSql.StartedAt, streamId, beforeEventId: null,
+      async reader => {
+        _ = await reader.ReadAsync(cancellationToken);
+        return await reader.IsDBNullAsync(0, cancellationToken)
+          ? (DateTime?)null
+          : DateTime.SpecifyKind(reader.GetDateTime(0), DateTimeKind.Utc);
+      }, cancellationToken);
+
+  // Runs one of the version questions (#1933) on the context's connection and in its current transaction, qualified with
+  // the schema the event store table is mapped to.
+  private async Task<T> _queryHistoryAsync<T>(Func<string, string> sql, Guid streamId, Guid? beforeEventId,
+      Func<System.Data.Common.DbDataReader, Task<T>> read, CancellationToken cancellationToken) {
+    var prefix = Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(
+      EFCoreWorkCoordinator<TDbContext>.ResolveSchema(_context.Model, typeof(EventStoreRecord), logger: null));
+    T result;
+    await _context.Database.OpenConnectionAsync(cancellationToken);
+    try {
+      await using var command = _context.Database.GetDbConnection().CreateCommand();
+      command.Transaction = _context.Database.CurrentTransaction?.GetDbTransaction();
+#pragma warning disable S2077 // The schema prefix is quoted from the EF model, never from input; values are parameters.
+      command.CommandText = sql(prefix);
+#pragma warning restore S2077
+      command.Parameters.Add(new NpgsqlParameter("StreamId", NpgsqlDbType.Uuid) { Value = streamId });
+      if (beforeEventId is { } before) {
+        command.Parameters.Add(new NpgsqlParameter("BeforeEventId", NpgsqlDbType.Uuid) { Value = before });
+      }
+      await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+      result = await read(reader);
+    } finally {
+      await _context.Database.CloseConnectionAsync();
+    }
+    return result;
   }
 
   /// <summary>
@@ -398,64 +496,188 @@ public sealed class EFCoreEventStore<TDbContext>(
     // backward against their versions, and a replay in that order folded the stream's last event first.
     // ReplayEventOrder makes the final call from the envelope (LocalStreamVersion); reading in the same order keeps
     // the two agreeing for any caller that takes the read as it comes.
-    var query = _bodyAwareRows(fromEventId == null
+    // "After" an event is after its position in the stream, its version (#2379): reading after its id selected nothing
+    // when the event carries the stream's highest id, and a rewind from a snapshot there replayed nothing, forever.
+    var query = _bodyAwareRows((fromEventId == null
       ? _context.Set<EventStoreRecord>()
           .AsNoTracking()
           .Where(e => e.StreamId == streamId)
-          .OrderBy(e => e.Version)
-          .ThenBy(e => e.Id)
-      : _context.Set<EventStoreRecord>()
-          .AsNoTracking()
-          .Where(e => e.StreamId == streamId && e.Id.CompareTo(fromEventId.Value) > 0)
+      : _afterInStream(streamId, fromEventId.Value))
           .OrderBy(e => e.Version)
           .ThenBy(e => e.Id))
       .AsAsyncEnumerable();
 
     await foreach (var record in query.WithCancellation(cancellationToken)) {
-      // Look up the concrete type from the EventType column (canonical resolver — skip unknowns)
-      if (!EventTypeMatchingHelper.TryResolveType(typeMap, record.EventType, out var concreteType)) {
-        continue;
+      if (_envelopeOf(record, typeMap) is { } envelope) {
+        yield return envelope;
       }
-      if (record.EventData is null || record.Metadata is null) {
-        continue;   // reaped ephemeral body — consumed, snapshot-covered history
-      }
-
-      // Deserialize the event payload to the concrete type
-      var eventData = _deserializePayload(record, record.EventData.Value, concreteType);
-
-      var hops = _restoreScopeInHops(record.Metadata, record.Scope);
-
-      // Reconstruct the message envelope with the polymorphic payload cast to IEvent.
-      // LocalCommitSequence carries the wh_event_store.commit_sequence stamp so the
-      // perspective runner's idempotency filter can compare against
-      // metadata.CommitSequence — required to keep UUIDv7 generation-time inversions
-      // from silently dropping late events (production forensic G5).
-      var envelope = new MessageEnvelope<IEvent> {
-        MessageId = record.Metadata.MessageId,
-        Payload = (IEvent)eventData,
-        Hops = hops,
-        DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
-        LocalCommitSequence = record.CommitSequence,
-        // The stream's own order (#1352): replay folds by version, because a commit sequence stamped after the fact
-        // can run backward against the order the stream was written in.
-        LocalStreamVersion = record.Version,
-        // Decided by the query from the event's position, whatever the read starts after (#1878).
-        IsFirstInLocalStream = record.IsFirstInStream,
-        // Origin identity rides the replay read: the rewind's origin-order slotting keys on it
-        // (a reconciled straggler's local sequence is arrival-fresh, but its origin sequence is
-        // its true position in the stream). Dropping it demotes single-origin streams to
-        // local-commit order and re-applies stragglers last.
-        SourceServiceId = record.OriginServiceId ?? Guid.Empty,
-        SourceCommitSequence = record.OriginCommitSequence ?? 0,
-      };
-
-      yield return envelope;
     }
   }
 
   /// <summary>
-  /// Gets events between two checkpoint positions (exclusive start, inclusive end).
-  /// Used by lifecycle receptors to load events that were just processed by a perspective.
+  /// <see cref="ReadPolymorphicAsync"/> for many streams with at most two statements (#2246): one for the streams read
+  /// from their start, one for the rest, each read after the earliest of its anchors by version (#2379). Each stream's
+  /// events come in its own order, as the per-stream read returns them. Null, so each pair reads its own events, when an
+  /// anchor is not held by its stream.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#the-batch</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreReadAfterVersionTests.cs:ReadPolymorphicManyAsync_CutsEachStreamAtItsAnchorsVersion_FromTheEarliestByVersionAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreReadAfterVersionTests.cs:ReadPolymorphicManyAsync_AnAnchorItsStreamDoesNotHold_LeavesEachPairToItsOwnReadAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:ReadPolymorphicManyAsync_ReadsEveryStreamAsThePerStreamReadDoesAsync</tests>
+  public async Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
+      IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(streams);
+    ArgumentNullException.ThrowIfNull(eventTypes);
+    var typeMap = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
+    // A stream asked from its start (null) is read whole; every other stream from the earliest of its anchors in stream
+    // order, its version (#2379).
+    var whole = streams.Where(s => s.FromEventId is null).Select(s => s.StreamId).ToHashSet();
+    var anchorsByStream = streams
+      .Where(s => s.FromEventId is not null && !whole.Contains(s.StreamId))
+      .GroupBy(s => s.StreamId)
+      .ToDictionary(g => g.Key, g => g.Select(s => s.FromEventId!.Value).Distinct().ToArray());
+    var read = new Dictionary<Guid, List<MessageEnvelope<IEvent>>>();
+    foreach (var (stream, _) in streams) {
+      read[stream] = [];
+    }
+    if (whole.Count > 0) {
+      var wholeIds = whole.ToArray();
+      await _readManyIntoAsync(_context.Set<EventStoreRecord>().AsNoTracking().Where(e => wholeIds.Contains(e.StreamId)),
+        typeMap, read, cancellationToken);
+    }
+    if (anchorsByStream.Count > 0 && !await _readManyAfterAnchorsAsync(anchorsByStream, typeMap, read, cancellationToken)) {
+      return null;
+    }
+    return read.ToDictionary(r => r.Key, r => (IReadOnlyList<MessageEnvelope<IEvent>>)r.Value);
+  }
+
+  /// <summary>
+  /// The anchored streams of a batched read, in one statement (#2379): each stream's events above the earliest of its
+  /// anchors by version, read together with the anchors themselves, whose rows give their positions. False, with nothing
+  /// added, when an anchor is not held by its stream: it has no position the batch can cut at, so each pair reads its own.
+  /// </summary>
+  private async Task<bool> _readManyAfterAnchorsAsync(
+      Dictionary<Guid, Guid[]> anchorsByStream, Dictionary<string, Type> typeMap,
+      Dictionary<Guid, List<MessageEnvelope<IEvent>>> read, CancellationToken cancellationToken) {
+    var ids = anchorsByStream.Keys.ToArray();
+    var anchorIds = anchorsByStream.Values.SelectMany(a => a).Distinct().ToArray();
+    var events = _context.Set<EventStoreRecord>().AsNoTracking();
+    var pointers = events.Where(e => ids.Contains(e.StreamId)
+      && (anchorIds.Contains(e.Id)
+        || e.Version > events.Where(a => a.StreamId == e.StreamId && anchorIds.Contains(a.Id)).Min(a => (int?)a.Version)));
+    var rows = await _bodyAwareRows(pointers.OrderBy(e => e.StreamId).ThenBy(e => e.Version).ThenBy(e => e.Id))
+      .ToListAsync(cancellationToken);
+    var held = rows.Where(r => anchorIds.Contains(r.Id)).ToDictionary(r => r.Id, r => (r.StreamId, r.Version));
+    var floors = new Dictionary<Guid, int>();
+    foreach (var (stream, anchors) in anchorsByStream) {
+      if (anchors.Any(a => !held.TryGetValue(a, out var position) || position.StreamId != stream)) {
+        return false;
+      }
+      floors[stream] = anchors.Min(a => held[a].Version);
+    }
+    foreach (var record in rows.Where(r => r.Version > floors[r.StreamId])) {
+      if (_envelopeOf(record, typeMap) is { } envelope) {
+        read[record.StreamId].Add(envelope);
+      }
+    }
+    return true;
+  }
+
+  /// <summary>
+  /// The stream's events after <paramref name="fromEventId"/>'s position in it, its version (#2379). An anchor the stream
+  /// does not hold has no position in it, so the read keeps the order it always had for one: after its id.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreReadAfterVersionTests.cs</tests>
+  private IQueryable<EventStoreRecord> _afterInStream(Guid streamId, Guid fromEventId) {
+    var events = _context.Set<EventStoreRecord>().AsNoTracking();
+    var anchor = events.Where(a => a.StreamId == streamId && a.Id == fromEventId);
+    return events.Where(e => e.StreamId == streamId
+      && (e.Version > anchor.Select(a => (int?)a.Version).FirstOrDefault()
+        || (!anchor.Any() && e.Id.CompareTo(fromEventId) > 0)));
+  }
+
+  /// <summary>
+  /// The stream's events after <paramref name="afterEventId"/>'s position in it, through <paramref name="upToEventId"/>'s,
+  /// in stream order (#2381): the batch a perspective just processed, as its cursor and its replay count it. A checkpoint
+  /// the stream does not hold has no position in it and is compared by id, as <see cref="_afterInStream"/> does;
+  /// <see cref="Guid.Empty"/> as the upper checkpoint is no bound, and a null lower one reads from the stream's start.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreReadAfterVersionTests.cs</tests>
+  private IQueryable<EventStoreRecord> _betweenInStream(Guid streamId, Guid? afterEventId, Guid upToEventId) {
+    var events = _context.Set<EventStoreRecord>().AsNoTracking();
+    var query = afterEventId is { } after
+      ? _afterInStream(streamId, after)
+      : events.Where(e => e.StreamId == streamId);
+    if (upToEventId != Guid.Empty) {
+      var upTo = events.Where(a => a.StreamId == streamId && a.Id == upToEventId);
+      query = query.Where(e => e.Version <= upTo.Select(a => (int?)a.Version).FirstOrDefault()
+        || (!upTo.Any() && e.Id.CompareTo(upToEventId) <= 0));
+    }
+    return query.OrderBy(e => e.Version).ThenBy(e => e.Id);
+  }
+
+  private async Task _readManyIntoAsync(
+      IQueryable<EventStoreRecord> pointers, Dictionary<string, Type> typeMap, Dictionary<Guid, List<MessageEnvelope<IEvent>>> read,
+      CancellationToken cancellationToken) {
+    var rows = _bodyAwareRows(pointers.OrderBy(e => e.StreamId).ThenBy(e => e.Version).ThenBy(e => e.Id));
+    await foreach (var record in rows.AsAsyncEnumerable().WithCancellation(cancellationToken)) {
+      if (_envelopeOf(record, typeMap) is { } envelope) {
+        read[record.StreamId].Add(envelope);
+      }
+    }
+  }
+
+  /// <summary>
+  /// The envelope of one stored event as the polymorphic read builds it, or null for an event of a type not asked for, or
+  /// whose body was reaped. The one mapping <see cref="ReadPolymorphicAsync"/> and its batched form share.
+  /// </summary>
+  private MessageEnvelope<IEvent>? _envelopeOf(EventRow record, Dictionary<string, Type> typeMap) {
+    // Look up the concrete type from the EventType column (canonical resolver, skip unknowns)
+    if (!EventTypeMatchingHelper.TryResolveType(typeMap, record.EventType, out var concreteType)) {
+      return null;
+    }
+    if (record.EventData is null || record.Metadata is null) {
+      return null;   // reaped ephemeral body, consumed, snapshot-covered history
+    }
+
+    // Deserialize the event payload to the concrete type
+    var eventData = _deserializePayload(record, record.EventData.Value, concreteType);
+
+    var hops = _restoreScopeInHops(record.Metadata, record.Scope);
+
+    // Reconstruct the message envelope with the polymorphic payload cast to IEvent.
+    // LocalCommitSequence carries the wh_event_store.commit_sequence stamp so the
+    // perspective runner's idempotency filter can compare against
+    // metadata.CommitSequence, required to keep UUIDv7 generation-time inversions
+    // from silently dropping late events (production forensic G5).
+    var envelope = new MessageEnvelope<IEvent> {
+      MessageId = record.Metadata.MessageId,
+      Payload = (IEvent)eventData,
+      Hops = hops,
+      DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+      LocalCommitSequence = record.CommitSequence,
+      // The stream's own order (#1352): replay folds by version, because a commit sequence stamped after the fact
+      // can run backward against the order the stream was written in.
+      LocalStreamVersion = record.Version,
+      // Decided by the query from the event's position, whatever the read starts after (#1878).
+      IsFirstInLocalStream = record.IsFirstInStream,
+      // Origin identity rides the replay read: the rewind's origin-order slotting keys on it
+      // (a reconciled straggler's local sequence is arrival-fresh, but its origin sequence is
+      // its true position in the stream). Dropping it demotes single-origin streams to
+      // local-commit order and re-applies stragglers last.
+      SourceServiceId = record.OriginServiceId ?? Guid.Empty,
+      SourceCommitSequence = record.OriginCommitSequence ?? 0,
+    };
+
+    return envelope;
+  }
+
+  /// <summary>
+  /// Gets events between two checkpoint positions (exclusive start, inclusive end), by their positions in the stream and
+  /// in stream order (#2381). Used by lifecycle receptors to load events that were just processed by a perspective.
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_WithEventsInRange_ReturnsEventsBetweenCheckpointsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
@@ -467,23 +689,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       Guid upToEventId,
       CancellationToken cancellationToken = default) {
 
-    // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
-    // Guid.Empty means "no upper bound" - read all events for the stream
-    IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
-      .AsNoTracking()
-      .Where(e => e.StreamId == streamId);
-
-    // Apply upper bound only if upToEventId is not Guid.Empty
-    if (upToEventId != Guid.Empty) {
-      query = query.Where(e => e.Id <= upToEventId);
-    }
-
-    if (afterEventId != null) {
-      query = query.Where(e => e.Id > afterEventId.Value);
-    }
-
-    // Order by UUID v7 (time-ordered); body-aware projection
-    var records = await _bodyAwareRows(query.OrderBy(e => e.Id))
+    var records = await _bodyAwareRows(_betweenInStream(streamId, afterEventId, upToEventId))
       .ToListAsync(cancellationToken);
 
     // Deserialize to message envelopes
@@ -513,8 +719,10 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// Gets events between two checkpoint positions, deserializing each event to its concrete type.
   /// Uses the EventType column to determine which concrete type to deserialize to.
   /// This is the polymorphic version of GetEventsBetweenAsync for perspectives that handle multiple event types.
-  /// Used by lifecycle receptors to load events that were just processed by a perspective.
+  /// Used by lifecycle receptors to load events that were just processed by a perspective, selected and ordered by their
+  /// positions in the stream (#2381).
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreReadAfterVersionTests.cs:GetEventsBetweenPolymorphicAsync_AfterTheFirstEvent_WhoseIdIsTheHighest_ReadsThroughTheUpperVersionAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_WithMixedEventTypes_ReturnsAllEventsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NoEventsInRange_ReturnsEmptyListAsync</tests>
@@ -536,23 +744,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       Guid upToEventId,
       IReadOnlyList<Type> eventTypes,
       CancellationToken cancellationToken) {
-    // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
-    // Guid.Empty means "no upper bound" - read all events for the stream
-    IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
-      .AsNoTracking()
-      .Where(e => e.StreamId == streamId);
-
-    // Apply upper bound only if upToEventId is not Guid.Empty
-    if (upToEventId != Guid.Empty) {
-      query = query.Where(e => e.Id <= upToEventId);
-    }
-
-    if (afterEventId != null) {
-      query = query.Where(e => e.Id > afterEventId.Value);
-    }
-
-    // Order by UUID v7 (time-ordered); body-aware projection
-    var records = await _bodyAwareRows(query.OrderBy(e => e.Id))
+    var records = await _bodyAwareRows(_betweenInStream(streamId, afterEventId, upToEventId))
       .ToListAsync(cancellationToken);
 
     // Canonical normalized stored-EventType -> Type lookup, shared by every read path.
@@ -592,16 +784,17 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetLastSequenceAsync_WithEmptyStream_ReturnsMinusOneAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetLastSequenceAsync_WithExistingEvents_ReturnsHighestSequenceAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchivedStreamHistoryProbeSqlTests.cs</tests>
   public async Task<long> GetLastSequenceAsync(
       Guid streamId,
       CancellationToken cancellationToken = default) {
 
-    var lastSequence = await _context.Set<EventStoreRecord>()
-      .AsNoTracking()
-      .Where(e => e.StreamId == streamId)
-      .MaxAsync(e => (long?)e.Version, cancellationToken);
-
-    return lastSequence ?? -1;
+    // #1933: a stream archived whole keeps its versions on its tombstone; one statement either way.
+    return await _queryHistoryAsync(Whizbang.Data.Postgres.ArchivedStreamHistorySql.LastSequence, streamId, beforeEventId: null,
+      async reader => {
+        _ = await reader.ReadAsync(cancellationToken);
+        return reader.GetInt64(0);
+      }, cancellationToken);
   }
 
   /// <summary>

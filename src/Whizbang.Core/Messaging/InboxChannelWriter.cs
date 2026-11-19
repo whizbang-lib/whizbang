@@ -21,6 +21,12 @@ public class InboxChannelWriter : IInboxChannelWriter {
   private readonly Channel<InboxWork> _channel;
   private readonly ConcurrentDictionary<Guid, Held> _inFlight = new();
   private long _heldBytes;
+
+  /// <summary>No acquisition mark: every held total is at or below it.</summary>
+  private const long NO_ACQUISITION_MARK = long.MaxValue;
+
+  /// <summary>The held total new inbox acquisition waits for (#1853), or <see cref="NO_ACQUISITION_MARK"/>.</summary>
+  private long _acquisitionMark = NO_ACQUISITION_MARK;
   private readonly TimeProvider _timeProvider;
   private static readonly TimeSpan _leaseRenewalThreshold = TimeSpan.FromSeconds(150); // Half of 300s lease
 
@@ -107,9 +113,28 @@ public class InboxChannelWriter : IInboxChannelWriter {
   public void RemoveInFlight(Guid messageId) {
     // Every removal comes through here, so the held bytes are released exactly once per row (#1793).
     if (_inFlight.TryRemove(messageId, out var held)) {
-      Interlocked.Add(ref _heldBytes, -held.Bytes);
+      var nowHeld = Interlocked.Add(ref _heldBytes, -held.Bytes);
+      // #1853: the removal that drains the working set to the mark resumes acquisition, and wakes the claim to say so.
+      // Losing the exchange to a newer mark only costs a wake.
+      var mark = Interlocked.Read(ref _acquisitionMark);
+      if (mark != NO_ACQUISITION_MARK && nowHeld <= mark) {
+        _ = Interlocked.CompareExchange(ref _acquisitionMark, NO_ACQUISITION_MARK, mark);
+        SignalNewInboxWorkAvailable();
+      }
     }
   }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs:TheLatestMark_IsTheOneInForceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs:AMarkAtOrAboveWhatIsHeld_DefersNothingAsync</tests>
+  public void DeferInboxAcquisitionUntilHeldAtMost(long heldBytes) {
+    var mark = Math.Max(0L, heldBytes);
+    _ = Interlocked.Exchange(ref _acquisitionMark, HeldPayloadBytes > mark ? mark : NO_ACQUISITION_MARK);
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs:AcquisitionIsDeferred_WhileHeldIsAboveTheMark_AndResumesOnTheRemovalThatReachesItAsync</tests>
+  public bool InboxAcquisitionDeferred => HeldPayloadBytes > Interlocked.Read(ref _acquisitionMark);
 
 
   /// <inheritdoc />
@@ -121,11 +146,11 @@ public class InboxChannelWriter : IInboxChannelWriter {
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
   public long HeldPayloadBytes => Interlocked.Read(ref _heldBytes);
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
   public bool TryBeginDispatch(Guid messageId) {
     if (!_inFlight.TryGetValue(messageId, out var held)) {
       return false;
@@ -141,7 +166,7 @@ public class InboxChannelWriter : IInboxChannelWriter {
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
   public void MarkCommitPending(Guid messageId) {
     if (_inFlight.TryGetValue(messageId, out var held)) {
       lock (held.Gate) {
@@ -152,7 +177,7 @@ public class InboxChannelWriter : IInboxChannelWriter {
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
   public void EndDispatch(Guid messageId) {
     if (_inFlight.TryGetValue(messageId, out var held) && held.State != InboxHoldState.CommitPending) {
       RemoveInFlight(messageId);
@@ -160,7 +185,7 @@ public class InboxChannelWriter : IInboxChannelWriter {
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
   public InboxLeaseSweep SweepLeases(TimeSpan renewAfter, int maxRenewals) {
     var now = _timeProvider.GetUtcNow();
     var renew = new List<Guid>();

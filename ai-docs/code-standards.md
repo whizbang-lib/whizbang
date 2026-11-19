@@ -8,15 +8,30 @@ This document defines the code standards that apply to all C# code in the Whizba
 
 ## Table of Contents
 
-1. [dotnet format - NON-NEGOTIABLE](#dotnet-format---non-negotiable)
-2. [Async Naming Convention](#async-naming-convention)
-3. [Naming Conventions](#naming-conventions)
-4. [UUIDv7 for Identifiers](#uuidv7-for-identifiers)
-5. [EditorConfig Standards](#editorconfig-standards)
-6. [XML Documentation](#xml-documentation)
-7. [Code Quality](#code-quality)
+1. [Gravity](#gravity)
+2. [dotnet format - NON-NEGOTIABLE](#dotnet-format---non-negotiable)
+3. [Async Naming Convention](#async-naming-convention)
+4. [Naming Conventions](#naming-conventions)
+5. [UUIDv7 for Identifiers](#uuidv7-for-identifiers)
+6. [EditorConfig Standards](#editorconfig-standards)
+7. [XML Documentation](#xml-documentation)
+8. [Code Quality](#code-quality)
 
 ---
+
+## Gravity
+
+The path of least resistance must be the correct design. Before writing the same correct behavior in a second place,
+make the core system own it:
+
+| Instead of | Prefer |
+|---|---|
+| A shared helper every caller must remember | A pipeline step, registration API or generator the system runs |
+| A convention described in a doc | A type that cannot be built the wrong way, or a diagnostic that fails the build |
+| An opt-in safe behavior | A safe default, with an explicit opt-out |
+
+Every gravity design carries its enforcement: a test or an analyzer error that fails when something bypasses it (for
+example, a hosted service registered without a startup stage). The test is what keeps the gravity from eroding.
 
 ## dotnet format - NON-NEGOTIABLE
 

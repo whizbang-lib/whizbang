@@ -22,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <docs>proposals/stream-integrity</docs>
 [Category("Shard2")]
-public class StreamDigestTableSqlTests : EFCoreTestBase {
+public partial class StreamDigestTableSqlTests : EFCoreTestBase {
   private const string ZERO_UUID = "00000000-0000-0000-0000-000000000000";
 
   /// <summary>The event-store flag an at-most-once occurrence carries (<c>EventFlags.AtMostOnce</c>).</summary>
@@ -83,8 +83,10 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
   private static async Task<(long Lo, long Hi, int Count)?> _digestRowAsync(
       NpgsqlConnection connection, Guid streamId, string originUuid = ZERO_UUID) {
     await using var cmd = connection.CreateCommand();
+    // #2363: the bucket's live part (its digest less what cuts carried), which is what a fold of its events equals.
     cmd.CommandText = """
-      SELECT digest_lo, digest_hi, event_count FROM wh_stream_digests
+      SELECT digest_lo # COALESCE(carried_lo, 0), digest_hi # COALESCE(carried_hi, 0), event_count - COALESCE(carried_count, 0)
+      FROM wh_stream_digests
       WHERE stream_id = @sid AND origin_service_id = @origin::uuid
       """;
     cmd.Parameters.AddWithValue("sid", streamId);
@@ -236,6 +238,13 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
+  private static async Task<long> _carriedCountAsync(NpgsqlConnection connection, Guid streamId) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT COALESCE(SUM(carried_count), 0)::bigint FROM wh_stream_digests WHERE stream_id = @sid";
+    cmd.Parameters.AddWithValue("sid", streamId);
+    return (long)(await cmd.ExecuteScalarAsync())!;
+  }
+
   private static async Task<long> _originGenerationAsync(NpgsqlConnection connection) {
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = "SELECT setting_value::bigint FROM wh_settings WHERE setting_key = 'integrity_origin_generation'";
@@ -265,13 +274,15 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     var before = await _originGenerationAsync(connection);
 
     await Assert.That(await _truncateAsync(connection, streamId, 1)).IsEqualTo("truncated");
-    var afterAudit = await _originGenerationAsync(connection);
+    var carriedAfterAudit = await _carriedCountAsync(connection, streamId);
     await Assert.That(await _truncateAsync(connection, streamId, 2)).IsEqualTo("truncated");
-    var afterDomain = await _originGenerationAsync(connection);
+    var carriedAfterDomain = await _carriedCountAsync(connection, streamId);
 
-    await Assert.That((afterAudit - before, afterDomain - afterAudit)).IsEqualTo((0L, 1L))
-      .Because("the audit record was never folded, so removing it refolds nothing and does not advance the origin "
-        + "generation; removing the domain event, which was folded, does (the control)");
+    await Assert.That((carriedAfterAudit, carriedAfterDomain)).IsEqualTo((0L, 1L))
+      .Because("the audit record was never folded, so removing it carries nothing; removing the domain event, which was "
+        + "folded, carries it (the control, #2363)");
+    await Assert.That(await _originGenerationAsync(connection)).IsEqualTo(before)
+      .Because("#2363: neither truncate rewrote anything a consumer verified, so neither advances the generation");
   }
 
   [Test]
@@ -487,10 +498,10 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
 
     var after = await _digestRowAsync(connection, streamId);
     await Assert.That(after.HasValue).IsTrue().Because("The surviving carry-forward keeps the bucket alive.");
-    await Assert.That(after!.Value.Count).IsEqualTo(1).Because("close_stream subtracted the two truncated events.");
+    await Assert.That(after!.Value.Count).IsEqualTo(1).Because("the truncate carried the two truncated events, so the live part holds one (#2363).");
     var (Lo, Hi) = await _expectedDigestAsync(connection, survivorId);
     await Assert.That(after.Value.Lo).IsEqualTo(Lo)
-      .Because("XOR-ing the truncated hashes back out leaves exactly the survivor's digest (XOR is self-inverse).");
+      .Because("the live part is exactly the survivor's digest: the truncated hashes are carried beside it.");
     await Assert.That(after.Value.Hi).IsEqualTo(Hi);
   }
 
@@ -562,9 +573,14 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
           AND COALESCE(es.flags, 0) & 32 = 0
         GROUP BY 1, 2, 3, 4
       ),
+      -- #2363: a bucket's live part, its digest less what cuts carried.
       stored AS (
-        SELECT origin_service_id, scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count
+        SELECT origin_service_id, scope_tenant, event_type, stream_id,
+               digest_lo # COALESCE(carried_lo, 0) AS digest_lo, digest_hi # COALESCE(carried_hi, 0) AS digest_hi,
+               event_count - COALESCE(carried_count, 0) AS event_count
         FROM wh_stream_digests WHERE stream_id = ANY(@sids::uuid[])
+          AND NOT (event_count - COALESCE(carried_count, 0) = 0
+                   AND digest_lo # COALESCE(carried_lo, 0) = 0 AND digest_hi # COALESCE(carried_hi, 0) = 0)
       )
       SELECT (SELECT COUNT(*) FROM ((TABLE recomputed EXCEPT TABLE stored)
                                     UNION ALL

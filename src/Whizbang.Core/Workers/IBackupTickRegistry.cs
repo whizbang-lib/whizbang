@@ -24,7 +24,7 @@ namespace Whizbang.Core.Workers;
 /// backstop only fires while this pod holds the advisory lock).
 /// </param>
 /// <docs>fundamentals/work-coordinator/backup-tick-coordinator</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/BackupTickRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BackupTickRegistryTests.cs</tests>
 public sealed record BackupTickRegistration(
   string Name,
   Func<CancellationToken, Task> Tick,
@@ -44,7 +44,7 @@ public sealed record BackupTickRegistration(
 /// instead of a new worker type.
 /// </remarks>
 /// <docs>fundamentals/workers/idle-footprint</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/BackupTickRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BackupTickRegistryTests.cs</tests>
 public interface IBackupTickRegistry {
   /// <summary>
   /// Registers a backup tick. Idempotent on (<paramref name="name"/>,

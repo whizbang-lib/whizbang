@@ -10,10 +10,11 @@ single job**, not the total. Before sharding, PostgreSQL was that job at 23m34s 
 the next — and inside it one project (`Whizbang.Data.EFCore.Postgres.Tests`, ~2,300 tests) was
 ~87% of the time.
 
-Integration projects also run *sequentially* inside a job because they share containers, and most
-of their tests are serialized further by `[NotInParallel]` constraint keys guarding one database
-server. Sharding across runners is how parallelism is recovered safely: each runner is its own
-process with its own containers, so a constraint key only serializes within a shard.
+Integration projects also run *sequentially* inside a job because they share containers. Inside a shard, the EF
+Core project's tests run in parallel under a limit sized to the container's connections (#2069,
+[efcore-test-parallelism.md](efcore-test-parallelism.md)); before that, one constraint key serialized every class.
+Sharding across runners adds parallelism on top: each runner is its own process with its own containers, so a
+constraint key only serializes within a shard.
 
 ## Two levels
 
@@ -35,9 +36,39 @@ Both are driven from `ci.yml` via a `strategy.matrix`, calling the same reusable
    (see [Keeping shards balanced](#keeping-shards-balanced)); test counts mislead badly here, because a
    2,259-case matrix that needs no database finishes in under a minute while a 16-test class that
    provisions one per test takes 90 seconds.
-3. **Add the coverage guard** (see below). This is not optional.
+3. **Opt the project in to the build rule and add the coverage guard** (see below). Neither is optional.
 4. Add the matrix entries to `ci.yml`. `.github/scripts/tests/Measure-TestShards.Tests.ps1` fails if a
    shard category has no matrix leg, or a leg has no classes.
+
+## The build rejects a class without exactly one shard (WHIZ605)
+
+A sharded project sets `<WhizbangShardedTests>true</WhizbangShardedTests>` in its `.csproj`. Then
+`Whizbang.TestAnalyzers` (loaded by every test project through `tests/Directory.Build.props`, which passes the
+property to the compiler with `CompilerVisibleProperty`) reports **WHIZ605** as a build error on every test class
+that does not carry exactly one `Shard*` category, or `Benchmark` and no shard:
+
+```csharp
+// ❌ WHIZ605: runs in no slice
+[Category("Integration")]
+public class OrderStoreTests { [Test] public async Task SavesAsync() { ... } }
+
+// ❌ WHIZ605: runs in two slices
+[Category("Shard1")][Category("Shard3")]
+public class OrderStoreTests { ... }
+
+// ✅
+[Category("Integration")][Category("Shard2")]
+public class OrderStoreTests { ... }
+```
+
+It counts the way the runtime guard below does: a test class is a non-abstract class with a TUnit `[Test]` method,
+declared or inherited, and its categories are the TUnit `[Category]` attributes on it and its base classes, so a
+shard on a shared base class counts for every class derived from it. Only `Whizbang.Data.EFCore.Postgres.Tests`
+sets the property today; a project that runs unsliced (Dapper's leg passes an empty filter) does not.
+
+The rule reads a category from the attribute's constructor argument. A `CategoryAttribute` subclass that hands a
+fixed value to its base constructor shows no argument there, so it counts as no category and the class is reported;
+pass the value through the subclass's constructor instead.
 
 ## The guard is the whole safety story
 
@@ -47,7 +78,9 @@ reports it. A class with two shard categories runs twice, wasting a runner.
 
 Every sharded project therefore carries a guard test asserting the whole assembly:
 `ShardCoverageGuardTests.EveryTestClass_DeclaresExactlyOneShardCategoryAsync`. Copy it when
-sharding a new project.
+sharding a new project. WHIZ605 fails the build first, on the line that needs the fix; the guard stays as the
+second line of defense, because it reads the compiled assembly and so also sees classes a source generator
+emitted, which the analyzer does not analyze.
 
 This is not theoretical. When the EFCore project was first tagged, the guard immediately caught 11
 classes the tagging script had missed (it tagged only the first class per file), and later a further
@@ -94,14 +127,17 @@ unsharded for this reason: at 4m52 it is no longer the critical path, and three 
 ## Build slices
 
 Test jobs do not download the whole build. The build job uploads one **slice** per integration suite
-and one for the component suite (`build-<suite>-<run>`): the `bin/Release` of the projects that suite
-runs, which already holds their whole dependency closure, plus a `test-slice-<suite>.txt` marker
-naming them. Sources come from the job's own checkout. The unit suite runs most projects, so it keeps
-the full build.
+and one each for the component and unit suites (`build-<suite>-<run>`): the `bin/Release` of the
+projects that suite runs, which already holds their whole dependency closure, plus a
+`test-slice-<suite>.txt` marker naming them. Sources come from the job's own checkout. The unit suite
+kept the full build until #2068, spending 4.2 minutes downloading it for 1.5 minutes of tests; only
+pack reads the full build now. A push that reuses an already-tested run uploads no slices at all,
+since no suite runs.
 
 `.github/scripts/Get-TestSlice.ps1` derives each slice the way `Run-Tests.ps1` selects the suite's
 projects: in the solution, the suite's `<WhizbangTestType>`, and for an integration suite its tag.
-The component suite runs `-Mode Component` with no tag, so its slice is every Component project. A
+The component and unit suites run `-Mode Component` and `-Mode Unit` with no tag, so each slice is every
+project of that type. A
 new project joins its slice on its own. Every test type is either sliced or listed in the script's
 `$UnslicedTypes` with the reason, and `.github/scripts/Test-WhizbangTestType.ps1` fails on a type that
 is neither.
@@ -163,9 +199,11 @@ only 17-47% of the window. Each test that needs a database creates one by copyin
 serializes those copies on the template's lock, and each shard's container therefore takes roughly
 one such test per second while its CPU sits mostly idle.
 
-So the script charges each test the gap from its start to the next test's start. Those gaps sum
-exactly to the shard's test window, and a class's cost is the median of its sums over the last ten
-runs. Five proved too few: two 5-run samples taken hours apart put one shard at 5.9 and 8.8 minutes and
+So the script charges each class the time its tests occupied the shard: every moment between two test
+boundaries is shared equally among the tests running then (in a serial shard that is each test's whole
+duration; since #2069 the shards run in parallel), and a moment when nothing runs goes to the test that
+started last before it. Those charges sum exactly to the shard's test window, and a class's cost is the
+median of its sums over the last ten runs. Five proved too few: two 5-run samples taken hours apart put one shard at 5.9 and 8.8 minutes and
 proposed different moves. Rebalancing starts from the current assignment and moves the class that best closes the gap
 between the heaviest and lightest shard, never one larger than half of it, so each rebalance is a
 small diff of `[Category("ShardN")]` changes rather than a reshuffle.

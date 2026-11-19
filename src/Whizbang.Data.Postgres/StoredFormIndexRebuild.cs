@@ -68,6 +68,7 @@ public sealed partial record StoredFormIndexRebuild(string Schema, string Table,
     await connection.OpenAsync(cancellationToken);
     var built = 0;
     foreach (var rebuild in rebuilds) {
+      StartupProgress.Note();   // #2165: each index reached is progress
       var (state, invalid) = await _stateAsync(connection, rebuild, cancellationToken);
       if (state is IndexState.Valid or IndexState.TableAbsent) {
         continue;

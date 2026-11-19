@@ -63,7 +63,7 @@ public sealed class MultiHostPerspectiveAwaiter<TEvent> : IAwaiterIdentity, IDis
           Task.WhenAll(tasks), timeout, string.Empty, cancellationToken);
     } catch (TimeoutException) {
       var status = string.Join(", ", _hostRegistrations.Select(r =>
-        $"{r.Host.Services.GetType().Name}: {r.Receptor.Count}/{r.Receptor.Expected}"));
+        $"{TypeNameFormatter.ForLog(r.Host.Services.GetType())}: {r.Receptor.Count}/{r.Receptor.Expected}"));
       throw new TimeoutException($"Not all perspectives completed within {timeout}. Status: [{status}]");
     }
   }

@@ -62,13 +62,16 @@ public sealed class WhizbangNotificationOptions {
   ///   <item><description>Else fall back to <c>ConnectionStrings:{ConnectionStringKey}</c> — the pooled string. Works on direct-Postgres deployments without pgbouncer.</description></item>
   /// </list>
   /// </summary>
+#pragma warning disable WHIZ606 // the name of a ConnectionStrings entry, not a credential
   public string? ConnectionStringKey { get; set; }
+#pragma warning restore WHIZ606
 
   /// <summary>
   /// Explicit direct connection string. Overrides <see cref="ConnectionStringKey"/>-based lookup
-  /// when set. Mostly used for testing or programmatic overrides.
+  /// when set. Mostly used for testing or programmatic overrides. Held as a
+  /// <see cref="Whizbang.Core.Configuration.SensitiveString"/>, so writing the options out writes its redaction.
   /// </summary>
-  public string? DirectConnectionString { get; set; }
+  public Whizbang.Core.Configuration.SensitiveString? DirectConnectionString { get; set; }
 
   /// <summary>
   /// PostgreSQL search path (the service's Whizbang schema) for the notification layer's raw
@@ -105,7 +108,13 @@ public sealed class WhizbangNotificationOptions {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgDurableSignalRetentionWindowTests.cs:Sweep_UsesTheConfiguredWindowAsync</tests>
   public TimeSpan SignalRetention { get; set; } = TimeSpan.FromDays(7);
 
-  /// <summary>Cadence of <c>SELECT 1</c> keepalive on the listener connection. Default 30 s.</summary>
+  /// <summary>
+  /// Cadence of <c>SELECT 1</c> keepalive on the listener connection. Default 30 s. It bounds how long a
+  /// dead connection goes unnoticed. A subscription made after the connection came up whose wake-up is
+  /// lost does not wait for it: the connection's wait for notifications also times out at a short resync
+  /// recheck (1 s), which runs no round trip (#2155, #2291). Must be greater than zero: zero or less is
+  /// refused at startup.
+  /// </summary>
   public TimeSpan ListenKeepaliveInterval { get; set; } = TimeSpan.FromSeconds(30);
 
   /// <summary>First reconnect attempt delay after a disconnect. Default 1 s.</summary>

@@ -24,7 +24,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres.Generators/Templates/DbContextSchemaExtensionTemplate.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/MigrationFunctionBodies.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class StaleFunctionDefinitionSweepTests : EFCoreTestBase {
 

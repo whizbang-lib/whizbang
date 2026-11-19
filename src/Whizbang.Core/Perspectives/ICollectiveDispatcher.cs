@@ -27,9 +27,9 @@ public interface ICollectiveDispatcher {
   /// dispatcher uses <see cref="ICollectiveEvent.Scope"/> to find the
   /// right resolver and the event's runtime type to find every
   /// matching <see cref="CollectiveApplyEntry"/>.</param>
-  /// <param name="collectiveEventId">Unique id of this collective event.
-  /// Written by the executor to the audit-pointer column on every
-  /// affected row in the same SQL UPDATE that performs the mutation.</param>
+  /// <param name="collectiveEventId">Unique id of this collective event. Each handler's apply keeps its progress record
+  /// under it and the entry's <see cref="CollectiveApplyEntry.EntryKey"/>, so a dispatch of the same event again resumes
+  /// after the last committed batch and skips a finished handler (#1969).</param>
   /// <param name="dbContextOrSession">Driver-specific session
   /// (<c>DbContext</c> for EF Core, <c>NpgsqlConnection</c> for
   /// Dapper). Forwarded as <see cref="object"/> to each executor —
@@ -65,10 +65,10 @@ public interface ICollectiveDispatcher {
 /// was empty at write time or when every row was already at the target
 /// state).</param>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_OneEntry_InvokesExecutorOnceAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_TwoEntriesSameEventDifferentModels_FansOutAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_NoMatchingEntry_ReturnsZeroAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_ReportsThePropertiesEachModelsSpecAssignedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_OneEntry_InvokesExecutorOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_TwoEntriesSameEventDifferentModels_FansOutAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_NoMatchingEntry_ReturnsZeroAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveDispatcherTests.cs:DispatchAsync_ReportsThePropertiesEachModelsSpecAssignedAsync</tests>
 public sealed record CollectiveDispatchResult(int HandlerCount, int AffectedRowCount) {
   /// <summary>
   /// The properties each model's specs assigned, by model type, read from the specs' setters as they applied (#1045).

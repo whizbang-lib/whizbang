@@ -133,23 +133,6 @@ public class EventTypeBytesSamplerTests {
   }
 
   [Test]
-  public async Task BeforeTheSchemaIsReady_NothingIsSampled_AndStoppingEndsTheWaitAsync() {
-    // Stopped only once the sampler is waiting on the gate: stopped any earlier, the host cancels the task before
-    // it starts, which proves nothing about the wait and ends the task canceled rather than returned.
-    var provider = new ScriptedProvider(_sample);
-    var gate = new NeverReadyGate();
-    await using var host = new SamplerHost(provider, new TableStatisticsOptions(), gate);
-
-    await host.StartAsync();
-    await gate.Waiting.WaitAsync(_wait);
-    await host.StopAsync();
-
-    await Assert.That(host.Sampler.ExecuteTask!.IsCompletedSuccessfully).IsTrue();
-    await Assert.That(provider.Requests).IsEmpty()
-      .Because("the event store does not exist until the schema is ready");
-  }
-
-  [Test]
   public async Task WithoutALoggerOrAClock_TheSamplerStillRunsAsync() {
     var provider = new ScriptedProvider(_sample);
     var services = new ServiceCollection();
@@ -160,7 +143,6 @@ public class EventTypeBytesSamplerTests {
       container.GetRequiredService<IServiceScopeFactory>(),
       new TableStatisticsMetrics(new WhizbangMetrics(factory)),
       Options.Create(new TableStatisticsOptions()),
-      schemaReadyGate: null,
       logger: null);
     var sampled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     sampler.SampleCompleted += took => sampled.TrySetResult(took);
@@ -183,7 +165,6 @@ public class EventTypeBytesSamplerTests {
         container.GetRequiredService<IServiceScopeFactory>(),
         new TableStatisticsMetrics(new WhizbangMetrics(factory)),
         options: null!,
-        schemaReadyGate: null,
         logger: null))
       .Throws<ArgumentNullException>()
       .Because("the interval, share and cap all come from the options; there is no safe default for a missing one");
@@ -198,7 +179,7 @@ public class EventTypeBytesSamplerTests {
     private readonly CancellationTokenSource _stopping = new();
     private TaskCompletionSource<bool> _next = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public SamplerHost(ScriptedProvider? provider, TableStatisticsOptions options, ISchemaReadyGate? gate = null) {
+    public SamplerHost(ScriptedProvider? provider, TableStatisticsOptions options) {
       var services = new ServiceCollection();
       if (provider is not null) {
         services.AddSingleton<ITableStatisticsProvider>(provider);
@@ -209,7 +190,6 @@ public class EventTypeBytesSamplerTests {
         _container.GetRequiredService<IServiceScopeFactory>(),
         metrics,
         Options.Create(options),
-        gate ?? SchemaReadyGate.AlreadyReady(),
         NullLogger<EventTypeBytesSampler>.Instance,
         Clock);
       Sampler.SampleCompleted += took => Volatile.Read(ref _next).TrySetResult(took);
@@ -296,25 +276,6 @@ public class EventTypeBytesSamplerTests {
 
     public Task<IReadOnlyDictionary<string, long>> GetQueueDepthsAsync(CancellationToken ct = default) =>
       Task.FromResult<IReadOnlyDictionary<string, long>>(new Dictionary<string, long>());
-  }
-
-  /// <summary>A schema gate that never opens, and reports when something starts waiting on it.</summary>
-  private sealed class NeverReadyGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _waiting = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Waiting => _waiting.Task;
-
-    public bool IsReady => false;
-
-    public void MarkReady() => throw new NotSupportedException("this gate never opens");
-
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _waiting.TrySetResult();
-      // Ends only when the wait is canceled, which is the transition the test drives.
-      var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-      cancellationToken.Register(() => stopped.TrySetCanceled(cancellationToken));
-      return stopped.Task;
-    }
   }
 
   /// <summary>A fake clock that reports each timer the sampler arms, with its due time.</summary>

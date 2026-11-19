@@ -129,6 +129,7 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
     await Assert.That(await _throwsArgumentNullAsync(() => c.FlushCompletionsAsync(null!))).IsTrue();
     await Assert.That(await _throwsArgumentNullAsync(() => c.ResolveSyncInquiriesAsync(null!))).IsTrue();
     await Assert.That(await _throwsArgumentNullAsync(() => c.ClaimWorkAsync(null!))).IsTrue();
+    await Assert.That(await _throwsArgumentNullAsync(() => c.RecordInstanceTransitionAsync(null!))).IsTrue();
   }
 
   // ----- empty-input short-circuits -----
@@ -176,6 +177,55 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
     await Assert.That(zone).IsEqualTo("z1");
   }
 
+  // ----- release of unstarted leases: the run-control path's held-work step (#2045), as EF Core does it -----
+
+  [Test]
+  public async Task ReleaseUnstartedLeasesAsync_ReleasesThisInstancesUnprocessedInboxLease_AndEndsItsStreamOwnershipAsync() {
+    // Dapper behaves as EF Core does: the claim worker's held work is released through release_unstarted_leases, so a
+    // peer takes the stream over at once when this instance stands down, pauses or stops.
+    var c = _build();
+    var instanceId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    await c.StoreInboxMessagesAsync([_makeInbox(msgId, streamId)], partitionCount: 100);
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await conn.ExecuteAsync(
+      "UPDATE wh_inbox_state SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes', attempts = 1 WHERE message_id = @m",
+      new { i = instanceId, m = msgId });
+
+    var released = await c.ReleaseUnstartedLeasesAsync(instanceId, [streamId], [(Guid)TrackedGuid.New()]);
+
+    await Assert.That(released).IsEqualTo(new UnstartedLeaseRelease(1, 0));
+    var holder = await conn.ExecuteScalarAsync<Guid?>("SELECT instance_id FROM wh_inbox_state WHERE message_id = @m", new { m = msgId });
+    await Assert.That(holder).IsNull();
+    var attempts = await conn.ExecuteScalarAsync<int>("SELECT attempts FROM wh_inbox_state WHERE message_id = @m", new { m = msgId });
+    await Assert.That(attempts).IsEqualTo(0).Because("the attempt the claim charged is refunded: the row was never started");
+  }
+
+  [Test]
+  public async Task ReleaseUnstartedLeasesAsync_NoStreams_CostsNoRoundTripAsync() {
+    var c = new DapperWorkCoordinator("Host=127.0.0.1;Port=1;Database=none;Username=none;Password=none;Timeout=1",
+      _jsonOptions, NullLogger<DapperWorkCoordinator>.Instance);
+
+    var released = await c.ReleaseUnstartedLeasesAsync((Guid)TrackedGuid.New(), [], []);
+
+    await Assert.That(released).IsEqualTo(new UnstartedLeaseRelease(0, 0))
+      .Because("an unreachable database is never asked when there is nothing to release");
+    await Assert.That(await _throwsArgumentNullAsync(() => c.ReleaseUnstartedLeasesAsync(Guid.Empty, null!, []))).IsTrue();
+    await Assert.That(await _throwsArgumentNullAsync(() => c.ReleaseUnstartedLeasesAsync(Guid.Empty, [], null!))).IsTrue();
+  }
+
+  [Test]
+  public async Task ReleaseUnstartedLeasesAsync_ThroughTheGate_ReleasesAsync() {
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 2, logger: NullLogger<WorkCoordinatorGate>.Instance);
+    var c = new DapperWorkCoordinator(ConnectionString, _jsonOptions, NullLogger<DapperWorkCoordinator>.Instance, gate: gate);
+
+    var released = await c.ReleaseUnstartedLeasesAsync((Guid)TrackedGuid.New(), [(Guid)TrackedGuid.New()], []);
+
+    await Assert.That(released).IsEqualTo(new UnstartedLeaseRelease(0, 0));
+  }
+
   // ----- WorkCoordinatorGate-provided branch of every gated method -----
 
   [Test]
@@ -189,6 +239,13 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
     var instanceId = (Guid)TrackedGuid.New();
 
     await c.RecordHeartbeatAsync(new HeartbeatRequest(instanceId, "svc-gate", "host-gate", 11));
+    await Assert.That(await c.RecordInstanceTransitionAsync(new Whizbang.Core.Startup.InstanceTransition(
+      instanceId, Whizbang.Core.Startup.StartupStage.Running, "serving", Whizbang.Core.RunControl.LifecyclePhase.Running,
+      "1.0.0"))).IsTrue();
+    await Assert.That(c.RecordsInstanceTransitions).IsTrue()
+      .Because("the Dapper driver keeps instance rows, so the data plane waits for the row to record Accept commands");
+    await Assert.That(c.ReadsCursorsInBatches).IsTrue()
+      .Because("the Dapper driver reads cursors in batches, so a batch may skip a pair its read found no cursor for");
 
     // Queues empty here — ClaimWorkAsync's gate branch plus the empty-batch path.
     var emptyBatch = await c.ClaimWorkAsync(new ClaimWorkRequest(

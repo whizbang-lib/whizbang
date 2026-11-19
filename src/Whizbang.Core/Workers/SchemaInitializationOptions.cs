@@ -12,8 +12,9 @@ public sealed class SchemaInitializationOptions {
   /// <summary>
   /// When <see langword="true"/> (<b>the default — turnkey</b>), initialization runs <b>in the
   /// background</b>: <c>StartAsync</c> returns immediately so the host binds and can answer a liveness
-  /// probe, while <see cref="ISchemaReadyGate"/> stays closed until migrations succeed. Gated workers
-  /// (and the managed readiness health that reports "migrating" as ready) hold off until then, so
+  /// probe, while <see cref="ISchemaReadyGate"/> stays closed until migrations succeed. Staged workers
+  /// (the host starts each only at its registered start point) and the managed readiness health
+  /// that reports "migrating" as ready hold off until then, so
   /// nothing touches an unmigrated schema and the pod is not rolled back for a long migration. On
   /// failure the gate never opens (fail-closed).
   /// <para>
@@ -60,14 +61,14 @@ public sealed class SchemaInitializationOptions {
   /// <see cref="NonBlockingSchemaInit"/> to <see langword="false"/> instead; that hold stays opt-in.
   /// </remarks>
   /// <docs>operations/workers/database-readiness</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_ByDefault_WaitsAtMostFiveMinutesThenThrowsNotReadyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WithAConfiguredMaxWait_ThrowsNotReadyWhenThatWaitElapsesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WithAZeroMaxWait_RefusesAtOnceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:HoldingTheApplicationUntilMigrated_StaysOptInAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_ByDefault_WaitsAtMostFiveMinutesThenThrowsNotReadyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WithAConfiguredMaxWait_ThrowsNotReadyWhenThatWaitElapsesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_WithAZeroMaxWait_RefusesAtOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:HoldingTheApplicationUntilMigrated_StaysOptInAsync</tests>
   public TimeSpan DispatchMaxWait { get; set; } = DefaultDispatchMaxWait;
 
   /// <summary>The default of <see cref="DispatchMaxWait"/>: five minutes.</summary>
   /// <docs>operations/workers/database-readiness</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_ByDefault_WaitsAtMostFiveMinutesThenThrowsNotReadyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSchemaGateTests.cs:DeferredDispatch_ByDefault_WaitsAtMostFiveMinutesThenThrowsNotReadyAsync</tests>
   internal static readonly TimeSpan DefaultDispatchMaxWait = TimeSpan.FromMinutes(5);
 }

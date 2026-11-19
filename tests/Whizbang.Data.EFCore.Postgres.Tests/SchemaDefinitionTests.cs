@@ -43,7 +43,6 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await Assert.That(tables).Contains("wh_inbox");
     await Assert.That(tables).Contains("wh_outbox");
     await Assert.That(tables).Contains("wh_event_store");
-    await Assert.That(tables).Contains("wh_receptor_processing");
     await Assert.That(tables).Contains("wh_perspective_cursors");
     await Assert.That(tables).Contains("wh_request_response");
     await Assert.That(tables).Contains("wh_sequences");
@@ -141,45 +140,6 @@ public class SchemaDefinitionTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task ReceptorProcessing_ShouldHaveForeignKeyToEventStoreAsync() {
-    // Arrange
-    await using var connection = new NpgsqlConnection(ConnectionString);
-    await connection.OpenAsync();
-
-    // Act - Query foreign key constraints
-    const string sql = @"
-      SELECT
-        tc.constraint_name,
-        kcu.column_name,
-        ccu.table_name AS foreign_table_name,
-        ccu.column_name AS foreign_column_name
-      FROM information_schema.table_constraints AS tc
-      JOIN information_schema.key_column_usage AS kcu
-        ON tc.constraint_name = kcu.constraint_name
-        AND tc.table_schema = kcu.table_schema
-      JOIN information_schema.constraint_column_usage AS ccu
-        ON ccu.constraint_name = tc.constraint_name
-        AND ccu.table_schema = tc.table_schema
-      WHERE tc.table_name = 'wh_receptor_processing'
-        AND tc.constraint_type = 'FOREIGN KEY'";
-
-    await using var command = new NpgsqlCommand(sql, connection);
-    await using var reader = await command.ExecuteReaderAsync();
-
-    var foreignKeys = new List<(string Column, string RefTable, string RefColumn)>();
-    while (await reader.ReadAsync()) {
-      foreignKeys.Add((reader.GetString(1), reader.GetString(2), reader.GetString(3)));
-    }
-
-    // Assert - FK: event_id -> wh_event_store.event_id
-    await Assert.That(foreignKeys).Count().IsGreaterThanOrEqualTo(1);
-    var eventFk = foreignKeys.FirstOrDefault(fk => fk.Column == "event_id");
-    await Assert.That(eventFk).IsNotEqualTo(default((string, string, string)));
-    await Assert.That(eventFk.RefTable).IsEqualTo("wh_event_store");
-    await Assert.That(eventFk.RefColumn).IsEqualTo("event_id");
-  }
-
-  [Test]
   public async Task PerspectiveCursors_ShouldHaveForeignKeyToEventStoreAsync() {
     // Arrange
     await using var connection = new NpgsqlConnection(ConnectionString);
@@ -219,35 +179,6 @@ public class SchemaDefinitionTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task ReceptorProcessing_ShouldHaveUniqueConstraintAsync() {
-    // Arrange
-    await using var connection = new NpgsqlConnection(ConnectionString);
-    await connection.OpenAsync();
-
-    // Act - Query unique indexes
-    const string sql = @"
-      SELECT
-        i.indexname,
-        i.indexdef
-      FROM pg_indexes i
-      WHERE i.tablename = 'wh_receptor_processing'
-        AND i.indexdef LIKE '%UNIQUE%'
-      ORDER BY i.indexname";
-
-    await using var command = new NpgsqlCommand(sql, connection);
-    await using var reader = await command.ExecuteReaderAsync();
-
-    var uniqueIndexes = new List<string>();
-    while (await reader.ReadAsync()) {
-      uniqueIndexes.Add(reader.GetString(0));
-    }
-
-    // Assert - Unique constraint for (event_id, receptor_name)
-    await Assert.That(uniqueIndexes).Count().IsGreaterThanOrEqualTo(1);
-    await Assert.That(uniqueIndexes).Contains("uq_receptor_processing_event_receptor");
-  }
-
-  [Test]
   public async Task PartialIndexes_ShouldExistForStatusQueriesAsync() {
     // Arrange
     await using var connection = new NpgsqlConnection(ConnectionString);
@@ -263,7 +194,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
       JOIN pg_class c ON c.relname = i.tablename
       JOIN pg_index idx ON idx.indrelid = c.oid
       JOIN pg_class ic ON ic.oid = idx.indexrelid
-      WHERE i.tablename IN ('wh_receptor_processing', 'wh_perspective_cursors')
+      WHERE i.tablename = 'wh_perspective_cursors'
         AND pg_get_indexdef(idx.indexrelid) LIKE '%WHERE%'
       ORDER BY i.indexname";
 
@@ -276,12 +207,10 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     }
 
     // Assert - Partial indexes exist
-    await Assert.That(partialIndexes).ContainsKey("idx_receptor_processing_status");
     await Assert.That(partialIndexes).ContainsKey("idx_perspective_cursors_catching_up");
     await Assert.That(partialIndexes).ContainsKey("idx_perspective_cursors_failed");
 
     // Assert - Partial index definitions contain status checks
-    await Assert.That(partialIndexes["idx_receptor_processing_status"]).Contains("WHERE");
     await Assert.That(partialIndexes["idx_perspective_cursors_catching_up"]).Contains("WHERE");
     await Assert.That(partialIndexes["idx_perspective_cursors_failed"]).Contains("WHERE");
   }
@@ -329,7 +258,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_inbox");
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_outbox");
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_event_store");
-    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_receptor_processing");
+    await Assert.That(sql).DoesNotContain("wh_receptor_processing");
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_perspective_cursors");
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_request_response");
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_sequences");

@@ -6,6 +6,7 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Schema;
 using Whizbang.Testing.Containers;
@@ -19,7 +20,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <docs>fundamentals/perspectives/managed-schema-objects</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Schema/ManagedSchemaReconciler.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class ManagedSchemaReconcilerTests {
   private const string SCHEMA = "public";
@@ -81,12 +81,18 @@ public class ManagedSchemaReconcilerTests {
 
   private static ManagedSchemaSettings _gated => new(ReconcileMode.Apply, [], [], DropAfterFleetConverged: true);
 
-  /// <summary>The instance registry's shape the fleet gate reads: an id and a heartbeat.</summary>
+  /// <summary>
+  /// The instance registry the fleet gate reads, and the one liveness rule it reads it through (#2027): the bootstrap
+  /// subset, which creates both ahead of any migration, as a starting instance's Preflight does.
+  /// </summary>
   private async Task _registryAsync(params (Guid Id, TimeSpan Ago)[] instances) {
     await using var db = await _openAsync();
-    await _execAsync(db, "CREATE TABLE IF NOT EXISTS wh_service_instances (instance_id uuid PRIMARY KEY, last_heartbeat_at timestamptz NOT NULL)");
+    foreach (var (_, sql) in WorkCoordinationDbContextSchemaExtensions.GetBootstrapScripts()) {
+      await _execAsync(db, sql);
+    }
     foreach (var (id, ago) in instances) {
-      await _execAsync(db, $"INSERT INTO wh_service_instances VALUES ('{id}', now() - interval '{(int)ago.TotalSeconds} seconds')");
+      await _execAsync(db, "INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at) "
+        + $"VALUES ('{id}', 'svc', 'host', 1, now() - interval '{(int)ago.TotalSeconds} seconds')");
     }
   }
 
@@ -184,6 +190,38 @@ public class ManagedSchemaReconcilerTests {
 
     await Assert.That(tables).IsEmpty()
       .Because("an index the server never built (an extension it refused) is reported, not retried under the lock forever");
+  }
+
+  /// <summary>
+  /// A caller whose open transaction began before the ledger was committed still has the table named for rebuilding:
+  /// the ledger's presence is read from <c>pg_class</c> under the statement's snapshot, not resolved through the
+  /// session's catalog cache (#2038).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The first call asks for the ledger while it is absent, and the session caches "no such table". Another session
+  /// then drops a declared index and puts the ledger back. Nothing in the caller's transaction refreshes the cache
+  /// between the calls, so <c>to_regclass</c> still said "no ledger", the answer was "nothing to rebuild", and a start
+  /// took the fast path past a missing index.
+  /// </para>
+  /// <para>Design choice documented at contributors/data-engines/writing-migrations#catalog-existence-checks.</para>
+  /// </remarks>
+  [Test]
+  public async Task InsideATransactionThatBeganBeforeTheLedgerWasCommitted_NamesTheTableForRebuildingAsync() {
+    await _reconcileAsync();
+    await using var other = await _openAsync();
+    await _execAsync(other, "ALTER TABLE wh_managed_objects RENAME TO wh_managed_objects_aside");
+    await using var caller = await _openAsync();
+    await using var transaction = await caller.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
+    await Assert.That(await ManagedSchemaReconciler.TablesMissingDeclaredObjectsAsync(
+      caller, SCHEMA, _declared(), CancellationToken.None)).IsEmpty()
+      .Because("precondition: there is no ledger, and the caller's session has now looked for it");
+
+    await _execAsync(other, "DROP INDEX idx_job_status; ALTER TABLE wh_managed_objects_aside RENAME TO wh_managed_objects");
+
+    await Assert.That(await ManagedSchemaReconciler.TablesMissingDeclaredObjectsAsync(
+      caller, SCHEMA, _declared(), CancellationToken.None)).IsEquivalentTo([TABLE])
+      .Because("the ledger is committed and remembers the index that is now gone");
   }
 
   [Test]

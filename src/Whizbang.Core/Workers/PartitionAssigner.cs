@@ -17,19 +17,6 @@ public sealed class PartitionAssignerOptions {
   public bool Enabled { get; set; } = true;
 
   /// <summary>
-  /// How long a pooled instance's heartbeat counts it as live. Default 90 seconds: three of the heartbeat's regular
-  /// beats.
-  /// </summary>
-  public TimeSpan PooledHeartbeatWindow { get; set; } = TimeSpan.FromSeconds(90);
-
-  /// <summary>
-  /// How long a direct instance's heartbeat counts it as live while its alive-lock is not held (the fallback). Default
-  /// 180 seconds: three of the slow beats a direct instance makes while it holds its lock, so an instance whose lock
-  /// was just lost is not judged by a beat that was never due.
-  /// </summary>
-  public TimeSpan DirectHeartbeatWindow { get; set; } = TimeSpan.FromSeconds(180);
-
-  /// <summary>
   /// How long a published assignment holds without renewal. The assigner renews it as part of its own liveness (its
   /// alive-lock tick, and its heartbeat), so this is also how long the assigner may go unseen before claimers stop
   /// using its assignment. Default 90 seconds; it must be longer than the slow heartbeat cadence.
@@ -42,11 +29,8 @@ public sealed class PartitionAssignerOptions {
   public TimeSpan RepublishInterval { get; set; } = TimeSpan.FromMinutes(5);
 
   /// <summary>Throws when the options cannot work together.</summary>
-  /// <exception cref="InvalidOperationException">A window or lease is not positive, or the lease is too short.</exception>
+  /// <exception cref="InvalidOperationException">The backstop is not positive, or the lease is too short.</exception>
   public void Validate() {
-    if (PooledHeartbeatWindow <= TimeSpan.Zero || DirectHeartbeatWindow <= TimeSpan.Zero) {
-      throw new InvalidOperationException("PartitionAssigner heartbeat windows must be positive.");
-    }
     if (RepublishInterval <= TimeSpan.Zero) {
       throw new InvalidOperationException("PartitionAssigner.RepublishInterval must be positive.");
     }
@@ -84,28 +68,23 @@ public sealed record PartitionAssignerEvaluation(IReadOnlyList<Guid> Members, Pa
 }
 
 /// <summary>
-/// The assigner's decisions, with no I/O and no clock of their own: who is live, by the strategy for each connection
-/// mode, and whether that calls for a publish.
+/// The assigner's decisions, with no I/O and no clock of their own: who is live, by the database's one liveness rule
+/// (#2027), and whether that calls for a publish.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
-/// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerTests.cs:IsLive_ADirectInstanceHoldingItsLock_IsLiveWhateverItsHeartbeatAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerTests.cs:IsLive_IsTheRulesAnswer_WhateverTheLockOrTheHeartbeatAsync</tests>
 /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerTests.cs:Evaluate_AMemberGoingStale_PublishesAsync</tests>
 public static class PartitionAssigner {
   /// <summary>
-  /// Whether a candidate is live, by the strategy for its connection mode. A direct instance's alive-lock is
-  /// authoritative: held, it is live. Without the lock (a direct instance between connections, or any pooled
-  /// instance), the heartbeat decides, against the window for its mode.
+  /// Whether a candidate is live: the answer of the database's one liveness rule (#2027, <c>wh_instance_liveness</c>),
+  /// which the candidate carries. The assigner keeps no window of its own, so it can never call an instance live that the
+  /// claim and the reap call dead.
   /// </summary>
   /// <param name="candidate">The candidate.</param>
-  /// <param name="options">The windows.</param>
   /// <returns>True when live.</returns>
-  public static bool IsLive(PartitionAssignmentCandidate candidate, PartitionAssignerOptions options) {
+  public static bool IsLive(PartitionAssignmentCandidate candidate) {
     ArgumentNullException.ThrowIfNull(candidate);
-    ArgumentNullException.ThrowIfNull(options);
-    if (candidate.Mode == InstanceConnectionMode.Direct) {
-      return candidate.AliveLockHeld || candidate.HeartbeatAge <= options.DirectHeartbeatWindow;
-    }
-    return candidate.HeartbeatAge <= options.PooledHeartbeatWindow;
+    return candidate.IsLive;
   }
 
   /// <summary>
@@ -116,12 +95,10 @@ public static class PartitionAssigner {
   /// </summary>
   /// <param name="candidates">The registered instances and their signals.</param>
   /// <param name="self">The assigner.</param>
-  /// <param name="options">The windows.</param>
   /// <returns>The members, in rank order.</returns>
-  public static IReadOnlyList<Guid> LiveMembers(
-      IEnumerable<PartitionAssignmentCandidate> candidates, Guid self, PartitionAssignerOptions options) {
+  public static IReadOnlyList<Guid> LiveMembers(IEnumerable<PartitionAssignmentCandidate> candidates, Guid self) {
     ArgumentNullException.ThrowIfNull(candidates);
-    var live = new SortedSet<Guid>(candidates.Where(c => c.InstanceId == self || IsLive(c, options)).Select(c => c.InstanceId));
+    var live = new SortedSet<Guid>(candidates.Where(c => c.InstanceId == self || IsLive(c)).Select(c => c.InstanceId));
     return [.. live];
   }
 

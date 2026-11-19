@@ -4,9 +4,9 @@
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureReasonTests.cs:MessageFailureReason_HasExpectedValuesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureReasonTests.cs:MessageFailureReason_CanConvertToIntAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureReasonTests.cs:MessageFailureReason_CanConvertFromIntAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureReasonTests.cs:MessageFailureReason_HasExpectedValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureReasonTests.cs:MessageFailureReason_CanConvertToIntAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureReasonTests.cs:MessageFailureReason_CanConvertFromIntAsync</tests>
 /// Classifies the reason a message failed processing.
 /// Enables typed filtering and handling of different failure scenarios.
 /// </summary>
@@ -255,6 +255,23 @@ public enum MessageFailureReason {
   /// </summary>
   /// <docs>fundamentals/events/archive-store#restore-requests</docs>
   AwaitingRestore = 27,
+
+  /// <summary>
+  /// A receptor interceptor denied a receptor this message would have run with <c>DeniedAction.DeadLetter</c>, so the
+  /// inbox worker moved the row to the dead-letter store before completing it, and no receptor ran. Not retried: the
+  /// same message under the same scope is denied the same way every time. The recorded error text names the receptor
+  /// and the interceptor's reason.
+  /// </summary>
+  /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
+  ReceptorDenied = 28,
+
+  /// <summary>
+  /// A receptor interceptor denied a receptor this message would have run with <c>DeniedAction.Quarantine</c>. The row
+  /// is held in the dead-letter store under this reason, apart from failures, for review; no receptor ran and the rest
+  /// of the stream is not blocked. Recover it through the dead-letter recovery flow once the denial is resolved.
+  /// </summary>
+  /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
+  ReceptorQuarantined = 29,
 
   /// <summary>
   /// Unclassified error - reason not determined. Numbered far above the classified reasons so a

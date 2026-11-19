@@ -10,8 +10,8 @@ namespace Whizbang.Core.MultiStream;
 
 /// <summary>Registers multi-stream command handlers.</summary>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#registration</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:AddMultiStreamCommandHandler_RegistersOneBindingNamedForTheCommandTypeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:AddMultiStreamCommandHandler_ASecondHandlerForTheSameCommand_IsRefusedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:AddMultiStreamCommandHandler_RegistersOneBindingNamedForTheCommandTypeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:AddMultiStreamCommandHandler_ASecondHandlerForTheSameCommand_IsRefusedAsync</tests>
 public static class MultiStreamCommandServiceCollectionExtensions {
   /// <summary>
   /// Registers <typeparamref name="THandler"/> as the one handler of <typeparamref name="TCommand"/>, the command's
@@ -31,7 +31,7 @@ public static class MultiStreamCommandServiceCollectionExtensions {
       if (descriptor.ImplementationInstance is HandlerRegistration existing && existing.Command == typeof(TCommand)) {
         if (existing.Handler != typeof(THandler)) {
           throw new InvalidOperationException(
-            $"{MultiStreamCommandNames.Of(typeof(TCommand))} already has a handler ({existing.Handler.Name}); a multi-stream command has exactly one, so {typeof(THandler).Name} cannot be added.");
+            $"{MultiStreamCommandNames.Of(typeof(TCommand))} already has a handler ({TypeNameFormatter.ForLog(existing.Handler)}); a multi-stream command has exactly one, so {TypeNameFormatter.ForLog(typeof(THandler))} cannot be added.");
         }
         return services;
       }

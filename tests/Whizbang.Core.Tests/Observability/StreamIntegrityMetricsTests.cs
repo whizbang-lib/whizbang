@@ -50,6 +50,8 @@ public class StreamIntegrityMetricsTests {
     await Assert.That(observed).Contains("whizbang.stream_integrity.manifests_requested");
     await Assert.That(observed).Contains("whizbang.stream_integrity.manifest_chunks_sent");
     await Assert.That(observed).Contains("whizbang.stream_integrity.drill_downs_requested");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.unplaced_buckets");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.stream_digest_drift_corrected");
     await Assert.That(observed).Contains("whizbang.stream_integrity.backfills_requested");
     await Assert.That(observed).Contains("whizbang.stream_integrity.digest_buckets_verified");
     await Assert.That(observed).Contains("whizbang.stream_integrity.digest_drift_healed");
@@ -69,10 +71,14 @@ public class StreamIntegrityMetricsTests {
     await Assert.That(metrics.ManifestsRequested).IsNotNull();
     await Assert.That(metrics.ManifestChunksSent).IsNotNull();
     await Assert.That(metrics.DrillDownsRequested).IsNotNull();
+    await Assert.That(metrics.UnplacedBuckets).IsNotNull();
+    await Assert.That(metrics.StreamDigestDriftCorrected).IsNotNull();
     await Assert.That(metrics.BackfillsRequested).IsNotNull();
     await Assert.That(metrics.DigestBucketsVerified).IsNotNull();
     await Assert.That(metrics.DigestDriftHealed).IsNotNull();
     await Assert.That(metrics.RedeliveryRequestsReceived).IsNotNull();
+    await Assert.That(metrics.RedeliveredChildrenReattributed).IsNotNull();
+    await Assert.That(metrics.MisattributedOriginsCorrected).IsNotNull();
   }
 
   [Test]
@@ -106,6 +112,29 @@ public class StreamIntegrityMetricsTests {
     // #1792: deficits a comparison could not add to the paced drain's ledger (per-comparison cap or
     // total backlog bound), deferred to a later audit, so they must be countable.
     await Assert.That(observed).Contains("whizbang.stream_integrity.repairs_deferred");
+    // #2001: the integrity delivery queue the maintainer drains: recorded, handled, retried, dropped.
+    await Assert.That(observed).Contains("whizbang.stream_integrity.deliveries_queued");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.deliveries_processed");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.deliveries_failed");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.deliveries_dropped");
+    // #2035: the deliveries waiting for the maintainer, and how long the oldest has waited.
+    await Assert.That(observed).Contains("whizbang.stream_integrity.deliveries_pending");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.oldest_delivery_age_seconds");
+    // #2029: buckets whose request is out, and buckets answered and waiting for the next comparison.
+    await Assert.That(observed).Contains("whizbang.stream_integrity.repair_answer_pending_buckets");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.repair_answered_buckets");
+    // #2184: each time the paced drain stops claiming because the outstanding-answer cap is reached.
+    await Assert.That(observed).Contains("whizbang.stream_integrity.repair_drain_holds");
+    // #2008, #2032: domains two services claim, and redelivery requests an origin declined to answer (its own).
+    await Assert.That(observed).Contains("whizbang.stream_integrity.ownership_conflicts");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.redelivery_requests_ignored");
+    // #2008: re-attribution of pre-origin history: moved, left without a known owner, and left on a first-hop disagreement.
+    await Assert.That(observed).Contains("whizbang.stream_integrity.origins_reattributed");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.origins_unattributed");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.reattribution_hop_disagreements");
+    // #2116: events recorded under an origin that does not own their type, on receipt and in stored history.
+    await Assert.That(observed).Contains("whizbang.stream_integrity.redelivered_children_reattributed");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.misattributed_origins_corrected");
     // Certification progress: the per-origin verified watermark.
     await Assert.That(observed).Contains("whizbang.stream_integrity.sealed_through");
   }
@@ -114,10 +143,13 @@ public class StreamIntegrityMetricsTests {
   public async Task SealedThroughGauge_ReportsOneMeasurementPerOrigin_TaggedAsync() {
     var originA = Guid.NewGuid();
     var originB = Guid.NewGuid();
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    // This instance's meter only: another test's metrics instance publishes a gauge of the same name, and its seals
+    // would be read as this test's.
     var readings = new List<(long Value, string? Origin)>();
     using var listener = new MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
-      if (instrument.Meter.Name == StreamIntegrityMetrics.METER_NAME
+      if (instrument.Meter == metrics.RepairsUnhealable.Meter
           && instrument.Name == "whizbang.stream_integrity.sealed_through") {
         l.EnableMeasurementEvents(instrument);
       }
@@ -135,7 +167,6 @@ public class StreamIntegrityMetricsTests {
     });
     listener.Start();
 
-    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     metrics.UpdateLedgerGauges(new LedgerGaugeSnapshot {
       UnhealedBuckets = 5,
       Seals = [new OriginSeal(originA, 300), new OriginSeal(originB, 0)],

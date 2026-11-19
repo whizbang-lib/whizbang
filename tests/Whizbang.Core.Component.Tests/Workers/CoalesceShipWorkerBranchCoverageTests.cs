@@ -224,7 +224,6 @@ public class CoalesceShipWorkerBranchCoverageTests {
 
     return new CoalesceShipWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       logger: NullLogger<CoalesceShipWorker>.Instance,
       compositeFactory: new CompositeFactory(),

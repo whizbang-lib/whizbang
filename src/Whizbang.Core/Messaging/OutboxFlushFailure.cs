@@ -54,7 +54,7 @@ public sealed record OutboxFlushFailure(
 /// <param name="cancellationToken">Cancellation.</param>
 /// <returns>True when the messages were written to the dead-letter table.</returns>
 /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/OutboxFlushFailureCallbackTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OutboxFlushFailureCallbackTests.cs</tests>
 public delegate Task<bool> OutboxFlushFailureCallback(OutboxFlushFailure failure, CancellationToken cancellationToken);
 
 /// <summary>
@@ -67,7 +67,7 @@ public delegate Task<bool> OutboxFlushFailureCallback(OutboxFlushFailure failure
 /// messages somewhere of its own when they were not dead-lettered, or re-send them once the database recovers.
 /// </remarks>
 /// <docs>extending/internals/outbox-batch-strategy#when-a-flush-fails</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/OutboxFlushFailureCallbackTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OutboxFlushFailureCallbackTests.cs</tests>
 public interface IOutboxFlushFailureObserver {
   /// <summary>Called once for each batch that could not be stored.</summary>
   /// <param name="failure">What was not stored, why, and whether it was dead-lettered.</param>

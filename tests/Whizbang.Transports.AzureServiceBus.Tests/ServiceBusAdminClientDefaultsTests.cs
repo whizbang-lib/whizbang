@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Runtime.CompilerServices;
+using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -74,6 +75,16 @@ public class ServiceBusAdminClientDefaultsTests {
         string topicName, string subscriptionName, CreateRuleOptions options,
         CancellationToken cancellationToken = default)
         => throw new NotImplementedException();
+  }
+
+  [Test]
+  public async Task UpdateRuleAsync_Default_IsNotSupportedAsync() {
+    IServiceBusAdminClient client = new MinimalAdminClient();
+    var rule = ServiceBusModelFactory.RuleProperties("ExcludedEventTypes", new TrueRuleFilter());
+
+    var thrown = await Assert.That(() => client.UpdateRuleAsync("orders", "sub", rule)).Throws<NotSupportedException>();
+
+    await Assert.That(thrown!.Message).Contains(nameof(MinimalAdminClient));
   }
 
   [Test]

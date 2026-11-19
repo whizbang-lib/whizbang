@@ -18,7 +18,7 @@ public sealed record PerspectiveDocumentModel(string Table, Type Model);
 /// table's declared JSON names from the serializer's metadata for that type, with no reflection (#1874).
 /// </summary>
 /// <docs>fundamentals/perspectives/stored-form-migrations#declared-names</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveDocumentModelsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveDocumentModelsTests.cs</tests>
 public static class PerspectiveDocumentModels {
   private static readonly ConcurrentDictionary<string, Type> _models = new(StringComparer.Ordinal);
 

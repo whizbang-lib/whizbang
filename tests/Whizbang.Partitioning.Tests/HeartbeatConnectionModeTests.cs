@@ -23,6 +23,17 @@ namespace Whizbang.Partitioning.Tests;
 /// </summary>
 [Category("Workers")]
 public class HeartbeatConnectionModeTests {
+  /// <summary>No beat here is refused, so nothing exits.</summary>
+  private sealed class NoExit : IWhizbangInstanceExit {
+    public ExitCause? Cause => null;
+    public InstanceExitReport? Report => null;
+    public Task Completion => Task.CompletedTask;
+    public void RequestExit(InstanceExitRequest request) => throw new InvalidOperationException("nothing exits in this test");
+    public Task ExitAsync(InstanceExitRequest request, CancellationToken cancellationToken) => throw new InvalidOperationException("nothing exits in this test");
+    public void OnHostStarting() { }
+    public Task OnHostStoppingAsync(CancellationToken stopToken) => Task.CompletedTask;
+  }
+
   private sealed class Lifecycle : IWhizbangLifecycleState {
     public LifecyclePhase Phase => LifecyclePhase.Running;
     public ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken) => ValueTask.CompletedTask;
@@ -64,19 +75,18 @@ public class HeartbeatConnectionModeTests {
       services.AddSingleton(source);
     }
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new HeartbeatWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new ServiceInstanceProvider(Guid.CreateVersion7(), "svc", "host", processId: 1),
-      schemaReadyGate: gate,
       options: Options.Create(new HeartbeatWorkerOptions()),
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: new Lifecycle(),
       libraryVersion: new Version(),
+      applicationVersion: new Whizbang.Core.Versioning.ApplicationVersionProvider(Whizbang.Core.Versioning.ApplicationVersion.Unknown),
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
       signalBus: NullSignalBus.Instance,
+      schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), instanceExit: new NoExit(),
       timeProvider: new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1)));
 
     _ = await worker.TickForTestsAsync(CancellationToken.None);

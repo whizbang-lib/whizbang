@@ -35,20 +35,15 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/backup-tick-coordinator</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/BackupTickCoordinatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BackupTickCoordinatorTests.cs</tests>
 public sealed partial class BackupTickCoordinator(
   IIdleActivityTracker tracker,
   IBackupTickRegistry registry,
   IOptions<BackupTickCoordinatorOptions> options,
   ILogger<BackupTickCoordinator> logger,
-  // Startup barrier: registered backstop ticks poll the database. Optional only so existing
-  // fixtures construct unchanged; DI always supplies it.
-  ISchemaReadyGate schemaReadyGate,
   INotifySignalingGate gate,
   TimeProvider? timeProvider = null
 ) : BackgroundService {
-  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
-
   private readonly IIdleActivityTracker _tracker = ArgumentGuard.NotNull(tracker);
   private readonly IBackupTickRegistry _registry = ArgumentGuard.NotNull(registry);
   private readonly BackupTickCoordinatorOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
@@ -75,15 +70,6 @@ public sealed partial class BackupTickCoordinator(
       LogDisabled(_logger);
       return;
     }
-
-    if (_schemaReadyGate is not null) {
-      try {
-        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        return;
-      }
-    }
-
 
     LogStarted(_logger, _options.IdleThreshold, _options.PollingInterval, _options.FastPollingInterval);
 

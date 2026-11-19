@@ -18,7 +18,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// for the same stream. RED here = ordering bug at the SQL/Postgres storage layer.
 /// </summary>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class EventStoreOrderingInvariantSqlTests : EFCoreTestBase {
 

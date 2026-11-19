@@ -222,4 +222,52 @@ public class CollectiveApplyHookPlanTests {
     await Assert.That(plan.StoreColumns).Count().IsEqualTo(1);
     await Assert.That(plan.BumpVersion).IsTrue();
   }
+  // --- The apply's timestamp on a resumed apply (#1969) ------------------------
+
+  private static readonly DateTimeOffset _applyTimestamp = new(2026, 11, 1, 12, 0, 0, TimeSpan.Zero);
+
+  [Test]
+  public async Task RenderStoreColumnSetTail_WithTheAppliedAtSql_StampsTheApplyTimestampColumnFromItAsync() {
+    var plan = _plan([new CollectiveStoreColumn("updated_at", _applyTimestamp), new CollectiveStoreColumn("audit", "x")])
+      with { ApplyTimestamp = _applyTimestamp };
+
+    await Assert.That(plan.RenderStoreColumnSetTail("(SELECT applied_at FROM wb_mark)"))
+      .IsEqualTo(", \"updated_at\" = COALESCE((SELECT applied_at FROM wb_mark), @wb_hookcol0), \"audit\" = @wb_hookcol1")
+      .Because("a resumed apply stamps the rows it reaches with the time the apply started; other columns keep their value");
+  }
+
+  [Test]
+  public async Task RenderStoreColumnSetTail_AColumnSetToAnotherTime_KeepsItsOwnValueAsync() {
+    var plan = _plan([new CollectiveStoreColumn("reviewed_at", _applyTimestamp.AddDays(-1))])
+      with { ApplyTimestamp = _applyTimestamp };
+
+    await Assert.That(plan.RenderStoreColumnSetTail("(SELECT applied_at FROM wb_mark)"))
+      .IsEqualTo(", \"reviewed_at\" = @wb_hookcol0");
+  }
+
+  [Test]
+  public async Task RenderStoreColumnSetTail_APlanWithNoApplyTimestamp_BindsEveryColumnAsync() {
+    var plan = _plan([new CollectiveStoreColumn("updated_at", _applyTimestamp)]);
+
+    await Assert.That(plan.RenderStoreColumnSetTail("(SELECT applied_at FROM wb_mark)"))
+      .IsEqualTo(", \"updated_at\" = @wb_hookcol0");
+  }
+
+  [Test]
+  public async Task RenderStoreColumnSetTail_WithNoAppliedAtSql_BindsEveryColumnAsync() {
+    var plan = _plan([new CollectiveStoreColumn("updated_at", _applyTimestamp)]) with { ApplyTimestamp = _applyTimestamp };
+
+    await Assert.That(plan.RenderStoreColumnSetTail()).IsEqualTo(", \"updated_at\" = @wb_hookcol0");
+  }
+  [Test]
+  public async Task Resolve_CarriesTheApplysTimestamp_SoAResumedApplyCanRecognizeItAsync() {
+    var plan = CollectiveApplyHookPlanner.Resolve<OrderModel>(
+      WhizbangApplyHooks.CreateCollectiveWithDefaults(),
+      new ApplyHookContext { ModelType = typeof(OrderModel), ApplyTimestamp = _applyTimestamp });
+
+    await Assert.That(plan.ApplyTimestamp).IsEqualTo(_applyTimestamp);
+    await Assert.That(plan.RenderStoreColumnSetTail("(SELECT applied_at FROM wb_mark)"))
+      .Contains("\"updated_at\" = COALESCE((SELECT applied_at FROM wb_mark), @wb_hookcol0)")
+      .Because("the default whizbang.timestamps hook stamps updated_at with the apply's timestamp");
+  }
 }

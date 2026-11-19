@@ -51,15 +51,12 @@ public partial class LifecycleExceptionInvariantTests {
     // The detached stage resolves its own invoker from a fresh scope, so the container carries one too.
     var invoker = new ThrowingReceptorInvoker(_payloadTooLarge());
     var sp = new ServiceCollection().AddSingleton<IReceptorInvoker>(invoker).BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new FakeServiceInstanceProvider(),
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: new FakeHandlerCommitChannel(),
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { Enabled = true }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,

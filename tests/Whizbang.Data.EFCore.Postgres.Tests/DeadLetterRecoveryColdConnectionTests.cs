@@ -31,7 +31,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreDeadLetterRecoveryService.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard2")]
 public class DeadLetterRecoveryColdConnectionTests : EFCoreTestBase {
 

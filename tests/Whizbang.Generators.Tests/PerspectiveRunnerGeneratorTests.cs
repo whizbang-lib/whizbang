@@ -341,7 +341,7 @@ namespace TestNamespace {
     await Assert.That(array).Contains("typeof(global::TestNamespace.ThreadArchived)");
     await Assert.That(array).Contains("typeof(global::TestNamespace.ThreadRenamed)");
 
-    await Assert.That(runnerSource).Contains("HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, _handledEventTypes, cancellationToken)")
+    await Assert.That(runnerSource).Contains("HasStreamEventsBeforeAsync(streamId, beforeEventId, _handledEventTypes, cancellationToken)")
       .Because("the probe asks about the handled event types only (issue #696)");
   }
 
@@ -2933,7 +2933,7 @@ namespace TestNamespace {
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("model = model with {");
     await Assert.That(runnerSource).Contains("Status = default!");
-    await Assert.That(runnerSource).Contains("Embedding = System.Array.Empty<float>()");
+    await Assert.That(runnerSource).Contains("Embedding = global::System.Array.Empty<float>()");
     await Assert.That(runnerSource).Contains("UpsertWithPhysicalFieldsAsync");
   }
 
@@ -2985,7 +2985,7 @@ namespace TestNamespace {
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("model.Status = default!;");
-    await Assert.That(runnerSource).Contains("model.Embedding = System.Array.Empty<float>();");
+    await Assert.That(runnerSource).Contains("model.Embedding = global::System.Array.Empty<float>();");
     await Assert.That(runnerSource).DoesNotContain("model = model with {");
   }
 

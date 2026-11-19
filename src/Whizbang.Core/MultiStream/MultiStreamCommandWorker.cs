@@ -7,7 +7,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Events.System;
-using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Workers;
@@ -21,14 +20,11 @@ namespace Whizbang.Core.MultiStream;
 /// least every <see cref="MultiStreamCommandOptions.PollInterval"/>; a full batch is followed by another pass at once.
 /// </summary>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#worker</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:RunOnceAsync_CallsTheHandlerOncePerClaimedStreamAndRecordsEachSuccessAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:RunOnceAsync_AHandlerThatThrows_RecordsTheFailureAndWorksTheRestAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:RunOnceAsync_CanceledMidBatch_RecordsTheStreamsAlreadyDoneAndStopsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:RunOnceAsync_CallsTheHandlerOncePerClaimedStreamAndRecordsEachSuccessAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:RunOnceAsync_AHandlerThatThrows_RecordsTheFailureAndWorksTheRestAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandWorkerTests.cs:RunOnceAsync_CanceledMidBatch_RecordsTheStreamsAlreadyDoneAndStopsAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/MultiStream/MultiStreamCommandWorkerLoopTests.cs:Loop_ANewRunNotice_WakesTheWorkerAsync</tests>
-public sealed partial class MultiStreamCommandWorker : BackgroundService, INotifySubscription {
-  /// <summary>The channel a newly recorded run is announced on.</summary>
-  public const string CHANNEL = "wh_multi_stream_work";
-
+public sealed partial class MultiStreamCommandWorker : BackgroundService, Whizbang.Core.RunControl.IObeysRunPermit {
   private readonly IMultiStreamCommandStore _store;
   private readonly Dictionary<string, IMultiStreamCommandBinding> _bindings;
   private readonly IServiceScopeFactory _scopeFactory;
@@ -36,7 +32,6 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
   private readonly MultiStreamCommandOptions _options;
   private readonly ILogger<MultiStreamCommandWorker> _logger;
   private readonly IPartitionAssignmentSource _assignment;
-  private readonly ISchemaReadyGate _schemaReady;
   private readonly TimeProvider _time;
   private readonly SemaphoreSlim _wake = new(0, 1);
   private DateTimeOffset? _nextPurgeAt;
@@ -50,8 +45,10 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
   /// <param name="logger">Logger.</param>
   /// <param name="assignment">The cached partition assignment; the claim ranks this instance from it, as the work claim
   /// does, and ranks the live instances itself when it has no current version.</param>
-  /// <param name="schemaReady">The loop waits for the schema before its first pass.</param>
   /// <param name="timeProvider">Clock for retention; the system clock when null.</param>
+  /// <param name="runPermit">The instance's run permit (#2045); each pass is a hold of it. A worker built without one is
+  /// under no run control.</param>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list.")]
   public MultiStreamCommandWorker(
       IMultiStreamCommandStore store,
       IEnumerable<IMultiStreamCommandBinding> bindings,
@@ -60,8 +57,8 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
       IOptions<MultiStreamCommandOptions> options,
       ILogger<MultiStreamCommandWorker> logger,
       IPartitionAssignmentSource assignment,
-      ISchemaReadyGate schemaReady,
-      TimeProvider? timeProvider = null) {
+      TimeProvider? timeProvider = null,
+      Whizbang.Core.RunControl.WhizbangRunPermit? runPermit = null) {
     ArgumentNullException.ThrowIfNull(store);
     ArgumentNullException.ThrowIfNull(bindings);
     ArgumentNullException.ThrowIfNull(scopeFactory);
@@ -69,7 +66,6 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(logger);
     ArgumentNullException.ThrowIfNull(assignment);
-    ArgumentNullException.ThrowIfNull(schemaReady);
     _store = store;
     _bindings = bindings.ToDictionary(b => b.CommandType, StringComparer.Ordinal);
     _scopeFactory = scopeFactory;
@@ -77,9 +73,12 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
     _options = options.Value;
     _logger = logger;
     _assignment = assignment;
-    _schemaReady = schemaReady;
     _time = timeProvider ?? TimeProvider.System;
+    RunPermit = runPermit ?? new Whizbang.Core.RunControl.WhizbangRunPermit();
   }
+
+  /// <summary>The run permit every pass takes a hold of (#2045).</summary>
+  public Whizbang.Core.RunControl.WhizbangRunPermit RunPermit { get; }
 
   /// <summary>Raised once for each run this instance completed, after its completion event was published (or failed to be).</summary>
   public event Action<MultiStreamRunCompletion>? OnRunCompleted;
@@ -87,13 +86,10 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
   /// <summary>Raised after each pass of the loop with the number of streams it claimed; a pass that failed reports zero.</summary>
   public event Action<int>? OnPassCompleted;
 
-  /// <inheritdoc/>
-  public string ChannelName => CHANNEL;
-
-  /// <inheritdoc/>
-  public void OnNotification(string payload) => RequestImmediateRun();
-
-  /// <summary>Wakes the loop for a pass now instead of at the next poll.</summary>
+  /// <summary>
+  /// Wakes the loop for a pass now instead of at the next poll: called when a new run is announced on the signal bus
+  /// (<see cref="Whizbang.Core.Signals.MultiStreamWorkSignal"/>, #2046).
+  /// </summary>
   public void RequestImmediateRun() {
     try {
       _wake.Release();
@@ -109,14 +105,14 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
       return;
     }
     _options.Validate();
-    await _schemaReady.WaitForReadyAsync(stoppingToken).ConfigureAwait(false);
     while (!stoppingToken.IsCancellationRequested) {
       var claimed = 0;
       try {
         claimed = await RunOnceAsync(stoppingToken).ConfigureAwait(false);
         await PurgeIfDueAsync(stoppingToken).ConfigureAwait(false);
-      } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
-        break;
+      } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested
+          || RunPermit.State == Whizbang.Core.RunControl.RunState.Stopped) {
+        break;   // shutdown, or a stopped run permit (#2045): a stop is final, and no later pass could claim
       } catch (Exception ex) {
         // A failed pass is reported and the next one tries again; it never stops the host.
         LogPassFailed(_logger, ex);
@@ -133,6 +129,8 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
   /// <param name="cancellationToken">The host's stopping token.</param>
   /// <returns>How many streams were claimed.</returns>
   internal async Task<int> RunOnceAsync(CancellationToken cancellationToken) {
+    // #2045: no claim while the run permit is closed, and the pass is a hold the run-control path waits for.
+    using var hold = await RunPermit.EnterAsync(cancellationToken).ConfigureAwait(false);
     var instanceId = _instance.InstanceId;
     var version = await _assignment.ForClaimAsync(instanceId, cancellationToken).ConfigureAwait(false);
     var items = await _store.ClaimAsync(
@@ -188,7 +186,7 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
       return new MultiStreamOutcome(item.RunId, item.StreamId, null);
     } catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested) {
       LogStreamFailed(_logger, ex, item.CommandType, item.RunId, item.StreamId, item.Attempt);
-      return new MultiStreamOutcome(item.RunId, item.StreamId, $"{ex.GetType().Name}: {ex.Message}");
+      return new MultiStreamOutcome(item.RunId, item.StreamId, $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}");
     } finally {
       ScopeContextAccessor.CurrentContext = previous;
       ScopeContextAccessor.CurrentInitiatingContext = previousInitiating;

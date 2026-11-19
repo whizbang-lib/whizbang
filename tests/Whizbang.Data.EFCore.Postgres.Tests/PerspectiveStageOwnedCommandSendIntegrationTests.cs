@@ -76,7 +76,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.PerspectiveStageSends;
 /// <code-under-test>src/Whizbang.Core/Lifecycle/LifecycleTrackingState.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Generators/Templates/PerspectiveRunnerTemplate.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard5")]
 public class PerspectiveStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
   private const string OWNED_DOMAIN = "Whizbang.Data.EFCore.Postgres.Tests.PerspectiveStageSends.Owned";
@@ -196,15 +195,12 @@ public class PerspectiveStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
     var provider = services.BuildServiceProvider();
     var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
 
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var harness = new PerspectiveWorkerTestHarness();
 
     var claimWorker = new ClaimWorker(
       scopeFactory: scopeFactory,
       instanceProvider: instanceProvider,
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 200,
@@ -228,7 +224,6 @@ public class PerspectiveStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
       instanceProvider: instanceProvider,
       scopeFactory: scopeFactory,
       options: Options.Create(workerOptions),
-      schemaReadyGate: gate,
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: provider.GetRequiredService<IEventTypeProvider>(),

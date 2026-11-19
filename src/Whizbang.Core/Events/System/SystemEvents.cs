@@ -28,7 +28,7 @@ public record PerspectiveRebuildStarted(
     int TotalStreams,
     DateTimeOffset StartedAt,
     Whizbang.Core.Perspectives.RebuildOrigin? Origin = null
-) : IEvent;
+) : IEphemeralSystemEvent;
 
 /// <summary>
 /// Emitted periodically during a rebuild to report progress.
@@ -52,7 +52,7 @@ public record PerspectiveRebuildProgress(
     int EventsReplayed,
     DateTimeOffset StartedAt,
     Whizbang.Core.Perspectives.RebuildOrigin? Origin = null
-) : IEvent;
+) : IEphemeralSystemEvent;
 
 /// <summary>
 /// Emitted when a perspective rebuild completes successfully.
@@ -74,7 +74,7 @@ public record PerspectiveRebuildProgress(
 /// one whose digest failed carries the failure, so "unknown" is never read as "unchanged".</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:PerspectiveRebuildCompleted_Properties_RoundTripCorrectlyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderOutcomeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderOutcomeTests.cs</tests>
 [PinnedId("5e3fb66f-286a-406f-9cf0-23e77bd96026")]
 public record PerspectiveRebuildCompleted(
     [property: StreamId] Guid StreamId,
@@ -87,7 +87,7 @@ public record PerspectiveRebuildCompleted(
     string? RowDigestBefore = null,
     string? RowDigestAfter = null,
     string? RowDigestUnavailableReason = null
-) : IEvent;
+) : IEphemeralSystemEvent;
 
 /// <summary>
 /// Emitted when a perspective rebuild fails.
@@ -111,7 +111,7 @@ public record PerspectiveRebuildFailed(
     int StreamsProcessedBeforeFailure,
     TimeSpan Duration,
     Whizbang.Core.Perspectives.RebuildOrigin? Origin = null
-) : IEvent;
+) : IEphemeralSystemEvent;
 
 // --- Perspective rewind events ---
 
@@ -130,9 +130,9 @@ public record PerspectiveRebuildFailed(
 /// <param name="HasSnapshot">Whether a snapshot was available for the rewind.</param>
 /// <param name="StartedAt">When the rewind operation started.</param>
 /// <docs>fundamentals/perspectives/perspectives#rewind-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveRewindStarted_WithAllParams_PreservesValuesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveRewindStarted_Properties_AreCorrectAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveRewindStarted_NullSnapshot_IndicatesFullReplayAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveRewindStarted_WithAllParams_PreservesValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveRewindStarted_Properties_AreCorrectAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveRewindStarted_NullSnapshot_IndicatesFullReplayAsync</tests>
 [AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
 [PinnedId("7291e4ab-917e-4955-a78c-e41da5ee1af3")]
 public record PerspectiveRewindStarted(
@@ -143,7 +143,7 @@ public record PerspectiveRewindStarted(
     Guid? ReplayFromSnapshotEventId,
     bool HasSnapshot,
     DateTimeOffset StartedAt
-) : IEvent;
+) : IEphemeralSystemEvent;
 
 /// <summary>
 /// Emitted when a perspective rewind completes successfully.
@@ -161,8 +161,8 @@ public record PerspectiveRewindStarted(
 /// <param name="CompletedAt">When the rewind operation completed.</param>
 /// <docs>fundamentals/perspectives/perspectives#rewind-events</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/PerspectiveRewindCompletionGapTests.cs:FixedRewind_EventsAppendedDuringWindow_AreAppliedTooAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveRewindCompleted_Properties_AreCorrectAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveRewindCompleted_DurationCanBeCalculatedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveRewindCompleted_Properties_AreCorrectAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:PerspectiveRewindCompleted_DurationCanBeCalculatedAsync</tests>
 [AuditEvent(Exclude = true, Reason = "Infrastructure event — no ambient security context during background rewind")]
 [PinnedId("56514b57-149d-47aa-9a10-afcb4e38539c")]
 public record PerspectiveRewindCompleted(
@@ -174,7 +174,7 @@ public record PerspectiveRewindCompleted(
     int EventsReplayed,
     DateTimeOffset StartedAt,
     DateTimeOffset CompletedAt
-) : IEvent;
+) : IEphemeralSystemEvent;
 
 /// <summary>
 /// Emitted once per stream before any per-perspective rewinds begin.

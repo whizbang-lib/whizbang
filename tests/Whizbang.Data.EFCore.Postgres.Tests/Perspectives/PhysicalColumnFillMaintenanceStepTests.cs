@@ -28,7 +28,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields#rows-written-during-a-rolling-deploy</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard5")]
 public class PhysicalColumnFillMaintenanceStepTests {
   private const string TABLE = PhysicalFieldPromotionTests.TABLE;

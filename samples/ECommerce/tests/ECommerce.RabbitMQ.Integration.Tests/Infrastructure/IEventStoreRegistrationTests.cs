@@ -59,12 +59,6 @@ public class IEventStoreRegistrationTests {
     // DIAGNOSTIC: Check if callback is registered BEFORE .WithDriver.Postgres
     var registrarCountBefore = _getRegistrarCount();
 
-    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang().
-    // The ECommerce.Integration.TestUtilities assembly's module initializer overwrites
-    // ServiceRegistrationCallbacks.Dispatcher with a callback that registers
-    // DistributeStageTestReceptor (which has unresolvable constructor dependencies).
-    ServiceRegistrationCallbacks.Dispatcher = null;
-
     // THIS IS THE KEY LINE - triggers registration
     _ = builder.Services
       .AddWhizbang()
@@ -89,7 +83,7 @@ public class IEventStoreRegistrationTests {
   private int _getRegistrarCount() {
     // Use reflection to access private static field for diagnostic purposes
     var registryType = typeof(ModelRegistrationRegistry);
-    var registrarsField = registryType.GetField("_registrars",
+    var registrarsField = registryType.GetField("_entries",
       System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
     if (registrarsField != null) {
       var registrars = registrarsField.GetValue(null) as System.Collections.IList;

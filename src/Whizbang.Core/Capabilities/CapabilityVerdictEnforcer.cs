@@ -1,15 +1,15 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
+using Whizbang.Core.RunControl;
 
 namespace Whizbang.Core.Capabilities;
 
 /// <summary>
 /// Stops the host when the verdict finds an explicitly configured feature whose capability is known not to be
-/// Ready: logs every failing verdict line at Critical, sets the process exit code to 1 and stops the application.
+/// Ready: the instance exits through the one exit path (#2126) as a <see cref="ExitCause.StartupFailure"/> (exit code 4),
+/// whose one entry lists every failing verdict line.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -19,53 +19,28 @@ namespace Whizbang.Core.Capabilities;
 /// </para>
 /// <para>
 /// The exit code is what makes the stop visible: an application stopped on request exits zero, which looks to
-/// an orchestrator exactly like an orderly shutdown.
+/// an orchestrator exactly like an orderly shutdown. The exit path sets it.
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#validation</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Capabilities/CapabilityVerdictEnforcerTests.cs</tests>
-internal sealed partial class CapabilityVerdictEnforcer : IHostedService, IDisposable {
+internal sealed class CapabilityVerdictEnforcer : IHostedService, IDisposable {
   private readonly ICapabilityRegistry _registry;
-  private readonly Action _stopApplication;
-  private readonly ILogger<CapabilityVerdictEnforcer> _logger;
-  private readonly Action<int> _setExitCode;
+  private readonly IWhizbangInstanceExit _instanceExit;
   private readonly CancellationTokenSource _stopping = new();
 
   /// <summary>Creates the enforcer.</summary>
   /// <param name="registry">The registry the verdict is published on.</param>
-  /// <param name="stopApplication">
-  /// Stops the application; <see cref="StopApplicationOf"/> in a host, which resolves the host's lifetime only when it
-  /// is called, so a container without a host still resolves this service.
-  /// </param>
-  /// <param name="logger">Where the failing lines go.</param>
-  /// <param name="setExitCode">Sets the process exit code; <see cref="SetProcessExitCode"/> in a host.</param>
-  public CapabilityVerdictEnforcer(
-      ICapabilityRegistry registry,
-      Action stopApplication,
-      ILogger<CapabilityVerdictEnforcer> logger,
-      Action<int> setExitCode) {
+  /// <param name="instanceExit">The one exit path the enforcer takes when a required capability is not ready.</param>
+  public CapabilityVerdictEnforcer(ICapabilityRegistry registry, IWhizbangInstanceExit instanceExit) {
     ArgumentNullException.ThrowIfNull(registry);
-    ArgumentNullException.ThrowIfNull(stopApplication);
-    ArgumentNullException.ThrowIfNull(logger);
-    ArgumentNullException.ThrowIfNull(setExitCode);
+    ArgumentNullException.ThrowIfNull(instanceExit);
     _registry = registry;
-    _stopApplication = stopApplication;
-    _logger = logger;
-    _setExitCode = setExitCode;
+    _instanceExit = instanceExit;
   }
 
   /// <summary>The background wait for the verdict and what it did about it; completed before start.</summary>
   internal Task Watching { get; private set; } = Task.CompletedTask;
-
-  /// <summary>Stops the host's application, resolving its lifetime from <paramref name="services"/> when called.</summary>
-  /// <param name="services">The host's services.</param>
-  /// <returns>The stop action.</returns>
-  internal static Action StopApplicationOf(IServiceProvider services) =>
-    () => services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
-
-  /// <summary>Sets <see cref="Environment.ExitCode"/>.</summary>
-  /// <param name="code">The exit code.</param>
-  internal static void SetProcessExitCode(int code) => Environment.ExitCode = code;
 
   /// <inheritdoc />
   public Task StartAsync(CancellationToken cancellationToken) {
@@ -95,12 +70,8 @@ internal sealed partial class CapabilityVerdictEnforcer : IHostedService, IDispo
     }
     // Built once, on the way to stopping the host, so the cost does not depend on the log level.
     var lines = string.Join('\n', failures.Select(entry => "  " + entry.Line));
-    LogStopping(_logger, failures.Count, lines);
-    _setExitCode(1);
-    _stopApplication();
+    _instanceExit.RequestExit(new InstanceExitRequest(ExitCause.StartupFailure,
+      $"{failures.Count} explicitly configured feature(s) need a capability that is not ready. Fix each, or remove the "
+      + $"setting that turns the feature on:\n{lines}\n"));
   }
-
-  [LoggerMessage(EventId = 1, Level = LogLevel.Critical,
-    Message = "Stopping: {Count} explicitly configured feature(s) need a capability that is not ready. Fix each, or remove the setting that turns the feature on\n{Lines}")]
-  static partial void LogStopping(ILogger logger, int count, string lines);
 }

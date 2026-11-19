@@ -910,6 +910,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     public Action<IServiceCollection>? Services { get; init; }
     public PerspectiveWorkerOptions? WorkerOptions { get; init; }
     public TimeProvider? TimeProvider { get; init; }
+    public PerspectiveRewindOptions? RewindOptions { get; init; }
   }
 
   private static (PerspectiveWorker Worker, PerspectiveWorkerTestHarness Harness, ServiceProvider Provider) _buildBranchWorker(
@@ -936,7 +937,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(options),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(setup.Tracing ?? new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),
@@ -949,7 +949,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
       processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
       workChannelWriter: new WorkChannelWriter(),
-      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      rewindOptions: Options.Create(setup.RewindOptions ?? new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,

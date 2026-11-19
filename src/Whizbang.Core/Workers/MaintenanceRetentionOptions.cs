@@ -18,8 +18,8 @@ namespace Whizbang.Core.Workers;
 /// <para>Negative values are rejected at startup; zero is allowed and keeps nothing past the current cycle.</para>
 /// </remarks>
 /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBindingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBindingTests.cs</tests>
 public sealed class MaintenanceRetentionOptions {
   /// <summary>
   /// Days a message id stays in the deduplication ledger (<c>wh_message_deduplication</c>). Publishes
@@ -97,4 +97,135 @@ public sealed class MaintenanceRetentionOptions {
   /// Publishes <c>integrity_ledger_max_entries</c>; the database default is 100000.
   /// </summary>
   public int? IntegrityLedgerMaxEntries { get; set; }
+
+  /// <summary>
+  /// Days a finished collective apply's progress record (<c>wh_collective_apply_progress</c>) is kept. Publishes
+  /// <c>collective_apply_progress_retention_days</c>; the database default is 7.
+  /// </summary>
+  /// <remarks>
+  /// A record is never swept while its collective's work row is pending, so a re-delivered collective still finds its
+  /// finished apply and skips it. An abandoned record, left by a dead letter, is not swept by age: it goes with the last
+  /// dead letter of its collective, and after that a rewind folds that collective in full again.
+  /// </remarks>
+  /// <docs>fundamentals/workers/maintenance-steps#ledger-retention</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveApplyProgressSqlTests.cs:TheSweep_HonorsTheConfiguredHorizonAsync</tests>
+  public int? CollectiveApplyProgressDays { get; set; }
+
+  /// <summary>
+  /// Days a trace (<c>wh_traces</c>, one event's trip distilled from its staged metadata) is kept. Publishes
+  /// <c>trace_retention_days</c>; the database default is 30.
+  /// </summary>
+  /// <remarks>
+  /// Within the window an event's full metadata is rebuilt from its row, its trace and its route; after it, the row and
+  /// its route still say how the event got here.
+  /// </remarks>
+  public int? TraceDays { get; set; }
+
+  /// <summary>
+  /// Days a route (<c>wh_routes</c>) is kept after it was last taken. Publishes <c>route_idle_days</c>; the database
+  /// default is 365.
+  /// </summary>
+  /// <remarks>A route still taken is never removed, so only paths that left with old code age out.</remarks>
+  public int? RouteIdleDays { get; set; }
+
+  /// <summary>
+  /// Days the record of an instance's exits (<c>wh_instance_exits</c>) is kept. Publishes
+  /// <c>instance_exit_retention_days</c>; the database default is 30.
+  /// </summary>
+  /// <remarks>Exits are rare, so rows past the window are removed by the next exit's write, not by the sweep.</remarks>
+  /// <docs>operations/startup/instance-exits#the-exit-record</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InstanceExitRecordSqlTests.cs:AWrite_RemovesRowsOlderThanTheConfiguredRetentionAsync</tests>
+  public int? InstanceExitDays { get; set; }
+
+  /// <summary>
+  /// The most completed inbox rows one maintenance cycle purges. Publishes <c>completed_inbox_purge_batch_size</c>; the
+  /// database default is 50000.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A completed inbox row is normally deleted when its message completes. A row the consumer stores already settled (a
+  /// message discarded on receive) and a row a refused store completes in place stay until this purge removes them. The
+  /// purge runs inside the one maintenance call, under that call's command budget, so it is bounded: an unbounded
+  /// purge over a large backlog outran the budget, the whole cycle rolled back, and the backlog then only grew.
+  /// </para>
+  /// <para>
+  /// Unlike the retention windows, the value must be 1 or greater: a batch of zero would never purge. Debug retention
+  /// (<c>Whizbang:WorkCoordinator:DebugMode</c>) is the way to keep completed rows.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/infrastructure/maintenance#completed-inbox-purge-is-bounded</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsValidationTests.cs:ACompletedInboxPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_PurgesAtMostTheBatchOfCompletedInboxRows_AndTheRestOnTheNextCycleAsync</tests>
+  public int? CompletedInboxPurgeBatchSize { get; set; }
+
+  /// <summary>
+  /// The most completed outbox rows one maintenance cycle purges. Publishes <c>completed_outbox_purge_batch_size</c>; the database default is 50000.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A completed outbox row is normally deleted when its message is published; one kept by debug retention, or completed in place, stays until this purge removes it. The purge runs inside the one maintenance call, under that call's command budget, so it is bounded as the
+  /// completed-inbox purge is (#2173): an unbounded purge over a large backlog outran the budget, the whole cycle rolled
+  /// back, and the backlog then only grew.
+  /// </para>
+  /// <para>The value must be 1 or greater: a batch of zero would never purge.</para>
+  /// </remarks>
+  /// <docs>operations/infrastructure/maintenance#every-purge-is-bounded</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsValidationTests.cs:EveryOtherPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_ABoundedPurge_DeletesAtMostItsBatch_AndTheRestOnTheNextCycleAsync</tests>
+  public int? CompletedOutboxPurgeBatchSize { get; set; }
+
+  /// <summary>
+  /// The most completed perspective events one maintenance cycle purges. Publishes <c>completed_perspective_event_purge_batch_size</c>; the database default is 50000.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A completed perspective event is normally deleted when it is applied; one completed in place stays until this purge removes it. The purge runs inside the one maintenance call, under that call's command budget, so it is bounded as the
+  /// completed-inbox purge is (#2173): an unbounded purge over a large backlog outran the budget, the whole cycle rolled
+  /// back, and the backlog then only grew.
+  /// </para>
+  /// <para>The value must be 1 or greater: a batch of zero would never purge.</para>
+  /// </remarks>
+  /// <docs>operations/infrastructure/maintenance#every-purge-is-bounded</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsValidationTests.cs:EveryOtherPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_ABoundedPurge_DeletesAtMostItsBatch_AndTheRestOnTheNextCycleAsync</tests>
+  public int? CompletedPerspectiveEventPurgeBatchSize { get; set; }
+
+  /// <summary>
+  /// The most deduplication rows past their retention one maintenance cycle purges. Publishes <c>deduplication_purge_batch_size</c>; the database default is 50000.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The deduplication table holds one row per message received within <see cref="DeduplicationDays"/>, so it is the largest table the purges read. The purge runs inside the one maintenance call, under that call's command budget, so it is bounded as the
+  /// completed-inbox purge is (#2173): an unbounded purge over a large backlog outran the budget, the whole cycle rolled
+  /// back, and the backlog then only grew.
+  /// </para>
+  /// <para>The value must be 1 or greater: a batch of zero would never purge.</para>
+  /// </remarks>
+  /// <docs>operations/infrastructure/maintenance#every-purge-is-bounded</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsValidationTests.cs:EveryOtherPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_ABoundedPurge_DeletesAtMostItsBatch_AndTheRestOnTheNextCycleAsync</tests>
+  public int? DeduplicationPurgeBatchSize { get; set; }
+
+  /// <summary>
+  /// The most stuck inbox rows one maintenance cycle purges. Publishes <c>stuck_inbox_purge_batch_size</c>; the database default is 50000.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A stuck inbox row is one never processed, leased or claimed, older than <see cref="StuckInboxDays"/>. The purge runs inside the one maintenance call, under that call's command budget, so it is bounded as the
+  /// completed-inbox purge is (#2173): an unbounded purge over a large backlog outran the budget, the whole cycle rolled
+  /// back, and the backlog then only grew.
+  /// </para>
+  /// <para>The value must be 1 or greater: a batch of zero would never purge.</para>
+  /// </remarks>
+  /// <docs>operations/infrastructure/maintenance#every-purge-is-bounded</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsBridgeTests.cs:EachIntegerOption_PublishesItsKeyAsAnIntegerLiteralAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/RetentionSettingsValidationTests.cs:EveryOtherPurgeBatchBelowOne_IsRejectedByNameAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_ABoundedPurge_DeletesAtMostItsBatch_AndTheRestOnTheNextCycleAsync</tests>
+  public int? StuckInboxPurgeBatchSize { get; set; }
 }

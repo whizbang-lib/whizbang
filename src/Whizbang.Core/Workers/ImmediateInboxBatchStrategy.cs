@@ -20,7 +20,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>extending/internals/inbox-batch-strategy</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/InboxBatchStrategyRegistrationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxBatchStrategyRegistrationTests.cs</tests>
 public sealed class ImmediateInboxBatchStrategy : IInboxBatchStrategy {
   private readonly InboxBulkFlushCallback _flush;
   private int _disposed;

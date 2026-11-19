@@ -83,9 +83,8 @@ public class TableStatisticsCollectorDatabaseTests {
       Collector = new TableStatisticsCollector(
         _container.GetRequiredService<IServiceScopeFactory>(),
         metrics,
-        SchemaReadyGate.AlreadyReady(),
         NullLogger<TableStatisticsCollector>.Instance,
-        Options.Create(new TableStatisticsOptions { CollectionInterval = interval }),
+        Options.Create(new TableStatisticsOptions { CollectionInterval = interval, CollectionJitter = 0 }),
         clock);
       Collector.CycleCompleted += () => Volatile.Read(ref _next).TrySetResult();
 

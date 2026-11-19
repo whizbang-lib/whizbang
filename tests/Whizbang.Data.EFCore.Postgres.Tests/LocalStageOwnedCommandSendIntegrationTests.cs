@@ -50,7 +50,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Lifecycle/LifecycleCoordinator.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Lifecycle/LifecycleTrackingState.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard5")]
 public class LocalStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
   private const string OWNED_DOMAIN = "Whizbang.Data.EFCore.Postgres.Tests.LocalStageSends.Owned";

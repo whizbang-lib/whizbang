@@ -65,10 +65,29 @@ public interface IPerspectiveStore<TModel> where TModel : class {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The row's version and metadata, or <see cref="PerspectiveApplyRead.Unchecked"/> when the store does not track versions.</returns>
   /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowVersionTests.cs:ReadForApplyAsync_Default_IsUncheckedAndDoesNoReadAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowVersionTests.cs:ReadForApplyAsync_Default_IsUncheckedAndDoesNoReadAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRowVersionIntegrationTests.cs:ReadForApplyAsync_ReportsAbsence_ThenTheRowsVersionAndMetadata_AndSeesACollectiveAsync</tests>
   Task<PerspectiveApplyRead> ReadForApplyAsync(Guid streamId, CancellationToken cancellationToken = default)
     => Task.FromResult(PerspectiveApplyRead.Unchecked);
+
+  /// <summary>
+  /// Reads what <see cref="ReadForApplyAsync"/> and <see cref="GetByStreamIdAsync"/> read, for many streams at once: the
+  /// batched row read of a set-based batch (<see cref="IPerspectiveStateSource"/>).
+  /// </summary>
+  /// <remarks>
+  /// The versions are read before the models, as the per-stream read does, so no model is older than the version its
+  /// write is checked against. A stream whose row is absent is left out of the result. The default returns null, and
+  /// the runner then reads each stream on its own.
+  /// </remarks>
+  /// <param name="streamIds">The streams.</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>The present rows by stream, or null when the store does not read rows in batches.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/IPerspectiveStoreDefaultsTests.cs:ReadForApplyManyAsync_Default_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.StateSource.cs</tests>
+  Task<IReadOnlyDictionary<Guid, PerspectiveStoredRow<TModel>>?> ReadForApplyManyAsync(
+      IReadOnlyCollection<Guid> streamIds, CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyDictionary<Guid, PerspectiveStoredRow<TModel>>?>(null);
 
   /// <summary>
   /// Insert or update a read model.
@@ -152,7 +171,7 @@ public interface IPerspectiveStore<TModel> where TModel : class {
   /// <param name="expectedVersion">The version <see cref="ReadForApplyAsync"/> returned for this apply.</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowVersionTests.cs:UpsertAsync_WithExpectedVersion_Default_ForwardsToTheMetadataOverloadAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowVersionTests.cs:UpsertAsync_WithExpectedVersion_Default_ForwardsToTheMetadataOverloadAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRowVersionIntegrationTests.cs:Upsert_WithAVersionReadBeforeACollective_IsRefused_AndTheCollectiveSurvivesAsync</tests>
   [global::System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public store surface: the versioned twin of the metadata overload, which already carries six parameters; each is a distinct write concern and a parameter object would break every store implementation.")]
   Task UpsertAsync(
@@ -184,7 +203,7 @@ public interface IPerspectiveStore<TModel> where TModel : class {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Whether the row was written.</returns>
   /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowVersionTests.cs:TryUpsertAsync_Default_WritesAndReportsWrittenAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowVersionTests.cs:TryUpsertAsync_Default_WritesAndReportsWrittenAsync</tests>
   [global::System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public store surface: the reporting twin of the versioned upsert; same parameters, each a distinct write concern.")]
   async Task<bool> TryUpsertAsync(
       Guid streamId,
@@ -263,7 +282,7 @@ public interface IPerspectiveStore<TModel> where TModel : class {
   /// <param name="expectedVersion">The version <see cref="ReadForApplyAsync"/> returned for this apply.</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowVersionTests.cs:UpsertWithPhysicalFieldsAsync_WithExpectedVersion_Default_ForwardsToTheMetadataOverloadAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowVersionTests.cs:UpsertWithPhysicalFieldsAsync_WithExpectedVersion_Default_ForwardsToTheMetadataOverloadAsync</tests>
   [global::System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public store surface: the versioned twin of the physical-fields metadata overload; each parameter is a distinct write concern and a parameter object would break every store implementation.")]
   Task UpsertWithPhysicalFieldsAsync(
       Guid streamId,
@@ -290,7 +309,7 @@ public interface IPerspectiveStore<TModel> where TModel : class {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Whether the row was written.</returns>
   /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowVersionTests.cs:TryUpsertWithPhysicalFieldsAsync_Default_WritesAndReportsWrittenAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowVersionTests.cs:TryUpsertWithPhysicalFieldsAsync_Default_WritesAndReportsWrittenAsync</tests>
   [global::System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public store surface: the reporting twin of the versioned upsert; same parameters, each a distinct write concern.")]
   async Task<bool> TryUpsertWithPhysicalFieldsAsync(
       Guid streamId,
@@ -304,6 +323,56 @@ public interface IPerspectiveStore<TModel> where TModel : class {
     await UpsertWithPhysicalFieldsAsync(streamId, model, physicalFieldValues, scope, forceUpdateScope, metadata, expectedVersion, cancellationToken).ConfigureAwait(false);
     return true;
   }
+
+  /// <summary>
+  /// Prepares the row write <see cref="TryUpsertAsync"/> (or, with physical field values,
+  /// <see cref="TryUpsertWithPhysicalFieldsAsync"/>) would make, for an <see cref="IPerspectiveWriteSink"/> to write
+  /// together with the rest of its batch, without writing anything.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The prepared write holds the same document, metadata, scope, physical columns, version check and ordering guard
+  /// the per-stream write stores, decided by the same code, so whichever path writes a row writes the same bytes. The
+  /// apply hooks run here, as they run in the per-stream write.
+  /// </para>
+  /// <para>
+  /// Null means the set-based write cannot take this row (a provider other than PostgreSQL, a model or column it
+  /// cannot write set-based), and the runner writes it through the per-stream write instead. The default returns null,
+  /// so a store written before this member keeps its behavior.
+  /// </para>
+  /// </remarks>
+  /// <param name="streamId">Stream ID (aggregate ID)</param>
+  /// <param name="model">The read model data to store</param>
+  /// <param name="scope">Multi-tenancy and security scope</param>
+  /// <param name="forceUpdateScope">When true, scope is written on UPDATE (for IScopeEvent).</param>
+  /// <param name="metadata">Metadata of the last applied event</param>
+  /// <param name="expectedVersion">The version <see cref="ReadForApplyAsync"/> returned for this apply.</param>
+  /// <param name="physicalFieldValues">The physical column values, or null for a model with none.</param>
+  /// <returns>The prepared write, or null.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/IPerspectiveStoreDefaultsTests.cs:PrepareWrite_Default_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.cs</tests>
+  [global::System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public store surface: the preparing twin of the reporting upsert, with the same write concerns plus the physical values.")]
+  PendingPerspectiveWrite? PrepareWrite(
+      Guid streamId,
+      TModel model,
+      PerspectiveScope scope,
+      bool forceUpdateScope,
+      PerspectiveMetadata metadata,
+      PerspectiveRowVersion expectedVersion,
+      IDictionary<string, object?>? physicalFieldValues)
+    => null;
+
+  /// <summary>
+  /// Prepares the delete <see cref="PurgeAsync"/> would make, for an <see cref="IPerspectiveWriteSink"/> to write with
+  /// the rest of its batch. Null when the set-based write cannot take it; the default returns null.
+  /// </summary>
+  /// <param name="streamId">Stream ID (aggregate ID) of the model to purge</param>
+  /// <returns>The prepared purge, or null.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#prepare-and-commit</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/IPerspectiveStoreDefaultsTests.cs:PreparePurge_Default_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.cs</tests>
+  PendingPerspectiveWrite? PreparePurge(Guid streamId) => null;
 
   /// <summary>
   /// Get a read model by partition key (for multi-stream/global perspectives).

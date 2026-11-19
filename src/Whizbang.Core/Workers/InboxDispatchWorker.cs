@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Minting;
@@ -15,6 +16,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
+using Whizbang.Core.Security.Attributes;
 
 namespace Whizbang.Core.Workers;
 
@@ -69,7 +71,6 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private readonly IInboxHandlerCommitChannel _handlerCommitChannel;
   private readonly Whizbang.Core.Observability.CompositeMetrics? _compositeMetrics;
   private readonly IFailureChannel _failureChannel;
-  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly InboxDispatchWorkerOptions _options;
   private readonly WorkCoordinatorOptions _coordinatorOptions;
   private readonly LeaseHandleOptions _leaseHandleOptions;
@@ -87,6 +88,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   // marking it Published. Optional so existing callers (and the legacy fakes used by
   // many tests) continue to compile + run unchanged.
   private readonly IDeadLetterStore _deadLetterStore;
+  private readonly LogLevel _deadLetterLevel;
   private readonly IGenerationProvider _generationProvider;
   private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics;
   // v0.660 slice 8 — per-message-type dispatch duration histogram.
@@ -105,7 +107,6 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     IInboxChannelWriter inboxChannelWriter,
     IInboxHandlerCommitChannel handlerCommitChannel,
     IFailureChannel failureChannel,
-    ISchemaReadyGate schemaReadyGate,
     IOptions<InboxDispatchWorkerOptions> options,
     IOptions<WorkCoordinatorOptions> coordinatorOptions,
     ILogger<InboxDispatchWorker> logger,
@@ -125,7 +126,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     Whizbang.Core.Observability.InboxMetrics? inboxMetrics = null,
     Whizbang.Core.Messaging.WorkCoordinatorGate? gate = null,
     WorkCompletionMeter? completionMeter = null,
-    Whizbang.Core.Observability.CompositeMetrics? compositeMetrics = null) {
+    Whizbang.Core.Observability.CompositeMetrics? compositeMetrics = null,
+    DeadLetterLoggingOptions? deadLetterLogging = null) {
+    _deadLetterLevel = DeadLetterLog.LevelFrom(deadLetterLogging);
     _integrityOptions = ArgumentGuard.NotNull(integrityOptions).Value;
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
@@ -139,8 +142,6 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     _handlerCommitChannel = handlerCommitChannel;
     ArgumentNullException.ThrowIfNull(failureChannel);
     _failureChannel = failureChannel;
-    ArgumentNullException.ThrowIfNull(schemaReadyGate);
-    _schemaReadyGate = schemaReadyGate;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     _coordinatorOptions = coordinatorOptions?.Value ?? throw new ArgumentNullException(nameof(coordinatorOptions));
     _leaseHandleOptions = leaseHandleOptions.Value;
@@ -175,6 +176,15 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// documented "disabled gate" state) or <c>null</c> means "no upstream cap"
   /// and the configured value passes through (subject to the floor).
   /// </remarks>
+  /// <summary>The dispatch fan-out as <see cref="ClampPartitionCount"/> caps it, with its inputs, for the startup settings report.</summary>
+  internal static Whizbang.Core.Configuration.DerivedSetting<int> DerivePartitionCount(int configured, int gateMaxConcurrent) =>
+    Whizbang.Core.Configuration.DerivedSetting.Of(
+      "Whizbang:Workers:InboxDispatch:MaxConcurrentDispatch",
+      ClampPartitionCount(configured, gateMaxConcurrent),
+      "at least 1, at most the gate's permits",
+      Whizbang.Core.Configuration.SettingInput.Of("MaxConcurrentDispatch", configured),
+      Whizbang.Core.Configuration.SettingInput.Of("GateMaxConcurrent", gateMaxConcurrent));
+
   internal static int ClampPartitionCount(int configured, int? gateMaxConcurrent) {
     var floored = Math.Max(1, configured);
     if (gateMaxConcurrent is null or <= 0) {
@@ -192,12 +202,6 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       LogDisabled(_logger);
       try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       LogStopped(_logger);
-      return;
-    }
-
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-    } catch (OperationCanceledException) {
       return;
     }
 
@@ -306,7 +310,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// which is what happened before the keeper existed, and the next pass tries again.
   /// </remarks>
   /// <docs>fundamentals/work-coordinator/inbox-dispatch#held-rows</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerHeldLeaseTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerHeldLeaseTests.cs</tests>
   internal async Task RenewHeldLeasesOnceAsync(CancellationToken cancellationToken) {
     var leaseSeconds = _leaseRenewalOptions.LeaseSeconds;
     var sweep = _inboxChannelWriter.SweepLeases(TimeSpan.FromSeconds(leaseSeconds / 2.0), _leaseHandleOptions.MaxRenewalsPerWork);
@@ -379,6 +383,17 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     }
   }
 
+  /// <summary>
+  /// Logs the dead-letter record (#1901) for a row this worker dead-lettered or finished for good, at the dead-letter
+  /// level, with its type and its last failure.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerDeadLetterLogTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerUndeserializablePayloadTests.cs:Dispatch_PayloadRefused_DeadLetterRecordCarriesTheRefusalAtErrorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerBranchCoverageTests.cs:CompositeOverOwnCap_MovedToTheDeadLetterStore_LogsTheDeadLetterRecordAtErrorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerBranchCoverageTests.cs:CompositeOverConsumerBudget_NoDeadLetterStore_LogsTheRecordForTheTerminalCompletionAsync</tests>
+  private void _logDeadLettered(InboxWork work, MessageFailureReason reason, string? lastError, Exception? exception) =>
+    DeadLetterLog.MessageDeadLettered(_logger, _deadLetterLevel, exception, work.MessageId, work.MessageType, reason.ToString(), lastError);
+
   /// <summary>What a held row's lapse means, by where it was when its renewals ran out (#1788).</summary>
   internal static string DescribeLapse(InboxHoldState state) => state switch {
     InboxHoldState.Queued => "it was never dispatched and is handed back without charging an attempt",
@@ -392,7 +407,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// held unless its completion is waiting in the commit channel. A dispatch that throws is routed to the failure
   /// channel; a shutdown is not a failure and propagates.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerHeldLeaseTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerHeldLeaseTests.cs</tests>
   internal async Task DispatchQueuedAsync(InboxWork work, CancellationToken stoppingToken) {
     if (!_inboxChannelWriter.TryBeginDispatch(work.MessageId)) {
       LogCopyNotHeldSkipped(_logger, work.MessageId);
@@ -497,7 +512,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// </summary>
   /// <param name="error">The row's last recorded error, or null.</param>
   /// <returns>The cause, worded for a log line.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerControlPlaneDropLogTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerControlPlaneDropLogTests.cs</tests>
   internal static string DescribeLastFailure(string? error) => error switch {
     null => "none recorded",
     _ when PoisonAdmissionPolicy.IsLeaseExpiryCasualty(error) => "its lease lapsed without a reported outcome",
@@ -540,8 +555,6 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // greater-than so MaxInboxAttempts = 5 means "5 total attempts allowed", matching the
     // pre-refactor count (the check used to be >= when attempts was zero-based).
     if (maxAttempts.HasValue && work.Attempts > maxAttempts.Value) {
-      LogDeadLettered(_logger, work.MessageId, work.Attempts, maxAttempts.Value);
-
       // v0.502 slice C.4 — when an IDeadLetterStore is wired, persist the failing row
       // into wh_dead_letters with a forensic snapshot AND have the SQL function DELETE
       // it from wh_inbox in the same transaction. The handler-commit path (legacy
@@ -566,9 +579,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         return;
       }
 
+      var promotionErrorText = _buildPromotionErrorText(work, maxAttempts.Value);
       if (_deadLetterStore.IsConfigured) {
         try {
-          var promotionErrorText = _buildPromotionErrorText(work, maxAttempts.Value);
           var movedId = await _deadLetterStore.MoveAsync(
             deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
             sourceTable: DeadLetterSourceTable.INBOX,
@@ -584,6 +597,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
               new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, "MaxAttemptsExceeded"));
             _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX,
               (int)Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded, promotionErrorText);
+            _logDeadLettered(work, Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded, promotionErrorText, exception: null);
           } else {
             // #571: null is the documented already-gone no-op — the row was dead-lettered
             // or deleted by someone else. Counting it would mint phantom DLQ arrivals; NOT
@@ -603,6 +617,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
           LogDeadLetterStoreFailed(_logger, work.MessageId, ex);
         }
       }
+      // Finished for good without reaching the store: the message is just as dead, so it gets the record too.
+      _logDeadLettered(work, Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded, promotionErrorText, exception: null);
       var terminalRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
       await _enqueueCommitAsync(terminalRequest, stoppingToken);
       return;
@@ -690,6 +706,16 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // domain triggers).
       var stateOnly = work.Envelope.StateOnly;
 
+      // The receptor interceptors are asked before the row is completed (#1996), so a denied message can still be
+      // dead-lettered or retried. A host with no interceptor returns at once.
+      if (!stateOnly && typedEnvelope is not null && receptorInvoker is not null) {
+        var admission = await receptorInvoker.EvaluateAdmissionAsync(typedEnvelope, ReceptorDenial.InboxHandlingStages, ct);
+        if (!admission.Allow) {
+          await _handleReceptorDenialAsync(work, admission, ct);
+          return;
+        }
+      }
+
       if (!stateOnly) {
         await InvokeInboxLifecycleStageAsync(
           work, typedEnvelope, receptorInvoker, LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
@@ -763,7 +789,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// </summary>
   /// <param name="ex">The exception the deserializer raised, possibly wrapped.</param>
   /// <returns><see langword="true"/> when a refusal was found.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerUndeserializablePayloadTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerUndeserializablePayloadTests.cs</tests>
   internal static bool IsPayloadRefusal(Exception ex) {
     for (Exception? current = ex; current is not null; current = current.InnerException) {
       if (current is System.Text.Json.JsonException or NotSupportedException) {
@@ -784,35 +810,27 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// keeps its body and the attempts bound governs it, rather than the completion that deletes it.
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#unreadable-messages</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerUndeserializablePayloadTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerUndeserializablePayloadTests.cs</tests>
   private async Task _deadLetterUndeserializableAsync(InboxWork work, Exception refusal, CancellationToken ct) {
     const MessageFailureReason reason = Whizbang.Core.Messaging.MessageFailureReason.SerializationError;
     var cause = refusal.GetBaseException();
     var detail = $"The payload of inbox message {work.MessageId} ({work.MessageType}) could not be deserialized, "
-      + $"which a retry will not change: {cause.GetType().Name}: {cause.Message}";
+      + $"which a retry will not change: {TypeNameFormatter.ForLog(cause.GetType())}: {cause.Message}";
     LogUndeserializablePayload(_logger, work.MessageId, work.MessageType, refusal);
+    await _deadLetterOrFailAsync(work, reason, detail, refusal, ct);
+  }
 
+  /// <summary>
+  /// Dead-letters a row that a retry cannot help, without completing it: the dead-letter move snapshots its body and
+  /// deletes it in one step. Without a configured store, or when the move fails, the failure is routed through the
+  /// failure channel instead, so the row keeps its body and the attempts bound governs it, rather than the completion
+  /// that deletes it. Shared by the undeserializable payload (#938) and the receptor denial (#1996) paths.
+  /// </summary>
+  private async Task _deadLetterOrFailAsync(InboxWork work, MessageFailureReason reason, string detail, Exception? cause, CancellationToken ct) {
+    var errorText = cause is null ? detail : string.Concat(detail, Environment.NewLine, cause.ToString());
     if (_deadLetterStore.IsConfigured) {
       try {
-        var errorText = detail + Environment.NewLine + refusal;
-        var movedId = await _deadLetterStore.MoveAsync(
-          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
-          sourceTable: DeadLetterSourceTable.INBOX,
-          sourceId: work.MessageId,
-          failureReason: reason,
-          errorText: errorText,
-          instanceId: _instanceProvider.InstanceId,
-          generation: _generationProvider.GetGeneration(),
-          ct: ct).ConfigureAwait(false);
-        if (movedId is not null) {
-          _dlqMetrics?.Added.Add(1,
-            new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
-            new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, reason.ToString()));
-          _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, errorText);
-        } else {
-          LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
-        }
-        _releaseTerminal(work.MessageId);
+        await _moveToDeadLettersAsync(work, reason, errorText, detail, cause, ct).ConfigureAwait(false);
         return;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogUndeserializableDeadLetterFailed(_logger, work.MessageId, ex);
@@ -822,8 +840,58 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
       MessageId = work.MessageId,
       CompletedStatus = work.Status,
-      Error = detail + Environment.NewLine + refusal,
+      Error = errorText,
       Reason = reason,
+    }, ct);
+  }
+
+  /// <summary>
+  /// Moves the row to the dead-letter store and releases it: counts and logs the arrival when the move took it, or
+  /// notes that someone else already did. The row is terminal either way; a failed move throws.
+  /// </summary>
+  private async Task _moveToDeadLettersAsync(InboxWork work, MessageFailureReason reason, string? errorText,
+      string? detail, Exception? cause, CancellationToken ct) {
+    var movedId = await _deadLetterStore.MoveAsync(
+      deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
+      sourceTable: DeadLetterSourceTable.INBOX,
+      sourceId: work.MessageId,
+      failureReason: reason,
+      errorText: errorText,
+      instanceId: _instanceProvider.InstanceId,
+      generation: _generationProvider.GetGeneration(),
+      ct: ct).ConfigureAwait(false);
+    if (movedId is not null) {
+      _dlqMetrics?.Added.Add(1,
+        new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
+        new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, reason.ToString()));
+      _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, errorText);
+      _logDeadLettered(work, reason, detail, cause);
+    } else {
+      LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
+    }
+    _releaseTerminal(work.MessageId);
+  }
+
+  /// <summary>
+  /// Honors a receptor interceptor's denial of a message on inbox delivery before the row is completed (#1996). A
+  /// dead-letter denial moves the row to the dead-letter store, a quarantine denial holds it there under its own
+  /// reason, and neither is retried; any other denial fails the attempt, so the attempts bound retries it. No receptor
+  /// runs and nothing is completed.
+  /// </summary>
+  /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/InboxDispatchWorkerReceptorDenialTests.cs</tests>
+  private async Task _handleReceptorDenialAsync(InboxWork work, InterceptorResult denial, CancellationToken ct) {
+    var detail = ReceptorDenial.Describe(work.MessageId, work.MessageType, denial);
+    LogReceptorDenied(_logger, work.MessageId, work.MessageType, denial.OnDenied, ReceptorDenial.ReasonOf(denial));
+    if (ReceptorDenial.DeadLetterReasonFor(denial.OnDenied) is { } reason) {
+      await _deadLetterOrFailAsync(work, reason, detail, cause: null, ct);
+      return;
+    }
+    await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
+      MessageId = work.MessageId,
+      CompletedStatus = work.Status,
+      Error = detail,
+      Reason = MessageFailureReason.Unknown,
     }, ct);
   }
 
@@ -836,7 +904,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// </summary>
   private async Task _discardRepairBundleAsync(
       InboxWork work, ICompositeEvent composite, IServiceProvider scopeProvider, CancellationToken ct) {
-    LogRepairBundleDiscarded(_logger, work.MessageId, composite.GetType().Name);
+#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+    LogRepairBundleDiscarded(_logger, work.MessageId, TypeNameFormatter.ForLog(composite.GetType()));
+#pragma warning restore CA1873
     scopeProvider.GetService<StreamIntegrityMetrics>()?.RepairTrafficDiscarded.Add(
       1, new KeyValuePair<string, object?>("role", "consumer_bundle"));
     var commitRequest = _buildCommitRequest(
@@ -862,7 +932,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// </summary>
   private static (CompositeInboxFanout.FanoutResult Result, bool FannedOut) _expandComposite(
       ICompositeEvent composite, InboxWork work, IServiceProvider scopeProvider, FanoutDirective? directive,
-      string? compositeTypeName, Func<string, bool>? hasConsumer) {
+      string? compositeTypeName, Func<string, bool>? hasConsumer, Func<string, Guid?>? ownerOf) {
     CompositeInboxFanout.FanoutResult Empty() =>
       new(CompositeInboxFanout.FanoutOutcome.Expanded, [], null, compositeTypeName);
     var result = directive switch {
@@ -870,11 +940,77 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       { Kind: FanoutDirectiveKind.ReplaceWith } replace =>
         CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider, replace.Replacement, hasConsumer),
       _ when composite.FanoutMode == FanoutMode.Manual => Empty(),
-      _ => CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider, hasConsumer: hasConsumer),
+      _ => CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider, hasConsumer: hasConsumer, ownerOf: ownerOf),
     };
     var fannedOut = directive?.Kind != FanoutDirectiveKind.Skip
       && (directive?.Kind == FanoutDirectiveKind.ReplaceWith || composite.FanoutMode != FanoutMode.Manual);
     return (result, fannedOut);
+  }
+
+  /// <summary>
+  /// The true-owner lookup for a redelivery bundle's children (#2116): a child of a type this receiver's ownership map
+  /// gives to a service other than the origin the bundle names is stored under that owner. The map is read from the
+  /// store once per bundle (repair traffic, not the ordinary path). Null when the bundle names no origin, the map knows no
+  /// owner, or the map cannot be read: then every child keeps the bundle's origin, as before, and a record stored under
+  /// the wrong origin is left for the misattributed-origin correction.
+  /// </summary>
+  private async Task<Func<string, Guid?>?> _bundleOwnersAsync(
+      RedeliveryComposite bundle, IServiceProvider scopeProvider, CancellationToken ct) {
+    if (bundle.OriginServiceId == Guid.Empty || scopeProvider.GetService<IWorkCoordinator>() is not { } coordinator) {
+      return null;
+    }
+    try {
+      var claims = await coordinator.GetIntegrityDomainClaimsAsync(ct).ConfigureAwait(false);
+      var ownedDomains = scopeProvider.GetOptionsValue<RoutingOptions>()?.OwnedDomains ?? new HashSet<string>();
+      return MisattributedOrigin.ForBundle(bundle.OriginServiceId, new IntegrityDomainOwnership(claims), ownedDomains);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogBundleOwnershipUnavailable(_logger, bundle.OriginServiceId, ex);
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// #2273: decides, before they are stored, which children of a redelivery bundle run their opted-in receptors: only
+  /// an event inside the repair receptor lookback that the handled ledger proves was never handled here. Every other
+  /// child is stored state only. The ledger is read once per bundle; when it cannot be read nothing is proven, so every
+  /// child is state only and the bundle still lands.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerCompositeCommitTests.cs:Redelivery_ChildrenRunReceptorsOnlyWhenTheLedgerProvesTheyWereNeverHandledAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerCompositeCommitTests.cs:Redelivery_WhenTheLedgerCannotBeRead_EveryChildIsStateOnlyAsync</tests>
+  private async Task _gateRepairedChildrenAsync(
+      IReadOnlyList<InboxMessage> children, InboxWork work, IServiceProvider scopeProvider, CancellationToken ct) {
+    var coordinator = scopeProvider.GetService<IWorkCoordinator>();
+    var tally = await RepairReceptorGate.ApplyAsync(
+      children, work.Envelope.StateOnly, _integrityOptions.RepairReceptorLookback, _timeProvider.GetUtcNow(),
+      (ids, token) => _lookupHandledAsync(coordinator, ids, work.MessageId, token), ct).ConfigureAwait(false);
+    var metrics = scopeProvider.GetService<StreamIntegrityMetrics>();
+    foreach (var (reason, count) in tally) {
+      metrics?.RecordRepairedEvents(reason, count);
+    }
+  }
+
+  private async Task<HandledLedgerAnswer?> _lookupHandledAsync(
+      IWorkCoordinator? coordinator, IReadOnlyList<Guid> ids, Guid bundleId, CancellationToken ct) {
+    if (coordinator is null) {
+      return null;
+    }
+    try {
+      return await coordinator.LookupHandledEventsAsync(ids, ct).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogHandledLedgerUnavailable(_logger, bundleId, ids.Count, ex);
+      return null;
+    }
+  }
+
+  /// <summary>Reports the children of a redelivery bundle stored under their type's true owner (#2116).</summary>
+  private void _recordReattributed(
+      CompositeInboxFanout.FanoutResult result, RedeliveryComposite bundle, InboxWork work, IServiceProvider scopeProvider) {
+    if (result.ReattributedChildren == 0) {
+      return;
+    }
+    scopeProvider.GetService<StreamIntegrityMetrics>()?.RedeliveredChildrenReattributed.Add(result.ReattributedChildren);
+    LogRedeliveredChildrenReattributed(_logger, result.ReattributedChildren, work.MessageId, bundle.OriginServiceId);
   }
 
   /// <summary>The expansion meters (#738); an empty result from Skip or Manual is not an expansion.</summary>
@@ -891,7 +1027,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// Commits an expanded composite's children (and its pre-fanout outbox) in one request, then reconciles a
   /// redelivery bundle with the events the store already held (#1790): a redelivered event the store already holds
   /// is skipped as a duplicate, so once the bundle has landed, history stored before origins were recorded adopts
-  /// the bundle's origin, and a bundle that changed nothing marks its buckets as ones repair cannot change.
+  /// the bundle's origin, and a bundle that changed nothing marks its buckets as ones repair cannot change. Since #2001
+  /// the reconcile itself is integrity work: where the integrity delivery drain is registered it is recorded for the
+  /// maintainer instead of running here (<see cref="RedeliveryReconciler.ReconcileAsync"/>); the children's commit stays
+  /// here, because that is ordinary event storage.
   /// </summary>
   /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerCompositeCommitTests.cs</tests>
@@ -903,8 +1042,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       newInboxMessages: children, newOutboxMessages: preFanoutOutbox);
     var committed = await _commitCompositeAsync(commitRequest, children.Count, scopeProvider, ct).ConfigureAwait(false);
     if (committed && composite is RedeliveryComposite redelivery) {
+      // #2116: a child stored under its type's true owner is not the bundle origin's to reconcile: a held copy of it
+      // must not adopt the origin the bundle names.
       _ = await RedeliveryReconciler.ReconcileAsync(
-        redelivery, children, scopeProvider, _logger, _timeProvider.GetUtcNow(),
+        redelivery, [.. children.Where(c => c.SourceServiceId == redelivery.OriginServiceId)], scopeProvider, _logger, _timeProvider.GetUtcNow(),
         RedeliveryReconciler.OriginServiceNameOf(work.Envelope), ct).ConfigureAwait(false);
     }
   }
@@ -938,9 +1079,15 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     var preFanoutOutbox = pre.Outbox;
 
     var compositeTypeName = TypeNameFormatter.DisplayName(composite.GetType());
-    var (result, fannedOut) = _expandComposite(composite, work, scopeProvider, pre.Directive, compositeTypeName, hasConsumer);
+    var ownerOf = composite is RedeliveryComposite bundle
+      ? await _bundleOwnersAsync(bundle, scopeProvider, ct).ConfigureAwait(false)
+      : null;
+    var (result, fannedOut) = _expandComposite(composite, work, scopeProvider, pre.Directive, compositeTypeName, hasConsumer, ownerOf);
     if (result.Outcome == CompositeInboxFanout.FanoutOutcome.Expanded) {
       _recordExpansion(result, fannedOut);
+      if (composite is RedeliveryComposite redelivered) {
+        _recordReattributed(result, redelivered, work, scopeProvider);
+      }
       // MaxInnerEventsAllowed is declared by the COMPOSITE, so a composite carrying a hundred
       // thousand inner events simply declares a cap that large and passes. The consumer had no say,
       // and expansion happens after admission control has already accepted the message — so one
@@ -972,6 +1119,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         }
       }
 
+      if (composite is RedeliveryComposite) {
+        await _gateRepairedChildrenAsync(result.Children, work, scopeProvider, ct).ConfigureAwait(false);
+      }
       await _commitExpansionAsync(work, composite, result.Children, preFanoutOutbox, scopeProvider, ct).ConfigureAwait(false);
       return;
     }
@@ -981,37 +1131,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       ? Whizbang.Core.Messaging.MessageFailureReason.CompositeInnerEventLimitExceeded
       : Whizbang.Core.Messaging.MessageFailureReason.CompositeExpansionFailure;
     LogCompositeFanoutFailed(_logger, work.MessageId, reason.ToString(), result.Detail);
-    _compositeMetrics?.DeadLettered.Add(1);
-
-    if (_deadLetterStore.IsConfigured) {
-      try {
-        var movedId = await _deadLetterStore.MoveAsync(
-          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
-          sourceTable: DeadLetterSourceTable.INBOX,
-          sourceId: work.MessageId,
-          failureReason: reason,
-          errorText: result.Detail,
-          instanceId: _instanceProvider.InstanceId,
-          generation: _generationProvider.GetGeneration(),
-          ct: ct).ConfigureAwait(false);
-        if (movedId is not null) {
-          _dlqMetrics?.Added.Add(1,
-            new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
-            new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, reason.ToString()));
-          _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, result.Detail);
-        } else {
-          LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
-        }
-        _releaseTerminal(work.MessageId);
-        return;
-      } catch (Exception ex) {
-        // DLQ move is best-effort — fall back to the legacy terminal completion so the row never
-        // re-claims. Mirrors the max-attempts branch.
-        LogDeadLetterStoreFailed(_logger, work.MessageId, ex);
-      }
-    }
-    var terminalRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
-    await _enqueueCommitAsync(terminalRequest, ct);
+    await _deadLetterCompositeAsync(work, reason, result.Detail, ct).ConfigureAwait(false);
   }
 
 
@@ -1019,12 +1139,17 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// Commits an expansion as one step (#737): the composite row's completion and its children go through
   /// <see cref="IWorkCoordinator.CommitHandlerResultAsync"/> before this returns, so the row is never in the
   /// "expanded but not yet committed" state the claim loop can see and re-offer, and the children never wait
-  /// in the batched commit channel (#740). A failed commit leaves the row leased and unprocessed for the
-  /// claim loop to re-offer (the deterministic child ids make that re-expansion a repeat at the key), counts
-  /// the failure, and releases the in-flight entry so the re-offer is not filtered. Without a coordinator in
-  /// the dispatch scope the batched channel is used as before, with a warning naming the cost. Returns true only
-  /// when the commit landed here, so work that must follow a landed expansion can tell it did.
+  /// in the batched commit channel (#740). A failed commit leaves the row unprocessed, counts the failure, records
+  /// it against the row through the failure channel (so the retry is backed off, the next claim counts the attempt,
+  /// and the row is dead-lettered past <see cref="InboxDispatchWorkerOptions.MaxInboxAttempts"/>, #1983), and
+  /// releases the in-flight entry so the re-offer is not filtered; the deterministic child ids make the re-expansion
+  /// a repeat at the key. Without a coordinator in the dispatch scope the batched channel is used as before, with a
+  /// warning naming the cost. Returns true only when the commit landed here, so work that must follow a landed
+  /// expansion can tell it did.
   /// </summary>
+  /// <docs>fundamentals/messaging/composite-events#transactional-expansion</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerCompositeCommitTests.cs:Composite_WhoseCommitFails_IsFailedForBackoffAndTheAttemptBound_AndLoggedAtWarningAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerCompositeCommitTests.cs:Composite_WhoseCommitFails_ReleasesTheRowForRetry_AndCountsTheFailureAsync</tests>
   private async Task<bool> _commitCompositeAsync(HandlerCommitRequest request, int childCount, IServiceProvider scopeProvider, CancellationToken ct) {
     var coordinator = scopeProvider.GetService<IWorkCoordinator>();
     if (coordinator is null) {
@@ -1038,6 +1163,14 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       _compositeMetrics?.CommitFailures.Add(1);
       LogCompositeCommitFailed(_logger, request.HandlerId, childCount, ex);
+      // #1983: recorded against the row, so its retry is backed off and released, the next claim counts the attempt,
+      // and the attempt bound dead-letters it. Unrecorded, the row stayed leased and was re-offered every poll.
+      await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
+        MessageId = request.HandlerId,
+        CompletedStatus = MessageProcessingStatus.None,
+        Error = ex.Message,
+        Reason = MessageFailureReason.Unknown,
+      }, ct).ConfigureAwait(false);
       return false;
     } finally {
       // Committed: the row is gone and its in-flight entry with it. Failed: the row must be re-offered.
@@ -1076,33 +1209,17 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// so this defers oversized work for an operator rather than discarding it.
   /// </remarks>
   private async Task _deadLetterCompositeAsync(
-      InboxWork work, Whizbang.Core.Messaging.MessageFailureReason reason, string detail, CancellationToken ct) {
+      InboxWork work, Whizbang.Core.Messaging.MessageFailureReason reason, string? detail, CancellationToken ct) {
     _compositeMetrics?.DeadLettered.Add(1);
     if (_deadLetterStore.IsConfigured) {
       try {
-        var movedId = await _deadLetterStore.MoveAsync(
-          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
-          sourceTable: DeadLetterSourceTable.INBOX,
-          sourceId: work.MessageId,
-          failureReason: reason,
-          errorText: detail,
-          instanceId: _instanceProvider.InstanceId,
-          generation: _generationProvider.GetGeneration(),
-          ct: ct).ConfigureAwait(false);
-        if (movedId is not null) {
-          _dlqMetrics?.Added.Add(1,
-            new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
-            new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, reason.ToString()));
-          _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, detail);
-        } else {
-          LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
-        }
-        _releaseTerminal(work.MessageId);
+        await _moveToDeadLettersAsync(work, reason, detail, detail, cause: null, ct).ConfigureAwait(false);
         return;
       } catch (Exception ex) {
         LogDeadLetterStoreFailed(_logger, work.MessageId, ex);
       }
     }
+    _logDeadLettered(work, reason, detail, exception: null);
     var terminal = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
     await _enqueueCommitAsync(terminal, ct);
   }
@@ -1251,7 +1368,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         StreamId = null,
         LastProcessedEventId = null,
         MessageSource = MessageSource.Inbox,
-        AttemptNumber = work.Attempts
+        AttemptNumber = work.Attempts,
+        // #2273: a repaired child the fan-out proved never handled runs only its [RunOnRepair] receptors.
+        IsRepair = work.Envelope.Repaired
       };
 
       // Slice 16: only spawn the detached fire-and-forget when a receptor is actually registered
@@ -1404,6 +1523,21 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   static partial void LogCompositeExceedsConsumerBudget(
     ILogger logger, string compositeType, int childCount, int budget, int chunks);
 
+  [LoggerMessage(EventId = 86, Level = LogLevel.Warning,
+    Message = "Redelivery bundle {CompositeMessageId} names origin {BundleOrigin}, which does not own the type of {Count} of its " +
+              "event(s); they are stored under their owner with no origin sequence, and are not reconciled under {BundleOrigin} (#2116)")]
+  static partial void LogRedeliveredChildrenReattributed(ILogger logger, int count, Guid compositeMessageId, Guid bundleOrigin);
+
+  [LoggerMessage(EventId = 87, Level = LogLevel.Warning,
+    Message = "Redelivery bundle from origin {BundleOrigin}: the ownership map could not be read, so every child keeps the " +
+              "bundle's origin; one stored under the wrong origin is corrected later by the misattributed-origin correction")]
+  static partial void LogBundleOwnershipUnavailable(ILogger logger, Guid bundleOrigin, Exception exception);
+
+  [LoggerMessage(EventId = 88, Level = LogLevel.Warning,
+    Message = "Redelivery bundle {BundleId}: the handled ledger could not be read, so none of its {ChildCount} repaired " +
+              "events can be proven never handled; each is stored state only and runs no receptor")]
+  static partial void LogHandledLedgerUnavailable(ILogger logger, Guid bundleId, int childCount, Exception exception);
+
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "InboxDispatchWorker started: maxInboxAttempts={MaxInboxAttempts}")]
   static partial void LogStarted(ILogger logger, int maxInboxAttempts);
@@ -1449,8 +1583,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     Message = "InboxDispatchWorker skipped a copy of inbox message {MessageId}: the row is already dispatching, committing, or no longer held here")]
   static partial void LogCopyNotHeldSkipped(ILogger logger, Guid messageId);
 
-  [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "InboxDispatchWorker dead-lettered message {MessageId}: attempts={Attempts} > max={MaxAttempts}")]
-  static partial void LogDeadLettered(ILogger logger, Guid messageId, int attempts, int maxAttempts);
+  // EventId 5 (a dead letter, at Warning) is retired: every dead letter is the DeadLetterLog record (#1901).
 
   [LoggerMessage(EventId = 29, Level = LogLevel.Information,
     Message = "InboxDispatchWorker discarded {MessageId} ({MessageType}): its subsystem is disabled on this host — "
@@ -1474,7 +1607,11 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing)")]
   static partial void LogLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
 
-  [LoggerMessage(EventId = 76, Level = LogLevel.Error,
+  [LoggerMessage(EventId = 85, Level = LogLevel.Warning,
+    Message = "Inbox message {MessageId} ({MessageType}) was not handled: a receptor interceptor denied it with DeniedAction.{Action}. Reason: {Reason}")]
+  static partial void LogReceptorDenied(ILogger logger, Guid messageId, string messageType, DeniedAction action, string reason);
+
+  [LoggerMessage(EventId = 76, Level = LogLevel.Warning,
     Message = "InboxDispatchWorker could not deserialize the payload of message {MessageId} ({MessageType}), which a retry will not change; "
             + "dead-lettering the row with its body instead of completing it")]
   static partial void LogUndeserializablePayload(ILogger logger, Guid messageId, string messageType, Exception ex);
@@ -1509,9 +1646,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
             + "stays leased and pending, so a re-offer can expand it again (the derived child ids make that a repeat at the key, not a copy).")]
   static partial void LogCompositeCommitWithoutCoordinator(ILogger logger, Guid messageId, int childCount);
 
-  [LoggerMessage(EventId = 73, Level = LogLevel.Error,
-    Message = "Composite {MessageId} expanded to {ChildCount} child row(s) but the commit failed; the row stays leased and unprocessed "
-            + "and the claim loop re-offers it, where the same child ids are derived again and the store absorbs the repeat.")]
+  [LoggerMessage(EventId = 73, Level = LogLevel.Warning,
+    Message = "Composite {MessageId} expanded to {ChildCount} child row(s) but the commit failed; the row is failed and retried "
+            + "with backoff, where the same child ids are derived again and the store absorbs the repeat, and it is dead-lettered "
+            + "once its attempts pass MaxInboxAttempts.")]
   static partial void LogCompositeCommitFailed(ILogger logger, Guid messageId, int childCount, Exception ex);
 
   [LoggerMessage(EventId = 30, Level = LogLevel.Information,

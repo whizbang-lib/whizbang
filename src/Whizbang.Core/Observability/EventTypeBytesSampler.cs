@@ -29,7 +29,6 @@ namespace Whizbang.Core.Observability;
 /// <param name="scopeFactory">Resolves the provider for each sample.</param>
 /// <param name="metrics">The meter the sample is reported on.</param>
 /// <param name="options">The interval, the share sampled and the cap on event types.</param>
-/// <param name="schemaReadyGate">Holds the first sample until the schema exists; null starts at once.</param>
 /// <param name="logger">Optional logger.</param>
 /// <param name="timeProvider">The clock the window is read from; null is the system clock.</param>
 /// <docs>operations/observability/metrics#event-type-bytes</docs>
@@ -38,7 +37,6 @@ public sealed partial class EventTypeBytesSampler(
     IServiceScopeFactory scopeFactory,
     TableStatisticsMetrics metrics,
     IOptions<TableStatisticsOptions> options,
-    Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate,
     ILogger<EventTypeBytesSampler>? logger,
     TimeProvider? timeProvider = null) : BackgroundService {
 
@@ -59,14 +57,6 @@ public sealed partial class EventTypeBytesSampler(
     if (interval <= TimeSpan.Zero) {
       LogSampleOff(_logger);
       return;
-    }
-
-    if (schemaReadyGate is not null) {
-      try {
-        await schemaReadyGate.WaitForReadyAsync(stoppingToken).ConfigureAwait(false);
-      } catch (OperationCanceledException) {
-        return;
-      }
     }
 
     while (true) {

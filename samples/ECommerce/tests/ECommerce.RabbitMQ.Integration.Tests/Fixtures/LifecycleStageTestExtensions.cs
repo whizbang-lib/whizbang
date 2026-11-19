@@ -292,6 +292,7 @@ public static class LifecycleStageTestExtensions {
     string? perspectiveName = null,
     int timeoutMilliseconds = 45000,
     Func<TEvent, bool>? messageFilter = null,
+    int expectedFirings = 1,
     CancellationToken cancellationToken = default)
     where TEvent : IEvent {
 
@@ -301,6 +302,7 @@ public static class LifecycleStageTestExtensions {
       timeoutMilliseconds,
       perspectiveName,
       messageFilter,
+      expectedFirings,
       cancellationToken);
   }
 
@@ -313,6 +315,7 @@ public static class LifecycleStageTestExtensions {
     string? perspectiveName = null,
     int timeoutMilliseconds = 45000,
     Func<TEvent, bool>? messageFilter = null,
+    int expectedFirings = 1,
     CancellationToken cancellationToken = default)
     where TEvent : IEvent {
 
@@ -322,6 +325,7 @@ public static class LifecycleStageTestExtensions {
       timeoutMilliseconds,
       perspectiveName,
       messageFilter,
+      expectedFirings,
       cancellationToken);
   }
 
@@ -334,6 +338,7 @@ public static class LifecycleStageTestExtensions {
     string? perspectiveName = null,
     int timeoutMilliseconds = 45000,
     Func<TEvent, bool>? messageFilter = null,
+    int expectedFirings = 1,
     CancellationToken cancellationToken = default)
     where TEvent : IEvent {
 
@@ -343,6 +348,7 @@ public static class LifecycleStageTestExtensions {
       timeoutMilliseconds,
       perspectiveName,
       messageFilter,
+      expectedFirings,
       cancellationToken);
   }
 
@@ -355,6 +361,7 @@ public static class LifecycleStageTestExtensions {
     string? perspectiveName = null,
     int timeoutMilliseconds = 45000,
     Func<TEvent, bool>? messageFilter = null,
+    int expectedFirings = 1,
     CancellationToken cancellationToken = default)
     where TEvent : IEvent {
 
@@ -364,6 +371,7 @@ public static class LifecycleStageTestExtensions {
       timeoutMilliseconds,
       perspectiveName,
       messageFilter,
+      expectedFirings,
       cancellationToken);
   }
 
@@ -387,6 +395,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds,
     string? perspectiveName = null,
     Func<TMessage, bool>? messageFilter = null,
+    int expectedFirings = 1,
     CancellationToken cancellationToken = default)
     where TMessage : IMessage {
 
@@ -414,7 +423,9 @@ public static class LifecycleStageTestExtensions {
     // completes — so any state the receptor mutated (InvocationCount) is
     // visible by the time the await resumes.
     var observer = host.Services.GetRequiredService<LifecycleStageFiringObserver>();
-    var observerTask = observer.WaitForStageAsync(stage, messageFilter, cancellationToken);
+    // The receptor stays registered until the last expected firing: a perspective stage fires once per perspective
+    // that folds the event, and the perspectives of one stream may run one after another or together.
+    var observerTask = observer.WaitForStageAsync(stage, messageFilter, expectedFirings, cancellationToken);
 
     try {
       if (cancellationToken.CanBeCanceled) {

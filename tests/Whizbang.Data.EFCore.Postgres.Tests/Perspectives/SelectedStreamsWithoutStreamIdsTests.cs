@@ -9,6 +9,7 @@ using TUnit.Core;
 using Whizbang.Core.Commands.System;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 
@@ -22,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// shape the refusal takes. "Rebuild nothing" and "refuse loudly" are separable; this test pins the
 /// one that protects data.
 /// </remarks>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RebuildPerspectiveCommandReceptor.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/RebuildPerspectiveCommandReceptor.cs</code-under-test>
 [Category("Shard1")]
 public class SelectedStreamsWithoutStreamIdsTests {
 

@@ -21,12 +21,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <remarks>
 /// <c>SplitModeChangeTrackerHydrator</c>'s registry is process-global — the same shared-static hazard
-/// recorded for it elsewhere (<c>SplitModeChangeTrackerHydratorCoverageTests</c>). Tagged with the
-/// shared <c>"EFCorePostgresTests"</c> <see cref="NotInParallelAttribute"/> key for the same reason.
+/// recorded for it elsewhere (<c>SplitModeChangeTrackerHydratorCoverageTests</c>). It clears that registry, so it
+/// runs alone (<see cref="NotInParallelAttribute"/> with no key) for the same reason.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/MultiModelScopedAccess.cs</code-under-test>
 [Category("Shard1")]
-[NotInParallel("EFCorePostgresTests")]
+[NotInParallel] // Resets a process-wide registry the database tests read (#1903): runs alone, after the parallel tests.
 public class MultiModelScopedAccessCoverageTests {
 
   private sealed record SplitProbeModel { public string Value { get; init; } = ""; }

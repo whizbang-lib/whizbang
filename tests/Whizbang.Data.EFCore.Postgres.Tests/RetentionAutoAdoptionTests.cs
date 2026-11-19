@@ -30,7 +30,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Workers/MaintenanceWorker.cs</code-under-test>
 /// <docs>fundamentals/perspectives/row-retention</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class RetentionAutoAdoptionTests : EFCoreTestBase {
   private const string TABLE = "wh_per_auto_adoption";
@@ -143,11 +142,8 @@ public class RetentionAutoAdoptionTests : EFCoreTestBase {
       services.AddSingleton(Options.Create(new PerspectiveRowRetentionOptions { AutoAcknowledge = value }));
     }
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       NullLogger<MaintenanceWorker>.Instance);
   }

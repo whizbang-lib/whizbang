@@ -20,13 +20,13 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <see cref="DbContextInitializationRegistryTests.ResetStaticState"/> already uses lets
 /// <c>RunAsync</c> delegate into an empty registry, which the registry's own contract guarantees
 /// completes without touching a database (see <code>DbContextInitializationRegistryTests
-/// .InitializeAllAsync_WithNoRegistrations_CompletesSuccessfullyAsync</code>). <see
-/// cref="NotInParallelAttribute"/> uses the exact key <see cref="DbContextInitializationRegistryTests"/>
-/// already uses to guard the same static state, so the two classes serialize against each other
-/// instead of racing. No database is used in this file.
+/// .InitializeAllAsync_WithNoRegistrations_CompletesSuccessfullyAsync</code>). Like
+/// <see cref="DbContextInitializationRegistryTests"/>, it runs alone (<see cref="NotInParallelAttribute"/> with no
+/// key), so the two classes never race each other or a database test that reads the registry. No database is used in
+/// this file.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/DbContextSchemaInitializationRunner.cs</code-under-test>
-[NotInParallel(["DbContextInitializationRegistry", "EFCorePostgresTests"])]
+[NotInParallel] // Resets a process-wide registry the database tests read (#1903): runs alone, after the parallel tests.
 [Category("Shard1")]
 public class ISchemaInitializationRunnerCoverageTests {
   private IDisposable? _restore;

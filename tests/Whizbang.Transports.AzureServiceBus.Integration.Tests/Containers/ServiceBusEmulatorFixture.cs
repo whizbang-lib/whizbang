@@ -27,9 +27,16 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
   ];
 
   /// <summary>
-  /// Creates a fixture with the default port (5672).
+  /// The default emulator port for the running framework: 5672 on net11.0, ten lower or higher for each major
+  /// version away from it (5682 on net10.0). A release build tests every target framework at once on one runner,
+  /// and a shared port and container name made the second framework's compose fail with a name conflict.
   /// </summary>
-  public ServiceBusEmulatorFixture() : this(5672) {
+  public static int DefaultPort { get; } = 5672 + ((11 - Environment.Version.Major) * 10);
+
+  /// <summary>
+  /// Creates a fixture on <see cref="DefaultPort"/>, so each target framework gets its own emulator.
+  /// </summary>
+  public ServiceBusEmulatorFixture() : this(DefaultPort) {
   }
 
   /// <summary>

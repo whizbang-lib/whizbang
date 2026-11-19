@@ -118,6 +118,8 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
     // heartbeat MUST be treated as dead so a healthy peer can take over.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
+    // The database clock, which the SQL under test compares against, not the host clock.
+    var dbNow = await _dbNowAsync(conn);
 
     var meId = (Guid)TrackedGuid.New();
     var staleOwnerId = (Guid)TrackedGuid.New();
@@ -130,9 +132,9 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
     // heartbeat freshness), but the per-row outbox lease is EXPIRED — that's the
     // orphan condition the claim function looks for.
     await _upsertActiveStreamRowAsync(conn, streamId, partitionNumber: 0,
-      ownerInstanceId: staleOwnerId, leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(5));
+      ownerInstanceId: staleOwnerId, leaseExpiry: dbNow.AddMinutes(5));
     await _insertOutboxRowAsync(conn, msgId, streamId, partitionNumber: 0,
-      instanceId: staleOwnerId, leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-1), attempts: 0);
+      instanceId: staleOwnerId, leaseExpiry: dbNow.AddMinutes(-1), attempts: 0);
 
     await _callClaimOrphanedOutboxAsync(conn, meId);
 
@@ -142,37 +144,57 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task ClaimOrphanedOutbox_StaleHeartbeat_WithListenConnection_LeasesNotReclaimedAsync() {
-    // The Slice 2b behavior change — an instance whose heartbeat row is stale
-    // but whose LISTEN connection is currently registered in pg_stat_activity
-    // must be treated as alive. Its leases are NOT eligible for cross-instance
-    // re-claim.
+  public async Task ClaimOrphanedOutbox_StaleHeartbeat_WithOnlyAConnectionNamedForIt_LeasesReclaimableAsync() {
+    // #2027: the one liveness rule (316) decides. A connection named for an instance is not a liveness signal: the
+    // rule counts a direct instance's held alive-lock, which its LISTEN connection takes, and nothing else.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
+    // The database clock, which the SQL under test compares against, not the host clock.
+    var dbNow = await _dbNowAsync(conn);
 
     var meId = (Guid)TrackedGuid.New();
-    var alivePodId = (Guid)TrackedGuid.New();
+    var ownerId = (Guid)TrackedGuid.New();
     var msgId = (Guid)TrackedGuid.New();
     var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
-    // alivePodId has stale heartbeat — under heartbeat-only semantics, dead.
-    await _registerInstanceAsync(conn, alivePodId, lastHeartbeatOffset: TimeSpan.FromMinutes(-10));
-    // active_streams row is fresh, outbox row's per-row lease has EXPIRED — without
-    // the LISTEN-alive signal the orphan-claim would proceed (verified by the sibling
-    // _NoListenConnection test).
+    await _registerInstanceAsync(conn, ownerId, lastHeartbeatOffset: TimeSpan.FromMinutes(-10));
     await _upsertActiveStreamRowAsync(conn, streamId, partitionNumber: 0,
-      ownerInstanceId: alivePodId, leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(5));
+      ownerInstanceId: ownerId, leaseExpiry: dbNow.AddMinutes(5));
     await _insertOutboxRowAsync(conn, msgId, streamId, partitionNumber: 0,
-      instanceId: alivePodId, leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-1), attempts: 0);
-
-    // Open a side connection mirroring alivePodId's real LISTEN connection.
-    await using var sideConn = await _openSideConnectionAsync(alivePodId);
+      instanceId: ownerId, leaseExpiry: dbNow.AddMinutes(-1), attempts: 0);
+    await using var sideConn = await _openSideConnectionAsync(ownerId);
 
     await _callClaimOrphanedOutboxAsync(conn, meId);
 
-    var ownerAfter = await _readOutboxInstanceIdAsync(conn, msgId);
-    await Assert.That(ownerAfter).IsEqualTo(alivePodId)
-      .Because("LISTEN-alive signal must preserve the lease — Slice 5 of zero-idle-polling relies on this so HeartbeatWorker can safely relax to 30 s cadence without weakening orphan detection.");
+    await Assert.That(await _readOutboxInstanceIdAsync(conn, msgId)).IsEqualTo(meId)
+      .Because("the rule calls the owner dead; an open connection carrying its name does not make it live");
+  }
+
+  [Test]
+  public async Task ClaimOrphanedOutbox_DirectOwnerHoldingItsAliveLock_LeasesNotReclaimedAsync() {
+    // #2027: what the LISTEN connection used to prove, the rule proves through the alive-lock that connection holds.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    // The database clock, which the SQL under test compares against, not the host clock.
+    var dbNow = await _dbNowAsync(conn);
+
+    var meId = (Guid)TrackedGuid.New();
+    var ownerId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    await _registerInstanceAsync(conn, meId);
+    // Past the 30 second window of a row that records none, inside the five-minute definitive-dead cutoff.
+    await _registerInstanceAsync(conn, ownerId, lastHeartbeatOffset: TimeSpan.FromMinutes(-2), mode: "direct");
+    await _upsertActiveStreamRowAsync(conn, streamId, partitionNumber: 0,
+      ownerInstanceId: ownerId, leaseExpiry: dbNow.AddMinutes(5));
+    await _insertOutboxRowAsync(conn, msgId, streamId, partitionNumber: 0,
+      instanceId: ownerId, leaseExpiry: dbNow.AddMinutes(-1), attempts: 0);
+    await using var sideConn = await _openSideConnectionAsync(ownerId, holdAliveLock: true);
+
+    await _callClaimOrphanedOutboxAsync(conn, meId);
+
+    await Assert.That(await _readOutboxInstanceIdAsync(conn, msgId)).IsEqualTo(ownerId)
+      .Because("a direct owner holding its alive-lock is live by the rule, so its leases are not reclaimed");
   }
 
   // ============================================================================
@@ -183,6 +205,8 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
   public async Task ClaimOrphanedInbox_StaleHeartbeat_NoListenConnection_LeasesReclaimableAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
+    // The database clock, which the SQL under test compares against, not the host clock.
+    var dbNow = await _dbNowAsync(conn);
 
     var meId = (Guid)TrackedGuid.New();
     var staleOwnerId = (Guid)TrackedGuid.New();
@@ -191,9 +215,9 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, meId);
     await _registerInstanceAsync(conn, staleOwnerId, lastHeartbeatOffset: TimeSpan.FromMinutes(-10));
     await _upsertActiveStreamRowAsync(conn, streamId, partitionNumber: 0,
-      ownerInstanceId: staleOwnerId, leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(5));
+      ownerInstanceId: staleOwnerId, leaseExpiry: dbNow.AddMinutes(5));
     await _insertInboxRowAsync(conn, msgId, streamId, partitionNumber: 0,
-      instanceId: staleOwnerId, leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-1), attempts: 0);
+      instanceId: staleOwnerId, leaseExpiry: dbNow.AddMinutes(-1), attempts: 0);
 
     await _callClaimOrphanedInboxAsync(conn, meId);
 
@@ -203,28 +227,28 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task ClaimOrphanedInbox_StaleHeartbeat_WithListenConnection_LeasesNotReclaimedAsync() {
+  public async Task ClaimOrphanedInbox_StaleHeartbeat_WithOnlyAConnectionNamedForIt_LeasesReclaimableAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
+    // The database clock, which the SQL under test compares against, not the host clock.
+    var dbNow = await _dbNowAsync(conn);
 
     var meId = (Guid)TrackedGuid.New();
-    var alivePodId = (Guid)TrackedGuid.New();
+    var ownerId = (Guid)TrackedGuid.New();
     var msgId = (Guid)TrackedGuid.New();
     var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
-    await _registerInstanceAsync(conn, alivePodId, lastHeartbeatOffset: TimeSpan.FromMinutes(-10));
+    await _registerInstanceAsync(conn, ownerId, lastHeartbeatOffset: TimeSpan.FromMinutes(-10));
     await _upsertActiveStreamRowAsync(conn, streamId, partitionNumber: 0,
-      ownerInstanceId: alivePodId, leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(5));
+      ownerInstanceId: ownerId, leaseExpiry: dbNow.AddMinutes(5));
     await _insertInboxRowAsync(conn, msgId, streamId, partitionNumber: 0,
-      instanceId: alivePodId, leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-1), attempts: 0);
-
-    await using var sideConn = await _openSideConnectionAsync(alivePodId);
+      instanceId: ownerId, leaseExpiry: dbNow.AddMinutes(-1), attempts: 0);
+    await using var sideConn = await _openSideConnectionAsync(ownerId);
 
     await _callClaimOrphanedInboxAsync(conn, meId);
 
-    var ownerAfter = await _readInboxInstanceIdAsync(conn, msgId);
-    await Assert.That(ownerAfter).IsEqualTo(alivePodId)
-      .Because("LISTEN-alive signal preserves the lease — additive defensive predicate from Slice 2b.");
+    await Assert.That(await _readInboxInstanceIdAsync(conn, msgId)).IsEqualTo(meId)
+      .Because("#2027: the one liveness rule calls the owner dead; a connection carrying its name is not a signal");
   }
 
   // ============================================================================
@@ -240,6 +264,8 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
     // already DELETEd by cleanup_stale_instances).
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
+    // The database clock, which the SQL under test compares against, not the host clock.
+    var dbNow = await _dbNowAsync(conn);
 
     var meId = (Guid)TrackedGuid.New();
     var deadId = (Guid)TrackedGuid.New();
@@ -250,7 +276,7 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
     // deadId never registered — its wh_service_instances row doesn't exist.
     await _upsertActiveStreamRowAsync(conn, streamId, partitionNumber: 0, ownerInstanceId: deadId);
     await _insertPerspectiveEventAsync(conn, workId, streamId, "Projection.Test", eventId,
-      instanceId: deadId, leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-1), attempts: 0);
+      instanceId: deadId, leaseExpiry: dbNow.AddMinutes(-1), attempts: 0);
 
     await _callClaimOrphanedPerspectiveEventsAsync(conn, meId);
 
@@ -260,35 +286,53 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task ClaimOrphanedPerspectiveEvents_DeadInstanceRow_WithListenConnection_LeasesNotReclaimedAsync() {
-    // The Slice 2b additive defensive predicate — even if cleanup_stale_instances
-    // has DELETEd the wh_service_instances row, an active LISTEN connection
-    // proves the pod is alive (race window during pod restart, or transient
-    // ordering between cleanup_stale_instances and the pod's heartbeat).
+  public async Task ClaimOrphanedPerspectiveEvents_DeadInstanceRow_WithOnlyAConnectionNamedForIt_LeasesReclaimableAsync() {
+    // #2027: an owner with no row is not live by the one rule, whatever connection carries its name. The reap removes
+    // only rows the rule calls dead, and never a direct instance holding its alive-lock, so the race this once covered
+    // (a row reaped under a pod that is still up) no longer arises.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
+    // The database clock, which the SQL under test compares against, not the host clock.
+    var dbNow = await _dbNowAsync(conn);
 
     var meId = (Guid)TrackedGuid.New();
-    var rebootingPodId = (Guid)TrackedGuid.New();
+    var ownerId = (Guid)TrackedGuid.New();
     var workId = (Guid)TrackedGuid.New();
     var streamId = (Guid)TrackedGuid.New();
     var eventId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, meId);
-    // rebootingPodId's wh_service_instances row is GONE (cleanup_stale_instances)
-    // — but a LISTEN connection is currently registered, proving the pod is
-    // back up and re-establishing state.
-    await _upsertActiveStreamRowAsync(conn, streamId, partitionNumber: 0,
-      ownerInstanceId: rebootingPodId);
+    await _upsertActiveStreamRowAsync(conn, streamId, partitionNumber: 0, ownerInstanceId: ownerId);
     await _insertPerspectiveEventAsync(conn, workId, streamId, "Projection.Test", eventId,
-      instanceId: rebootingPodId, leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-1), attempts: 0);
-
-    await using var sideConn = await _openSideConnectionAsync(rebootingPodId);
+      instanceId: ownerId, leaseExpiry: dbNow.AddMinutes(-1), attempts: 0);
+    await using var sideConn = await _openSideConnectionAsync(ownerId);
 
     await _callClaimOrphanedPerspectiveEventsAsync(conn, meId);
 
-    var ownerAfter = await _readPerspectiveEventInstanceIdAsync(conn, workId);
-    await Assert.That(ownerAfter).IsEqualTo(rebootingPodId)
-      .Because("LISTEN-alive defensive predicate covers the brief race window where the wh_service_instances row has been cleaned up but the pod is back up and has re-opened its LISTEN connection.");
+    await Assert.That(await _readPerspectiveEventInstanceIdAsync(conn, workId)).IsEqualTo(meId);
+  }
+
+  [Test]
+  public async Task ClaimOrphanedPerspectiveEvents_AStaleOwnerRowTheRuleCallsDead_LeasesReclaimableAsync() {
+    // #2027: a row alone no longer counts; the rule judges it (here: past its window, no alive-lock).
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    // The database clock, which the SQL under test compares against, not the host clock.
+    var dbNow = await _dbNowAsync(conn);
+
+    var meId = (Guid)TrackedGuid.New();
+    var ownerId = (Guid)TrackedGuid.New();
+    var workId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    await _registerInstanceAsync(conn, meId);
+    await _registerInstanceAsync(conn, ownerId, lastHeartbeatOffset: TimeSpan.FromMinutes(-10));
+    await _upsertActiveStreamRowAsync(conn, streamId, partitionNumber: 0, ownerInstanceId: ownerId);
+    await _insertPerspectiveEventAsync(conn, workId, streamId, "Projection.Test", eventId,
+      instanceId: ownerId, leaseExpiry: dbNow.AddMinutes(-1), attempts: 0);
+
+    await _callClaimOrphanedPerspectiveEventsAsync(conn, meId);
+
+    await Assert.That(await _readPerspectiveEventInstanceIdAsync(conn, workId)).IsEqualTo(meId);
   }
 
   // ============================================================================
@@ -319,7 +363,13 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
   /// when run in parallel.
   /// </para>
   /// </summary>
-  private async Task<NpgsqlConnection> _openSideConnectionAsync(Guid instanceId) {
+  private static async Task<DateTimeOffset> _dbNowAsync(NpgsqlConnection conn) {
+    await using var cmd = new NpgsqlCommand("SELECT now()", conn);
+    // Npgsql reads timestamptz as a UTC DateTime.
+    return new DateTimeOffset((DateTime)(await cmd.ExecuteScalarAsync())!, TimeSpan.Zero);
+  }
+
+  private async Task<NpgsqlConnection> _openSideConnectionAsync(Guid instanceId, bool holdAliveLock = false) {
     var csBuilder = new NpgsqlConnectionStringBuilder(ConnectionString) {
       ApplicationName = $"whizbang-{instanceId:D}",
     };
@@ -329,7 +379,7 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
     // initialized row (some Postgres versions don't surface a backend in
     // pg_stat_activity until it executes at least one statement).
     await using var cmd = sideConn.CreateCommand();
-    cmd.CommandText = "SELECT 1";
+    cmd.CommandText = holdAliveLock ? $"SELECT claim_instance_alive_lock('{instanceId}'::uuid)" : "SELECT 1";
     await cmd.ExecuteScalarAsync();
     return sideConn;
   }
@@ -497,17 +547,18 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
   }
 
   private static async Task _registerInstanceAsync(
-      NpgsqlConnection conn, Guid instanceId, TimeSpan? lastHeartbeatOffset = null) {
+      NpgsqlConnection conn, Guid instanceId, TimeSpan? lastHeartbeatOffset = null, string? mode = null) {
     var hb = lastHeartbeatOffset.HasValue
       ? DateTimeOffset.UtcNow + lastHeartbeatOffset.Value
       : DateTimeOffset.UtcNow;
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = @"
-      INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
-      VALUES (@id, 'test-svc', 'test-host', 1, @hb, @hb, '{}'::jsonb)
+      INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata, connection_mode)
+      VALUES (@id, 'test-svc', 'test-host', 1, @hb, @hb, '{}'::jsonb, @mode)
       ON CONFLICT (instance_id) DO UPDATE SET last_heartbeat_at = EXCLUDED.last_heartbeat_at";
     cmd.Parameters.AddWithValue("id", instanceId);
     cmd.Parameters.Add(new NpgsqlParameter("hb", NpgsqlDbType.TimestampTz) { Value = hb });
+    cmd.Parameters.AddWithValue(nameof(mode), (object?)mode ?? DBNull.Value);
     await cmd.ExecuteNonQueryAsync();
   }
 }

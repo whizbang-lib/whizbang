@@ -160,13 +160,10 @@ public class ClaimWorkerLifecycleTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator ?? new MinimalCoordinator());
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: listener,
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 200,

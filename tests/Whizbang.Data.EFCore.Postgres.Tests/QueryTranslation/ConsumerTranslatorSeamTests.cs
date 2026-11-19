@@ -93,8 +93,25 @@ public class ConsumerTranslatorSeamTests {
   /// <summary>
   /// Builds options the way a consumer would, with both calls, in the given order.
   /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Entity Framework keeps one internal service provider per distinct configuration for the life of the process, and
+  /// by default throws ManyServiceProvidersCreatedWarning when it builds one more after twenty (#2157). This project
+  /// builds one per test on purpose: every test owns a database and a data source, and the Npgsql provider keys the
+  /// internal provider on the data source, which is why every fixture here ignores the warning. A deployed service has
+  /// one data source, so the count the warning guards is a property of the test process, not of the seam.
+  /// </para>
+  /// <para>
+  /// Sharing these options statically would not avoid it: the plugin set is this class's alone, so the first context
+  /// built from it needs a provider of its own whatever came before, and the warning fires on that build once the rest
+  /// of an unsharded run has built twenty. Bypassing the cache with an internal service provider of the test's making
+  /// would stop the test exercising the registration path a consumer goes through. So the warning is ignored here, as
+  /// it is in every other fixture of the project.
+  /// </para>
+  /// </remarks>
   private static DbContextOptions<ProbeContext> _options(bool consumerFirst, bool registerTwice = false) {
     var builder = new DbContextOptionsBuilder<ProbeContext>();
+    builder.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
     builder.UseNpgsql("Host=localhost;Database=unused", npgsql => {
       if (consumerFirst) {
         npgsql.AddWhizbangQueryTranslator<ConsumerPlugin>();

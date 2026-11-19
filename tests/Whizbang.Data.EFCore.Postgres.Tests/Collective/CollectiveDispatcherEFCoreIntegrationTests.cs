@@ -45,7 +45,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 /// <docs>fundamentals/messaging/collective-events</docs>
 [Category("Integration")]
 [Category("CollectiveEvents")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   static CollectiveDispatcherEFCoreIntegrationTests() {
@@ -382,11 +381,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   [Before(Test)]
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
-    _testDatabaseName = $"test_collective_{Guid.NewGuid():N}";
-
-    await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-    await admin.OpenAsync();
-    await admin.ExecuteAsync($"CREATE DATABASE {_testDatabaseName}");
+    _testDatabaseName = (await PerTestDatabaseFactory.CreateAsync("collective")).Name;
 
     var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _testDatabaseName,
@@ -416,17 +411,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       _dataSource = null;
     }
     if (_testDatabaseName is not null) {
-      try {
-        await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await admin.OpenAsync();
-        await admin.ExecuteAsync($"""
-          SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-          WHERE datname = '{_testDatabaseName}' AND pid <> pg_backend_pid();
-          """);
-        await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
-      } catch {
-        // best-effort cleanup
-      }
+      await PerTestDatabaseFactory.DropAsync(_testDatabaseName);
       _testDatabaseName = null;
     }
   }
@@ -500,6 +485,9 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
   private readonly List<string> _capturedSql = [];
 
+  // A batch statement (#1969): it selects the batch, moves the apply's progress record and updates the batch.
+  private static bool _isBatchStatement(string sql) => sql.Contains("wb_applied AS (UPDATE", StringComparison.Ordinal);
+
   private JobDbContext _newContext() {
     var optionsBuilder = new DbContextOptionsBuilder<JobDbContext>();
     optionsBuilder.UseNpgsql(_dataSource!, npg => npg.UseWhizbangFunctions())
@@ -522,6 +510,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   private async Task _initSchemaAsync() {
     await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
+    await CollectiveApplyProgressTable.CreateAsync(conn);
     await conn.ExecuteAsync("""
       CREATE TABLE IF NOT EXISTS wh_per_collective_job (
         id UUID PRIMARY KEY,
@@ -1260,12 +1249,12 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     var tableCmds = _capturedSql
       .Where(c => c.Contains("wh_per_collective_cells", StringComparison.OrdinalIgnoreCase))
       .ToList();
-    var tableSelects = tableCmds.Where(c => c.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)).ToList();
-    await Assert.That(tableSelects.Count).IsGreaterThan(0)
-      .Because("A keyset batch selects the batch ids before updating them.");
-    await Assert.That(tableSelects.All(c => c.Contains("LIMIT", StringComparison.OrdinalIgnoreCase))).IsTrue()
+    var batchStatements = tableCmds.Where(_isBatchStatement).ToList();
+    await Assert.That(batchStatements.Count).IsGreaterThan(0)
+      .Because("A keyset batch selects the batch ids and updates them in one statement (#1969).");
+    await Assert.That(batchStatements.All(c => c.Contains("ORDER BY id LIMIT", StringComparison.OrdinalIgnoreCase))).IsTrue()
       .Because("Every id selection is bounded by LIMIT (at most BatchSize) — the whole-cohort seq-scan gather is gone.");
-    await Assert.That(tableCmds.Any(c => c.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase))).IsTrue()
+    await Assert.That(batchStatements.All(c => c.Contains("WHERE id IN (SELECT id FROM wb_batch)", StringComparison.Ordinal))).IsTrue()
       .Because("The mutation is a set-based UPDATE over the batch ids.");
   }
 
@@ -1290,8 +1279,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         .Because("Every row in the cohort must be updated exactly once across the batches.");
     }
     var updateBatches = _capturedSql.Count(c =>
-      c.Contains("wh_per_collective_cells", StringComparison.OrdinalIgnoreCase) &&
-      c.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase));
+      c.Contains("wh_per_collective_cells", StringComparison.OrdinalIgnoreCase) && _isBatchStatement(c));
     await Assert.That(updateBatches).IsEqualTo(3)
       .Because("5 rows at BatchSize=2 → ⌈5/2⌉ = 3 batched UPDATEs, each a short transaction (brief lock hold).");
   }
@@ -1465,7 +1453,6 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       .Because("the apply still runs; only the wait is unbounded");
   }
 
-
   // ── §7: index creation is a STARTUP concern, never in the apply hot path ──────────────────────────
 
   [Test]
@@ -1533,8 +1520,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         .Because("Every row applies regardless of batch size.");
     }
     var updateBatches = _capturedSql.Count(c =>
-      c.Contains("wh_per_collective_cells", StringComparison.OrdinalIgnoreCase) &&
-      c.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase));
+      c.Contains("wh_per_collective_cells", StringComparison.OrdinalIgnoreCase) && _isBatchStatement(c));
     await Assert.That(updateBatches).IsEqualTo(3)
       .Because("5 rows at the per-handler BatchSize override of 2 → 3 batched UPDATEs, even though the global default is 1000. The [CollectiveApplyFor] knob on the entry reached the adapter.");
   }
@@ -1642,7 +1628,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
 
     await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after");
     await Assert.That(await _readCellsAsync(id)).IsEquivalentTo(["k1=v1", "k2=new"], TUnit.Assertions.Enums.CollectionOrdering.Matching);
-    await Assert.That(_capturedSql.Count(c => c.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase)
+    await Assert.That(_capturedSql.Count(c => _isBatchStatement(c)
       && c.Contains("wh_per_collective_cells", StringComparison.OrdinalIgnoreCase))).IsEqualTo(1)
       .Because("the top-level property and the element are written by the same set-based UPDATE");
   }

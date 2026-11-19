@@ -57,8 +57,8 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/jsonb-containment</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CanonicalTemporalJsonConverterTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CanonicalTemporalReaderToleranceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CanonicalTemporalJsonConverterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CanonicalTemporalReaderToleranceTests.cs</tests>
 public static class CanonicalTemporalJsonConverters {
   /// <summary>An instant, as microseconds since the Unix epoch.</summary>
   public sealed class InstantConverter : JsonConverter<DateTime> {

@@ -50,7 +50,7 @@ public sealed class SharedTopicOutboxStrategy(string inboxTopic, ITopicRoutingSt
   /// its configured inbox topic — the one address every command rides.
   /// </summary>
   /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/CommandInboxAddressResolverTests.cs:SharedTopicOutboxStrategy_ImplementsTheSeam_DefaultIsInboxTopic_NeverFlipsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/CommandInboxAddressResolverTests.cs:SharedTopicOutboxStrategy_ImplementsTheSeam_DefaultIsInboxTopic_NeverFlipsAsync</tests>
   public string DefaultCommandInboxAddress => InboxTopic;
 
   /// <summary>
@@ -85,7 +85,7 @@ public sealed class SharedTopicOutboxStrategy(string inboxTopic, ITopicRoutingSt
 
     // Get the full namespace from the message type
     var ns = _topicResolver.ResolveTopic(messageType, "", null);
-    var typeName = messageType.Name.ToLowerInvariant();
+    var typeName = TypeNameFormatter.SimpleName(messageType).ToLowerInvariant();
 
     if (kind == MessageKind.Command) {
       // Commands go to shared inbox topic with namespace-based routing key

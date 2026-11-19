@@ -35,13 +35,13 @@ namespace Whizbang.Core.Messaging;
 /// <see cref="EventFlags.Collective"/> in the inbox envelope's
 /// <c>Flags</c> column, looks up the <see cref="ICollectiveScopeResolver"/>
 /// matching <see cref="ICollectiveScope.ScopeKind"/>, finds matching
-/// handlers in <c>CollectiveApplyRegistry</c>, and fans out via
+/// handlers in the served <c>ICollectiveApplyRegistry</c> (every assembly's), and fans out via
 /// <c>ICollectiveEventExecutor</c> per <c>TModel</c>.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveEventContractTests.cs:ICollectiveEvent_ExtendsIMessage_SoExistingPipelinesCanCarryItAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveEventContractTests.cs:ICollectiveEvent_Scope_CarriedThroughEvent_Async</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CollectiveEventContractTests.cs:ICollectiveEvent_ExtendsIMessage_SoExistingPipelinesCanCarryItAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CollectiveEventContractTests.cs:ICollectiveEvent_Scope_CarriedThroughEvent_Async</tests>
 public interface ICollectiveEvent : IEvent {
   /// <summary>
   /// The scope envelope this event operates in. Drives runtime routing
@@ -80,7 +80,7 @@ public interface ICollectiveEvent : IEvent {
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/messaging/collective-events</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectiveOrderingKeyTests.cs:AHandWrittenCollective_HasNoOrderingKeyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CollectiveOrderingKeyTests.cs:AHandWrittenCollective_HasNoOrderingKeyAsync</tests>
   string? OrderingKey => null;
 
   /// <summary>
@@ -102,7 +102,7 @@ public interface ICollectiveEvent : IEvent {
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/messaging/collective-events#ordering-across-services</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CollectivePredecessorLinkTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Messaging/CollectivePredecessorLinkTests.cs</tests>
   Guid? PredecessorId => null;
 
   /// <summary>

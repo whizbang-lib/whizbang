@@ -32,7 +32,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/jsonb-containment</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CanonicalTemporalReaderToleranceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CanonicalTemporalReaderToleranceTests.cs</tests>
 public static class StoredFormFallbacks {
 #pragma warning disable CA1707
   /// <summary>OpenTelemetry meter name.</summary>

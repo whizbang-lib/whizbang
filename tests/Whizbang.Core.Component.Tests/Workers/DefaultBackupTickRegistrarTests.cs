@@ -27,13 +27,6 @@ namespace Whizbang.Core.Tests.Workers;
 /// <docs>fundamentals/work-coordinator/backup-tick-coordinator</docs>
 public class DefaultBackupTickRegistrarTests {
 
-  private sealed class FakeSchemaReadyGate(bool isReady) : ISchemaReadyGate {
-    public bool IsReady { get; } = isReady;
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) =>
-      IsReady ? Task.CompletedTask : Task.Delay(Timeout.Infinite, cancellationToken);
-    public void MarkReady() { }
-  }
-
   [Test]
   public async Task StartAsync_RegistersScheduledRetryTickAsync() {
     var registry = new BackupTickRegistry();
@@ -43,7 +36,6 @@ public class DefaultBackupTickRegistrarTests {
     var registrar = new DefaultBackupTickRegistrar(
       registry,
       scopeFactory,
-      new FakeSchemaReadyGate(isReady: true),
       NullLogger<DefaultBackupTickRegistrar>.Instance);
 
     await registrar.StartAsync(CancellationToken.None);
@@ -62,7 +54,6 @@ public class DefaultBackupTickRegistrarTests {
     var registrar = new DefaultBackupTickRegistrar(
       registry,
       scopeFactory,
-      new FakeSchemaReadyGate(isReady: true),
       NullLogger<DefaultBackupTickRegistrar>.Instance);
 
     await registrar.StartAsync(CancellationToken.None);
@@ -81,7 +72,6 @@ public class DefaultBackupTickRegistrarTests {
     var registrar = new DefaultBackupTickRegistrar(
       registry,
       scopeFactory,
-      new FakeSchemaReadyGate(isReady: true),
       NullLogger<DefaultBackupTickRegistrar>.Instance);
 
     await registrar.StartAsync(CancellationToken.None);
@@ -101,7 +91,7 @@ public class DefaultBackupTickRegistrarTests {
   }
 
   private static (DefaultBackupTickRegistrar Registrar, BackupTickRegistry Registry, ServiceProvider Provider)
-      _build(bool schemaReady, IWorkCoordinator coordinator) {
+      _build(IWorkCoordinator coordinator) {
     var registry = new BackupTickRegistry();
     var services = new ServiceCollection();
     services.AddScoped(_ => coordinator);
@@ -109,27 +99,8 @@ public class DefaultBackupTickRegistrarTests {
     var registrar = new DefaultBackupTickRegistrar(
       registry,
       provider.GetRequiredService<IServiceScopeFactory>(),
-      new FakeSchemaReadyGate(schemaReady),
       NullLogger<DefaultBackupTickRegistrar>.Instance);
     return (registrar, registry, provider);
-  }
-
-  [Test]
-  public async Task RegisteredTick_BeforeTheSchemaIsReady_AsksTheCoordinatorNothingAsync() {
-    // The tick is registered at startup and the coordinator begins polling it immediately, so it
-    // can fire while migrations are still running. What it calls reads the schedule tables — a
-    // query against tables that do not exist yet throws inside a backup tick, on a timer, once
-    // per polling cycle, for as long as the migration takes.
-    var coordinator = new CountingCoordinator(streamsWoken: 3);
-    var (registrar, registry, provider) = _build(schemaReady: false, coordinator);
-    await using var _ = provider;
-
-    await registrar.StartAsync(CancellationToken.None);
-    await registry.Registrations[0].Tick(CancellationToken.None);
-
-    await Assert.That(coordinator.Calls).IsEqualTo(0)
-      .Because("the gate is the only thing standing between a backup tick and a table the "
-             + "migration has not created yet");
   }
 
   [Test]
@@ -138,7 +109,7 @@ public class DefaultBackupTickRegistrarTests {
     // waits for some other signal to wake its stream. Registering it and never calling through is
     // indistinguishable, from the outside, from registering a tick that does nothing at all.
     var coordinator = new CountingCoordinator(streamsWoken: 3);
-    var (registrar, registry, provider) = _build(schemaReady: true, coordinator);
+    var (registrar, registry, provider) = _build(coordinator);
     await using var _ = provider;
 
     await registrar.StartAsync(CancellationToken.None);
@@ -155,7 +126,7 @@ public class DefaultBackupTickRegistrarTests {
     // nothing. It has to stay silent then — a log line per cycle per process buries the one that
     // reports real work, and this fires for the life of the service.
     var coordinator = new CountingCoordinator(streamsWoken: 0);
-    var (registrar, registry, provider) = _build(schemaReady: true, coordinator);
+    var (registrar, registry, provider) = _build(coordinator);
     await using var _ = provider;
 
     await registrar.StartAsync(CancellationToken.None);

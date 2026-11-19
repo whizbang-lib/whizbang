@@ -15,6 +15,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.RabbitMQ;
@@ -271,7 +272,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
       // Get envelope type name - prefer provided envelopeType to preserve correct generic type
       // (envelope.GetType() may be MessageEnvelope<object> when loaded from outbox)
+#pragma warning disable RS0030 // versioned on purpose: the envelope type the subscriber resolves the message body from (#2267)
       var envelopeTypeName = envelopeType ?? TypeNameFormatter.AssemblyQualifiedName(envelope.GetType());
+#pragma warning restore RS0030
 
       var envelopeRuntimeType = envelope.GetType();
 
@@ -358,7 +361,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         ex
       );
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      _logger?.LogError(
+      // #1976: rethrown to the outbox, which retries the publish and dead-letters it at the bound, so a Warning.
+      _logger?.LogWarning(
         ex,
         "Failed to publish message {MessageId} to exchange {ExchangeName} with routing key {RoutingKey}",
         envelope.MessageId,
@@ -427,7 +431,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
           results.Add(new BulkPublishItemResult {
             MessageId = item.MessageId,
             Success = false,
-            Error = $"{ex.GetType().Name}: {ex.Message}",
+            Error = $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}",
             Reason = TransportFailureClassifier.Classify(ex),
           });
         }
@@ -435,7 +439,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     } catch (AlreadyClosedException ex) {
       _failRemainingItems(items, results, $"AlreadyClosedException: {ex.Message}", TransportFailureClassifier.Classify(ex));
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      _failRemainingItems(items, results, $"{ex.GetType().Name}: {ex.Message}", TransportFailureClassifier.Classify(ex));
+      _failRemainingItems(items, results, $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}", TransportFailureClassifier.Classify(ex));
     }
 
     return results;
@@ -453,7 +457,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   ) {
     var routingKey = item.RoutingKey ?? destination.RoutingKey ?? "#";
     var envelope = item.Envelope;
+#pragma warning disable RS0030 // versioned on purpose: the envelope type the subscriber resolves the message body from (#2267)
     var envelopeTypeName = item.EnvelopeType ?? TypeNameFormatter.AssemblyQualifiedName(envelope.GetType());
+#pragma warning restore RS0030
     var envelopeRuntimeType = envelope.GetType();
 
     // Honor per-item pre-serialized hint when present (avoids double-serialize
@@ -660,18 +666,12 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       return Task.CompletedTask; // Non-blocking — lets ConsumerDispatchConcurrency=1 dispatch next immediately
     };
 
-    var consumerTag = await channel.BasicConsumeAsync(
-      queue: queueName,
-      autoAck: false,
-      consumerTag: $"{queueName}-{Guid.NewGuid():N}",
-      noLocal: false,
-      exclusive: false,
-      arguments: null,
-      consumer: consumer,
-      cancellationToken: cancellationToken
-    );
+    var consumerTag = await _consumeAsync(channel, queueName, consumer, cancellationToken);
 
-    subscription = new RabbitMQSubscription(channel, queueName, consumerTag, _logger);
+    // A pause cancels this consumer and a resume starts another on the same channel (#2406).
+    subscription = new RabbitMQSubscription(channel, queueName, consumerTag, _logger) {
+      RestartConsuming = () => _consumeAsync(channel, queueName, consumer, CancellationToken.None),
+    };
 
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
       _logger.LogDebug(
@@ -715,11 +715,12 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       if (_logger?.IsEnabled(LogLevel.Debug) == true) {
         _logger.LogDebug("Processed batch of {BatchSize} messages from queue {QueueName}", deserialized.Count, queueName);
       }
-    } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+    } catch (Exception ex) when (RabbitMQChannelClosure.IsChannelGone(ex)) {
       _logger?.LogWarning(ex,
         "RabbitMQ channel closed while processing batch from queue {QueueName} — messages will be redelivered", queueName);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      _logger?.LogError(ex,
+      // #1976: the batch is requeued for redelivery, so the failed attempt is a Warning.
+      _logger?.LogWarning(ex,
         "Error processing batch of {BatchSize} messages from queue {QueueName} — NACKing for redelivery", deserialized.Count, queueName);
       await _nackFailedBatchAsync(successfulPending);
     }
@@ -731,7 +732,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     foreach (var pending in pendingMessages) {
       try {
         await NackPausedMessageAsync(pending.Channel, pending.Args, pending.QueueName);
-      } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+      } catch (Exception ex) when (RabbitMQChannelClosure.IsChannelGone(ex)) {
         // Channel closed — message will be redelivered automatically
       }
     }
@@ -757,7 +758,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         }
         deserialized.Add(new TransportMessage(envelope, envelopeTypeName));
         successfulPending.Add(pending);
-      } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+      } catch (Exception ex) when (RabbitMQChannelClosure.IsChannelGone(ex)) {
         _logger?.LogWarning(ex,
           "RabbitMQ channel closed while deserializing message {MessageId} from queue {QueueName}",
           pending.Args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID, pending.QueueName);
@@ -773,7 +774,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     foreach (var pending in successfulPending) {
       try {
         await pending.Channel.BasicAckAsync(pending.Args.DeliveryTag, multiple: false, CancellationToken.None);
-      } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+      } catch (Exception ex) when (RabbitMQChannelClosure.IsChannelGone(ex)) {
         _logger?.LogWarning(ex,
           "RabbitMQ channel closed while ACKing message {MessageId} from queue {QueueName} — will be redelivered",
           pending.Args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID, pending.QueueName);
@@ -787,7 +788,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     foreach (var pending in successfulPending) {
       try {
         await pending.Channel.BasicNackAsync(pending.Args.DeliveryTag, multiple: false, requeue: true, CancellationToken.None);
-      } catch (Exception nackEx) when (nackEx is AlreadyClosedException or ObjectDisposedException) {
+      } catch (Exception nackEx) when (RabbitMQChannelClosure.IsChannelGone(nackEx)) {
         // Channel closed — message will be redelivered automatically
       }
     }
@@ -879,18 +880,12 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     consumer.ReceivedAsync += (_, args) =>
       _onMessageReceivedAsync(channel, args, handler, subscription, queueName, cancellationToken);
 
-    var consumerTag = await channel.BasicConsumeAsync(
-      queue: queueName,
-      autoAck: false,
-      consumerTag: $"{queueName}-{Guid.NewGuid():N}",
-      noLocal: false,
-      exclusive: false,
-      arguments: null,
-      consumer: consumer,
-      cancellationToken: cancellationToken
-    );
+    var consumerTag = await _consumeAsync(channel, queueName, consumer, cancellationToken);
 
-    subscription = new RabbitMQSubscription(channel, queueName, consumerTag, _logger);
+    // A pause cancels this consumer and a resume starts another on the same channel (#2406).
+    subscription = new RabbitMQSubscription(channel, queueName, consumerTag, _logger) {
+      RestartConsuming = () => _consumeAsync(channel, queueName, consumer, CancellationToken.None),
+    };
 
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
       _logger.LogDebug(
@@ -922,7 +917,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       }
 
       await _processMessageAsync(channel, args, handler, queueName, cancellationToken);
-    } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+    } catch (Exception ex) when (RabbitMQChannelClosure.IsChannelGone(ex)) {
       _logger?.LogWarning(
         ex,
         "RabbitMQ channel closed/disposed while processing message {MessageId} from queue {QueueName} - message will be redelivered",
@@ -931,6 +926,20 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       );
     }
   }
+
+  /// <summary>Starts <paramref name="consumer"/> on <paramref name="queueName"/> under a fresh consumer tag.</summary>
+  private static Task<string> _consumeAsync(
+      IChannel channel, string queueName, AsyncEventingBasicConsumer consumer, CancellationToken cancellationToken) =>
+    channel.BasicConsumeAsync(
+      queue: queueName,
+      autoAck: false,
+      consumerTag: $"{queueName}-{TrackedGuid.New().Value:N}",
+      noLocal: false,
+      exclusive: false,
+      arguments: null,
+      consumer: consumer,
+      cancellationToken: cancellationToken
+    );
 
   /// <summary>
   /// Nacks a message when the subscription is paused, requeueing for later delivery.
@@ -946,7 +955,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     );
     try {
       await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: true);
-    } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+    } catch (Exception ex) when (RabbitMQChannelClosure.IsChannelGone(ex)) {
       _logger?.LogWarning(
         ex,
         "RabbitMQ channel closed/disposed while NACKing paused message {MessageId} from queue {QueueName} — broker will redeliver",
@@ -1077,7 +1086,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
     try {
       await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: false);
-    } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+    } catch (Exception ex) when (RabbitMQChannelClosure.IsChannelGone(ex)) {
       _logger?.LogWarning(
         ex,
         "RabbitMQ channel closed/disposed while quarantining poison message {MessageId} from queue "
@@ -1100,7 +1109,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     );
     try {
       await channel.BasicNackAsync(args.DeliveryTag, false, false);
-    } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+    } catch (Exception ex) when (RabbitMQChannelClosure.IsChannelGone(ex)) {
       _logger?.LogWarning(
         ex,
         "RabbitMQ channel closed/disposed while NACKing deserialization failure for message {MessageId} from queue {QueueName}",
@@ -1423,7 +1432,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     string queueName,
     Exception ex
   ) {
-    _logger?.LogError(
+    // #1976: the message is requeued, or dead-lettered past its delivery count and recorded when the dead-letter drain
+    // takes it into custody, so each attempt is a Warning carrying its exception.
+    _logger?.LogWarning(
       ex,
       "Error processing message {MessageId} from queue {QueueName}",
       args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
@@ -1458,7 +1469,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         );
         await channel.BasicNackAsync(args.DeliveryTag, false, true);
       }
-    } catch (Exception channelEx) when (channelEx is AlreadyClosedException or ObjectDisposedException) {
+    } catch (Exception channelEx) when (RabbitMQChannelClosure.IsChannelGone(channelEx)) {
       // Channel/connection was closed or disposed during shutdown - this is expected
       // The message will be redelivered when the consumer reconnects or another instance picks it up
       _logger?.LogWarning(

@@ -67,7 +67,7 @@ public class InboxLifecycleTests {
 
     // Act - If perspectives process, the inbox must have delivered the message
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -95,7 +95,7 @@ public class InboxLifecycleTests {
 
     // Act - If perspectives process, the inbox must have delivered the message
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -119,7 +119,7 @@ public class InboxLifecycleTests {
 
     // Act - If perspectives process, the inbox stages have all completed
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -147,7 +147,7 @@ public class InboxLifecycleTests {
 
     // Act - If perspectives process, the inbox must have delivered the message
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -171,7 +171,7 @@ public class InboxLifecycleTests {
 
     // Act - If perspectives process, the inbox stages have all completed
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -199,7 +199,7 @@ public class InboxLifecycleTests {
 
     // Act - If perspectives process, the inbox must have delivered the message
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -227,7 +227,7 @@ public class InboxLifecycleTests {
 
     // Act - If perspectives process, all inbox stages have fired in order
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
@@ -257,9 +257,10 @@ public class InboxLifecycleTests {
       }
     };
 
-    // Act - Wait for perspectives processing for both commands (2 perspectives each = 4 total)
+    // Act - Wait for perspectives processing for both commands' streams
+    // (2 commands x 3 events each: ProductCreated x2 perspectives + InventoryRestocked x1 = 6)
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 4, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 6, streamIds: [.. commands.Select(c => c.ProductId.Value)], timeoutMilliseconds: 45000, hostFilter: "inventory");
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
     }

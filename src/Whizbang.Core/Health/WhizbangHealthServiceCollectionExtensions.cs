@@ -14,10 +14,10 @@ namespace Whizbang.Core.Health;
 /// policy. Each managed subsystem contributes its own source via <see cref="AddWhizbangHealthSource{TSource}"/>.
 /// </summary>
 /// <docs>resilience/managed-resource-health</docs>
-/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthDiTests.cs:AddWhizbangManagedHealth_AggregatesRegisteredSourcesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthDiTests.cs:AddWhizbangHealthSource_SameSourceTwice_RegistersOnceAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthDiTests.cs:AddWhizbangManagedHealth_AppliesPolicyConfigurationAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthDiTests.cs:AddWhizbangManagedHealth_TimesSourcesOnTheRegisteredClockAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Health/WhizbangHealthDiTests.cs:AddWhizbangManagedHealth_AggregatesRegisteredSourcesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Health/WhizbangHealthDiTests.cs:AddWhizbangHealthSource_SameSourceTwice_RegistersOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Health/WhizbangHealthDiTests.cs:AddWhizbangManagedHealth_AppliesPolicyConfigurationAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Health/WhizbangHealthDiTests.cs:AddWhizbangManagedHealth_TimesSourcesOnTheRegisteredClockAsync</tests>
 public static class WhizbangHealthServiceCollectionExtensions {
   /// <summary>
   /// Registers the health aggregator + policy options (idempotent). <paramref name="configure"/>

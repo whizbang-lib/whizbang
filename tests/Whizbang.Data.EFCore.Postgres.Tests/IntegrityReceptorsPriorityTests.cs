@@ -87,7 +87,7 @@ public class IntegrityReceptorsPriorityTests {
     var sp = _manifestProvider(coordinator, transport, new StreamIntegrityOptions { MaxDigestsPerManifest = 2, PublishReportEvents = true });
     var receptor = new IntegrityManifestRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
 
-    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox", EventTypes = ["Contracts.TypeX"] });
+    await receptor.HandleAsync(new RequestIntegrityManifest { RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null), RequesterService = "auditor-svc", Topic = "inbox", EventTypes = ["Contracts.TypeX"] });
 
     await Assert.That(transport.Published.Count).IsEqualTo(2);
     foreach (var (envelope, _, _) in transport.Published) {
@@ -124,6 +124,7 @@ public class IntegrityReceptorsPriorityTests {
   // ── helpers ─────────────────────────────────────────────────────────────
 
   private static IntegrityCheckpoint _checkpoint(Guid originId, long from, long to, int count, bool emptyBuckets = false) => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     CheckpointStreamId = originId,
     OriginServiceId = originId,
     OriginServiceName = "origin-svc",
@@ -144,6 +145,7 @@ public class IntegrityReceptorsPriorityTests {
 
 
   private static IntegrityManifest _manifest(AuditCoordinator coordinator, List<StreamDigest> digests, ManifestLevel level = ManifestLevel.Streams) => new() {
+    RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
     ManifestStreamId = coordinator.OriginId,
     OriginServiceId = coordinator.OriginId,
     OriginServiceName = "origin-svc",
@@ -162,7 +164,7 @@ public class IntegrityReceptorsPriorityTests {
     services.AddSingleton<Whizbang.Core.Messaging.IntegrityRepairLedger>();
     services.AddSingleton(new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
-    services.AddSingleton<IEventTypeProvider>(new TypeProvider());
+    services.AddSingleton<IConsumerRegistry>(new TypeProvider());
     services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("consumer-svc"));
     services.AddSingleton(Options.Create(options));
     var consumerOptions = new TransportConsumerOptions();
@@ -175,6 +177,7 @@ public class IntegrityReceptorsPriorityTests {
       AuditCoordinator coordinator, CaptureTransport transport, StreamIntegrityOptions? options = null, IntegrityGapTracker? tracker = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IConsumerRegistry>(new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery());
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IDispatcher>(new CaptureDispatcher());
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
@@ -191,8 +194,12 @@ public class IntegrityReceptorsPriorityTests {
 
   // ── fakes ───────────────────────────────────────────────────────────────
 
-  private sealed class TypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(IntegrityCheckpointReceptorTests.VerifiedEvent)];
+  /// <summary>The consumer registry: this service consumes these events.</summary>
+  private sealed class TypeProvider : IConsumerRegistry {
+    private static readonly Type[] _events = [typeof(IntegrityCheckpointReceptorTests.VerifiedEvent)];
+    public bool HasAnyConsumer(string messageType) => _events.Any(e => TypeNameFormatter.Format(e) == messageType);
+    public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages() =>
+      [.. _events.Select(e => new ConsumedMessageInfo(TypeNameFormatter.Format(e), IsEvent: true))];
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {

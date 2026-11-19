@@ -50,7 +50,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Dispatcher.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/InboxDispatchWorker.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class LifecycleStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
   private const string OWNED_DOMAIN = "Whizbang.Data.EFCore.Postgres.Tests.StageSends.Owned";
@@ -109,8 +108,6 @@ public class LifecycleStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
     };
 
     var inbox = new FakeInboxChannelWriter();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     ScopeContextAccessor.CurrentInitiatingContext = null;
     ScopeContextAccessor.CurrentContext = null;
 
@@ -120,7 +117,6 @@ public class LifecycleStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
       inboxChannelWriter: inbox,
       handlerCommitChannel: new NullHandlerCommitChannel(),
       failureChannel: new NullFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,

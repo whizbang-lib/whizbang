@@ -74,13 +74,10 @@ public partial class InboxDrainWorkerCoverageTests {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     await using var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var worker = new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drain, new CapturingInboxChannel(), gate,
-      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 10, MaxBytesPerStream = configured }),
+      new FakeServiceInstanceProvider(), drain, new CapturingInboxChannel(), Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 10, MaxBytesPerStream = configured }),
       _jsonOpts,
       NullLogger<InboxDrainWorker>.Instance);
 
@@ -128,13 +125,10 @@ public partial class InboxDrainWorkerCoverageTests {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     await using var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var worker = new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drain, inbox, gate,
-      Options.Create(new InboxDrainWorkerOptions {
+      new FakeServiceInstanceProvider(), drain, inbox, Options.Create(new InboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 1,
         MaxPerStreamCeiling = 1000,
@@ -178,13 +172,10 @@ public partial class InboxDrainWorkerCoverageTests {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     await using var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var worker = new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drain, inbox, gate,
-      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 10, AdaptivePerStreamEnabled = false }),
+      new FakeServiceInstanceProvider(), drain, inbox, Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 10, AdaptivePerStreamEnabled = false }),
       _jsonOpts,
       NullLogger<InboxDrainWorker>.Instance);
 
@@ -216,13 +207,10 @@ public partial class InboxDrainWorkerCoverageTests {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     await using var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var worker = new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drain, inbox, gate,
-      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 5, AdaptivePerStreamEnabled = false }),
+      new FakeServiceInstanceProvider(), drain, inbox, Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 5, AdaptivePerStreamEnabled = false }),
       _jsonOpts,
       logger);
 
@@ -307,13 +295,10 @@ public partial class InboxDrainWorkerCoverageTests {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     await using var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
 
     var worker = new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new FakeServiceInstanceProvider(), drain, inbox, gate,
-      Options.Create(new InboxDrainWorkerOptions {
+      new FakeServiceInstanceProvider(), drain, inbox, Options.Create(new InboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 2,
         MaxPerStreamCeiling = 2,

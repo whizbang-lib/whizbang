@@ -1,0 +1,290 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Events;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.SystemEvents;
+
+namespace Whizbang.Core.Tests.Messaging;
+
+/// <summary>
+/// Locks that every event-store decorator FORWARDS the interface's default-implemented methods
+/// to the inner store. A default interface method is NOT virtual dispatch through composition:
+/// a decorator that doesn't explicitly forward silently serves the interface default instead of
+/// the inner store's override — which is how a decorated <c>EFCoreEventStore</c> lost
+/// <c>GetCommitSequenceAsync</c> (snapshot commit-sequence anchors silently null) and
+/// <c>HasStreamEventsBeforeAsync</c> (resurrection-on-wake never fired through an auditing
+/// decoration; caught by a consumer wake-after-reap E2E during rollout).
+/// </summary>
+/// <docs>fundamentals/perspectives/row-retention</docs>
+public class EventStoreDecoratorForwardingTests {
+  public static IEnumerable<Func<IEventStore>> Decorators() => [
+    () => new SecurityContextEventStoreDecorator(new ProbeAwareStore()),
+    () => new AppendAndWaitEventStoreDecorator(inner: new ProbeAwareStore(), syncAwaiter: new NoopSyncAwaiter(), eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance),
+    () => new AuditingEventStoreDecorator(new ProbeAwareStore(), new NoopOutboxChannel(), Options.Create(new SystemEventOptions()), new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance, ephemeralModeResolver: new Whizbang.Core.EphemeralModeResolver(Whizbang.Core.NullMessageTypeCatalog.Instance)),
+    () => new SyncTrackingEventStoreDecorator(inner: new ProbeAwareStore(), tracker: NullScopedEventTracker.Instance, envelopeRegistry: new EnvelopeRegistry(), syncEventTracker: new SyncEventTracker(), typeRegistry: new TrackedEventTypeRegistry()),
+    () => new UpcastingEventStoreDecorator(new ProbeAwareStore(), new EventUpcasterPipeline([])),
+    () => new Whizbang.Core.Archival.ArchiveAwareEventStoreDecorator(new ProbeAwareStore(), new NoArchiveStore(), readThrough: true),
+  ];
+
+  /// <summary>The decorators that pass the explicit read through the archive on to the store they wrap.</summary>
+  public static IEnumerable<Func<IEventStore>> ThroughArchiveForwarders() => [
+    () => new SecurityContextEventStoreDecorator(new ProbeAwareStore()),
+    () => new AppendAndWaitEventStoreDecorator(inner: new ProbeAwareStore(), syncAwaiter: new NoopSyncAwaiter(), eventCompletionAwaiter: new EventCompletionAwaiter(new SyncEventTracker()), scopedEventTracker: NullScopedEventTracker.Instance),
+    () => new AuditingEventStoreDecorator(new ProbeAwareStore(), new NoopOutboxChannel(), Options.Create(new SystemEventOptions()), new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance, logger: NullLogger<AuditingEventStoreDecorator>.Instance, ephemeralModeResolver: new Whizbang.Core.EphemeralModeResolver(Whizbang.Core.NullMessageTypeCatalog.Instance)),
+    () => new SyncTrackingEventStoreDecorator(inner: new ProbeAwareStore(), tracker: NullScopedEventTracker.Instance, envelopeRegistry: new EnvelopeRegistry(), syncEventTracker: new SyncEventTracker(), typeRegistry: new TrackedEventTypeRegistry()),
+    () => new UpcastingEventStoreDecorator(new ProbeAwareStore(), new EventUpcasterPipeline([])),
+  ];
+
+  /// <summary>
+  /// Interface members whose default implementation is DELIBERATELY served by decorators:
+  /// <c>AppendBatchAsync</c>'s default loops over <c>this.AppendAsync</c>, so interceptors
+  /// (audit, sync-tracking, security-context) see every entry — forwarding it to the inner
+  /// store would bypass them. <c>AppendAndWaitAsync</c> is only meaningful on the outermost
+  /// decorator; inner layers keep the interface default. Every OTHER default member must be
+  /// explicitly forwarded, or the decorator swallows the inner store's override.
+  /// </summary>
+  private static readonly HashSet<string> _deliberateInterfaceDefaults = [
+    nameof(IEventStore.AppendBatchAsync),
+    nameof(IEventStore.AppendAndWaitAsync),
+  ];
+
+  public static IEnumerable<Func<Type>> DecoratorTypes() => [
+    () => typeof(SecurityContextEventStoreDecorator),
+    () => typeof(AppendAndWaitEventStoreDecorator),
+    () => typeof(AuditingEventStoreDecorator),
+    () => typeof(SyncTrackingEventStoreDecorator),
+    () => typeof(UpcastingEventStoreDecorator),
+    () => typeof(Whizbang.Core.Archival.ArchiveAwareEventStoreDecorator),
+  ];
+
+  /// <summary>
+  /// Drift-lock for FUTURE default interface methods: any <see cref="IEventStore"/> member a
+  /// decorator leaves to the interface default (instead of a class-declared forward) must be on
+  /// the deliberate allow-list. When a new default member is added to the interface, this fails
+  /// for every decorator until the author either forwards it or consciously allow-lists it.
+  /// </summary>
+  [Test]
+  [MethodDataSource(nameof(DecoratorTypes))]
+  public async Task Decorator_LeavesNoDefaultInterfaceMethod_UnforwardedAsync(Type decoratorType) {
+    var map = decoratorType.GetInterfaceMap(typeof(IEventStore));
+    var swallowed = map.TargetMethods
+      .Where(m => m.DeclaringType?.IsInterface == true)
+      .Select(m => m.Name.Split('.')[^1])
+      .Where(name => !_deliberateInterfaceDefaults.Contains(name))
+      .Distinct()
+      .ToList();
+
+    await Assert.That(swallowed).IsEmpty()
+      .Because($"{decoratorType.Name} serves the interface default for [{string.Join(", ", swallowed)}] — forward to the inner store or add to the deliberate allow-list");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Decorators))]
+  public async Task Decorator_ForwardsGetCommitSequence_ToInnerStoreAsync(IEventStore decorated) {
+    await Assert.That(await decorated.GetCommitSequenceAsync(Guid.NewGuid())).IsEqualTo(42L)
+      .Because($"{decorated.GetType().Name} must forward to the inner store's override, not serve the interface default (null)");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Decorators))]
+  public async Task Decorator_ForwardsHasStreamEventsBefore_ToInnerStoreAsync(IEventStore decorated) {
+    await Assert.That(await decorated.HasStreamEventsBeforeAsync(Guid.NewGuid(), Guid.NewGuid())).IsTrue()
+      .Because($"{decorated.GetType().Name} must forward to the inner store's override, not serve the interface default (false) — a swallowed probe disables resurrection-on-wake");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Decorators))]
+  public async Task Decorator_ForwardsTypedHasStreamEventsBefore_ToInnerStoreAsync(IEventStore decorated) {
+    // Issue #696: the generated runner probes with the perspective's handled event types. A
+    // decorator that forwards only the untyped overload leaves the typed one on the interface
+    // default (false), which silently disables resurrection-on-wake through that decoration.
+    await Assert.That(await decorated.HasStreamEventsBeforeAsync(Guid.NewGuid(), Guid.NewGuid(), [typeof(string)])).IsTrue()
+      .Because($"{decorated.GetType().Name} must forward the typed probe to the inner store's override");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Decorators))]
+  public async Task Decorator_ForwardsGetStreamStartedAt_ToInnerStoreAsync(IEventStore decorated) {
+    // #2152: the runner asks for a stream's start through the decorated store. A decorator serving the interface
+    // default (null) would date a rebuilt row at its oldest surviving event again.
+    await Assert.That(await decorated.GetStreamStartedAtAsync(Guid.NewGuid())).IsEqualTo(ProbeAwareStore.StartedAtSentinel)
+      .Because($"{decorated.GetType().Name} must forward to the inner store's override, not serve the interface default (null)");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Decorators))]
+  public async Task Decorator_ForwardsTheBatchedRead_ToInnerStoreAsync(IEventStore decorated) {
+    // #2246: a set-based batch reads its pairs' streams with one read through the decorated store. A decorator serving
+    // the interface default (null) would quietly send every pair back to its own read.
+    var stream = Guid.NewGuid();
+
+    var read = await decorated.ReadPolymorphicManyAsync([(stream, null)], [typeof(ProbeEvent)]);
+
+    await Assert.That(read![stream].Select(e => e.MessageId.Value)).IsEquivalentTo([ProbeAwareStore.BatchedReadSentinel])
+      .Because($"{decorated.GetType().Name} must forward to the inner store's override, not serve the interface default (null)");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Decorators))]
+  public async Task Decorator_ForwardsTheBatchedHistoryProbe_ToInnerStoreAsync(IEventStore decorated) {
+    // #2246: a set-based batch asks every missing row's history with one probe. The interface default asks each stream
+    // through the per-stream probe, so the sentinel answer proves the batched override was reached.
+    var stream = Guid.NewGuid();
+
+    var answer = await decorated.StreamsWithEventsBeforeAsync([(stream, Guid.NewGuid())], [typeof(ProbeEvent)]);
+
+    await Assert.That(answer).IsEquivalentTo([ProbeAwareStore.BatchedProbeSentinel])
+      .Because($"{decorated.GetType().Name} must forward the batched probe to the inner store's override");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(ThroughArchiveForwarders))]
+  public async Task Decorator_ForwardsTheReadThroughTheArchive_ToInnerStoreAsync(IEventStore decorated) {
+    var read = new List<MessageEnvelope<IEvent>>();
+    await foreach (var envelope in decorated.ReadPolymorphicThroughArchiveAsync(Guid.NewGuid(), null, 3, [typeof(ProbeEvent)])) {
+      read.Add(envelope);
+    }
+
+    await Assert.That(read.Select(e => e.MessageId.Value)).IsEquivalentTo([ProbeAwareStore.ThroughArchiveSentinel])
+      .Because($"{decorated.GetType().Name} must pass a rewind's read through the archive on, or the rewind reads only hot events");
+  }
+
+  /// <summary>An event the probe store returns from its read through the archive.</summary>
+  public sealed record ProbeEvent : IEvent {
+    /// <summary>The stream.</summary>
+    [Whizbang.Core.StreamId]
+    public Guid StreamId { get; init; }
+  }
+
+  /// <summary>An archive store the forwarding probes never reach.</summary>
+  private sealed class NoArchiveStore : Whizbang.Core.Archival.IArchiveStore {
+    public Task<Whizbang.Core.Archival.ArchiveWriteResult> WriteAsync(Whizbang.Core.Archival.ArchiveBatch batch, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
+    public IAsyncEnumerable<ArchivedEvent> ReadAsync(Guid streamId, long fromVersion = 0, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
+    public Task<Whizbang.Core.Archival.ArchiveRestoreResult> RestoreAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
+    public Task<long> DeleteAsync(Guid streamId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+  }
+
+  /// <summary>
+  /// An inner store whose probe methods return sentinel values distinguishable from the
+  /// interface defaults (null / false) — forwarding is proven iff the sentinel surfaces
+  /// through the decorator.
+  /// </summary>
+  private sealed class ProbeAwareStore : IEventStore {
+    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+
+    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default)
+        where TMessage : notnull =>
+      Task.CompletedTask;
+
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) =>
+      AsyncEnumerable.Empty<MessageEnvelope<TMessage>>();
+
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) =>
+      AsyncEnumerable.Empty<MessageEnvelope<TMessage>>();
+
+    public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+      AsyncEnumerable.Empty<MessageEnvelope<IEvent>>();
+
+    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) =>
+      Task.FromResult(new List<MessageEnvelope<TMessage>>());
+
+    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+      Task.FromResult(new List<MessageEnvelope<IEvent>>());
+
+    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+      Task.FromResult(0L);
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
+
+    public Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken cancellationToken = default) =>
+      Task.FromResult<long?>(42L);
+
+    public Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) =>
+      Task.FromResult(true);
+
+    public Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+      Task.FromResult(true);
+
+    public static readonly Guid BatchedProbeSentinel = Guid.Parse("0199f0a1-0000-7000-8000-00000000b9b0");
+
+    public Task<IReadOnlySet<Guid>> StreamsWithEventsBeforeAsync(
+        IReadOnlyList<(Guid StreamId, Guid BeforeEventId)> probes, IReadOnlyList<Type> eventTypes,
+        CancellationToken cancellationToken = default) =>
+      Task.FromResult<IReadOnlySet<Guid>>(new HashSet<Guid> { BatchedProbeSentinel });
+
+    public static readonly Guid BatchedReadSentinel = Guid.Parse("0199f0a1-0000-7000-8000-00000000b47c");
+
+    public Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
+        IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
+        CancellationToken cancellationToken = default) =>
+      Task.FromResult<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?>(streams.ToDictionary(
+        s => s.StreamId,
+        s => (IReadOnlyList<MessageEnvelope<IEvent>>)[new MessageEnvelope<IEvent> {
+          MessageId = Whizbang.Core.ValueObjects.MessageId.From(BatchedReadSentinel),
+          Payload = new ProbeEvent(),
+          Hops = [],
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+          // The stream's first event: no gap at its start, so a store that reads through the archive has nothing to add.
+          LocalStreamVersion = 1,
+        }]));
+
+    public static readonly DateTime StartedAtSentinel = new(2020, 3, 1, 9, 0, 0, DateTimeKind.Utc);
+
+    public Task<DateTime?> GetStreamStartedAtAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+      Task.FromResult<DateTime?>(StartedAtSentinel);
+
+    public static readonly Guid ThroughArchiveSentinel = Guid.Parse("0199f0a1-0000-7000-8000-00000000c0de");
+
+    public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicThroughArchiveAsync(
+        Guid streamId, Guid? fromEventId, long afterVersion, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+      new[] {
+        new MessageEnvelope<IEvent> {
+          MessageId = Whizbang.Core.ValueObjects.MessageId.From(ThroughArchiveSentinel),
+          Payload = new ProbeEvent(),
+          Hops = [],
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+        },
+      }.ToAsyncEnumerable();
+  }
+
+  private sealed class NoopSyncAwaiter : IPerspectiveSyncAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
+
+    public Task<SyncResult> WaitAsync(Type perspectiveType, PerspectiveSyncOptions options, CancellationToken ct = default) =>
+      throw new NotSupportedException("Not used by the forwarding tests");
+
+    public Task<bool> IsCaughtUpAsync(Type perspectiveType, PerspectiveSyncOptions options, CancellationToken ct = default) =>
+      throw new NotSupportedException("Not used by the forwarding tests");
+
+    public Task<SyncResult> WaitForStreamAsync(
+        Type perspectiveType,
+        Guid streamId,
+        Type[]? eventTypes,
+        TimeSpan timeout,
+        Guid? eventIdToAwait = null,
+        CancellationToken ct = default) =>
+      throw new NotSupportedException("Not used by the forwarding tests");
+  }
+
+  private sealed class NoopOutboxChannel : IDeferredOutboxChannel {
+    public ValueTask QueueAsync(OutboxMessage message, CancellationToken ct = default) => ValueTask.CompletedTask;
+
+    public IReadOnlyList<OutboxMessage> DrainAll() => [];
+
+    public bool HasPending => false;
+  }
+}

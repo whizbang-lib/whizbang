@@ -22,6 +22,44 @@ public class WorkCoordinatorMetricsTests {
     await Assert.That(meterName).IsEqualTo("Whizbang.WorkCoordinator");
   }
 
+  /// <summary>
+  /// #2256: the coordinator records the integrity ledger's opened and closed buckets on the stream-integrity metrics it
+  /// reaches through these, so the two travel together; built without them, there is nothing to record on.
+  /// </summary>
+  [Test]
+  public async Task WCMetrics_WithoutStreamIntegrityMetrics_CarriesNoneAsync() {
+    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+
+    await Assert.That(metrics.Integrity).IsNull();
+  }
+
+  [Test]
+  public async Task WCMetrics_WithStreamIntegrityMetrics_CarriesThatInstanceAsync() {
+    var whizbangMetrics = new WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
+    var integrity = new StreamIntegrityMetrics(whizbangMetrics);
+
+    var metrics = new WorkCoordinatorMetrics(whizbangMetrics, integrity);
+
+    await Assert.That(metrics.Integrity).IsSameReferenceAs(integrity);
+  }
+
+  /// <summary>Resolved from the container, they carry the registered stream-integrity metrics, so the coordinator
+  /// the container builds counts ledger buckets without being handed them separately.</summary>
+  [Test]
+  public async Task WCMetrics_ResolvedFromTheContainer_CarryTheRegisteredStreamIntegrityMetricsAsync() {
+    var services = new ServiceCollection().AddMetrics();
+    services.AddSingleton(sp => new WhizbangMetrics(sp.GetRequiredService<IMeterFactory>()));
+    services.AddSingleton<StreamIntegrityMetrics>();
+    services.AddSingleton<WorkCoordinatorMetrics>();
+    await using var provider = services.BuildServiceProvider();
+
+    var metrics = provider.GetRequiredService<WorkCoordinatorMetrics>();
+
+    await Assert.That(metrics.Integrity).IsSameReferenceAs(provider.GetRequiredService<StreamIntegrityMetrics>());
+  }
+
   [Test]
   public async Task WCMetrics_Constructor_CreatesAllInstrumentsAsync() {
     // Arrange & Act

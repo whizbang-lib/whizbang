@@ -7,6 +7,7 @@ using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -118,6 +119,24 @@ public class InboxDispatchWorkerCompositeCommitTests {
       return Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>([]);
     }
 
+    /// <summary>The domain claims this store holds (#2116); empty unless a test sets them.</summary>
+    public IReadOnlyList<IntegrityDomainClaim> Claims { get; set; } = [];
+    public Exception? ClaimsFailWith { get; set; }
+    public Task<IReadOnlyList<IntegrityDomainClaim>> GetIntegrityDomainClaimsAsync(CancellationToken cancellationToken = default) =>
+      ClaimsFailWith is { } failure ? Task.FromException<IReadOnlyList<IntegrityDomainClaim>>(failure) : Task.FromResult(Claims);
+
+    /// <summary>#2273: the handled ledger this store answers with; null keeps the interface default (no ledger).</summary>
+    public HandledLedgerAnswer? Ledger { get; set; }
+    public Exception? LedgerFailWith { get; set; }
+    public ConcurrentQueue<IReadOnlyList<Guid>> LedgerAsked { get; } = new();
+    public Task<HandledLedgerAnswer> LookupHandledEventsAsync(IReadOnlyList<Guid> eventIds, CancellationToken cancellationToken = default) {
+      LedgerAsked.Enqueue(eventIds);
+      if (LedgerFailWith is { } failure) {
+        return Task.FromException<HandledLedgerAnswer>(failure);
+      }
+      return Task.FromResult(Ledger ?? HandledLedgerAnswer.NoLedger);
+    }
+
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -191,30 +210,34 @@ public class InboxDispatchWorkerCompositeCommitTests {
   }
 
   private static Harness _harness(ICompositeEvent composite, IMessageDiscardPolicy? discardPolicy = null, Exception? commitFailure = null, bool withCoordinator = true,
-      StreamIntegrityOptions? integrityOptions = null) {
+      StreamIntegrityOptions? integrityOptions = null, Microsoft.Extensions.Logging.ILogger<InboxDispatchWorker>? logger = null,
+      RoutingOptions? routing = null, bool integrityMetrics = true, TimeProvider? timeProvider = null) {
     var coordinator = new RecordingCoordinator { FailWith = commitFailure };
+    var factory = new TestMeterFactory();
     var services = new ServiceCollection().AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer());
+    if (integrityMetrics) {
+      services.AddSingleton(new StreamIntegrityMetrics(new WhizbangMetrics(factory)));
+    }
+    if (routing is not null) {
+      services.AddSingleton(Options.Create(routing));
+    }
     if (withCoordinator) {
       services.AddScoped<IWorkCoordinator>(_ => coordinator);
     }
     var sp = services.BuildServiceProvider();
-    var factory = new TestMeterFactory();
     var metrics = new CompositeMetrics(new WhizbangMetrics(factory));
     var inbox = new FakeInboxChannelWriter();
     var commitChannel = new FakeHandlerCommitChannel();
     var failures = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new FakeInstanceProvider(),
       inboxChannelWriter: inbox,
       handlerCommitChannel: commitChannel,
       failureChannel: failures,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 7 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
-      logger: NullLogger<InboxDispatchWorker>.Instance,
+      logger: logger ?? NullLogger<InboxDispatchWorker>.Instance,
       integrityOptions: Options.Create(integrityOptions ?? new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
@@ -224,6 +247,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
+      timeProvider: timeProvider,
       compositeMetrics: metrics);
     return new Harness(worker, inbox, commitChannel, failures, coordinator, metrics, factory);
   }
@@ -325,6 +349,42 @@ public class InboxDispatchWorkerCompositeCommitTests {
     await h.Worker.StopAsync(CancellationToken.None);
   }
 
+  /// <summary>
+  /// A composite whose commit fails is failed through the failure channel (#1983), so the failure is recorded against
+  /// the row, its retry is backed off, the next claim counts the attempt, and the row is dead-lettered once its attempts
+  /// pass <see cref="InboxDispatchWorkerOptions.MaxInboxAttempts"/>. Before, nothing was recorded: the row stayed
+  /// leased, was re-offered on the next poll with no backoff and no attempt counted, and was expanded and failed
+  /// again, logging an Error each time.
+  /// </summary>
+  [Test]
+  public async Task Composite_WhoseCommitFails_IsFailedForBackoffAndTheAttemptBound_AndLoggedAtWarningAsync() {
+    var logger = new Microsoft.Extensions.Logging.Testing.FakeLogger<InboxDispatchWorker>();
+    using var h = _harness(new Composite(new RowAdded("a")), commitFailure: new InvalidOperationException("store unavailable"),
+      logger: logger);
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    var failing = _compositeWork();
+    await h.Inbox.WriteAsync(failing, cts.Token);
+    // The release is the last thing the failed commit does, after the failure is recorded.
+    await h.Inbox.Released(failing.MessageId).WaitAsync(TimeSpan.FromSeconds(5));
+
+    var (category, failure) = h.Failures.All.Single();
+    await Assert.That(category).IsEqualTo(WorkCategory.Inbox);
+    await Assert.That(failure.MessageId).IsEqualTo(failing.MessageId)
+      .Because("the failure is recorded against the composite row, which backs it off and lets the claim count the attempt");
+    await Assert.That(failure.Error).Contains("store unavailable", StringComparison.Ordinal);
+    var attempt = logger.Collector.GetSnapshot().Single(r => r.Id.Id == COMPOSITE_COMMIT_FAILED_EVENT_ID);
+    await Assert.That(attempt.Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning)
+      .Because("the row is retried and dead-lettered at the attempt bound, where the dead-letter record is the Error");
+    await Assert.That(attempt.Exception?.Message).IsEqualTo("store unavailable");
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  private const int COMPOSITE_COMMIT_FAILED_EVENT_ID = 73;
+
   [Test]
   public async Task Composite_Meters_CountReceivedExpansionsChildrenAndUnsubscribedDropsAsync() {
     using var h = _harness(
@@ -363,6 +423,109 @@ public class InboxDispatchWorkerCompositeCommitTests {
     };
   }
 
+  // #2273: a fixed "now" and ids minted at fixed instants before it, so no decision reads the wall clock.
+  private static readonly DateTimeOffset _repairNow = new(2026, 11, 11, 12, 0, 0, TimeSpan.Zero);
+  private static Guid _eventFrom(TimeSpan ago) => Guid.CreateVersion7(_repairNow - ago);
+
+  private static long _repaired(TestMeterFactory factory, string reason) =>
+    ProbeMeterReader.ReadSeries(factory.CreatedMeters.Single(m => m.Name == StreamIntegrityMetrics.METER_NAME),
+        "whizbang.stream_integrity.repaired_events")
+      .Where(series => Equals(series.Tags.GetValueOrDefault("reason"), reason))
+      .Sum(series => series.Value);
+
+  /// <summary>
+  /// #2273 end to end through the dispatch worker: one bundle carrying an event older than the lookback, one the ledger
+  /// shows handled, and one the ledger covers and does not hold. Only the last is marked to run its opted-in receptors;
+  /// the other two are stored state only, and each decision is counted by reason.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  [Test]
+  public async Task Redelivery_ChildrenRunReceptorsOnlyWhenTheLedgerProvesTheyWereNeverHandledAsync() {
+    var old = _eventFrom(TimeSpan.FromDays(30));
+    var handled = _eventFrom(TimeSpan.FromDays(1));
+    var neverHandled = _eventFrom(TimeSpan.FromHours(2));
+    using var h = _harness(_redelivery((Guid)TrackedGuid.New(), old, handled, neverHandled), integrityOptions: _autoRepair,
+      timeProvider: new FakeTimeProvider(_repairNow));
+    h.Coordinator.Ledger = new HandledLedgerAnswer(_repairNow - TimeSpan.FromDays(60), new HashSet<Guid> { handled });
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    await h.Inbox.WriteAsync(_compositeWork(), cts.Token);
+    var commit = await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+
+    var children = commit.NewInboxMessages!.ToDictionary(c => c.MessageId);
+    await Assert.That(children[old].Envelope.StateOnly).IsTrue();
+    await Assert.That(children[handled].Envelope.StateOnly).IsTrue();
+    await Assert.That(children[neverHandled].Envelope.Repaired).IsTrue();
+    await Assert.That(children[neverHandled].Envelope.StateOnly).IsFalse();
+    await Assert.That(h.Coordinator.LedgerAsked.Single()).IsEquivalentTo([handled, neverHandled])
+      .Because("the ledger is asked once, for the events the lookback admits");
+    await Assert.That(_repaired(h.MeterFactory, "outside_lookback")).IsEqualTo(1L);
+    await Assert.That(_repaired(h.MeterFactory, "already_handled")).IsEqualTo(1L);
+    await Assert.That(_repaired(h.MeterFactory, "never_handled")).IsEqualTo(1L);
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Redelivery_WhenTheLedgerCannotBeRead_EveryChildIsStateOnlyAsync() {
+    var recent = _eventFrom(TimeSpan.FromHours(2));
+    using var h = _harness(_redelivery((Guid)TrackedGuid.New(), recent), integrityOptions: _autoRepair,
+      timeProvider: new FakeTimeProvider(_repairNow));
+    h.Coordinator.LedgerFailWith = new InvalidOperationException("ledger offline");
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    await h.Inbox.WriteAsync(_compositeWork(), cts.Token);
+    var commit = await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+
+    var child = commit.NewInboxMessages!.Single();
+    await Assert.That(child.Envelope.StateOnly).IsTrue()
+      .Because("without the ledger nothing is proven never handled, and the bundle still lands");
+    await Assert.That(child.Envelope.Repaired).IsFalse();
+    await Assert.That(_repaired(h.MeterFactory, "ledger_unavailable")).IsEqualTo(1L);
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Redelivery_WithoutACoordinatorOrTheMeter_IsStillStateOnlyAsync() {
+    using var h = _harness(_redelivery((Guid)TrackedGuid.New(), _eventFrom(TimeSpan.FromHours(2))), withCoordinator: false, integrityOptions: _autoRepair,
+      integrityMetrics: false, timeProvider: new FakeTimeProvider(_repairNow));
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    await h.Inbox.WriteAsync(_compositeWork(), cts.Token);
+    var request = await h.CommitChannel.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(request.NewInboxMessages!.Single().Envelope.StateOnly).IsTrue()
+      .Because("no coordinator means no ledger, so the child cannot be proven never handled");
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task OrdinaryComposite_ChildrenAreNotGatedAsync() {
+    using var h = _harness(new Composite(new RowAdded("a")), timeProvider: new FakeTimeProvider(_repairNow));
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    await h.Inbox.WriteAsync(_compositeWork(), cts.Token);
+    var commit = await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+
+    var child = commit.NewInboxMessages!.Single();
+    await Assert.That(child.Envelope.StateOnly).IsFalse()
+      .Because("a composite of new events is not a repair: its children run every receptor as before");
+    await Assert.That(child.Envelope.Repaired).IsFalse();
+    await Assert.That(h.Coordinator.LedgerAsked).IsEmpty();
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
   [Test]
   public async Task Redelivery_OnceCommitted_IsReconciledWithTheEventsTheStoreAlreadyHoldsAsync() {
     // #1790: a redelivered event the store already holds is skipped as a duplicate, so without this step history
@@ -380,6 +543,113 @@ public class InboxDispatchWorkerCompositeCommitTests {
 
     await Assert.That(reconciledOrigin).IsEqualTo(origin);
     await Assert.That(reconciledIds).IsEquivalentTo([first, second]);
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// #2116: a redelivery bundle names the service that answered it as every child's origin. A service that answered
+  /// with events it had only received (before #2032 limited answers to what the answering service wrote, or from a
+  /// bundle queued since) shipped another service's events as its own, and every consumer stored them under the wrong
+  /// origin: the owner's lane counted short, the answerer's long, and repair could never heal the bucket because the
+  /// owner's own redelivery is skipped as a duplicate. A child of a type this consumer knows another service owns is
+  /// stored under that owner, with no origin sequence (only the owner knows it; its next redelivery fills it), and it is
+  /// not reconciled under the answering service.
+  /// </summary>
+  [Test]
+  public async Task Redelivery_AChildOfATypeAnotherServiceOwns_IsStoredUnderTheOwner_NotTheAnsweringServiceAsync() {
+    var answering = (Guid)TrackedGuid.New();
+    var owner = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    using var h = _harness(_redelivery(answering, eventId), integrityOptions: _autoRepair);
+    h.Coordinator.Claims = [new IntegrityDomainClaim { Domain = "contracts", OwnerServiceId = owner, OwnerServiceName = "orders-service" }];
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    var work = _compositeWork();
+    await h.Inbox.WriteAsync(work, cts.Token);
+    var commit = await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+    await h.Inbox.Released(work.MessageId).WaitAsync(TimeSpan.FromSeconds(5));
+
+    var child = commit.NewInboxMessages!.Single();
+    await Assert.That(child.MessageId).IsEqualTo(eventId);
+    await Assert.That(child.SourceServiceId).IsEqualTo(owner)
+      .Because("the claims name another service as the owner of the child's type, so the answering service did not write it");
+    await Assert.That(child.SourceCommitSequence).IsEqualTo(0L)
+      .Because("the sequence the bundle carries is the answering service's, a position in the wrong lane; zero stores no origin sequence");
+    await Assert.That(child.Envelope.SourceServiceId).IsEqualTo(owner)
+      .Because("the stored envelope names the same origin as the row");
+    await Assert.That(h.Coordinator.ReconcileCalls).IsEqualTo(0)
+      .Because("a held copy of the owner's event must not adopt the answering service as its origin");
+    var integrityMeter = h.MeterFactory.CreatedMeters.Single(m => m.Name == StreamIntegrityMetrics.METER_NAME);
+    await Assert.That(ProbeMeterReader.ReadTotal(integrityMeter, "whizbang.stream_integrity.redelivered_children_reattributed")).IsEqualTo(1)
+      .Because("each corrected child is counted");
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Redelivery_WithoutTheIntegrityMeter_StillStoresTheChildUnderTheOwnerAsync() {
+    var answering = (Guid)TrackedGuid.New();
+    var owner = (Guid)TrackedGuid.New();
+    using var h = _harness(_redelivery(answering, (Guid)TrackedGuid.New()), integrityOptions: _autoRepair, integrityMetrics: false);
+    h.Coordinator.Claims = [new IntegrityDomainClaim { Domain = "contracts", OwnerServiceId = owner, OwnerServiceName = "orders-service" }];
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    await h.Inbox.WriteAsync(_compositeWork(), cts.Token);
+    var commit = await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(commit.NewInboxMessages!.Single().SourceServiceId).IsEqualTo(owner)
+      .Because("the meter is optional; the correction is not");
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Redelivery_AChildOfATypeThisServiceOwns_KeepsTheBundlesOriginAsync() {
+    // A parent claim another service announced does not move this service's own namespace: that record is not the
+    // receive path's to change.
+    var answering = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    using var h = _harness(_redelivery(answering, eventId), integrityOptions: _autoRepair, routing: new RoutingOptions().OwnDomains("Contracts"));
+    h.Coordinator.Claims = [new IntegrityDomainClaim { Domain = "contracts", OwnerServiceId = (Guid)TrackedGuid.New(), OwnerServiceName = "orders-service" }];
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    await h.Inbox.WriteAsync(_compositeWork(), cts.Token);
+    var commit = await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+    var (reconciledOrigin, _) = await h.Coordinator.Reconciled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(commit.NewInboxMessages!.Single().SourceServiceId).IsEqualTo(answering);
+    await Assert.That(reconciledOrigin).IsEqualTo(answering);
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Redelivery_WhenTheOwnershipMapCannotBeRead_KeepsTheBundlesOrigin_AndIsReconciledAsync() {
+    // Best-effort: a store that cannot answer the claims read must not lose the bundle. Every child keeps the origin
+    // the bundle names, as before, and a wrong one is left for the misattributed-origin correction.
+    var answering = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    using var h = _harness(_redelivery(answering, eventId), integrityOptions: _autoRepair);
+    h.Coordinator.ClaimsFailWith = new InvalidOperationException("claims unavailable");
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    await h.Inbox.WriteAsync(_compositeWork(), cts.Token);
+    var commit = await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+    var (reconciledOrigin, reconciledIds) = await h.Coordinator.Reconciled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(commit.NewInboxMessages!.Single().SourceServiceId).IsEqualTo(answering);
+    await Assert.That(commit.NewInboxMessages!.Single().SourceCommitSequence).IsEqualTo(1L);
+    await Assert.That(reconciledOrigin).IsEqualTo(answering);
+    await Assert.That(reconciledIds).IsEquivalentTo([eventId]);
 
     await cts.CancelAsync();
     await h.Worker.StopAsync(CancellationToken.None);

@@ -15,7 +15,7 @@ namespace Whizbang.Core.MultiStream;
 /// different partition assignments during a rebalance), so it must leave the same result when repeated.
 /// </remarks>
 /// <docs>fundamentals/dispatcher/multi-stream-commands</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandIntakeTests.cs:HandleAsync_RecordsOneRunCarryingTheCommandAndItsStreamsAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/MultiStreamCommandIntakeTests.cs:HandleAsync_RecordsOneRunCarryingTheCommandAndItsStreamsAsync</tests>
 public interface IMultiStreamCommand : ICommand {
   /// <summary>
   /// The run's identity, chosen by the caller (a new <c>TrackedGuid</c>). Recording is idempotent on it, so a command

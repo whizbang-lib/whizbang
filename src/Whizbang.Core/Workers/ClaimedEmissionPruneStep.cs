@@ -35,7 +35,7 @@ namespace Whizbang.Core.Workers;
 /// <param name="logger">The logger; registration supplies a null logger where the host has none.</param>
 /// <param name="timeProvider">The clock expiry is read against.</param>
 /// <docs>fundamentals/dispatcher/publish-once#claim-expiry</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ClaimedEmissionPruneStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/ClaimedEmissionPruneStepTests.cs</tests>
 public sealed partial class ClaimedEmissionPruneStep(
     ILogger<ClaimedEmissionPruneStep> logger,
     TimeProvider? timeProvider = null) : IMaintenanceStep {
@@ -85,9 +85,7 @@ public sealed partial class ClaimedEmissionPruneStep(
   /// case only on its holder.
   /// </summary>
   private static bool _isThisInstancesTurn(IServiceProvider services) =>
-    services.GetService<DutyHolderWorker>() is not { } holder
-    || !holder.Roles.Contains(StartupDuties.MAINTAINER, StringComparer.Ordinal)
-    || holder.Holds(StartupDuties.MAINTAINER);
+    MaintainerDuty.IsThisInstancesTurn(services);
 
   [LoggerMessage(Level = LogLevel.Information, Message = "Pruned {Count} claimed-emission claim(s) that expired before {ExpiredBefore}")]
   private static partial void LogPruned(ILogger logger, int count, DateTimeOffset expiredBefore);

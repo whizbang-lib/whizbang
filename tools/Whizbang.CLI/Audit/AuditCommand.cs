@@ -71,13 +71,13 @@ internal static class AuditCommand {
       CancellationToken cancellationToken) {
     var options = _parse(args, out var usageError);
     if (options is null) {
-      await error.WriteLineAsync($"whizbang audit: {usageError}");
-      await error.WriteLineAsync("Run 'whizbang audit --help' for usage.");
+      await error.WriteLineAsync($"whizbang audit: {usageError}".AsMemory(), CancellationToken.None);
+      await error.WriteLineAsync("Run 'whizbang audit --help' for usage.".AsMemory(), CancellationToken.None);
       return EXIT_NOT_CHECKED;
     }
 
     if (options.Help) {
-      await output.WriteAsync(HELP);
+      await output.WriteAsync(HELP.AsMemory(), CancellationToken.None);
       return EXIT_CLEAN;
     }
 
@@ -90,17 +90,18 @@ internal static class AuditCommand {
       }
 
       var report = AuditReport.Build(packages, matches, options.FailOn);
-      await output.WriteAsync(options.Json
+      var text = options.Json
         ? AuditReportFormatter.FormatJson(report) + Environment.NewLine
-        : AuditReportFormatter.FormatText(report));
+        : AuditReportFormatter.FormatText(report);
+      await output.WriteAsync(text.AsMemory(), CancellationToken.None);
       return report.Failing.Count > 0 ? EXIT_ADVISORIES : EXIT_CLEAN;
     } catch (AuditCheckException ex) {
-      await error.WriteLineAsync($"Could not check for advisories: {ex.Message}");
+      await error.WriteLineAsync($"Could not check for advisories: {ex.Message}".AsMemory(), CancellationToken.None);
       return EXIT_NOT_CHECKED;
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       // Exit code 1 means "advisories found". An unexpected failure is a check that did not run,
       // and a CI step must not read it as anything else.
-      await error.WriteLineAsync($"Could not check for advisories: unexpected {ex.GetType().Name}: {ex.Message}");
+      await error.WriteLineAsync($"Could not check for advisories: unexpected {ex.GetType().Name}: {ex.Message}".AsMemory(), CancellationToken.None);
       return EXIT_NOT_CHECKED;
     }
   }

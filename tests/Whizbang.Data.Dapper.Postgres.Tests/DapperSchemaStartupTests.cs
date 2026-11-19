@@ -144,6 +144,25 @@ public class DapperSchemaStartupTests {
       "SELECT count(*) FROM wh_service_instances WHERE instance_id = @self", new { self })).IsEqualTo(1L);
   }
 
+  /// <summary>
+  /// #2126: the registration records the connection mode and the liveness window the one liveness rule judges the row
+  /// by, so a starting instance is not judged by the 30 seconds the rule gives a row that records no window.
+  /// </summary>
+  [Test]
+  public async Task HostStart_RegistersThisInstance_WithItsConnectionModeAndLivenessWindowAsync() {
+    await using var provider = _services().BuildServiceProvider();
+
+    await _initializer(provider).StartAsync(CancellationToken.None);
+
+    var self = provider.GetRequiredService<IServiceInstanceProvider>().InstanceId;
+    await using var db = new NpgsqlConnection(_database.ConnectionString);
+    await Assert.That(await db.ExecuteScalarAsync<string>(
+        "SELECT connection_mode || ' ' || liveness_window_seconds FROM wh_service_instances WHERE instance_id = @self",
+        new { self }))
+      .IsEqualTo("pooled " + Whizbang.Core.Workers.HeartbeatLivenessThreshold.StaleThresholdSeconds(
+        new Whizbang.Core.Workers.HeartbeatWorkerOptions()).ToString(System.Globalization.CultureInfo.InvariantCulture));
+  }
+
   [Test]
   public async Task Registration_RegistersAnInstanceIdentity_AndKeepsOneAlreadyRegisteredAsync() {
     await using (var provider = _services().BuildServiceProvider()) {

@@ -18,7 +18,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/AdvisoryLockRelease.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class AdvisoryLockReleaseTests {
   private const long KEY = -6_120_034_871_225_119_533;

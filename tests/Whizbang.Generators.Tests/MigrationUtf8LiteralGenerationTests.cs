@@ -31,6 +31,7 @@ namespace Whizbang.Generators.Tests;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres.Generators/EFCoreServiceRegistrationGenerator.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres.Generators/Templates/DbContextSchemaExtensionTemplate.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.EFCore.Postgres.Generators/Templates/MigrationScriptsTemplate.cs</code-under-test>
 /// <docs>operations/infrastructure/migrations</docs>
 public class MigrationUtf8LiteralGenerationTests {
   private const string MINIMAL_CONTEXT = """

@@ -73,6 +73,18 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
       : [.. ledger.ToPinnedFormerNames()];
   }
 
+  /// <summary>The type's non-blank <c>[PinnedId]</c> value, or null when it has none.</summary>
+  private static string? _pinnedId(INamedTypeSymbol typeSymbol) {
+    var pinnedIdAttribute = typeSymbol.GetAttributes().FirstOrDefault(attr =>
+        TypeNameUtilities.IsFullyQualifiedNamed(attr.AttributeClass, StandardInterfaceNames.PINNED_ID_ATTRIBUTE));
+
+    return pinnedIdAttribute?.ConstructorArguments.Length > 0 &&
+        pinnedIdAttribute.ConstructorArguments[0].Value is string pinnedIdValue &&
+        !string.IsNullOrWhiteSpace(pinnedIdValue)
+      ? pinnedIdValue
+      : null;
+  }
+
   private static MessageTypeCatalogEntryInfo? _extractEntry(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
@@ -90,6 +102,62 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
       return null;
     }
 
+    if (_kindOf(typeSymbol) is not { } kind) {
+      return null;
+    }
+
+    var fullTypeName = TypeNameHelper.GetFullyQualifiedName(typeSymbol);
+    // CLR type name (no assembly, '+' for nested types) — the SAME shared builder used by
+    // PerspectiveDiscoveryGenerator / PerspectiveRunnerRegistryGenerator for perspective
+    // clr_type_name, so a nested MESSAGE type registers as "Ns.Outer+Nested" and matches the
+    // registry/rename-tool comparison instead of the C# '.' display form.
+    var clrTypeName = TypeNameUtilities.BuildClrTypeName(typeSymbol);
+
+    var pinnedId = _pinnedId(typeSymbol);
+
+    // Ephemeral mode is an EVENT property. Commands are never ephemeral, and a perspective's effective
+    // mode is DERIVED from the events it applies (a separate step), not read from an attribute here.
+    // EphemeralResolver is the single source of truth shared with the analyzer.
+    (string Destruction, string Storage)? ephemeral = kind == EVENT_KIND ? EphemeralResolver.Resolve(typeSymbol) : null;
+    var rewindGrace = kind == EVENT_KIND ? EphemeralResolver.ResolveRewindGraceSeconds(typeSymbol) : -1;
+    var ttlSeconds = kind == EVENT_KIND ? EphemeralResolver.ResolveTtlSeconds(typeSymbol) : -1;
+    // #1729: only an event is stored on a stream, so only an event can supersede another.
+    // #2123: with the key's [JsonPropertyName], so a JSON payload missing the key is told from one carrying a default
+    // value; #2124: and the superseding group, registered with the type so the write paths stamp it beside the key.
+    var superseding = kind == EVENT_KIND ? SupersedingResolver.Resolve(typeSymbol) : default;
+
+    return new MessageTypeCatalogEntryInfo(
+        TypeName: fullTypeName,
+        ClrTypeName: clrTypeName,
+        Kind: kind,
+        PinnedId: pinnedId,
+        EphemeralDestruction: ephemeral?.Destruction,
+        EphemeralStorage: ephemeral?.Storage,
+        EphemeralRewindGraceSeconds: rewindGrace,
+        EphemeralTtlSeconds: ttlSeconds,
+        SettingsHash: _computeSettingsHash(ephemeral, superseding.IsSuperseding),
+        SchemaHash: _computeSchemaHash(typeSymbol),
+        IsCollective: _implementsInterface(typeSymbol, COLLECTIVE_EVENT_INTERFACE),
+        IsComposite: _implementsInterface(typeSymbol, COMPOSITE_EVENT_INTERFACE),
+        IsCompacted: _implementsInterface(typeSymbol, COMPACTED_EVENT_INTERFACE),
+        MaxPayloadBytes: _maxPayloadBytes(typeSymbol),
+        DefaultRouting: _defaultRouting(typeSymbol),
+        // WS-3 S4: a terminal event ends its stream. Only an event is stored on a stream, so only an event can be one.
+        IsTerminal: kind == EVENT_KIND && _isTerminal(typeSymbol),
+        // #1740: the end-of-life policy of the streams an event opens. Only an event opens a stream.
+        StreamEndOfLife: kind == EVENT_KIND ? _streamEndOfLife(typeSymbol, clrTypeName) : null,
+        IsSuperseding: superseding.IsSuperseding,
+        SupersedingKey: superseding.Key,
+        SupersedingKeyJsonName: superseding.KeyJsonName,
+        SupersedingGroup: superseding.Group
+    );
+  }
+
+  /// <summary>
+  /// The kind the catalog records for a type: perspective, command, event or plain message, or null when it is none of
+  /// them and has no entry.
+  /// </summary>
+  private static string? _kindOf(INamedTypeSymbol typeSymbol) {
     var isEvent = TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_EVENT);
     var isCommand = TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_COMMAND);
     var isMessage = isEvent || isCommand || TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_MESSAGE);
@@ -105,52 +173,14 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
       return null;
     }
 
-    var fullTypeName = TypeNameHelper.GetFullyQualifiedName(typeSymbol);
-    // CLR type name (no assembly, '+' for nested types) — the SAME shared builder used by
-    // PerspectiveDiscoveryGenerator / PerspectiveRunnerRegistryGenerator for perspective
-    // clr_type_name, so a nested MESSAGE type registers as "Ns.Outer+Nested" and matches the
-    // registry/rename-tool comparison instead of the C# '.' display form.
-    var clrTypeName = TypeNameUtilities.BuildClrTypeName(typeSymbol);
-
-    var messageKind = isCommand ? COMMAND_KIND : EVENT_KIND;
-    var kind = isPerspective ? "perspective" : messageKind;
-
-    var pinnedIdAttribute = typeSymbol.GetAttributes().FirstOrDefault(attr =>
-        TypeNameUtilities.IsFullyQualifiedNamed(attr.AttributeClass, StandardInterfaceNames.PINNED_ID_ATTRIBUTE));
-
-    string? pinnedId = null;
-    if (pinnedIdAttribute?.ConstructorArguments.Length > 0 &&
-        pinnedIdAttribute.ConstructorArguments[0].Value is string pinnedIdValue &&
-        !string.IsNullOrWhiteSpace(pinnedIdValue)) {
-      pinnedId = pinnedIdValue;
-    }
-
-    // Ephemeral mode is an EVENT property. Commands are never ephemeral, and a perspective's effective
-    // mode is DERIVED from the events it applies (a separate step), not read from an attribute here.
-    // EphemeralResolver is the single source of truth shared with the analyzer.
-    (string Destruction, string Storage)? ephemeral = kind == EVENT_KIND ? EphemeralResolver.Resolve(typeSymbol) : null;
-    var rewindGrace = kind == EVENT_KIND ? EphemeralResolver.ResolveRewindGraceSeconds(typeSymbol) : -1;
-    var ttlSeconds = kind == EVENT_KIND ? EphemeralResolver.ResolveTtlSeconds(typeSymbol) : -1;
-
-    return new MessageTypeCatalogEntryInfo(
-        TypeName: fullTypeName,
-        ClrTypeName: clrTypeName,
-        Kind: kind,
-        PinnedId: pinnedId,
-        EphemeralDestruction: ephemeral?.Destruction,
-        EphemeralStorage: ephemeral?.Storage,
-        EphemeralRewindGraceSeconds: rewindGrace,
-        EphemeralTtlSeconds: ttlSeconds,
-        SettingsHash: _computeSettingsHash(ephemeral),
-        SchemaHash: _computeSchemaHash(typeSymbol),
-        IsCollective: _implementsInterface(typeSymbol, COLLECTIVE_EVENT_INTERFACE),
-        IsComposite: _implementsInterface(typeSymbol, COMPOSITE_EVENT_INTERFACE),
-        IsCompacted: _implementsInterface(typeSymbol, COMPACTED_EVENT_INTERFACE),
-        MaxPayloadBytes: _maxPayloadBytes(typeSymbol),
-        DefaultRouting: _defaultRouting(typeSymbol),
-        // WS-3 S4: a terminal event ends its stream. Only an event is stored on a stream, so only an event can be one.
-        IsTerminal: kind == EVENT_KIND && _isTerminal(typeSymbol)
-    );
+    // #2074: a message that is neither a command nor an event is a plain "message", never an event, so the receive path
+    // never classifies it as one (and never stores it). The pinned-type ledger already uses the same four kinds.
+    var messageKind = (isCommand, isEvent) switch {
+      (true, _) => COMMAND_KIND,
+      (_, true) => EVENT_KIND,
+      _ => MESSAGE_KIND,
+    };
+    return isPerspective ? "perspective" : messageKind;
   }
 
   // Marker interfaces stamped onto the entry so the transport receive path can derive EventFlags by
@@ -162,6 +192,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
   // The two kinds the catalog records, spelled as they appear in the emitted metadata.
   private const string COMMAND_KIND = "command";
   private const string EVENT_KIND = "event";
+  private const string MESSAGE_KIND = "message";
 
   private const string MAX_PAYLOAD_SIZE_ATTRIBUTE = "global::Whizbang.Core.Attributes.MaxPayloadSizeAttribute";
 
@@ -189,6 +220,34 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     }
     return false;
   }
+
+  private const string STREAM_END_OF_LIFE_ATTRIBUTE = "global::Whizbang.Core.Attributes.StreamEndOfLifeAttribute";
+  private const string STREAM_LIFECYCLE_ACTION = "global::Whizbang.Core.Archival.StreamLifecycleAction";
+
+  // [StreamEndOfLife] on the type or a base type (the attribute is inherited), rendered as the arguments of a
+  // StreamEndOfLifeDeclaration keyed by the CLR type name the ledger records as the stream type; null when none.
+  private static string? _streamEndOfLife(INamedTypeSymbol typeSymbol, string clrTypeName) {
+    for (var type = typeSymbol; type is not null; type = type.BaseType) {
+      var attribute = type.GetAttributes().FirstOrDefault(a =>
+        TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, STREAM_END_OF_LIFE_ATTRIBUTE));
+      if (attribute is not null) {
+        var named = attribute.NamedArguments.ToDictionary(a => a.Key, a => a.Value.Value);
+        string text(string name) => named.TryGetValue(name, out var value) && value is string s ? _literal(s) : "null";
+        long number(string name) => named.TryGetValue(name, out var value)
+          ? System.Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture)
+          : 0L;
+        var action = named.TryGetValue("Action", out var raw)
+          ? System.Convert.ToInt32(raw, System.Globalization.CultureInfo.InvariantCulture)
+          : 0;
+        return $"{_literal(clrTypeName)}, {text("IdleTtl")}, {text("MaxAge")}, {number("KeepTailVersions")}L, " +
+          $"{number("TenantByteCap")}L, ({STREAM_LIFECYCLE_ACTION}){action}";
+      }
+    }
+    return null;
+  }
+
+  // A C# string literal of the value.
+  private static string _literal(string value) => "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
 
   private const string DEFAULT_ROUTING_ATTRIBUTE = "global::Whizbang.Core.Dispatch.DefaultRoutingAttribute";
   private const string DISPATCH_MODES = "global::Whizbang.Core.Dispatch.DispatchModes";
@@ -225,12 +284,18 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
   // load-bearing: identical definitions MUST hash identically across builds/machines, so every input is
   // canonically ordered and fully-qualified.
 
-  /// <summary>Hash of the type's behavioral settings — its Sourced/Ephemeral mode + destruction/storage.</summary>
-  private static string _computeSettingsHash((string Destruction, string Storage)? ephemeral) {
+  /// <summary>
+  /// Hash of the type's behavioral settings: its Sourced/Ephemeral mode + destruction/storage, and whether it is
+  /// superseding (#2110). The superseding part is appended only for a superseding type, so every other type keeps the
+  /// hash it had and drifts on no upgrade, while a type that becomes superseding registers a new definition.
+  /// </summary>
+  /// <docs>fundamentals/events/superseding-events#history-stored-before-the-declaration</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageTypeCatalogFingerprintTests.cs:SettingsHash_ChangesWhenATypeBecomesSuperseding_AndASourcedTypeKeepsItsHashAsync</tests>
+  private static string _computeSettingsHash((string Destruction, string Storage)? ephemeral, bool isSuperseding) {
     var canonical = ephemeral is { } e
       ? $"ephemeral;destruction={e.Destruction};storage={e.Storage}"
       : "sourced";
-    return _sha256Hex(canonical);
+    return _sha256Hex(isSuperseding ? canonical + ";superseding" : canonical);
   }
 
   /// <summary>
@@ -343,10 +408,11 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     source.AppendLine("/// Module initializer that wires GeneratedMessageTypeCatalog into AddWhizbang().");
     source.AppendLine("/// </summary>");
     source.AppendLine("internal static class MessageTypeCatalogModuleInitializer {");
-    source.AppendLine("  [System.Runtime.CompilerServices.ModuleInitializer]");
+    source.AppendLine("  [global::System.Runtime.CompilerServices.ModuleInitializer]");
     source.AppendLine("  internal static void Initialize() {");
-    source.AppendLine("    ServiceRegistrationCallbacks.MessageTypeCatalog = static services =>");
-    source.AppendLine("      services.AddSingleton<IMessageTypeCatalog, GeneratedMessageTypeCatalog>();");
+    // #2243: named by this assembly, so a host's catalog unions only its own service's
+    source.AppendLine($"    ServiceRegistrationCallbacks.RegisterMessageTypeCatalog({ServiceAssemblyFactsGenerator.Literal(assemblyName)}, static services =>");
+    source.AppendLine("      services.AddSingleton<IMessageTypeCatalog, GeneratedMessageTypeCatalog>());");
     // Message-type [DefaultRouting], registered without DI so the cascade can read it without
     // reflection from any dispatcher, however it was built.
     foreach (var info in ordered.Where(i => i.DefaultRouting is not null)) {
@@ -357,10 +423,40 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     foreach (var info in ordered.Where(i => i.IsTerminal)) {
       source.AppendLine($"    global::Whizbang.Core.Lifecycle.TerminalEvents.Register(typeof({info.TypeName}));");
     }
+    // [StreamEndOfLife] (#1740), registered without DI so the lifecycle options start from it however they were built.
+    foreach (var info in ordered.Where(i => i.StreamEndOfLife is not null)) {
+      source.AppendLine($"    global::Whizbang.Core.Archival.StreamEndOfLifeDeclarations.Register(new global::Whizbang.Core.Archival.StreamEndOfLifeDeclaration({info.StreamEndOfLife}));");
+    }
+    // [Superseding] (#1729), with a generated accessor for its [SupersedingKey], so the flag and the key are stamped on
+    // every path without reflection. A keyed type also registers its key member and [JsonPropertyName] (#2123), so a JSON
+    // payload missing the key is read as no key rather than as the key type's default.
+    foreach (var info in ordered.Where(i => i.IsSuperseding)) {
+      var keyJsonName = info.SupersedingKeyJsonName is null
+        ? "null"
+        : Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(info.SupersedingKeyJsonName, quote: true);
+      var registration = info.SupersedingKey is null
+        ? "null"
+        : $"static p => global::Whizbang.Core.Lifecycle.SupersedingEvents.KeyText((({info.TypeName})p).{info.SupersedingKey}), " +
+          $"\"{info.SupersedingKey}\", {keyJsonName}";
+      source.AppendLine(
+        $"    global::Whizbang.Core.Lifecycle.SupersedingEvents.Register(typeof({info.TypeName}), {_withGroup(registration, info)});");
+    }
     source.AppendLine("  }");
     source.AppendLine("}");
 
     context.AddSource("MessageTypeCatalog.g.cs", source.ToString());
+  }
+
+  /// <summary>
+  /// The superseding registration's arguments with the type's group (#2124) appended, padding a keyless registration's
+  /// key member and JSON name with null; unchanged for an ungrouped type, so its generated call stays as it was.
+  /// </summary>
+  private static string _withGroup(string registration, MessageTypeCatalogEntryInfo info) {
+    if (info.SupersedingGroup is null) {
+      return registration;
+    }
+    var group = Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(info.SupersedingGroup, quote: true);
+    return info.SupersedingKey is null ? $"null, null, null, {group}" : $"{registration}, {group}";
   }
 
   /// <summary>
@@ -414,6 +510,9 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     if (info.IsTerminal) {
       initParts.Add("IsTerminal = true");
     }
+    if (info.IsSuperseding) {
+      initParts.Add("IsSuperseding = true");
+    }
     if (info.MaxPayloadBytes is { } maxPayloadBytes) {
       initParts.Add($"MaxPayloadBytes = {maxPayloadBytes.ToString(System.Globalization.CultureInfo.InvariantCulture)}L");
     }
@@ -449,5 +548,10 @@ internal sealed record MessageTypeCatalogEntryInfo(
     bool IsCompacted = false,
     long? MaxPayloadBytes = null,
     string? DefaultRouting = null,
-    bool IsTerminal = false
+    bool IsTerminal = false,
+    string? StreamEndOfLife = null,
+    bool IsSuperseding = false,
+    string? SupersedingKey = null,
+    string? SupersedingKeyJsonName = null,
+    string? SupersedingGroup = null
 );

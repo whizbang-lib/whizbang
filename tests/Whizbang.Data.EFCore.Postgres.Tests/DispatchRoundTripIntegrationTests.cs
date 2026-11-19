@@ -43,7 +43,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Workers/InboxDispatchWorker.cs</code-under-test>
 /// <docs>fundamentals/dispatcher/dispatch-policy#decision-table</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class DispatchRoundTripIntegrationTests : EFCoreTestBase {
   private const string SENDER = "dx-sender";

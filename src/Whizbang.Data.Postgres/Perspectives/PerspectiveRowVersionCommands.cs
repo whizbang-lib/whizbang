@@ -141,16 +141,53 @@ public static class PerspectiveRowVersionCommands {
     if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       return new PerspectiveApplyRead(PerspectiveRowVersion.Absent, null);
     }
+    return await _applyReadAtAsync(reader, 0, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// The read <see cref="ReadForApplySql"/> makes, for many rows at once: each row's id, then the same columns. The
+  /// batched row read of a set-based batch (#2246).
+  /// </summary>
+  /// <param name="qualifiedTable">The quoted, schema-qualified perspective table.</param>
+  /// <returns>The statement, taking a single <c>@ids</c> parameter (a <c>uuid[]</c>).</returns>
+  /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.StateSource.cs</tests>
+  public static string ReadForApplyManySql(string qualifiedTable) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(qualifiedTable);
+    return "SELECT id, xmin, metadata->>'EventId', metadata->>'EventType', metadata->>'CommitSequence', scope::text FROM "
+      + qualifiedTable + " WHERE id = ANY(@ids)";
+  }
+
+  /// <summary>The apply reads of <see cref="ReadForApplyManySql"/>'s result, by row id; an absent row is left out.</summary>
+  /// <param name="reader">The reader, not yet advanced.</param>
+  /// <param name="cancellationToken">Cancels the read.</param>
+  /// <returns>Each present row's apply read, by id.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePrepareCompleteIntegrationTests.StateSource.cs</tests>
+  public static async Task<IReadOnlyDictionary<Guid, PerspectiveApplyRead>> ReadApplyManyAsync(
+      DbDataReader reader, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(reader);
+    var reads = new Dictionary<Guid, PerspectiveApplyRead>();
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      var id = await reader.GetFieldValueAsync<Guid>(0, cancellationToken).ConfigureAwait(false);
+      reads[id] = await _applyReadAtAsync(reader, 1, cancellationToken).ConfigureAwait(false);
+    }
+    return reads;
+  }
+
+  /// <summary>Maps the apply-read columns of the current row, starting at <paramref name="first"/> (the <c>xmin</c>).</summary>
+  private static async Task<PerspectiveApplyRead> _applyReadAtAsync(
+      DbDataReader reader, int first, CancellationToken cancellationToken) {
     var metadata = new PerspectiveMetadata {
-      EventId = await _textAsync(reader, 1, cancellationToken).ConfigureAwait(false) ?? string.Empty,
-      EventType = await _textAsync(reader, 2, cancellationToken).ConfigureAwait(false) ?? string.Empty,
-      CommitSequence = await _textAsync(reader, 3, cancellationToken).ConfigureAwait(false) is { } sequence
+      EventId = await _textAsync(reader, first + 1, cancellationToken).ConfigureAwait(false) ?? string.Empty,
+      EventType = await _textAsync(reader, first + 2, cancellationToken).ConfigureAwait(false) ?? string.Empty,
+      CommitSequence = await _textAsync(reader, first + 3, cancellationToken).ConfigureAwait(false) is { } sequence
         ? long.Parse(sequence, NumberStyles.Integer, CultureInfo.InvariantCulture)
         : null,
     };
-    var xmin = await reader.GetFieldValueAsync<uint>(0, cancellationToken).ConfigureAwait(false);
+    var xmin = await reader.GetFieldValueAsync<uint>(first, cancellationToken).ConfigureAwait(false);
     // A perspective row's scope column is NOT NULL and always holds an object, in both drivers.
-    var scope = JsonSerializer.Deserialize(reader.GetString(4), InfrastructureJsonContext.Default.PerspectiveScope);
+    var scope = JsonSerializer.Deserialize(reader.GetString(first + 4), InfrastructureJsonContext.Default.PerspectiveScope);
     return new PerspectiveApplyRead(PerspectiveRowVersion.Of(xmin), metadata, scope);
   }
 

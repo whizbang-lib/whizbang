@@ -27,8 +27,11 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// and <c>error</c> on update — a full rebuild resolves any prior rewind flagging since the
 /// entire event log has been replayed.
 /// </para>
+/// <para>The cursor of a stream archived whole is parked with the stream (migration 273, #1931): a rebuild that
+/// includes such a stream must not name an archived event in the live cursor table, and the restore brings the cursor back.</para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/rebuild</docs>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchivedStreamRebuildTests.cs:Completer_TheCursorOfAStreamArchivedWhole_IsParked_AndTheRestoreBringsItBackAsync</tests>
 public sealed partial class DapperPostgresPerspectiveCheckpointCompleter(
     string connectionString,
     ILogger<DapperPostgresPerspectiveCheckpointCompleter>? logger = null) : IPerspectiveCheckpointCompleter {
@@ -50,19 +53,9 @@ public sealed partial class DapperPostgresPerspectiveCheckpointCompleter(
     await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
     try {
-      const string sql = """
-        INSERT INTO wh_perspective_cursors
-          (stream_id, perspective_name, last_event_id, status, processed_at)
-        VALUES (@p_stream_id, @p_perspective_name, @p_last_event_id, @p_status, NOW())
-        ON CONFLICT (stream_id, perspective_name) DO UPDATE SET
-          last_event_id = EXCLUDED.last_event_id,
-          status = EXCLUDED.status,
-          processed_at = EXCLUDED.processed_at,
-          error = NULL,
-          rewind_trigger_event_id = NULL,
-          rewind_flagged_at = NULL,
-          rewind_first_flagged_at = NULL
-        """;
+      // The shared rebuild cursor write (migration 273, #1931): a stream archived whole has its cursor parked with the
+      // stream, any other stream's is upserted into wh_perspective_cursors, exactly as the EF Core driver's completer writes it.
+      const string sql = "SELECT wh_complete_rebuilt_cursor(@p_stream_id, @p_perspective_name, @p_last_event_id, @p_status)";
 
       foreach (var completion in completions) {
         // Skip completions with no event processed — same rationale as the EFCore completer:

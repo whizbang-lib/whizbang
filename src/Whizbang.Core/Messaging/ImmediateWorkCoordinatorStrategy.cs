@@ -19,10 +19,10 @@ using Whizbang.Core.Validation;
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_ImmediatelyCallsWorkCoordinatorAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesOnCallAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueInboxMessage_FlushesOnCallAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:ImmediateStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_ImmediatelyCallsWorkCoordinatorAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesOnCallAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueInboxMessage_FlushesOnCallAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkFlusherTests.cs:ImmediateStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
 /// Immediate strategy - flushes queued work to the database immediately for each operation.
 /// Provides lowest latency but highest database load.
 /// Best for: Real-time scenarios, low-throughput services, critical operations.
@@ -43,7 +43,8 @@ public partial class ImmediateWorkCoordinatorStrategy(
   DetachedLifecycleWork detachedWork,
   WorkCoordinatorMetrics? metrics = null,
   LifecycleMetrics? lifecycleMetrics = null,
-  Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null
+  Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null,
+  AuditTypeResolver? auditEventTypes = null
   ) : IWorkCoordinatorStrategy, IWorkFlusher {
 #pragma warning restore S107
   private const string STRATEGY_NAME = "immediate";
@@ -62,12 +63,12 @@ public partial class ImmediateWorkCoordinatorStrategy(
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
   private readonly SystemEventOptions _systemEventOptions = systemEventOptions.Value;
-  private readonly WorkCoordinatorQueues _queues = new(logger, auditDecisionHook, coalesceResolver);
+  private readonly WorkCoordinatorQueues _queues = new(logger, auditDecisionHook, coalesceResolver, auditEventTypes);
 
   /// <summary>
   /// Queues an outbox message for immediate flush.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesOnCallAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesOnCallAsync</tests>
   public void QueueOutboxMessage(OutboxMessage message) {
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ImmediateStrategy.QueueOutbox", message.MessageType);
     _queues.AddOutboxMessage(message, _systemEventOptions);
@@ -77,7 +78,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   /// <summary>
   /// Queues an inbox message for immediate flush.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueInboxMessage_FlushesOnCallAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueInboxMessage_FlushesOnCallAsync</tests>
   public void QueueInboxMessage(InboxMessage message) {
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ImmediateStrategy.QueueInbox", message.MessageType);
     _queues.AddInboxMessage(message);
@@ -126,9 +127,9 @@ public partial class ImmediateWorkCoordinatorStrategy(
   /// Immediately flushes all queued operations to the work coordinator and returns the work batch.
   /// </summary>
   /// <docs>data/work-coordinator-strategies</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_ImmediatelyCallsWorkCoordinatorAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDrainTests.cs:FlushAsync_DrainsDeferredChannel_IncludesInBatchAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/FlushApiTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_ImmediatelyCallsWorkCoordinatorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDrainTests.cs:FlushAsync_DrainsDeferredChannel_IncludesInBatchAsync</tests>
   public async Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
     _metrics?.FlushCalls.Add(1,
       new KeyValuePair<string, object?>("strategy", STRATEGY_NAME),
@@ -136,17 +137,12 @@ public partial class ImmediateWorkCoordinatorStrategy(
     // Drain deferred channel first - these get written in THIS transaction
     // Events that were published outside transaction context (e.g., PostPerspective handlers)
     // are picked up here and included in the current work batch.
-    if (_deferredChannel.HasPending) {
-      var deferredMessages = _deferredChannel.DrainAll();
-      // Prepend deferred messages to the queue. The deferred channel bypasses
-      // AddOutboxMessage, so this drain is a mint seam of its own — coalesce stamping
-      // must run here too (events published outside transaction context, including the
-      // audit event-store decorator's mints, arrive this way).
-      var index = 0;
-      foreach (var deferred in deferredMessages) {
-        _queues.OutboxMessages.Insert(index++, _queues.Stamp(deferred));
-      }
-      LogDeferredChannelDrained(_logger, deferredMessages.Count);
+    // The deferred channel bypasses AddOutboxMessage, so this drain is a mint seam of its own:
+    // coalesce stamping runs here too (events published outside transaction context, including the
+    // audit event-store decorator's mints, arrive this way).
+    var drained = DeferredOutboxDrain.PrependTo(_deferredChannel, _queues.OutboxMessages, _queues.Stamp);
+    if (drained > 0) {
+      LogDeferredChannelDrained(_logger, drained);
     }
 
     if (_queues.IsEmpty) {

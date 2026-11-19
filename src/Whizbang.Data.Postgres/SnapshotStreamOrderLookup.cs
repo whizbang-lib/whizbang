@@ -41,7 +41,7 @@ public static class SnapshotStreamOrderLookup {
   /// guess skips the events in between and leaves nothing pending to repair them.
   /// </summary>
   private const string BY_VERSION_SQL = """
-    SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data, s.archived_through_version
+    SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data, s.archived_through_version, s.collectives_through_sequence
     FROM wh_perspective_snapshots s
     WHERE s.stream_id = @p_stream_id
       AND s.perspective_name = @p_perspective_name
@@ -58,7 +58,7 @@ public static class SnapshotStreamOrderLookup {
   /// never had the defect.
   /// </summary>
   private const string BY_EVENT_ID_SQL = """
-    SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data, s.archived_through_version
+    SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data, s.archived_through_version, s.collectives_through_sequence
     FROM wh_perspective_snapshots s
     WHERE s.stream_id = @p_stream_id
       AND s.perspective_name = @p_perspective_name
@@ -66,6 +66,36 @@ public static class SnapshotStreamOrderLookup {
     ORDER BY s.snapshot_event_id DESC
     LIMIT 1
     """;
+
+  /// <summary>The stream's newest snapshot by the order snapshots are written in, with its marks.</summary>
+  private const string LATEST_SQL = """
+    SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data, s.archived_through_version, s.collectives_through_sequence
+    FROM wh_perspective_snapshots s
+    WHERE s.stream_id = @p_stream_id
+      AND s.perspective_name = @p_perspective_name
+    ORDER BY s.sequence_number DESC
+    LIMIT 1
+    """;
+
+  /// <summary>
+  /// The stream's newest snapshot, as the floor a replay restores from (#1963), on an OPEN connection: with its version,
+  /// its archive mark and the commit sequence through which its row's collectives were complete. Null when there is none.
+  /// Shared by both drivers, so a default rebuild starts from the same snapshot with the same marks on either.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/snapshots#collectives</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SnapshotSelectionFollowsStreamOrderTests.cs:SnapshotStore_RecordsTheCollectivesCompleteThroughMark_AndTheFloorAndTheNewestSnapshotCarryItAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/DapperPerspectiveSnapshotStoreTests.cs:SnapshotStore_RecordsTheCollectivesCompleteThroughMark_AndTheFloorAndTheNewestSnapshotCarryItAsync</tests>
+  public static async Task<Whizbang.Core.Perspectives.PerspectiveSnapshotFloor?> FindLatestFloorAsync(
+      NpgsqlConnection connection,
+      Guid streamId,
+      string perspectiveName,
+      CancellationToken ct = default) {
+    ArgumentNullException.ThrowIfNull(connection);
+    await using var cmd = new NpgsqlCommand(LATEST_SQL, connection);
+    cmd.Parameters.AddWithValue("p_stream_id", streamId);
+    cmd.Parameters.AddWithValue("p_perspective_name", perspectiveName);
+    return await _readFloorAsync(cmd, ct).ConfigureAwait(false);
+  }
 
   /// <summary>
   /// Returns the latest snapshot before <paramref name="beforeEventId"/> in the stream's order, on an OPEN
@@ -116,6 +146,11 @@ public static class SnapshotStreamOrderLookup {
       cmd.Parameters.AddWithValue("p_before_event_id", beforeEventId);
     }
 
+    return await _readFloorAsync(cmd, ct).ConfigureAwait(false);
+  }
+
+  // Reads the one snapshot row a floor query returns: event, version, data, archive mark, collectives mark.
+  private static async Task<Whizbang.Core.Perspectives.PerspectiveSnapshotFloor?> _readFloorAsync(NpgsqlCommand cmd, CancellationToken ct) {
     await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
     if (!await reader.ReadAsync(ct).ConfigureAwait(false)) {
       return null;
@@ -124,6 +159,9 @@ public static class SnapshotStreamOrderLookup {
     int? snapshotVersion = await reader.IsDBNullAsync(1, ct).ConfigureAwait(false) ? null : reader.GetInt32(1);
     var snapshotJson = reader.GetString(2);
     long? archivedThrough = await reader.IsDBNullAsync(3, ct).ConfigureAwait(false) ? null : reader.GetInt64(3);
-    return new Whizbang.Core.Perspectives.PerspectiveSnapshotFloor(snapshotEventId, snapshotVersion, JsonDocument.Parse(snapshotJson), archivedThrough);
+    long? collectivesThrough = await reader.IsDBNullAsync(4, ct).ConfigureAwait(false) ? null : reader.GetInt64(4);
+    return new Whizbang.Core.Perspectives.PerspectiveSnapshotFloor(snapshotEventId, snapshotVersion, JsonDocument.Parse(snapshotJson), archivedThrough) {
+      CollectivesThroughSequence = collectivesThrough,
+    };
   }
 }

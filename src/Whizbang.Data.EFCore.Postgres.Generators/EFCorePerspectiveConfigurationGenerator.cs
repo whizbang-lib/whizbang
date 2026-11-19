@@ -286,7 +286,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // No Schema property set, derive from namespace
     // Roslyn renders the global namespace as the literal "<global namespace>", which is never
     // empty (issue #707): ask the symbol, and let an empty string reach the default-schema arm.
-    var namespaceName = TypeNameUtilities.NamespaceName(symbol.ContainingNamespace);
+    var namespaceName = TypeNameUtilities.NamespaceName(TypeNameUtilities.NamespaceOf(symbol));
     return _deriveSchemaFromNamespace(namespaceName);
   }
 
@@ -340,11 +340,10 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       lastSegment = segments[^2];
     }
 
-    // Remove common suffixes (case-insensitive)
-    // Use regex for case-insensitive replacement (netstandard2.0 doesn't have String.Replace with StringComparison)
-    // Timeout added to prevent ReDoS attacks (S6444)
-    lastSegment = System.Text.RegularExpressions.Regex.Replace(lastSegment, "Worker", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
-    lastSegment = System.Text.RegularExpressions.Regex.Replace(lastSegment, "Service", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
+    // Remove common suffixes (case-insensitive), by a scan: a regular expression's match timeout is wall-clock time,
+    // and losing it on a loaded build machine makes the generator emit nothing (#1942).
+    lastSegment = NamingConventionUtilities.RemoveAllIgnoringCase(lastSegment, "Worker");
+    lastSegment = NamingConventionUtilities.RemoveAllIgnoringCase(lastSegment, "Service");
 
     // Convert to lowercase
     return lastSegment.ToLowerInvariant();
@@ -815,16 +814,15 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// </summary>
   private static string _getCSharpType(PhysicalFieldInfo field) {
     if (field.IsVector) {
-      return "Pgvector.Vector?";
+      return "global::Pgvector.Vector?";
     }
 
     // Use the model's declared type directly — preserves nullability from the model.
     // If the model says Guid (non-nullable), the shadow property should also be Guid.
     // If the model says Guid? (nullable), the shadow property should also be Guid?.
-    var typeName = field.TypeName
-        .Replace(GLOBAL_PREFIX, "");
-
-    return typeName;
+    // Kept fully qualified (#2400): written without global::, System.X binds to a System namespace beside the
+    // consumer's.
+    return field.TypeName;
   }
 
   /// <summary>

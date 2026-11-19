@@ -55,76 +55,68 @@ public class HeartbeatWorkerCoverageTests {
     }
   }
 
-  /// <summary>
-  /// A gate that never opens and announces when a waiter arrives. <see cref="Entered"/> is the
-  /// deterministic "the worker is parked at the barrier" signal. It is needed because since .NET 10
-  /// <c>BackgroundService.StartAsync</c> dispatches ExecuteAsync through
-  /// <c>Task.Run(action, stoppingToken)</c>: StartAsync returning proves only that the body was
-  /// scheduled, and a token canceled before the work item is dequeued settles the task Canceled
-  /// without ever invoking the delegate — which satisfies both <c>IsCompleted</c> and
-  /// <c>!IsFaulted</c>, and trivially satisfies "the coordinator was never called" as well.
-  /// </summary>
-  private sealed class BlockingGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+  /// <summary>Stops the host from inside a beat and still accepts it, without observing the token.</summary>
+  private sealed class StopsTheHostDuringTheBeatCoordinator(CancellationTokenSource hostStop) : NoOpWorkCoordinator, IWorkCoordinator {
+    private int _calls;
+    public int Calls => Volatile.Read(ref _calls);
 
-    public Task Entered => _entered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _calls);
+      hostStop.Cancel();
+      return Task.FromResult(true);
     }
   }
 
   private static HeartbeatWorker _buildWorker(
-      IWorkCoordinator coordinator, ISchemaReadyGate gate, HeartbeatWorkerOptions options) {
+      IWorkCoordinator coordinator, HeartbeatWorkerOptions options,
+      Whizbang.Testing.Lifecycle.RecordingInstanceExit? instanceExit = null) {
     var services = new ServiceCollection();
     services.AddSingleton(coordinator);
     var sp = services.BuildServiceProvider();
     return new HeartbeatWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new InstanceProvider("origin-svc"),
-      schemaReadyGate: gate,
       options: Options.Create(options),
       logger: NullLogger<HeartbeatWorker>.Instance,
       lifecycleState: HeartbeatTestDependencies.LifecycleState,
       libraryVersion: HeartbeatTestDependencies.Version,
+      applicationVersion: HeartbeatTestDependencies.ApplicationVersion,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       aliveLockSource: NullInstanceAliveLockSource.Instance,
-      signalBus: NullSignalBus.Instance);
+      signalBus: NullSignalBus.Instance,
+        schemaReady: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), instanceExit: instanceExit ?? new Whizbang.Testing.Lifecycle.RecordingInstanceExit());
   }
 
-  // Target: src/Whizbang.Core/Workers/HeartbeatWorker.cs:79 — `return;` in the
-  // the OperationCanceledException handler around _schemaReadyGate.WaitForReadyAsync. Without
-  // this, a pod stopped while still waiting for the schema would fault its BackgroundService
-  // instead of exiting quietly — turning a routine fast restart into a logged crash.
+  // Target: the beat loop's own stop check (`while (!stoppingToken.IsCancellationRequested)` in
+  // _beatUntilStoppedOrEvictedAsync), taken with the token already canceled. The loop is normally left through the
+  // cancellation the next wait throws, so without this test whether that outcome is taken depends on timing. Here the
+  // host stops inside a beat the registry still accepts without observing the token, so no wait and no beat throws, and
+  // the stop check is what ends the loop, by construction.
   [Test]
   [Timeout(30000)]
-  public async Task ExecuteAsync_CanceledWhileWaitingForSchemaReady_ReturnsQuietlyAsync(
+  public async Task ExecuteAsync_HostStopsDuringAnAcceptedBeat_LoopExitsOnItsStopCheckWithoutRequestingExitAsync(
       CancellationToken testToken) {
-    var coordinator = new ThrowingCoordinator();
-    var gate = new BlockingGate();  // never opens
-    var worker = _buildWorker(coordinator, gate, new HeartbeatWorkerOptions { IntervalSeconds = 1 });
+    using var hostStop = new CancellationTokenSource();
+    var coordinator = new StopsTheHostDuringTheBeatCoordinator(hostStop);
+    var exit = new Whizbang.Testing.Lifecycle.RecordingInstanceExit();
+    var worker = _buildWorker(coordinator, new HeartbeatWorkerOptions { IntervalSeconds = 1 }, exit);
 
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    var executeTask = worker.ExecuteTask;
-    // Wait until the body is actually parked on the gate. Without this the whole test is
-    // satisfied by a worker whose ExecuteAsync the thread pool never invoked.
-    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10), testToken);
-    await worker.StopAsync(CancellationToken.None);
-    await executeTask!.WaitAsync(TimeSpan.FromSeconds(10), testToken)
-      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    await worker.StartAsync(hostStop.Token);
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(20), testToken);
 
-    await Assert.That(executeTask.IsCompleted).IsTrue();
-    await Assert.That(executeTask.IsFaulted).IsFalse()
-      .Because("waiting for the schema is not an error condition, so stopping mid-wait must read "
-             + "as a clean exit rather than a crashed worker");
-    await Assert.That(coordinator.Calls).IsEqualTo(0)
-      .Because("nothing may heartbeat before the schema is ready");
+    await Assert.That(coordinator.Calls).IsEqualTo(1)
+      .Because("the worker ran one beat, and the stop it saw afterwards ended the loop before a second");
+    await Assert.That(worker.LastAcceptedAt.HasValue).IsTrue()
+      .Because("the beat returned normally and was recorded as accepted, so no cancellation was thrown out of it");
+    await Assert.That(worker.ExecuteTask.Status).IsEqualTo(TaskStatus.RanToCompletion);
+    await Assert.That(exit.Requests).IsEmpty()
+      .Because("a host stop is not an eviction: only a refused beat asks the instance to exit");
   }
 
+  // Target: src/Whizbang.Core/Workers/HeartbeatWorker.cs:79: `return;` in the
+  // the OperationCanceledException handler around _schemaReadyGate.WaitForReadyAsync. Without
+  // this, a pod stopped while still waiting for the schema would fault its BackgroundService
+  // instead of exiting quietly, turning a routine fast restart into a logged crash.
   // Target: line 87 — the break in the the OperationCanceledException handler around
   // `_heartbeatOnceAsync` inside the main loop. A cancellation surfacing from the tick itself
   // (not necessarily stoppingToken) must end the loop immediately rather than being retried —
@@ -137,8 +129,7 @@ public class HeartbeatWorkerCoverageTests {
       ThrowOnCallsUpTo = int.MaxValue,
       ThrowWith = new OperationCanceledException("simulated tick-level cancellation"),
     };
-    var worker = _buildWorker(coordinator, SchemaReadyGate.AlreadyReady(),
-      new HeartbeatWorkerOptions { IntervalSeconds = 1 });
+    var worker = _buildWorker(coordinator, new HeartbeatWorkerOptions { IntervalSeconds = 1 });
 
     await worker.StartAsync(testToken);
     var executeTask = worker.ExecuteTask;
@@ -165,8 +156,7 @@ public class HeartbeatWorkerCoverageTests {
       ThrowOnCallsUpTo = 1,
       ThrowWith = new InvalidOperationException("simulated transient heartbeat failure"),
     };
-    var worker = _buildWorker(coordinator, SchemaReadyGate.AlreadyReady(),
-      new HeartbeatWorkerOptions { IntervalSeconds = 1 });
+    var worker = _buildWorker(coordinator, new HeartbeatWorkerOptions { IntervalSeconds = 1 });
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

@@ -22,10 +22,10 @@ namespace Whizbang.Core.Transports;
 /// - X-Roles: Comma-separated role list</para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#service-bus-metadata</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/TransportMetadataTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/TransportMetadataTests.cs:ServiceBusTransportMetadata_ApplicationProperties_ReturnsProvidedPropertiesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/TransportMetadataTests.cs:ServiceBusTransportMetadata_GetProperty_ExistingKey_ReturnsValueAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Security/TransportMetadataTests.cs:ServiceBusTransportMetadata_TryGetProperty_ExistingKey_ReturnsTrueAndValueAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/TransportMetadataTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/TransportMetadataTests.cs:ServiceBusTransportMetadata_ApplicationProperties_ReturnsProvidedPropertiesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/TransportMetadataTests.cs:ServiceBusTransportMetadata_GetProperty_ExistingKey_ReturnsValueAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/TransportMetadataTests.cs:ServiceBusTransportMetadata_TryGetProperty_ExistingKey_ReturnsTrueAndValueAsync</tests>
 public sealed class ServiceBusTransportMetadata : ITransportMetadata {
   private readonly Dictionary<string, object> _applicationProperties;
 

@@ -47,7 +47,6 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await Assert.That(tables).Contains("wh_inbox");
     await Assert.That(tables).Contains("wh_outbox");
     await Assert.That(tables).Contains("wh_event_store");
-    await Assert.That(tables).Contains("wh_receptor_processing");
     await Assert.That(tables).Contains("wh_perspective_cursors");
     await Assert.That(tables).Contains("wh_request_response");
     await Assert.That(tables).Contains("wh_sequences");
@@ -174,26 +173,27 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
 
-    // wh_schema_versions should have a version entry with both library and application versions
+    // wh_schema_versions should have a version entry with both library and application versions, and the assembly that
+    // applied the pass as its note.
     // The reader has to close before the next command runs on this connection.
-    async Task<(string Library, string Application)> ReadVersionsAsync() {
+    async Task<(string Library, string Application, string Notes)> ReadVersionsAsync() {
       await using var versionCmd = new NpgsqlCommand(
-        "SELECT library_version, application_version FROM wh_schema_versions LIMIT 1", connection);
+        "SELECT library_version, application_version, notes FROM wh_schema_versions LIMIT 1", connection);
       await using var versionReader = await versionCmd.ExecuteReaderAsync();
       await Assert.That(await versionReader.ReadAsync()).IsTrue();
-      return (versionReader.GetString(0), versionReader.GetString(1));
+      return (versionReader.GetString(0), versionReader.GetString(1), versionReader.GetString(2));
     }
-    var (libraryVersion, applicationVersion) = await ReadVersionsAsync();
+    var (libraryVersion, applicationVersion, notes) = await ReadVersionsAsync();
 
     // Library version should be a semver string (e.g., "0.9.4-local.64")
     await Assert.That(libraryVersion).Contains(".")
       .Because("library_version should be a semver version like '0.9.4', not an assembly name");
 
-    // Application version should contain the assembly name and version (e.g., "Whizbang.Data.EFCore.Postgres.Tests/0.9.4.0")
-    await Assert.That(applicationVersion).Contains("/")
-      .Because("application_version should be 'AssemblyName/Version' format");
-    await Assert.That(applicationVersion).Contains(".")
-      .Because("application_version should include a version number");
+    // #2027: application_version is the application's version as the instance rows record it; with no provider passed
+    // it is unknown, recorded as text (a NULL would add a ledger row on every pass). The assembly is the note.
+    await Assert.That(applicationVersion).IsEqualTo("unknown");
+    await Assert.That(notes).Contains("/")
+      .Because("the note names the assembly that applied the pass, as 'AssemblyName/Version'");
 
     // wh_schema_migrations should have entries for each migration
     await using var migrationCmd = new NpgsqlCommand(
@@ -343,7 +343,8 @@ public class SchemaInitializationTests : EFCoreTestBase {
         BEGIN
           SELECT pg_get_functiondef(p.oid) INTO v_def FROM pg_proc p
           WHERE p.proname = 'wh_append_event' AND p.pronamespace = 'public'::regnamespace;
-          EXECUTE replace(v_def, 'stream_id = p_stream_id), 0) + 1', 'stream_id = p_stream_id), -1) + 1');
+          -- The new-stream floor of the numbering, which 280 (#1734) writes after its new-generation branch.
+          EXECUTE regexp_replace(v_def, 'END,\s*0\) \+ 1', 'END, -1) + 1');
         END $$;
         DELETE FROM wh_schema_migrations WHERE file_name LIKE '267\_%';
         """, connection)) {

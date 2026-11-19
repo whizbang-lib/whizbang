@@ -9,20 +9,25 @@ using Microsoft.Extensions.Options;
 namespace Whizbang.Core.Archival;
 
 /// <summary>
-/// Binds <see cref="ArchiveOptions"/> and <see cref="StreamLifecycleOptions"/> from configuration by hand, so a value the
+/// Binds <see cref="ArchiveOptions"/>, <see cref="StreamLifecycleOptions"/> and <see cref="ArchivedStreamRowsOptions"/> from configuration by hand, so a value the
 /// framework cannot use is refused at startup with the key that holds it, rather than read as a default.
 /// </summary>
 /// <remarks>
-/// <c>NewGeneration</c> is refused with its own message: it is the third append-to-archived policy the design names, and it
-/// ships with the final snapshot finalization takes (#1734). A number is refused too, because binding a policy by its
-/// position is a setting nobody reading the configuration can check.
+/// A policy is bound by its name only: a number is refused, because binding a policy by its position is a setting nobody
+/// reading the configuration can check. <c>FinalizeGrace</c> must be a time span of zero or more and
+/// <c>SweepBatchSize</c> a whole number of one or more (#1734). <c>Enabled</c> is a boolean; a type's <c>IdleTtl</c> and
+/// <c>MaxAge</c> are time spans above zero, its <c>KeepTailVersions</c> and <c>TenantByteCap</c> whole numbers of one or
+/// more, and its <c>Action</c> a name (#1740). A <c>CloseBooks</c> action with no <see cref="Lifecycle.IBookClosingHandler"/>
+/// registered fails the start (#1741).
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#configuration</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/StreamLifecycleOptionsBinderTests.cs</tests>
 internal static class ArchiveOptionsBinder {
   private const string READ_THROUGH_KEY = ArchiveOptions.SECTION + ":" + nameof(ArchiveOptions.ReadThrough);
   private const string TYPES_SECTION = StreamLifecycleOptions.SECTION + ":" + nameof(StreamLifecycleOptions.Types);
-  private const string NEW_GENERATION = "NewGeneration";
+  private const string FINALIZE_GRACE_KEY = StreamLifecycleOptions.SECTION + ":" + nameof(StreamLifecycleOptions.FinalizeGrace);
+  private const string SWEEP_BATCH_SIZE_KEY = StreamLifecycleOptions.SECTION + ":" + nameof(StreamLifecycleOptions.SweepBatchSize);
+  private const string ENABLED_KEY = StreamLifecycleOptions.SECTION + ":" + nameof(StreamLifecycleOptions.Enabled);
 
   /// <summary>Binds <c>Whizbang:Archive</c>.</summary>
   /// <param name="configuration">The host's configuration.</param>
@@ -38,38 +43,138 @@ internal static class ArchiveOptionsBinder {
       : throw new InvalidOperationException($"{READ_THROUGH_KEY} is '{value}'; it must be true or false.");
   }
 
-  /// <summary>Binds <c>Whizbang:StreamLifecycle</c>.</summary>
+  /// <summary>Binds <c>Whizbang:Perspectives:ArchivedStreamRows:&lt;Perspective&gt;</c> (#1739).</summary>
   /// <param name="configuration">The host's configuration.</param>
   /// <param name="options">The options to fill.</param>
-  /// <exception cref="InvalidOperationException">An <c>AppendToArchived</c> names no policy that ships.</exception>
-  internal static void Bind(IConfiguration configuration, StreamLifecycleOptions options) {
-    foreach (var type in configuration.GetSection(TYPES_SECTION).GetChildren()) {
-      var typeOptions = new StreamTypeLifecycleOptions();
-      var value = type[nameof(StreamTypeLifecycleOptions.AppendToArchived)];
-      if (value is not null) {
-        typeOptions.AppendToArchived = _policy($"{TYPES_SECTION}:{type.Key}:{nameof(StreamTypeLifecycleOptions.AppendToArchived)}", value);
+  /// <exception cref="InvalidOperationException">A perspective's value names no policy, is a section rather than a value, or
+  /// the perspective's name holds <c>=</c> or a line break, which the stored policies cannot carry.</exception>
+  internal static void Bind(IConfiguration configuration, ArchivedStreamRowsOptions options) {
+    foreach (var perspective in configuration.GetSection(ArchivedStreamRowsOptions.SECTION).GetChildren()) {
+      var key = $"{ArchivedStreamRowsOptions.SECTION}:{perspective.Key}";
+      if (perspective.Key.AsSpan().IndexOfAny('=', '\n', '\r') >= 0) {
+        throw new InvalidOperationException($"{key} cannot name a perspective: the stored policies are one name=policy per line.");
       }
-      options.Types[type.Key] = typeOptions;
+      var value = perspective.Value
+        ?? throw new InvalidOperationException($"{key} is a section; it must be a policy: Keep, Drop, Archive.");
+      options.Perspectives[perspective.Key] = _rowPolicy(key, value);
     }
   }
 
-  private static AppendToArchivedPolicy _policy(string key, string value) {
-    if (string.Equals(value, NEW_GENERATION, StringComparison.OrdinalIgnoreCase)) {
-      throw new InvalidOperationException(
-        $"{key} is NewGeneration, which is not available yet: starting a new generation of an archived stream needs the "
-        + "final snapshot that finalization takes, and ships with it (#1734). Use Refuse or AutoRestore until then.");
+  /// <summary>Binds <c>Whizbang:StreamLifecycle</c>.</summary>
+  /// <param name="configuration">The host's configuration.</param>
+  /// <param name="options">The options to fill.</param>
+  /// <exception cref="InvalidOperationException">An <c>AppendToArchived</c> names no policy, <c>FinalizeGrace</c> is not a
+  /// time span of zero or more, or <c>SweepBatchSize</c> is not a whole number of one or more.</exception>
+  internal static void Bind(IConfiguration configuration, StreamLifecycleOptions options) {
+    if (configuration[FINALIZE_GRACE_KEY] is { } grace) {
+      options.FinalizeGrace = TimeSpan.TryParse(grace, System.Globalization.CultureInfo.InvariantCulture, out var parsed) && parsed >= TimeSpan.Zero
+        ? parsed
+        : throw new InvalidOperationException($"{FINALIZE_GRACE_KEY} is '{grace}'; it must be a time span of zero or more, such as 7.00:00:00.");
     }
+    if (configuration[SWEEP_BATCH_SIZE_KEY] is { } batch) {
+      options.SweepBatchSize = int.TryParse(batch, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var size) && size >= 1
+        ? size
+        : throw new InvalidOperationException($"{SWEEP_BATCH_SIZE_KEY} is '{batch}'; it must be a whole number of 1 or more.");
+    }
+    if (configuration[ENABLED_KEY] is { } enabled) {
+      options.Enabled = bool.TryParse(enabled, out var on)
+        ? on
+        : throw new InvalidOperationException($"{ENABLED_KEY} is '{enabled}'; it must be true or false.");
+    }
+    foreach (var type in configuration.GetSection(TYPES_SECTION).GetChildren()) {
+      options.Types[type.Key] = _type(type, options.Types.TryGetValue(type.Key, out var declared) ? declared : new StreamTypeLifecycleOptions());
+    }
+  }
+
+  // One stream type's settings over what its [StreamEndOfLife] declared: a key set here wins; each key names itself in
+  // its refusal.
+  private static StreamTypeLifecycleOptions _type(IConfigurationSection type, StreamTypeLifecycleOptions options) {
+    var prefix = $"{TYPES_SECTION}:{type.Key}:";
+    if (type[nameof(StreamTypeLifecycleOptions.AppendToArchived)] is { } appendToArchived) {
+      options.AppendToArchived = _policy(prefix + nameof(StreamTypeLifecycleOptions.AppendToArchived), appendToArchived);
+    }
+    options.IdleTtl = _positiveSpan(prefix + nameof(StreamTypeLifecycleOptions.IdleTtl), type[nameof(StreamTypeLifecycleOptions.IdleTtl)]) ?? options.IdleTtl;
+    options.MaxAge = _positiveSpan(prefix + nameof(StreamTypeLifecycleOptions.MaxAge), type[nameof(StreamTypeLifecycleOptions.MaxAge)]) ?? options.MaxAge;
+    options.KeepTailVersions = _positiveCount(prefix + nameof(StreamTypeLifecycleOptions.KeepTailVersions), type[nameof(StreamTypeLifecycleOptions.KeepTailVersions)])
+      ?? options.KeepTailVersions;
+    options.TenantByteCap = _positiveCount(prefix + nameof(StreamTypeLifecycleOptions.TenantByteCap), type[nameof(StreamTypeLifecycleOptions.TenantByteCap)])
+      ?? options.TenantByteCap;
+    if (type[nameof(StreamTypeLifecycleOptions.Action)] is { } action) {
+      options.Action = _action(prefix + nameof(StreamTypeLifecycleOptions.Action), action);
+    }
+    return options;
+  }
+
+  // Unset is no trigger; zero would act on every stream of the type at once, so a trigger is above zero.
+  private static TimeSpan? _positiveSpan(string key, string? value) => value switch {
+    null => null,
+    _ when TimeSpan.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out var span) && span > TimeSpan.Zero => span,
+    _ => throw new InvalidOperationException($"{key} is '{value}'; it must be a time span above zero, such as 90.00:00:00."),
+  };
+
+  private static long? _positiveCount(string key, string? value) => value switch {
+    null => null,
+    _ when long.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var count) && count >= 1 => count,
+    _ => throw new InvalidOperationException($"{key} is '{value}'; it must be a whole number of 1 or more."),
+  };
+
+  private static StreamLifecycleAction _action(string key, string value) {
+    // Names only, as for a policy.
+    if (value.Length > 0 && !char.IsAsciiDigit(value[0]) && value[0] != '-'
+        && Enum.TryParse<StreamLifecycleAction>(value, ignoreCase: true, out var action) && Enum.IsDefined(action)) {
+      return action;
+    }
+    throw new InvalidOperationException($"{key} is '{value}', which names no end-of-life action. Use one of: Archive, Compact, Purge, CloseBooks.");
+  }
+
+  private static ArchivedStreamRowPolicy _rowPolicy(string key, string value) {
+    // Names only, as for the append policy: a number would bind a policy by position.
+    if (value.Length > 0 && !char.IsAsciiDigit(value[0]) && value[0] != '-'
+        && Enum.TryParse<ArchivedStreamRowPolicy>(value, ignoreCase: true, out var policy) && Enum.IsDefined(policy)) {
+      return policy;
+    }
+    throw new InvalidOperationException($"{key} is '{value}', which names no policy for rows of archived streams. Use one of: Keep, Drop, Archive.");
+  }
+
+  /// <summary>
+  /// Applies the <see cref="Attributes.StreamEndOfLifeAttribute"/> declarations (#1740) before configuration binds, so a
+  /// key set in configuration wins over the attribute's value.
+  /// </summary>
+  /// <param name="declarations">The declarations (<see cref="StreamEndOfLifeDeclarations.All"/>).</param>
+  /// <param name="options">The options to fill.</param>
+  /// <exception cref="InvalidOperationException">A declared value cannot be used; the message names the type.</exception>
+  internal static void Apply(IEnumerable<StreamEndOfLifeDeclaration> declarations, StreamLifecycleOptions options) {
+    foreach (var declaration in declarations) {
+      var key = $"[StreamEndOfLife] on {declaration.StreamType}: ";
+      options.Types[declaration.StreamType] = new StreamTypeLifecycleOptions {
+        IdleTtl = _positiveSpan(key + nameof(StreamTypeLifecycleOptions.IdleTtl), declaration.IdleTtl),
+        MaxAge = _positiveSpan(key + nameof(StreamTypeLifecycleOptions.MaxAge), declaration.MaxAge),
+        KeepTailVersions = _declaredCount(key + nameof(StreamTypeLifecycleOptions.KeepTailVersions), declaration.KeepTailVersions),
+        TenantByteCap = _declaredCount(key + nameof(StreamTypeLifecycleOptions.TenantByteCap), declaration.TenantByteCap),
+        Action = declaration.Action,
+      };
+    }
+  }
+
+  // An attribute cannot hold a null number, so 0 is "no trigger"; a negative count is refused.
+  private static long? _declaredCount(string key, long value) => value switch {
+    0 => null,
+    > 0 => value,
+    _ => throw new InvalidOperationException($"{key} is '{value}'; it must be a whole number of 1 or more, or 0 for none."),
+  };
+
+  private static AppendToArchivedPolicy _policy(string key, string value) {
     // Names only: a number would bind a policy by position.
     if (value.Length > 0 && !char.IsAsciiDigit(value[0]) && value[0] != '-'
         && Enum.TryParse<AppendToArchivedPolicy>(value, ignoreCase: true, out var policy) && Enum.IsDefined(policy)) {
       return policy;
     }
     throw new InvalidOperationException(
-      $"{key} is '{value}', which names no append-to-archived policy. Use one of: Refuse, AutoRestore.");
+      $"{key} is '{value}', which names no append-to-archived policy. Use one of: Refuse, AutoRestore, NewGeneration.");
   }
 
   /// <summary>
-  /// Registers both options, bound from the host's configuration and validated when the host starts. Safe to call more
+  /// Registers the three options, bound from the host's configuration and validated when the host starts. Safe to call more
   /// than once: the binders are added once.
   /// </summary>
   /// <param name="services">The service collection.</param>
@@ -77,10 +182,15 @@ internal static class ArchiveOptionsBinder {
   internal static IServiceCollection AddWhizbangArchiveOptions(this IServiceCollection services) {
     services.AddOptions<ArchiveOptions>().ValidateOnStart();
     services.AddOptions<StreamLifecycleOptions>().ValidateOnStart();
+    services.AddOptions<ArchivedStreamRowsOptions>().ValidateOnStart();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<ArchiveOptions>, ArchiveOptionsSetup>(
       sp => new ArchiveOptionsSetup(sp.GetService<IConfiguration>())));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<StreamLifecycleOptions>, StreamLifecycleOptionsSetup>(
       sp => new StreamLifecycleOptionsSetup(sp.GetService<IConfiguration>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<ArchivedStreamRowsOptions>, ArchivedStreamRowsOptionsSetup>(
+      sp => new ArchivedStreamRowsOptionsSetup(sp.GetService<IConfiguration>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<StreamLifecycleOptions>, CloseBooksNeedsAHandler>(
+      sp => new CloseBooksNeedsAHandler(sp)));
     return services;
   }
 
@@ -92,11 +202,34 @@ internal static class ArchiveOptionsBinder {
     }
   }
 
-  private sealed class StreamLifecycleOptionsSetup(IConfiguration? configuration) : IConfigureOptions<StreamLifecycleOptions> {
-    public void Configure(StreamLifecycleOptions options) {
+  private sealed class ArchivedStreamRowsOptionsSetup(IConfiguration? configuration) : IConfigureOptions<ArchivedStreamRowsOptions> {
+    public void Configure(ArchivedStreamRowsOptions options) {
       if (configuration is not null) {
         Bind(configuration, options);
       }
+    }
+  }
+
+  private sealed class StreamLifecycleOptionsSetup(IConfiguration? configuration) : IConfigureOptions<StreamLifecycleOptions> {
+    public void Configure(StreamLifecycleOptions options) {
+      // The [StreamEndOfLife] declarations first, so configuration wins key by key (#1740).
+      Apply(StreamEndOfLifeDeclarations.All(), options);
+      if (configuration is not null) {
+        Bind(configuration, options);
+      }
+    }
+  }
+
+  // #1741: only the domain can write a closing summary and an opening balance, so a type whose action closes the books
+  // with no handler registered could never run; it fails the start instead, naming the types.
+  private sealed class CloseBooksNeedsAHandler(IServiceProvider services) : IValidateOptions<StreamLifecycleOptions> {
+    public ValidateOptionsResult Validate(string? name, StreamLifecycleOptions options) {
+      var closing = options.Types.Where(t => t.Value.Action == StreamLifecycleAction.CloseBooks).Select(t => t.Key).Order(StringComparer.Ordinal).ToList();
+      return closing.Count == 0 || services.GetService<Lifecycle.IBookClosingHandler>() is not null
+        ? ValidateOptionsResult.Success
+        : ValidateOptionsResult.Fail(
+          $"{TYPES_SECTION}:<StreamType>:Action is CloseBooks for {string.Join(", ", closing)}, but no {nameof(Lifecycle.IBookClosingHandler)} " +
+          "is registered; register one, which supplies the closing summary and the opening balance (#1741).");
     }
   }
 }

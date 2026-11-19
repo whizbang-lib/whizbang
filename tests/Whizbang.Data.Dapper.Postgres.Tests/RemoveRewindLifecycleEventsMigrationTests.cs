@@ -189,12 +189,25 @@ public class RemoveRewindLifecycleEventsMigrationTests : IAsyncDisposable {
     await conn.ExecuteAsync(sql);
   }
 
-  /// <summary>Applies the migration the way both drivers do: plain segments once, batched regions until they report zero.</summary>
+  /// <summary>
+  /// Applies the migration the way both drivers do: plain segments once, batched regions until they report zero. A pass
+  /// that runs 210 again runs every file again (its text has no constant, so only a change to every file's hash reruns
+  /// it), so it also runs the retired-table bootstrap first and the drop after (#2345): 210 clears the table the
+  /// bootstrap gives back for the pass, and the drop takes it away again.
+  /// </summary>
   private async Task _runMigrationAsync() {
-    var sql = new PostgresMigrationProvider().GetMigration(MIGRATION)?.Sql
-      ?? throw new InvalidOperationException($"migration {MIGRATION} is not shipped");
+    var provider = new PostgresMigrationProvider();
+    var drop = RetiredReceptorTable.FindDropMigration(provider.GetMigrations().Select(m => m.Name))
+      ?? throw new InvalidOperationException("the retired-table drop migration is not shipped");
     await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
+    await conn.ExecuteAsync(RetiredReceptorTable.BootstrapSql("public", drop, dropMigrationHash: ""));
+    await _applyAsync(conn, provider, MIGRATION);
+    await _applyAsync(conn, provider, drop);
+  }
+
+  private static async Task _applyAsync(NpgsqlConnection conn, PostgresMigrationProvider provider, string name) {
+    var sql = provider.GetMigration(name)?.Sql ?? throw new InvalidOperationException($"migration {name} is not shipped");
     foreach (var segment in MigrationBatchRegions.Segment(sql)) {
       if (segment.Kind == MigrationSegmentKind.Plain) {
         await conn.ExecuteAsync(segment.Sql);

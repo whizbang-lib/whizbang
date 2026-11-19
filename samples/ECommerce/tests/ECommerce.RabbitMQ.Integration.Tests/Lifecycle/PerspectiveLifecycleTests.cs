@@ -92,15 +92,17 @@ public class PerspectiveLifecycleTests {
     // Plumb the test-method CancellationToken through so _waitForLifecycleStageAsync takes
     // the deterministic path (no internal scaled timer race) — the [Timeout] attribute is
     // the single source of truth for the wall-clock budget under CI parallel pressure.
+    var perspectives = _perspectivesFolding<ProductCreatedEvent>(fixture.BffHost);
     var receptorTask = fixture.BffHost.WaitForPrePerspectiveInlineAsync<ProductCreatedEvent>(
       messageFilter: e => e.ProductId == command.ProductId.Value,
+      expectedFirings: perspectives,
       cancellationToken: cancellationToken);
 
     await fixture.Dispatcher.SendAsync(command);
     var receptor = await receptorTask;
 
-    // Assert - Verify receptor was invoked
-    await Assert.That(receptor.InvocationCount).IsEqualTo(1);
+    // Assert - the stage fired once for each perspective that folds the event, and no more
+    await Assert.That(receptor.InvocationCount).IsEqualTo(perspectives);
     await Assert.That(receptor.LastMessage).IsNotNull();
     await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId);
   }
@@ -125,8 +127,11 @@ public class PerspectiveLifecycleTests {
 
     // Act — use OnPerspectiveEventProcessed hook to verify perspective processed the event.
     // If the worker processed it, PrePerspectiveInline must have fired (it fires before processing).
+    // Arm the wait BEFORE sending: it counts only this product's stream, so a fire that
+    // happened before subscribing would be missed rather than substituted by a stale one.
+    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(expectedCompletions: 2, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "bff");
     await fixture.Dispatcher.SendAsync(command);
-    await fixture.WaitForPerspectiveProcessingAsync(expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "bff");
+    await perspectiveTask;
     // The [Timeout(180_000)] above is the test-framework wall-clock budget. The internal
     // 45 s timer above is bounded by WHIZBANG_TEST_TIMEOUT_MULTIPLIER under CI (legacy path
     // — WaitForPerspectiveProcessingAsync doesn't expose a CT yet; out of scope to extend here).
@@ -158,15 +163,17 @@ public class PerspectiveLifecycleTests {
     // Act - Register receptor for ProductCreatedEvent in BFF, filtered to OUR event only
     // (stale event from prior test would otherwise satisfy this wait). CT-driven
     // deterministic wait (see PrePerspectiveInline_FiresBeforePerspectiveProcessing_… for rationale).
+    var perspectives = _perspectivesFolding<ProductCreatedEvent>(fixture.BffHost);
     var receptorTask = fixture.BffHost.WaitForPrePerspectiveDetachedAsync<ProductCreatedEvent>(
       messageFilter: e => e.ProductId == command.ProductId.Value,
+      expectedFirings: perspectives,
       cancellationToken: cancellationToken);
 
     await fixture.Dispatcher.SendAsync(command);
     var receptor = await receptorTask;
 
-    // Assert - Verify receptor was invoked
-    await Assert.That(receptor.InvocationCount).IsEqualTo(1);
+    // Assert - the stage fired once for each perspective that folds the event, and no more
+    await Assert.That(receptor.InvocationCount).IsEqualTo(perspectives);
     await Assert.That(receptor.LastMessage).IsNotNull();
     await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId);
   }
@@ -231,15 +238,17 @@ public class PerspectiveLifecycleTests {
     // Act - Register receptor for ProductCreatedEvent in BFF, filtered to OUR ProductId
     // (stale events from prior tests would otherwise satisfy this wait). CT-driven
     // deterministic wait (see PrePerspectiveInline_FiresBeforePerspectiveProcessing_… for rationale).
+    var perspectives = _perspectivesFolding<ProductCreatedEvent>(fixture.BffHost);
     var receptorTask = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(
       messageFilter: e => e.ProductId == command.ProductId.Value,
+      expectedFirings: perspectives,
       cancellationToken: cancellationToken);
 
     await fixture.Dispatcher.SendAsync(command);
     var receptor = await receptorTask;
 
-    // Assert - Verify receptor was invoked
-    await Assert.That(receptor.InvocationCount).IsEqualTo(1);
+    // Assert - the stage fired once for each perspective that folds the event, and no more
+    await Assert.That(receptor.InvocationCount).IsEqualTo(perspectives);
     await Assert.That(receptor.LastMessage).IsNotNull();
     await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId);
   }
@@ -287,8 +296,9 @@ public class PerspectiveLifecycleTests {
     // CT plumbed through so _waitForLifecycleStageAsync takes the deterministic path
     // (the [Timeout] attribute bounds the wall-clock budget — no internal scaled-timer race).
     bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
-    var postAsyncTask = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(messageFilter: filter, cancellationToken: cancellationToken);
-    var postInlineTask = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(messageFilter: filter, cancellationToken: cancellationToken);
+    var perspectives = _perspectivesFolding<ProductCreatedEvent>(fixture.BffHost);
+    var postAsyncTask = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
+    var postInlineTask = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
 
     // Act - Dispatch command
     await fixture.Dispatcher.SendAsync(command);
@@ -297,8 +307,8 @@ public class PerspectiveLifecycleTests {
     await Task.WhenAll(postAsyncTask, postInlineTask);
 
     // Assert - Both stages should have fired
-    await Assert.That((await postAsyncTask).InvocationCount).IsEqualTo(1);
-    await Assert.That((await postInlineTask).InvocationCount).IsEqualTo(1);
+    await Assert.That((await postAsyncTask).InvocationCount).IsEqualTo(perspectives);
+    await Assert.That((await postInlineTask).InvocationCount).IsEqualTo(perspectives);
 
     // PostPerspectiveInline blocks checkpoint reporting, so if it completed,
     // checkpoint reporting happens AFTER both stages
@@ -407,10 +417,12 @@ public class PerspectiveLifecycleTests {
     // attribute is the single source of truth for the wall-clock budget — no internal
     // scaled-timer races under heavy parallel load.
     bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
-    var preInlineTask = fixture.BffHost.WaitForPrePerspectiveInlineAsync<ProductCreatedEvent>(messageFilter: filter, cancellationToken: cancellationToken);
-    var preAsyncTask = fixture.BffHost.WaitForPrePerspectiveDetachedAsync<ProductCreatedEvent>(messageFilter: filter, cancellationToken: cancellationToken);
-    var postAsyncTask = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(messageFilter: filter, cancellationToken: cancellationToken);
-    var postInlineTask = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(messageFilter: filter, cancellationToken: cancellationToken);
+    // Each perspective stage fires once per perspective that folds the event (fundamentals/receptors/exactly-once-firing).
+    var perspectives = _perspectivesFolding<ProductCreatedEvent>(fixture.BffHost);
+    var preInlineTask = fixture.BffHost.WaitForPrePerspectiveInlineAsync<ProductCreatedEvent>(messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
+    var preAsyncTask = fixture.BffHost.WaitForPrePerspectiveDetachedAsync<ProductCreatedEvent>(messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
+    var postAsyncTask = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
+    var postInlineTask = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
 
     // Act - Dispatch command (event will be processed by ProductCatalog perspective in BFF)
     await fixture.Dispatcher.SendAsync(command);
@@ -419,10 +431,10 @@ public class PerspectiveLifecycleTests {
     await Task.WhenAll(preInlineTask, preAsyncTask, postAsyncTask, postInlineTask);
 
     // Assert - All stages should have been invoked
-    await Assert.That((await preInlineTask).InvocationCount).IsEqualTo(1);
-    await Assert.That((await preAsyncTask).InvocationCount).IsEqualTo(1);
-    await Assert.That((await postAsyncTask).InvocationCount).IsEqualTo(1);
-    await Assert.That((await postInlineTask).InvocationCount).IsEqualTo(1);
+    await Assert.That((await preInlineTask).InvocationCount).IsEqualTo(perspectives);
+    await Assert.That((await preAsyncTask).InvocationCount).IsEqualTo(perspectives);
+    await Assert.That((await postAsyncTask).InvocationCount).IsEqualTo(perspectives);
+    await Assert.That((await postInlineTask).InvocationCount).IsEqualTo(perspectives);
   }
 
   /// <summary>
@@ -499,9 +511,23 @@ public class PerspectiveLifecycleTests {
 
     // Act - Use hook to wait for 3 inventory perspective events.
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
   }
 
+
+  /// <summary>
+  /// How many of the host's perspectives fold <typeparamref name="TEvent"/>: the number of times each perspective stage
+  /// fires for one such event, one per perspective. Read from the host's own runner registry, never counted by hand.
+  /// </summary>
+  private static int _perspectivesFolding<TEvent>(Microsoft.Extensions.Hosting.IHost host) where TEvent : Whizbang.Core.IEvent {
+    var eventType = Whizbang.Core.TypeNameFormatter.Format(typeof(TEvent));
+    var count = host.Services.GetRequiredService<Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry>()
+      .GetRegisteredPerspectives()
+      .Count(p => p.EventTypes.Contains(eventType, StringComparer.Ordinal));
+    return count > 0
+      ? count
+      : throw new InvalidOperationException($"No perspective of the host folds {eventType}; the stage counts would prove nothing.");
+  }
 }

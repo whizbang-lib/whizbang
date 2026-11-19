@@ -15,8 +15,8 @@ namespace Whizbang.Core.Perspectives;
 /// through the ordinary failure path, and its events are redelivered.
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowVersionTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowConflictRetryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowVersionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowConflictRetryTests.cs</tests>
 public sealed class PerspectiveRowConflictException : Exception {
   /// <summary>Initializes a new instance with a default message.</summary>
   public PerspectiveRowConflictException()
@@ -53,7 +53,7 @@ public sealed class PerspectiveRowConflictException : Exception {
   private static string _describe(
       Type modelType, Guid streamId, PerspectiveRowVersion expectedVersion, PerspectiveRowVersion actualVersion) {
     ArgumentNullException.ThrowIfNull(modelType);
-    return $"The {modelType.Name} perspective row for stream {streamId} changed after it was read for apply "
+    return $"The {TypeNameFormatter.ForLog(modelType)} perspective row for stream {streamId} changed after it was read for apply "
       + $"(version read: {expectedVersion}; version now: {actualVersion}). The write was refused so it cannot "
       + "overwrite the newer row; the apply re-reads the row and re-applies its events.";
   }

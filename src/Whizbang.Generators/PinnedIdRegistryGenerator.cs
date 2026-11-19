@@ -167,7 +167,10 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("  /// </summary>");
     source.AppendLine("  public static IServiceCollection AddPinnedIdRegistry(");
     source.AppendLine("      this IServiceCollection services) {");
-    source.AppendLine("    services.AddSingleton<IPinnedIdRegistry, GeneratedPinnedIdRegistry>();");
+    // #2198: a contribution to the one registry the host serves, never the registry itself. Whizbang.Core pins types
+    // too, so every host has at least two of these registrations, and a plain AddSingleton kept only one.
+    source.AppendLine("    global::Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton<GeneratedPinnedIdRegistry>(services);");
+    source.AppendLine("    global::Whizbang.Core.PinnedIdRegistryServiceCollectionExtensions.AddPinnedIdRegistryContribution<GeneratedPinnedIdRegistry>(services);");
     source.AppendLine("    return services;");
     source.AppendLine("  }");
     source.AppendLine("}");
@@ -179,10 +182,11 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("/// automatically with no explicit call from the consumer.");
     source.AppendLine("/// </summary>");
     source.AppendLine("internal static class PinnedIdRegistryModuleInitializer {");
-    source.AppendLine("  [System.Runtime.CompilerServices.ModuleInitializer]");
+    source.AppendLine("  [global::System.Runtime.CompilerServices.ModuleInitializer]");
     source.AppendLine("  internal static void Initialize() {");
-    source.AppendLine("    ServiceRegistrationCallbacks.PinnedIdRegistry = static services =>");
-    source.AppendLine("      services.AddSingleton<IPinnedIdRegistry, GeneratedPinnedIdRegistry>();");
+    // #2243: named by this assembly, so a host replays only its own service's registrations
+    source.AppendLine($"    ServiceRegistrationCallbacks.RegisterPinnedIdRegistry({ServiceAssemblyFactsGenerator.Literal(assemblyName)}, static services =>");
+    source.AppendLine("      PinnedIdRegistryExtensions.AddPinnedIdRegistry(services));");
     source.AppendLine("  }");
     source.AppendLine("}");
 

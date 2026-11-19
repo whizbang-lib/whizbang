@@ -31,7 +31,7 @@ namespace Whizbang.Core.SystemEvents;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/system-events#emitter</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs</tests>
 internal static class DefaultSystemEventEmitter {
   /// <summary>Registers the default emitter unless an emitter is already registered.</summary>
   /// <param name="services">The service collection.</param>
@@ -44,8 +44,8 @@ internal static class DefaultSystemEventEmitter {
   /// </summary>
   /// <param name="serviceProvider">The root service provider.</param>
   /// <returns>The emitter to register.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs:Create_WhenTheProviderCannotSayWhetherAStoreIsRegistered_ReturnsTheNullEmitterAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs:AddWhizbang_WithNoEventStore_KeepsTheNullEmitterAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs:Create_WhenTheProviderCannotSayWhetherAStoreIsRegistered_ReturnsTheNullEmitterAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs:AddWhizbang_WithNoEventStore_KeepsTheNullEmitterAsync</tests>
   internal static ISystemEventEmitter Create(IServiceProvider serviceProvider) {
     if (serviceProvider.GetService<IServiceProviderIsService>()?.IsService(typeof(IEventStore)) != true) {
       return new NullSystemEventEmitter();
@@ -55,6 +55,8 @@ internal static class DefaultSystemEventEmitter {
       serviceProvider.GetRequiredService<IOptions<SystemEventOptions>>(),
       new ScopePerAppendSystemEventSink(serviceProvider.GetRequiredService<IServiceScopeFactory>()),
       serviceProvider.GetRequiredService<IServiceInstanceProvider>(),
-      serviceProvider.GetRequiredService<ILogger<SystemEventEmitter>>());
+      serviceProvider.GetRequiredService<ILogger<SystemEventEmitter>>(),
+      // A singleton built once from the catalog, so the emitter holds no scoped service by holding it.
+      serviceProvider.GetService<IEphemeralModeResolver>());
   }
 }

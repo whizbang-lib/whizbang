@@ -21,6 +21,7 @@ SoftwareExtravaganza.Whizbang.Migrate
 SoftwareExtravaganza.Whizbang.Observability
 SoftwareExtravaganza.Whizbang.Offloads.AzureBlob
 SoftwareExtravaganza.Whizbang.Offloads.InMemory
+SoftwareExtravaganza.Whizbang.Rules
 SoftwareExtravaganza.Whizbang.Sagas
 SoftwareExtravaganza.Whizbang.Sagas.Contracts
 SoftwareExtravaganza.Whizbang.Sagas.Generators

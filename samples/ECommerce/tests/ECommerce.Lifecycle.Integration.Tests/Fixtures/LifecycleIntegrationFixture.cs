@@ -24,6 +24,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
@@ -155,10 +156,6 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
       new TestRoutingStrategy(_testId));
 
     // Database readiness (schema created before host starts)
-    // Clear static callbacks to avoid contamination from other assemblies
-    ServiceRegistrationCallbacks.Dispatcher = null;
-    ServiceRegistrationCallbacks.PerspectiveServices = null;
-
     // Explicitly call module initializer (may not run automatically in test context)
     Generated.GeneratedModelRegistration.Initialize();
 
@@ -172,7 +169,6 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
     builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
 
     // Generated registrations (receptors, dispatcher, lifecycle deserializer)
-    builder.Services.AddReceptors();
     builder.Services.AddWhizbangLifecycleMessageDeserializer();
     builder.Services.AddSingleton<IEventTypeProvider, MockEventTypeProvider>();
 
@@ -183,9 +179,6 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
     // Topic registry
     builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRegistry>(
       new Generated.TopicRegistry());
-
-    // Dispatcher
-    builder.Services.AddWhizbangDispatcher();
 
     // Perspective stores (manual registration to avoid ModelRegistrationRegistry issues)
     _registerPerspectiveStore<MockBatchModelA>(builder.Services, "wh_per_mock_batch_model_a");
@@ -226,7 +219,7 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
     });
 
     // Background workers
-    builder.Services.AddHostedService<PerspectiveWorker>();
+    // AddWhizbang() hosts the perspective worker, starting at Accept commands.
 
     // RabbitMQ consumer with test-specific routing
     var consumerOptions = new TransportConsumerOptions();
@@ -243,7 +236,7 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
         ["SubscriberName"] = JsonElement.Parse("\"lifecycle-test\"")
       }));
     builder.Services.AddSingleton(consumerOptions);
-    builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
+    builder.Services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp =>
       new TransportConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         options: consumerOptions,
@@ -254,7 +247,6 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
         metrics: sp.GetService<TransportMetrics>(),
         logger: sp.GetRequiredService<ILogger<TransportConsumerWorker>>(),
         serviceInstanceProvider: sp.GetRequiredService<IServiceInstanceProvider>(),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         routingOptions: Options.Create(new RoutingOptions()),
         workChannelWriter: new WorkChannelWriter(),
         claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),

@@ -42,9 +42,9 @@ namespace Whizbang.Core.Messaging;
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleContextFlagsTests.cs:IsReplay_ReplayProcessingMode_ReturnsTrueAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleContextFlagsTests.cs:IsNewEvent_DefaultsToTrueAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleContextTests.cs:Receptor_WithLifecycleContext_CanAccessContextPropertiesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/LifecycleContextFlagsTests.cs:IsReplay_ReplayProcessingMode_ReturnsTrueAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/LifecycleContextFlagsTests.cs:IsNewEvent_DefaultsToTrueAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/LifecycleContextTests.cs:Receptor_WithLifecycleContext_CanAccessContextPropertiesAsync</tests>
 public interface ILifecycleContext {
   /// <summary>
   /// Gets the current lifecycle stage at which the receptor is being invoked.
@@ -174,4 +174,12 @@ public interface ILifecycleContext {
   /// </remarks>
   /// <docs>fundamentals/receptors/lifecycle-receptors#replay-safety</docs>
   bool IsNewEvent => true;
+
+  /// <summary>
+  /// <c>true</c> when the invocation handles a repaired event (a stream-integrity redelivery) that this service can
+  /// prove it never handled. Only receptors declared <see cref="RunOnRepairAttribute"/> run for it (#2273). False for
+  /// every other delivery.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  bool IsRepair => false;
 }

@@ -574,6 +574,21 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     await Assert.That(remaining).IsEqualTo(2L);
   }
 
+  [Test]
+  public async Task GetPendingInboxMessageTypesAsync_ReturnsTheDistinctTypesOfPendingUnleasedRowsAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openConnectionAsync(dbContext);
+    await _insertInboxRowAsync(connection, Guid.NewGuid(), "Pending.Type", Guid.NewGuid());
+    await _insertInboxRowAsync(connection, Guid.NewGuid(), "Pending.Type", Guid.NewGuid());
+    await _insertInboxRowAsync(connection, Guid.NewGuid(), "Other.Type", Guid.NewGuid());
+    await _insertInboxRowAsync(connection, Guid.NewGuid(), "Leased.Type", Guid.NewGuid(), instanceId: Guid.NewGuid());
+
+    var types = await _createCoordinator(dbContext).GetPendingInboxMessageTypesAsync();
+
+    await Assert.That(types).IsEquivalentTo(["Other.Type", "Pending.Type"])
+      .Because("the rows the purge may delete: pending and unleased, each type once (a leased row is in-flight work)");
+  }
+
   // --------------------------------------------------------------------------
   // Helpers
   // --------------------------------------------------------------------------

@@ -139,8 +139,8 @@ public class RoslynGuardsTests {
     ";
     var tree = CSharpSyntaxTree.ParseText(source);
     var compilation = CSharpCompilation.Create("Test")
-        .AddReferences(MetadataReference.CreateFromFile(typeof(object).Assembly.Location))
-        .AddReferences(MetadataReference.CreateFromFile(typeof(Guid).Assembly.Location))
+        .AddReferences(SharedMetadataReferences.FromFile(typeof(object).Assembly.Location))
+        .AddReferences(SharedMetadataReferences.FromFile(typeof(Guid).Assembly.Location))
         .AddSyntaxTrees(tree);
     var semanticModel = compilation.GetSemanticModel(tree);
     var propertyDeclaration = (await tree.GetRootAsync()).DescendantNodes().OfType<PropertyDeclarationSyntax>().First();
@@ -166,8 +166,8 @@ public class RoslynGuardsTests {
     ";
     var tree = CSharpSyntaxTree.ParseText(source);
     var compilation = CSharpCompilation.Create("Test")
-        .AddReferences(MetadataReference.CreateFromFile(typeof(object).Assembly.Location))
-        .AddReferences(MetadataReference.CreateFromFile(typeof(Guid).Assembly.Location))
+        .AddReferences(SharedMetadataReferences.FromFile(typeof(object).Assembly.Location))
+        .AddReferences(SharedMetadataReferences.FromFile(typeof(Guid).Assembly.Location))
         .AddSyntaxTrees(tree);
     var semanticModel = compilation.GetSemanticModel(tree);
     var propertyDeclaration = (await tree.GetRootAsync()).DescendantNodes().OfType<PropertyDeclarationSyntax>().First();

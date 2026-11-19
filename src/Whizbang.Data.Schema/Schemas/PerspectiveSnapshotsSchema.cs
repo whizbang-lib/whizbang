@@ -78,6 +78,14 @@ public static class PerspectiveSnapshotsSchema {
         Name: Columns.ARCHIVED_THROUGH_VERSION,
         DataType: WhizbangDataType.BIG_INT,
         Nullable: true
+      ),
+      // The commit sequence through which the row's collectives were complete when the snapshot was taken (#1963): a
+      // replay from it folds the collectives past it. NULL on a snapshot taken before the mark existed, which keeps the
+      // snapshot-event rule. Not indexed: read with the snapshot, never searched by. Mig 275 adds it on existing databases.
+      new ColumnDefinition(
+        Name: Columns.COLLECTIVES_THROUGH_SEQUENCE,
+        DataType: WhizbangDataType.BIG_INT,
+        Nullable: true
       )
     ),
     Indexes: [
@@ -118,5 +126,7 @@ public static class PerspectiveSnapshotsSchema {
     public const string SNAPSHOT_VERSION = "snapshot_version";
     /// <summary>How far an archive of the stream reaches, when one covers this snapshot (#1738).</summary>
     public const string ARCHIVED_THROUGH_VERSION = "archived_through_version";
+    /// <summary>The commit sequence through which the row's collectives were complete when the snapshot was taken (#1963).</summary>
+    public const string COLLECTIVES_THROUGH_SEQUENCE = "collectives_through_sequence";
   }
 }

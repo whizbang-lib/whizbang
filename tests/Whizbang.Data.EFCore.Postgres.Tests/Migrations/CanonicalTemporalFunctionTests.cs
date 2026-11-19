@@ -51,12 +51,7 @@ public class CanonicalTemporalFunctionTests : IAsyncDisposable {
   [Before(Test)]
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
-    _databaseName = $"forms_{Guid.NewGuid():N}";
-    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
-      await admin.OpenAsync();
-      await using var create = new NpgsqlCommand($"CREATE DATABASE {_databaseName}", admin);
-      await create.ExecuteNonQueryAsync();
-    }
+    _databaseName = (await PerTestDatabaseFactory.CreateAsync("forms")).Name;
     _connectionString = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _databaseName,
       // Deliberately not UTC: a rendering with no zone must still be read as UTC by the function
@@ -73,14 +68,7 @@ public class CanonicalTemporalFunctionTests : IAsyncDisposable {
   [After(Test)]
   public async ValueTask DisposeAsync() {
     if (_databaseName is not null) {
-      try {
-        await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await admin.OpenAsync();
-        await using var drop = new NpgsqlCommand($"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)", admin);
-        await drop.ExecuteNonQueryAsync();
-      } catch (NpgsqlException) {
-        // The container is torn down with the run; a database left behind costs nothing.
-      }
+      await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
     GC.SuppressFinalize(this);
   }

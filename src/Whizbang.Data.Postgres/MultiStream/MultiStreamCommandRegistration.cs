@@ -12,6 +12,7 @@ using Whizbang.Core.Commands.System;
 using Whizbang.Core.MultiStream;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres.Notifications;
 
@@ -26,7 +27,7 @@ namespace Whizbang.Data.Postgres.MultiStream;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandPostgresRegistrationTests.cs:AHandlerRegisteredBeforeTheDriver_StillGetsThePostgresStoreAsync</tests>
 internal static class MultiStreamCommandRegistration {
   /// <summary>The notifications path: the store opens connections as the notification stores do, and the worker is woken
-  /// by new-run notices on the shared listen connection.</summary>
+  /// by new-run notices on the signal bus.</summary>
   internal static IServiceCollection AddWhizbangMultiStreamCommands(this IServiceCollection services) {
     services.TryAddSingletonOverNullDefault<IMultiStreamCommandStore, PgMultiStreamCommandStore>();
     _addWorker(services);
@@ -61,18 +62,21 @@ internal static class MultiStreamCommandRegistration {
       return;
     }
     services.AddSingleton<MultiStreamCommandWorker>();
-    services.AddHostedService(sp => sp.GetRequiredService<MultiStreamCommandWorker>());
+    services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp => sp.GetRequiredService<MultiStreamCommandWorker>());
   }
 }
 
-/// <summary>Subscribes the worker to new-run notices on the instance's shared listen connection.</summary>
+/// <summary>Subscribes the worker to new-run notices on the signal bus (#2046).</summary>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#worker</docs>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandPostgresRegistrationTests.cs:Subscriber_SubscribesTheWorkerToNewRunNoticesUntilStoppedAsync</tests>
-internal sealed class MultiStreamCommandSubscriber(ISharedNotifyConnection connection, MultiStreamCommandWorker worker) : IHostedService {
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandPostgresRegistrationTests.cs:Subscriber_SubscribesTheWorkerToNewRunSignalsOnTheBusUntilStoppedAsync</tests>
+internal sealed class MultiStreamCommandSubscriber(Whizbang.Core.Signals.ISignalBus bus, MultiStreamCommandWorker worker) : IHostedService {
   private IDisposable? _subscription;
 
   public Task StartAsync(CancellationToken cancellationToken) {
-    _subscription = connection.Subscribe(worker);
+    _subscription = bus.Subscribe<Whizbang.Core.Signals.MultiStreamWorkSignal>(_ => {
+      worker.RequestImmediateRun();
+      return ValueTask.CompletedTask;
+    });
     return Task.CompletedTask;
   }
 

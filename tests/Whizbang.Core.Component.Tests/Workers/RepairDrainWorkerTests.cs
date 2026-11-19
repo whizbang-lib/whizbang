@@ -8,7 +8,9 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
@@ -26,8 +28,7 @@ namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
 /// The paced repair drain's tick, deterministically: token pacing gates the claim budget,
-/// claimed rows dispatch grouped per (origin, tenant, type) with the union of their stamped
-/// windows, pre-stamp rows widen to whole history, and unlearned origins are never claimed —
+/// claimed rows dispatch grouped per (origin, tenant, type, window), pre-stamp rows ask for whole history, and unlearned origins are never claimed:
 /// no attempt budget burns on a request that could not leave the process.
 /// </summary>
 /// <docs>proposals/paced-repair-drain</docs>
@@ -40,9 +41,13 @@ namespace Whizbang.Core.Tests.Workers;
 /// </remarks>
 [NotInParallel(Order = 106)]
 public class RepairDrainWorkerTests {
+  // A fixed instant: these tests pass "now" explicitly, so it never needs the real clock.
+  private static readonly DateTimeOffset _fixedNow = new(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
+
 
   [Test]
-  public async Task DrainTick_DispatchesGroupedPerType_WithTheUnionWindowAsync() {
+  public async Task DrainTick_DispatchesGroupedPerTypeAndWindow_NeverWideningAStreamPastItsOwnWindowAsync() {
+    // #2034: the union of a group's windows re-shipped every stream over the widest range any row of the group had.
     var origin = TrackedGuid.New().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,
@@ -51,25 +56,211 @@ public class RepairDrainWorkerTests {
     var s1 = TrackedGuid.New().Value;
     var s2 = TrackedGuid.New().Value;
     var s3 = TrackedGuid.New().Value;
+    var s4 = TrackedGuid.New().Value;
     coordinator.Eligible.AddRange([
       new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", s1, 100, 500),
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", s2, 200, 600),
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeB", s3, 300, 700),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", s2, 100, 500),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", s3, 200, 600),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeB", s4, 300, 700),
     ]);
 
     await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
 
-    await Assert.That(transport.Published.Count).IsEqualTo(2)
-      .Because("three rows in two (origin, tenant, type) groups → two directed requests");
+    await Assert.That(transport.Published.Count).IsEqualTo(3)
+      .Because("four rows in three (origin, tenant, type, window) groups → three directed requests");
+    await Assert.That(transport.Published.All(p =>
+        Whizbang.Core.Transports.ControlMessageTtl.FromMetadata(p.Destination.Metadata) == TimeSpan.FromMinutes(60))).IsTrue()
+      .Because("#2078: a paced repair request expires at the broker");
     var typeA = transport.Published
       .Select(p => _deserializeRedelivery(p.Envelope))
-      .Single(r => r.EventTypes!.Contains("Contracts.TypeA"));
-    await Assert.That(typeA.StreamIds!.Count).IsEqualTo(2)
-      .Because("one request carries the whole group's stream set");
-    await Assert.That(typeA.FromCommitSequence).IsEqualTo(99L)
-      .Because("the group's union window, exclusive floor — exactly the burst path's conversion");
-    await Assert.That(typeA.ToCommitSequence).IsEqualTo(599L)
-      .Because("inclusive ceiling of the union window");
+      .Where(r => r.EventTypes!.Contains("Contracts.TypeA"))
+      .ToList();
+    var shared = typeA.Single(r => r.StreamIds!.Count == 2);
+    await Assert.That(shared.StreamIds).IsEquivalentTo([s1, s2])
+      .Because("rows that disagreed over the same window share one request");
+    await Assert.That(shared.FromCommitSequence).IsEqualTo(99L)
+      .Because("the group's window, exclusive floor, exactly the burst path's conversion");
+    await Assert.That(shared.ToCommitSequence).IsEqualTo(499L)
+      .Because("inclusive ceiling of the group's own window, not the widest in the type");
+    var own = typeA.Single(r => r.StreamIds!.Count == 1);
+    await Assert.That(own.FromCommitSequence).IsEqualTo(199L);
+    await Assert.That(own.ToCommitSequence).IsEqualTo(599L);
+    await Assert.That(typeA.All(r => r.AcceptsStreamSpanningBundles)).IsTrue()
+      .Because("#2268: a requester of this release files each child under its own stream, so its answer may span streams");
+  }
+
+  /// <summary>
+  /// #2365: a deficit row keeps the trace of the comparison that recorded it, and the drain's request starts in that
+  /// trace, so the origin's answer and the repair join the audit that found the gap. A group whose first row names no
+  /// trace starts a trace of its own.
+  /// </summary>
+  [Test]
+  public async Task DrainTick_ARequestStartsInTheTraceOfTheAuditThatRecordedItsRowAsync() {
+    var spans = new System.Collections.Concurrent.ConcurrentBag<System.Diagnostics.Activity>();
+    using var listener = new System.Diagnostics.ActivityListener {
+      ShouldListenTo = s => s.Name == IntegrityTracing.SOURCE_NAME,
+      Sample = (ref _) => System.Diagnostics.ActivitySamplingResult.AllDataAndRecorded,
+      ActivityStopped = spans.Add,
+    };
+    System.Diagnostics.ActivitySource.AddActivityListener(listener);
+    System.Diagnostics.Activity.Current = null;
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+    }, origin, learnTopic: true);
+    var auditTrace = System.Diagnostics.ActivityTraceId.CreateRandom();
+    var auditSpan = System.Diagnostics.ActivitySpanId.CreateRandom();
+    var askId = TrackedGuid.New().Value;
+    coordinator.Eligible.AddRange([
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500,
+        TraceParent: $"00-{auditTrace}-{auditSpan}-01", TraceRequestId: askId),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeB", TrackedGuid.New().Value, 100, 500),
+    ]);
+
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
+
+    var requests = transport.Published.ConvertAll(p => _deserializeRedelivery(p.Envelope));
+    var traced = requests.Single(r => r.EventTypes!.Contains("Contracts.TypeA"));
+    await Assert.That(System.Diagnostics.ActivityContext.Parse(traced.TraceParent!, null).TraceId).IsEqualTo(auditTrace)
+      .Because("the request carries a span in the audit's trace, so the origin's answer and the repair join it");
+    var span = spans.Single(s => (string?)s.GetTagItem(IntegrityTracing.ATTR_REQUEST_ID) == traced.RequestId.ToString());
+    await Assert.That(span.ParentSpanId).IsEqualTo(auditSpan).Because("the drain's request is the audit's child");
+    await Assert.That(span.GetTagItem(IntegrityTracing.ATTR_KIND)).IsEqualTo(IntegrityTracing.KIND_DRAIN);
+    var untraced = requests.Single(r => r.EventTypes!.Contains("Contracts.TypeB"));
+    await Assert.That(System.Diagnostics.ActivityContext.Parse(untraced.TraceParent!, null).TraceId).IsNotEqualTo(auditTrace)
+      .Because("a row recorded with no trace starts a trace of its own");
+  }
+
+  [Test]
+  public async Task DrainOnce_RunsOneTickWithAFullBucket_NowAsync() {
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+    }, origin, learnTopic: true);
+    coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
+
+    var foundWork = await worker.DrainOnceAsync(CancellationToken.None);
+
+    await Assert.That(foundWork).IsTrue();
+    await Assert.That(transport.Published.Count).IsEqualTo(1).Because("no elapsed time is needed: the bucket starts full");
+  }
+
+  [Test]
+  public async Task DrainTick_ARowThatNamesItsMissingEvent_AsksForThatEventOnly_ApartFromWholeStreamRowsAsync() {
+    // #2103: a bucket missing exactly one event records that event's id; its request names it, so the owner ships
+    // one event instead of the stream. Rows that name none still ask for their streams over the window, separately,
+    // because an id list narrows a request to those ids.
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+    }, origin, learnTopic: true);
+    var named = TrackedGuid.New().Value;
+    var missing = TrackedGuid.New().Value;
+    var whole = TrackedGuid.New().Value;
+    coordinator.Eligible.AddRange([
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", named, 100, 500, missing),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", whole, 100, 500),
+    ]);
+
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
+
+    var requests = transport.Published.ConvertAll(p => _deserializeRedelivery(p.Envelope));
+    await Assert.That(requests.Count).IsEqualTo(2);
+    var one = requests.Single(r => r.EventIds is { Count: > 0 });
+    await Assert.That(one.EventIds).IsEquivalentTo([missing]);
+    await Assert.That(one.StreamIds).IsEquivalentTo([named])
+      .Because("the stream and window stay on the request, so an owner that cannot name the event answers the range");
+    await Assert.That(one.FromCommitSequence).IsEqualTo(99L);
+    var rest = requests.Single(r => r.EventIds is null);
+    await Assert.That(rest.StreamIds).IsEquivalentTo([whole]);
+  }
+
+  [Test]
+  public async Task DrainTick_MarksTheDispatchedBucketsAnswerPending_AndWithdrawsAGroupWhoseSendFailedAsync() {
+    // #2029: a bucket whose request left is not claimed again while its answer is on the way. #2223: every group is
+    // recorded before it is sent, and a group whose send failed never asked, so its record is withdrawn.
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+      RepairAnswerTimeoutMinutes = 45,
+    }, origin, learnTopic: true);
+    transport.FailFirst = 1;
+    var failed = TrackedGuid.New().Value;
+    var sent = TrackedGuid.New().Value;
+    coordinator.Eligible.AddRange([
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", failed, 100, 500),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeB", sent, 300, 700),
+    ]);
+    var now = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+
+    await worker.DrainTickAsync(1.0, now, CancellationToken.None);
+
+    await Assert.That(coordinator.PendingMarks.Count).IsEqualTo(2)
+      .Because("each group is recorded as awaiting its answer before its request is sent");
+    await Assert.That(coordinator.Withdrawals.Count).IsEqualTo(1);
+    var withdrawal = coordinator.Withdrawals[0];
+    await Assert.That(withdrawal.Keys.Select(k => k.StreamId)).IsEquivalentTo([failed])
+      .Because("only the group whose send failed is taken back");
+    await Assert.That(withdrawal.Origin).IsEqualTo(origin);
+    await Assert.That(withdrawal.Now).IsEqualTo(now);
+    await Assert.That(withdrawal.Timeout).IsEqualTo(TimeSpan.FromMinutes(45))
+      .Because("the withdrawal names the record the mark made, so it cannot take back a later one");
+    await Assert.That(coordinator.PendingKeys.Select(k => k.StreamId)).IsEquivalentTo([sent]);
+    var mark = coordinator.PendingMarks.Single(m => m.Keys[0].StreamId == sent);
+    await Assert.That(mark.Keys.Select(k => k.StreamId)).IsEquivalentTo([sent]);
+    await Assert.That(mark.Keys[0].TenantScope).IsEqualTo("tenant-a");
+    await Assert.That(mark.Keys[0].EventType).IsEqualTo("Contracts.TypeB");
+    await Assert.That(mark.Origin).IsEqualTo(origin);
+    await Assert.That(mark.Now).IsEqualTo(now);
+    await Assert.That(mark.Timeout).IsEqualTo(TimeSpan.FromMinutes(45));
+  }
+
+  [Test]
+  public async Task DrainTick_NothingSent_LeavesNothingPendingAsync() {
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+    }, origin, learnTopic: true);
+    transport.FailFirst = 1;
+    coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
+
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
+
+    await Assert.That(coordinator.PendingKeys).IsEmpty()
+      .Because("the one request recorded before its send was withdrawn when the send failed");
+    await Assert.That(coordinator.Withdrawals.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task DrainTick_RecordsTheAnswerPending_BeforeTheRequestLeaves_SoAnAnswerThatOutrunsThePublishIsKeptAsync() {
+    // #2223: the origin may answer before the publish call returns (a fast origin, or this host's continuation delayed
+    // under load). An answer clears the bucket's wait; a mark written after it would put the wait back, and the bucket
+    // would count against the outstanding-answer cap until the answer timeout. The fake answers inside the publish.
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+    }, origin, learnTopic: true);
+    var stream = TrackedGuid.New().Value;
+    coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", stream, 100, 500));
+    var marksWhenPublished = -1;
+    transport.OnPublish = () => {
+      marksWhenPublished = coordinator.PendingMarks.Count;
+      coordinator.Answer(stream);
+    };
+
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
+
+    await Assert.That(marksWhenPublished).IsEqualTo(1)
+      .Because("the bucket is recorded as awaiting its answer before the request can reach the origin");
+    await Assert.That(coordinator.PendingKeys).IsEmpty()
+      .Because("the answer that landed inside the publish stands; nothing after it records the bucket as waiting again");
+    await Assert.That(coordinator.Withdrawals).IsEmpty();
   }
 
   [Test]
@@ -186,30 +377,37 @@ public class RepairDrainWorkerTests {
   }
 
   [Test]
-  public async Task DrainTick_PreStampRows_WidenTheAskToWholeHistoryAsync() {
+  public async Task DrainTick_PreStampRows_AskForWholeHistory_WithoutWideningTheirWindowedNeighborsAsync() {
+    // Before #2034 a pre-stamp row widened its whole group, windowed rows included, to whole history.
     var origin = TrackedGuid.New().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
       RepairMode = IntegrityRepairMode.AutoRepairCapped,
       RepairDrainRatePerSecond = 10,
     }, origin, learnTopic: true);
+    var windowed = TrackedGuid.New().Value;
+    var preStamp = TrackedGuid.New().Value;
     coordinator.Eligible.AddRange([
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500),
-      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, null, null),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", windowed, 100, 500),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", preStamp, null, null),
     ]);
 
     await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None);
 
-    var request = _deserializeRedelivery(transport.Published.Single().Envelope);
-    await Assert.That(request.FromCommitSequence).IsNull()
-      .Because("a pre-stamp row in the group means the compared range is unknown — whole history, the legacy semantics");
-    await Assert.That(request.ToCommitSequence).IsNull();
+    var requests = transport.Published.ConvertAll(p => _deserializeRedelivery(p.Envelope));
+    var whole = requests.Single(r => r.StreamIds!.Contains(preStamp));
+    await Assert.That(whole.FromCommitSequence).IsNull()
+      .Because("a pre-stamp row's compared range is unknown: whole history, the legacy semantics");
+    await Assert.That(whole.ToCommitSequence).IsNull();
+    var bounded = requests.Single(r => r.StreamIds!.Contains(windowed));
+    await Assert.That(bounded.FromCommitSequence).IsEqualTo(99L).Because("its neighbor's unknown range does not widen it");
+    await Assert.That(bounded.ToCommitSequence).IsEqualTo(499L);
   }
 
 
   // ── ExecuteAsync: the paced loop itself ───────────────────────────────────
 
   private static (RepairDrainWorker Worker, DrainCoordinator Coordinator) _buildForLoop(
-      StreamIntegrityOptions options, TimeProvider clock, ISchemaReadyGate gate) {
+      StreamIntegrityOptions options, TimeProvider clock) {
     var coordinator = new DrainCoordinator();
     var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
@@ -229,7 +427,6 @@ public class RepairDrainWorkerTests {
     var sp = services.BuildServiceProvider();
     var worker = new RepairDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(options),
       NullLogger<RepairDrainWorker>.Instance,
       clock);
@@ -244,8 +441,7 @@ public class RepairDrainWorkerTests {
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, _) = _buildForLoop(
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = false },
-      clock,
-      SchemaReadyGate.AlreadyReady());
+      clock);
 
     await worker.StartAsync(CancellationToken.None);
 
@@ -265,48 +461,13 @@ public class RepairDrainWorkerTests {
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, _) = _buildForLoop(
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = true, RepairDrainRatePerSecond = rate },
-      clock,
-      SchemaReadyGate.AlreadyReady());
+      clock);
 
     await worker.StartAsync(CancellationToken.None);
 
     await Assert.That(worker.ExecuteTask!.IsCompleted).IsFalse();
 
     await worker.StopAsync(CancellationToken.None);
-  }
-
-  [Test]
-  public async Task ExecuteAsync_ShutdownBeforeTheSchemaIsReady_ExitsQuietlyAsync() {
-    // The worker parks on the schema gate at startup. A pod stopped while still waiting has no
-    // schema to drain against, so the exit must be silent rather than an error on every fast
-    // restart.
-    //
-    // The gate reports when the body reaches it, and the test stops only after that. On .NET 10
-    // the base class dispatches ExecuteAsync through Task.Run: StartAsync returning proves only
-    // that the body was scheduled, and a work item dequeued after the stopping token is canceled
-    // never invokes the delegate at all. A bare "StopAsync did not throw" would then pass for a
-    // worker that never ran, never parked, and never exercised the catch this test is about.
-    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
-    var gate = new BlockingGate();
-    var (worker, coordinator) = _buildForLoop(
-      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = true, RepairDrainRatePerSecond = 1 },
-      clock,
-      gate);   // never marked ready
-
-    await worker.StartAsync(CancellationToken.None);
-    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
-
-    await Assert.That(async () => await worker.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10)))
-      .ThrowsNothing();
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    await Assert.That(worker.ExecuteTask!.IsCompleted).IsTrue()
-      .Because("a canceled gate wait must settle the hosted service rather than hang shutdown");
-    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
-      .Because("a pod stopped mid-migration is an ordinary deploy, not a crash to report");
-    await Assert.That(coordinator.ClaimCalls).Count().IsEqualTo(0)
-      .Because("the catch must end the run: falling through into the drain loop would claim "
-             + "repair rows out of tables the migration may not have created");
   }
 
   [Test]
@@ -317,8 +478,7 @@ public class RepairDrainWorkerTests {
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, coordinator) = _buildForLoop(
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = true, RepairDrainRatePerSecond = 1 },
-      clock,
-      SchemaReadyGate.AlreadyReady());
+      clock);
 
     await worker.StartAsync(CancellationToken.None);
 
@@ -338,10 +498,256 @@ public class RepairDrainWorkerTests {
     await worker.StopAsync(CancellationToken.None);
   }
 
+  // ── #2184: the outstanding-answer cap ──────────────────────────────────
+
+  [Test]
+  public async Task DrainTick_AtTheOutstandingAnswerCap_ClaimsNothing_AndSaysSoOnceAsync() {
+    // Answers can land hours after their requests, so the request rate alone does not bound the load a burst of late
+    // answers puts on this service's store; the count of buckets still awaiting an answer does.
+    var origin = TrackedGuid.New().Value;
+    var logger = new FakeLogger<RepairDrainWorker>();
+    var (metrics, holdCount, listener) = _metrics();
+    using var listening = listener;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+      MaxOutstandingRepairAnswers = 500,
+    }, origin, learnTopic: true, logger: logger, metrics: metrics);
+    coordinator.AnswerPending = 500;
+    coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
+
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
+    await worker.DrainTickAsync(1.0, _fixedNow.AddSeconds(1), CancellationToken.None);
+
+    await Assert.That(coordinator.ClaimCalls).IsEmpty()
+      .Because("with the cap's worth of answers on the way, the drain claims no row, so no attempt is stamped");
+    await Assert.That(transport.Published).IsEmpty();
+    await Assert.That(coordinator.CountCalls).IsEquivalentTo([(_fixedNow, 500), (_fixedNow.AddSeconds(1), 500)])
+      .Because("the count is asked at the tick's own instant and needs to read no further than the cap");
+    var holds = logger.Collector.GetSnapshot().Where(r => r.Message.Contains("holding", StringComparison.Ordinal)).ToList();
+    await Assert.That(holds.Count).IsEqualTo(1).Because("the hold is logged when it starts, not on every tick it lasts");
+    await Assert.That(holds[0].Level).IsEqualTo(LogLevel.Warning);
+    await Assert.That(holds[0].Message).Contains("500");
+    await Assert.That(holdCount()).IsEqualTo(1L).Because("one hold, counted once");
+  }
+
+  [Test]
+  public async Task DrainTick_UnderTheCap_ClaimsNoMoreThanTheRoomLeftAsync() {
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, _, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+      MaxOutstandingRepairAnswers = 500,
+    }, origin, learnTopic: true);
+    coordinator.AnswerPending = 498;
+
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
+
+    await Assert.That(coordinator.ClaimCalls.Single().Limit).IsEqualTo(2)
+      .Because("the tokens afford ten rows, but only two more answers fit under the cap");
+  }
+
+  [Test]
+  public async Task DrainTick_WhenThePendingCountFallsUnderTheCap_ResumesAndSaysSoOnceAsync() {
+    var origin = TrackedGuid.New().Value;
+    var logger = new FakeLogger<RepairDrainWorker>();
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+      MaxOutstandingRepairAnswers = 5,
+    }, origin, learnTopic: true, logger: logger);
+    coordinator.AnswerPending = 5;
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
+    coordinator.AnswerPending = 3;
+    coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
+
+    await worker.DrainTickAsync(1.0, _fixedNow.AddSeconds(1), CancellationToken.None);
+    await worker.DrainTickAsync(1.0, _fixedNow.AddSeconds(2), CancellationToken.None);
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1).Because("answers landed, so there is room to ask again");
+    var resumed = logger.Collector.GetSnapshot().Where(r => r.Message.Contains("resumed", StringComparison.Ordinal)).ToList();
+    await Assert.That(resumed.Count).IsEqualTo(1).Because("the release is logged once, when the hold ends");
+    await Assert.That(resumed[0].Level).IsEqualTo(LogLevel.Information);
+  }
+
+  [Test]
+  public async Task DrainTick_WithTheCapOff_NeverCountsTheAnswersAsync() {
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, _, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+      MaxOutstandingRepairAnswers = 0,
+    }, origin, learnTopic: true);
+    coordinator.AnswerPending = 1_000_000;
+
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
+
+    await Assert.That(coordinator.CountCalls).IsEmpty().Because("0 turns the cap off, and an off cap costs no query");
+    await Assert.That(coordinator.ClaimCalls.Single().Limit).IsEqualTo(10);
+  }
+
+  [Test]
+  public async Task DrainTick_AtTheCap_OnAHostWithoutMetrics_StillHoldsAsync() {
+    var origin = TrackedGuid.New().Value;
+    var (worker, coordinator, _, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+      MaxOutstandingRepairAnswers = 1,
+    }, origin, learnTopic: true);
+    coordinator.AnswerPending = 1;
+
+    await worker.DrainTickAsync(1.0, _fixedNow, CancellationToken.None);
+
+    await Assert.That(coordinator.ClaimCalls).IsEmpty();
+  }
+
+  [Test]
+  public async Task ExecuteAsync_ACountThatCannotBeRead_ClaimsNothing_LogsIt_AndResumesOnceItCanAsync() {
+    // The cap fails closed: a pending-answer count that cannot be read fails the tick, so nothing is claimed (no attempt
+    // stamped, nothing sent) until the count reads again. Driven through the real loop on a clock that signals each time
+    // the loop arms its one-second wait, so every step waits on the transition it asserts.
+    var origin = TrackedGuid.New().Value;
+    var logger = new FakeLogger<RepairDrainWorker>();
+    var clock = new ArmSignalingClock(new DateTimeOffset(2026, 11, 9, 12, 0, 0, TimeSpan.Zero));
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+      MaxOutstandingRepairAnswers = 500,
+    }, origin, learnTopic: true, logger: logger, clock: clock);
+    coordinator.CountFailure = new InvalidOperationException("the ledger cannot be read");
+    coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
+    var guard = TimeSpan.FromSeconds(30);
+
+    await worker.StartAsync(CancellationToken.None);
+    try {
+      await clock.Armed.WaitAsync(guard);           // the loop waits out its first second
+      clock.Advance(TimeSpan.FromSeconds(1));
+      await coordinator.Counted.WaitAsync(guard);   // the tick asked, and the count threw
+      await clock.Armed.WaitAsync(guard);           // the failed tick is over and the loop waits again
+
+      await Assert.That(coordinator.ClaimCalls).IsEmpty()
+        .Because("a cap that cannot be measured never opens: no row is claimed, so no attempt is spent");
+      await Assert.That(transport.Published).IsEmpty();
+      var failed = logger.Collector.GetSnapshot().Where(r => r.Message.Contains("tick failed", StringComparison.Ordinal)).ToList();
+      await Assert.That(failed.Count).IsEqualTo(1).Because("the failed tick is logged with its cause");
+      await Assert.That(failed[0].Level).IsEqualTo(LogLevel.Warning);
+      await Assert.That(failed[0].Exception).IsTypeOf<InvalidOperationException>();
+
+      coordinator.CountFailure = null;
+      clock.Advance(TimeSpan.FromSeconds(1));
+      await coordinator.FirstClaim.Task.WaitAsync(guard);   // the next tick reads the count and claims
+      await clock.Armed.WaitAsync(guard);                   // and finishes
+
+      await Assert.That(coordinator.ClaimCalls.Count).IsEqualTo(1).Because("once the count reads, the drain resumes");
+      await Assert.That(transport.Published.Count).IsEqualTo(1);
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  /// <summary>
+  /// #2346: a drain that finds nothing to claim and nothing awaiting an answer waits longer each tick, doubling from one
+  /// second up to <see cref="StreamIntegrityOptions.IdlePollCeilingSeconds"/>, and the first tick that claims returns it to
+  /// one second. An idle service then asks the ledger a few times a minute instead of every second; the pacing of a drain
+  /// with work is unchanged. Each tick is counted by outcome on <c>whizbang.probes.ticks{probe=repair-drain}</c>.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-pollers-back-off</docs>
+  [Test]
+  public async Task ExecuteAsync_AnIdleLedger_WaitsLongerUpToTheCeiling_AndAClaimReturnsItToOneSecondAsync() {
+    var origin = TrackedGuid.New().Value;
+    var clock = new ArmSignalingClock(new DateTimeOffset(2026, 11, 16, 12, 0, 0, TimeSpan.Zero));
+    using var meters = new ProbeTickMeters();
+    var probes = new ProbeCadenceMetrics(new WhizbangMetrics(meters));
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainRatePerSecond = 10,
+      MaxOutstandingRepairAnswers = 500,
+      IdlePollCeilingSeconds = 8,
+    }, origin, learnTopic: true, clock: clock, probes: probes);
+    var guard = TimeSpan.FromSeconds(30);
+
+    await worker.StartAsync(CancellationToken.None);
+    try {
+      // Five idle ticks: each waits out the delay it armed, then the loop arms the next.
+      await clock.Armed.WaitAsync(guard);
+      for (var tick = 0; tick < 5; tick++) {
+        clock.Advance(clock.DueTimes.Last());
+        await clock.Armed.WaitAsync(guard);
+      }
+      coordinator.Eligible.Add(new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.New().Value, 100, 500));
+      clock.Advance(clock.DueTimes.Last());
+      await coordinator.FirstClaim.Task.WaitAsync(guard);
+      await clock.Armed.WaitAsync(guard);
+
+      await Assert.That(clock.DueTimes.Select(d => d.TotalSeconds).ToList())
+        .IsEquivalentTo(new List<double> { 1, 2, 4, 8, 8, 8, 1 }, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+        .Because("idle ticks double the wait up to the ceiling, and the tick that claims returns it to one second");
+      await Assert.That(transport.Published.Count).IsEqualTo(1);
+      var (idle, work) = meters.Read(ProbeCadenceMetrics.PROBE_REPAIR_DRAIN);
+      await Assert.That(idle).IsEqualTo(5L);
+      await Assert.That(work).IsEqualTo(1L);
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  /// <summary>#2346: the idle ceiling defaults to a minute.</summary>
+  [Test]
+  public async Task Options_IdlePollCeilingSeconds_DefaultsTo60Async() =>
+    await Assert.That(new StreamIntegrityOptions().IdlePollCeilingSeconds).IsEqualTo(60);
+
+  /// <summary>A fake clock that releases <see cref="Armed"/> each time a timer is created, which is each time the drain's
+  /// loop starts waiting out its interval.</summary>
+  private sealed class ArmSignalingClock(DateTimeOffset start) : TimeProvider {
+    private readonly FakeTimeProvider _inner = new(start);
+    public SemaphoreSlim Armed { get; } = new(0);
+    /// <summary>Each wait the loop armed, in order (#2346).</summary>
+    public System.Collections.Concurrent.ConcurrentQueue<TimeSpan> DueTimes { get; } = new();
+    public void Advance(TimeSpan by) => _inner.Advance(by);
+    public override DateTimeOffset GetUtcNow() => _inner.GetUtcNow();
+    public override long GetTimestamp() => _inner.GetTimestamp();
+    public override long TimestampFrequency => _inner.TimestampFrequency;
+    public override TimeZoneInfo LocalTimeZone => _inner.LocalTimeZone;
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
+      var timer = _inner.CreateTimer(callback, state, dueTime, period);
+      DueTimes.Enqueue(dueTime);
+      Armed.Release();
+      return timer;
+    }
+  }
+
+  [Test]
+  public async Task Options_MaxOutstandingRepairAnswers_DefaultsTo500Async() {
+    await Assert.That(new StreamIntegrityOptions().MaxOutstandingRepairAnswers).IsEqualTo(500)
+      .Because("at the default 5 rows a second, 500 answers is 100 seconds of requests: answers that land in under that "
+             + "never meet the cap, and answers that lag are paced to the rate they land at");
+  }
+
+  private static (StreamIntegrityMetrics Metrics, Func<long> Holds, IDisposable Listener) _metrics() {
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    long holds = 0;
+    // This instance's counter only, read on demand: a passive counter reports its cumulative count when observed.
+    var listener = new System.Diagnostics.Metrics.MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (ReferenceEquals(instrument, metrics.RepairDrainHolds.Instrument)) {
+          l.EnableMeasurementEvents(instrument);
+        }
+      },
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Exchange(ref holds, value));
+    listener.Start();
+    return (metrics, () => {
+      listener.RecordObservableInstruments();
+      return Interlocked.Read(ref holds);
+    }, listener);
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static (RepairDrainWorker Worker, DrainCoordinator Coordinator, CaptureTransport Transport, IntegrityGapTracker Tracker) _build(
-      StreamIntegrityOptions options, Guid origin, bool learnTopic) {
+      StreamIntegrityOptions options, Guid origin, bool learnTopic, ILogger<RepairDrainWorker>? logger = null,
+      StreamIntegrityMetrics? metrics = null, TimeProvider? clock = null, ProbeCadenceMetrics? probes = null) {
     var coordinator = new DrainCoordinator();
     var transport = new CaptureTransport();
     var tracker = new IntegrityGapTracker();
@@ -355,6 +761,12 @@ public class RepairDrainWorkerTests {
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton(tracker);
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
+    }
+    if (probes is not null) {
+      services.AddSingleton(probes);
+    }
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IServiceInstanceProvider>(new InstanceProvider("drainer-svc"));
     var consumerOptions = new TransportConsumerOptions();
@@ -363,9 +775,9 @@ public class RepairDrainWorkerTests {
     var sp = services.BuildServiceProvider();
     var worker = new RepairDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new SchemaReadyGate(),
       Options.Create(options),
-      NullLogger<RepairDrainWorker>.Instance);
+      logger ?? NullLogger<RepairDrainWorker>.Instance,
+      clock);
     return (worker, coordinator, transport, tracker);
   }
 
@@ -374,23 +786,6 @@ public class RepairDrainWorkerTests {
     return (RequestRedeliveryCommand)JsonSerializer.Deserialize(
       ((MessageEnvelope<JsonElement>)envelope).Payload.GetRawText(),
       options.GetTypeInfo(typeof(RequestRedeliveryCommand)))!;
-  }
-
-  /// <summary>
-  /// A gate that never opens and announces the arrival of a waiter, so a test can wait on the
-  /// worker actually being parked at the barrier instead of assuming StartAsync left it there.
-  /// </summary>
-  private sealed class BlockingGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Entered => _entered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-    }
   }
 
   private sealed class DrainCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
@@ -410,6 +805,49 @@ public class RepairDrainWorkerTests {
       }
       return Task.FromResult<IReadOnlyList<IntegrityRepairDrainItem>>(take);
     }
+
+    public List<(Guid Origin, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> Keys, DateTimeOffset Now, TimeSpan Timeout)> PendingMarks { get; } = [];
+
+    /// <summary>The buckets awaiting an answer, as the ledger would count them (#2184).</summary>
+    public int AnswerPending { get; set; }
+    public List<(DateTimeOffset Now, int Limit)> CountCalls { get; } = [];
+
+    /// <summary>When set, the count throws it, as a store that cannot be read would.</summary>
+    public Exception? CountFailure { get; set; }
+    /// <summary>Released on every count, so a test waits on the count itself.</summary>
+    public SemaphoreSlim Counted { get; } = new(0);
+
+    public Task<int> IntegrityCountAnswerPendingAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default) {
+      CountCalls.Add((now, limit));
+      Counted.Release();
+      if (CountFailure is { } failure) {
+        return Task.FromException<int>(failure);
+      }
+      return Task.FromResult(Math.Min(AnswerPending, limit));
+    }
+
+    public Task<int> IntegrityMarkAnswerPendingAsync(
+        Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, long? windowFrom, long? windowUntil,
+        DateTimeOffset now, TimeSpan timeout, CancellationToken cancellationToken = default) {
+      PendingMarks.Add((originServiceId, keys, now, timeout));
+      PendingKeys.AddRange(keys);
+      return Task.FromResult(keys.Count);
+    }
+
+    /// <summary>The buckets awaiting an answer, as the ledger would hold them: marked, and neither answered nor withdrawn.</summary>
+    public List<IntegrityRepairLedger.DivergenceKey> PendingKeys { get; } = [];
+
+    public List<(Guid Origin, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> Keys, DateTimeOffset Now, TimeSpan Timeout)> Withdrawals { get; } = [];
+
+    /// <summary>An answer landing for <paramref name="streamId"/>: its bucket stops waiting.</summary>
+    public void Answer(Guid streamId) => PendingKeys.RemoveAll(k => k.StreamId == streamId);
+
+    public Task<int> IntegrityWithdrawAnswerPendingAsync(
+        Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now, TimeSpan timeout,
+        CancellationToken cancellationToken = default) {
+      Withdrawals.Add((originServiceId, keys, now, timeout));
+      return Task.FromResult(PendingKeys.RemoveAll(keys.Contains));
+    }
   }
 
   private sealed class CaptureTransport : ITransport {
@@ -418,10 +856,13 @@ public class RepairDrainWorkerTests {
     /// <summary>Thrown in place of the throttle timeout, for the cancellation contract.</summary>
     public Exception? FailFirstWith { get; set; }
     public int Attempts { get; private set; }
+    /// <summary>Runs inside each publish, before it succeeds or fails: where an answer that outruns the publish lands.</summary>
+    public Action? OnPublish { get; set; }
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null, CancellationToken cancellationToken = default) {
+      OnPublish?.Invoke();
       lock (Published) {
         Attempts++;
         if (Attempts <= FailFirst) {

@@ -42,6 +42,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// </para>
 /// </remarks>
 [Category("Benchmark")]
+[NotInParallel] // A measurement: runs alone so it measures the code, not its neighbors.
 [Category("Performance")]
 public class InboxStateWriteCostScenarioTests : EFCoreTestBase {
   /// <summary>Rows seeded on each side. Large enough that index maintenance dominates.</summary>

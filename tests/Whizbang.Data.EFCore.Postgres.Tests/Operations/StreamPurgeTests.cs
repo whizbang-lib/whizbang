@@ -38,12 +38,15 @@ public class StreamPurgeTests : EFCoreTestBase {
   private const string PERSPECTIVE = "Purge.Tests.SomethingPerspective";
   private const string PERSPECTIVE_TABLE = "wh_per_action_test";
 
-  /// <summary>Every table a stream owns rows in, as the purge reports it.</summary>
+  /// <summary>
+  /// Every table a stream owns rows in that the purge removes, as it reports it. <c>wh_stream_digests</c> is not among
+  /// them since #2363: a purged stream keeps its buckets, its whole digest carried, as its tombstone.
+  /// </summary>
   private static readonly string[] _streamTables = [
     "wh_outbox", "wh_inbox_state", "wh_inbox", "wh_perspective_events", "wh_active_streams",
-    "wh_message_deduplication", "wh_receptor_processing", "wh_perspective_cursors", "wh_perspective_snapshots",
+    "wh_message_deduplication", "wh_perspective_cursors", "wh_perspective_snapshots",
     "wh_perspective_applied", PERSPECTIVE_TABLE, "wh_perspective_row_hold", "wh_row_eviction_journal",
-    "wh_stream_digests", "wh_integrity_ledger", "wh_event_body", "wh_event_destruction_hold",
+    "wh_integrity_ledger", "wh_event_body", "wh_event_destruction_hold",
     "wh_lifecycle_completions", "wh_event_archive", "wh_apply_fold_watermarks", "wh_event_store",
     "wh_stream_lifecycle",
   ];
@@ -76,6 +79,10 @@ public class StreamPurgeTests : EFCoreTestBase {
     foreach (var table in _streamTables) {
       await Assert.That(after[table]).IsEqualTo(0).Because($"{table} keeps no row of the purged stream");
     }
+    await Assert.That(report.Totals["wh_stream_digests"]).IsEqualTo(0)
+      .Because("#2363: the purge removes no digest bucket");
+    await Assert.That(after["wh_stream_digests"]).IsEqualTo(before["wh_stream_digests"])
+      .Because("#2363: the purged stream keeps its buckets, its digest carried, so it still answers what it held");
     var untouched = await _countsAsync(conn, kept);
     foreach (var table in _streamTables) {
       await Assert.That(untouched[table]).IsEqualTo(before[table]).Because($"{table} keeps every row of the other stream");
@@ -121,6 +128,7 @@ public class StreamPurgeTests : EFCoreTestBase {
       await Assert.That(report.Totals[table]).IsEqualTo(before[table]).Because($"the dry run counts what {table} would lose");
     }
     await Assert.That(report.Totals["wh_stream_purge_markers"]).IsEqualTo(1);
+    await Assert.That(report.Totals["wh_stream_digests"]).IsEqualTo(0).Because("#2363: a purge would remove no digest bucket");
     var after = await _countsAsync(conn, stream);
     foreach (var table in _streamTables) {
       await Assert.That(after[table]).IsEqualTo(before[table]).Because($"a dry run leaves {table} alone");
@@ -131,6 +139,57 @@ public class StreamPurgeTests : EFCoreTestBase {
         "SELECT count(*) FROM wh_unique_emission_claims WHERE claim_key LIKE $1", PostgresStreamPurger.CLAIM_KEY_PREFIX + "%"))
       .IsEqualTo(0).Because("a dry run claims nothing");
     await Assert.That(report.Format()).Contains("Dry run: would purge 1 stream(s)");
+  }
+
+  /// <summary>
+  /// #2256: a purge removes the purged streams' integrity ledger rows, so the repair backlog's open gauge falls; the
+  /// rows count as buckets closed without a heal, or the closed counter would fall behind the gauge. A dry run removes
+  /// nothing and counts nothing.
+  /// </summary>
+  [Test]
+  public async Task Purge_CountsTheLedgerRowsItRemoves_AsForgottenBucketsAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var doomed = Guid.CreateVersion7();
+    foreach (var type in new[] { EVENT_TYPE, EVENT_TYPE + "Too" }) {
+      await _executeAsync(conn, """
+        INSERT INTO wh_integrity_ledger (origin_service_id, event_type, stream_id, origin_lo, origin_hi, local_lo, local_hi)
+        VALUES (gen_random_uuid(), $1, $2, 1, 1, 1, 1)
+        """, type, doomed);
+    }
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    var purger = new PostgresStreamPurger(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync, integrityMetrics: metrics);
+
+    _ = await purger.PurgeAsync(new StreamPurgeRequest { StreamIds = [doomed], RequestedBy = "operator-1", Reason = "rehearsal", DryRun = true });
+    await Assert.That(_forgotten(metrics)).IsEqualTo(0L).Because("a dry run removes nothing");
+    _ = await purger.PurgeAsync(new StreamPurgeRequest { StreamIds = [Guid.CreateVersion7()], RequestedBy = "operator-1", Reason = "no ledger rows" });
+    await Assert.That(_forgotten(metrics)).IsEqualTo(0L).Because("a stream with no ledger rows closes no bucket");
+    _ = await purger.PurgeAsync(new StreamPurgeRequest { StreamIds = [doomed], RequestedBy = "operator-1", Reason = "retired" });
+
+    await Assert.That(_forgotten(metrics)).IsEqualTo(2L)
+      .Because("each ledger row the purge removed is a bucket closed without a heal");
+  }
+
+  private static long _forgotten(StreamIntegrityMetrics metrics) {
+    long total = 0;
+    using var listener = new System.Diagnostics.Metrics.MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (ReferenceEquals(instrument, metrics.LedgerBucketsClosed.Instrument)) {
+          l.EnableMeasurementEvents(instrument);
+        }
+      },
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
+      foreach (var tag in tags) {
+        if (tag.Key == "how" && Equals(tag.Value, "forgotten")) {
+          total += value;
+        }
+      }
+    });
+    listener.Start();
+    listener.RecordObservableInstruments();
+    return total;
   }
 
   [Test]
@@ -351,10 +410,6 @@ public class StreamPurgeTests : EFCoreTestBase {
     // Bookkeeping written by machinery outside this test's reach.
     await _executeAsync(conn, "INSERT INTO wh_message_deduplication (message_id, first_seen_at) VALUES ($1, NOW()) ON CONFLICT DO NOTHING", eventId);
     await _executeAsync(conn, """
-      INSERT INTO wh_receptor_processing (id, event_id, receptor_name, stream_id, status, attempts, started_at)
-      VALUES (gen_random_uuid(), $1, 'Receptor', $2, 0, 0, NOW())
-      """, eventId, stream);
-    await _executeAsync(conn, """
       INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number)
       VALUES ($1, $2, $3, '{}'::jsonb, 1)
       """, stream, PERSPECTIVE, eventId);
@@ -401,7 +456,7 @@ public class StreamPurgeTests : EFCoreTestBase {
     const string BY_EVENT = "= ANY($1)";
     var counts = new Dictionary<string, long>(StringComparer.Ordinal);
     foreach (var table in new[] {
-        "wh_outbox", "wh_inbox", "wh_perspective_events", "wh_active_streams", "wh_receptor_processing",
+        "wh_outbox", "wh_inbox", "wh_perspective_events", "wh_active_streams",
         "wh_perspective_cursors", "wh_perspective_snapshots", "wh_perspective_applied", "wh_stream_digests",
         "wh_integrity_ledger", "wh_event_archive", "wh_apply_fold_watermarks", "wh_event_store", "wh_stream_lifecycle" }) {
       counts[table] = await _scalarAsync<long>(conn, $"SELECT count(*) FROM {table} WHERE stream_id = $1", stream);

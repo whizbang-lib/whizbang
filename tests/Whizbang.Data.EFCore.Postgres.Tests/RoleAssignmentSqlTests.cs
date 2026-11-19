@@ -20,7 +20,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/173_RoleAssignments.sql</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class RoleAssignmentSqlTests : EFCoreTestBase {
   private const string ROLE = "maintainer";
@@ -277,12 +276,15 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
   [Test]
   [Timeout(60000)]
   public async Task Elect_WhileAnotherBackendHoldsTheLegacySessionLock_AnswersLegacyHolderAsync(CancellationToken cancellationToken) {
-    // Mixed-version fleets: an instance still on the session-lock elector holds the duty's lock.
+    // Mixed-version fleets (#2044): an instance on an older release holds the duty by its own session lock and records
+    // the holding. The vote sees the record, not the lock: the lock alone decides nothing. (The name is kept because
+    // migrations 173 and 184 link to it.)
     var a = await _joinAsync(cancellationToken);
+    var older = await _joinAsync(cancellationToken);
     const long legacyKey = 7_966_001L;
     await using var legacy = await _openAsync(cancellationToken);
     await using (var take = legacy.CreateCommand()) {
-      take.CommandText = $"SELECT pg_advisory_lock({legacyKey})";
+      take.CommandText = $"SELECT pg_advisory_lock({legacyKey}), record_capability('{older}'::uuid, '{ROLE}')";
       await take.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -290,6 +292,13 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
 
     await Assert.That(vote.Outcome).IsEqualTo("legacy_holder");
     await Assert.That(await _electionCountAsync(cancellationToken)).IsEqualTo(0L);
+
+    await using (var release = legacy.CreateCommand()) {
+      release.CommandText = $"SELECT release_capability('{older}'::uuid, '{ROLE}')";
+      await release.ExecuteNonQueryAsync(cancellationToken);
+    }
+    await Assert.That((await _electAsync(a, cancellationToken, legacyKey)).Outcome).IsEqualTo("granted")
+      .Because("the session lock is still held, and it is not read");
   }
 
   [Test]
@@ -429,6 +438,33 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
 
     await Assert.That(delivered).IsTrue().Because("the release commits its NOTIFY with it");
     await Assert.That(payload).IsEqualTo(ROLE);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Release_IsRecordedDurably_SoAnInstanceThatMissedTheNotificationIsStillToldAsync(CancellationToken cancellationToken) {
+    // #2046: a released role is a decision. The signal bus's tail replays it, payload and all, to a subscriber that was
+    // not listening when it committed.
+    var a = await _joinAsync(cancellationToken);
+    var vote = await _electAsync(a, cancellationToken);
+    await using var conn = await _openAsync(cancellationToken);
+    long before;
+    await using (var max = conn.CreateCommand()) {
+      max.CommandText = "SELECT COALESCE(MAX(id), 0) FROM wh_signals";
+      before = (long)(await max.ExecuteScalarAsync(cancellationToken))!;
+    }
+
+    await _releaseAsync(a, vote.Epoch, cancellationToken);
+
+    await using var read = conn.CreateCommand();
+    read.CommandText = "SELECT wire_name || '|' || payload || '|' || COALESCE(target_instance_id::text, 'all') FROM wh_signals WHERE id > @before";
+    read.Parameters.AddWithValue("before", before);
+    await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+    var rows = new List<string>();
+    while (await reader.ReadAsync(cancellationToken)) {
+      rows.Add(reader.GetString(0));
+    }
+    await Assert.That(rows).IsEquivalentTo([$"role-released|{ROLE}|all"]);
   }
 
   private async Task _oweAsync(string key, CancellationToken ct) =>

@@ -19,7 +19,7 @@ namespace Whizbang.Data.Postgres;
 /// connection string opts in.
 /// </remarks>
 /// <docs>fundamentals/events/stream-end-of-life#a-sealed-stream-refuses-appends</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamSealedRefusalTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamSealedRefusalTests.cs</tests>
 internal static class StreamSealedRefusal {
   /// <summary>The SQLSTATE <c>wh_append_event</c> raises for a sealed stream (migration 266).</summary>
   internal const string SQL_STATE = "WHS01";

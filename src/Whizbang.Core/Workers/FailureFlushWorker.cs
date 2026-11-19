@@ -15,9 +15,8 @@ namespace Whizbang.Core.Workers;
 /// Phase C of work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
-public sealed partial class FailureFlushWorker : BackgroundService, IFailureChannel {
+public sealed partial class FailureFlushWorker : BackgroundService, IFailureChannel, IQueuedWriteFlusher {
   private readonly IServiceScopeFactory _scopeFactory;
-  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly FailureFlushWorkerOptions _options;
   private readonly ILogger<FailureFlushWorker> _logger;
   private readonly IPinnedConnectionPool _pinnedPool;
@@ -29,25 +28,48 @@ public sealed partial class FailureFlushWorker : BackgroundService, IFailureChan
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/FlushWorkerClockWiringTests.cs:FailureFlushWorker_RunsItsFlusherOnTheRegisteredClockAsync</tests>
   public FailureFlushWorker(
     IServiceScopeFactory scopeFactory,
-    ISchemaReadyGate schemaReadyGate,
     IOptions<FailureFlushWorkerOptions> options,
     ILogger<FailureFlushWorker> logger,
     IPinnedConnectionPool pinnedPool,
     TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
-    ArgumentNullException.ThrowIfNull(schemaReadyGate);
-    _schemaReadyGate = schemaReadyGate;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     ArgumentNullException.ThrowIfNull(logger);
     _logger = logger;
     _pinnedPool = pinnedPool;
-    _flusher = new BatchFlusher<CategorizedFailure>(_flushBatchAsync, _options.Flusher, _logger, timeProvider);
+    // Started when the host starts this worker, at Accept commands (#1636): nothing is flushed before then.
+    _flusher = new BatchFlusher<CategorizedFailure>(_flushBatchAsync, _options.Flusher, _logger, timeProvider, started: false);
   }
 
   /// <inheritdoc />
   public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default)
-    => _flusher.Writer.WriteAsync(new CategorizedFailure(category, failure), cancellationToken);
+    => _flusher.EnqueueAsync(new CategorizedFailure(category, failure), cancellationToken);
+
+  /// <inheritdoc />
+  /// <docs>fundamentals/work-coordinator/batched-flushers#when-writes-have-landed</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/FlushWorkerIdleSignalTests.cs:FailureFlushWorker_ReportsAQueuedFailureUntilItLandsAsync</tests>
+  public QueuedWriteActivity Activity => _flusher.Activity;
+
+  /// <inheritdoc />
+  public bool IsIdle => _flusher.IsIdle;
+
+  /// <inheritdoc />
+  public event WorkProcessingIdleHandler? OnWorkProcessingIdle {
+    add => _flusher.OnWorkProcessingIdle += value;
+    remove => _flusher.OnWorkProcessingIdle -= value;
+  }
+
+  /// <inheritdoc />
+  public Task WaitForIdleAsync(CancellationToken cancellationToken = default) => _flusher.WaitForIdleAsync(cancellationToken);
+
+  /// <inheritdoc />
+  public override Task StartAsync(CancellationToken cancellationToken) {
+    // The flusher starts with the worker (#1636), here rather than in ExecuteAsync: the host runs ExecuteAsync on the
+    // thread pool, and a stop that lands before it runs would otherwise find a flusher that never started.
+    _flusher.Start();
+    return base.StartAsync(cancellationToken);
+  }
 
   /// <inheritdoc />
   protected override Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -63,7 +85,6 @@ public sealed partial class FailureFlushWorker : BackgroundService, IFailureChan
     if (!_options.Enabled) {
       return;
     }
-    await _schemaReadyGate.WaitForReadyAsync(ct);
     await using var pin = await _pinnedPool.TryPinForAsync(typeof(FailureFlushWorker), ct);
     using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();

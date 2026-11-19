@@ -113,6 +113,21 @@ public class DeadLetterRecoveryWorkerTests {
       ScheduleCalls.Add((deadLetterId, nextAt)); return Task.CompletedTask;
     }
     public ServiceBacklog? Backlog { get; set; }
+    // The housekeeping deferral writes (#2288), each completing its own signal so a test waits on the exact write.
+    public System.Collections.Concurrent.ConcurrentQueue<(string Key, DateTimeOffset At)> DeferralsRecorded { get; } = new();
+    public System.Collections.Concurrent.ConcurrentQueue<string> DeferralsCleared { get; } = new();
+    public TaskCompletionSource DeferralRecordedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource DeferralClearedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public ValueTask RecordHousekeepingDeferralAsync(string budgetKey, DateTimeOffset firstDeferredAt, CancellationToken cancellationToken = default) {
+      DeferralsRecorded.Enqueue((budgetKey, firstDeferredAt));
+      DeferralRecordedSignal.TrySetResult();
+      return ValueTask.CompletedTask;
+    }
+    public ValueTask ClearHousekeepingDeferralAsync(string budgetKey, CancellationToken cancellationToken = default) {
+      DeferralsCleared.Enqueue(budgetKey);
+      DeferralClearedSignal.TrySetResult();
+      return ValueTask.CompletedTask;
+    }
     public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default) {
       if (CountServiceBacklogShouldThrow) { throw new InvalidOperationException("simulated backlog-count failure"); }
       return ValueTask.FromResult(Backlog);
@@ -168,12 +183,6 @@ public class DeadLetterRecoveryWorkerTests {
     }
   }
 
-  private sealed class ImmediateSchemaGate : ISchemaReadyGate {
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-    public void MarkReady() { }
-    public bool IsReady => true;
-  }
-
   private sealed class FixedGenerationProvider(string value) : IGenerationProvider {
     public string GetGeneration() => value;
   }
@@ -182,6 +191,45 @@ public class DeadLetterRecoveryWorkerTests {
   /// Test double for the NOTIFY listener. Tracks subscribe/unsubscribe and can raise a
   /// signal of any category so the worker's <c>_onSignal</c> filter can be exercised.
   /// </summary>
+  /// <summary>
+  /// A listener whose subscription does not return until the test releases it, so ExecuteAsync can be held between
+  /// adding its handler and anything it does after.
+  /// </summary>
+  private sealed class HeldSubscribeNotificationListener : IWorkNotificationListener, IDisposable {
+    private readonly ManualResetEventSlim _release = new(initialState: false);
+    private readonly Lock _gate = new();
+    private Action<WorkSignalCategory>? _onSignal;
+    /// <summary>How many handlers are attached now.</summary>
+    public int SubscriberCount {
+      get {
+        lock (_gate) {
+          return _onSignal?.GetInvocationList().Length ?? 0;
+        }
+      }
+    }
+    public bool IsHealthy => true;
+    public DateTimeOffset? LastSignalAt => null;
+    /// <summary>Completes once the worker has entered the subscription and is held there.</summary>
+    public TaskCompletionSource Subscribing { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public event Action<WorkSignalCategory>? OnSignal {
+      add {
+        lock (_gate) {
+          _onSignal += value;
+        }
+        Subscribing.TrySetResult();
+        _release.Wait();
+      }
+      remove {
+        lock (_gate) {
+          _onSignal -= value;
+        }
+      }
+    }
+    public event Action<bool>? OnHealthChanged { add { /* the fake never raises this event */ } remove { /* the fake never raises this event */ } }
+    public void ReleaseSubscribe() => _release.Set();
+    public void Dispose() => _release.Dispose();
+  }
+
   private sealed class FakeNotificationListener : Whizbang.Core.Notifications.IWorkNotificationListener {
     public bool IsHealthy => true;
     public DateTimeOffset? LastSignalAt => null;
@@ -354,66 +402,6 @@ public class DeadLetterRecoveryWorkerTests {
       .Because("a counter that cannot be read is indistinguishable from a sweep that never ran");
   }
 
-  [Test]
-  public async Task ShutdownBeforeTheSchemaIsReady_ExitsQuietlyAsync() {
-    // The worker parks on the schema gate before its first sweep. A pod stopped while still
-    // waiting has no DLQ table to scan, so the exit must be silent rather than an error on every
-    // fast restart.
-    var svc = new FakeRecoveryService();
-    var services = new ServiceCollection();
-    services.AddSingleton<IDeadLetterRecoveryService>(svc);
-    services.AddSingleton<IDeadLetterRecoveryPolicy>(
-      new DefaultDeadLetterRecoveryPolicy(Options.Create(new DeadLetterRecoveryOptions())));
-    var sp = services.BuildServiceProvider();
-    var gate = new NeverReadySchemaGate();
-    var worker = new DeadLetterRecoveryWorker(
-      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: gate,
-      options: Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
-      integrityOptions: Options.Create(new StreamIntegrityOptions()),
-      generationProvider: new FixedGenerationProvider("test/0.0.1"),
-      logger: NullLogger<DeadLetterRecoveryWorker>.Instance,
-      notificationListener: new NoOpWorkNotificationListener(),
-      metrics: null);
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    // Wait until the body is actually parked at the barrier. Since .NET 10,
-    // BackgroundService.StartAsync dispatches ExecuteAsync via Task.Run(action, stoppingToken):
-    // StartAsync returning proves only that the body was scheduled, and stopping before the
-    // thread pool dequeues it settles the task Canceled with the delegate never invoked. The
-    // "zero scans" assertion is satisfied by that too, so without this wait the test passes on a
-    // worker that never ran.
-    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
-
-    await worker.StopAsync(CancellationToken.None);
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10))
-      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    await Assert.That(worker.TotalScans).IsEqualTo(0L)
-      .Because("nothing may be scanned before the schema exists — a sweep against a missing table "
-             + "is what the gate is there to prevent");
-    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
-      .Because("the parked worker must unpark on stop rather than hanging shutdown");
-    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
-      .Because("a fast restart during migrations is routine, not a crash to report");
-  }
-
-  /// <summary>A schema gate that never opens, for the shutdown-while-waiting path. It announces
-  /// arrival so a test can wait for the worker to be parked instead of assuming StartAsync left
-  /// it there.</summary>
-  private sealed class NeverReadySchemaGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Entered => _entered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-    }
-  }
-
   /// <summary>Completes when the worker's first scan has finished with its rows; subscribe before starting it.</summary>
   private static Task _firstScanCompleted(DeadLetterRecoveryWorker worker) {
     var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -424,7 +412,7 @@ public class DeadLetterRecoveryWorkerTests {
   private static (DeadLetterRecoveryWorker Worker, FakeRecoveryService Svc) _newWorker(
       DeadLetterRecoveryOptions? options = null,
       string generation = "test/0.0.1",
-      FakeNotificationListener? listener = null,
+      IWorkNotificationListener? listener = null,
       Whizbang.Core.Messaging.StreamIntegrityOptions? integrity = null,
       TimeProvider? timeProvider = null,
       ILogger<DeadLetterRecoveryWorker>? logger = null) {
@@ -435,12 +423,11 @@ public class DeadLetterRecoveryWorkerTests {
     var sp = services.BuildServiceProvider();
     var worker = new DeadLetterRecoveryWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: new ImmediateSchemaGate(),
       options: Options.Create(options ?? new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
       integrityOptions: Options.Create(integrity ?? new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider(generation),
       logger: logger ?? NullLogger<DeadLetterRecoveryWorker>.Instance,
-      notificationListener: (IWorkNotificationListener?)listener ?? new NoOpWorkNotificationListener(),
+      notificationListener: listener ?? new NoOpWorkNotificationListener(),
       metrics: null,
       timeProvider: timeProvider);
     return (worker, svc);
@@ -541,6 +528,38 @@ public class DeadLetterRecoveryWorkerTests {
         return ValueTask.CompletedTask;
       }
     }
+  }
+
+  /// <summary>
+  /// #2046: the dead-letter doorbell is best-effort because the scan has a poll behind it. A dead letter whose doorbell
+  /// was lost (no DeadLetterReady signal ever arrives) is still recovered, by the next backstop scan.
+  /// </summary>
+  [Test]
+  public async Task ADeadLetterWhoseDoorbellIsLost_IsRecoveredByTheBackstopScanAsync() {
+    var listener = new FakeNotificationListener();
+    var clock = new ManualTimeProvider();
+    var (worker, svc) = _newWorker(
+      new DeadLetterRecoveryOptions { ScanIntervalMinutes = 60, ScanBatchSize = 50 },
+      listener: listener,
+      timeProvider: clock);
+    var entry = _entry(MessageFailureReason.Throttled, recoveryAttempts: 0);
+    svc.FetchBatches.Enqueue([]);       // scan 1: startup, before the dead letter is recorded
+    svc.FetchBatches.Enqueue([entry]);  // scan 2: the backstop finds it
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(TimeSpan.FromSeconds(5));
+    await clock.TimerRegistered(1).WaitAsync(TimeSpan.FromSeconds(5));
+
+    // No signal is raised: the doorbell was lost. Only the backstop interval passes.
+    clock.Advance(TimeSpan.FromMinutes(60));
+
+    await svc.RecoverSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(svc.RecoverCalls).Contains(entry.DeadLetterId)
+      .Because("the backstop scan, not the doorbell, is what guarantees a dead letter is recovered");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
   }
 
   /// <summary>
@@ -683,7 +702,6 @@ public class DeadLetterRecoveryWorkerTests {
     var logger = new EventIdSignalLogger(16);  // LogNoRecoveryService
     var worker = new DeadLetterRecoveryWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: new ImmediateSchemaGate(),
       options: Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider("test/0.0.1"),
@@ -917,6 +935,31 @@ public class DeadLetterRecoveryWorkerTests {
     // StopAsync unsubscribes the handler.
     await Assert.That(listener.SubscriberCount).IsEqualTo(0)
       .Because("StopAsync removes the OnSignal subscription so the worker leaves no dangling handler");
+  }
+
+  /// <summary>
+  /// StopAsync can run while ExecuteAsync is still subscribing (#2409): the host runs ExecuteAsync on its own thread, so a
+  /// stop that lands between the subscription and whatever records it must still leave no handler behind. The listener
+  /// holds ExecuteAsync inside the subscription until StopAsync has begun, which is that interleaving every time.
+  /// </summary>
+  [Test]
+  public async Task NotificationListener_StopDuringSubscribe_LeavesNoHandlerAsync() {
+    using var listener = new HeldSubscribeNotificationListener();
+    var (worker, _) = _newWorker(
+      new DeadLetterRecoveryOptions { ScanIntervalMinutes = 60, ScanBatchSize = 50 },
+      listener: listener);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // ExecuteAsync is now inside the subscription, held there.
+    await listener.Subscribing.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+    var stopping = worker.StopAsync(CancellationToken.None);
+    listener.ReleaseSubscribe();
+    await stopping.WaitAsync(TimeSpan.FromSeconds(30));
+
+    await Assert.That(listener.SubscriberCount).IsEqualTo(0)
+      .Because("a stop that lands while the worker is subscribing must still leave no handler on the listener");
   }
 
   /// <summary>
@@ -1206,7 +1249,6 @@ public class DeadLetterRecoveryWorkerTests {
     var housekeeping = new HousekeepingCoordinator();
     var worker = new DeadLetterRecoveryWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: new ImmediateSchemaGate(),
       options: Options.Create(options),
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider("test/0.0.1"),
@@ -1267,7 +1309,6 @@ public class DeadLetterRecoveryWorkerTests {
     var housekeeping = new HousekeepingCoordinator();
     var worker = new DeadLetterRecoveryWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: new ImmediateSchemaGate(),
       options: Options.Create(options),
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider("test/0.0.1"),
@@ -1287,6 +1328,75 @@ public class DeadLetterRecoveryWorkerTests {
     await worker.StopAsync(CancellationToken.None);
   }
 
+
+  [Test]
+  public async Task ADeferredScan_RecordsRecoverysFirstDeferral_InTheStoreAsync() {
+    // #2288: the ceiling's first deferral is held by the store, so a restart does not start the hour over.
+    var options = new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, EnableGenerationReplay = false, WaitForIdle = true };
+    var svc = new FakeRecoveryService {
+      Backlog = new ServiceBacklog {
+        UnprocessedInboxRows = 500,
+        HousekeepingDeferrals = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal),
+      },
+    };
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+    var worker = _newGatedWorker(options, svc, new HousekeepingCoordinator(new HousekeepingCoordinator.Settings(), clock));
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.DeferralRecordedSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(svc.DeferralsRecorded.ToArray()).IsEquivalentTo([("dead-letter-recovery", clock.GetUtcNow())])
+      .Because("the scan was refused on a busy service whose store held no first deferral for recovery");
+    await Assert.That(svc.FetchedBatchSizes.IsEmpty).IsTrue().Because("a deferred scan fetches nothing");
+  }
+
+  [Test]
+  public async Task AScanForcedByTheStoredCeiling_ClearsItWhenTheScanEndsAsync() {
+    // #2288: a new process reads the first deferral an earlier one recorded an hour ago, forces the pass, and once the
+    // pass ends re-arms the stored ceiling for every instance.
+    var origin = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+    var options = new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, EnableGenerationReplay = false, WaitForIdle = true };
+    var svc = new FakeRecoveryService {
+      Backlog = new ServiceBacklog {
+        UnprocessedInboxRows = 500,
+        HousekeepingDeferrals = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal) { ["dead-letter-recovery"] = origin },
+      },
+    };
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(origin + TimeSpan.FromHours(1));
+    var worker = _newGatedWorker(options, svc, new HousekeepingCoordinator(new HousekeepingCoordinator.Settings(), clock));
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.DeferralClearedSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(svc.FetchedBatchSizes.IsEmpty).IsFalse().Because("the stored hour forced the scan through");
+    await Assert.That(svc.DeferralsCleared.ToArray()).IsEquivalentTo(_recoveryOnly);
+    await Assert.That(svc.DeferralsRecorded.IsEmpty).IsTrue();
+  }
+
+  private static readonly string[] _recoveryOnly = ["dead-letter-recovery"];
+
+  private static DeadLetterRecoveryWorker _newGatedWorker(
+      DeadLetterRecoveryOptions options, FakeRecoveryService svc, HousekeepingCoordinator housekeeping) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IDeadLetterRecoveryService>(svc);
+    services.AddSingleton<IWorkCoordinator>(svc);
+    services.AddSingleton<IDeadLetterRecoveryPolicy>(new DefaultDeadLetterRecoveryPolicy(Options.Create(options)));
+    var sp = services.BuildServiceProvider();
+    return new DeadLetterRecoveryWorker(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(options),
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      generationProvider: new FixedGenerationProvider("test/0.0.1"),
+      logger: NullLogger<DeadLetterRecoveryWorker>.Instance,
+      notificationListener: new NoOpWorkNotificationListener(),
+      housekeeping: housekeeping);
+  }
 
   [Test]
   public async Task ForcedThroughWhileBusy_ScansNarrowAsync() {
@@ -1311,7 +1421,6 @@ public class DeadLetterRecoveryWorkerTests {
     var housekeeping = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { MaxConsecutiveDeferrals = 0 });
     var worker = new DeadLetterRecoveryWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: new ImmediateSchemaGate(),
       options: Options.Create(options),
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider("test/0.0.1"),
@@ -1540,7 +1649,6 @@ public class DeadLetterRecoveryWorkerTests {
     var housekeeping = new HousekeepingCoordinator();
     var worker = new DeadLetterRecoveryWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: new ImmediateSchemaGate(),
       options: Options.Create(options),
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider("test/0.0.1"),

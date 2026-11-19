@@ -27,7 +27,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// branches (empty fetch, newRows==0), cancellation short-circuits, and the Debug perf log.
 /// </summary>
 [NotInParallel("WhizbangBackgroundServiceTests")]
-public class InboxDrainWorkerGapTests {
+public partial class InboxDrainWorkerGapTests {
 
   // --- fakes ---
 
@@ -91,6 +91,9 @@ public class InboxDrainWorkerGapTests {
     /// <summary>Payload bytes this writer reports as held (#1793): a starting amount plus each written payload.</summary>
     public long HeldBytes;
     public long HeldPayloadBytes => Interlocked.Read(ref HeldBytes);
+    /// <summary>The held total the drain last said new inbox acquisition waits for (#1853), or null if it never said.</summary>
+    public long? DeferredUntil { get; private set; }
+    public void DeferInboxAcquisitionUntilHeldAtMost(long heldBytes) => DeferredUntil = heldBytes;
     public bool IsInFlight(Guid messageId) => Held?.ContainsKey(messageId) ?? false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
@@ -193,23 +196,6 @@ public class InboxDrainWorkerGapTests {
     }
   }
 
-  /// <summary>
-  /// Schema gate that never becomes ready. Signals <see cref="Entered"/> once the worker is
-  /// deterministically inside <see cref="WaitForReadyAsync"/>, so the test can cancel exactly
-  /// while the worker is parked on the gate.
-  /// </summary>
-  private sealed class NeverReadyGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _never = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public Task Entered => _entered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      return _never.Task.WaitAsync(cancellationToken);
-    }
-  }
-
   // --- helpers ---
 
   private static readonly JsonSerializerOptions _jsonOpts =
@@ -217,10 +203,10 @@ public class InboxDrainWorkerGapTests {
 
   private static readonly TimeSpan _timeout = TimeSpan.FromSeconds(15);
 
-  private static InboxBatchRow _row(Guid messageId, Guid? streamId) {
+  private static InboxBatchRow _row(Guid messageId, Guid? streamId, string payload = "{}") {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonElement.Parse("{}"),
+      Payload = JsonElement.Parse(payload),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
     };
@@ -261,24 +247,21 @@ public class InboxDrainWorkerGapTests {
       RecordingDrainChannel drainChannel,
       TestInboxWriter inboxWriter,
       InboxDrainWorkerOptions options,
-      ILogger<InboxDrainWorker>? logger = null,
-      ISchemaReadyGate? gate = null) {
+      ILogger<InboxDrainWorker>? logger = null) {
     var services = new ServiceCollection();
     services.AddSingleton(coordinator);
+    // What the drain resolves for a row it cannot read (#1983).
+    services.AddSingleton<IFailureChannel>(new UnreadableFailureChannel());
+    services.AddSingleton<IDeadLetterStore>(NullDeadLetterStore.Instance);
+    services.AddOptions();
     var sp = services.BuildServiceProvider();
 
-    if (gate is null) {
-      var readyGate = new SchemaReadyGate();
-      readyGate.MarkReady();
-      gate = readyGate;
-    }
 
     return new InboxDrainWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       new FakeInstance(),
       drainChannel,
       inboxWriter,
-      gate,
       Options.Create(options),
       _jsonOpts,
       logger ?? NullLogger<InboxDrainWorker>.Instance);
@@ -297,45 +280,40 @@ public class InboxDrainWorkerGapTests {
     var instance = new FakeInstance();
     var drain = new RecordingDrainChannel();
     var writer = new TestInboxWriter();
-    var gate = new SchemaReadyGate();
     var options = Options.Create(new InboxDrainWorkerOptions());
     var logger = NullLogger<InboxDrainWorker>.Instance;
 
     var exScope = Assert.Throws<ArgumentNullException>(() =>
-      _ = new InboxDrainWorker(null!, instance, drain, writer, gate, options, _jsonOpts, logger));
+      _ = new InboxDrainWorker(null!, instance, drain, writer, options, _jsonOpts, logger));
     await Assert.That(exScope.ParamName).IsEqualTo("scopeFactory");
 
     var exInstance = Assert.Throws<ArgumentNullException>(() =>
-      _ = new InboxDrainWorker(scopeFactory, null!, drain, writer, gate, options, _jsonOpts, logger));
+      _ = new InboxDrainWorker(scopeFactory, null!, drain, writer, options, _jsonOpts, logger));
     await Assert.That(exInstance.ParamName).IsEqualTo("instanceProvider");
 
     var exDrain = Assert.Throws<ArgumentNullException>(() =>
-      _ = new InboxDrainWorker(scopeFactory, instance, null!, writer, gate, options, _jsonOpts, logger));
+      _ = new InboxDrainWorker(scopeFactory, instance, null!, writer, options, _jsonOpts, logger));
     await Assert.That(exDrain.ParamName).IsEqualTo("drainChannel");
 
     var exWriter = Assert.Throws<ArgumentNullException>(() =>
-      _ = new InboxDrainWorker(scopeFactory, instance, drain, null!, gate, options, _jsonOpts, logger));
+      _ = new InboxDrainWorker(scopeFactory, instance, drain, null!, options, _jsonOpts, logger));
     await Assert.That(exWriter.ParamName).IsEqualTo("inboxChannelWriter");
 
-    var exGate = Assert.Throws<ArgumentNullException>(() =>
-      _ = new InboxDrainWorker(scopeFactory, instance, drain, writer, null!, options, _jsonOpts, logger));
-    await Assert.That(exGate.ParamName).IsEqualTo("schemaReadyGate");
 
     var exOptions = Assert.Throws<ArgumentNullException>(() =>
-      _ = new InboxDrainWorker(scopeFactory, instance, drain, writer, gate, null!, _jsonOpts, logger));
+      _ = new InboxDrainWorker(scopeFactory, instance, drain, writer, null!, _jsonOpts, logger));
     await Assert.That(exOptions.ParamName).IsEqualTo("options");
 
     var exOptionsValue = Assert.Throws<ArgumentNullException>(() =>
-      _ = new InboxDrainWorker(scopeFactory, instance, drain, writer, gate,
-        new OptionsWrapper<InboxDrainWorkerOptions>(null!), _jsonOpts, logger));
+      _ = new InboxDrainWorker(scopeFactory, instance, drain, writer, new OptionsWrapper<InboxDrainWorkerOptions>(null!), _jsonOpts, logger));
     await Assert.That(exOptionsValue.ParamName).IsEqualTo("options");
 
     var exJson = Assert.Throws<ArgumentNullException>(() =>
-      _ = new InboxDrainWorker(scopeFactory, instance, drain, writer, gate, options, null!, logger));
+      _ = new InboxDrainWorker(scopeFactory, instance, drain, writer, options, null!, logger));
     await Assert.That(exJson.ParamName).IsEqualTo("jsonOptions");
 
     var exLogger = Assert.Throws<ArgumentNullException>(() =>
-      _ = new InboxDrainWorker(scopeFactory, instance, drain, writer, gate, options, _jsonOpts, null!));
+      _ = new InboxDrainWorker(scopeFactory, instance, drain, writer, options, _jsonOpts, null!));
     await Assert.That(exLogger.ParamName).IsEqualTo("logger");
   }
 
@@ -369,40 +347,6 @@ public class InboxDrainWorkerGapTests {
       .Because("a disabled drainer must never issue a fetch");
     await Assert.That(writer.Written.Count).IsEqualTo(0);
     await Assert.That(worker.IsIdle).IsTrue();
-  }
-
-  /// <summary>
-  /// Covers the schema-gate cancellation branch (lines 102-106): cancellation while parked on
-  /// <see cref="ISchemaReadyGate.WaitForReadyAsync"/> returns from ExecuteAsync WITHOUT
-  /// entering the batch loop and WITHOUT reaching the trailing LogStopped (EventId 2) — that
-  /// early return skips line 133 entirely.
-  /// </summary>
-  [Test]
-  public async Task ExecuteAsync_CanceledWhileWaitingForSchemaGate_ReturnsWithoutBatchingAsync() {
-    var coord = new ScriptedCoordinator();
-    var drain = new RecordingDrainChannel();
-    var writer = new TestInboxWriter();
-    var logger = new RecordingLogger(LogLevel.Information);
-    var gate = new NeverReadyGate();
-
-    var worker = _buildWorker(coord, drain, writer,
-      new InboxDrainWorkerOptions { Enabled = true }, logger, gate);
-
-    await worker.StartAsync(CancellationToken.None);
-    await gate.Entered.WaitAsync(_timeout);
-
-    await worker.StopAsync(CancellationToken.None);
-
-    var executeTask = worker.ExecuteTask ?? Task.CompletedTask;
-    await Assert.That(executeTask.IsCompleted).IsTrue()
-      .Because("the gate-cancellation branch swallows the OCE and returns cleanly");
-    await Assert.That(executeTask.IsFaulted).IsFalse()
-      .Because("graceful shutdown must not fault (Canceled or RanToCompletion both clean)");
-    await Assert.That(logger.Entries.Count(e => e.EventId == 1)).IsEqualTo(1)
-      .Because("LogStarted fires before the gate wait");
-    await Assert.That(logger.Entries.Count(e => e.EventId == 2)).IsEqualTo(0)
-      .Because("the early return on gate cancellation skips LogStopped");
-    await Assert.That(coord.FetchCalls.Count).IsEqualTo(0);
   }
 
   /// <summary>
@@ -774,6 +718,47 @@ public class InboxDrainWorkerGapTests {
     await Assert.That(coord.Releases.Single().Ids).IsEquivalentTo(ids)
       .Because("a row left leased and unqueued would lapse and be charged an attempt it never used");
     await Assert.That(log.Entries.Select(e => e.Message).Any(m => m.Contains("working set", StringComparison.OrdinalIgnoreCase))).IsTrue();
+  }
+
+  // #1853: rows turned away for the byte budget also stop the claim leasing new inbox rows, until the working set has
+  // drained to where the smallest of them fits.
+
+  [Test]
+  public async Task WorkingSetFull_DefersAcquisitionUntilTheSmallestTurnedAwayRowFitsAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var otherStream = (Guid)TrackedGuid.New();
+    var (writer, coord, _) = await _drainOnceAsync(
+      new() {
+        // 11 bytes, then 7 bytes waiting behind it in the same stream; 9 bytes in another.
+        [streamId] = [_row((Guid)TrackedGuid.New(), streamId, """{"a":12345}"""), _row((Guid)TrackedGuid.New(), streamId, """{"a":1}""")],
+        [otherStream] = [_row((Guid)TrackedGuid.New(), otherStream, """{"a":123}""")],
+      },
+      budget: 100, alreadyHeld: 100);
+
+    await Assert.That(coord.Releases.Single().Ids.Length).IsEqualTo(3);
+    await Assert.That(writer.DeferredUntil).IsEqualTo(93L)
+      .Because("until 7 bytes are free no turned-away row fits, so leasing more would only hand it back again");
+  }
+
+  [Test]
+  public async Task ARowLargerThanTheBudget_DefersAcquisitionUntilNothingIsHeldAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var (writer, _, _) = await _drainOnceAsync(
+      new() { [streamId] = [_row((Guid)TrackedGuid.New(), streamId, """{"a":12345}""")] }, budget: 5, alreadyHeld: 5);
+
+    await Assert.That(writer.DeferredUntil).IsEqualTo(0L)
+      .Because("a row larger than the budget is admitted only when nothing is held");
+  }
+
+  [Test]
+  public async Task NothingTurnedAway_DefersNothingAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var (writer, coord, _) = await _drainOnceAsync(
+      new() { [streamId] = [_row((Guid)TrackedGuid.New(), streamId)] }, budget: 1000, alreadyHeld: 0);
+
+    await Assert.That(writer.Written.Count).IsEqualTo(1);
+    await Assert.That(coord.Releases).IsEmpty();
+    await Assert.That(writer.DeferredUntil).IsNull();
   }
 
   [Test]

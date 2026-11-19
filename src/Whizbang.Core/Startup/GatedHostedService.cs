@@ -1,0 +1,120 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using Microsoft.Extensions.Hosting;
+using Whizbang.Core.Observability;
+
+namespace Whizbang.Core.Startup;
+
+/// <summary>
+/// Starts a hosted service only once this instance reaches the point in startup the service needs (#1636), so the
+/// service itself holds no gate code: when it may start is a fact of its registration, and the host enforces it.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The host starts the wrapper with every other hosted service; the wrapper waits for the start point in the
+/// background and then starts the service. Stopped before the point is reached, the service is never started and so
+/// never stopped. A service whose own loop is a <see cref="BackgroundService"/> has that loop watched: a fault in it is
+/// the wrapper's fault, which the host handles exactly as it would have handled the service's.
+/// </para>
+/// <para>
+/// Register a worker through <see cref="WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorker{TWorker}(Microsoft.Extensions.DependencyInjection.IServiceCollection, StartupStage)"/>
+/// or <see cref="WhizbangWorkerServiceCollectionExtensions.AddWhizbangWorkerAtSchemaReady{TWorker}(Microsoft.Extensions.DependencyInjection.IServiceCollection)"/>;
+/// the two wrappers they host are <see cref="StartupStageGatedService{TService}"/> and
+/// <see cref="SchemaReadyGatedService{TService}"/>.
+/// </para>
+/// </remarks>
+/// <docs>operations/startup/startup-status#what-runs-in-each-stage</docs>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupStageGatedServiceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/WhizbangWorkerRegistrationTests.cs</tests>
+public abstract class GatedHostedService : BackgroundService {
+  private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+  private readonly CancellationTokenSource _startCanceled = new();
+  private CancellationTokenRegistration _startRegistration;
+
+  /// <summary>Creates the wrapper.</summary>
+  /// <param name="service">The service to start at the start point.</param>
+  private protected GatedHostedService(IHostedService service) {
+    ArgumentNullException.ThrowIfNull(service);
+    Service = service;
+  }
+
+  /// <summary>The service this starts.</summary>
+  public IHostedService Service { get; }
+
+  /// <summary>
+  /// Where the service starts, as an operator reads it: a startup stage's name (for example <c>Accept commands</c>) or
+  /// <c>schema ready</c>.
+  /// </summary>
+  public abstract string StartPoint { get; }
+
+  /// <summary>Completes once the service has been started.</summary>
+  public Task Started => _started.Task;
+
+  /// <summary>Completes once this instance has reached the point the service starts at.</summary>
+  /// <param name="stoppingToken">Ends the wait when the host stops.</param>
+  /// <returns>A task that completes at the start point, or is canceled with the token.</returns>
+  protected abstract Task WaitToStartAsync(CancellationToken stoppingToken);
+
+  /// <summary>
+  /// Starts the wait for the start point. The start's token is linked here rather than handed to the base class, which
+  /// runs <see cref="ExecuteAsync"/> through <c>Task.Run</c> with it: a start canceled before the thread pool ran the
+  /// wait left the wrapper canceled without the wait ever running, and a host counts a canceled service as a failed one.
+  /// </summary>
+  /// <param name="cancellationToken">Canceled when the host's start is abandoned.</param>
+  /// <returns>A task that completes once the wait is running.</returns>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupStageGatedServiceTests.cs:AStartAlreadyCanceled_EndsTheWrapperWithoutAFaultOrACancellationAsync</tests>
+  public override Task StartAsync(CancellationToken cancellationToken) {
+    _startRegistration = cancellationToken.Register(static state => ((CancellationTokenSource)state!).Cancel(), _startCanceled);
+    return base.StartAsync(CancellationToken.None);
+  }
+
+  /// <inheritdoc />
+  protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+    using var abandoned = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, _startCanceled.Token);
+    await _executeAsync(abandoned.Token).ConfigureAwait(false);
+  }
+
+  private async Task _executeAsync(CancellationToken stoppingToken) {
+    try {
+      await WaitToStartAsync(stoppingToken).ConfigureAwait(false);
+      // A worker that names its mechanism is started inside it, so its loop, and every task the loop starts, carries
+      // the name to each statement it runs. The scope closes here; the loop keeps the copy it captured.
+      using (Service is IDbMechanismOwner owner ? DbMechanismScope.Begin(owner.DbMechanism) : null) {
+        await Service.StartAsync(stoppingToken).ConfigureAwait(false);
+      }
+      _started.TrySetResult();
+      if (Service is BackgroundService background) {
+        // Set by StartAsync, which has returned.
+        await background.ExecuteTask!.WaitAsync(stoppingToken).ConfigureAwait(false);
+      }
+    } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
+      // Stopping ends the wrapper normally, not canceled (#2135). The token is also canceled with the host's start, so a
+      // start abandoned before the start point ends here before the host is stopping, and a host counts a canceled
+      // service as a failed one unless it is already stopping: it logs it at Error and, from .NET 11, rethrows it from
+      // its stop. What happens to the service is settled in StopAsync.
+    }
+  }
+
+  /// <inheritdoc />
+  public override void Dispose() {
+    _startRegistration.Dispose();
+    _startCanceled.Dispose();
+    base.Dispose();
+    GC.SuppressFinalize(this);
+  }
+
+  /// <inheritdoc />
+  public override async Task StopAsync(CancellationToken cancellationToken) {
+    // Waits for the wait above to end, so whether the service was started is settled below.
+    await base.StopAsync(cancellationToken).ConfigureAwait(false);
+    if (_started.Task.IsCompleted) {
+      await Service.StopAsync(cancellationToken).ConfigureAwait(false);
+    } else {
+      // The host stopped before the start point: the service is never started, and one whose startup others wait on
+      // settles that signal now. Decided here rather than where the wait is canceled, because a host that stops early
+      // enough cancels the wait before it ever ran.
+      (Service as IStartAbandonedObserver)?.OnStartAbandoned(new CancellationToken(canceled: true));
+    }
+  }
+}

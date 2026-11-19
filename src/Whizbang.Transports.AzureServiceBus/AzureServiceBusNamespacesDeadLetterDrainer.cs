@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using Whizbang.Core.Transports;
 
 namespace Whizbang.Transports.AzureServiceBus;
@@ -33,20 +34,29 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbNamespacesDeadLetterDrainerTests.cs</tests>
 internal sealed class AzureServiceBusNamespacesDeadLetterDrainer : ITransportDeadLetterDrainer, IAsyncDisposable {
   private readonly Func<IReadOnlyList<AzureServiceBusTransport>> _transports;
-  private readonly Func<AzureServiceBusTransport, AzureServiceBusFleetDeadLetterDrainer> _fleetFor;
+  private readonly Func<AzureServiceBusTransport, LogLevel, AzureServiceBusFleetDeadLetterDrainer> _fleetFor;
   private readonly ConcurrentDictionary<AzureServiceBusTransport, AzureServiceBusFleetDeadLetterDrainer> _fleets = new();
 
   /// <summary>Creates the drainer.</summary>
   /// <param name="transports">The Service Bus transports to drain, evaluated fresh on every pass.</param>
-  /// <param name="fleetFor">Builds the fleet drainer for one namespace's transport, once per transport.</param>
+  /// <param name="fleetFor">Builds the fleet drainer for one namespace's transport, once per transport, given the
+  ///   level its drainers log a dead-letter record at.</param>
+  /// <param name="deadLetterLogLevel">The level every fleet's drainers log their dead-letter record at (#1901).</param>
   internal AzureServiceBusNamespacesDeadLetterDrainer(
       Func<IReadOnlyList<AzureServiceBusTransport>> transports,
-      Func<AzureServiceBusTransport, AzureServiceBusFleetDeadLetterDrainer> fleetFor) {
+      Func<AzureServiceBusTransport, LogLevel, AzureServiceBusFleetDeadLetterDrainer> fleetFor,
+      LogLevel deadLetterLogLevel = LogLevel.Error) {
     ArgumentNullException.ThrowIfNull(transports);
     ArgumentNullException.ThrowIfNull(fleetFor);
     _transports = transports;
     _fleetFor = fleetFor;
+    DeadLetterLogLevel = deadLetterLogLevel;
   }
+
+  /// <summary>The level each namespace's fleet is built to log a dead-letter record at (#1901).</summary>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbNamespacesDeadLetterDrainerTests.cs:Drain_BuildsEachFleetWithTheDeadLetterLevelAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbDeadLetterDrainerWiringTests.cs:AddAzureServiceBusTransport_ConfiguredWarning_TheDrainerLogsDeadLettersAtWarningAsync</tests>
+  internal LogLevel DeadLetterLogLevel { get; }
 
   /// <inheritdoc />
   public string TransportName => "asb";
@@ -73,7 +83,7 @@ internal sealed class AzureServiceBusNamespacesDeadLetterDrainer : ITransportDea
         break;
       }
 
-      var fleet = _fleets.GetOrAdd(transport, _fleetFor);
+      var fleet = _fleets.GetOrAdd(transport, _fleetFor, DeadLetterLogLevel);
       drained += await fleet.DrainDeadLetterQueueAsync(remaining, ct).ConfigureAwait(false);
     }
 

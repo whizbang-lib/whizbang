@@ -4,6 +4,7 @@
 using System.Globalization;
 using Azure.Core;
 using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -37,7 +38,9 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
   public static IServiceCollection AddWhizbangAzureBlobArchive(this IServiceCollection services, Action<AzureBlobArchiveOptions> configure) {
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(configure);
-    services.AddOptions<AzureBlobArchiveOptions>().Configure(configure);
+    // Validated when the host starts (#1897): a tier the store cannot write at fails the start, not the first archive.
+    services.AddOptions<AzureBlobArchiveOptions>().Configure(configure).ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<AzureBlobArchiveOptions>, AccessTierValidator>());
     services.RemoveAll<IArchiveStore>();
     services.TryAddSingleton(_create);
     services.AddSingleton<IArchiveStore>(sp => sp.GetRequiredService<AzureBlobArchiveStore>());
@@ -48,8 +51,8 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
 
   /// <summary>
   /// Registers the Azure Blob store as the <see cref="IArchiveStore"/>, with settings read from
-  /// <c>Whizbang:Archive:AzureBlob</c> (<c>ServiceUri</c>, <c>ConnectionString</c>, <c>ContainerName</c>,
-  /// <c>CompressionLevel</c>, <c>MaxEventsPerChunk</c>; environment form <c>Whizbang__Archive__AzureBlob__ServiceUri</c>).
+  /// <c>Whizbang:Archive:AzureBlob</c> (<c>ServiceUri</c>, <c>ConnectionString</c>, <c>ContainerName</c>, <c>ConnectionName</c>,
+  /// <c>CompressionLevel</c>, <c>MaxEventsPerChunk</c>, <c>AccessTier</c>, <c>VerifyLocation</c>, <c>DeleteAfter</c>; environment form <c>Whizbang__Archive__AzureBlob__ServiceUri</c>).
   /// </summary>
   /// <param name="services">The service collection.</param>
   /// <param name="configuration">The application's configuration.</param>
@@ -69,17 +72,64 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
         ? uri
         : throw _unreadable(nameof(AzureBlobArchiveOptions.ServiceUri), serviceUri);
     }
-    var connectionString = section[nameof(AzureBlobArchiveOptions.ConnectionString)];
-    if (!string.IsNullOrWhiteSpace(connectionString)) {
-      options.ConnectionString = connectionString;
-    }
+    Whizbang.Core.Configuration.ConfigurationValueBinder.BindSensitive(
+      section, nameof(AzureBlobArchiveOptions.ConnectionString), value => options.ConnectionString = value);
     var containerName = section[nameof(AzureBlobArchiveOptions.ContainerName)];
     if (!string.IsNullOrWhiteSpace(containerName)) {
       options.ContainerName = containerName;
     }
+    var connectionName = section[nameof(AzureBlobArchiveOptions.ConnectionName)];
+    if (!string.IsNullOrWhiteSpace(connectionName)) {
+      // Never echoed: a value that looks like a connection string may be one.
+      options.ConnectionName = AzureBlobArchiveOptions.IsLogicalName(connectionName)
+        ? connectionName
+        : throw new InvalidOperationException(
+          $"{CONFIGURATION_SECTION}:{nameof(AzureBlobArchiveOptions.ConnectionName)} is a logical name, not a connection string: " +
+          "it may not contain ';' or '='.");
+    }
+    var verifyLocation = section[nameof(AzureBlobArchiveOptions.VerifyLocation)];
+    if (!string.IsNullOrWhiteSpace(verifyLocation)) {
+      options.VerifyLocation = bool.TryParse(verifyLocation, out var verify)
+        ? verify
+        : throw _unreadable(nameof(AzureBlobArchiveOptions.VerifyLocation), verifyLocation);
+    }
     options.CompressionLevel = _int(section, nameof(AzureBlobArchiveOptions.CompressionLevel), options.CompressionLevel);
     options.MaxEventsPerChunk = _int(section, nameof(AzureBlobArchiveOptions.MaxEventsPerChunk), options.MaxEventsPerChunk);
+    var deleteAfter = section[nameof(AzureBlobArchiveOptions.DeleteAfter)];
+    if (!string.IsNullOrWhiteSpace(deleteAfter)) {
+      options.DeleteAfter = TimeSpan.TryParse(deleteAfter, CultureInfo.InvariantCulture, out var delay)
+        && AzureBlobArchiveOptions.RefusalForDeleteAfter(delay) is null
+        ? delay
+        : throw new InvalidOperationException(
+          $"{CONFIGURATION_SECTION}:{nameof(AzureBlobArchiveOptions.DeleteAfter)} is '{deleteAfter}'. " +
+          AzureBlobArchiveOptions.DELETE_AFTER_REFUSAL);
+    }
+    var accessTier = section[nameof(AzureBlobArchiveOptions.AccessTier)];
+    if (!string.IsNullOrWhiteSpace(accessTier)) {
+      // Hot, Cool or Cold in any case, kept in the SDK's spelling; anything else is refused with the reason.
+      options.AccessTier = AzureBlobArchiveOptions.Online(new AccessTier(accessTier))
+        ?? throw _tierRefused(accessTier, AzureBlobArchiveOptions.RefusalFor(new AccessTier(accessTier))!);
+    }
   }
+
+  /// <summary>
+  /// Refuses, when the host starts, a tier set in code that the store cannot write at, the same tiers
+  /// <see cref="Bind"/> refuses from configuration.
+  /// </summary>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveRegistrationTests.cs:Startup_AnArchiveTierSetInCode_FailsTheHostAtStart_ACoolTierDoesNotAsync</tests>
+  private sealed class AccessTierValidator : IValidateOptions<AzureBlobArchiveOptions> {
+    public ValidateOptionsResult Validate(string? name, AzureBlobArchiveOptions options) {
+      if (AzureBlobArchiveOptions.RefusalFor(options.AccessTier) is { } refusal) {
+        return ValidateOptionsResult.Fail(_tierRefused($"{options.AccessTier}", refusal).Message);
+      }
+      return AzureBlobArchiveOptions.RefusalForDeleteAfter(options.DeleteAfter) is { } delayRefusal
+        ? ValidateOptionsResult.Fail($"{CONFIGURATION_SECTION}:{nameof(AzureBlobArchiveOptions.DeleteAfter)} is '{options.DeleteAfter}'. {delayRefusal}")
+        : ValidateOptionsResult.Success;
+    }
+  }
+
+  private static InvalidOperationException _tierRefused(string value, string refusal) =>
+    new($"{CONFIGURATION_SECTION}:{nameof(AzureBlobArchiveOptions.AccessTier)} is '{value}'. {refusal}");
 
   /// <summary>
   /// The container client the settings name: a connection string as given, or the service endpoint with the registered
@@ -89,14 +139,14 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
   /// the endpoint is set and no credential is registered.</exception>
   internal static BlobContainerClient CreateContainerClient(AzureBlobArchiveOptions options, TokenCredential? credential) {
     var hasUri = options.ServiceUri is not null;
-    var hasConnectionString = !string.IsNullOrWhiteSpace(options.ConnectionString);
+    var hasConnectionString = !string.IsNullOrWhiteSpace(options.ConnectionString?.Reveal());
     if (hasUri == hasConnectionString) {
       throw new InvalidOperationException(
         $"Set exactly one of {CONFIGURATION_SECTION}:ServiceUri (with a TokenCredential registered for its identity) or " +
         $"{CONFIGURATION_SECTION}:ConnectionString for the Azure Blob archive store.");
     }
     if (hasConnectionString) {
-      return new BlobContainerClient(options.ConnectionString, options.ContainerName);
+      return new BlobContainerClient(options.ConnectionString!.Reveal(), options.ContainerName);
     }
     if (credential is null) {
       throw new InvalidOperationException(
@@ -117,7 +167,9 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
       database,
       CreateContainerClient(options, services.GetService<TokenCredential>()),
       options,
-      services.GetService<ILogger<AzureBlobArchiveStore>>());
+      services.GetService<ILogger<AzureBlobArchiveStore>>(),
+      services.GetService<TimeProvider>(),
+      services.GetService<Whizbang.Core.Observability.WhizbangMetrics>() is { } metrics ? new ArchiveSweepMetrics(metrics) : null);
   }
 
   private static int _int(IConfiguration section, string key, int current) {

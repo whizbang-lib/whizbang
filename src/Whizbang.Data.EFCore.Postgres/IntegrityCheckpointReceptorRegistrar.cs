@@ -17,7 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// dispatch finds a runtime handler; <see cref="LifecycleStage.PreOutboxInline"/>, where the sending service handles an
 /// outbox copy that nothing dispatched locally; and <see cref="LifecycleStage.PostInboxInline"/>, for a copy arriving
 /// from another service. So the checkpoint reaches it whether it fires in-process or
-/// arrives over the inbox. No-ops if no registry is present (schema-only / diagnostic hosts still boot).
+/// arrives over the inbox. Registered deferred (<see cref="IntegrityDeliveryRegistration"/>, #2001): every stage records the message for the maintainer's integrity delivery drain. No-ops if no registry is present (schema-only / diagnostic hosts still boot).
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityCheckpointReceptorTests.cs</tests>
@@ -32,10 +32,8 @@ internal sealed class IntegrityCheckpointReceptorRegistrar(
     if (registry is null or INullDefault) {
       return Task.CompletedTask;
     }
-    var receptor = new IntegrityCheckpointReceptor(scopeFactory, receptorLogger);
-    registry.Register<IntegrityCheckpoint>(receptor, LifecycleStage.LocalImmediateInline);
-    registry.Register<IntegrityCheckpoint>(receptor, LifecycleStage.PreOutboxInline);
-    registry.Register<IntegrityCheckpoint>(receptor, LifecycleStage.PostInboxInline);
+    // Deferred at every stage: the check runs on the maintainer's integrity delivery drain (#2001).
+    registry.RegisterIntegrityReceptor(new IntegrityCheckpointReceptor(scopeFactory, receptorLogger), services, scopeFactory);
     return Task.CompletedTask;
   }
 

@@ -26,18 +26,6 @@ public class NotificationConnectionPlanCoverageTests {
       string? connectionString, NotificationConnectionStringResolver.ResolutionSource source) =>
     new(connectionString, source);
 
-  /// <summary>Binds an ephemeral loopback port, then immediately frees it — a port nothing is
-  /// listening on, so a connection attempt fails fast (deterministic ECONNREFUSED) instead of
-  /// hanging on a timeout. Mirrors the identical helper in
-  /// <c>PostgresConnectionRetryCoverageTests</c>.</summary>
-  private static int _reserveClosedPort() {
-    var probe = new TcpListener(IPAddress.Loopback, 0);
-    probe.Start();
-    var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-    probe.Stop();
-    return port;
-  }
-
   // StringSource is the diagnostic trail for "why is this component using this connection
   // string" — an operator debugging a notification worker that's talking to the wrong database
   // (pooled vs. direct, EF Core's DbContext connection vs. an explicit override) reads this to
@@ -65,7 +53,11 @@ public class NotificationConnectionPlanCoverageTests {
   // failing to actually connect.
   [Test]
   public async Task OpenAsync_FallbackConnectionStringFailsToConnect_DisposesAndRethrowsAsync() {
-    var closedPort = _reserveClosedPort();
+    // Bound and never listening, held for the whole test: the attempt is refused at once, and nothing else can take
+    // the port in between, as it could when the port was probed and released (#2069).
+    using var closed = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+    closed.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+    var closedPort = ((IPEndPoint)closed.LocalEndPoint!).Port;
     var badConnectionString =
       $"Host=127.0.0.1;Port={closedPort};Username=nobody;Password=nobody;Database=nothing;Timeout=1";
     var plan = NotificationConnectionPlan.Create(

@@ -214,4 +214,56 @@ public class WhizbangLifecycleStateTests {
       await Task.Yield();
     }
   }
+
+  [Test]
+  [Arguments(LifecyclePhase.Stopped)]
+  [Arguments(LifecyclePhase.Halted)]
+  public async Task AdvanceTo_FromATerminalPhase_IsIgnoredAsync(LifecyclePhase terminal) {
+    // #2045: a stop is final. A startup step that finishes after the host began stopping cannot move the instance back
+    // to work, and cannot write Running over Stopped on its row.
+    var (state, participant) = _build();
+    await state.AdvanceToAsync(terminal, CancellationToken.None);
+    participant.Seen.Clear();
+
+    await state.AdvanceToAsync(LifecyclePhase.Running, CancellationToken.None);
+    await state.AdvanceToAsync(LifecyclePhase.Resuming, CancellationToken.None);
+
+    await Assert.That(state.Phase).IsEqualTo(terminal);
+    await Assert.That(participant.Seen).IsEmpty();
+  }
+
+  [Test]
+  [Arguments(LifecyclePhase.Pausing, LifecyclePhase.AcceptingCommands)]
+  [Arguments(LifecyclePhase.Paused, LifecyclePhase.Running)]
+  [Arguments(LifecyclePhase.StandingBy, LifecyclePhase.Running)]
+  [Arguments(LifecyclePhase.StandingBy, LifecyclePhase.Migrating)]
+  [Arguments(LifecyclePhase.Stopping, LifecyclePhase.Connecting)]
+  public async Task AdvanceTo_AStartupPhaseWhileHalted_IsIgnoredAsync(LifecyclePhase halted, LifecyclePhase startup) {
+    // #2045: once the run-control path halted the instance, only it moves the instance on (Resuming, or a further
+    // halt). The startup ladder finishing late does not silently resume a paused or stood-down instance.
+    var (state, participant) = _build();
+    await state.AdvanceToAsync(halted, CancellationToken.None);
+    participant.Seen.Clear();
+
+    await state.AdvanceToAsync(startup, CancellationToken.None);
+
+    await Assert.That(state.Phase).IsEqualTo(halted);
+    await Assert.That(participant.Seen).IsEmpty();
+  }
+
+  [Test]
+  [Arguments(LifecyclePhase.Paused, LifecyclePhase.Resuming)]
+  [Arguments(LifecyclePhase.StandingBy, LifecyclePhase.Resuming)]
+  [Arguments(LifecyclePhase.Paused, LifecyclePhase.Stopping)]
+  [Arguments(LifecyclePhase.Pausing, LifecyclePhase.StandingBy)]
+  [Arguments(LifecyclePhase.Stopping, LifecyclePhase.Stopped)]
+  public async Task AdvanceTo_TheRunControlPathFromAHalt_IsAcceptedAsync(LifecyclePhase halted, LifecyclePhase next) {
+    var (state, participant) = _build();
+    await state.AdvanceToAsync(halted, CancellationToken.None);
+
+    await state.AdvanceToAsync(next, CancellationToken.None);
+
+    await Assert.That(state.Phase).IsEqualTo(next);
+    await Assert.That(participant.Seen[^1]).IsEqualTo(next);
+  }
 }

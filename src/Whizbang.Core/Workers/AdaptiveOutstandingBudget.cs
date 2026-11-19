@@ -41,8 +41,8 @@ namespace Whizbang.Core.Workers;
 /// <para>AOT-safe: plain arithmetic over value types, no reflection.</para>
 /// </remarks>
 /// <docs>operations/workers/claim-backpressure#lease-aware-budget</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/AdaptiveOutstandingBudgetTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/AdaptiveOutstandingBudgetLeaseAwarenessTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/AdaptiveOutstandingBudgetTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/AdaptiveOutstandingBudgetLeaseAwarenessTests.cs</tests>
 public sealed class AdaptiveOutstandingBudget {
   private readonly int _leaseSeconds;
   private readonly int _ceiling;

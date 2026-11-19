@@ -57,13 +57,15 @@
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <!-- Integration: Requires PostgreSQL via Testcontainers -->
     <WhizbangTestType>Integration</WhizbangTestType>
     <!-- Tags for filtering: Postgres, Docker, Data -->
     <WhizbangTestTags>Postgres;Docker;Data</WhizbangTestTags>
+    <!-- CI runs this project as [Category=ShardN] slices (ci.yml, ai-docs/test-sharding.md), so every test class
+         must carry exactly one Shard category, or Benchmark and none: WHIZ605 makes anything else a build error. -->
+    <WhizbangShardedTests>true</WhizbangShardedTests>
     <!-- Suppress trimming warnings for test project using EF Core InMemory -->
     <NoWarn>$(NoWarn);IL2026;IL3050</NoWarn>
 
@@ -82,8 +84,18 @@
     <None Update="Performance\baseline.tsv" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- #2122: a reverse script the reversal reader finds by its resource name, as it finds the library's own. -->
+  <ItemGroup>
+    <EmbeddedResource Include="MigrationReversals\*.down.sql" LogicalName="Whizbang.Data.EFCore.Postgres.Tests.MigrationReversals.%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <!-- The fake clock the outbox batcher's retry waits run on (#1871), shared with the component tests. -->
   <ItemGroup>
     <Compile Include="../Whizbang.Core.Component.Tests/Workers/TimerAdvancingClock.cs" Link="Shared/Workers/TimerAdvancingClock.cs" />
+    <!-- #2029: the repair-ladder contract both ledgers run, so the in-memory fallback and the durable ledger cannot drift. -->
+    <Compile Include="../Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityRepairLedgerContractTests.cs" Link="Shared/Messaging/IntegrityRepairLedgerContractTests.cs" />
+    <!-- #2125: the ledger hashes published releases recorded, captured once and shared with the Dapper tests. -->
+    <Compile Include="../Whizbang.Data.Dapper.Postgres.Tests/Fixtures/LegacyMigrationLedgers/LegacyMigrationLedger.cs" Link="Shared/Fixtures/LegacyMigrationLedgers/LegacyMigrationLedger.cs" />
+    <None Include="../Whizbang.Data.Dapper.Postgres.Tests/Fixtures/LegacyMigrationLedgers/**/*.tsv" Link="Fixtures/LegacyMigrationLedgers/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

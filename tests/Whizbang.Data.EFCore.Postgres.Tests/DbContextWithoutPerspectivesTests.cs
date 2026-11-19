@@ -34,11 +34,7 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     await SharedPostgresContainer.InitializeAsync();
 
     // Create unique database for THIS test
-    _testDatabaseName = $"test_{Guid.NewGuid():N}";
-
-    await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-    await adminConnection.OpenAsync();
-    await adminConnection.ExecuteAsync($"CREATE DATABASE {_testDatabaseName}");
+    _testDatabaseName = (await PerTestDatabaseFactory.CreateAsync("no_persp")).Name;
 
     // Build connection string for the test database
     var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
@@ -57,21 +53,7 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
   public async Task CleanupAsync() {
     // Drop the test-specific database to clean up
     if (_testDatabaseName != null) {
-      try {
-        await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await adminConnection.OpenAsync();
-
-        // Terminate connections to the test database
-        await adminConnection.ExecuteAsync($@"
-          SELECT pg_terminate_backend(pg_stat_activity.pid)
-          FROM pg_stat_activity
-          WHERE pg_stat_activity.datname = '{_testDatabaseName}'
-          AND pid <> pg_backend_pid()");
-
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
-      } catch {
-        // Ignore cleanup errors
-      }
+      await PerTestDatabaseFactory.DropAsync(_testDatabaseName);
 
       _testDatabaseName = null;
     }

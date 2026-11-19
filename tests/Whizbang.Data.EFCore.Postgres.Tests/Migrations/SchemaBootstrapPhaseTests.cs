@@ -1,7 +1,9 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -42,7 +44,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <code-under-test>src/Whizbang.Data.Postgres/SchemaBootstrapPhase.cs</code-under-test>
 /// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class SchemaBootstrapPhaseTests {
   private const long LOCK_ID = 573948201;
@@ -75,6 +76,36 @@ public class SchemaBootstrapPhaseTests {
         TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
       Entries.Add((logLevel, formatter(state, exception)));
     private sealed class Scope : IDisposable { public void Dispose() { } }
+  }
+
+  /// <summary>Signals the bootstrap's waits: the schema lock found held, and the first retry scheduled.</summary>
+  private sealed class BootstrapSignals : ISchemaInitializationObserver {
+    private readonly TaskCompletionSource _contended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<(int Attempt, Exception Exception, TimeSpan Delay)> _retry =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public BootstrapSignals() =>
+      Services = new ServiceCollection().AddSingleton<ISchemaInitializationObserver>(this).BuildServiceProvider();
+
+    /// <summary>Where the bootstrap finds this observer.</summary>
+    public IServiceProvider Services { get; }
+
+    /// <summary>Completes when the bootstrap finds the schema lock held and is about to wait for it.</summary>
+    public Task Contended => _contended.Task;
+
+    /// <summary>Completes when the bootstrap has scheduled its first retry.</summary>
+    public Task<(int Attempt, Exception Exception, TimeSpan Delay)> RetryScheduled => _retry.Task;
+
+    public ValueTask OnSchemaLockContendedAsync(string schema, CancellationToken cancellationToken) {
+      _contended.TrySetResult();
+      return ValueTask.CompletedTask;
+    }
+
+    public ValueTask OnBootstrapRetryScheduledAsync(
+        string schema, int attempt, Exception exception, TimeSpan delay, CancellationToken cancellationToken) {
+      _retry.TrySetResult((attempt, exception, delay));
+      return ValueTask.CompletedTask;
+    }
   }
 
   [Before(Test)]
@@ -144,6 +175,151 @@ public class SchemaBootstrapPhaseTests {
     await Assert.That(recorded).IsTrue()
       .Because("this is the exact call the elector makes, and the one that could not be made "
         + "before the schema was migrated");
+  }
+
+  /// <summary>
+  /// An empty database records an instance's startup stage at registration once the bootstrap has run (#1636): the
+  /// stage columns and the function that writes them are Preflight's pre-migration scripts, so the row holds Preflight
+  /// from the moment it exists rather than from the main pass that used to add them.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task AnEmptyDatabaseRecordsItsStageAtRegistrationAfterTheBootstrapAsync(CancellationToken cancellationToken) {
+    var ready = await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+    await Assert.That(ready).IsTrue();
+    var instance = new Instance();
+    await SchemaBootstrapPhase.RegisterInstanceAsync(
+      _connect, SCHEMA, instance, cancellationToken: cancellationToken);
+
+    await Assert.That(await _scalarAsync<bool>(
+        "SELECT to_regprocedure('wh_record_startup_stage(uuid,smallint,text,text)') IS NOT NULL"))
+      .IsTrue().Because("registration writes the stage held until the row existed through this function");
+    var recorded = await _scalarAsync<bool>(
+      $"SELECT wh_record_startup_stage('{instance.InstanceId}'::uuid, 10::smallint, 'registering', 'Connecting')");
+    await Assert.That(recorded).IsTrue().Because("the row exists and can hold its stage");
+    await Assert.That(await _scalarAsync<string>(
+        $"""
+        SELECT startup_stage || ' ' || startup_stage_message || ' ' || lifecycle_phase || ' '
+               || (startup_stage_entered_at IS NOT NULL)
+        FROM wh_service_instances WHERE instance_id = '{instance.InstanceId}'
+        """))
+      .IsEqualTo("10 registering Connecting true");
+  }
+
+  /// <summary>
+  /// An empty database records an instance's whole transition at registration once the bootstrap has run (#1636): the
+  /// one recorder of stage, phase and version is a pre-migration script too, since the registration's held stage is
+  /// written through it.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task AnEmptyDatabaseRecordsATransitionAtRegistrationAfterTheBootstrapAsync(CancellationToken cancellationToken) {
+    await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+    var instance = new Instance();
+    await SchemaBootstrapPhase.RegisterInstanceAsync(
+      _connect, SCHEMA, instance, cancellationToken: cancellationToken);
+
+    await Assert.That(await _scalarAsync<bool>(
+        "SELECT to_regprocedure('wh_record_instance_transition(uuid,smallint,text,text,text)') IS NOT NULL"))
+      .IsTrue().Because("registration writes the transition held until the row existed through this function");
+    var recorded = await _scalarAsync<bool>(
+      $"SELECT wh_record_instance_transition('{instance.InstanceId}'::uuid, 10::smallint, 'registering', 'Connecting', '1.2.3')");
+    await Assert.That(recorded).IsTrue();
+    await Assert.That(await _scalarAsync<string>(
+        $"""
+        SELECT startup_stage || ' ' || startup_stage_message || ' ' || lifecycle_phase || ' ' || library_version
+        FROM wh_service_instances WHERE instance_id = '{instance.InstanceId}'
+        """))
+      .IsEqualTo("10 registering Connecting 1.2.3");
+  }
+
+  /// <summary>
+  /// An empty database beats a starting instance once the bootstrap has run, before any migration (#2126). The
+  /// heartbeat starts at registration, at the end of Preflight, so the function a starting instance beats through is a
+  /// pre-migration script: <c>record_heartbeat</c> is not, and does not exist yet. The beat refreshes the heartbeat and
+  /// the declared mode and window, and leaves the stage and the phase to the stage record.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task AnEmptyDatabase_BeatsAStartingInstanceAfterTheBootstrap_BeforeAnyMigrationAsync(CancellationToken cancellationToken) {
+    await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+    var instance = new Instance();
+    await SchemaBootstrapPhase.RegisterInstanceAsync(_connect, SCHEMA, instance, cancellationToken: cancellationToken);
+    await _scalarAsync<bool>(
+      $"SELECT wh_record_instance_transition('{instance.InstanceId}'::uuid, 30::smallint, 'applying', 'Migrating', NULL)");
+    await _scalarAsync<int>(
+      "WITH aged AS (UPDATE wh_service_instances SET last_heartbeat_at = NOW() - INTERVAL '200 seconds' "
+      + $"WHERE instance_id = '{instance.InstanceId}' RETURNING 1) SELECT count(*)::int FROM aged");
+    var staleBeforeTheBeat = !await _scalarAsync<bool>($"SELECT wh_instance_is_live('{instance.InstanceId}'::uuid)");
+
+    var accepted = await _scalarAsync<bool>(
+      $"SELECT wh_record_startup_heartbeat('{instance.InstanceId}'::uuid, 'pooled', 150)");
+
+    await Assert.That(await _scalarAsync<bool>("SELECT to_regproc('record_heartbeat') IS NULL")).IsTrue()
+      .Because("the full heartbeat arrives with the main pass, so it cannot be what a starting instance beats through");
+    await Assert.That(staleBeforeTheBeat).IsTrue();
+    await Assert.That(accepted).IsTrue();
+    await Assert.That(await _scalarAsync<bool>($"SELECT wh_instance_is_live('{instance.InstanceId}'::uuid)")).IsTrue()
+      .Because("the startup beat is a real heartbeat, judged by the one rule");
+    await Assert.That(await _scalarAsync<string>(
+        $"""
+        SELECT startup_stage || ' ' || lifecycle_phase || ' ' || connection_mode || ' ' || liveness_window_seconds
+        FROM wh_service_instances WHERE instance_id = '{instance.InstanceId}'
+        """))
+      .IsEqualTo("30 Migrating pooled 150")
+      .Because("the beat records the mode and the window and never moves the stage or the phase");
+  }
+
+  /// <summary>
+  /// The registration records the instance's connection mode and liveness window (#2126), so the one liveness rule
+  /// judges the row by its own window from the moment it exists rather than by the 30 seconds it gives a row that
+  /// records none. A registration that declares neither keeps what is recorded.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task ARegistration_RecordsTheConnectionModeAndTheLivenessWindowAsync(CancellationToken cancellationToken) {
+    await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+    var instance = new Instance();
+
+    await SchemaBootstrapPhase.RegisterInstanceAsync(_connect, SCHEMA, instance,
+      liveness: new InstanceRegistrationLiveness(Whizbang.Core.Workers.InstanceConnectionMode.Pooled, 150),
+      cancellationToken: cancellationToken);
+    await _scalarAsync<int>(
+      "WITH aged AS (UPDATE wh_service_instances SET last_heartbeat_at = NOW() - INTERVAL '45 seconds' "
+      + $"WHERE instance_id = '{instance.InstanceId}' RETURNING 1) SELECT count(*)::int FROM aged");
+    var liveAtFortyFive = await _scalarAsync<bool>($"SELECT wh_instance_is_live('{instance.InstanceId}'::uuid)");
+    await SchemaBootstrapPhase.RegisterInstanceAsync(_connect, SCHEMA, instance, cancellationToken: cancellationToken);
+
+    await Assert.That(liveAtFortyFive).IsTrue()
+      .Because("45 seconds is inside the 150 second window the registration recorded");
+    await Assert.That(await _scalarAsync<string>(
+        $"SELECT connection_mode || ' ' || liveness_window_seconds FROM wh_service_instances WHERE instance_id = '{instance.InstanceId}'"))
+      .IsEqualTo("pooled 150").Because("a registration that declares nothing keeps what was recorded");
+  }
+
+  /// <summary>
+  /// The columns the bootstrap adds to the instance tables carry their descriptions. Migration 231 describes its
+  /// stage columns only when it is the one adding them, and on a database the bootstrap brought up it no longer is.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task TheColumnsTheBootstrapAdds_AreDescribedAsync(CancellationToken cancellationToken) {
+    await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+
+    var described = await _scalarAsync<long>("""
+      SELECT count(*) FROM pg_attribute a
+      WHERE NOT a.attisdropped AND col_description(a.attrelid, a.attnum) IS NOT NULL
+        AND ((a.attrelid = to_regclass('wh_service_instances')
+              AND a.attname IN ('lifecycle_phase', 'library_version', 'connection_mode', 'startup_stage',
+                                'startup_stage_message', 'startup_stage_entered_at'))
+          OR (a.attrelid = to_regclass('wh_instance_evictions') AND a.attname = 'evicted_by'))
+      """);
+    await Assert.That(described).IsEqualTo(7L);
   }
 
   /// <summary>
@@ -397,33 +573,297 @@ public class SchemaBootstrapPhaseTests {
   }
 
   /// <summary>
-  /// An instance that cannot take the lock applies nothing, and says so by what it reports.
+  /// An instance that finds the schema lock held waits for it, then applies the closure (#1636): it does not skip.
   /// </summary>
   /// <remarks>
-  /// The expected outcome for every instance but one. On an empty database it must report that no
-  /// election is possible yet, because nothing has been created; reporting ready would send it off
-  /// to elect against objects that are not there.
+  /// Before #1636 a loser applied nothing and reported whatever it found, so on an empty database it gave up the
+  /// election and every instance but one migrated under the lock alone. The bootstrap is Preflight's work and every
+  /// instance needs its objects before it registers, so it waits its turn instead. Nothing is applied while another
+  /// session holds the lock.
   /// </remarks>
   [Test]
   [Timeout(120000)]
-  public async Task AnInstanceThatCannotTakeTheLockAppliesNothingAsync(CancellationToken cancellationToken) {
+  public async Task ABootstrapThatFindsTheLockHeld_WaitsForIt_ThenAppliesTheClosureAsync(CancellationToken cancellationToken) {
     await using var holder = _connect();
     await holder.OpenAsync(cancellationToken);
     await using (var take = new NpgsqlCommand($"SELECT pg_advisory_lock({LOCK_ID})", holder)) {
       await take.ExecuteScalarAsync(cancellationToken);
     }
+    var signals = new BootstrapSignals();
 
-    var ready = await SchemaBootstrapPhase.ApplyAsync(
-      _connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+    var applying = SchemaBootstrapPhase.ApplyAsync(
+      new SchemaBootstrapRequest(_connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS), signals.Services, new FakeTimeProvider(), null,
+      cancellationToken);
 
-    await Assert.That(ready).IsFalse()
-      .Because("it applied nothing and nothing was there, so there is nothing to elect with yet");
-    await Assert.That(await _scalarAsync<string>(
-      "SELECT to_regclass('public.wh_service_instances')::text")).IsNull()
-      .Because("a loser must not apply the bootstrap alongside the holder");
+    await Assert.That(await Task.WhenAny(signals.Contended, applying) == signals.Contended).IsTrue()
+      .Because("an instance that finds the schema lock held waits for it; it does not return having applied nothing");
+    await Assert.That(await _scalarAsync<string>("SELECT to_regclass('public.wh_service_instances')::text")).IsNull()
+      .Because("nothing is applied while another session holds the schema lock");
+
+    await using (var release = new NpgsqlCommand($"SELECT pg_advisory_unlock({LOCK_ID})", holder)) {
+      await release.ExecuteScalarAsync(cancellationToken);
+    }
+
+    await Assert.That(await applying).IsTrue().Because("once the lock is free the waiter applies the closure itself");
+    await Assert.That(await _scalarAsync<string>("SELECT to_regclass('public.wh_service_instances')::text")).IsNotNull();
+  }
+
+  /// <summary>
+  /// A waiter whose lock holder applied the same closure meanwhile applies nothing once it gets the lock: the closure
+  /// record is read again under the lock.
+  /// </summary>
+  /// <remarks>
+  /// The common shape of a fleet starting together on a new release: one instance applies, the others queue behind it,
+  /// and each must find the holder's commit rather than run every statement again on tables that are now in use.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task AWaiterWhoseHolderAppliedTheClosureMeanwhile_AppliesNothingAsync(CancellationToken cancellationToken) {
+    var scripts = _scriptsWithMarker();
+    await using var holder = _connect();
+    await holder.OpenAsync(cancellationToken);
+    await using var transaction = await _applyHoldingTheLockAsync(holder, scripts, cancellationToken);
+    var signals = new BootstrapSignals();
+
+    var applying = SchemaBootstrapPhase.ApplyAsync(
+      new SchemaBootstrapRequest(_connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS), signals.Services, new FakeTimeProvider(), null, cancellationToken);
+
+    await Assert.That(await Task.WhenAny(signals.Contended, applying) == signals.Contended).IsTrue()
+      .Because("the holder has not committed, so the waiter has to wait for it");
+    await transaction.CommitAsync(cancellationToken);
+
+    await Assert.That(await applying).IsTrue();
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM bootstrap_marker")).IsEqualTo(1L)
+      .Because("the holder's commit applied this closure, which the waiter finds once it has the lock");
+  }
+
+  /// <summary>
+  /// A waiter finds the closure record its lock holder committed while it waited, although the holder's commit is the
+  /// first its session hears of the record table: the record is read from the catalog under the statement's snapshot,
+  /// not through the session's catalog cache.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The waiter looks for the record table before it waits, on a database where only the holder's uncommitted
+  /// transaction has created it, so its session caches "no such table". A transaction refreshes that cache when it
+  /// starts and when it locks a relation; waiting on an advisory lock does neither, so the cache still says "no such
+  /// table" when the waiter asks again under the lock. <c>to_regclass</c> answered from that cache, the record read as
+  /// absent, and the waiter applied the closure a second time.
+  /// </para>
+  /// <para>
+  /// The closure here is two scripts on purpose. A holder's commit sends one invalidation message per catalog row it
+  /// changed, and only a commit large enough to fill the shared queue makes the server tell a lagging session to catch
+  /// up. The full closure is that large, so whether the waiter caught up before its recheck was a race and the test
+  /// above with the full closure failed only sometimes. Two scripts never fill it, so before the fix this failed every
+  /// time.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task AWaiterWhoseSessionCachedTheRecordTableAsMissing_StillFindsTheHoldersRecord_AndAppliesNothingAsync(
+      CancellationToken cancellationToken) {
+    var scripts = _recordTableAndMarker();
+    await using var holder = _connect();
+    await holder.OpenAsync(cancellationToken);
+    await using var transaction = await _applyHoldingTheLockAsync(holder, scripts, cancellationToken);
+    var signals = new BootstrapSignals();
+    var logger = new RecordingLogger();
+
+    var applying = SchemaBootstrapPhase.ApplyAsync(
+      new SchemaBootstrapRequest(_connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS), signals.Services, new FakeTimeProvider(), logger,
+      cancellationToken);
+
+    await Assert.That(await Task.WhenAny(signals.Contended, applying) == signals.Contended).IsTrue()
+      .Because("the holder has not committed, so the waiter has to wait for it");
+    await transaction.CommitAsync(cancellationToken);
+
+    await Assert.That(await applying).IsFalse().Because("a closure of two scripts creates nothing an election needs");
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM bootstrap_marker")).IsEqualTo(1L)
+      .Because("the holder committed this closure and its record while the waiter waited; applying it again is the defect");
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("by the session this instance waited for", StringComparison.Ordinal)))
+      .IsTrue().Because("the waiter says it found the holder's record");
+  }
+
+  /// <summary>
+  /// The waiter's recheck under the lock sees the holder's commit even where the database's default isolation is
+  /// repeatable read: the bootstrap's transaction is read committed whatever the default.
+  /// </summary>
+  /// <remarks>
+  /// Under repeatable read the waiter's snapshot would be taken by its first statement, the try-lock, before the holder
+  /// committed, so neither the catalog nor the record table would show the holder's work, and the waiter would apply the
+  /// closure again. A default an operator sets on the database or the role must not change what the recheck can see.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task AWaiterOnADatabaseDefaultingToRepeatableRead_StillFindsTheHoldersRecord_AndAppliesNothingAsync(
+      CancellationToken cancellationToken) {
+    await _scalarAsync<object>($"ALTER DATABASE \"{_databaseName}\" SET default_transaction_isolation = 'repeatable read'");
+    // Unpooled, so no connection opened before the ALTER keeps the old default.
+    var unpooled = new NpgsqlConnectionStringBuilder(_connectionString) { Pooling = false }.ConnectionString;
+    NpgsqlConnection connectUnpooled() => new(unpooled);
+    await using (var probe = connectUnpooled()) {
+      await probe.OpenAsync(cancellationToken);
+      await using var show = new NpgsqlCommand("SHOW default_transaction_isolation", probe);
+      await Assert.That(await show.ExecuteScalarAsync(cancellationToken) as string).IsEqualTo("repeatable read")
+        .Because("precondition: a session the bootstrap opens defaults to repeatable read");
+    }
+    var scripts = _recordTableAndMarker();
+    await using var holder = connectUnpooled();
+    await holder.OpenAsync(cancellationToken);
+    await using var transaction = await _applyHoldingTheLockAsync(holder, scripts, cancellationToken);
+    var signals = new BootstrapSignals();
+
+    var applying = SchemaBootstrapPhase.ApplyAsync(
+      new SchemaBootstrapRequest(connectUnpooled, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS), signals.Services, new FakeTimeProvider(), null,
+      cancellationToken);
+
+    await Assert.That(await Task.WhenAny(signals.Contended, applying) == signals.Contended).IsTrue()
+      .Because("the holder has not committed, so the waiter has to wait for it");
+    await transaction.CommitAsync(cancellationToken);
+
+    await Assert.That(await applying).IsFalse();
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM bootstrap_marker")).IsEqualTo(1L)
+      .Because("a recheck under a snapshot taken before the holder committed cannot see the holder's record");
+  }
+
+  /// <summary>
+  /// The server behavior the recheck is written around: inside one transaction, <c>to_regclass</c> keeps saying a table
+  /// another session has since committed does not exist, while a read of <c>pg_class</c> sees it.
+  /// </summary>
+  /// <remarks>
+  /// The control for the two tests above: it shows the harness observes the stale answer at all, so their passing
+  /// means the bootstrap avoids it rather than that nothing produced it. If a server release ever refreshes the cache
+  /// here, this fails and says the workaround's reason is gone.
+  /// <para>
+  /// It runs alone. The stale answer holds only while the reading session processes no shared invalidation messages, and
+  /// that queue is shared by every database on the server: when parallel tests' DDL (database creation, migrations)
+  /// puts the session far enough behind, the server sends it a catch-up signal, which it handles while idle in the
+  /// transaction, refreshing the cache, and <c>to_regclass</c> then sees the table. Alone, nothing else generates enough
+  /// invalidation traffic to signal it, so the answer depends on the server's rule rather than on its neighbors.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  [NotInParallel] // Asserts a catalog cache stays stale: other tests' DDL fills the server-wide invalidation queue, whose catch-up refreshes it, so it runs alone.
+  public async Task InsideATransaction_ToRegclassMissesATableAnotherSessionCommitted_WhereAPgClassReadSeesItAsync(
+      CancellationToken cancellationToken) {
+    await using var reader = _connect();
+    await reader.OpenAsync(cancellationToken);
+    await using var transaction = await reader.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, cancellationToken);
+    await Assert.That(await _readerScalarAsync<bool>(reader, "SELECT to_regclass('public.committed_meanwhile') IS NOT NULL", cancellationToken))
+      .IsFalse().Because("precondition: the table does not exist yet, and the session caches that");
+
+    await _scalarAsync<object>("CREATE TABLE committed_meanwhile (note TEXT)");
+
+    await Assert.That(await _readerScalarAsync<bool>(reader, "SELECT to_regclass('public.committed_meanwhile') IS NOT NULL", cancellationToken))
+      .IsFalse().Because("nothing in this transaction has refreshed the session's catalog cache since the commit");
+    await Assert.That(await _readerScalarAsync<bool>(reader,
+        "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace "
+        + "WHERE n.nspname = 'public' AND c.relname = 'committed_meanwhile')", cancellationToken))
+      .IsTrue().Because("a read of the catalog table uses the statement's snapshot, which a read committed statement takes fresh");
+  }
+
+  /// <summary>
+  /// The election probe answers from what is committed even inside a transaction that began before the election's
+  /// objects were committed, and answers false again once one of them is dropped.
+  /// </summary>
+  /// <remarks>
+  /// The bootstrap calls the probe outside any transaction, where every statement starts with a refreshed catalog
+  /// cache, but the probe is public and takes any open connection. It reads the catalog tables rather than resolving
+  /// names, so a caller's open transaction cannot make it report objects as missing that another session committed.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task CanElect_InsideATransactionThatBeganBeforeTheObjectsWereCommitted_SeesThemAsync(CancellationToken cancellationToken) {
+    await using var prober = _connect();
+    await prober.OpenAsync(cancellationToken);
+    await using var transaction = await prober.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, cancellationToken);
+    await Assert.That(await SchemaBootstrapPhase.CanElectAsync(prober, SCHEMA, cancellationToken)).IsFalse()
+      .Because("precondition: nothing exists yet, and the session has now looked for every object");
+
+    await _scalarAsync<object>("""
+      CREATE TABLE wh_service_instances (id INT);
+      CREATE TABLE wh_instance_evictions (id INT);
+      CREATE TABLE wh_instance_capabilities (id INT);
+      CREATE FUNCTION record_capability(uuid, text) RETURNS boolean LANGUAGE sql AS 'SELECT true';
+      CREATE FUNCTION release_capability(uuid, text) RETURNS boolean LANGUAGE sql AS 'SELECT true';
+      CREATE FUNCTION register_instance_heartbeat(uuid, character varying, character varying, integer, jsonb,
+        timestamp with time zone, timestamp with time zone) RETURNS void LANGUAGE sql AS '';
+      """);
+
+    await Assert.That(await SchemaBootstrapPhase.CanElectAsync(prober, SCHEMA, cancellationToken)).IsTrue()
+      .Because("every object an election needs is committed, whatever this session cached before");
+
+    await _scalarAsync<object>("DROP FUNCTION release_capability(uuid, text)");
+
+    await Assert.That(await SchemaBootstrapPhase.CanElectAsync(prober, SCHEMA, cancellationToken)).IsFalse()
+      .Because("one function missing is enough to make an election impossible");
+  }
+
+  /// <summary>A bootstrap canceled while it waits for the schema lock ends with the cancellation and applies nothing.</summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task ABootstrapCanceledWhileItWaits_EndsWithTheCancellation_AndAppliesNothingAsync(CancellationToken cancellationToken) {
+    await using var holder = _connect();
+    await holder.OpenAsync(cancellationToken);
+    await using (var take = new NpgsqlCommand($"SELECT pg_advisory_lock({LOCK_ID})", holder)) {
+      await take.ExecuteScalarAsync(cancellationToken);
+    }
+    var signals = new BootstrapSignals();
+    using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+    var applying = SchemaBootstrapPhase.ApplyAsync(
+      new SchemaBootstrapRequest(_connect, LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS), signals.Services, new FakeTimeProvider(), null,
+      stop.Token);
+    await Assert.That(await Task.WhenAny(signals.Contended, applying) == signals.Contended).IsTrue();
+    await stop.CancelAsync();
+
+    await Assert.That(async () => await applying).Throws<OperationCanceledException>();
+    await Assert.That(await _scalarAsync<string>("SELECT to_regclass('public.wh_service_instances')::text")).IsNull();
 
     await using var release = new NpgsqlCommand($"SELECT pg_advisory_unlock({LOCK_ID})", holder);
     await release.ExecuteScalarAsync(cancellationToken);
+  }
+
+  /// <summary>
+  /// A transient database failure is retried once its delay has passed on the initializer's clock, and the closure
+  /// lands (#1636). The failure is said at Warning with the script and the SQLSTATE.
+  /// </summary>
+  /// <remarks>
+  /// The injected failure is a deadlock raised by the closure's last script on its first run only: a sequence counts the
+  /// runs, and a sequence is not rolled back with the transaction that advanced it.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task ATransientFailure_IsRetriedOnceItsDelayHasPassed_ThenTheClosureLandsAsync(CancellationToken cancellationToken) {
+    await _scalarAsync<object>("CREATE SEQUENCE bootstrap_fails_once");
+    var scripts = _bootstrapScripts();
+    scripts.Add(("fails-once",
+      "DO $$ BEGIN IF nextval('bootstrap_fails_once') = 1 THEN "
+      + "RAISE EXCEPTION 'injected deadlock' USING ERRCODE = '40P01'; END IF; END $$;"));
+    var signals = new BootstrapSignals();
+    var time = new FakeTimeProvider();
+    var logger = new RecordingLogger();
+
+    var applying = SchemaBootstrapPhase.ApplyAsync(
+      new SchemaBootstrapRequest(_connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS), signals.Services, time, logger, cancellationToken);
+
+    await Assert.That(await Task.WhenAny(signals.RetryScheduled, applying) == signals.RetryScheduled).IsTrue()
+      .Because("a transient failure is retried; it is not reported as a lost election");
+    var (attempt, exception, delay) = await signals.RetryScheduled;
+    await Assert.That(attempt).IsEqualTo(1);
+    await Assert.That(exception is PostgresException { SqlState: "40P01" }).IsTrue();
+    await Assert.That(delay).IsEqualTo(TimeSpan.FromSeconds(1));
+    await Assert.That(applying.IsCompleted).IsFalse().Because("the retry waits for its delay on the initializer's clock");
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning
+        && e.Message.Contains("fails-once", StringComparison.Ordinal) && e.Message.Contains("40P01", StringComparison.Ordinal)))
+      .IsTrue().Because("a retried failure is said out loud, with what failed and why");
+
+    time.Advance(delay);
+
+    await Assert.That(await applying).IsTrue();
+    await Assert.That(await _scalarAsync<long>("SELECT last_value FROM bootstrap_fails_once")).IsEqualTo(2L)
+      .Because("the closure ran twice: the failed attempt and the retry that landed");
   }
 
   /// <summary>
@@ -456,50 +896,97 @@ public class SchemaBootstrapPhaseTests {
   }
 
   /// <summary>
-  /// A script that fails costs the election, not the startup.
+  /// A transient failure the server never answered (a refused connection carries no SQLSTATE) is retried like any
+  /// other, and its log line says <c>SQLSTATE none</c> rather than leaving the field blank.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task ATransientFailureWithNoSqlState_IsRetried_AndLoggedAsNoneAsync(CancellationToken cancellationToken) {
+    // Nothing listens on port 1, so the connection is refused at once: a dropped-connection failure with no SQLSTATE.
+    var refused = new NpgsqlConnectionStringBuilder(_connectionString) { Host = "127.0.0.1", Port = 1, Timeout = 5 }.ConnectionString;
+    var signals = new BootstrapSignals();
+    var logger = new RecordingLogger();
+    using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+    var applying = SchemaBootstrapPhase.ApplyAsync(
+      new SchemaBootstrapRequest(() => new NpgsqlConnection(refused), LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS),
+      signals.Services, new FakeTimeProvider(), logger, stop.Token);
+
+    await Assert.That(await Task.WhenAny(signals.RetryScheduled, applying) == signals.RetryScheduled).IsTrue()
+      .Because("a refused connection is transient, so it is retried");
+    var (attempt, exception, _) = await signals.RetryScheduled;
+    await Assert.That(attempt).IsEqualTo(1);
+    await Assert.That(exception is NpgsqlException { SqlState: null }).IsTrue();
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning
+        && e.Message.Contains("<connect>", StringComparison.Ordinal) && e.Message.Contains("SQLSTATE none", StringComparison.Ordinal)))
+      .IsTrue().Because("a failure with no SQLSTATE is logged as none, with the step that failed");
+
+    await stop.CancelAsync();
+    await Assert.That(async () => await applying).Throws<OperationCanceledException>()
+      .Because("the retry's wait ends with the start's cancellation");
+  }
+
+  /// <summary>A missing request is a caller error.</summary>
+  [Test]
+  public async Task AMissingRequest_IsRefusedAsync() =>
+    await Assert.That(async () => await SchemaBootstrapPhase.ApplyAsync(
+      null!, null, new FakeTimeProvider(), null, CancellationToken.None)).Throws<ArgumentNullException>();
+
+  /// <summary>
+  /// A failure that is not transient fails startup loudly (#1636): it is thrown as a
+  /// <see cref="SchemaBootstrapException"/> naming the script, logged at Error, and not retried.
   /// </summary>
   /// <remarks>
-  /// The failure mode that decides whether this is safe to put in front of every startup. A
-  /// bootstrap that threw would turn a wrong closure, a permission problem, or a half-created schema
-  /// into a service that cannot start at all — strictly worse than the duplicated work an election
-  /// avoids. It reports instead, and the caller migrates under the advisory lock.
+  /// Before #1636 it was logged at Warning and the instance migrated under the lock alone, so a wrong closure or a
+  /// missing permission surfaced only as an election that never happened. The same failure would recur on every
+  /// attempt; retrying it would only hide it.
   /// </remarks>
   [Test]
   [Timeout(120000)]
-  public async Task AFailedScriptReportsNotReadyRatherThanThrowingAsync(CancellationToken cancellationToken) {
+  public async Task ANonTransientFailure_FailsStartupLoudly_NamingWhatFailedAsync(CancellationToken cancellationToken) {
     var logger = new RecordingLogger();
 
-    var ready = await SchemaBootstrapPhase.ApplyAsync(
+    var thrown = await Assert.That(async () => await SchemaBootstrapPhase.ApplyAsync(
       _connect,
       LOCK_ID,
       [("broken", "CREATE TABLE nonsense (x int) INHERITS (does_not_exist);")],
       SCHEMA,
       TIMEOUT_SECONDS,
       logger,
-      cancellationToken);
+      cancellationToken)).Throws<SchemaBootstrapException>();
 
-    await Assert.That(ready).IsFalse();
-    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning)).IsTrue()
-      .Because("losing the election silently would leave a fleet duplicating work with no clue why");
+    await Assert.That(thrown!.Step).IsEqualTo("broken");
+    await Assert.That(thrown.Schema).IsEqualTo(SCHEMA);
+    await Assert.That(thrown.InnerException is PostgresException { SqlState: "42P01" }).IsTrue();
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Error && e.Message.Contains("broken", StringComparison.Ordinal)))
+      .IsTrue().Because("a failure that stops startup says what failed, at Error");
     await Assert.That(await _lockHoldersAsync()).IsEqualTo(0L)
       .Because("a lock held after a failure would stall every other instance's bootstrap too");
   }
 
   /// <summary>
-  /// A failed script rolls the whole bootstrap back, leaving nothing half created.
+  /// A database that cannot be connected to for a reason that is not transient fails the bootstrap naming the
+  /// connection as what failed.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task AConnectionRefusedForGood_FailsTheBootstrap_NamingTheConnectionAsync(CancellationToken cancellationToken) {
+    var missing = new NpgsqlConnectionStringBuilder(_connectionString) { Database = _databaseName + "_missing" }.ConnectionString;
+
+    var thrown = await Assert.That(async () => await SchemaBootstrapPhase.ApplyAsync(
+      () => new NpgsqlConnection(missing), LOCK_ID, _bootstrapScripts(), SCHEMA, TIMEOUT_SECONDS, null, cancellationToken))
+      .Throws<SchemaBootstrapException>();
+
+    await Assert.That(thrown!.Step).IsEqualTo("<connect>");
+    await Assert.That(thrown.InnerException is PostgresException { SqlState: "3D000" }).IsTrue();
+  }
+
+  /// <summary>
+  /// A failed script rolls the whole bootstrap back, leaving nothing half created, and fails the start.
   /// </summary>
   /// <remarks>
-  /// <para>
-  /// The bootstrap runs as one transaction, so this is all-or-nothing by construction, and that is
-  /// the behavior worth having. A half-applied bootstrap cannot elect anything anyway: the probe
-  /// asks for the full set, so "some of it landed" and "none of it landed" lead to the same
-  /// fallback. Leaving the partial objects behind would only make the next instance's failure
-  /// harder to read.
-  /// </para>
-  /// <para>
-  /// Nothing is lost by it either. The ordinary migration pass applies these same files under its
-  /// own lock and records them, so the objects still arrive; only the election is given up.
-  /// </para>
+  /// The bootstrap runs as one transaction, so this is all-or-nothing by construction: a partly applied closure cannot
+  /// elect anything, and leaving its objects behind would only make the next attempt's failure harder to read.
   /// </remarks>
   [Test]
   [Timeout(120000)]
@@ -509,15 +996,14 @@ public class SchemaBootstrapPhaseTests {
     };
 
     var logger = new RecordingLogger();
-    var ready = await SchemaBootstrapPhase.ApplyAsync(
-      _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, logger, cancellationToken);
+    await Assert.That(async () => await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, logger, cancellationToken)).Throws<SchemaBootstrapException>();
 
-    await Assert.That(ready).IsFalse();
     await Assert.That(await _scalarAsync<string>(
       "SELECT to_regclass('public.wh_service_instances')::text")).IsNull()
       .Because("the good scripts ran before the broken one and must have gone back with it");
-    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning)).IsTrue()
-      .Because("giving up the election silently would leave a fleet duplicating work with no clue why");
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Error)).IsTrue()
+      .Because("a bootstrap that stops startup says so at Error");
   }
 
   /// <summary>
@@ -532,14 +1018,14 @@ public class SchemaBootstrapPhaseTests {
   [Test]
   [Timeout(120000)]
   public async Task AFailedBootstrapLeavesTheLockFreeForTheDdlPhaseAsync(CancellationToken cancellationToken) {
-    await SchemaBootstrapPhase.ApplyAsync(
+    await Assert.That(async () => await SchemaBootstrapPhase.ApplyAsync(
       _connect,
       LOCK_ID,
       [("broken", "CREATE TABLE nonsense (x int) INHERITS (does_not_exist);")],
       SCHEMA,
       TIMEOUT_SECONDS,
       new RecordingLogger(),
-      cancellationToken);
+      cancellationToken)).Throws<SchemaBootstrapException>();
 
     await Assert.That(await _lockHoldersAsync()).IsEqualTo(0L);
 
@@ -593,6 +1079,45 @@ public class SchemaBootstrapPhaseTests {
       "CREATE TABLE IF NOT EXISTS bootstrap_marker (note TEXT NOT NULL); -- a comment on a statement's line\n"
       + "INSERT INTO bootstrap_marker (note) VALUES ('applied');"));
     return scripts;
+  }
+
+  /// <summary>
+  /// A closure of two scripts: the record table, as migration 000 creates it, and the marker. Small enough that its
+  /// commit never fills the server's invalidation queue, so nothing makes a waiting session catch up on it.
+  /// </summary>
+  private static List<(string Name, string Sql)> _recordTableAndMarker() => [
+    ("closure record",
+      "CREATE TABLE IF NOT EXISTS wh_bootstrap_closure (closure_hash VARCHAR(64) PRIMARY KEY, "
+      + "applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());"),
+    ("marker",
+      "CREATE TABLE IF NOT EXISTS bootstrap_marker (note TEXT NOT NULL);\n"
+      + "INSERT INTO bootstrap_marker (note) VALUES ('applied');"),
+  ];
+
+  /// <summary>
+  /// Takes the schema lock on <paramref name="holder"/>, applies <paramref name="scripts"/> and records their hash, all
+  /// in a transaction left open for the caller to commit.
+  /// </summary>
+  private static async Task<NpgsqlTransaction> _applyHoldingTheLockAsync(
+      NpgsqlConnection holder, List<(string Name, string Sql)> scripts, CancellationToken cancellationToken) {
+    var transaction = await holder.BeginTransactionAsync(cancellationToken);
+    await using (var take = new NpgsqlCommand($"SELECT pg_advisory_xact_lock({LOCK_ID})", holder)) {
+      await take.ExecuteScalarAsync(cancellationToken);
+    }
+    foreach (var (_, sql) in scripts) {
+      await using var apply = new NpgsqlCommand(sql, holder);
+      await apply.ExecuteNonQueryAsync(cancellationToken);
+    }
+    await using (var record = new NpgsqlCommand("INSERT INTO wh_bootstrap_closure (closure_hash) VALUES ($1)", holder)) {
+      record.Parameters.AddWithValue(SchemaBootstrapPhase.ClosureHash(scripts));
+      await record.ExecuteNonQueryAsync(cancellationToken);
+    }
+    return transaction;
+  }
+
+  private static async Task<T> _readerScalarAsync<T>(NpgsqlConnection connection, string sql, CancellationToken cancellationToken) {
+    await using var command = new NpgsqlCommand(sql, connection);
+    return (T)(await command.ExecuteScalarAsync(cancellationToken))!;
   }
 
   /// <summary>Stands a database where an earlier release recorded <paramref name="scripts"/> under the legacy hash.</summary>

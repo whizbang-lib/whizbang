@@ -27,7 +27,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/apply-exactly-once#idempotency-filter</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveIdempotencyFilterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveIdempotencyFilterTests.cs</tests>
 public static class PerspectiveIdempotencyFilter {
   /// <summary>
   /// Reports whether <paramref name="incomingEventId"/> is already reflected in a row whose last applied

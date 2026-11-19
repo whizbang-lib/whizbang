@@ -38,10 +38,10 @@ namespace Whizbang.Core.Dispatch;
 /// </code>
 /// </example>
 /// <docs>fundamentals/dispatcher/message-cascade#routed-message-cascading</docs>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchModeTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchModeTests.cs:Local_HasValue_FiveAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchModeTests.cs:None_HasValue_ZeroAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchModeTests.cs:Outbox_HasValue_TwoAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchModeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchModeTests.cs:Local_HasValue_FiveAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchModeTests.cs:None_HasValue_ZeroAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchModeTests.cs:Outbox_HasValue_TwoAsync</tests>
 [Flags]
 #pragma warning disable RCS1154 // Members are intentionally grouped by semantic category rather than alphabetically.
 public enum DispatchModes {

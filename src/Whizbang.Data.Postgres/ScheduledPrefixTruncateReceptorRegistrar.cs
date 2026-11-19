@@ -1,0 +1,73 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Whizbang.Core;
+using Whizbang.Core.Archival;
+using Whizbang.Core.Messaging;
+
+namespace Whizbang.Data.Postgres;
+
+/// <summary>
+/// Registers <see cref="ScheduledPrefixTruncateReceptor"/> with <see cref="IReceptorRegistry"/> at startup.
+/// <see cref="ScheduledPrefixTruncate"/> is a framework command defined in <c>Whizbang.Core</c>, and
+/// source-generated receptor discovery only sees the consumer's own syntax, so a built-in receptor needs
+/// runtime registration to join the dispatch pipeline. Registered at the three stages a framework receptor needs: <see cref="LifecycleStage.LocalImmediateInline"/>, where local
+/// dispatch finds a runtime handler; <see cref="LifecycleStage.PreOutboxInline"/>, where the sending service handles an
+/// outbox copy that nothing dispatched locally; and <see cref="LifecycleStage.PostInboxInline"/>, for a copy arriving
+/// from another service. So the
+/// occurrence reaches it whether it fires in-process or arrives over the inbox. No-ops if no registry is
+/// present (schema-only / diagnostic hosts still boot).
+/// </summary>
+/// <docs>fundamentals/events/ephemeral-events#scheduling-a-prefix-truncate</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ScheduledPrefixTruncateReceptorTests.cs:Registrar_RegistersReceptorAtThreeDefaultStagesAsync</tests>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S6672:Generic logger injection should match enclosing type", Justification = "The registrar never logs. It receives the logger for the receptor it constructs and hands it straight over, so the category names the type that actually writes the entries.")]
+internal sealed class ScheduledPrefixTruncateReceptorRegistrar(
+    IServiceProvider services,
+    IServiceScopeFactory scopeFactory,
+    ILogger<ScheduledPrefixTruncateReceptor> receptorLogger) : IHostedService {
+
+  public Task StartAsync(CancellationToken cancellationToken) {
+    var registry = services.GetService<IReceptorRegistry>();
+    // INullDefault, not null: every framework dependency resolves now, so "no registry" arrives as
+    // the turnkey default rather than as an absent service. Registering into it throws by design,
+    // which would take the whole host down on a service that simply declares no receptors.
+    if (registry is null or INullDefault) {
+      return Task.CompletedTask;
+    }
+    var receptor = new ScheduledPrefixTruncateReceptor(scopeFactory, receptorLogger);
+    registry.Register<ScheduledPrefixTruncate>(receptor, LifecycleStage.LocalImmediateInline);
+    registry.Register<ScheduledPrefixTruncate>(receptor, LifecycleStage.PreOutboxInline);
+    registry.Register<ScheduledPrefixTruncate>(receptor, LifecycleStage.PostInboxInline);
+    return Task.CompletedTask;
+  }
+
+  public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+}
+
+/// <summary>
+/// The scheduled prefix truncate's turnkey registration, shared by both Postgres data layers so a schedule drives the
+/// same truncate whichever one a host runs (#2043).
+/// </summary>
+/// <docs>fundamentals/events/ephemeral-events#scheduling-a-prefix-truncate</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupHostedServiceAuditTests.cs</tests>
+internal static class ScheduledPrefixTruncateRegistration {
+  /// <summary>
+  /// Registers <see cref="ScheduledPrefixTruncateReceptorRegistrar"/>, which runtime-registers the receptor that turns a
+  /// fired <see cref="ScheduledPrefixTruncate"/> occurrence into a prefix truncate. Idempotent: a second call adds nothing.
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <returns>The service collection.</returns>
+  internal static IServiceCollection AddScheduledPrefixTruncate(this IServiceCollection services) {
+    // A factory, not a type: naming the constructor keeps activation free of reflection.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, ScheduledPrefixTruncateReceptorRegistrar>(sp =>
+      new ScheduledPrefixTruncateReceptorRegistrar(
+        sp,
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<ScheduledPrefixTruncateReceptor>>())));
+    return services;
+  }
+}

@@ -22,7 +22,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields#promoting-an-existing-field</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class PhysicalFieldPromotionTests {
   internal const string TABLE = "wh_per_promoted_item";

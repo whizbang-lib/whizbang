@@ -17,23 +17,15 @@ namespace Whizbang.Core.Fingerprint;
 /// <remarks>Creates the hosted service.</remarks>
 public sealed partial class TypeDefinitionReconcilerHostedService(
     TypeDefinitionReconciler reconciler,
-    ISchemaReadyGate schemaReadyGate,
     ILogger<TypeDefinitionReconcilerHostedService> logger) : BackgroundService {
   private readonly TypeDefinitionReconciler _reconciler = reconciler;
-  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
   private readonly ILogger<TypeDefinitionReconcilerHostedService> _logger = logger;
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken).ConfigureAwait(false);
-    } catch (OperationCanceledException) {
-      return;
-    }
-
-    try {
       var summary = await _reconciler.ReconcileAsync(stoppingToken).ConfigureAwait(false);
-      LogCompleted(_logger, summary.DriftDetected, summary.TypesReclassified);
+      LogCompleted(_logger, summary.DriftDetected);
     } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
       // shutting down
     } catch (Exception ex) {
@@ -42,8 +34,8 @@ public sealed partial class TypeDefinitionReconcilerHostedService(
   }
 
   [LoggerMessage(EventId = 9214, Level = LogLevel.Information,
-    Message = "Type-definition reconcile complete: {DriftDetected} drift, {TypesReclassified} type(s) reclassified.")]
-  private static partial void LogCompleted(ILogger logger, int driftDetected, int typesReclassified);
+    Message = "Type-definition reconcile complete: {DriftDetected} drift.")]
+  private static partial void LogCompleted(ILogger logger, int driftDetected);
 
   [LoggerMessage(EventId = 9215, Level = LogLevel.Error,
     Message = "Type-definition reconcile failed (non-fatal — drift will be re-detected next startup).")]

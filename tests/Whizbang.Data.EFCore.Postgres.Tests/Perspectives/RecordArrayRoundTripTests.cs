@@ -20,7 +20,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </summary>
 /// <docs>fundamentals/perspectives/perspectives</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class RecordArrayRoundTripTests {
   private const string TABLE = "wh_per_record_array_document";

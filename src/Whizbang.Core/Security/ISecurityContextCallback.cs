@@ -20,7 +20,7 @@ namespace Whizbang.Core.Security;
 /// - Initializing audit/logging contexts</para>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#callbacks</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs:EstablishContextAsync_WithCallbacks_CallsAllCallbacksAfterContextEstablishedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/MessageSecurityContextProviderTests.cs:EstablishContextAsync_WithCallbacks_CallsAllCallbacksAfterContextEstablishedAsync</tests>
 /// <example>
 /// public class UserContextManagerCallback : ISecurityContextCallback {
 ///   private readonly UserContextManager _userContextManager;

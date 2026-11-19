@@ -22,6 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// catching a return to O(backlog).
 /// </remarks>
 [Category("Benchmark")]
+[NotInParallel] // A measurement: runs alone so it measures the code, not its neighbors.
 public class InboxAcquisitionBenchmarkTests : EFCoreTestBase {
   private const int FAT_STREAMS = 20;
   private const int ROWS_PER_FAT_STREAM = 3000;

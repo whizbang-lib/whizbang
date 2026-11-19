@@ -320,7 +320,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       // reason applies decides what the author should go looking for, so the sentence names it.
       var reason = PolymorphicModelDiscovery.IsPolymorphic(model)
         ? "holds a polymorphic member"
-        : $"holds '{MappedPathDiscovery.UnmappableMember(model)}', which the mapped path cannot construct";
+        : MappedPathDiscovery.DescribeUnmappable(model);
 
       return $"This model {reason}, so its document is stored as one serialized value and "
         + "an index over a field inside it cannot be reached. Promote it with "
@@ -858,7 +858,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
 
     // Every caller found the field on the model, so the model is a real type with members, and a real
     // type belongs to an assembly.
-    var owning = model.ContainingAssembly!;
+    var owning = TypeNameUtilities.AssemblyOf(model);
     return !SymbolEqualityComparer.Default.Equals(owning, compiling) &&
            HasReasonedSuppression(owning.GetAttributes());
   }

@@ -195,8 +195,6 @@ public class DeadLetterMetricsEmissionTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new NoOpCompletionChannel();
     var failure = new NoOpFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var strategy = new FailingPublishStrategy();
     var dlqStore = new CapturingDeadLetterStore();
 
@@ -206,7 +204,6 @@ public class DeadLetterMetricsEmissionTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = 2 }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new FakeServiceInstanceProvider(),
@@ -276,7 +273,6 @@ public class DeadLetterMetricsEmissionTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       // MaxOutboxAttempts deliberately UNSET (default null in this test scenario)
       // — promotion gate disabled; failure-channel routing only.
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = null }),

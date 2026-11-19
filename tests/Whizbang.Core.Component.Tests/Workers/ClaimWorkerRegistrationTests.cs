@@ -124,13 +124,10 @@ public class ClaimWorkerRegistrationTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: instance,
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions { PollingIntervalMilliseconds = 10, PollingMaxIntervalMilliseconds = 50 }),
       logger: logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<ClaimWorker>.Instance,
       outboxChannel: new WorkChannelWriter(),

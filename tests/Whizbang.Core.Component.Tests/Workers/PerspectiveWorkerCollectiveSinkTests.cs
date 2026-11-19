@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -173,11 +174,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     renewalServices.TryAddWhizbangDefaults();
     renewalServices.AddSingleton<IWorkCoordinator>(renewCoordinator);
     await using var renewalProvider = renewalServices.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var renewalWorker = new LeaseRenewalWorker(
       scopeFactory: renewalProvider.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: gate,
       options: Options.Create(new LeaseRenewalWorkerOptions {
         Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 10, ImmediateFlushThreshold = 1 }
       }),
@@ -238,11 +236,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     renewalServices.TryAddWhizbangDefaults();
     renewalServices.AddSingleton<IWorkCoordinator>(renewCoordinator);
     await using var renewalProvider = renewalServices.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var renewalWorker = new LeaseRenewalWorker(
       scopeFactory: renewalProvider.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: gate,
       options: Options.Create(new LeaseRenewalWorkerOptions {
         Flusher = new BatchFlusherOptions { MaxBatchSize = 10, CoalesceWindowMs = 10, ImmediateFlushThreshold = 1 }
       }),
@@ -1205,7 +1200,9 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     await worker.StartAsync(cts.Token);
     _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await dispatcher.AllDispatched.WaitAsync(cancellationToken);
-    await harness.CompletionCapture.FirstEventWorkId.WaitAsync(cancellationToken);
+    // Completions are reported in batches, so the first one can land while the other is still in flight (#2396):
+    // wait for both rows' completion signals, not the first of them.
+    await harness.CompletionCapture.EventWorkIdsCaptured(gone.WorkId, present.WorkId).WaitAsync(cancellationToken);
     await cts.CancelAsync();
     await worker.ExecuteTask!.WaitAsync(cancellationToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
@@ -1335,6 +1332,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     var busyId = Guid.CreateVersion7();
     var dispatcher = new FlipDispatcher(expected: 2) { BusyOnceOn = "b" };
     var receptorInvoker = new CapturingReceptorInvoker();
+    var dedups = new RowDedupSignal();
 
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
@@ -1347,7 +1345,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       },
       registry: new Registry([typeof(FlipCollectiveEvent)]),
       dispatcher: dispatcher,
-      receptorInvoker: receptorInvoker);
+      receptorInvoker: receptorInvoker,
+      processedEventCacheObserver: dedups);
     coordinator.SinkQueue = [
       new CollectiveSinkQueueEntry(applied.WorkId, appliedId, CommitSequence: 1),
       new CollectiveSinkQueueEntry(busy.WorkId, busyId, CommitSequence: 2),
@@ -1363,9 +1362,9 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     lock (receptorInvoker.Invocations) {
       postApplyBeforeTheRetry = [.. receptorInvoker.Invocations.Where(i => i.Stage == LifecycleStage.PostAllPerspectivesDetached).Select(i => i.EventId)];
     }
-    // The retry: the busy collective's row is leased again; the applied one's row is complete and is not.
-    coordinator.OfferWork([busy]);
-    await dispatcher.AllDispatched.WaitAsync(cancellationToken);
+    // The retry: the busy collective's row is leased again; the applied one's row is complete and is not. The run that
+    // found the lock busy may still have the row reserved, so it is offered until a run takes it (#2086).
+    await ReofferUntilTakenAsync(coordinator, dedups, busy, dispatcher.AllDispatched, t => t.WaitAsync(cancellationToken));
     await harness.CompletionCapture.EventWorkIdsCaptured(busy.WorkId).WaitAsync(cancellationToken);
     await cts.CancelAsync();
     await worker.ExecuteTask!.WaitAsync(cancellationToken)
@@ -1516,7 +1515,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       LeaseRegistry? leaseRegistry = null, IProcessedEventCacheObserver? processedEventCacheObserver = null,
       CompositeMetrics? compositeMetrics = null, bool lockBusyCountsAsFailure = false,
       ISyncEventTracker? syncEventTracker = null, TimeProvider? timeProvider = null, int predecessorWaitSeconds = 30,
-      PerspectiveMetrics? metrics = null) {
+      PerspectiveMetrics? metrics = null, ILogger<PerspectiveWorker>? logger = null) {
     var instanceProvider = new InstanceProvider();
     var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
@@ -1548,13 +1547,12 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
         CollectiveLockBusyCountsAsFailure = lockBusyCountsAsFailure,
         CollectivePredecessorWaitSeconds = predecessorWaitSeconds,
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
       eventTypeProvider: registry,
       syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
       syncEventTracker: syncEventTracker ?? new SyncEventTracker(),
-      logger: NullLogger<PerspectiveWorker>.Instance,
+      logger: logger ?? NullLogger<PerspectiveWorker>.Instance,
       snapshotStore: NullPerspectiveSnapshotStore.Instance,
       streamLocker: NullPerspectiveStreamLocker.Instance,
       streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
@@ -1775,6 +1773,57 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       throw new InvalidOperationException(
         "simulated collective apply failure (e.g. SetProperty does not represent a valid property to be set)");
     }
+  }
+
+  /// <summary>
+  /// Signals each time the worker dedups one particular work row (#2086). A row offered again while the run that held
+  /// it still has it reserved is dropped against that reservation, and nothing in the test's fake time offers it again.
+  /// </summary>
+  private protected sealed class RowDedupSignal : IProcessedEventCacheObserver {
+    private readonly Lock _lock = new();
+    private readonly List<(Guid WorkId, TaskCompletionSource Signal)> _waiters = [];
+
+    /// <summary>Completes the next time <paramref name="workId"/> is deduped, counting only dedups after this call.</summary>
+    public Task NextDedupOf(Guid workId) {
+      var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      lock (_lock) {
+        _waiters.Add((workId, signal));
+      }
+      return signal.Task;
+    }
+
+    public void OnEventsDeduped(IReadOnlyList<Guid> dedupedEventIds, string perspectiveName, Guid streamId) {
+      List<TaskCompletionSource> fired;
+      lock (_lock) {
+        fired = [.. _waiters.Where(w => dedupedEventIds.Contains(w.WorkId)).Select(w => w.Signal)];
+        _waiters.RemoveAll(w => dedupedEventIds.Contains(w.WorkId));
+      }
+      foreach (var signal in fired) {
+        signal.TrySetResult();
+      }
+    }
+
+    public void OnEventsMarkedInFlight(IReadOnlyList<Guid> eventIds) { }
+    public void OnRetentionActivated(int count) { }
+    public void OnEvicted(int count) { }
+    public void OnEventsRemoved(IReadOnlyList<Guid> eventIds) { }
+  }
+
+  /// <summary>
+  /// Offers <paramref name="row"/> again until a run takes it, which <paramref name="taken"/> reports (#2086). The real
+  /// claim never serves a row a run still has reserved; this fake serves it whenever asked, and the worker drops such an
+  /// offer against the reservation. Each dropped offer is answered with another, so the row reaches a run once the one
+  /// holding it has released it, however late that is, and no offer is left outstanding when this returns.
+  /// </summary>
+  /// <param name="waitFor">How the test waits: on a fake clock, the wait that also fires the worker's idle polls.</param>
+  private protected static async Task ReofferUntilTakenAsync(
+      FakeCoordinator coordinator, RowDedupSignal dedups, PerspectiveWork row, Task taken, Func<Task, Task> waitFor) {
+    while (!taken.IsCompleted) {
+      var dropped = dedups.NextDedupOf(row.WorkId);
+      coordinator.OfferWork([row]);
+      await waitFor(Task.WhenAny(taken, dropped));
+    }
+    await taken;
   }
 
   /// <summary>Signals when the sink dedups a re-offered, already-completed work row.</summary>

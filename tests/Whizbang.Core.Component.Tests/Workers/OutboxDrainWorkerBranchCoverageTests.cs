@@ -367,15 +367,12 @@ public class OutboxDrainWorkerBranchCoverageTests {
       DeadLetterMetrics? dlqMetrics = null,
       IConcurrencyGovernor? governor = null,
       GovernorMetrics? governorMetrics = null) {
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new BranchServiceInstanceProvider(),
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(options),
       jsonOptions: _jsonOpts,
       logger: logger ?? NullLogger<OutboxDrainWorker>.Instance,

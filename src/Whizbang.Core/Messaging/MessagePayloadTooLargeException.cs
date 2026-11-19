@@ -20,7 +20,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/payload-size-limit</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/MessagePayloadLimitsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessagePayloadLimitsTests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
   Justification = "The exception is only meaningful with its measurements; the standard constructors would produce one without them.")]
 public sealed class MessagePayloadTooLargeException(MessagePayloadSizeContext context, string? userMessage = null, string? errorCode = null)

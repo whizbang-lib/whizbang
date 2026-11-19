@@ -17,16 +17,15 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <para>
 /// <c>_coalescers</c> is process-global — the same shared-static hazard already recorded for
 /// <c>SplitModeChangeTrackerHydrator</c> in <c>SplitModeChangeTrackerHydratorCoverageTests</c> and for
-/// <c>IntegrityManifestReceptors._pagesFollowed</c> in <c>scratchpad/residue.md</c>. Tagged with the
-/// shared <c>"EFCorePostgresTests"</c> <see cref="NotInParallelAttribute"/> key — the same one
-/// <c>OrderSchemaEvolutionComplexTypeTests</c> carries while it registers/clears this exact registry
-/// against a real container — so this file's <c>Register</c>/<c>Clear</c> calls can never interleave
-/// with that suite's.
+/// <c>IntegrityManifestReceptors._pagesFollowed</c> in <c>scratchpad/residue.md</c>. It runs alone
+/// (<see cref="NotInParallelAttribute"/> with no key), as <c>OrderSchemaEvolutionComplexTypeTests</c> does while
+/// it registers and clears this exact registry against a real container, so this file's <c>Register</c>/<c>Clear</c>
+/// calls can never interleave with that suite's.
 /// </para>
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/PerspectiveDataCoalescer.cs</code-under-test>
 [Category("Shard1")]
-[NotInParallel("EFCorePostgresTests")]
+[NotInParallel] // Resets a process-wide registry the database tests read (#1903): runs alone, after the parallel tests.
 public class PerspectiveDataCoalescerCoverageTests {
 
   private sealed class RegisteredProbeModel;

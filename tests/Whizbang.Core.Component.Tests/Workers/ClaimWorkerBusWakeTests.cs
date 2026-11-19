@@ -38,7 +38,9 @@ public class ClaimWorkerBusWakeTests {
   }
 
   private sealed class CountingCoordinator : IWorkCoordinator {
-    public int CallCount { get; private set; }
+    // Read from the counter itself: it is incremented before either signal is set, so a test woken by SecondCall always
+    // reads at least 2. A copy assigned after the signal raced the woken test and could still read 1.
+    public int CallCount => Volatile.Read(ref _count);
     public TaskCompletionSource FirstCall { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource SecondCall { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -46,7 +48,6 @@ public class ClaimWorkerBusWakeTests {
       var c = Interlocked.Increment(ref _count);
       if (c == 1) { FirstCall.TrySetResult(); }
       if (c == 2) { SecondCall.TrySetResult(); }
-      CallCount = c;
       return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
     }
     private int _count;
@@ -61,14 +62,13 @@ public class ClaimWorkerBusWakeTests {
     public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) => Task.FromResult(true);
   }
 
-  private static (ClaimWorker Worker, CountingCoordinator Coord, SignalBus Bus, CancellationTokenSource Cts) _create() {
+  private static (ClaimWorker Worker, CountingCoordinator Coord, SignalBus Bus, CancellationTokenSource Cts) _create(
+      int pollingMaxIntervalMilliseconds = 300_000) {
     var coord = new CountingCoordinator();
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var schemaGate = new SchemaReadyGate();
-    schemaGate.MarkReady();
 
     var bus = new SignalBus(transports: [new InMemorySignalTransport()], pullSources: []);
 
@@ -76,12 +76,11 @@ public class ClaimWorkerBusWakeTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: schemaGate,
       // Huge polling intervals: without the bus wake, the SecondCall.WaitAsync would time out
       // long before the adaptive-poll timer fires again.
       options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 300_000,
-        PollingMaxIntervalMilliseconds = 300_000
+        PollingMaxIntervalMilliseconds = pollingMaxIntervalMilliseconds
       }),
       logger: NullLogger<ClaimWorker>.Instance,
       outboxChannel: new WorkChannelWriter(),
@@ -94,6 +93,31 @@ public class ClaimWorkerBusWakeTests {
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: bus);
     return (worker, coord, bus, new CancellationTokenSource(TimeSpan.FromSeconds(15)));
+  }
+
+  /// <summary>
+  /// #2046: the orphan wake is best-effort because the claim has a poll behind it. With the bus wired and no signal at
+  /// all (the reap's orphan doorbell lost), the claim still runs again on the backstop interval, and claim_work takes
+  /// the released rows there (claim_orphaned_*).
+  /// </summary>
+  [Test]
+  public async Task WithEveryDoorbellLost_TheBackstopPollStillClaimsAgainAsync() {
+    // The backstop interval is the only wake source here, so the second claim is the transition it causes.
+    var (worker, coord, bus, cts) = _create(pollingMaxIntervalMilliseconds: 50);
+    try {
+      await bus.StartAsync(cts.Token);
+      await worker.StartAsync(cts.Token);
+
+      await coord.FirstCall.Task.WaitAsync(TimeSpan.FromSeconds(5), cts.Token);
+      await coord.SecondCall.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
+
+      await Assert.That(coord.CallCount).IsGreaterThanOrEqualTo(2)
+        .Because("no doorbell was published; the backstop poll alone ran the claim that finds orphaned work");
+    } finally {
+      await cts.CancelAsync();
+      await worker.StopAsync(CancellationToken.None);
+      cts.Dispose();
+    }
   }
 
   [Test]

@@ -20,7 +20,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <docs>fundamentals/perspectives/table-naming#renaming-perspectives</docs>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres.Generators/Templates/DbContextSchemaExtensionTemplate.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class PerspectiveTableRenameTests : EFCoreTestBase {
   private const string LEGACY_TABLE = "wh_per_nested_retention_legacy";

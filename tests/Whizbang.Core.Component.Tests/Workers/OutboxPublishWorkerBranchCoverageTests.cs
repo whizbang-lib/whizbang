@@ -280,15 +280,12 @@ public class OutboxPublishWorkerBranchCoverageTests {
       IDeadLetterStore? deadLetterStore = null,
       LeaseRegistry? leaseRegistry = null,
       WorkCompletionMeter? completionMeter = null) {
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var sp = serviceProvider ?? new ServiceCollection().BuildServiceProvider();
     return new OutboxPublishWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: options,
       logger: logger ?? NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),

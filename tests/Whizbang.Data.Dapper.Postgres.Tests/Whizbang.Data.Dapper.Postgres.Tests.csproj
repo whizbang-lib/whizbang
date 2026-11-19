@@ -2,7 +2,6 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -24,6 +23,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
     <PackageReference Include="Microsoft.Testing.Extensions.Retry" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="Npgsql" />
     <PackageReference Include="SSH.NET" />
@@ -36,6 +36,11 @@
     <ProjectReference Include="../../src/Whizbang.Data.Postgres/Whizbang.Data.Postgres.csproj" />
     <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <ProjectReference Include="../../src/Whizbang.Testing/Whizbang.Testing.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The ledger hashes published releases recorded (#2125), read at run time from the output directory. -->
+    <None Include="Fixtures/LegacyMigrationLedgers/**/*.tsv" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

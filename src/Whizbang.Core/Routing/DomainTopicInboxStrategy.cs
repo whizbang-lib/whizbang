@@ -62,7 +62,7 @@ public sealed class DomainTopicInboxStrategy(string suffix) : IInboxRoutingStrat
   /// <returns>A one-element list containing today's singular subscription.</returns>
   /// <exception cref="ArgumentNullException">Thrown when context is null.</exception>
   /// <docs>fundamentals/dispatcher/routing#domain-topic-inbox</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/DomainTopicInboxStrategyTests.cs:GetSubscriptions_BitIdenticalToSingularAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/DomainTopicInboxStrategyTests.cs:GetSubscriptions_BitIdenticalToSingularAsync</tests>
   public IReadOnlyList<InboxSubscription> GetSubscriptions(InboxSubscriptionContext context) {
     ArgumentNullException.ThrowIfNull(context);
     return [GetSubscription(context.OwnedDomains, context.ServiceName, MessageKind.Command)];

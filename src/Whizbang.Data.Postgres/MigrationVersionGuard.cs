@@ -49,7 +49,8 @@ public static class MigrationVersionGuard {
   /// that cannot state what it is has no business writing DDL.
   /// </returns>
   public static bool MayApply(string? myVersion, string? recordedVersion, out string reason) {
-    if (!SemanticVersion.TryParse(myVersion, out var mine)) {
+    // #2022: ordered by the one version rule, like every other version comparison.
+    if (!UpgradeOrder.IsReadable(myVersion)) {
       reason = $"this build's library version '{myVersion}' is not a readable semantic version, "
              + "so it cannot be ordered against the schema and will not apply migrations";
       return false;
@@ -60,15 +61,15 @@ public static class MigrationVersionGuard {
       return true;
     }
 
-    if (!SemanticVersion.TryParse(recordedVersion, out var recorded)) {
+    if (!UpgradeOrder.IsReadable(recordedVersion)) {
       reason = $"the ledger records library version '{recordedVersion}', which is not a readable "
              + "semantic version; proceeding, because refusing on an unreadable record would leave "
              + "the schema permanently unmigratable";
       return true;
     }
 
-    if (mine < recorded) {
-      reason = $"this build is version {mine}, and the migration was applied by {recorded} — "
+    if (UpgradeOrder.CompareLibrary(myVersion, recordedVersion) < 0) {
+      reason = $"this build is version {myVersion}, and the migration was applied by {recordedVersion}: "
              + "applying would replace newer definitions with older ones";
       return false;
     }

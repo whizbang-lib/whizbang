@@ -38,7 +38,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/composite-events#dispatch-fanout</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
 public static partial class CompositeInboxFanout {
   private const string LOG_CATEGORY = "Whizbang.Core.Messaging.CompositeInboxFanout";
 
@@ -70,7 +70,7 @@ public static partial class CompositeInboxFanout {
   /// <see cref="EventFlags"/> derivation. A catalog miss means "unknown here", not "composite".
   /// </remarks>
   /// <docs>fundamentals/messaging/composite-events#dispatch-fanout</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:IsCompositeWireType_CatalogStampsComposite_ReturnsTrueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeInboxFanoutTests.cs:IsCompositeWireType_CatalogStampsComposite_ReturnsTrueAsync</tests>
   public static bool IsCompositeWireType(string? wireTypeName, IEventMarkerResolver? markerResolver) {
     if (markerResolver is null || EventFlagsDeriver.ToClrTypeName(wireTypeName) is not { } clrTypeName) {
       return false;
@@ -96,12 +96,15 @@ public static partial class CompositeInboxFanout {
   /// <param name="Detail">Human-readable failure detail for DLQ error text (null on success).</param>
   /// <param name="CompositeTypeName">Full name of the composite type (null when not a composite).</param>
   /// <param name="UnsubscribedChildren">Children dropped at expansion because the consumer has no subscription for their type (#736).</param>
+  /// <param name="ReattributedChildren">Children of a redelivery bundle stored under their type's true owner instead of
+  /// the origin the bundle names, which does not own it (#2116).</param>
   public readonly record struct FanoutResult(
     FanoutOutcome Outcome,
     IReadOnlyList<InboxMessage> Children,
     string? Detail,
     string? CompositeTypeName,
-    int UnsubscribedChildren = 0);
+    int UnsubscribedChildren = 0,
+    int ReattributedChildren = 0);
 
   /// <summary>
   /// Expands <paramref name="composite"/> into child inbox messages, inheriting identity context from
@@ -112,21 +115,25 @@ public static partial class CompositeInboxFanout {
   /// Under <see cref="FanoutAtomicity.Independent"/>, a dropped inner event is logged (first-drop
   /// detail + count summary) so a partially-lost fan-out is diagnosable rather than silent.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_NullInner_Independent_LogsTheDroppedChildAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeUnresolvedInnerMessageTests.cs:TryExpand_AtomicCompositeWithUnresolvedInner_ExpandsResolvableChildrenAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_NullInner_Independent_LogsTheDroppedChildAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeUnresolvedInnerMessageTests.cs:TryExpand_AtomicCompositeWithUnresolvedInner_ExpandsResolvableChildrenAsync</tests>
   /// <param name="composite">The composite payload, or null when the row is not a composite.</param>
   /// <param name="source">The composite's own inbox envelope.</param>
   /// <param name="scope">The dispatch scope (serializer, catalog, resolvers, logging).</param>
   /// <param name="replacementInner">A pre-fanout directive's replacement for the inner events.</param>
   /// <param name="hasConsumer">Answers whether this consumer subscribes to a child type (by wire type name); a child it does not subscribe to is dropped at expansion and counted (#736). Null keeps every child.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
+  /// <param name="ownerOf">For a redelivery bundle: a child type's true owner when the origin the bundle names does not own
+  /// it (<see cref="MisattributedOrigin.ForBundle"/>), or null when the bundle's origin stands. Such a child is stored
+  /// under the owner with no origin sequence, and counted (#2116). Null keeps every child's origin.</param>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Expanding a composite checks five things that can disagree (the inner count against the cap, against the carried ids, against the carried sequences, each inner against null, and each child against the consumer's subscriptions) and every disagreement has a different outcome under Atomic than under Independent. The branching is the atomicity contract, and the two modes have to be read together to see that a drop is logged exactly once.")]
   public static FanoutResult TryExpand(
       ICompositeEvent? composite,
       IMessageEnvelope source,
       IServiceProvider scope,
       IEnumerable<IMessage>? replacementInner = null,
-      Func<string, bool>? hasConsumer = null) {
+      Func<string, bool>? hasConsumer = null,
+      Func<string, Guid?>? ownerOf = null) {
     ArgumentNullException.ThrowIfNull(source);
     ArgumentNullException.ThrowIfNull(scope);
 
@@ -153,7 +160,8 @@ public static partial class CompositeInboxFanout {
     // no typed payloads exist on either side, so they expand through the raw path. A replacement
     // set (pre-fanout directive) is typed and takes the typed path as before.
     if (replacementInner is null && composite is IRawInnerComposite rawComposite) {
-      return _expandRaw(rawComposite, compositeTypeName, source, eventMarkerResolver, ephemeralModeResolver, streamIdExtractor, hasConsumer);
+      return _expandRaw(rawComposite, compositeTypeName, source, eventMarkerResolver, ephemeralModeResolver, streamIdExtractor, hasConsumer, ownerOf,
+        scope.GetService<JsonSerializerOptions>());
     }
 
     // A pre-fanout directive may replace the composite's own inner events (filter / transform / re-key).
@@ -293,6 +301,7 @@ public static partial class CompositeInboxFanout {
   /// count desync between payloads, type names, ids, or sequences fails the whole expansion.
   /// </summary>
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The raw path re-checks every guard the typed path checks, because a raw bundle is machine-built and any count desync between payloads, type names, ids and sequences fails the whole expansion. The guards sit in one place so the two paths can be compared line by line.")]
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The raw path takes exactly what the typed path takes: the composite, its name, the source envelope, the three resolvers, the two routing questions (who consumes a type, who owns it) and the options a superseding child's key is read with. Grouping them would hide which resolver each guard uses.")]
   private static FanoutResult _expandRaw(
       IRawInnerComposite composite,
       string compositeTypeName,
@@ -300,7 +309,9 @@ public static partial class CompositeInboxFanout {
       IEventMarkerResolver? eventMarkerResolver,
       IEphemeralModeResolver? ephemeralModeResolver,
       IStreamIdExtractor? streamIdExtractor,
-      Func<string, bool>? hasConsumer) {
+      Func<string, bool>? hasConsumer,
+      Func<string, Guid?>? ownerOf,
+      JsonSerializerOptions? jsonOptions) {
     var payloads = composite.InnerPayloads;
     var typeNames = composite.InnerTypeNames;
     var identityComposite = composite as IIdentityPreservingComposite;
@@ -346,6 +357,7 @@ public static partial class CompositeInboxFanout {
     }
     var children = new List<InboxMessage>(payloads.Count);
     var unsubscribed = 0;
+    var reattributed = 0;
     for (var i = 0; i < payloads.Count; i++) {
       var wireTypeName = typeNames[i];
       if (payloads[i].ValueKind == JsonValueKind.Undefined || string.IsNullOrWhiteSpace(wireTypeName)) {
@@ -361,6 +373,14 @@ public static partial class CompositeInboxFanout {
 
       var sourceServiceId = originOverride != Guid.Empty ? originOverride : source.SourceServiceId;
       var sourceCommitSequence = identitySequences?[i] ?? source.SourceCommitSequence;
+      // #2116: the bundle names the service that answered it. A child of a type another service owns was only received
+      // there, so it is stored under its owner; the carried sequence is a position in the answerer's lane, so none is
+      // stored (zero), and the owner's next redelivery fills it.
+      if (ownerOf?.Invoke(wireTypeName) is { } owner) {
+        sourceServiceId = owner;
+        sourceCommitSequence = 0;
+        reattributed++;
+      }
       var childEnvelope = new MessageEnvelope<JsonElement> {
         Version = source.Version,
         DispatchContext = source.DispatchContext,
@@ -368,7 +388,7 @@ public static partial class CompositeInboxFanout {
         // the composite, the ordinal and the wire type, so a repeated expansion is a repeat at the key.
         MessageId = identityIds is not null
           ? new MessageId(identityIds[i])
-          : new MessageId(CompositeChildIdentity.Derive(source.MessageId.Value, i, wireTypeName)),
+          : new MessageId(CompositeChildIdentity.ForChild(source.MessageId.Value, i, wireTypeName)),
         Payload = payloads[i],
         Hops = childHops,
         SourceServiceId = sourceServiceId,
@@ -407,6 +427,11 @@ public static partial class CompositeInboxFanout {
           MessageId = childEnvelope.MessageId,
           Hops = childEnvelope.Hops,
           DispatchContext = childEnvelope.DispatchContext,
+          // #2350: a superseding child keeps the key and group its origin stored it with, read from the carried payload
+          // as the live receive path reads it (ReceivedInboxMessageBuilder). Without them a restored older copy was
+          // stored unkeyed, never reaped again, and the newest of its key by version.
+          SupersedingKey = Lifecycle.SupersedingEvents.KeyOf(payloads[i], wireTypeName, jsonOptions),
+          SupersedingGroup = Lifecycle.SupersedingEvents.GroupOf(payloads[i], wireTypeName),
         },
         MessageType = wireTypeName,
         SourceServiceId = sourceServiceId,
@@ -417,7 +442,7 @@ public static partial class CompositeInboxFanout {
       });
     }
 
-    return new FanoutResult(FanoutOutcome.Expanded, children, null, compositeTypeName, unsubscribed);
+    return new FanoutResult(FanoutOutcome.Expanded, children, null, compositeTypeName, unsubscribed, reattributed);
   }
 
   /// <summary>
@@ -446,10 +471,8 @@ public static partial class CompositeInboxFanout {
     // must recount under the identity the live delivery would have carried.
     var sourceServiceId = originOverride != Guid.Empty ? originOverride : source.SourceServiceId;
     var sourceCommitSequence = sequenceOverride ?? source.SourceCommitSequence;
-    // The child's type, rendered the way the serializer renders MessageType (the same helper), so the
-    // derived id and the stored message_type agree.
+    // The child's type; its id is derived from it the one canonical way every path uses (#2266).
     var innerType = inner.GetType();
-    var childTypeName = TypeNameFormatter.AssemblyQualifiedNameOrDisplay(innerType);
     var childEnvelope = new MessageEnvelope<IMessage> {
       Version = source.Version,
       DispatchContext = source.DispatchContext,
@@ -459,7 +482,7 @@ public static partial class CompositeInboxFanout {
       // and the inbox primary key absorbs the repeat instead of storing a second copy.
       MessageId = originalId is { } oid
         ? new MessageId(oid)
-        : new MessageId(CompositeChildIdentity.Derive(source.MessageId.Value, ordinal, childTypeName)),
+        : new MessageId(CompositeChildIdentity.ForChild(source.MessageId.Value, ordinal, innerType)),
       Payload = inner,
       // Composite-lineage hop chain (shared by reference across the batch): the creation hop traces
       // each child back to the parent composite; the composite's own journey follows for audit.
@@ -516,6 +539,9 @@ public static partial class CompositeInboxFanout {
         MessageId = childEnvelope.MessageId,
         Hops = childEnvelope.Hops,
         DispatchContext = childEnvelope.DispatchContext,
+        // #2350: a superseding child keeps its key and group, as the dispatch path stamps them on a direct delivery.
+        SupersedingKey = Lifecycle.SupersedingEvents.KeyOf(inner),
+        SupersedingGroup = Lifecycle.SupersedingEvents.GroupOf(inner),
       },
       MessageType = messageTypeName,
       SourceServiceId = sourceServiceId,
@@ -536,7 +562,7 @@ public static partial class CompositeInboxFanout {
       ServiceInstance = sourceFirstHop?.ServiceInstance ?? ServiceInstanceInfo.Unknown,
       Timestamp = DateTimeOffset.UtcNow,
       CausationId = source.MessageId,
-      CausationType = composite.GetType().Name,
+      CausationType = TypeNameFormatter.SimpleName(composite.GetType()),
       // Same shared rescue chain as every other cascade site (hop → ambient parent → fresh root).
       CorrelationId = Observability.CascadeContext.ResolveInheritedIdentity(source).Correlation,
       // Carry the composite's stream metadata (AggregateId) + scope so the child's hop chain is

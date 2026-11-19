@@ -23,7 +23,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// </summary>
 /// <docs>fundamentals/perspectives/physical-fields#jsonb-filters</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class GraphQLJsonbContainmentIntegrationTests {
   private const string TABLE = "wh_per_jsonb_graph_item";

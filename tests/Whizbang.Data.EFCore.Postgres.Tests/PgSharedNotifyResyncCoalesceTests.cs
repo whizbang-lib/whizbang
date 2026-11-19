@@ -74,6 +74,9 @@ public class PgSharedNotifyResyncCoalesceTests : EFCoreTestBase {
       await Task.Delay(1, cts.Token);
     }
 
+    // A ceiling for a failure message, not the proof: the proof is that every channel is listened.
+    // When Npgsql loses a wake the batch waits for the wait's timeout, which is the 1 s resync
+    // recheck (#2291); before, it was the 30 s keepalive, past this ceiling.
     using var listenWait = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
     listenWait.CancelAfter(TimeSpan.FromSeconds(10));
     try {

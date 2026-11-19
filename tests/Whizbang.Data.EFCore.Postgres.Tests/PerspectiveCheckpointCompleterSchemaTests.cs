@@ -62,12 +62,26 @@ public class PerspectiveCheckpointCompleterSchemaTests : EFCoreTestBase {
       // LIKE ... INCLUDING ALL copies the columns, defaults and the (stream_id, perspective_name)
       // key the upsert conflicts on. Foreign keys are deliberately not copied by LIKE, so the
       // cursor needs no event row behind it — the schema qualification is what is under test.
+      // The rebuild's cursor write is the framework function migration 273 creates in the service's schema, over the
+      // ledger and the parked-cursor table (#1931), so the service schema holds those too, as its migrations create them.
       ddl.CommandText = $"""
         CREATE SCHEMA IF NOT EXISTS {ServiceSchema};
         CREATE TABLE IF NOT EXISTS {ServiceSchema}.wh_perspective_cursors
           (LIKE public.wh_perspective_cursors INCLUDING ALL);
+        CREATE TABLE IF NOT EXISTS {ServiceSchema}.wh_stream_lifecycle
+          (LIKE public.wh_stream_lifecycle INCLUDING ALL);
+        CREATE TABLE IF NOT EXISTS {ServiceSchema}.wh_event_archive_cursors
+          (LIKE public.wh_event_archive_cursors INCLUDING ALL);
         """;
       await ddl.ExecuteNonQueryAsync();
+      await using var definition = conn.CreateCommand();
+      definition.CommandText = "SELECT pg_get_functiondef('public.wh_complete_rebuilt_cursor'::regproc)";
+      var publicDefinition = (string)(await definition.ExecuteScalarAsync())!;
+      await using var function = conn.CreateCommand();
+      function.CommandText = publicDefinition
+        .Replace("\"public\".", ServiceSchema + ".", StringComparison.Ordinal)
+        .Replace("public.", ServiceSchema + ".", StringComparison.Ordinal);
+      await function.ExecuteNonQueryAsync();
     }
 
     var options = new DbContextOptionsBuilder<SchemaScopedDbContext>()

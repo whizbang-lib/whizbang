@@ -40,7 +40,9 @@ namespace Whizbang.Core.Archival;
 /// <param name="archive">The registered archive store.</param>
 /// <param name="readThrough">Whether reads from the start read through the archive (<c>Whizbang:Archive:ReadThrough</c>).</param>
 /// <docs>fundamentals/events/archive-store#read-through</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ARebuildThatSkipsArchivedData_ReadsOnlyTheHotEvents_OnEveryReadPathAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ARewind_AndALiveRead_ReadThroughTheGap_WhateverARebuildWouldChooseAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/ArchiveReadThroughIntegrationTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveReadThroughTests.cs</tests>
 public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveStore archive, bool readThrough)
@@ -57,6 +59,14 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
   /// <summary>Whether reads from the start read through the archive.</summary>
   public bool ReadThrough { get; } = readThrough;
 
+  // A rebuild reads no archived data unless it opts in (#1931): under RebuildArchivedData.Skip a read from the start
+  // returns only the hot events. Rewinds (Replay) and live reads are unchanged, and the explicit read a rewind past an
+  // archived snapshot makes always reads through.
+  private bool _readsThrough =>
+    ReadThrough
+    && !(ProcessingModeAccessor.Current is ProcessingMode.Rebuild
+      && Perspectives.RebuildArchivedDataAccessor.Current == Perspectives.RebuildArchivedData.Skip);
+
   // ── Appends: AutoRestore restores inline and retries once ──────────────────────────────────────────
 
   /// <inheritdoc />
@@ -72,7 +82,7 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
   /// <inheritdoc />
   public override IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
       Guid streamId, long fromSequence, CancellationToken cancellationToken = default) =>
-    ReadThrough && fromSequence <= FIRST_ARCHIVED_VERSION
+    _readsThrough && fromSequence <= FIRST_ARCHIVED_VERSION
       ? _throughGapAsync(Inner.ReadAsync<TMessage>(streamId, fromSequence, cancellationToken),
           (before, ct) => _archivedTypedAsync<TMessage>(streamId, fromSequence, before, ct), cancellationToken)
       : Inner.ReadAsync<TMessage>(streamId, fromSequence, cancellationToken);
@@ -80,7 +90,7 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
   /// <inheritdoc />
   public override IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
       Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) =>
-    ReadThrough && fromEventId is null
+    _readsThrough && fromEventId is null
       ? _throughGapAsync(Inner.ReadAsync<TMessage>(streamId, fromEventId, cancellationToken),
           (before, ct) => _archivedTypedAsync<TMessage>(streamId, 0, before, ct), cancellationToken)
       : Inner.ReadAsync<TMessage>(streamId, fromEventId, cancellationToken);
@@ -88,7 +98,7 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
   /// <inheritdoc />
   public override IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
       Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
-    ReadThrough && fromEventId is null
+    _readsThrough && fromEventId is null
       ? _throughGapAsync(Inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken),
           (before, ct) => _archivedAsync(streamId, 0, before, eventTypes, ct), cancellationToken)
       : Inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken);
@@ -97,11 +107,11 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
   public override async Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(
       Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) {
     var live = await Inner.GetEventsBetweenAsync<TMessage>(streamId, afterEventId, upToEventId, cancellationToken).ConfigureAwait(false);
-    if (!ReadThrough || afterEventId is not null || !_showsAGap(live)) {
+    if (!_readsThrough || afterEventId is not null || !_showsAGap(live)) {
       return live;
     }
     var archived = await _archivedTypedAsync<TMessage>(streamId, 0, _firstVersion(live), cancellationToken).ConfigureAwait(false);
-    return [.. archived.Where(e => _atOrBefore(e.MessageId.Value, upToEventId)), .. live];
+    return _throughUpper(archived, live, upToEventId);
   }
 
   /// <inheritdoc />
@@ -109,11 +119,33 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
       Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
     var live = await Inner.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes, cancellationToken)
       .ConfigureAwait(false);
-    if (!ReadThrough || afterEventId is not null || !_showsAGap(live)) {
+    if (!_readsThrough || afterEventId is not null || !_showsAGap(live)) {
       return live;
     }
     var archived = await _archivedAsync(streamId, 0, _firstVersion(live), eventTypes, cancellationToken).ConfigureAwait(false);
-    return [.. archived.Where(e => _atOrBefore(e.MessageId.Value, upToEventId)), .. live];
+    return _throughUpper(archived, live, upToEventId);
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// A set-based batch's one read of its pairs' streams (#2246) reads the hot store only. When a stream read from its
+  /// start shows a gap there, the archive holds the stream's first events, so null is returned and each pair reads its
+  /// own events, through the archive.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ABatchedRead_ThatAStreamsGapNeedsTheArchiveFor_LeavesEachPairToItsOwnReadAsync</tests>
+  public override async Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
+      IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) {
+    var read = await Inner.ReadPolymorphicManyAsync(streams, eventTypes, cancellationToken).ConfigureAwait(false);
+    if (read is null || !_readsThrough) {
+      return read;
+    }
+    foreach (var (streamId, fromEventId) in streams) {
+      if (fromEventId is null && (!read.TryGetValue(streamId, out var live) || _showsAGap(live))) {
+        return null;
+      }
+    }
+    return read;
   }
 
   /// <summary>
@@ -123,7 +155,8 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
   /// archive. Reads through whatever <see cref="ReadThrough"/> says: the caller asked for it.
   /// </summary>
   /// <param name="streamId">The stream.</param>
-  /// <param name="fromEventId">The snapshot's event: the hot events after it are read.</param>
+  /// <param name="fromEventId">The snapshot's event. The hot events are placed after it by <paramref name="afterVersion"/>,
+  /// because the hot store may no longer hold it (#2379).</param>
   /// <param name="afterVersion">The snapshot's version: the archived events above it are read.</param>
   /// <param name="eventTypes">The event types the reader folds.</param>
   /// <param name="cancellationToken">Cancellation.</param>
@@ -138,8 +171,10 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
       seen.Add(envelope.MessageId.Value);
       yield return envelope;
     }
-    await foreach (var envelope in Inner.ReadPolymorphicAsync(streamId, fromEventId, eventTypes, cancellationToken).ConfigureAwait(false)) {
-      if (!seen.Contains(envelope.MessageId.Value)) {
+    // The hot events after the snapshot's version (#2379): the snapshot's event may be archived, and an anchor the hot
+    // store no longer holds can be placed only by the version the caller passed, never by its id.
+    await foreach (var envelope in Inner.ReadPolymorphicAsync(streamId, fromEventId: null, eventTypes, cancellationToken).ConfigureAwait(false)) {
+      if (envelope.LocalStreamVersion > afterVersion && !seen.Contains(envelope.MessageId.Value)) {
         yield return envelope;
       }
     }
@@ -166,13 +201,31 @@ public sealed class ArchiveAwareEventStoreDecorator(IEventStore inner, IArchiveS
     }
   }
 
-  private static bool _showsAGap<T>(List<MessageEnvelope<T>> live) =>
+  private static bool _showsAGap<T>(IReadOnlyList<MessageEnvelope<T>> live) =>
     live.Count == 0 || live[0].LocalStreamVersion > FIRST_ARCHIVED_VERSION;
 
   private static long? _firstVersion<T>(List<MessageEnvelope<T>> live) => live.Count == 0 ? null : live[0].LocalStreamVersion;
 
-  // Guid.Empty is "no upper bound", as the store reads it.
-  private static bool _atOrBefore(Guid eventId, Guid upToEventId) => upToEventId == Guid.Empty || eventId.CompareTo(upToEventId) <= 0;
+  /// <summary>
+  /// A between read from the stream's start through <paramref name="upToEventId"/>, joined across the archive and the hot
+  /// store by the upper checkpoint's position in the stream (#2381), as the stores bound their own reads. Every archived
+  /// event precedes every hot one. A checkpoint the archive holds keeps the archived events through its version and none
+  /// of the hot ones; one the hot read returned keeps every archived event; one neither holds has no position and is
+  /// compared by id, the bound the read always had for one. <see cref="Guid.Empty"/> is no bound.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ABetweenRead_ThroughAnArchivedEvent_KeepsTheArchivedEventsThroughItsVersion_WhateverTheirIdsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ABetweenRead_ThroughAHotEvent_KeepsEveryArchivedEvent_WhateverTheirIdsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveAwareEventStoreDecoratorTests.cs:ABetweenRead_ThroughAnEventNeitherStoreHolds_KeepsTheArchivedEventsAtOrBeforeItsIdAsync</tests>
+  private static List<MessageEnvelope<T>> _throughUpper<T>(
+      List<MessageEnvelope<T>> archived, List<MessageEnvelope<T>> live, Guid upToEventId) {
+    if (upToEventId == Guid.Empty || live.Exists(e => e.MessageId.Value == upToEventId)) {
+      return [.. archived, .. live];
+    }
+    if (archived.Find(e => e.MessageId.Value == upToEventId) is { } anchor) {
+      return archived.FindAll(e => e.LocalStreamVersion <= anchor.LocalStreamVersion);
+    }
+    return [.. archived.Where(e => e.MessageId.Value.CompareTo(upToEventId) <= 0), .. live];
+  }
 
   private async Task<List<MessageEnvelope<TMessage>>> _archivedTypedAsync<TMessage>(
       Guid streamId, long fromVersion, long? beforeVersion, CancellationToken cancellationToken) {

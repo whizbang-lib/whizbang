@@ -10,6 +10,7 @@ using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 #if AZURESERVICEBUS
@@ -77,7 +78,7 @@ builder.Services.AddReceptors();
 builder.Services.AddWhizbangDispatcher();
 
 // WorkCoordinator publisher - atomic coordination with lease-based work claiming
-builder.Services.AddHostedService<Worker>();
+builder.Services.AddWhizbangWorker<Worker>();
 
 var host = builder.Build();
 

@@ -20,7 +20,7 @@ namespace Whizbang.Data.Postgres;
 /// message detail is not used, because Npgsql redacts it unless the connection string opts in.
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#appending-to-an-archived-stream</docs>
-/// <tests>tests/Whizbang.Core.Tests/Archival/StreamArchivedRefusalTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/StreamArchivedRefusalTests.cs</tests>
 internal static class StreamArchivedRefusal {
   /// <summary>The SQLSTATE the store raises for an archived stream whose type refuses appends.</summary>
   internal const string REFUSE_SQL_STATE = "WHA01";

@@ -29,7 +29,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/SyncTrackingEventStoreDecoratorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SyncTrackingEventStoreDecoratorTests.cs</tests>
 /// <remarks>
 /// Initializes a new instance of <see cref="SyncTrackingEventStoreDecorator"/>.
 /// </remarks>

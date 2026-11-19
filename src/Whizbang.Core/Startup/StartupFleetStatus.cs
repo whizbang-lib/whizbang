@@ -26,13 +26,13 @@ namespace Whizbang.Core.Startup;
 /// mixed-version rollout this is the first question anyone asks.</param>
 /// <param name="Evicted">Whether the instance is tombstoned — refused at heartbeat, capability
 /// acquisition and claims. An evicted peer no longer counts for anything, handshakes included.</param>
-/// <param name="AliveLockHeld">Whether the instance's session alive-lock is held right now (#1286). An
-/// instance holding it is live whatever the age of <paramref name="LastHeartbeatAt"/>: it beats on the
-/// slow cadence, so its heartbeat alone would read as lapsed for half of every beat.</param>
+/// <param name="IsLive">Whether the database's one liveness rule (#2027, <c>wh_instance_is_live</c>) calls the
+/// instance live; it counts an instance holding its alive-lock between slow beats. Nothing reading the fleet judges
+/// liveness from <paramref name="LastHeartbeatAt"/>, which is for display.</param>
 public sealed record FleetInstanceStatus(
   Guid InstanceId, string ServiceName, string HostName, DateTimeOffset LastHeartbeatAt,
   IReadOnlyList<string> Capabilities, string? LifecyclePhase = null, string? LibraryVersion = null,
-  bool Evicted = false, bool AliveLockHeld = false);
+  bool Evicted = false, bool IsLive = false);
 
 /// <summary>
 /// The fleet section of a status response: either the live instances from the database, or an

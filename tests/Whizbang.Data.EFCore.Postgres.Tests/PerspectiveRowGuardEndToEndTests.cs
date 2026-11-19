@@ -28,7 +28,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <docs>fundamentals/perspectives/pre-destruction-holds#testing</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class PerspectiveRowGuardEndToEndTests : EFCoreTestBase {
   private const string TABLE = "wh_per_guard_e2e";
@@ -79,11 +78,8 @@ public class PerspectiveRowGuardEndToEndTests : EFCoreTestBase {
       Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IPerspectiveRowDestructionGuard>(new BlobCleanupGuard(store));
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       NullLogger<MaintenanceWorker>.Instance);
   }

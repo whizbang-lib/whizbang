@@ -19,14 +19,30 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/BatchFlusherRetryTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/BatchFlusherTests.cs</tests>
-public sealed partial class BatchFlusher<T> : IAsyncDisposable {
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/BatchFlusherIdleSignalTests.cs</tests>
+public sealed partial class BatchFlusher<T> : IAsyncDisposable, IQueuedWriteFlusher {
+  // What is offered and what is pending, in one word so one atomic read gives both (#1899): the high 32 bits advance by
+  // one per offer (the version, wrapping), the low 32 bits hold the pending count. An offer adds OFFER, so the version
+  // and the count move together; landing or giving up n items subtracts n. The channel's capacity keeps the count far
+  // below 2^31, so it never borrows from the version.
+  private const long OFFER = (1L << 32) + 1;
+  private const long PENDING_MASK = 0xFFFF_FFFFL;
+  private long _state;
+  private readonly Lock _idleLock = new();
+  // Completed while nothing is pending; replaced by an incomplete one when the count leaves zero.
+  private TaskCompletionSource _idle = _completedIdle();
+  private readonly CountingWriter _writer;
+
   private readonly Channel<T> _channel;
   private readonly Func<IReadOnlyList<T>, CancellationToken, Task> _flush;
   private readonly BatchFlusherOptions _options;
   private readonly ILogger _logger;
   private readonly TimeProvider _timeProvider;
   private readonly CancellationTokenSource _stop = new();
-  private readonly Task _loop;
+  private readonly Lock _startLock = new();
+  // Null until the loop starts; set under _startLock, and only once.
+  private Task? _loop;
+  private bool _startClosed;
   private readonly TaskCompletionSource _stoppedSignal = new();
 
   /// <summary>Total items consumed across all flushes (observability).</summary>
@@ -38,23 +54,135 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
   /// <summary>Items dropped after <see cref="BatchFlusherOptions.MaxFlushAttempts"/> consecutive failed flushes (diagnostic).</summary>
   public long ItemsDropped { get; private set; }
 
-  /// <summary>Producer-side writer for callers to enqueue items. Items written here are not counted in <see cref="Pending"/>; use <see cref="EnqueueAsync"/> for that.</summary>
-  public ChannelWriter<T> Writer => _channel.Writer;
+  /// <summary>
+  /// Producer-side writer for callers to enqueue items. Every item written here is counted in <see cref="Pending"/>
+  /// exactly as one given to <see cref="EnqueueAsync"/> is (#1899): there is no way in that the idle signal cannot see.
+  /// </summary>
+  public ChannelWriter<T> Writer => _writer;
 
-  private long _accepted;
-
-  /// <summary>Enqueues one item and counts it toward <see cref="Pending"/> until it is flushed or dropped.</summary>
+  /// <summary>Enqueues one item and counts it toward <see cref="Pending"/> until it is flushed or given up.</summary>
+  /// <remarks>An item the channel refuses (a stopped flusher, or a write canceled while the channel is full) is not counted.</remarks>
   public ValueTask EnqueueAsync(T item, CancellationToken cancellationToken = default) {
-    Interlocked.Increment(ref _accepted);
-    return _channel.Writer.WriteAsync(item, cancellationToken);
+    _offer();
+    var write = _channel.Writer.WriteAsync(item, cancellationToken);
+    return write.IsCompletedSuccessfully ? write : _awaitOfferedWriteAsync(write);
+  }
+
+  private async ValueTask _awaitOfferedWriteAsync(ValueTask write) {
+    try {
+      await write.ConfigureAwait(false);
+    } catch {
+      // Refused: never queued, so nothing will flush it. The caller sees the refusal as before.
+      _release(1);
+      throw;
+    }
   }
 
   /// <summary>
-  /// Items accepted through <see cref="EnqueueAsync"/> that are neither flushed nor dropped yet: what waits
-  /// in the channel plus what the loop has taken up and is flushing. Counted on the producer side so a
+  /// Items offered through <see cref="EnqueueAsync"/> or <see cref="Writer"/> that have neither landed nor been given up:
+  /// what waits in the channel plus what the loop has taken up and is flushing. Counted on the producer side so a
   /// reading never misses an item the loop has read but not yet flushed.
   /// </summary>
-  public long Pending => Math.Max(0, Interlocked.Read(ref _accepted) - ItemsFlushed - ItemsDropped);
+  public long Pending => Interlocked.Read(ref _state) & PENDING_MASK;
+
+  /// <inheritdoc />
+  /// <docs>fundamentals/work-coordinator/batched-flushers#when-writes-have-landed</docs>
+  public QueuedWriteActivity Activity {
+    get {
+      var state = Interlocked.Read(ref _state);
+      return new QueuedWriteActivity(Version: (long)((ulong)state >> 32), Pending: state & PENDING_MASK);
+    }
+  }
+
+  /// <inheritdoc />
+  /// <docs>fundamentals/work-coordinator/batched-flushers#when-writes-have-landed</docs>
+  public bool IsIdle => Pending == 0;
+
+  /// <inheritdoc />
+  /// <docs>fundamentals/work-coordinator/batched-flushers#when-writes-have-landed</docs>
+  public event WorkProcessingIdleHandler? OnWorkProcessingIdle;
+
+  /// <inheritdoc />
+  /// <docs>fundamentals/work-coordinator/batched-flushers#when-writes-have-landed</docs>
+  public Task WaitForIdleAsync(CancellationToken cancellationToken = default) {
+    Task idle;
+    lock (_idleLock) {
+      idle = _idle.Task;
+    }
+    return idle.WaitAsync(cancellationToken);
+  }
+
+  private void _offer() {
+    if ((Interlocked.Add(ref _state, OFFER) & PENDING_MASK) == 1) {
+      ReconcileIdle();
+    }
+  }
+
+  private void _release(long count) {
+    if ((Interlocked.Add(ref _state, -count) & PENDING_MASK) == 0) {
+      ReconcileIdle();
+    }
+  }
+
+  /// <summary>
+  /// Brings the idle awaitable in line with the pending count, and raises the idle event when the count has reached
+  /// zero. Called whenever the count leaves or reaches zero; it reads the count afresh under the lock, so whichever of
+  /// two crossing calls runs last leaves the state matching the count, and a call that finds nothing to change does
+  /// nothing.
+  /// </summary>
+  internal void ReconcileIdle() {
+    WorkProcessingIdleHandler? raise = null;
+    lock (_idleLock) {
+      var idle = Pending == 0;
+      if (idle == _idle.Task.IsCompleted) {
+        return;
+      }
+      if (idle) {
+        _idle.SetResult();
+        raise = OnWorkProcessingIdle;
+      } else {
+        _idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      }
+    }
+    raise?.Invoke();
+  }
+
+  private static TaskCompletionSource _completedIdle() {
+    var idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    idle.SetResult();
+    return idle;
+  }
+
+  /// <summary>Gives up whatever is still in the channel once the loop will read no more: it will never be flushed.</summary>
+  private void _abandonQueued() {
+    var abandoned = 0;
+    while (_channel.Reader.TryRead(out _)) {
+      abandoned++;
+    }
+    if (abandoned > 0) {
+      _release(abandoned);
+    }
+  }
+
+  /// <summary>The writer behind <see cref="Writer"/>: the flusher's channel, with every offer counted.</summary>
+  private sealed class CountingWriter(BatchFlusher<T> owner) : ChannelWriter<T> {
+    public override bool TryWrite(T item) {
+      owner._offer();
+      if (owner._channel.Writer.TryWrite(item)) {
+        return true;
+      }
+      owner._release(1);
+      return false;
+    }
+
+    public override ValueTask<bool> WaitToWriteAsync(CancellationToken cancellationToken = default) =>
+      owner._channel.Writer.WaitToWriteAsync(cancellationToken);
+
+    public override ValueTask WriteAsync(T item, CancellationToken cancellationToken = default) =>
+      owner.EnqueueAsync(item, cancellationToken);
+
+    public override bool TryComplete(Exception? error = null) => owner._channel.Writer.TryComplete(error);
+  }
 
   /// <summary>
   /// Creates the flusher and starts the background coalescing loop.
@@ -75,7 +203,26 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
     Func<IReadOnlyList<T>, CancellationToken, Task> flush,
     BatchFlusherOptions options,
     ILogger logger,
-    TimeProvider? timeProvider = null) {
+    TimeProvider? timeProvider = null) : this(flush, options, logger, timeProvider, started: true) {
+  }
+
+  /// <summary>
+  /// Creates the flusher, starting its loop now or leaving it for <see cref="Start"/> (#1636): a flush worker's flusher
+  /// starts when the host starts the worker, so nothing is flushed before the worker's start point. Items enqueued
+  /// before then wait in the channel.
+  /// </summary>
+  /// <param name="flush">Callback invoked per flush with the coalesced batch.</param>
+  /// <param name="options">Tuning knobs.</param>
+  /// <param name="logger">Logger.</param>
+  /// <param name="timeProvider">The clock; null uses <see cref="TimeProvider.System"/>.</param>
+  /// <param name="started">Whether the loop starts now; false leaves it for <see cref="Start"/>.</param>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/BatchFlusherDeferredStartTests.cs</tests>
+  internal BatchFlusher(
+    Func<IReadOnlyList<T>, CancellationToken, Task> flush,
+    BatchFlusherOptions options,
+    ILogger logger,
+    TimeProvider? timeProvider,
+    bool started) {
     ArgumentNullException.ThrowIfNull(flush);
     _flush = flush;
     ArgumentNullException.ThrowIfNull(options);
@@ -89,13 +236,28 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
       SingleReader = true,
       SingleWriter = false,
     });
+    _writer = new CountingWriter(this);
 
-    // Start the loop synchronously up to its first `await` (channel.ReadAsync) so the
-    // flusher is "running" by the time the ctor returns — important when callers race
-    // ahead and Writer.WriteAsync immediately. Avoids Task.Run's threadpool-queueing
-    // delay under heavy contention (full-suite test runs at parallelism=10 saturated
-    // the threadpool and starved Task.Run-launched loops for >30s).
-    _loop = _runAsync(_stop.Token);
+    if (started) {
+      Start();
+    }
+  }
+
+  /// <summary>
+  /// Starts the coalescing loop, once; a second call, or a call on a flusher started at construction, changes nothing.
+  /// </summary>
+  /// <remarks>
+  /// The loop runs synchronously up to its first <c>await</c> (the channel read), so the flusher is running by the time
+  /// this returns. That avoids Task.Run's thread-pool queueing delay under heavy contention (full-suite test runs at
+  /// parallelism 10 saturated the pool and starved Task.Run-launched loops for more than 30 s).
+  /// </remarks>
+  internal void Start() {
+    lock (_startLock) {
+      if (!_startClosed) {
+        _startClosed = true;
+        _loop = _runAsync(_stop.Token);
+      }
+    }
   }
 
   private async Task _runAsync(CancellationToken ct) {
@@ -111,10 +273,15 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
         try {
           await _flushWithRetryAsync(batch, ct);
         } catch (OperationCanceledException) {
+          // Shutdown gave up on this batch past the drain bound: it will not land.
+          _release(batch.Count);
           break;
         }
+        // Landed, or dropped after its last attempt: either way nothing is still coming for these items.
+        _release(batch.Count);
       }
     } finally {
+      _abandonQueued();
       _stoppedSignal.TrySetResult();
     }
   }
@@ -200,6 +367,20 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
       await _stoppedSignal.Task.ConfigureAwait(false);
       return;
     }
+    // A flusher whose worker never started (#1636) flushes nothing, not even on the way out: claiming the start here
+    // keeps a late Start from running a loop after this, and what was queued is dropped with the channel.
+    Task? loop;
+    lock (_startLock) {
+      _startClosed = true;
+      loop = _loop;
+    }
+    if (loop is null) {
+      _channel.Writer.TryComplete();
+      _abandonQueued();
+      _stoppedSignal.TrySetResult();
+      _stop.Dispose();
+      return;
+    }
 
     // Completing the writer is what lets the loop DRAIN: ReadAsync throws ChannelClosedException
     // only once the channel is both completed and empty, so the loop finishes the work already
@@ -213,14 +394,14 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
       // CancellationToken.None is deliberate and load-bearing: _stop is what this method cancels
       // *after* the drain gives up, so flowing it in here would let an external cancel abort the
       // drain early and discard the buffered work this whole path exists to flush.
-      await _loop
+      await loop
         .WaitAsync(TimeSpan.FromMilliseconds(_options.DrainTimeoutMs), _timeProvider, CancellationToken.None)
         .ConfigureAwait(false);
     } catch (TimeoutException) {
       // A flush callback that will not return must not hold host shutdown open forever.
       LogDrainTimeout(_logger, _options.DrainTimeoutMs);
       await _stop.CancelAsync().ConfigureAwait(false);
-      try { await _loop.ConfigureAwait(false); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
+      try { await loop.ConfigureAwait(false); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
     }
 
     if (!_stop.IsCancellationRequested) {

@@ -82,8 +82,8 @@ public class GuidInterceptorGeneratorCoverageTests {
 
     var assemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
     var references = new List<MetadataReference> {
-      MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
-      MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll"))
+      SharedMetadataReferences.FromFile(typeof(object).Assembly.Location),
+      SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Runtime.dll"))
     };
 
     var compilation = CSharpCompilation.Create(

@@ -36,8 +36,6 @@ namespace Whizbang.Core.Tests.Workers;
 public partial class LifecycleExceptionInvariantTests {
   private static (InboxDispatchWorker Worker, FakeLogger<InboxDispatchWorker> Logger, ServiceProvider Provider) _inboxWorkerWithLogger() {
     var sp = new ServiceCollection().BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var logger = new FakeLogger<InboxDispatchWorker>();
     var worker = new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -45,7 +43,6 @@ public partial class LifecycleExceptionInvariantTests {
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: new FakeHandlerCommitChannel(),
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { Enabled = true }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: logger,

@@ -55,9 +55,14 @@ public class TagHookLifecycleTests {
     };
 
     // Act — dispatch command, wait for ProductCreatedEvent perspectives to complete
-    // 4 perspectives: 2 inventory + 2 BFF (all local, no transport)
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 4, timeoutMilliseconds: 45000);
+    // Filtered to this product's stream (all local, no transport): inventory applies 3 events
+    // (ProductCreated x2 perspectives + InventoryRestocked x1), the BFF applies ProductCreated
+    // to its 2 perspectives.
+    var inventoryTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    var bffTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "bff");
+    var perspectiveTask = Task.WhenAll(inventoryTask, bffTask);
 
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;

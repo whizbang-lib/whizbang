@@ -38,7 +38,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
 [Category("Shard4")]
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
   /// <summary>Streams the backlog spreads over: thousands, as an import of a few hundred items fans out.</summary>
   private const int STREAMS = 10_000;

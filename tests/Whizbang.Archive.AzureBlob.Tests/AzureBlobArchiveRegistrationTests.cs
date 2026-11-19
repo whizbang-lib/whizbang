@@ -3,14 +3,17 @@
 
 using System.Runtime.CompilerServices;
 using Azure.Core;
+using Azure.Storage.Blobs.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Archival;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
 
@@ -119,7 +122,8 @@ public class AzureBlobArchiveRegistrationTests {
 
     var store = (AzureBlobArchiveStore)provider.GetRequiredService<IArchiveStore>();
 
-    await Assert.That(store.LocatorFor(Guid.Empty).Address).StartsWith("whizbang-archive/");
+    await Assert.That(store.ConfiguredLocation.Endpoint).IsEqualTo("https://account.blob.core.windows.net");
+    await Assert.That(store.ConfiguredLocation.Container).IsEqualTo("whizbang-archive");
   }
 
   [Test]
@@ -174,11 +178,12 @@ public class AzureBlobArchiveRegistrationTests {
       ["ContainerName"] = "archive-a",
       ["CompressionLevel"] = "9",
       ["MaxEventsPerChunk"] = "500",
+      ["AccessTier"] = "Cool",
     }), bound);
     AzureBlobArchiveServiceCollectionExtensions.Bind(_config(new() { ["ContainerName"] = " " }), defaults);
 
     await Assert.That(bound.ServiceUri).IsEqualTo(new Uri("https://account.blob.core.windows.net"));
-    await Assert.That(bound.ConnectionString).IsEqualTo(EMULATOR);
+    await Assert.That(bound.ConnectionString?.Reveal()).IsEqualTo(EMULATOR);
     await Assert.That(bound.ContainerName).IsEqualTo("archive-a");
     await Assert.That(bound.CompressionLevel).IsEqualTo(9);
     await Assert.That(bound.MaxEventsPerChunk).IsEqualTo(500);
@@ -187,12 +192,93 @@ public class AzureBlobArchiveRegistrationTests {
     await Assert.That(defaults.ContainerName).IsEqualTo("whizbang-archive").Because("a blank value keeps the default");
     await Assert.That(defaults.CompressionLevel).IsEqualTo(4);
     await Assert.That(defaults.MaxEventsPerChunk).IsEqualTo(10_000);
+    await Assert.That(bound.AccessTier).IsEqualTo(AccessTier.Cool);
+    await Assert.That(defaults.AccessTier).IsNull().Because("no tier configured leaves the storage account's default tier");
+  }
+
+  [Test]
+  [Arguments("Hot", "Hot")]
+  [Arguments("cool", "Cool")]
+  [Arguments("COLD", "Cold")]
+  public async Task Configuration_AccessTier_BindsHotCoolOrCold_InAnyCaseAsync(string value, string expected) {
+    var bound = new AzureBlobArchiveOptions();
+
+    AzureBlobArchiveServiceCollectionExtensions.Bind(_config(new() { ["AccessTier"] = value }), bound);
+
+    await Assert.That(bound.AccessTier.ToString()).IsEqualTo(expected)
+      .Because("the tier is stored in the SDK's own spelling, whatever case the configuration used");
+  }
+
+  [Test]
+  [Arguments("Archive", "rehydrat")]
+  [Arguments("Premium", "Hot, Cool or Cold")]
+  [Arguments("P10", "Hot, Cool or Cold")]
+  [Arguments("Glacier", "Hot, Cool or Cold")]
+  public async Task Configuration_AnAccessTierTheStoreCannotWriteAt_IsRefused_NamingTheKeyAndWhyAsync(string value, string why) {
+    var refused = await Assert.That(() => AzureBlobArchiveServiceCollectionExtensions.Bind(
+        _config(new() { ["AccessTier"] = value }), new AzureBlobArchiveOptions()))
+      .Throws<InvalidOperationException>();
+
+    await Assert.That(refused!.Message).Contains("Whizbang:Archive:AzureBlob:AccessTier")
+      .Because("the operator is told which setting to change");
+    await Assert.That(refused.Message).Contains(why);
+  }
+
+  [Test]
+  [Arguments("Archive")]
+  [Arguments("Premium")]
+  public async Task Store_RefusesATierItCannotReadBackFromAsync(string tier) {
+    var options = new AzureBlobArchiveOptions { AccessTier = new AccessTier(tier) };
+
+    await Assert.That(() => new AzureBlobArchiveStore(_database, _container(), options)).Throws<ArgumentOutOfRangeException>()
+      .Because("a store built by hand is held to the same tiers as one built from configuration");
+  }
+
+  [Test]
+  [Arguments("Hot")]
+  [Arguments("Cool")]
+  [Arguments("Cold")]
+  [Arguments(null)]
+  public async Task Store_AcceptsHotCoolColdOrTheAccountDefaultAsync(string? tier) {
+    var options = new AzureBlobArchiveOptions { AccessTier = tier is null ? (AccessTier?)null : new AccessTier(tier) };
+
+    var store = new AzureBlobArchiveStore(_database, _container(), options);
+
+    await Assert.That(store).IsNotNull().Because("the control: every online tier, and no tier at all, is valid");
+  }
+
+  [Test]
+  public async Task Startup_AnArchiveTierSetInCode_FailsTheHostAtStart_ACoolTierDoesNotAsync() {
+    var refusedServices = new ServiceCollection();
+    _driver(refusedServices);
+    refusedServices.AddWhizbangAzureBlobArchive(o => {
+      o.ConnectionString = EMULATOR;
+      o.AccessTier = AccessTier.Archive;
+    });
+    var acceptedServices = new ServiceCollection();
+    _driver(acceptedServices);
+    acceptedServices.AddWhizbangAzureBlobArchive(o => {
+      o.ConnectionString = EMULATOR;
+      o.AccessTier = AccessTier.Cool;
+    });
+    await using var refusedProvider = refusedServices.BuildServiceProvider();
+    await using var acceptedProvider = acceptedServices.BuildServiceProvider();
+
+    var refused = await Assert.That(() => refusedProvider.GetRequiredService<IStartupValidator>().Validate())
+      .Throws<OptionsValidationException>().Because("the host fails as it starts, not on the first archive write hours later");
+    await Assert.That(refused!.Message).Contains("rehydrat");
+    await Assert.That(() => acceptedProvider.GetRequiredService<IStartupValidator>().Validate()).ThrowsNothing()
+      .Because("the control: the validator runs and passes an online tier");
   }
 
   [Test]
   [Arguments("CompressionLevel", "fast")]
   [Arguments("MaxEventsPerChunk", "ten thousand")]
   [Arguments("ServiceUri", "not an absolute uri")]
+  [Arguments("VerifyLocation", "maybe")]
+  [Arguments("DeleteAfter", "soon")]
+  [Arguments("DeleteAfter", "00:00:00")]
+  [Arguments("DeleteAfter", "-01:00:00")]
   public async Task Configuration_AValueThatCannotBeRead_IsRefused_NamingTheKeyAsync(string key, string value) {
     var refused = await Assert.That(() => AzureBlobArchiveServiceCollectionExtensions.Bind(
         _config(new() { [key] = value }), new AzureBlobArchiveOptions()))
@@ -201,6 +287,102 @@ public class AzureBlobArchiveRegistrationTests {
     await Assert.That(refused!.Message).Contains($"Whizbang:Archive:AzureBlob:{key}")
       .Because("a misread setting would otherwise fall back to a default nobody chose");
   }
+
+  [Test]
+  public async Task Configuration_DeleteAfter_IsOffByDefault_AndBindsATimeSpanAsync() {
+    var bound = new AzureBlobArchiveOptions();
+    var blank = new AzureBlobArchiveOptions();
+
+    AzureBlobArchiveServiceCollectionExtensions.Bind(_config(new() { ["DeleteAfter"] = "35.00:00:00" }), bound);
+    AzureBlobArchiveServiceCollectionExtensions.Bind(_config(new() { ["DeleteAfter"] = " " }), blank);
+
+    await Assert.That(new AzureBlobArchiveOptions().DeleteAfter).IsNull()
+      .Because("off by default: a queued deletion runs at once, as before the option existed");
+    await Assert.That(bound.DeleteAfter).IsEqualTo(TimeSpan.FromDays(35));
+    await Assert.That(blank.DeleteAfter).IsNull().Because("a blank value keeps the default");
+  }
+
+  [Test]
+  [Arguments(0L)]
+  [Arguments(-1L)]
+  public async Task Store_RefusesADeleteAfterThatIsNotAboveZeroAsync(long ticks) {
+    var options = new AzureBlobArchiveOptions { DeleteAfter = TimeSpan.FromTicks(ticks) };
+
+    var refused = await Assert.That(() => new AzureBlobArchiveStore(_database, _container(), options)).Throws<ArgumentOutOfRangeException>();
+
+    await Assert.That(refused!.Message).Contains("DeleteAfter");
+    await Assert.That(new AzureBlobArchiveStore(_database, _container(), new AzureBlobArchiveOptions { DeleteAfter = TimeSpan.FromTicks(1) }))
+      .IsNotNull().Because("the control: any span above zero is a delay");
+  }
+
+  [Test]
+  public async Task Startup_ADeleteAfterOfZeroSetInCode_FailsTheHostAtStartAsync() {
+    var services = new ServiceCollection();
+    _driver(services);
+    services.AddWhizbangAzureBlobArchive(o => {
+      o.ConnectionString = EMULATOR;
+      o.DeleteAfter = TimeSpan.Zero;
+    });
+    await using var provider = services.BuildServiceProvider();
+
+    var refused = await Assert.That(() => provider.GetRequiredService<IStartupValidator>().Validate()).Throws<OptionsValidationException>();
+
+    await Assert.That(refused!.Message).Contains("Whizbang:Archive:AzureBlob:DeleteAfter");
+  }
+
+  [Test]
+  public async Task Registration_TheStoreMeasuresAgesOnTheRegisteredTimeProviderAsync() {
+    var services = new ServiceCollection();
+    _driver(services);
+    var clock = new FixedClock();
+    services.AddSingleton<TimeProvider>(clock);
+    services.AddWhizbangAzureBlobArchive(o => o.ConnectionString = EMULATOR);
+    await using var provider = services.BuildServiceProvider();
+
+    // Without one, the store uses the system clock: AzureBlobArchiveStoreTests in the integration project asserts it,
+    // since a unit project does not name the real clock (#1264).
+    await Assert.That(provider.GetRequiredService<AzureBlobArchiveStore>().Clock).IsSameReferenceAs(clock);
+  }
+
+  [Test]
+  [Arguments("0199a1b2-0000-7000-8000-000000000001/0000000001-0000000002-ab.jsonl.br", "0199a1b2-0000-7000-8000-000000000001")]
+  [Arguments("0199a1b2-0000-7000-8000-000000000001/0000000001-0000000002-ab.jsonl", "0199a1b2-0000-7000-8000-000000000001")]
+  [Arguments("0199a1b2-0000-7000-8000-000000000001/0000000001-0000000002-ab.txt", null)]
+  [Arguments("0199a1b2-0000-7000-8000-000000000001/nested/0000000001-0000000002-ab.jsonl.br", null)]
+  [Arguments("notes/0000000001-0000000002-ab.jsonl.br", null)]
+  [Arguments("/0000000001-0000000002-ab.jsonl.br", null)]
+  [Arguments("0000000001-0000000002-ab.jsonl.br", null)]
+  public async Task StreamOf_ReadsTheStreamOfANameThisStoreWrites_AndNothingElseAsync(string name, string? stream) {
+    await Assert.That(AzureBlobArchiveStore.StreamOf(name)).IsEqualTo(stream is null ? null : Guid.Parse(stream))
+      .Because("the orphan sweep only ever touches an object whose name is one this store writes");
+  }
+
+  [Test]
+  public async Task Registration_CountsSweepRefusals_WhenTheHostHasWhizbangMetrics_AndOtherwiseNotAsync() {
+    var withMetrics = new ServiceCollection();
+    _driver(withMetrics);
+    withMetrics.AddSingleton(new WhizbangMetrics(new ServiceCollection().AddMetrics().BuildServiceProvider()
+      .GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    withMetrics.AddWhizbangAzureBlobArchive(o => o.ConnectionString = EMULATOR);
+    var without = new ServiceCollection();
+    _driver(without);
+    without.AddWhizbangAzureBlobArchive(o => o.ConnectionString = EMULATOR);
+    await using var first = withMetrics.BuildServiceProvider();
+    await using var second = without.BuildServiceProvider();
+
+    await Assert.That(first.GetRequiredService<AzureBlobArchiveStore>().Metrics).IsNotNull();
+    await Assert.That(second.GetRequiredService<AzureBlobArchiveStore>().Metrics).IsNull()
+      .Because("a host without the metrics registration still runs the store; it counts nothing");
+  }
+
+  [Test]
+  public async Task ArchiveSweepMetrics_MeterIsListedInWhizbangMetersAsync() {
+    await Assert.That(WhizbangMeters.All).Contains(ArchiveSweepMetrics.METER_NAME)
+      .Because("the meter list carries this package's meter as a literal; this locks it to the constant");
+    await Assert.That(() => new ArchiveSweepMetrics(null!)).Throws<ArgumentNullException>();
+  }
+
+  private sealed class FixedClock : TimeProvider;
 
   [Test]
   [Arguments(-1, 10_000)]
@@ -235,17 +417,15 @@ public class AzureBlobArchiveRegistrationTests {
   }
 
   [Test]
-  [Arguments("svc")]
-  [Arguments(null)]
-  public async Task LocatorFor_NamesTheStoreTheContainerAndTheStream_WithBrotliAndFormat1Async(string? schema) {
+  public async Task LocatorFor_NamesTheStoreAndTheStream_NeverTheContainer_WithBrotliAndFormat1Async() {
     var stream = Guid.Parse("0199a1b2-0000-7000-8000-000000000001");
 
-    var locator = new AzureBlobArchiveStore(_database with { Schema = schema }, _container(), new AzureBlobArchiveOptions())
-      .LocatorFor(stream);
+    var locator = AzureBlobArchiveStore.LocatorFor(stream);
 
     await Assert.That(locator.ToString())
-      .IsEqualTo("azure-blob://whizbang-archive/0199a1b2-0000-7000-8000-000000000001?codec=brotli&format=1")
-      .Because("the locator names the container, never the database schema the manifest lives in");
+      .IsEqualTo("azure-blob://0199a1b2-0000-7000-8000-000000000001?codec=brotli&format=1")
+      .Because("the tombstone says which store archived the stream; where it lives is the manifest's location (#2137), so " +
+        "a repoint never leaves it stale, and it never names the database schema the manifest lives in");
   }
 
   private static Azure.Storage.Blobs.BlobContainerClient _container() =>

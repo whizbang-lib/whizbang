@@ -18,7 +18,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer#doorbells-ring-after-commit</docs>
 [Category("Integration")]
 [Category("Shard2")]
-[NotInParallel("EFCorePostgresTests")]
 public class DoorbellRingerTests : EFCoreTestBase {
   private sealed class ListLogger : ILogger {
     public List<(LogLevel Level, string Message)> Entries { get; } = [];

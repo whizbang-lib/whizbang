@@ -65,7 +65,7 @@ public class AsbNamespacesDeadLetterDrainerTests {
       int returnPerDrain = 1) =>
     new(
       () => transports,
-      transport => new AzureServiceBusFleetDeadLetterDrainer(
+      (transport, _) => new AzureServiceBusFleetDeadLetterDrainer(
         () => transport.ActiveSubscriptions,
         _ => {
           var drainer = new RecordingDrainer { ReturnPerDrain = returnPerDrain };
@@ -201,6 +201,24 @@ public class AsbNamespacesDeadLetterDrainerTests {
     await Assert.That(made.Values.SelectMany(d => d).All(d => d.Disposed)).IsTrue();
   }
 
+  /// <summary>#1901: each namespace's fleet is built with the drainer's dead-letter level.</summary>
+  [Test]
+  public async Task Drain_BuildsEachFleetWithTheDeadLetterLevelAsync() {
+    var transport = await _subscribedTransportAsync("orders", "svc-orders");
+    var levels = new List<Microsoft.Extensions.Logging.LogLevel>();
+    await using var drainer = new AzureServiceBusNamespacesDeadLetterDrainer(
+      () => [transport],
+      (t, level) => {
+        levels.Add(level);
+        return new AzureServiceBusFleetDeadLetterDrainer(() => t.ActiveSubscriptions, _ => new RecordingDrainer());
+      },
+      Microsoft.Extensions.Logging.LogLevel.Warning);
+
+    await drainer.DrainDeadLetterQueueAsync(10);
+
+    await Assert.That(levels).IsEquivalentTo([Microsoft.Extensions.Logging.LogLevel.Warning]);
+  }
+
   [Test]
   public async Task TransportName_IsAsbAsync() {
     await using var drainer = _drainerOver([], []);
@@ -210,7 +228,7 @@ public class AsbNamespacesDeadLetterDrainerTests {
 
   [Test]
   public async Task Constructor_NullArguments_ThrowAsync() {
-    await Assert.That(() => new AzureServiceBusNamespacesDeadLetterDrainer(null!, _ => null!))
+    await Assert.That(() => new AzureServiceBusNamespacesDeadLetterDrainer(null!, (_, _) => null!))
       .ThrowsExactly<ArgumentNullException>();
     await Assert.That(() => new AzureServiceBusNamespacesDeadLetterDrainer(() => [], null!))
       .ThrowsExactly<ArgumentNullException>();

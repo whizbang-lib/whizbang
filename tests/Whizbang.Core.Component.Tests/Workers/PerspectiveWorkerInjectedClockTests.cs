@@ -26,7 +26,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// <summary>
 /// Every wait and every timestamp <see cref="PerspectiveWorker"/> takes runs on the clock it was given, not on the
 /// machine's (#1861). A test that hands the worker a <see cref="FakeTimeProvider"/> decides when its idle poll, its
-/// blocking startup re-poll and its lock keepalive come round, and how old its affinity gates and sent completions
+/// blocking startup barrier's re-read and its lock keepalive come round, and how old its affinity gates and sent completions
 /// are, so none of them can move on its own while the test is looking.
 /// </summary>
 /// <remarks>
@@ -90,12 +90,15 @@ public class PerspectiveWorkerInjectedClockTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task BlockingRewindScan_RepollsOnTheInjectedClock_AndReportsTheWaitItMeasuredAsync(CancellationToken cancellationToken) {
+  public async Task BlockingRewindScan_RereadsOnTheInjectedClock_AndReportsTheWaitItMeasuredAsync(CancellationToken cancellationToken) {
+    // #2214: the Blocking scan reads the whole cursor table once, and the read-model barrier then re-reads only the
+    // scan-time cursors' streams, by key, once per polling interval on the worker's clock until they clear.
     var pollInterval = TimeSpan.FromMilliseconds(150);
     var clock = new ArmingClock();
+    var stream = Guid.CreateVersion7();
     var coordinator = new ClockCoordinator();
     coordinator.RewindResults.Enqueue([
-      new RewindCursorInfo(Guid.CreateVersion7(), PERSPECTIVE, null, Guid.CreateVersion7())
+      new RewindCursorInfo(stream, PERSPECTIVE, null, Guid.CreateVersion7())
     ]);
     var logs = new CapturingLoggerProvider();
     var fx = _build(clock, new PerspectiveWorkerOptions {
@@ -107,21 +110,29 @@ public class PerspectiveWorkerInjectedClockTests {
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     await fx.Worker.StartAsync(cts.Token);
 
+    // The barrier's wait is armed before the consumer loops start, so it is the first wait of this interval. Either it
+    // armed on the injected clock, or a wait on the machine's clock elapsed and the re-read ran without the test.
     var firstArm = clock.Armed(pollInterval, 1);
-    await Task.WhenAny(firstArm, coordinator.RewindQueries(2)).WaitAsync(cancellationToken);
+    await Task.WhenAny(firstArm, coordinator.CursorRereads(1)).WaitAsync(cancellationToken);
     await Assert.That(firstArm.IsCompleted).IsTrue()
-      .Because("the blocking scan's re-poll must wait on the worker's injected clock");
-    await Assert.That(coordinator.RewindQueryCount).IsEqualTo(1)
-      .Because("nothing but the injected clock may end the re-poll wait");
+      .Because("the barrier's re-read must wait on the worker's injected clock");
+    await Assert.That(coordinator.CursorRereadCount).IsEqualTo(0)
+      .Because("nothing but the injected clock may end the re-read wait");
+    await Assert.That(fx.Worker.StartupScanComplete.IsCompleted).IsFalse()
+      .Because("the scan-time cursor has not been found cleared yet");
 
     clock.Advance(pollInterval);
     await fx.Worker.StartupScanComplete.WaitAsync(cancellationToken);
 
-    await Assert.That(coordinator.RewindQueryCount).IsEqualTo(2)
-      .Because("one elapsed interval is one re-poll, which found nothing left to rewind");
+    await Assert.That(coordinator.CursorRereadCount).IsEqualTo(1)
+      .Because("one elapsed interval is one keyed re-read, which found the scan-time cursor cleared");
+    await Assert.That(coordinator.RewindQueryCount).IsEqualTo(1)
+      .Because("the whole cursor table is read once, at the scan, never by the wait");
     var completed = logs.Entries.Single(e => e.EventId == 55);
     await Assert.That(completed.State["DurationMs"]).IsEqualTo((long)pollInterval.TotalMilliseconds)
       .Because("the scan reports the time it waited as the injected clock measured it");
+    await Assert.That(completed.State["ClearedCount"]).IsEqualTo(1)
+      .Because("the completion line says how many scan-time cursors cleared");
 
     await cts.CancelAsync();
     await fx.Worker.StopAsync(CancellationToken.None);
@@ -219,6 +230,46 @@ public class PerspectiveWorkerInjectedClockTests {
   }
 
   // ============================================================
+  // Fixture contract
+  // ============================================================
+
+  // A test waits for a wait to be armed and then advances the clock past it. That is only sound if the clock reports a
+  // wait as armed once an advance would end it; reported any earlier, the test's advance can land between the report
+  // and the registration and be lost, and the worker then waits for a time that never comes (#2020). Each test below
+  // advances the clock from inside the report itself, the earliest a test could, so the losing order is the one taken.
+
+  [Test]
+  public async Task ArmingClock_ReportsATimerCreatedWithADueTimeOnlyOnceAnAdvanceFiresItAsync() {
+    var due = TimeSpan.FromMilliseconds(150);
+    var clock = new ArmingClock();
+    var fired = 0;
+    clock.WhenArmed = armed => clock.Advance(armed);
+
+    await using var timer = clock.CreateTimer(_ => Interlocked.Increment(ref fired), null, due, Timeout.InfiniteTimeSpan);
+
+    await Assert.That(Volatile.Read(ref fired)).IsEqualTo(1)
+      .Because("an advance made the moment the clock reports the timer armed must fire it, so the report follows the registration");
+    await Assert.That(clock.FiredCount(due)).IsEqualTo(1)
+      .Because("the clock counts the wait that the advance ended");
+  }
+
+  [Test]
+  public async Task ArmingClock_ReportsATimerMovedToADueTimeOnlyOnceAnAdvanceFiresItAsync() {
+    var due = TimeSpan.FromMilliseconds(150);
+    var clock = new ArmingClock();
+    var fired = 0;
+    await using var timer = clock.CreateTimer(_ => Interlocked.Increment(ref fired), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+    clock.WhenArmed = armed => clock.Advance(armed);
+
+    timer.Change(due, Timeout.InfiniteTimeSpan);
+
+    await Assert.That(Volatile.Read(ref fired)).IsEqualTo(1)
+      .Because("an advance made the moment the clock reports the moved timer armed must fire it, so the report follows the change");
+    await Assert.That(clock.FiredCount(due)).IsEqualTo(1)
+      .Because("the clock counts the wait that the advance ended");
+  }
+
+  // ============================================================
   // Fixture
   // ============================================================
 
@@ -257,7 +308,6 @@ public class PerspectiveWorkerInjectedClockTests {
       instanceProvider: instanceProvider,
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(workerOptions),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: completionStrategy ?? new BatchedCompletionStrategy(),
       eventTypeProvider: sp.GetRequiredService<IEventTypeProvider>(),
@@ -292,7 +342,8 @@ public class PerspectiveWorkerInjectedClockTests {
 
   /// <summary>
   /// A fake clock that reports every wait armed on it, by due time, and counts the ones that elapsed. A wait the
-  /// worker takes on any other clock never shows up here.
+  /// worker takes on any other clock never shows up here. A wait is reported only once the fake clock holds its timer,
+  /// so an advance made the moment the report lands always ends it.
   /// </summary>
   private sealed class ArmingClock : FakeTimeProvider {
     private readonly Lock _lock = new();
@@ -312,6 +363,12 @@ public class PerspectiveWorkerInjectedClockTests {
       }
     }
 
+    /// <summary>
+    /// Runs on the arming thread each time a wait is reported armed, after the report. A fixture-contract test uses it to
+    /// advance the clock at the earliest moment a test waiting on <see cref="Armed"/> could.
+    /// </summary>
+    public Action<TimeSpan>? WhenArmed { get; set; }
+
     /// <summary>How many waits of <paramref name="due"/> have elapsed.</summary>
     public int FiredCount(TimeSpan due) {
       lock (_lock) {
@@ -321,13 +378,15 @@ public class PerspectiveWorkerInjectedClockTests {
 
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
       var due = new DueBox<TimeSpan>(dueTime);
-      if (dueTime != Timeout.InfiniteTimeSpan) {
-        _onArmed(dueTime);
-      }
       var inner = base.CreateTimer(s => {
         _onFired(due.Value);
         callback(s);
       }, state, dueTime, period);
+      // Reported only now that the fake clock holds the timer: a test that advances the moment it hears of the wait
+      // must find the timer there to fire, or its advance is lost and the wait never ends (#2020).
+      if (dueTime != Timeout.InfiniteTimeSpan) {
+        _onArmed(dueTime);
+      }
       return new ArmingTimer(inner, due, this);
     }
 
@@ -340,6 +399,7 @@ public class PerspectiveWorkerInjectedClockTests {
           waiter.Signal.TrySetResult();
         }
       }
+      WhenArmed?.Invoke(dueTime);
     }
 
     private void _onFired(TimeSpan dueTime) {
@@ -351,10 +411,12 @@ public class PerspectiveWorkerInjectedClockTests {
     private sealed class ArmingTimer(ITimer inner, DueBox<TimeSpan> due, ArmingClock clock) : ITimer {
       public bool Change(TimeSpan dueTime, TimeSpan period) {
         due.Value = dueTime;
-        if (dueTime != Timeout.InfiniteTimeSpan) {
+        var changed = inner.Change(dueTime, period);
+        // After the change, for the same reason as at creation: the wait is reported once an advance would end it.
+        if (changed && dueTime != Timeout.InfiniteTimeSpan) {
           clock._onArmed(dueTime);
         }
-        return inner.Change(dueTime, period);
+        return changed;
       }
 
       public void Dispose() => inner.Dispose();
@@ -529,7 +591,6 @@ public class PerspectiveWorkerInjectedClockTests {
     private readonly Counter _rewindQueries = new();
     public Queue<IReadOnlyList<RewindCursorInfo>> RewindResults { get; } = new();
     public int RewindQueryCount => _rewindQueries.Count;
-    public Task RewindQueries(int count) => _rewindQueries.Reached(count);
 
     public Task<IReadOnlyList<RewindCursorInfo>> GetCursorsRequiringRewindAsync(CancellationToken cancellationToken = default) {
       IReadOnlyList<RewindCursorInfo> result;
@@ -538,6 +599,16 @@ public class PerspectiveWorkerInjectedClockTests {
       }
       _rewindQueries.Increment();
       return Task.FromResult(result);
+    }
+
+    // The keyed re-read the Blocking barrier makes; answers with no cursors, so every scan-time cursor reads as cleared.
+    private readonly Counter _cursorRereads = new();
+    public int CursorRereadCount => _cursorRereads.Count;
+    public Task CursorRereads(int count) => _cursorRereads.Reached(count);
+
+    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(Guid[] streamIds, CancellationToken cancellationToken = default) {
+      _cursorRereads.Increment();
+      return Task.FromResult(new List<PerspectiveCursorInfo>());
     }
 
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>

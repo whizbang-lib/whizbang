@@ -208,6 +208,16 @@ public interface IMessageEnvelope : Whizbang.Core.Priority.IPrioritized {
   [JsonPropertyName("sto")]
   bool StateOnly => false;
 
+  /// <summary>
+  /// A repaired event (a child of a stream-integrity redelivery bundle) that this service can prove it never handled:
+  /// stored and projected as normal, and only receptors declared <see cref="Messaging.RunOnRepairAttribute"/> run for it
+  /// (#2273). Stamped by the receive-side fan-out, never by a producer; a repaired event without that proof is
+  /// <see cref="StateOnly"/> instead. Default false.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repaired-events-and-receptors</docs>
+  [JsonPropertyName("rep")]
+  bool Repaired => false;
+
   /// <summary>The priority the producer declared (lower is more urgent; 0 = not declared).</summary>
   /// <docs>fundamentals/messaging/message-priority#the-number-and-the-bucket</docs>
   int Whizbang.Core.Priority.IPrioritized.Priority => 0;

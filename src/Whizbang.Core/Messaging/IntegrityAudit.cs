@@ -45,6 +45,15 @@ public sealed record RequestIntegrityManifest : ICommand, IControlPlaneMessage {
   /// <summary>Types to manifest (the requester's subscribed set); null = all.</summary>
   public IReadOnlyList<string>? EventTypes { get; init; }
 
+  /// <summary>
+  /// Event namespaces the requester absorbs (#2058): it stores every event in them whether or not anything there
+  /// consumes it, so their types are audited too. The origin adds its own audited event types in these namespaces to
+  /// <see cref="EventTypes"/>. Null or empty adds nothing; an origin that predates the field ignores it and answers
+  /// <see cref="EventTypes"/> alone.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#the-integrity-surface-is-what-the-service-consumes</docs>
+  public IReadOnlyList<string>? EventNamespaces { get; init; }
+
   /// <summary>Requested granularity (default <see cref="ManifestLevel.Streams"/> — wire-compatible
   /// with pre-A1c requests).</summary>
   public ManifestLevel Level { get; init; }
@@ -76,6 +85,55 @@ public sealed record RequestIntegrityManifest : ICommand, IControlPlaneMessage {
   /// <summary>Stream-level resume cursor from the previous answer's
   /// <see cref="IntegrityManifest.ResumeAfterStreamId"/> (null = the window's first page).</summary>
   public Guid? ResumeAfterStreamId { get; init; }
+
+  /// <summary>
+  /// #2107: which window of one audit pass this asks for, the first being 1 (0, the default and what a sender that
+  /// predates the field sends, is read as 1). The origin echoes it on its answer
+  /// (<see cref="IntegrityManifest.WindowNumber"/>), and the consumer stops asking for further windows once it reaches
+  /// <see cref="StreamIntegrityOptions.MaxAuditWindowsPerAudit"/>.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  public int WindowNumber { get; init; }
+
+  /// <summary>
+  /// #2115: a re-check of ledger rows the consumer already holds, asked by its idle re-check: the answer is compared like
+  /// any stream-level answer (a matching or undecided bucket is removed from the ledger), but it never leads to a repair
+  /// request. The origin echoes it (<see cref="IntegrityManifest.Recheck"/>). False on every other request, and from a
+  /// sender that predates the field.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  public bool Recheck { get; init; }
+
+  /// <summary>
+  /// #2262: the origin generation the asker last recorded beside its seal for this origin. The origin answers how far
+  /// its history was rewritten since (<see cref="IntegrityManifest.RewrittenSinceGeneration"/>,
+  /// <see cref="IntegrityManifest.RewrittenFrom"/>), so a new generation lowers the asker's seal only that far. Null on
+  /// first contact and from a sender that predates the field; the origin then vouches for nothing.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  public long? KnownOriginGeneration { get; init; }
+
+  /// <summary>
+  /// #2362: the sender's eligibility rules for the event types this message is about. The receiver compares them with its
+  /// own over the types both name, and halts the pair on a mismatch. Null from a sender on a release that predates the
+  /// field, which the receiver treats as a mismatch: it may count differently.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  public RuleFingerprint? RuleFingerprint { get; init; }
+
+  /// <summary>
+  /// #2365: this request's id, echoed on every answer to it, so a trace or a log line ties an answer to its request.
+  /// Null from a sender on a release that predates the field.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  public Guid? RequestId { get; init; }
+
+  /// <summary>
+  /// #2365: the W3C <c>traceparent</c> of the span that sent this request. The origin's answer starts under it, so the
+  /// answer joins the requester's trace across services. Null when the sender had no span, or predates the field.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  public string? TraceParent { get; init; }
 }
 
 /// <summary>
@@ -142,6 +200,121 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
   /// divergence WITHOUT a generation change remains damage. Null = a pre-generation origin.
   /// </summary>
   public long? OriginGeneration { get; init; }
+
+  /// <summary>
+  /// #2262: the generation <see cref="RewrittenFrom"/> counts from, echoing the ask's
+  /// <see cref="RequestIntegrityManifest.KnownOriginGeneration"/>. Null when the ask named none, or when the origin's
+  /// rewrite log no longer reaches back to it; a consumer then resets its seal on a new generation, as before.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  public long? RewrittenSinceGeneration { get; init; }
+
+  /// <summary>
+  /// #2262: the lowest position of the origin's own lane that any rewrite after
+  /// <see cref="RewrittenSinceGeneration"/> touched. Null with a since-generation set means nothing was rewritten
+  /// since. A consumer keeps a seal at or below it and lowers a seal above it to it, never to 0.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  public long? RewrittenFrom { get; init; }
+
+  /// <summary>
+  /// #2107: true when the origin shortened the window at its <see cref="StreamIntegrityOptions.MaxAuditWindowSequences"/>:
+  /// <see cref="ComputedThrough"/> is the end of the slice it answered, not its settled head, and more settled history
+  /// follows. A consumer that seals a clean capped window asks for the next one from <see cref="ComputedThrough"/>.
+  /// False on an uncapped answer and on an answer from an origin that predates the cap.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  public bool WindowCapped { get; init; }
+
+  /// <summary>
+  /// #2107: the echo of the request's <see cref="RequestIntegrityManifest.WindowNumber"/>: which window of the asker's
+  /// audit pass this answers (0 from an origin that predates the field, read as 1).
+  /// </summary>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  public int WindowNumber { get; init; }
+
+  /// <summary>
+  /// #2115: the echo of the request's <see cref="RequestIntegrityManifest.Recheck"/>: this answer re-checks ledger rows,
+  /// so its comparison removes what now matches and never asks for a repair.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#idle-ledger-recheck</docs>
+  public bool Recheck { get; init; }
+
+  /// <summary>
+  /// #2225: on a stream-level answer, the event types its ask named (after the origin added the types of the asker's
+  /// absorbed namespaces): the types of the whole walk. A follow-up page asks for these, so a type that has no streams on
+  /// one page stays in the walk for the pages after it. Null on a type-level answer, and from an origin that predates the
+  /// field; the follow-up then asks for the types on this page, as before.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#windowed-manifests</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestReceptorTests.WalkTypes.cs:ManifestReceptor_AFollowUpPage_AsksForEveryTypeTheWalkStartedWith_NotOnlyThoseOnThePageAsync</tests>
+  public IReadOnlyList<string>? RequestedEventTypes { get; init; }
+
+  /// <summary>
+  /// #2349: true when the origin had nothing settled at or above the ask's window start, so it computed nothing and
+  /// answers only to say so (no digests, <see cref="ComputedThrough"/> equal to the start). The asker reads it as a
+  /// full match of an empty window. Only a type-level answer carries it; an origin that predates the field stays silent
+  /// instead, and an asker that predates it compares the empty window as a quiet one.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#unchanged-origins-are-not-asked</docs>
+  public bool NothingSettledAbove { get; init; }
+
+  /// <summary>
+  /// #2362: true when the origin halted the pair because the requester's rules differ from its own (or the requester
+  /// sent none). The answer carries no digests, only the origin's <see cref="RuleFingerprint"/>, so the requester names
+  /// the same differing types and halts the pair too. False from an origin that predates the field.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  public bool PairHalted { get; init; }
+
+  /// <summary>
+  /// #2362: the sender's eligibility rules for the event types this message is about. The receiver compares them with its
+  /// own over the types both name, and halts the pair on a mismatch. Null from a sender on a release that predates the
+  /// field, which the receiver treats as a mismatch: it may count differently.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  public RuleFingerprint? RuleFingerprint { get; init; }
+
+  /// <summary>
+  /// #2365: why this origin's history moved since the generation the ask named (<see cref="RequestIntegrityManifest.KnownOriginGeneration"/>):
+  /// <c>rule_change</c> when its eligibility rules changed after that generation, <c>rewrite</c> otherwise. Null when the
+  /// ask named no generation or the generation has not moved, and from an origin on a release that predates the field,
+  /// which the receiver counts as <c>unknown</c>. An optional field: the rule semantics version does not change.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-instruments</docs>
+  public string? HistoryMovedReason { get; init; }
+
+  /// <summary>#2365: the id of the request this answers, echoed from it; null when the request named none.</summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  public Guid? RequestId { get; init; }
+
+  /// <summary>
+  /// #2365: the W3C <c>traceparent</c> of the origin's answer span, itself in the request's trace. The receiver's work on
+  /// this answer starts under it. Null from an origin with no span, or one that predates the field.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#integrity-traces</docs>
+  public string? TraceParent { get; init; }
+}
+
+/// <summary>
+/// #2349: whether the audit asks an origin this cycle, and why. The audit remembers, per origin, the state at the last
+/// full match (the seal, the origin's generation, the origin's last checkpoint position and the highest position held
+/// from it); <see cref="Skip"/> means all four are unchanged and the last ask is younger than
+/// <see cref="StreamIntegrityOptions.MaxAskSkipMinutes"/>. Every other value asks. The values are the store's codes.
+/// </summary>
+/// <docs>resilience/stream-integrity#unchanged-origins-are-not-asked</docs>
+public enum IntegrityAskDecision {
+  /// <summary>Ask: no full match is remembered for the origin (first contact, a mismatch since, or a store without the memo).</summary>
+  NothingRemembered = 0,
+
+  /// <summary>Ask: at least one of the four remembered values moved since the last full match.</summary>
+  Moved = 1,
+
+  /// <summary>Ask: nothing moved, but the last ask is at least the maximum skip old.</summary>
+  BoundReached = 2,
+
+  /// <summary>Skip: nothing moved and the last ask is younger than the maximum skip.</summary>
+  Skip = 3,
 }
 
 /// <summary>
@@ -149,12 +322,31 @@ public sealed record IntegrityManifest : IEvent, IControlPlaneMessage {
 /// driver's built-in receptor reacts by running one full sweep
 /// (<see cref="Whizbang.Core.Workers.IIntegritySweepRunner"/>) — the trust-but-verify pass that
 /// catches exactly the state the epoch seals and audit seals assume is fine. A command (imperative
-/// "sweep now"), riding the F2 occurrence mechanism like <c>ScheduledStreamClose</c>.
+/// "sweep now"), riding the F2 occurrence mechanism like <c>ScheduledPrefixTruncate</c>.
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegritySweepSchedulingTests.cs</tests>
 [PinnedId("a7d2e9c4-5b18-4f36-8e0a-1c9b7d4f2a85")]
-public sealed record ScheduledIntegritySweep : ICommand;
+public sealed record ScheduledIntegritySweep : ICommand {
+  /// <summary>
+  /// The check this occurrence runs (#2353): each enabled check has its own schedule. Null on an occurrence scheduled
+  /// before #2353, whose schedule was the full sweep's, so it runs the full-history compare.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  public Whizbang.Core.Workers.IntegrityCheck? Check { get; init; }
+}
+
+/// <summary>
+/// #2262: what an origin vouches about its history since a generation: every rewrite of its own lane after
+/// <paramref name="SinceGeneration"/> touched nothing below <paramref name="RewrittenFrom"/> (null: nothing was rewritten
+/// since). A consumer's generation guard lowers its seal to <paramref name="RewrittenFrom"/> when the seal is above it,
+/// and keeps it otherwise.
+/// </summary>
+/// <param name="SinceGeneration">The generation the floor counts from.</param>
+/// <param name="RewrittenFrom">The lowest rewritten position after it; null when nothing was rewritten.</param>
+/// <docs>resilience/stream-integrity</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginRewriteFloorSqlTests.cs</tests>
+public sealed record IntegrityHistoryRewrite(long SinceGeneration, long? RewrittenFrom);
 
 /// <summary>
 /// Stream-integrity #80-B: the result of a NEGOTIATED-SCOPE digest read — digests for a sequence

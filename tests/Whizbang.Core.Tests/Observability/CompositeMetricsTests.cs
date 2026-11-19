@@ -36,6 +36,7 @@ public class CompositeMetricsTests {
     metrics.CollectivesReceived.Add(3);
     metrics.CollectivesApplied.Add(2);
     metrics.CollectivesSkipped.Add(1);
+    metrics.CollectivesUnhandled.Add(4);
 
     await Assert.That(ProbeMeterReader.ReadTotal(meter, "whizbang.composites.received")).IsEqualTo(1);
     await Assert.That(ProbeMeterReader.ReadTotal(meter, "whizbang.composites.expansions")).IsEqualTo(2)
@@ -48,6 +49,8 @@ public class CompositeMetricsTests {
     await Assert.That(ProbeMeterReader.ReadTotal(meter, "whizbang.collectives.received")).IsEqualTo(3);
     await Assert.That(ProbeMeterReader.ReadTotal(meter, "whizbang.collectives.applied")).IsEqualTo(2);
     await Assert.That(ProbeMeterReader.ReadTotal(meter, "whizbang.collectives.skipped")).IsEqualTo(1);
+    await Assert.That(ProbeMeterReader.ReadTotal(meter, "whizbang.collectives.unhandled")).IsEqualTo(4)
+      .Because("collective events completed without applying, because no handler on this service applies them (#2142)");
   }
 
   [Test]

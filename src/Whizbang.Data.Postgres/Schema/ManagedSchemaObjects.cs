@@ -160,6 +160,16 @@ public sealed class ManagedSchemaObjectSet {
     return copy;
   }
 
+  /// <summary>A copy with <paramref name="added"/> declared as well; an object declared twice keeps the later declaration.</summary>
+  /// <param name="added">The further declarations.</param>
+  internal ManagedSchemaObjectSet With(IEnumerable<DeclaredSchemaObject> added) {
+    var copy = WithEquivalents([], new HashSet<(string Table, string Name)>());
+    foreach (var o in added) {
+      copy._add(o.Table, o.Name, o.Kind, o.DeclaredBy);
+    }
+    return copy;
+  }
+
   /// <summary>Pins an object so it is never dropped.</summary>
   public ManagedSchemaObjectSet Pin(string table, string name, string? reason, string declaredBy) {
     ArgumentException.ThrowIfNullOrWhiteSpace(table);

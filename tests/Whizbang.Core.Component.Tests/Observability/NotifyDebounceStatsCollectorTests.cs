@@ -39,7 +39,6 @@ public class NotifyDebounceStatsCollectorTests {
     var worker = new NotifyDebounceStatsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       logger: NullLogger<NotifyDebounceStatsCollector>.Instance,
       timeProvider: new ArmedTimerClock());
 
@@ -68,7 +67,6 @@ public class NotifyDebounceStatsCollectorTests {
     var worker = new NotifyDebounceStatsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: metrics,
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       logger: NullLogger<NotifyDebounceStatsCollector>.Instance,
       timeProvider: clock);
     var cycled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -102,7 +100,6 @@ public class NotifyDebounceStatsCollectorTests {
     var worker = new NotifyDebounceStatsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       logger: NullLogger<NotifyDebounceStatsCollector>.Instance,
       timeProvider: clock);
     var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -125,45 +122,6 @@ public class NotifyDebounceStatsCollectorTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task ShutdownDuringSchemaWait_ExitsWithoutQueryingTheProviderAsync(CancellationToken cancellationToken) {
-    // The gate exists because the state table arrives with a migration. A collector that fell
-    // through the gate on shutdown would issue its first query against a schema that may not
-    // exist yet -- and log an error for it -- while the host is already tearing down.
-    var fake = new RecordingProvider();
-    var services = new ServiceCollection();
-    services.AddSingleton<INotifyDebounceStatsProvider>(fake);
-    var sp = services.BuildServiceProvider();
-
-    var gate = new BlockingGate();
-    var worker = new NotifyDebounceStatsCollector(
-      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      metrics: _newMetrics(),
-      schemaReadyGate: gate,
-      logger: NullLogger<NotifyDebounceStatsCollector>.Instance);
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    // Wait on a signal the code under test emits -- StartAsync returning proves nothing, the
-    // loop body runs on the thread pool.
-    await gate.Entered.Task.WaitAsync(cancellationToken);
-    await cts.CancelAsync();
-
-    await worker.ExecuteTask!.WaitAsync(cancellationToken)
-      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue();
-    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
-      .Because("a shutdown while waiting on the schema gate is an ordinary exit, not a fault");
-    await Assert.That(fake.CallCount).IsEqualTo(0)
-      .Because("the collector must never reach its first provider read when shutdown cancels "
-             + "the schema wait -- that read would hit a table the migration may not have created");
-    await Assert.That(gate.WaitCount).IsEqualTo(1)
-      .Because("proves the gate really was awaited rather than skipped, which is what makes the "
-             + "zero-call assertion above mean something");
-  }
-
-  [Test]
-  [Timeout(30000)]
   public async Task ProviderThrowsObjectDisposed_LeavesTheLoopInsteadOfRetryingAsync(CancellationToken cancellationToken) {
     // ObjectDisposedException here means the host's service provider is gone -- every later
     // cycle would throw the same way. The generic handler would log a warning every 15 seconds
@@ -175,7 +133,6 @@ public class NotifyDebounceStatsCollectorTests {
     var worker = new NotifyDebounceStatsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       logger: NullLogger<NotifyDebounceStatsCollector>.Instance,
       timeProvider: new ArmedTimerClock());
 
@@ -190,23 +147,6 @@ public class NotifyDebounceStatsCollectorTests {
   }
 
   // ---------------- fakes ----------------
-
-  /// <summary>A gate that never opens, and reports when a waiter has actually reached it.</summary>
-  private sealed class BlockingGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _never = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private int _waitCount;
-
-    public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public int WaitCount => Volatile.Read(ref _waitCount);
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      Interlocked.Increment(ref _waitCount);
-      Entered.TrySetResult();
-      return _never.Task.WaitAsync(cancellationToken);
-    }
-  }
 
   private sealed class RecordingProvider : INotifyDebounceStatsProvider {
     public IReadOnlyList<NotifyDebounceKindStats> ToReturn { get; set; } = [];

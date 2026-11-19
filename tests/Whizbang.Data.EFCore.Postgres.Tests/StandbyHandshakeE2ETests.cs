@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using TUnit.Assertions;
@@ -30,7 +29,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Startup/StandbyHandshake.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/110_StandbyHandshake.sql</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class StandbyHandshakeE2ETests : EFCoreTestBase {
 
@@ -50,12 +48,10 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     };
   }
 
-  private sealed class StubHostLifetime : IHostApplicationLifetime {
-    public bool StopRequested { get; private set; }
-    public CancellationToken ApplicationStarted => CancellationToken.None;
-    public CancellationToken ApplicationStopping => CancellationToken.None;
-    public CancellationToken ApplicationStopped => CancellationToken.None;
-    public void StopApplication() => StopRequested = true;
+  /// <summary>The exit path as the watcher sees it: whether it asked to exit (#2126).</summary>
+  private sealed class StubHostLifetime {
+    public Whizbang.Testing.Lifecycle.RecordingInstanceExit Exit { get; } = new();
+    public bool StopRequested => Exit.Cause == Whizbang.Core.RunControl.ExitCause.UpgradeStandDown;
   }
 
   private sealed class CountingStep : IStartupStep {
@@ -83,11 +79,11 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
   private static StandbyWatcherOptions _fastOptions() => new() {
     PollInterval = TimeSpan.FromMilliseconds(50),
     ObsolescenceInterval = TimeSpan.FromDays(1),   // handshake tests drive obsolescence explicitly
-    RequesterLivenessWindow = TimeSpan.FromSeconds(30),
   };
 
   /// <summary>A complete simulated instance: real coordinator, assessor, lifecycle machine (with
-  /// the REAL instance-state participant, so StandingBy lands on its row), and watcher.</summary>
+  /// the REAL stage participant and stage reporter, so StandingBy lands on its row as a phase-only write), and
+  /// watcher.</summary>
   private async Task<PodRig> _bootPodAsync(string version, CancellationToken ct) {
     var pod = new FakePod();
     var services = _servicesForPod();
@@ -96,24 +92,34 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     using (var scope = scopeFactory.CreateScope()) {
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
       await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(pod.InstanceId, pod.ServiceName, pod.HostName, 1), ct);
-      await coordinator.RecordInstanceStateAsync(pod.InstanceId, nameof(LifecyclePhase.Running), version, ct);
     }
 
     var versionProvider = new LibraryVersionProvider(version);
+    // The one writer of the row's stage, phase and version (#1636): an older pod is Running, as the stage record says;
+    // the newer pod is the migrator, still in Migrate while it runs the handshake. #2022: a newer instance that serves is
+    // online and stands the older ones down by itself; a migrator mid-handshake does not serve yet.
+    var stages = new StartupStageReporter(scopeFactory, pod, [], NullLogger<StartupStageReporter>.Instance, versionProvider);
+    if (version == NEW_VERSION) {
+      await stages.EnterAsync(StartupStage.Migrate, "applying the breaking migration under the standby handshake", ct);
+    } else {
+      await stages.EnterAsync(StartupStage.Running, "reads and writes are served", ct);
+    }
+    await stages.InstanceRegisteredAsync(ct);
     var lifecycleOptions = new WhizbangLifecycleOptions();
     var lifecycle = new WhizbangLifecycleState(
-      new WhizbangLifecycleCoordinator(
-        [new InstanceStateRunControl(scopeFactory: scopeFactory, instanceProvider: pod, versionProvider: versionProvider, logger: NullLogger<InstanceStateRunControl>.Instance)], lifecycleOptions),
+      new WhizbangLifecycleCoordinator([new StartupStageRunControl(stages)], lifecycleOptions),
       lifecycleOptions);
     var assessor = new EFCorePostgresStartupAssessor(scopeFactory, typeof(WorkCoordinationDbContext), versionProvider);
     var reviveProbe = new CountingStep();
     var hostLifetime = new StubHostLifetime();
+    // #2045: the watcher stands down and revives through the one run-control path, which reports through this lifecycle.
+    var runControl = new WhizbangRunController(new WhizbangRunPermit(), lifecycle, [], [], lifecycleOptions, null,
+      NullLogger<WhizbangRunController>.Instance);
     var watcher = new StandbyWatcher(
       scopeFactory: scopeFactory,
-      lifecycle: lifecycle,
-      hostLifetime: hostLifetime,
+      runControl: runControl,
+      instanceExit: hostLifetime.Exit,
       instanceProvider: pod,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       versionProvider: versionProvider,
       assessor: assessor,
       logger: NullLogger<StandbyWatcher>.Instance,

@@ -169,11 +169,38 @@ public class RabbitMQInfrastructureProvisionerManifestTests {
   }
 
   [Test]
-  public async Task ProvisionManifest_OwnedInboxExchangeExistsWithoutOurQueue_RecordsDriftAsync() {
-    // The RabbitMQ ownership drift probe: AMQP cannot enumerate queues bound to an exchange,
-    // so the observable is "the command-inbox exchange already exists but OUR conventional
-    // queue does not" — during the DARK phase only a subscribing owner creates inbox.<ns>
-    // entities, so a pre-existing exchange without our queue means another service claimed it.
+  public async Task ProvisionManifest_ExplicitPatterns_UnbindTheLegacyMatchAllBindingAsync() {
+    // #2089: a command inbox queue declared before its type filter was bound with '#', and binding the exact types
+    // beside it changes nothing: the queue keeps receiving every command. Explicit patterns remove the '#' binding.
+    var channel = new FakeChannel();
+    var (provisioner, _, _) = _fixture(channel: channel);
+
+    await provisioner.ProvisionManifestAsync(_namespaceManifest());
+
+    var queue = $"{SERVICE_NAME}-inbox.myapp.orders.commands";
+    await Assert.That(channel.QueueUnbindings).Contains((queue, "inbox.myapp.orders.commands", "#"));
+    await Assert.That(channel.QueueBindings).DoesNotContain((queue, "inbox.myapp.orders.commands", "#"));
+  }
+
+  [Test]
+  public async Task ProvisionManifest_MatchAllSubscription_KeepsItsMatchAllBindingAsync() {
+    // The service's own control inbox has no filter: its '#' binding is the subscription, never unbound.
+    var channel = new FakeChannel();
+    var (provisioner, _, _) = _fixture(channel: channel);
+
+    await provisioner.ProvisionManifestAsync(_namespaceManifest());
+
+    var control = "inbox.whizbang.service." + SERVICE_NAME.ToLowerInvariant();
+    await Assert.That(channel.QueueBindings.Any(b => b.Exchange == control && b.RoutingKey == "#")).IsTrue();
+    await Assert.That(channel.QueueUnbindings.Any(u => u.Exchange == control)).IsFalse();
+  }
+
+  [Test]
+  public async Task ProvisionManifest_CommandInboxExchangeExistsWithoutOurQueue_IsNotDriftAsync() {
+    // #2089: command inbox subscriptions bind exactly the command types each service handles, so a second service
+    // handling some commands of the namespace legitimately declares the exchange first. AMQP cannot list another
+    // queue's bindings, so "the exchange already existed" cannot tell a type-filtered subscriber from a match-all one,
+    // and it is no longer drift: it is logged, never recorded, and health is not degraded on it.
     var channel = new FakeChannel {
       ExistingExchanges = { "inbox.myapp.orders.commands" }
     };
@@ -181,9 +208,7 @@ public class RabbitMQInfrastructureProvisionerManifestTests {
 
     await provisioner.ProvisionManifestAsync(_namespaceManifest());
 
-    await Assert.That(driftState.HasDrift).IsTrue();
-    var finding = driftState.Findings.Single();
-    await Assert.That(finding.Entity).IsEqualTo("inbox.myapp.orders.commands");
+    await Assert.That(driftState.HasDrift).IsFalse();
   }
 
   [Test]

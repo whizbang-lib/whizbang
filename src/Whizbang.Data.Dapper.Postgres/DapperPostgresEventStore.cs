@@ -38,7 +38,7 @@ public partial class DapperPostgresEventStore(
   IPerspectiveInvoker? perspectiveInvoker,
   ILogger<DapperPostgresEventStore> logger,
   Whizbang.Core.IEphemeralModeResolver? ephemeralModeResolver = null
-  ) : DapperEventStoreBase(connectionFactory, executor, jsonOptions) {
+  ) : DapperEventStoreBase(connectionFactory, executor, jsonOptions), Whizbang.Data.Postgres.IDirectAppendRowBuilder {
 #pragma warning restore CS9113
   private readonly IJsonbPersistenceAdapter<IMessageEnvelope> _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
   private readonly JsonbSizeValidator _sizeValidator = sizeValidator ?? throw new ArgumentNullException(nameof(sizeValidator));
@@ -217,27 +217,37 @@ public partial class DapperPostgresEventStore(
     ORDER BY es.version";
 
   /// <summary>
-  /// Returns the PostgreSQL-specific SQL for querying events between two checkpoint IDs.
-  /// Guid.Empty means "no upper bound" - read all events for the stream.
+  /// Returns the PostgreSQL-specific SQL for querying events between two checkpoints: after the lower one's position in the
+  /// stream, through the upper one's, in stream order (#2381). Guid.Empty means "no upper bound" - read all events for the
+  /// stream.
   /// </summary>
+  /// <remarks>
+  /// A checkpoint the stream does not hold has no position in it (its version lookup is NULL), and is compared by id, the
+  /// order the read always had for one, as the stream-order read does (#2379).
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.EdgeCaseTests.cs:GetEventsBetweenPolymorphicAsync_AfterTheEventWithTheHighestId_ReadsByVersionThroughTheUpperAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.EdgeCaseTests.cs:GetEventsBetweenPolymorphicAsync_BetweenEventsTheStreamDoesNotHold_SelectsByTheirIdsAsync</tests>
   protected override string GetEventsBetweenSql() => @"
     SELECT es.event_type AS EventType, eb.event_data::text AS EventData, eb.metadata::text AS Metadata, es.scope::text AS Scope,
            es.version AS Version
     FROM wh_event_store es
     LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
     WHERE es.stream_id = @StreamId
-      AND (@UpToEventId = '00000000-0000-0000-0000-000000000000' OR es.event_id <= @UpToEventId)
-      AND (@AfterEventId IS NULL OR es.event_id > @AfterEventId)
-    ORDER BY es.event_id";
+      AND (@UpToEventId = '00000000-0000-0000-0000-000000000000' OR COALESCE(
+        es.version <= (SELECT a.version FROM wh_event_store a WHERE a.stream_id = @StreamId AND a.event_id = @UpToEventId),
+        es.event_id <= @UpToEventId))
+      AND (@AfterEventId IS NULL OR COALESCE(
+        es.version > (SELECT a.version FROM wh_event_store a WHERE a.stream_id = @StreamId AND a.event_id = @AfterEventId),
+        es.event_id > @AfterEventId))
+    ORDER BY es.version, es.event_id";
 
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for retrieving the last sequence number in a stream.
   /// </summary>
-  /// <tests>No tests found</tests>
-  protected override string GetLastSequenceSql() => @"
-    SELECT COALESCE(MAX(version), -1)
-    FROM wh_event_store
-    WHERE stream_id = @StreamId";
+  /// <remarks>#1933: a stream archived whole answers the last version its tombstone records, in the same statement.</remarks>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchivedStreamHistoryProbeTests.cs</tests>
+  protected override string GetLastSequenceSql() => Whizbang.Data.Postgres.ArchivedStreamHistorySql.LastSequence(string.Empty);
 
   /// <summary>
   /// Perspective row retention, the resurrection-on-wake history probe: does this stream hold any
@@ -246,12 +256,13 @@ public partial class DapperPostgresEventStore(
   /// </summary>
   /// <docs>fundamentals/perspectives/row-retention</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventStoreHistoryProbeTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchivedStreamHistoryProbeTests.cs</tests>
   public override async Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) {
     using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
     var exists = await Executor.ExecuteScalarAsync<bool?>(
       connection,
-      "SELECT EXISTS (SELECT 1 FROM wh_event_store WHERE stream_id = @StreamId AND event_id < @BeforeEventId)",
+      Whizbang.Data.Postgres.ArchivedStreamHistorySql.HasEventsBefore(string.Empty),
       new { StreamId = streamId, BeforeEventId = beforeEventId },
       cancellationToken: cancellationToken);
     return exists == true;
@@ -266,6 +277,7 @@ public partial class DapperPostgresEventStore(
   /// </summary>
   /// <docs>fundamentals/perspectives/row-retention</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventStoreHistoryProbeTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchivedStreamHistoryProbeTests.cs</tests>
   public override async Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(eventTypes);
     if (eventTypes.Count == 0) {
@@ -273,18 +285,54 @@ public partial class DapperPostgresEventStore(
     }
     using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
-    var storedTypes = await Executor.QueryAsync<string>(
+    var storedTypes = await Executor.QueryAsync<string?>(
       connection,
-      "SELECT DISTINCT event_type FROM wh_event_store WHERE stream_id = @StreamId AND event_id < @BeforeEventId",
+      Whizbang.Data.Postgres.ArchivedStreamHistorySql.EventTypesBefore(string.Empty),
       new { StreamId = streamId, BeforeEventId = beforeEventId },
       cancellationToken: cancellationToken);
-    var lookup = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
-    foreach (var stored in storedTypes) {
-      if (EventTypeMatchingHelper.TryResolveType(lookup, stored, out _)) {
-        return true;
-      }
-    }
-    return false;
+    return Whizbang.Data.Postgres.ArchivedStreamHistorySql.AnyHandledOrArchived(storedTypes, eventTypes);
+  }
+
+  /// <summary>
+  /// The stream's start once its first event is gone (#2152): the business time the superseding reaper or a prefix
+  /// truncate recorded on the stream's ledger row. Null while the stream holds its first event. Mirrors the EF Core driver.
+  /// </summary>
+  /// <docs>fundamentals/events/superseding-events#what-a-rebuild-keeps</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamStartedAtTests.cs</tests>
+  public override async Task<DateTime?> GetStreamStartedAtAsync(Guid streamId, CancellationToken cancellationToken = default) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+    var startedAt = await Executor.ExecuteScalarAsync<DateTime?>(
+      connection,
+      Whizbang.Data.Postgres.StreamStartSql.StartedAt(string.Empty),
+      new { StreamId = streamId },
+      cancellationToken: cancellationToken);
+    return startedAt is { } at ? DateTime.SpecifyKind(at, DateTimeKind.Utc) : null;
+  }
+
+  /// <summary>
+  /// The values this store's direct append stores for <paramref name="payload"/> (#1741), so the book closer stores the
+  /// closing summary and the opening balance exactly as an append would: the same envelope, persistence policies, size
+  /// validation and kind bits.
+  /// </summary>
+  /// <typeparam name="TMessage">The type the event is stored as.</typeparam>
+  /// <param name="payload">The event.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The row.</returns>
+  /// <docs>fundamentals/events/closing-the-books</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperCloseBooksTests.cs</tests>
+  public async ValueTask<Whizbang.Data.Postgres.DirectAppendRow> BuildAsync<TMessage>(TMessage payload, CancellationToken cancellationToken = default)
+      where TMessage : notnull {
+    var envelope = _createMinimalEnvelope(payload);
+    var jsonb = await _prepareJsonbAsync(envelope);
+    return new Whizbang.Data.Postgres.DirectAppendRow(
+      envelope.MessageId.Value,
+      TypeNameFormatter.FormatClrTypeName(typeof(TMessage)),
+      TypeNameFormatter.Format(typeof(TMessage)),
+      jsonb.DataJson,
+      jsonb.MetadataJson,
+      jsonb.ScopeJson,
+      Whizbang.Data.Postgres.DirectAppendKind.Of(payload, _ephemeralModeResolver));
   }
 
   // --- Private helper methods ---
@@ -300,7 +348,7 @@ public partial class DapperPostgresEventStore(
     var policy = await _policyEngine.MatchAsync(policyCtx);
 
     var jsonb = _adapter.ToJsonb(envelope, policy);
-    return _sizeValidator.Validate(jsonb, typeof(TMessage).Name, policy);
+    return _sizeValidator.Validate(jsonb, TypeNameFormatter.SimpleName(typeof(TMessage)), policy);
   }
 
   /// <summary>
@@ -415,13 +463,25 @@ public partial class DapperPostgresEventStore(
   /// when one is given: the order a replay applies the stream in. Commit order matched it only for rows stamped as
   /// they were written; rows stamped after the fact run backward against their versions (#1352).
   /// </summary>
+  /// <remarks>
+  /// "After" the starting event is after its position in the stream, its version (#2379). After its id selected nothing
+  /// when the event carries the stream's highest id, and a rewind from a snapshot there replayed nothing, forever. A
+  /// starting event the stream does not hold has no position in it (the version comparison is NULL), and the read keeps
+  /// the order it always had for one: after its id.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/rewind#one-order-for-a-stream</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.EdgeCaseTests.cs:ReadPolymorphicAsync_AfterTheEventWithTheHighestId_ReadsTheEventsAfterItsVersionAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.EdgeCaseTests.cs:ReadPolymorphicAsync_AfterAnEventTheStreamDoesNotHold_ReadsAfterItsIdAsync</tests>
   private static string _getReadInStreamOrderSql(Guid? fromEventId) =>
     fromEventId is null
       ? READ_IN_STREAM_ORDER_COLUMNS + @"
           WHERE es.stream_id = @StreamId
           ORDER BY es.version, es.event_id"
       : READ_IN_STREAM_ORDER_COLUMNS + @"
-          WHERE es.stream_id = @StreamId AND es.event_id > @FromEventId
+          WHERE es.stream_id = @StreamId
+            AND COALESCE(
+              es.version > (SELECT a.version FROM wh_event_store a WHERE a.stream_id = @StreamId AND a.event_id = @FromEventId),
+              es.event_id > @FromEventId)
           ORDER BY es.version, es.event_id";
 
   /// <summary>
@@ -471,6 +531,7 @@ public partial class DapperPostgresEventStore(
   /// <docs>fundamentals/events/archive-store#read-through</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveReadThroughTests.cs:DeserializeStreamEvents_DecodesAStoredRow_AndSkipsATypeTheReaderDoesNotFoldAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveReadThroughTests.cs:DeserializeStreamEvents_ARowThatCannotBeRead_IsSkipped_AndTheRestAreKeptAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveReadThroughTests.cs:DeserializeStreamEvents_ARowWhoseMessageIdIsNotAGuid_IsSkipped_AndTheRestAreKeptAsync</tests>
   public override List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
     ArgumentNullException.ThrowIfNull(streamEvents);
     var typeMap = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);

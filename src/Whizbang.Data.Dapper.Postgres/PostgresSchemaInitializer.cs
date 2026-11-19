@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core.Data;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Startup;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Schema;
 using Whizbang.Data.Schema;
@@ -125,6 +126,19 @@ public sealed class PostgresSchemaInitializer {
   public IServiceInstanceProvider? Instance { get; init; }
 
   /// <summary>
+  /// What this instance's registration records for the one liveness rule (#2126): its connection mode and its liveness
+  /// window, so the rule judges the row by them from the moment it exists. The default records neither.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaStartupTests.cs:HostStart_RegistersThisInstance_WithItsConnectionModeAndLivenessWindowAsync</tests>
+  public InstanceRegistrationLiveness RegistrationLiveness { get; init; }
+
+  /// <summary>
+  /// The application version the migration ledger records beside the library version (#2027), as recorded on the
+  /// instance rows; null falls back to the constructor's application version, else <c>unknown</c>.
+  /// </summary>
+  public string? LedgerApplicationVersion { get; init; }
+
+  /// <summary>
   /// The perspective tables whose stored keys are brought to their declared spelling once the tables exist (#1874):
   /// what each table's model declares, read from the serializer's metadata. Null or empty checks nothing.
   /// </summary>
@@ -162,6 +176,154 @@ public sealed class PostgresSchemaInitializer {
       await _migrateAsync(connection, schemaSql, schema, cancellationToken);
     }
 
+    await _convergeAsync(connection, schema, cancellationToken);
+  }
+
+  /// <summary>
+  /// The start on a schema the <c>Assess</c> verdict found current (#1992): no schema lock and no pass. The perspective
+  /// registry is reconciled (its payload is not part of any hash this driver records), this instance joins the registry,
+  /// and the managed-object reconcile and the storage settings follow, as on every start.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes once the instance is registered and the schema converged.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs:ARestartOnACurrentSchema_TakesNoSchemaLock_AndSkipsElectAndMigrateAsync</tests>
+  public async Task ConvergeCurrentAsync(CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    var schema = await _targetSchemaAsync(connection, cancellationToken);
+    await _reconcilePerspectiveRegistryAsync(connection, schema, cancellationToken);
+    if (Instance is { } instance) {
+      await SchemaBootstrapPhase.RegisterInstanceAsync(
+        () => new NpgsqlConnection(_connectionString), schema, instance, liveness: RegistrationLiveness,
+        cancellationToken: cancellationToken);
+    }
+    await _convergeAsync(connection, schema, cancellationToken);
+  }
+
+  /// <summary>
+  /// The start the incompatibility override allowed (#2022): this build serves a schema it did not create, so nothing is
+  /// changed. No schema lock, no pass, no perspective registry reconcile and no converge: the instance joins the registry
+  /// and its row records the override, with the reason the verdict would have stood it down.
+  /// </summary>
+  /// <param name="overriddenReason">The overridden verdict's reason.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes once the instance is registered and the override recorded.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs:TheIncompatibilityOverride_StartsWhatTheGateRefuses_LogsIt_RecordsIt_AndAppliesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStartupAssessorTests.cs:ServingAsItIs_RegistersTheInstance_WithItsConnectionModeAndLivenessWindow_AndTheOverrideAsync</tests>
+  public async Task ServeAsItIsAsync(string overriddenReason, CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(overriddenReason);
+    if (Instance is not { } instance) {
+      return;   // no identity: there is no row to record the override on
+    }
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    var schema = await _targetSchemaAsync(connection, cancellationToken);
+    await SchemaBootstrapPhase.RegisterInstanceAsync(
+      () => new NpgsqlConnection(_connectionString), schema, instance, liveness: RegistrationLiveness,
+      cancellationToken: cancellationToken);
+    await SchemaBootstrapPhase.RecordIncompatibilityOverrideAsync(
+      () => new NpgsqlConnection(_connectionString), schema, instance.InstanceId, overriddenReason, cancellationToken);
+  }
+
+  /// <summary>
+  /// Rolls the schema back to this binary's version (#2122): the rollback <c>Assess</c> decided on, run before the schema
+  /// pass, under the schema lock, in one transaction, from the reverse scripts the newer version stored in the ledger
+  /// (<see cref="SchemaRollback"/>). This driver holds no election, so the schema lock alone keeps it to one instance; it
+  /// decides again under the lock, so an instance that waited finds nothing left to reverse.
+  /// </summary>
+  /// <param name="plan">The rollback Assess decided on.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>How many changes were reversed.</returns>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaRollbackTests.cs:AnOwedRollback_RunsTheStoredReverseScripts_ThenThePassMigratesAsync</tests>
+  public async Task<int> RollBackSchemaAsync(RollbackPlan plan, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(plan);
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    var schema = await _targetSchemaAsync(connection, cancellationToken);
+    // No instance id: this instance registers only in the pass that follows, so no row of its own can be online yet.
+    return await SchemaRollback.ApplyAsync(
+      new SchemaRollbackRequest(
+        () => new NpgsqlConnection(_connectionString), schema, SchemaInitializationLockKey.Compute(schema),
+        new Whizbang.Core.Versioning.VersionSighting(_migrationProvider.Version, _recordedApplicationVersion), plan.AllowLossy,
+        SchemaCommandTimeout.Resolve(_connectionString)),
+      TimeProvider.System, Logger, cancellationToken);
+  }
+
+  /// <summary>
+  /// Whether the schema needs nothing from this binary (#1992), read without a lock: every migration this binary
+  /// carries recorded at its hash and at this binary's version (the infrastructure schema this driver builds is tied to
+  /// the version, and recorded nowhere else), every perspective table and application object at its hash, every
+  /// declared-key table settled, and every object the perspectives declare present. A schema that cannot be read this
+  /// way (legacy perspective SQL with no entries to hash) is not current.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns><see langword="true"/> when nothing is owed.</returns>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStartupAssessorTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaCurrencyTests.cs:WithNoPerspectivesAtAll_AnInitializedSchemaIsCurrentAsync</tests>
+  public async Task<bool> IsCurrentAsync(CancellationToken cancellationToken = default) {
+    if (_perspectiveEntries is null && !string.IsNullOrWhiteSpace(_perspectiveSchemaSql)) {
+      return false;
+    }
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    var schema = DapperCoordinatorSchema.FromConnectionString(_connectionString)
+      ?? await DapperCoordinatorSchema.CurrentAsync(connection, cancellationToken);
+    var provider = _rendersForTargetSchema
+      ? new PostgresMigrationProvider(typeof(PostgresMigrationProvider).Assembly, schema)
+      : _migrationProvider;
+    var recorded = await _readLedgerAsync(connection, cancellationToken);
+
+    var owed = provider.GetMigrations()
+      .Where(m => !m.Name.StartsWith("000", StringComparison.Ordinal))
+      .Select(m => (m.Name, Hash: MigrationSqlNormalizer.ContentHash(m.Sql), Version: (string?)provider.Version))
+      .Concat((_perspectiveEntries ?? []).Select(e => ($"perspective:{e.Key}", _sha256(e.Value), (string?)null)))
+      .Concat(_applicationObjectHashes());
+    foreach (var (name, hash, version) in owed) {
+      if (!recorded.TryGetValue(name, out var row) || row.Hash != hash || (version is not null && row.Version != version)) {
+        return false;
+      }
+    }
+
+    if (DeclaredKeyTables is { } declaredKeyTables
+        && !await StoredFormSettlement.IsSettledAsync(
+          connection, schema, [], declaredKeyTables.Select(t => (t.JournalName, t.Table)), [], cancellationToken)) {
+      return false;
+    }
+    return ManagedObjects is not { } declared
+      || (await ManagedSchemaReconciler.TablesMissingDeclaredObjectsAsync(connection, schema, declared, cancellationToken)).Count == 0;
+  }
+
+  /// <summary>The migration ledger, as this driver names it: unqualified, on the session's search path.</summary>
+  private const string LEDGER = "wh_schema_migrations";
+
+  /// <summary>The application version the ledger and the stored-form journal record (#2027, #2131); never null.</summary>
+  private string _recordedApplicationVersion =>
+    LedgerApplicationVersion ?? _applicationVersion ?? Whizbang.Data.Postgres.SchemaLedgerVersion.UNKNOWN;
+
+  private IEnumerable<(string Name, string Hash, string? Version)> _applicationObjectHashes() =>
+    (_applicationObjects?.BeforePerspectives ?? []).Select(o => ($"app:before:{o.Name}", _sha256(o.Sql), (string?)null))
+      .Concat((_applicationObjects?.AfterPerspectives ?? []).Select(o => ($"app:after:{o.Name}", _sha256(o.Sql), (string?)null)));
+
+  private static async Task<Dictionary<string, (string Hash, string Version)>> _readLedgerAsync(
+      NpgsqlConnection connection, CancellationToken cancellationToken) {
+    await using var command = connection.CreateCommand();
+    command.CommandText = """
+      SELECT m.file_name, m.content_hash, v.library_version
+      FROM wh_schema_migrations m JOIN wh_schema_versions v ON v.id = m.version_id
+      """;
+    var rows = new Dictionary<string, (string Hash, string Version)>(StringComparer.Ordinal);
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      rows[reader.GetString(0)] = (reader.GetString(1), reader.GetString(2));
+    }
+    return rows;
+  }
+
+  /// <summary>
+  /// What follows the schema work on every start: the managed-object reconcile and each perspective table's storage
+  /// settings. Neither takes the schema lock to wait.
+  /// </summary>
+  private async Task _convergeAsync(NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
     // The managed-object reconcile, after the lock is released (it takes the same lock itself, with a try). Never
     // fatal, as on the EF Core driver: a reconcile that cannot finish leaves every object where it is, and the next
     // start tries again.
@@ -209,6 +371,17 @@ public sealed class PostgresSchemaInitializer {
     command.CommandTimeout = 30; // 30 seconds should be plenty for schema creation
     await command.ExecuteNonQueryAsync(cancellationToken);
 
+    // 464: wh_receptor_processing is created only until its drop has recorded the hash it has now, so migration 031,
+    // which indexes it, finds it whenever it runs, and no pass after the drop creates it again.
+    if (RetiredReceptorTable.FindDropMigration(_migrationProvider.GetMigrations().Select(m => m.Name)) is { } drop) {
+      await using var retired = connection.CreateCommand();
+      retired.CommandText = RetiredReceptorTable.BootstrapSql(
+        "\"" + schema.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"", drop,
+        MigrationSqlNormalizer.ContentHash(_migrationProvider.GetMigrations().Single(m => m.Name == drop).Sql));
+      retired.CommandTimeout = 30;
+      await retired.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     // Execute migration SQL files with hash-based change detection
     await _executeMigrationsWithHashDetectionAsync(connection, schema, cancellationToken);
 
@@ -238,6 +411,8 @@ public sealed class PostgresSchemaInitializer {
     // case are moved to the declared name, and a required member still missing is reported (#1874). A row holding
     // both spellings with different values stops startup.
     if (DeclaredKeyTables is { } declaredKeyTables) {
+      // #2131: the keys it moves are a conversion this version applied, and the journal records so.
+      using var applier = StoredFormApplier.ScopeTo(new StoredFormApplier(_migrationProvider.Version, _recordedApplicationVersion));
       await Whizbang.Data.Postgres.Perspectives.DeclaredKeySpellingPass.ApplyAsync(
         () => new NpgsqlConnection(_connectionString), schema, declaredKeyTables,
         SchemaCommandTimeout.Resolve(_connectionString), Logger, cancellationToken);
@@ -252,7 +427,8 @@ public sealed class PostgresSchemaInitializer {
     // reconciles, sees it running. The registration function exists now that the migrations have run.
     if (Instance is { } instance) {
       await SchemaBootstrapPhase.RegisterInstanceAsync(
-        () => new NpgsqlConnection(_connectionString), schema, instance, cancellationToken: cancellationToken);
+        () => new NpgsqlConnection(_connectionString), schema, instance, liveness: RegistrationLiveness,
+        cancellationToken: cancellationToken);
     }
   }
 
@@ -488,8 +664,9 @@ public sealed class PostgresSchemaInitializer {
       var hash = MigrationSqlNormalizer.ContentHash(migration.Sql);
       var existingHash = await _getExistingHashAsync(connection, migration.Name, cancellationToken);
 
-      // A row still on the legacy hash of this file is a file that did not change: the start rewrites it and skips.
-      if (existingHash == hash || existingHash == MigrationSqlNormalizer.LegacyContentHash(migration.Sql)) {
+      // A row still on a hash an earlier release recorded for this file is a file that did not change: the start
+      // rewrites it and skips (#2125).
+      if (existingHash == hash || MigrationSqlNormalizer.IsLegacyContentHash(existingHash, migration.Sql)) {
         steps.Add(new MigrationStep(migration.Name, MigrationAction.Skip, existingHash, hash, null, null));
       } else if (existingHash != null) {
         steps.Add(new MigrationStep(migration.Name, MigrationAction.Update, existingHash, hash, null, null));
@@ -698,7 +875,7 @@ public sealed class PostgresSchemaInitializer {
   /// Applies one migration file and its ledger row in a transaction of its own; on a failure, rolls it back and returns
   /// the failure without recording it, so the caller decides between a retry and a recorded failure.
   /// </summary>
-  private static async Task<Exception?> _applyMigrationFileAsync(
+  private async Task<Exception?> _applyMigrationFileAsync(
       NpgsqlConnection connection, Core.Data.MigrationScript migration, string hash, string? existingHash, int versionId,
       int executionOrder, CancellationToken cancellationToken) {
     var isUpdate = existingHash != null;
@@ -736,7 +913,7 @@ public sealed class PostgresSchemaInitializer {
           await cmd.ExecuteNonQueryAsync(cancellationToken);
         } else {
           cmd.CommandText = segment.Sql;
-          await _runBatchedRegionAsync(cmd, migration.Name, cancellationToken);
+          await _runBatchedRegionAsync(cmd, migration.Name, segment.BatchSize, Logger, cancellationToken);
         }
       }
 
@@ -752,6 +929,10 @@ public sealed class PostgresSchemaInitializer {
       await _upsertMigrationAsync(connection,
           new MigrationRecord(migration.Name, hash, versionId, status, desc, previousContent, executionOrder),
           cancellationToken, transaction);
+      // #2122: how the migration is reversed, as it declares, in the transaction that applied it. A provider that is not
+      // the library's own has no reverse scripts to offer, and its migrations record nothing.
+      await MigrationReversal.RecordAsync(connection, LEDGER, migration.Name,
+        (_migrationProvider as PostgresMigrationProvider)?.ReversalOf(migration), cancellationToken);
       await transaction.CommitAsync(cancellationToken);
     } catch (Exception ex) {
       // Captured rather than rethrown here. A rethrow from an async catch that also awaits
@@ -769,7 +950,10 @@ public sealed class PostgresSchemaInitializer {
   /// Runs a batched region's command repeatedly until it reports no rows, failing once it has run more passes than
   /// <see cref="MaxBatchPasses"/> allows.
   /// </summary>
-  private static async Task _runBatchedRegionAsync(NpgsqlCommand cmd, string migrationName, CancellationToken cancellationToken) {
+  private static async Task _runBatchedRegionAsync(
+      NpgsqlCommand cmd, string migrationName, int batchSize, ILogger? logger, CancellationToken cancellationToken) {
+    // #2128: the batch it is on, the rows moved and the time elapsed, at Information on a steady cadence, then its totals.
+    var progress = new MigrationBatchProgress(migrationName, batchSize, TimeProvider.System, logger);
     var passes = 0;
     while (true) {
       var reported = await cmd.ExecuteScalarAsync(cancellationToken);
@@ -786,7 +970,9 @@ public sealed class PostgresSchemaInitializer {
           + "region has to exclude the rows it already handled, or it reports the same rows "
           + "forever.");
       }
+      progress.Batch(rows);
     }
+    progress.Finish();
   }
 
   /// <summary>
@@ -898,6 +1084,9 @@ public sealed class PostgresSchemaInitializer {
       await _upsertMigrationAsync(connection,
         new MigrationRecord(perspectiveName, hash, versionId, status, desc),
         cancellationToken, transaction);
+      // #2122: this driver knows a perspective by its key, not by its table, so it cannot generate the drop that would
+      // reverse a table it created; every perspective change it applies is recorded as irreversible.
+      await MigrationReversal.RecordAsync(connection, LEDGER, perspectiveName, MigrationReversal.Irreversible, cancellationToken);
       await transaction.CommitAsync(cancellationToken);
     } catch (Exception ex) {
       // Captured rather than rethrown here. A rethrow from an async catch that also awaits
@@ -923,7 +1112,8 @@ public sealed class PostgresSchemaInitializer {
       ON CONFLICT (library_version, application_version) DO UPDATE SET notes = EXCLUDED.notes
       RETURNING id";
     cmd.Parameters.AddWithValue("version", _migrationProvider.Version);
-    cmd.Parameters.AddWithValue("appVersion", (object?)_applicationVersion ?? DBNull.Value);
+    // #2027: the ledger records the application version; never NULL, which would add a row on every pass.
+    cmd.Parameters.AddWithValue("appVersion", _recordedApplicationVersion);
     cmd.Parameters.AddWithValue("notes", (object?)_migrationProvider.ReleaseNotes ?? DBNull.Value);
     cmd.CommandTimeout = 10;
 

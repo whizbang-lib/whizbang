@@ -377,6 +377,33 @@ public class DigestEpochSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Coordinator_CloseDigestEpochsAsync_WithAWidth_SetsItForLanesClosedFromNowOnAsync() {
+    // #2353: Sealing:EpochWidth is the configuration path of the store's integrity_epoch_width. It is written before the
+    // closure pass, so a lane met for the first time pins it; a lane already pinned keeps its own.
+    await using var conn = await _openAsync();
+    await using var ctx = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+    var stream = Guid.NewGuid();
+    await _seedLocalAsync(conn, stream, Guid.NewGuid(), "Contracts.EpochWidthProbe", 7, settled: true);
+    await _seedLocalAsync(conn, stream, Guid.NewGuid(), "Contracts.EpochWidthProbe", 130, settled: true);
+
+    _ = await coordinator.CloseDigestEpochsAsync(settleSeconds: 3600, maxEpochs: 100, epochWidth: 50);
+
+    await using var width = conn.CreateCommand();
+    width.CommandText = "SELECT epoch_width FROM wh_digest_epoch_frontiers WHERE origin_service_id = @z::uuid";
+    width.Parameters.AddWithValue("z", ZERO);
+    await Assert.That((long)(await width.ExecuteScalarAsync())!).IsEqualTo(50L)
+      .Because("the lane was met for the first time under the configured width");
+    await Assert.That((await _epochRowAsync(conn, ZERO, "", "Contracts.EpochWidthProbe", 0)).HasValue).IsTrue();
+
+    _ = await coordinator.CloseDigestEpochsAsync(settleSeconds: 3600, maxEpochs: 100, epochWidth: 70);
+
+    await Assert.That((long)(await width.ExecuteScalarAsync())!).IsEqualTo(50L)
+      .Because("a pinned lane keeps its width: a new width would remap every boundary it already sealed");
+  }
+
+  [Test]
   public async Task CloseDigestEpochs_StarvedLane_GoesFirstUnderTheBudgetAsync() {
     // #515 sub-fix 1: the closure budget was global and the lane loop UNORDERED, so
     // whichever lanes the hash-agg emitted first ate the whole budget every cycle and

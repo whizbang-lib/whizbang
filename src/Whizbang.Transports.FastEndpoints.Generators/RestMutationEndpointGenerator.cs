@@ -88,15 +88,15 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
     var requestTypeName = _getAttributeTypeValue(commandEndpointAttr, "RequestType");
 
     // Generate endpoint class name from command name
-    var endpointClassName = symbol.Name + "Endpoint";
+    var endpointClassName = TypeNameUtilities.SimpleName(symbol) + "Endpoint";
 
     return new RestMutationInfo(
         CommandTypeName: TypeNameUtilities.FullyQualified(commandType),
-        CommandTypeNameShort: commandType.Name,
+        CommandTypeNameShort: TypeNameUtilities.SimpleName(commandType),
         ResultTypeName: TypeNameUtilities.FullyQualified(resultType),
         RestRoute: restRoute!,
         RequestTypeName: requestTypeName,
-        Namespace: TypeNameUtilities.Display(symbol.ContainingNamespace),
+        Namespace: TypeNameUtilities.Display(TypeNameUtilities.NamespaceOf(symbol)),
         EndpointClassName: endpointClassName
     );
   }

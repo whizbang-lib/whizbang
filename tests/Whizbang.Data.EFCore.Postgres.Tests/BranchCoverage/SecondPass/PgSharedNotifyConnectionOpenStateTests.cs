@@ -24,6 +24,7 @@ public class PgSharedNotifyConnectionOpenStateTests : EFCoreTestBase {
   [Test]
   [Timeout(60000)]
   public async Task ConnectionOpenState_NoConnectionBeforeStart_OpenOnceAvailableAsync(CancellationToken cancellationToken) {
+    var logger = new CapturingLogger();
     using var gate = new PgSharedNotifyConnection(
       Options.Create(new WhizbangNotificationOptions {
         DirectConnectionString = ConnectionString,
@@ -32,7 +33,7 @@ public class PgSharedNotifyConnectionOpenStateTests : EFCoreTestBase {
       }),
       new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
       new ServiceInstanceProvider(Guid.NewGuid(), "open-state-svc", "open-state-host", processId: 1),
-      logger: null);
+      logger: logger);
     var available = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     gate.OnAvailabilityChanged += isAvailable => {
       if (isAvailable) {
@@ -43,7 +44,14 @@ public class PgSharedNotifyConnectionOpenStateTests : EFCoreTestBase {
     var openBeforeStart = gate.IsConnectionOpenForTesting;
     await gate.StartAsync(cancellationToken);
     try {
-      await available.Task.WaitAsync(cancellationToken);
+      // Bounded inside the test timeout so a connection that never comes up fails with what it reported
+      // (each failed attempt logs its reason) rather than a bare timeout (#2138).
+      try {
+        await available.Task.WaitAsync(TimeSpan.FromSeconds(45), cancellationToken);
+      } catch (TimeoutException) {
+        Assert.Fail("the shared LISTEN connection never became available; it logged: "
+          + string.Join(" | ", logger.AllMessages()));
+      }
 
       await Assert.That(openBeforeStart).IsFalse()
         .Because("nothing has opened the LISTEN connection before the loop starts");

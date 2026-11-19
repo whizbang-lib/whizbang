@@ -225,11 +225,11 @@ records a win through `record_capability`, which
 must not do exclusive work", and on an established database it actually means "nobody has
 heartbeated yet", which is every instance of every service. That shipped once as a throw.
 
-### The bootstrap, and the three properties that make it safe
+### The bootstrap, and the properties that make it safe
 
 `SchemaBootstrapPhase` applies a marked subset first: the core tables, then the regions marked
 `-- @whizbang:bootstrap-begin` / `-- @whizbang:bootstrap-end`. `MigratorDutyStaging` then registers
-the instance and elects. Three properties, each of which is a test:
+the instance and elects. The properties, each of which is a test:
 
 1. **It writes no ledger rows.** Making objects exist and claiming to have migrated them are
    different things. If the bootstrap wrote hashes, the ordinary pass would read them, conclude
@@ -237,10 +237,32 @@ the instance and elects. Three properties, each of which is a test:
 2. **It does not assume its own success.** Having applied the scripts it asks the database whether
    an election is now possible (`CanElectAsync`) and reports *that*. An incomplete closure
    therefore costs the election, not the startup.
-3. **Nothing about staging is fatal.** A refusal, a missing function, a failed registration, no
+3. **Nothing about the election is fatal.** A refusal, a missing function, a failed registration, no
    elector registered, an elector that throws: every path ends `Unstaged`, migrating under the
    advisory lock exactly as before. Never migrating needs a human to clear; duplicated work does
    not.
+
+The bootstrap itself is the exception to 3 (#1636): it is Preflight's work, every instance needs its
+objects before it registers, and a failure in it used to be swallowed into a lost election that
+nobody could explain. It **waits** for the schema lock (try first; when held, say so, wait, and read
+the closure record again under the lock so the holder's commit serves this instance), **retries** a
+`TransientDatabaseFailure` after `RetryDelay` (1 s doubling to 30 s, no limit), and **throws**
+`SchemaBootstrapException` naming the step for anything else, at Error. The generated initializer
+calls it outside the election's catch, so that exception fails the attempt. Exclude
+`OperationCanceledException` before classifying: Npgsql wraps a canceled statement's `57014`, which
+the classifier reads as transient, and a canceled start would otherwise retry.
+
+### Two barriers, and why the generated method has its own
+
+`DbContextInitializationRegistry.InitializeAllAsync` keeps one attempt per host (keyed on the host's
+`IServiceScopeFactory`) and a second call joins it. A direct `dbContext.EnsureWhizbangDatabaseInitializedAsync()`
+never reaches the registry, so the generated method enters `SchemaInitializationBarrier` itself (#1636): one
+initialization per host, data source, database and schema. The host is the context's application service provider
+(what `AddDbContext` gives it), else the provider passed in, keyed on its `IServiceScopeFactory`; a context built by
+hand with no provider is not barriered. Keyed per host, not per process, on purpose: two hosts in one process are two
+instances (tests rely on that to hold one instance mid-pass while another continues), and a process-wide key
+deadlocked exactly those tests. It serializes and does not join: the key comes from the connection string, which
+cannot prove two calls target one database, so a waiter runs its own pass and the fast path returns it.
 
 ### The bootstrap lock must be transaction scoped, not session scoped
 
@@ -257,7 +279,8 @@ Both advisory scopes share one lock space. So the leaked session lock then block
 `pg_try_advisory_xact_lock` on the same key, on every instance, for ever. Nothing migrates the
 schema again, and every instance reports only that it is waiting.
 
-`pg_try_advisory_xact_lock` inside one transaction has none of that: a pooler pins the backend for
+`pg_try_advisory_xact_lock` (and, when that finds it held, `pg_advisory_xact_lock`, bounded by the
+command timeout) inside one transaction has none of that: a pooler pins the backend for
 the transaction's duration, and the server releases the lock on commit **and** on rollback, so there
 is no path that leaks it. It also makes the bootstrap atomic, which costs nothing here because every
 statement in it is idempotent DDL, none of it needs to run outside a transaction, and a partly
@@ -285,6 +308,39 @@ not the ledger), the election is still probed rather than assumed, and a record 
 falls through to applying, never to skipping. `ACurrentClosureIsNotAppliedAgainAsync` and
 `AChangedClosureIsAppliedAsync` are the guards.
 
+### The recheck under the lock reads the catalog, never the session's name cache
+
+A waiter reads the closure record twice: once before it tries the lock, and again once it has waited for and taken
+it, so the holder's commit serves it. On a fresh database the record table is part of what the holder is creating,
+so the first read finds no table, and the session **caches** that. A session refreshes its catalog cache when a
+transaction starts and when it locks a relation; waiting on `pg_advisory_xact_lock` does neither. So
+`to_regclass(... wh_bootstrap_closure)` under the lock kept answering "no such table" after the holder committed, the
+record read as absent, and the waiter applied the closure a second time, taking every statement's lock on tables now
+in use. It surfaced only as a flaky test: a commit as large as the full closure fills the shared invalidation queue,
+the server then signals lagging sessions to catch up, and whether the waiter caught up before its recheck was a race.
+
+The rules:
+
+1. **Presence is read from `pg_class` / `pg_proc` joined to `pg_namespace`**, which a statement reads under its own
+   MVCC snapshot. No `to_regclass` or `to_regprocedure` in `SchemaBootstrapPhase`, including `CanElectAsync`: the
+   bootstrap calls it outside a transaction, where the cache is always fresh, but it is public and takes any open
+   connection.
+2. **The bootstrap transaction is `ReadCommitted` explicitly.** Under a `repeatable read` default the snapshot is taken
+   by the first statement, the try-lock, before the holder committed, and even the catalog read would miss the record.
+3. **A statement that names the table directly is safe**: the parser locks the relation it resolves, and a name it
+   cannot resolve makes it refresh the cache and look again. Only lookups that take no lock are stale.
+
+`to_regclass` is used in many other places in `Whizbang.Data.Postgres`. It is correct wherever the lookup is the first
+statement of its own transaction, or follows a relation lock in it; it is wrong only inside a transaction that waited
+for, or otherwise began before, another session's commit of the object it asks about.
+
+Guards: `SchemaBootstrapPhaseTests.AWaiterWhoseSessionCachedTheRecordTableAsMissing_StillFindsTheHoldersRecord_AndAppliesNothingAsync`
+(the defect, deterministic: a two-script closure never fills the queue),
+`AWaiterOnADatabaseDefaultingToRepeatableRead_StillFindsTheHoldersRecord_AndAppliesNothingAsync` (rule 2),
+`CanElect_InsideATransactionThatBeganBeforeTheObjectsWereCommitted_SeesThemAsync` (rule 1 for the probe), and
+`InsideATransaction_ToRegclassMissesATableAnotherSessionCommitted_WhereAPgClassReadSeesItAsync`, the control that shows
+the server still behaves this way; if it ever stops failing, the reason for the rule is gone.
+
 ### The closure is not what the migration headers say
 
 Three of the four headers are wrong or incomplete, so derive it from the SQL and never the comments:
@@ -305,6 +361,33 @@ bootstrap is a marked *region* rather than a marked file.
 runs only the bootstrap, then registers an instance and calls `record_capability` for real. It takes
 the script list from the generated initializer rather than rebuilding it, so the markers, the order
 and the schema transform under test are the ones that ship. Removing any single marker turns it red.
+
+### The instance tables' columns are Preflight's (#1636)
+
+Registration ends Preflight and writes the stage the instance held until its row existed. On a fresh database that
+write used to fail, quietly (Debug, held): the stage columns and `wh_record_startup_stage` came from 231 and the
+`lifecycle_phase` the recorder writes from 109, all in the main pass. Migration 277's bootstrap region now adds every
+column a migration adds to an instance table and creates the recorder. Three rules come with it, each a test:
+
+1. **Every column a migration adds to an instance or role table is added by the closure.** Derived from the shipped
+   SQL, not listed (`PreflightInstanceColumnsTests.EveryColumnAMigrationAddsToAnInstanceOrRoleTable_IsAddedByTheBootstrapClosureAsync`).
+   A new column on those tables goes in a bootstrap region too, catalog-checked.
+2. **The closure defines each function as its last word does.** The closure is applied again whenever its hash
+   changes, before the main pass; an older definition in it would be put back on every database it reached
+   (`EveryFunctionTheBootstrapDefines_IsDefinedAsItsLastWordAsync`). A migration that redefines a closure function puts
+   the new definition in a region of its own, as 198 did for 184.
+3. **A column added by the closure is described by the closure.** 231 describes its columns only inside the block that
+   adds them, and on a database the closure brought up it no longer adds them
+   (`SchemaBootstrapPhaseTests.TheColumnsTheBootstrapAdds_AreDescribedAsync`).
+
+Migration 278 adds `wh_record_instance_transition` to the closure for the same reason: the registration's held write
+is one update of stage, phase and version through it, and since #1636 it is the only writer of a recorded phase (a
+heartbeat records the phase and version only as a registration).
+
+The descriptor ensure (`PostgresSchemaBuilder`) does not declare these columns, so it neither re-adds nor fights them.
+`SchemaBootstrapPhaseTests.AnEmptyDatabaseRecordsItsStageAtRegistrationAfterTheBootstrapAsync` and
+`StartupStageHostTests.AFreshDatabase_EntersEveryStageInOrder_LogsEach_AndRecordsEachTheRowCanHoldAsync` are the
+behavior.
 
 ### What a non-holder watches
 
@@ -539,14 +622,15 @@ instance. Three things had to be true at once, and each is now false:
 
 1. **Idempotent DDL takes its lock before it looks.** `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` takes ACCESS
    EXCLUSIVE and `CREATE INDEX IF NOT EXISTS` takes SHARE whether or not there is anything to do. Migrations 109, 110,
-   184 and 203 add columns to the instance and role tables; 184's ALTER is also in the bootstrap closure, so the
-   ordinary pass re-applied it to columns the bootstrap had just added, against the electors using them. Shipped
-   migrations cannot be edited, so `CatalogCheckedDdl.Guard` rewrites each such top-level statement as it is
-   executed (never what is hashed) into a `DO` block that asks the catalog first: plain migration segments and the
-   core tables on both drivers, and the bootstrap closure. Anything else in a script is untouched.
+   184 and 203 add columns to the instance and role tables; 184's ALTER (since 277, every one of them) is also in the
+   bootstrap closure, so the ordinary pass re-applied it to columns the bootstrap had just added, against the electors
+   using them. Shipped migrations cannot be edited, so `CatalogCheckedDdl.Guard` rewrites each such top-level
+   statement as it is executed (never what is hashed) into a `DO` block that asks the catalog first: plain migration
+   segments and the core tables on both drivers, and the bootstrap closure. Anything else in a script is untouched.
 2. **Workers ran before their stage.** The duty holder, the partition assigner, the notification connection and the
    work-available probes started with the host. They are registered with `AddHostedServiceAtStage` now (Coordinate,
-   Coordinate, end of Preflight) or read the schema-ready gate, and the stage gate falls back to that gate for every
+   Coordinate, end of Preflight; the signal bus, whose self-test loops back over that connection, at Elect too) or
+   read the schema-ready gate, and the stage gate falls back to that gate for every
    stage up to Coordinate, so a host whose schema is provisioned out of band never waits. The migrator election is
    not gated: it is what Elect is. Do not move a worker that the election itself needs behind Coordinate.
 3. **A deadlock ended the attempt.** Since #1637 a step is its own transaction; a step that loses a deadlock is now
@@ -565,6 +649,8 @@ It keys on the host's `IServiceScopeFactory` now, and a call made while one runs
 | `StartupPreflightHostTests.NothingVotesBeforeCoordinate_AndNoWorkerAsksForAnObjectThatDoesNotExistYetAsync` | a role vote before Coordinate, or a worker's 42P01/42883 during startup |
 | `StartupPreflightHostTests.ASecondInitialization_ReturnsOnlyOnceTheFirstHasFinishedAsync` | an explicit initialization not joining the hosted one |
 | `StartupStageWiringTests` | a worker registered ungated again |
+| `StartupHostedServiceAuditTests.EveryHostedService_HasAPlaceInTheStageTable_AndTheStagedOnesStartAtTheirStageAsync` | a new hosted service in the turnkey host with no stated stage; the table there is the list of what starts when |
+| `StartupPreflightHostTests.HeldInPreflight_TheSignalBusStartsNoTransport_AndStartsItAtElectAsync` | the signal bus (and its `pg_notify` self-test) starting in Preflight |
 
 ## A fixture does not create its own database
 
@@ -608,6 +694,9 @@ is where to look rather than the assertions.
    wait, not skip: the holder may be a sibling's bootstrap or DDL, which does not do your work, and a
    sibling staged as a waiter never will. Test it with two instances, one holding the key in an open
    transaction, and assert something above debug level is logged on the path that did not run.
+0e. **Does it ask whether an object exists after waiting for another session?** Read `pg_class` / `pg_proc` under a
+   read committed snapshot, never `to_regclass` / `to_regprocedure` inside the transaction that waited: the session's
+   cached "missing" outlives the other session's commit (Trap 4, "The recheck under the lock reads the catalog").
 1. **Does it need a connection of its own?** Call `SchemaBoundaryConnections.Resolve`. Never open one
    from `GetConnectionString()`.
 2. **Does one statement depend on another's committed effect?** Ordering is not enough. Emit a

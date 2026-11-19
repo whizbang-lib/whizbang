@@ -288,7 +288,6 @@ public class TransportConsumerWorkerBranchCoverageTests {
       metrics: metrics,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: instance ?? new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       routingOptions: Options.Create(routing ?? new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),

@@ -17,9 +17,9 @@ namespace Whizbang.Core.Health;
 /// transient startup miss degrades the component for seconds, not for the whole re-probe interval.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
-/// <tests>tests/Whizbang.Core.Tests/Health/SignalBusHealthWiringTests.cs:FailedWireRouteProbe_WhileRunning_ReportsDegradedAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Health/SignalBusHealthWiringTests.cs:MissedDoorbellStreak_WhileRunning_ReportsDegradedAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Health/SignalBusHealthWiringTests.cs:DegradedState_OutsideRunning_StaysIntentionalAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Health/SignalBusHealthWiringTests.cs:FailedWireRouteProbe_WhileRunning_ReportsDegradedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Health/SignalBusHealthWiringTests.cs:MissedDoorbellStreak_WhileRunning_ReportsDegradedAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Health/SignalBusHealthWiringTests.cs:DegradedState_OutsideRunning_StaysIntentionalAsync</tests>
 public sealed class SignalBusHealthSource(
   SignalBusLivenessState liveness,
   IWhizbangLifecycleState lifecycle

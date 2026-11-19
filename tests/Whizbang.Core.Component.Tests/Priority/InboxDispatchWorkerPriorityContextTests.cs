@@ -118,15 +118,12 @@ public class InboxDispatchWorkerPriorityContextTests {
     services.AddScoped<IReceptorInvoker>(_ => invoker);
     var sp = services.BuildServiceProvider();
     var inbox = new FakeInboxChannelWriter();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new FakeInstanceProvider(),
       inboxChannelWriter: inbox,
       handlerCommitChannel: new FakeHandlerCommitChannel(),
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,

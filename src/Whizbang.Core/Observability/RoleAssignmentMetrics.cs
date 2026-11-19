@@ -55,8 +55,6 @@ public sealed class RoleAssignmentMetrics {
       description: "Owed duty work run by this instance as holder, by outcome");
     Drains = meter.CreatePassiveCounter<long>("whizbang.roles.drains",
       description: "Roles this instance released because a newer-version instance asked it to drain");
-    BridgeSessionsEnded = meter.CreatePassiveCounter<long>("whizbang.roles.bridge_sessions_ended",
-      description: "Legacy-lock sessions of lapsed bridged holders this instance ended so the role could be voted again");
   }
 
   /// <summary>Roles won at a new epoch.</summary>
@@ -79,9 +77,6 @@ public sealed class RoleAssignmentMetrics {
 
   /// <summary>Releases on a drain request.</summary>
   public PassiveCounter<long> Drains { get; }
-
-  /// <summary>Lapsed bridged holders' legacy-lock sessions ended.</summary>
-  public PassiveCounter<long> BridgeSessionsEnded { get; }
 
   /// <summary>The role tag.</summary>
   /// <param name="role">The role.</param>

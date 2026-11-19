@@ -42,13 +42,18 @@ namespace Whizbang.Core.SystemEvents;
 /// <param name="inner">The inner event store to wrap.</param>
 /// <param name="outboxChannel">The deferred outbox channel for queuing audit events.</param>
 /// <param name="options">System event configuration options.</param>
+/// <param name="ephemeralModeResolver">
+/// Recognizes ephemeral types, which are excluded from audit unless they keep their body (#1730). Required: the
+/// container supplies the default <see cref="EphemeralModeResolver"/> over the generated catalog.
+/// </param>
 public sealed class AuditingEventStoreDecorator(
     IEventStore inner,
     IDeferredOutboxChannel outboxChannel,
     IOptions<SystemEventOptions> options,
     Whizbang.Core.Observability.IServiceInstanceProvider instanceProvider,
     IAuditDecisionHook auditDecisionHook,
-    ILogger<AuditingEventStoreDecorator> logger) : ForwardingEventStoreDecorator(inner) {
+    ILogger<AuditingEventStoreDecorator> logger,
+    IEphemeralModeResolver ephemeralModeResolver) : ForwardingEventStoreDecorator(inner) {
   /// <summary>
   /// The dedicated audit topic destination for outbox messages.
   /// </summary>
@@ -66,6 +71,10 @@ public sealed class AuditingEventStoreDecorator(
 
   // Optional per-occurrence decision. Without one, behavior is exactly the attribute's.
   private readonly IAuditDecisionHook _auditDecisionHook = auditDecisionHook;
+
+  // Recognizes a type declared ephemeral through a base record or interface (#1730). Required, with the TryAdd default
+  // TryAddWhizbangDefaults registers, so a hand-built decorator cannot silently miss [Ephemeral] types.
+  private readonly IEphemeralModeResolver _ephemeralModeResolver = ArgumentGuard.NotNull(ephemeralModeResolver);
 
   /// <inheritdoc />
   public override async Task AppendAsync<TMessage>(
@@ -105,7 +114,8 @@ public sealed class AuditingEventStoreDecorator(
     }
     // One place decides: the attribute gates the TYPE, the hook may veto or name the OCCURRENCE.
     var auditDecision = AuditEligibility.Decide(
-      envelope.Payload, typeof(TMessage), _options.AuditMode, _auditDecisionHook);
+      envelope.Payload, typeof(TMessage), _options.AuditMode, _auditDecisionHook,
+      isEphemeral: EphemeralFlagDeriver.Derive(envelope.Payload, _ephemeralModeResolver) == EventFlags.Ephemeral);
     if (!auditDecision.ShouldAudit) {
       return;
     }
@@ -149,9 +159,10 @@ public sealed class AuditingEventStoreDecorator(
       : null;
 
     return new EventAudited {
-      Id = TrackedGuid.New(),
+      // Derived from the event it audits, so a record derived again is the same record (#1724).
+      Id = AuditLedger.RecordIdFor(envelope.MessageId.Value),
       OriginalEventId = envelope.MessageId.Value,
-      OriginalEventType = typeof(TMessage).Name,
+      OriginalEventType = TypeNameFormatter.SimpleName(typeof(TMessage)),
       OriginalStreamId = streamId.ToString(),
       OriginalStreamPosition = streamPosition,
       OriginalBody = payloadJson,
@@ -170,7 +181,7 @@ public sealed class AuditingEventStoreDecorator(
   }
 
   /// <summary>The audit record's outbox row; its hop names the record's own stream (#1798).</summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   private OutboxMessage _buildOutboxMessage(EventAudited auditEvent) {
     // Create envelope for the audit event
     var envelope = new MessageEnvelope<EventAudited> {
@@ -217,13 +228,17 @@ public sealed class AuditingEventStoreDecorator(
         MessageId = envelope.MessageId,
         Hops = envelope.CopyHops()
       },
+#pragma warning disable RS0030 // versioned on purpose: an envelope type a receiver resolves the envelope from (#2267)
       EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(eventType)),
+#pragma warning restore RS0030
       // The tenant's audit ledger, as on the outbox path. Transport-only, as on the outbox path: an audit
       // record is never event-stored at its origin, so it neither takes the ledger's per-stream store lock
       // nor lands in the origin's digest lane (#1485).
       StreamId = AuditLedger.StreamFor(auditEvent.TenantId),
       IsEvent = false,
+#pragma warning disable RS0030 // versioned on purpose: the message type a receiver resolves the payload from (#2267)
       MessageType = TypeNameFormatter.AssemblyQualifiedName(eventType)
+#pragma warning restore RS0030
     };
   }
 

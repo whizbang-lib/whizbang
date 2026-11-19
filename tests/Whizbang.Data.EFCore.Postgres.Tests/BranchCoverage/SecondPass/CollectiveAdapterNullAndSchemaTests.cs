@@ -13,6 +13,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres.Collective;
+using Whizbang.Data.EFCore.Postgres.Tests.Collective;
 using Whizbang.Data.Postgres.Collective;
 using Whizbang.Testing.Containers;
 
@@ -40,7 +41,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.SecondPass;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/Collective/EFCoreCollectiveAdapter.cs</code-under-test>
 [Category("Integration")]
 [Category("CollectiveEvents")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class CollectiveAdapterNullAndSchemaTests : IAsyncDisposable {
   private const string TABLE = "wh_per_nullable_ticket";
@@ -156,8 +156,9 @@ public class CollectiveAdapterNullAndSchemaTests : IAsyncDisposable {
       new TenantCollectiveScopeResolver(), ctx, Guid.NewGuid(), options);
   }
 
+  // The batch statements (#1969): each one updates its batch inside the statement that moves the apply's progress record.
   private List<string> _updateStatements() =>
-    [.. _capturedSql.Where(sql => sql.TrimStart().StartsWith("UPDATE", StringComparison.Ordinal))];
+    [.. _capturedSql.Where(sql => sql.Contains("wb_applied AS (UPDATE", StringComparison.Ordinal))];
 
   // ── Writing a row the way the generated runner does ───────────────────────────────────────────
 
@@ -192,11 +193,7 @@ public class CollectiveAdapterNullAndSchemaTests : IAsyncDisposable {
   [Before(Test)]
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
-    _databaseName = $"test_collective_nullable_{Guid.NewGuid():N}";
-    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
-      await admin.OpenAsync();
-      await admin.ExecuteAsync($"CREATE DATABASE {_databaseName}");
-    }
+    _databaseName = (await PerTestDatabaseFactory.CreateAsync("coll_nullable")).Name;
     _connectionString = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _databaseName,
       Timezone = "UTC",
@@ -211,6 +208,7 @@ public class CollectiveAdapterNullAndSchemaTests : IAsyncDisposable {
     _dataSource = dataSourceBuilder.Build();
 
     await using var conn = await _openAsync();
+    await CollectiveApplyProgressTable.CreateAsync(conn, SCHEMA);
     await conn.ExecuteAsync("CREATE EXTENSION IF NOT EXISTS vector");
     await conn.ReloadTypesAsync();
     await conn.ExecuteAsync($"""
@@ -228,9 +226,7 @@ public class CollectiveAdapterNullAndSchemaTests : IAsyncDisposable {
       _dataSource = null;
     }
     if (_databaseName is not null) {
-      await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-      await admin.OpenAsync();
-      await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)");
+      await PerTestDatabaseFactory.DropAsync(_databaseName);
       _databaseName = null;
     }
   }

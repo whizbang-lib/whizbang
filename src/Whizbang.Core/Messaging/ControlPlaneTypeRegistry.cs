@@ -28,7 +28,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ControlPlaneTypeRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ControlPlaneTypeRegistryTests.cs</tests>
 public static class ControlPlaneTypeRegistry {
   private static readonly ConcurrentDictionary<string, bool> _names = new(StringComparer.Ordinal);
 
@@ -47,6 +47,10 @@ public static class ControlPlaneTypeRegistry {
     Register(typeof(IntegrityDivergenceDetected));
     Register(typeof(PerspectiveCoverageGapDetected));
     Register(typeof(RequestRedeliveryCommand));
+    // A paced backfill window's answer (#2092) travels with the window's bundles.
+    Register(typeof(BackfillWindowAnswer));
+    // An audit rebuild request (#1724) is the same kind of framework request to an origin, with no user behind it.
+    Register(typeof(Whizbang.Core.Commands.System.RequestAuditRebuildCommand));
     // The BUNDLE the redelivery control plane ships back, not just the request for it. Missing it
     // meant a failed repair bundle was dead-lettered like domain traffic instead of dropped —
     // which fed the recovery ladder and produced unbounded churn.

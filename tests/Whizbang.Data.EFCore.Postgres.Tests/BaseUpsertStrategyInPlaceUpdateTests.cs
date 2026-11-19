@@ -18,7 +18,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// index corruption when updating tracked entities with collection properties.
 /// </summary>
 /// <tests>Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs</tests>
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class BaseUpsertStrategyInPlaceUpdateTests : EFCoreTestBase {
 

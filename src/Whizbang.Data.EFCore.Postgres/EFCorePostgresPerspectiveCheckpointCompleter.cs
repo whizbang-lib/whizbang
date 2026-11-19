@@ -29,11 +29,14 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// and <c>error</c> on update — a full rebuild resolves any prior rewind flagging since the
 /// entire event log has been replayed.
 /// </para>
+/// <para>The cursor of a stream archived whole is parked with the stream (migration 273, #1931): a rebuild that
+/// includes such a stream must not name an archived event in the live cursor table, and the restore brings the cursor back.</para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/rebuild</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildInPlaceAsync_WritesCursorCheckpointAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildStreamsAsync_WritesCursorsForTargetedStreamsOnlyAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildInPlaceAsync_WithExistingProcessingCursor_UpdatesToCompletedAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchivedStreamRebuildSqlTests.cs:Completer_TheCursorOfAStreamArchivedWhole_IsParked_AndTheRestoreBringsItBackAsync</tests>
 public sealed partial class EFCorePostgresPerspectiveCheckpointCompleter(
     DbContext dbContext,
     ILogger<EFCorePostgresPerspectiveCheckpointCompleter>? logger = null)
@@ -53,8 +56,7 @@ public sealed partial class EFCorePostgresPerspectiveCheckpointCompleter(
       return;
     }
 
-    var tableName = _buildQualifiedName(_resolveSchema(), "wh_perspective_cursors");
-    var sql = _buildCursorUpsertSql(tableName);
+    var sql = _buildCursorWriteSql(_buildQualifiedName(_resolveSchema(), "wh_complete_rebuilt_cursor"));
 
     var transaction = _dbContext.Database.CurrentTransaction;
     var ownsTransaction = transaction == null;
@@ -112,18 +114,10 @@ public sealed partial class EFCorePostgresPerspectiveCheckpointCompleter(
   /// replayed.
   /// </summary>
 #pragma warning disable S2077 // schema escaped through PgIdentifier; values are positional parameters.
-  private static string _buildCursorUpsertSql(string tableName) => $@"
-      INSERT INTO {tableName}
-        (stream_id, perspective_name, last_event_id, status, processed_at)
-      VALUES ({{0}}, {{1}}, {{2}}, {{3}}, NOW())
-      ON CONFLICT (stream_id, perspective_name) DO UPDATE SET
-        last_event_id = EXCLUDED.last_event_id,
-        status = EXCLUDED.status,
-        processed_at = EXCLUDED.processed_at,
-        error = NULL,
-        rewind_trigger_event_id = NULL,
-        rewind_flagged_at = NULL,
-        rewind_first_flagged_at = NULL;";
+  // The shared rebuild cursor write (migration 273, #1931): a stream archived whole has its cursor parked with the stream,
+  // any other stream's is upserted into wh_perspective_cursors, exactly as the Dapper driver's completer writes it.
+  private static string _buildCursorWriteSql(string functionName) =>
+    $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}})";
 #pragma warning restore S2077
 
   /// <summary>

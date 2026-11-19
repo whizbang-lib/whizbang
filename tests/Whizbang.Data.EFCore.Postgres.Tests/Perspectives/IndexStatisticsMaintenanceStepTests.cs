@@ -34,7 +34,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-indexes#statistics-for-a-new-index</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class IndexStatisticsMaintenanceStepTests {
   private const string OPTED_OUT = "wh_per_document_index_opted_out";

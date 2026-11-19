@@ -112,6 +112,33 @@ public class MessageTypeCatalogGeneratorTests {
     await Assert.That(code).DoesNotContain("FormerNames");
   }
 
+  /// <summary>
+  /// #2074: a message that is neither a command nor an event is catalogued as a plain "message", never as an event,
+  /// so the receive path never classifies it as an event or copies it into the event store.
+  /// </summary>
+  [Test]
+  public async Task Generator_APlainMessage_IsKindMessage_NotEventAsync() {
+    const string source = """
+
+      using Whizbang.Core;
+
+      namespace MyApp;
+
+      public record Ping : IMessage;
+      public record Pinged : IEvent;
+      public record DoPing : ICommand;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs");
+
+    await Assert.That(code).Contains("new(typeof(global::MyApp.Ping), \"MyApp.Ping\", \"message\"")
+      .Because("a plain message is not an event");
+    await Assert.That(code).Contains("new(typeof(global::MyApp.Pinged), \"MyApp.Pinged\", \"event\"");
+    await Assert.That(code).Contains("new(typeof(global::MyApp.DoPing), \"MyApp.DoPing\", \"command\"");
+  }
+
   [Test]
   public async Task Generator_SkipsAbstractTypesAsync() {
     const string source = """
@@ -162,8 +189,8 @@ public class MessageTypeCatalogGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs");
 
     await Assert.That(code).IsNotNull();
-    await Assert.That(code).Contains("[System.Runtime.CompilerServices.ModuleInitializer]");
-    await Assert.That(code).Contains("ServiceRegistrationCallbacks.MessageTypeCatalog");
+    await Assert.That(code).Contains("[global::System.Runtime.CompilerServices.ModuleInitializer]");
+    await Assert.That(code).Contains("ServiceRegistrationCallbacks.RegisterMessageTypeCatalog(\"TestAssembly\", ");
     await Assert.That(code).Contains("AddSingleton<IMessageTypeCatalog, GeneratedMessageTypeCatalog>");
   }
 
@@ -381,6 +408,49 @@ public class MessageTypeCatalogGeneratorTests {
   }
 
   [Test]
+  public async Task Generator_StreamEndOfLife_RegistersTheDeclarationOfEachEventType_InheritedAsync() {
+    // #1740: the end-of-life policy is declared on the event type that opens a stream, keyed by the CLR type name the
+    // ledger records as the stream type (nested types with '+'), inherited, and only for events.
+    const string source = """
+
+      using Whizbang.Core;
+      using Whizbang.Core.Archival;
+      using Whizbang.Core.Attributes;
+
+      namespace MyApp;
+
+      [StreamEndOfLife(IdleTtl = "90.00:00:00", MaxAge = "365.00:00:00", KeepTailVersions = 10, TenantByteCap = 2048, Action = StreamLifecycleAction.Purge)]
+      public record OrderPlaced : IEvent;
+
+      public record RushOrderPlaced : OrderPlaced;
+
+      public static class Ledgers {
+        [StreamEndOfLife(IdleTtl = null)]
+        public record LedgerOpened : IEvent;
+      }
+
+      [StreamEndOfLife(IdleTtl = "1.00:00:00")]
+      public record PlaceOrder : ICommand;
+
+      public record CartStarted : IEvent;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs")!;
+    const string register = "global::Whizbang.Core.Archival.StreamEndOfLifeDeclarations.Register(new global::Whizbang.Core.Archival.StreamEndOfLifeDeclaration(";
+    const string purge = "(global::Whizbang.Core.Archival.StreamLifecycleAction)2";
+
+    await Assert.That(generated).Contains($"{register}\"MyApp.OrderPlaced\", \"90.00:00:00\", \"365.00:00:00\", 10L, 2048L, {purge}));");
+    await Assert.That(generated).Contains($"{register}\"MyApp.RushOrderPlaced\", \"90.00:00:00\", \"365.00:00:00\", 10L, 2048L, {purge}));")
+      .Because("the attribute is inherited, so the streams a derived event opens carry the same policy");
+    await Assert.That(generated).Contains($"{register}\"MyApp.Ledgers+LedgerOpened\", null, null, 0L, 0L, (global::Whizbang.Core.Archival.StreamLifecycleAction)0));")
+      .Because("the key is the ledger's stream type, the CLR name with '+' for a nested type");
+    await Assert.That(generated.Contains($"{register}\"MyApp.PlaceOrder\"")).IsFalse().Because("a command never opens a stream");
+    await Assert.That(generated.Contains($"{register}\"MyApp.CartStarted\"")).IsFalse();
+  }
+
+  [Test]
   public async Task Generator_TerminalEvent_StampsTheEntryAndRegistersTheTypeAsync() {
     // A terminal event seals its stream (WS-3 S4). The flag is stamped from the generated registration on the dispatch
     // path and from the catalog entry on the receive path, so the attribute must reach both at compile time, including
@@ -421,6 +491,170 @@ public class MessageTypeCatalogGeneratorTests {
       "global::Whizbang.Core.Lifecycle.TerminalEvents.Register(typeof(global::MyApp.AccountClosedForFraud));");
     await Assert.That(generated.Contains("TerminalEvents.Register(typeof(global::MyApp.CloseAccount)")).IsFalse();
     await Assert.That(generated.Contains("TerminalEvents.Register(typeof(global::MyApp.AccountOpened)")).IsFalse();
+  }
+
+  [Test]
+  public async Task Generator_SupersedingEvent_StampsTheEntryAndRegistersTheKeyAsync() {
+    // A superseding event (#1729) is flagged from the generated registration on the dispatch path and from the catalog
+    // entry on the receive path, and its key is read by a generated accessor, never by reflection. The attribute is
+    // inherited, a key may sit on a property or a record parameter or a base type, and only an event can supersede.
+    const string source = """
+
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+
+      namespace MyApp;
+
+      [Superseding]
+      public record EmbeddingUpdated([property: SupersedingKey] string Model, float[] Vector) : IEvent;
+
+      [Superseding]
+      public record OwnerSnapshot : IEvent {
+        [SupersedingKey] public Guid Owner { get; init; }
+      }
+
+      public record DerivedOwnerSnapshot : OwnerSnapshot;
+
+      [Superseding]
+      public record ParameterKeyed([SupersedingKey] int Slot) : IEvent;
+
+      [Superseding]
+      public record RenamedKey([property: SupersedingKey, System.Text.Json.Serialization.JsonPropertyName("slot_\"no")] int Slot) : IEvent;
+
+      [Superseding]
+      public record PermissionsReplaced(string[] Grants) : IEvent;
+
+      [Superseding]
+      public record ReplaceAll : ICommand;
+
+      public record ProfileRenamed : IEvent;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs")!;
+    var lines = generated.Split('\n');
+    string entry(string type) => lines.Single(l => l.Contains($"new(typeof(global::MyApp.{type})"));
+    const string REGISTER = "global::Whizbang.Core.Lifecycle.SupersedingEvents.Register(typeof(global::MyApp.";
+    const string KEY_TEXT = "global::Whizbang.Core.Lifecycle.SupersedingEvents.KeyText";
+
+    await Assert.That(entry("EmbeddingUpdated")).Contains("IsSuperseding = true");
+    await Assert.That(entry("DerivedOwnerSnapshot")).Contains("IsSuperseding = true")
+      .Because("the attribute is inherited, so an event derived from a superseding event supersedes too");
+    await Assert.That(entry("ReplaceAll").Contains("IsSuperseding")).IsFalse()
+      .Because("a command is never stored on a stream, so nothing can supersede it");
+    await Assert.That(entry("ProfileRenamed").Contains("IsSuperseding")).IsFalse();
+    await Assert.That(generated).Contains(
+      $"{REGISTER}EmbeddingUpdated), static p => {KEY_TEXT}(((global::MyApp.EmbeddingUpdated)p).Model), \"Model\", null);")
+      .Because("a key on a record's positional property is read through that property");
+    await Assert.That(generated).Contains(
+      $"{REGISTER}OwnerSnapshot), static p => {KEY_TEXT}(((global::MyApp.OwnerSnapshot)p).Owner), \"Owner\", null);");
+    await Assert.That(generated).Contains(
+      $"{REGISTER}DerivedOwnerSnapshot), static p => {KEY_TEXT}(((global::MyApp.DerivedOwnerSnapshot)p).Owner), \"Owner\", null);")
+      .Because("a key declared on a base type is the derived type's key");
+    await Assert.That(generated).Contains(
+      $"{REGISTER}ParameterKeyed), static p => {KEY_TEXT}(((global::MyApp.ParameterKeyed)p).Slot), \"Slot\", null);")
+      .Because("on a primary-constructor parameter the attribute marks the property of the same name");
+    await Assert.That(generated).Contains(
+      $"{REGISTER}RenamedKey), static p => {KEY_TEXT}(((global::MyApp.RenamedKey)p).Slot), \"Slot\", \"slot_\\\"no\");")
+      .Because("#2123: the key's member and [JsonPropertyName] are registered, so a payload missing the key is told from a default key");
+    await Assert.That(generated).Contains($"{REGISTER}PermissionsReplaced), null);")
+      .Because("a superseding type with no key has one key per stream");
+    await Assert.That(generated.Contains($"{REGISTER}ReplaceAll)")).IsFalse();
+    await Assert.That(generated.Contains($"{REGISTER}ProfileRenamed)")).IsFalse();
+  }
+
+  [Test]
+  public async Task Generator_ASupersedingGroup_IsRegisteredWithEachTypeAsync() {
+    // #2124: [Superseding(Group = "...")] lets types supersede each other; the generator registers the group with each
+    // type, so the write paths stamp it without reflection. The name is taken as written, never derived from a type.
+    const string source = """
+
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+
+      namespace MyApp;
+
+      [Superseding(Group = "embedding")]
+      public record EmbeddingCreated([property: SupersedingKey] string Model) : IEvent;
+
+      [Superseding(Group = "embedding")]
+      public record EmbeddingRevised([property: SupersedingKey] string Model) : IEvent;
+
+      [Superseding(Group = "profile")]
+      public record ProfileBase : IEvent;
+
+      public record ProfileReplaced : ProfileBase;
+
+      [Superseding]
+      public record ProfileRedeclared : ProfileBase;
+
+      [Superseding(Group = "")]
+      public record EmptyGroup : IEvent;
+
+      [Superseding(Group = "quo\"te")]
+      public record QuotedGroup : IEvent;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs")!;
+    const string REGISTER = "global::Whizbang.Core.Lifecycle.SupersedingEvents.Register(typeof(global::MyApp.";
+    const string KEY_TEXT = "global::Whizbang.Core.Lifecycle.SupersedingEvents.KeyText";
+
+    await Assert.That(generated).Contains(
+      $"{REGISTER}EmbeddingCreated), static p => {KEY_TEXT}(((global::MyApp.EmbeddingCreated)p).Model), \"Model\", null, \"embedding\");");
+    await Assert.That(generated).Contains(
+      $"{REGISTER}EmbeddingRevised), static p => {KEY_TEXT}(((global::MyApp.EmbeddingRevised)p).Model), \"Model\", null, \"embedding\");");
+    await Assert.That(generated).Contains($"{REGISTER}ProfileBase), null, null, null, \"profile\");")
+      .Because("a grouped type with no key registers the empty key's group");
+    await Assert.That(generated).Contains($"{REGISTER}ProfileReplaced), null, null, null, \"profile\");")
+      .Because("the attribute is inherited, group and all");
+    await Assert.That(generated).Contains($"{REGISTER}ProfileRedeclared), null);")
+      .Because("the nearest [Superseding] wins, as attribute inheritance reads it, so a redeclaration without a group has none");
+    await Assert.That(generated).Contains($"{REGISTER}EmptyGroup), null);")
+      .Because("an empty name is no group");
+    await Assert.That(generated).Contains($"{REGISTER}QuotedGroup), null, null, null, \"quo\\\"te\");")
+      .Because("a group name is arbitrary text, so it is written as an escaped literal");
+  }
+
+  [Test]
+  public async Task Generator_ASupersedingTypeAnAnalyzerRefuses_IsNotRegistered_SoEveryEventIsKeptAsync() {
+    // WHIZ135 (also ephemeral) and WHIZ136 (two keys) are errors, but an error can be suppressed. The generator then
+    // registers nothing, so the type is never reaped as superseding: keeping events is the recoverable direction.
+    const string source = """
+
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+
+      namespace MyApp;
+
+      [Ephemeral, Superseding]
+      public record PresenceReplaced : IEvent;
+
+      [Superseding]
+      public record TwoKeys([property: SupersedingKey] string Model, [property: SupersedingKey] Guid Owner) : IEvent;
+
+      [Superseding]
+      public record OneKey([property: SupersedingKey] string Model) : IEvent;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs")!;
+    var lines = generated.Split('\n');
+    string entry(string type) => lines.Single(l => l.Contains($"new(typeof(global::MyApp.{type})"));
+
+    await Assert.That(entry("PresenceReplaced").Contains("IsSuperseding")).IsFalse()
+      .Because("an ephemeral event is reaped by the ephemeral reaper; it is never also superseding");
+    await Assert.That(entry("TwoKeys").Contains("IsSuperseding")).IsFalse()
+      .Because("with two keys the generator cannot tell which one the type means");
+    await Assert.That(generated.Contains("SupersedingEvents.Register(typeof(global::MyApp.PresenceReplaced)")).IsFalse();
+    await Assert.That(generated.Contains("SupersedingEvents.Register(typeof(global::MyApp.TwoKeys)")).IsFalse();
+    await Assert.That(entry("OneKey")).Contains("IsSuperseding = true").Because("the control: a valid superseding type is registered");
   }
 
   [Test]

@@ -239,6 +239,14 @@ Contracts a pattern exposes to code that does not reference its runtime.
 | Package | Version | What it is for |
 |---|---|---|
 | [Whizbang.Sagas.Contracts](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Sagas.Contracts/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Sagas.Contracts.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Sagas.Contracts/) | Saga event interfaces, item-state enums, and SagaContext. |
+
+#### Integrity rules
+
+The eligibility rules storage cleanup and stream integrity share, versioned only when they change.
+
+| Package | Version | What it is for |
+|---|---|---|
+| [Whizbang.Rules](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Rules/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Rules.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Rules/) | The eligibility rules storage cleanup and stream integrity share: the per-type rule model, the rule fingerprint, the pair comparison and the SQL eligibility rule's source. |
 <!-- /auto:packages -->
 
 ## Requirements
@@ -261,7 +269,7 @@ dotnet add package SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres
 ## Quality
 
 <!-- auto:quality -->
-- **Tests:** 36,000+ across unit, generator, integration and transport suites, run on every pull request.
+- **Tests:** 42,000+ across unit, generator, integration and transport suites, run on every pull request.
 - **Coverage:** 99.9% of library lines; every pull request must cover all of its new lines and add no
   SonarCloud findings.
 <!-- /auto:quality -->

@@ -25,7 +25,7 @@ namespace Whizbang.Core.Startup;
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/startup-status#startup-stages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStagesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStagesTests.cs</tests>
 public enum StartupStage : short {
   /// <summary>Checks and preparation before anything is elected: connectivity, the schema, the bootstrap.</summary>
   Preflight = 10,
@@ -60,7 +60,7 @@ public enum StartupStage : short {
 /// on the instance's row, and the line an instance logs when it enters it.
 /// </summary>
 /// <docs>operations/startup/startup-status#startup-stages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStagesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStagesTests.cs</tests>
 public static class StartupStages {
   private static readonly StartupStage[] _startup = [
     StartupStage.Preflight, StartupStage.Elect, StartupStage.Migrate, StartupStage.Converge,
@@ -134,7 +134,7 @@ public static class StartupStages {
 /// <param name="Skipped">Whether the stage was passed through without doing its work.</param>
 /// <param name="EnteredAt">When the stage was entered, by the host's clock. Progress within a stage keeps it.</param>
 /// <docs>operations/startup/startup-status#startup-stages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupStagesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupStagesTests.cs</tests>
 public sealed record StartupStageSnapshot(StartupStage Stage, string Message, bool Skipped, DateTimeOffset EnteredAt) {
   /// <summary>The stage's display name (<see cref="StartupStages.NameOf"/>).</summary>
   public string Name => StartupStages.NameOf(Stage);

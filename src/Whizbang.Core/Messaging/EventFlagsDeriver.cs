@@ -42,13 +42,15 @@ public static class EventFlagsDeriver {
   /// <param name="payload">The payload, possibly null.</param>
   /// <param name="ephemeralModeResolver">Resolves the ephemeral mode, when one is registered.</param>
   /// <returns>The payload's flags.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsDeriverTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventFlagsDeriverTests.cs</tests>
   internal static EventFlags FromPayload(object? payload, IEphemeralModeResolver? ephemeralModeResolver) =>
     (payload is ICompositeEvent ? EventFlags.Composite : EventFlags.None)
     | (payload is ICollectiveEvent ? EventFlags.Collective : EventFlags.None)
     | EphemeralFlagDeriver.Derive(payload, ephemeralModeResolver)
     // WS-3 S4: [TerminalEvent], registered by the generated catalog, so no reflection is needed to read it.
-    | (payload is not null && Lifecycle.TerminalEvents.IsTerminal(payload.GetType()) ? EventFlags.Terminal : EventFlags.None);
+    | (payload is not null && Lifecycle.TerminalEvents.IsTerminal(payload.GetType()) ? EventFlags.Terminal : EventFlags.None)
+    // #1729: [Superseding], registered by the generated catalog the same way.
+    | (payload is not null && Lifecycle.SupersedingEvents.IsSuperseding(payload.GetType()) ? EventFlags.Superseding : EventFlags.None);
 
   /// <summary>
   /// Reduces an assembly-qualified wire type name ("Ns.Outer+Nested, Asm, Version=…") to the

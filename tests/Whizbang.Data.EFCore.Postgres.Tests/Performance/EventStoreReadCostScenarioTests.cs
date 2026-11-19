@@ -29,6 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
 [Category("Benchmark")]
+[NotInParallel] // A measurement: runs alone so it measures the code, not its neighbors.
 [Category("Performance")]
 public class EventStoreReadCostScenarioTests : EFCoreTestBase {
   /// <summary>Streams seeded at each store size; each stream holds 20 events.</summary>

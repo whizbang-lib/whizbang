@@ -71,7 +71,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>operations/infrastructure/migrations</docs>
 /// <docs>fundamentals/perspectives/stored-form-migrations#recovery</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard5")]
 public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
   private static readonly TimeSpan _signalDeadline = TimeSpan.FromSeconds(60);
@@ -387,8 +386,6 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     var provider = services.BuildServiceProvider();
     var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
 
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var config = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
     var instanceProvider = new ServiceInstanceProvider(config);
     var harness = new PerspectiveWorkerTestHarness();
@@ -407,7 +404,6 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
       scopeFactory: scopeFactory,
       instanceProvider: instanceProvider,
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 200,
@@ -454,7 +450,6 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
       instanceProvider: instanceProvider,
       scopeFactory: scopeFactory,
       options: Options.Create(workerOptions),
-      schemaReadyGate: gate,
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: provider.GetRequiredService<IEventTypeProvider>(),

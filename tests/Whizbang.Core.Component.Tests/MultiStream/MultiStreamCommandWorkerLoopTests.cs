@@ -31,8 +31,8 @@ public class MultiStreamCommandWorkerLoopTests {
     new(run, stream, _commandType, MultiStreamJson.Serialize(new LoopProbeCommand(run, [stream])), null, 1);
 
   private static MultiStreamCommandWorker _worker(
-      LoopStore store, MultiStreamCommandOptions? options = null, ISchemaReadyGate? gate = null, LoopHandler? handler = null,
-      bool withHandler = true) {
+      LoopStore store, MultiStreamCommandOptions? options = null, LoopHandler? handler = null,
+      bool withHandler = true, Whizbang.Core.RunControl.WhizbangRunPermit? permit = null) {
     var services = new ServiceCollection();
     if (withHandler) {
       services.AddMultiStreamCommandHandler<LoopProbeCommand, LoopHandler>();
@@ -49,7 +49,7 @@ public class MultiStreamCommandWorkerLoopTests {
       Options.Create(options),
       NullLogger<MultiStreamCommandWorker>.Instance,
       new NoAssignment(),
-      gate ?? SchemaReadyGate.AlreadyReady());
+      runPermit: permit);
   }
 
   private static (Task<int> Pass, Action Unsubscribe) _nextPass(MultiStreamCommandWorker worker, Func<int, bool>? when = null) {
@@ -61,6 +61,43 @@ public class MultiStreamCommandWorkerLoopTests {
     }
     worker.OnPassCompleted += Handler;
     return (pass.Task, () => worker.OnPassCompleted -= Handler);
+  }
+
+  [Test]
+  public async Task Loop_AStoppedRunPermit_EndsTheLoopWithoutAClaimAsync() {
+    // #2045: a stop is final. The loop ends on the stopped permit rather than retrying a pass that can never claim, and
+    // it ends with the host's stopping token still uncanceled: only the permit ended it.
+    var store = new LoopStore();
+    var permit = new Whizbang.Core.RunControl.WhizbangRunPermit();
+    await permit.ChangeAsync(Whizbang.Core.RunControl.RunState.Stopped, CancellationToken.None);
+    var worker = _worker(store, permit: permit);
+
+    await worker.StartAsync(CancellationToken.None);
+    try {
+      await worker.ExecuteTask!.WaitAsync(_deadline);
+      await Assert.That(worker.ExecuteTask.Status).IsEqualTo(TaskStatus.RanToCompletion);
+      await Assert.That(store.ClaimCount).IsEqualTo(0);
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  [Test]
+  public async Task Loop_ACanceledClaimThatIsNotAStop_IsAFailedPass_AndTheLoopGoesOnAsync() {
+    // #2045: only the host stopping or a stopped run permit ends the loop. A claim canceled for its own reasons is a
+    // failed pass like any other, and the next pass claims again.
+    var store = new LoopStore { ClaimFailure = new OperationCanceledException("the statement was canceled") };
+    var worker = _worker(store);
+    var (second, _) = _nextPass(worker, _ => store.ClaimCount >= 2);
+
+    await worker.StartAsync(CancellationToken.None);
+    try {
+      worker.RequestImmediateRun();
+      await second.WaitAsync(_deadline);
+      await Assert.That(store.ClaimCount).IsGreaterThanOrEqualTo(2);
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
   }
 
   [Test]
@@ -79,13 +116,46 @@ public class MultiStreamCommandWorkerLoopTests {
       store.Claims.Enqueue([_item(run, Guid.CreateVersion7())]);
       store.Completions.Enqueue([new MultiStreamRunCompletion(run, _commandType, 1, 1, 0)]);
 
-      worker.OnNotification(run.ToString());
+      worker.RequestImmediateRun();
 
       var completion = await completed.Task.WaitAsync(_deadline);
       await Assert.That(completion.RunId).IsEqualTo(run)
         .Because("the notice, not the hour-long poll, started the pass that worked the new run");
     } finally {
       await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  [Test]
+  public async Task Loop_ANewRunSignalOnTheBus_WakesTheWorkerThroughItsSubscriberAsync() {
+    // #2046: the new-run notice arrives as MultiStreamWorkSignal on the signal bus; the host's subscriber turns it into
+    // an immediate pass. The poll is an hour, so the run below is worked only if the signal woke the loop.
+    var store = new LoopStore();
+    var worker = _worker(store);
+    var bus = new Whizbang.Core.Signals.SignalBus([new Whizbang.Core.Signals.InMemorySignalTransport()], []);
+    await bus.StartAsync();
+    var subscriber = new Whizbang.Data.Postgres.MultiStream.MultiStreamCommandSubscriber(bus, worker);
+    var (first, stopFirst) = _nextPass(worker);
+    var run = Guid.CreateVersion7();
+    var completed = new TaskCompletionSource<MultiStreamRunCompletion>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnRunCompleted += c => completed.TrySetResult(c);
+
+    await subscriber.StartAsync(CancellationToken.None);
+    await worker.StartAsync(CancellationToken.None);
+    try {
+      await Assert.That(await first.WaitAsync(_deadline)).IsEqualTo(0);
+      stopFirst();
+      store.Claims.Enqueue([_item(run, Guid.CreateVersion7())]);
+      store.Completions.Enqueue([new MultiStreamRunCompletion(run, _commandType, 1, 1, 0)]);
+
+      await bus.PublishAsync(new Whizbang.Core.Signals.MultiStreamWorkSignal());
+
+      var completion = await completed.Task.WaitAsync(_deadline);
+      await Assert.That(completion.RunId).IsEqualTo(run)
+        .Because("the signal on the bus, not the hour-long poll, started the pass that worked the new run");
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+      await subscriber.StopAsync(CancellationToken.None);
     }
   }
 
@@ -135,28 +205,6 @@ public class MultiStreamCommandWorkerLoopTests {
 
       await Assert.That(await next.WaitAsync(_deadline)).IsEqualTo(1)
         .Because("a failed pass never stops the worker");
-    } finally {
-      await worker.StopAsync(CancellationToken.None);
-    }
-  }
-
-  [Test]
-  public async Task Loop_WaitsForTheSchemaBeforeItsFirstPassAsync() {
-    var store = new LoopStore();
-    var gate = new LoopGate();
-    var worker = _worker(store, gate: gate);
-    var (first, _) = _nextPass(worker);
-
-    await worker.StartAsync(CancellationToken.None);
-    try {
-      await gate.Waiting.WaitAsync(_deadline);
-      await Assert.That(store.ClaimCount).IsEqualTo(0)
-        .Because("the worker is parked on the schema gate, so nothing has been claimed");
-
-      gate.Open();
-
-      await Assert.That(await first.WaitAsync(_deadline)).IsEqualTo(0);
-      await Assert.That(store.ClaimCount).IsGreaterThanOrEqualTo(1);
     } finally {
       await worker.StopAsync(CancellationToken.None);
     }
@@ -239,24 +287,6 @@ public class MultiStreamCommandWorkerLoopTests {
     public void MarkStale() => OnAssignmentChanged?.Invoke(null);
     public ValueTask<PartitionAssignmentVersion?> ForClaimAsync(Guid instanceId, CancellationToken cancellationToken) =>
       ValueTask.FromResult<PartitionAssignmentVersion?>(null);
-  }
-
-  private sealed class LoopGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _open = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _waiting = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Waiting => _waiting.Task;
-
-    public bool IsReady => _open.Task.IsCompleted;
-
-    public void Open() => _open.TrySetResult();
-
-    public void MarkReady() => Open();
-
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _waiting.TrySetResult();
-      return _open.Task.WaitAsync(cancellationToken);
-    }
   }
 
   private sealed class LoopStore : IMultiStreamCommandStore {

@@ -11,7 +11,7 @@ namespace Whizbang.Core.Perspectives;
 /// instead of replaying from event zero.
 /// </summary>
 /// <docs>fundamentals/perspectives/snapshots</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:GetLatestSnapshotWithCommitSequenceAsync_DefaultImpl_LegacyReturnsNullAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:GetLatestSnapshotWithCommitSequenceAsync_DefaultImpl_LegacyReturnsNullAsync</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ServiceCollectionExtensions_FullOverloadRegistrationTests.cs:AddWhizbangPostgres_EntriesOverload_ResolvesRealImplementationTypesAsync</tests>
 public interface IPerspectiveSnapshotStore {
   /// <summary>True when a real implementation is registered. The framework's null default returns false so
@@ -43,6 +43,34 @@ public interface IPerspectiveSnapshotStore {
       JsonDocument snapshotData,
       CancellationToken ct = default) =>
     CreateSnapshotAsync(streamId, perspectiveName, snapshotEventId, snapshotData, ct);
+
+  /// <summary>
+  /// Creates a snapshot that also records the commit sequence through which the row's collectives were complete when it
+  /// was taken (#1963): a rewind or a rebuild from it folds the collectives past that mark, so a collective in flight when
+  /// it was taken is folded, and one the snapshot holds is not folded again. The mark is written with the data it
+  /// describes, so writing the same snapshot again replaces it. The default falls through to the commit-sequence write
+  /// and stores no mark, so a store written before the mark keeps compiling and its snapshots keep the snapshot-event rule.
+  /// </summary>
+  /// <param name="streamId">Stream the snapshot belongs to.</param>
+  /// <param name="perspectiveName">Perspective name.</param>
+  /// <param name="snapshotEventId">Last event included in this snapshot.</param>
+  /// <param name="snapshotCommitSequence">That event's commit sequence, or null.</param>
+  /// <param name="snapshotData">Serialized model state as JSON.</param>
+  /// <param name="collectivesThroughSequence">The commit sequence through which the row's collectives were complete, or
+  /// null for none recorded.</param>
+  /// <param name="ct">Cancellation token.</param>
+  /// <docs>fundamentals/perspectives/snapshots#collectives</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:CreateSnapshotAsync_WithACollectivesMark_DefaultImpl_WritesTheSnapshotWithoutTheMarkAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SnapshotSelectionFollowsStreamOrderTests.cs:SnapshotStore_RecordsTheCollectivesCompleteThroughMark_AndTheFloorAndTheNewestSnapshotCarryItAsync</tests>
+  Task CreateSnapshotAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid snapshotEventId,
+      long? snapshotCommitSequence,
+      JsonDocument snapshotData,
+      long? collectivesThroughSequence,
+      CancellationToken ct = default) =>
+    CreateSnapshotAsync(streamId, perspectiveName, snapshotEventId, snapshotCommitSequence, snapshotData, ct);
 
   /// <summary>
   /// Gets the latest snapshot for a stream/perspective pair.
@@ -121,6 +149,12 @@ public interface IPerspectiveSnapshotStore {
   /// as sound there as it ever was. Refusing to answer at that point would turn every rewind into a replay
   /// from event zero for a store that never had the defect.
   /// </para>
+  /// <para>
+  /// The store's answer is a candidate, not the floor (#2379). The rewind restores it only when the events it holds come
+  /// first in the order the replay folds the stream (<see cref="ReplayFloor"/>); a single-origin stream replays in origin
+  /// order, which version alone does not give. A snapshot with no version cannot be placed in that order and is never
+  /// restored: the rewind replays in full.
+  /// </para>
   /// <para>Default implementation returns null so stores that do not record a version keep compiling.</para>
   /// </remarks>
   /// <docs>fundamentals/perspectives/snapshots</docs>
@@ -142,11 +176,29 @@ public interface IPerspectiveSnapshotStore {
   /// <see cref="GetLatestSnapshotBeforeEventInStreamOrderAsync"/> and records no mark: a store that keeps none has no
   /// archive to read through.</returns>
   /// <docs>fundamentals/events/archive-store#rewind-past-an-archived-snapshot</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindWriteCheckTests.cs:ARewindFromASnapshotTheArchiveCovers_ReadsThroughTheArchive_AboveTheSnapshotsVersionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRewindWriteCheckTests.cs:ARewindFromASnapshotTheArchiveCovers_ReadsThroughTheArchive_AboveTheSnapshotsVersionAsync</tests>
   async Task<PerspectiveSnapshotFloor?> GetSnapshotFloorAsync(
       Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) {
     var snapshot = await GetLatestSnapshotBeforeEventInStreamOrderAsync(streamId, perspectiveName, beforeEventId, ct).ConfigureAwait(false);
     return snapshot is { } s ? new PerspectiveSnapshotFloor(s.SnapshotEventId, s.SnapshotVersion, s.SnapshotData, ArchivedThroughVersion: null) : null;
+  }
+
+  /// <summary>
+  /// The stream's newest snapshot, as the floor a replay restores from (#1963): with its stream version, its archive mark
+  /// and the commit sequence through which its row's collectives were complete. A default rebuild of a stream archived
+  /// through a prefix starts from it.
+  /// </summary>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="perspectiveName">The perspective.</param>
+  /// <param name="ct">Cancellation.</param>
+  /// <returns>The newest snapshot, or null when the stream has none. The default wraps <see cref="GetLatestSnapshotAsync"/>
+  /// and records no version and no marks: a store that keeps none has none to return.</returns>
+  /// <docs>fundamentals/perspectives/snapshots#collectives</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:GetLatestSnapshotFloorAsync_DefaultImpl_WrapsTheNewestSnapshot_WithNoMarkAsync</tests>
+  async Task<PerspectiveSnapshotFloor?> GetLatestSnapshotFloorAsync(
+      Guid streamId, string perspectiveName, CancellationToken ct = default) {
+    var latest = await GetLatestSnapshotAsync(streamId, perspectiveName, ct).ConfigureAwait(false);
+    return latest is { } s ? new PerspectiveSnapshotFloor(s.SnapshotEventId, SnapshotVersion: null, s.SnapshotData, ArchivedThroughVersion: null) : null;
   }
 
   /// <summary>
@@ -229,4 +281,22 @@ public sealed class NullPerspectiveSnapshotStore : IPerspectiveSnapshotStore, IN
 /// <param name="ArchivedThroughVersion">The last version an archive of the stream holds, when an archive covers this
 /// snapshot; null when everything after the snapshot is hot.</param>
 /// <docs>fundamentals/events/archive-store#rewind-past-an-archived-snapshot</docs>
-public sealed record PerspectiveSnapshotFloor(Guid SnapshotEventId, int? SnapshotVersion, JsonDocument SnapshotData, long? ArchivedThroughVersion);
+public sealed record PerspectiveSnapshotFloor(Guid SnapshotEventId, int? SnapshotVersion, JsonDocument SnapshotData, long? ArchivedThroughVersion) {
+  /// <summary>
+  /// The commit sequence through which the row's collectives were complete when the snapshot was taken (#1963), or null for
+  /// a snapshot that records none, which keeps the snapshot-event rule.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/snapshots#collectives</docs>
+  public long? CollectivesThroughSequence { get; init; }
+
+  /// <summary>
+  /// True when no archived event lies after the snapshot (#1734): no archive covers it, or it was taken at the last version
+  /// the archive holds (the base a stream's new generation continues from, so everything after it is hot). A rebuild that
+  /// reads no archived data starts only from such a snapshot; one strictly inside the archive, or one that records no
+  /// version, would leave archived events unfolded.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#archived-data</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveSnapshotFloorTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/ArchiveReadThroughIntegrationTests.cs:Rebuild_ByDefault_AfterANewGeneration_StartsFromTheSnapshotAtTheArchiveBoundary_AndReplaysOnlyTheLiveTailAsync</tests>
+  public bool IsLive => ArchivedThroughVersion is not { } through || (SnapshotVersion is { } version && version >= through);
+}

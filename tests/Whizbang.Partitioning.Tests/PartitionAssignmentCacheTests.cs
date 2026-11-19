@@ -161,43 +161,42 @@ public class PartitionAssignmentCacheTests {
   }
 
   [Test]
-  public async Task OnNotification_ForADifferentVersion_MarksTheCopyStaleAsync() {
+  public async Task OnPublished_ForADifferentVersion_MarksTheCopyStaleAsync() {
     var (cache, store, _) = _create();
     store.Published = _read(3, 1, TimeSpan.FromSeconds(90), _self);
     _ = await cache.ForClaimAsync(_self, CancellationToken.None);
 
-    cache.OnNotification("3:2");
+    cache.OnPublished("3:2");
     _ = await cache.ForClaimAsync(_self, CancellationToken.None);
 
     await Assert.That(store.Reads).IsEqualTo(2);
-    await Assert.That(cache.ChannelName).IsEqualTo(PartitionAssignmentCache.CHANNEL);
   }
 
   [Test]
-  public async Task OnNotification_ForTheVersionAlreadyHeld_ReadsNothingAsync() {
+  public async Task OnPublished_ForTheVersionAlreadyHeld_ReadsNothingAsync() {
     var (cache, store, _) = _create();
     store.Published = _read(3, 1, TimeSpan.FromSeconds(90), _self);
     _ = await cache.ForClaimAsync(_self, CancellationToken.None);
 
-    cache.OnNotification("3:1");
+    cache.OnPublished("3:1");
     _ = await cache.ForClaimAsync(_self, CancellationToken.None);
 
     await Assert.That(store.Reads).IsEqualTo(1);
   }
 
   [Test]
-  public async Task OnNotification_RaisesTheAnnouncementSignalAsync() {
+  public async Task OnPublished_RaisesTheAnnouncementSignalAsync() {
     var (cache, _, _) = _create();
     var announced = new List<string>();
     cache.OnPublishAnnounced += announced.Add;
 
-    cache.OnNotification("7:1");
+    cache.OnPublished("7:1");
 
     await Assert.That(announced).IsEquivalentTo(["7:1"]);
   }
 
   [Test]
-  public async Task OnNotification_RaisesTheAnnouncementOnlyOnceTheCopyIsStaleAsync() {
+  public async Task OnPublished_RaisesTheAnnouncementOnlyOnceTheCopyIsStaleAsync() {
     // A caller woken by the announcement claims at once; it must be handed the new version, not the copy the
     // announcement replaced.
     var (cache, store, _) = _create();
@@ -207,21 +206,21 @@ public class PartitionAssignmentCacheTests {
     var claimsOnAnnouncement = new List<Task<PartitionAssignmentVersion?>>();
     cache.OnPublishAnnounced += _ => claimsOnAnnouncement.Add(cache.ForClaimAsync(_self, CancellationToken.None).AsTask());
 
-    cache.OnNotification("3:2");
+    cache.OnPublished("3:2");
 
     await Assert.That(claimsOnAnnouncement).Count().IsEqualTo(1);
     await Assert.That(await claimsOnAnnouncement[0]).IsEqualTo(new PartitionAssignmentVersion(3, 2));
   }
 
   [Test]
-  public async Task OnNotification_ForTheVersionAlreadyHeld_StillRaisesTheAnnouncementAsync() {
+  public async Task OnPublished_ForTheVersionAlreadyHeld_StillRaisesTheAnnouncementAsync() {
     var (cache, store, _) = _create();
     store.Published = _read(3, 1, TimeSpan.FromSeconds(90), _self);
     _ = await cache.ForClaimAsync(_self, CancellationToken.None);
     var announced = new List<string>();
     cache.OnPublishAnnounced += announced.Add;
 
-    cache.OnNotification("3:1");
+    cache.OnPublished("3:1");
 
     await Assert.That(announced).IsEquivalentTo(["3:1"]);
   }

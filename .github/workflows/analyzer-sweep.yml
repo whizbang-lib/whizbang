@@ -16,6 +16,10 @@ name: Analyzer Sweep
 # Every other test project completes locally in well under a gigabyte. A hosted runner has 16 GB
 # and is disposable, so a run that dies costs a job rather than someone's machine.
 #
+# Those figures predate #2392, which split the Core unit tests into Whizbang.Core.Tests and four
+# Whizbang.Core.Unit.*.Tests projects (Dispatcher, Messaging, Perspectives, Workers). A sweep runs
+# on one project; run it once per project to cover all of the Core unit tests.
+#
 # One diagnostic per invocation, always, AND --fix-scope document: together they bound the
 # working set. Do not "optimize" this by passing the whole list or by dropping the fix scope.
 #
@@ -125,7 +129,7 @@ jobs:
               # rather than a wasted job. Several of these fixes can break the build legitimately:
               # RCS1249 strips a null-forgiving operator that was load-bearing wherever no guard
               # dominates the use, which surfaces as CS8600/CS8603. Revert the rule and carry on.
-              if ! dotnet build "$PROJECT" -c Release --no-incremental -v q --nologo 2>&1 | tail -20; then
+              if ! dotnet build "$PROJECT" -c Release --no-incremental -v q --nologo -mt:false 2>&1 | tail -20; then
                 echo "::warning::$d broke the build; reverting it and continuing"
                 git checkout -- .
                 dotnet build-server shutdown >/dev/null 2>&1 || true
@@ -175,7 +179,7 @@ jobs:
         continue-on-error: true
         env:
           PROJECT: ${{ inputs.project }}
-        run: dotnet build "$PROJECT" -c Release --no-incremental -v q --nologo
+        run: dotnet build "$PROJECT" -c Release --no-incremental -v q --nologo -mt:false
 
       - name: Revert const conversions that break TUnit
         if: steps.verify.outcome == 'failure'
@@ -201,7 +205,7 @@ jobs:
             if ($touched) { [IO.File]::WriteAllText($f, ($lines -join "`n")) }
           }
           Write-Output "reverted $n const declarations"
-          dotnet build $env:PROJECT -c Release --no-incremental -v q --nologo
+          dotnet build $env:PROJECT -c Release --no-incremental -v q --nologo -mt:false
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Commit and push

@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Observability;
@@ -18,6 +19,7 @@ namespace Whizbang.Core.Observability;
 /// </summary>
 /// <docs>operations/observability/metrics#table-statistics</docs>
 /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsRegistrationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsRegistrationTests.cs:RegisteringTwice_RunsOnePendingReclamationSampler_OnTheMaintenanceMeterAsync</tests>
 public static class TableStatisticsServiceCollectionExtensions {
   /// <summary>
   /// Registers the table statistics meter and its collector over the provider
@@ -60,26 +62,34 @@ public static class TableStatisticsServiceCollectionExtensions {
     services.AddMetrics();
     services.TryAddSingleton(sp => new WhizbangMetrics(sp.GetRequiredService<IMeterFactory>()));
     services.TryAddSingleton(sp => new TableStatisticsMetrics(sp.GetRequiredService<WhizbangMetrics>()));
+    // #2289: what cleanup has left to do is on the maintenance meter, which a host without the maintenance worker still
+    // needs. TryAdd: the worker pipeline registers the same singleton.
+    services.TryAddSingleton(sp => new MaintenanceMetrics(sp.GetRequiredService<WhizbangMetrics>()));
     services.TryAddSingleton(sp => createProvider(sp, sp.GetRequiredService<IOptions<TableStatisticsOptions>>().Value));
 
-    // The collector tolerates a host with no logging and no schema gate (it logs to nothing and
-    // starts at once), so neither is required here.
-    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, TableStatisticsCollector>(sp =>
+    // The collector and the sampler tolerate a host with no logging (they log to nothing), and are hosted to start when
+    // the schema-ready gate opens (#1636); a host with no gate starts them at once.
+    services.AddWhizbangWorkerAtSchemaReady(sp =>
       new TableStatisticsCollector(
         sp.GetRequiredService<IServiceScopeFactory>(),
         sp.GetRequiredService<TableStatisticsMetrics>(),
-        sp.GetService<ISchemaReadyGate>()!,
         sp.GetService<ILogger<TableStatisticsCollector>>()!,
         sp.GetRequiredService<IOptions<TableStatisticsOptions>>(),
-        sp.GetService<TimeProvider>())));
-    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, EventTypeBytesSampler>(sp =>
+        sp.GetService<TimeProvider>()));
+    services.AddWhizbangWorkerAtSchemaReady(sp =>
       new EventTypeBytesSampler(
         sp.GetRequiredService<IServiceScopeFactory>(),
         sp.GetRequiredService<TableStatisticsMetrics>(),
         sp.GetRequiredService<IOptions<TableStatisticsOptions>>(),
-        sp.GetService<ISchemaReadyGate>(),
         sp.GetService<ILogger<EventTypeBytesSampler>>(),
-        sp.GetService<TimeProvider>())));
+        sp.GetService<TimeProvider>()));
+    services.AddWhizbangWorkerAtSchemaReady(sp =>
+      new PendingReclamationSampler(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<MaintenanceMetrics>(),
+        sp.GetRequiredService<IOptions<TableStatisticsOptions>>(),
+        sp.GetService<ILogger<PendingReclamationSampler>>(),
+        sp.GetService<TimeProvider>()));
 
     return services;
   }

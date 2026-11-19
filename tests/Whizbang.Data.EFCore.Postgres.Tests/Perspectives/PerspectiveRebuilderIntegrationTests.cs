@@ -30,8 +30,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// Paired with the unit tests in Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderTests.cs.
 /// </summary>
 [Category("Integration")]
-[Category("Shard1")]
-public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
+[Category("Shard4")]
+public partial class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
 
   // What the rebuilder published during a test. One per test instance, so tests do not see each other's events.
   private readonly PublishedEventLog _publishedEvents = new();
@@ -170,9 +170,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
       lastEventId = await _appendAndGetEventIdAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 7m });
     }
-    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+    var receptor = new Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+        sp.GetRequiredService<ILogger<Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor>>());
 
     await receptor.HandleAsync(new RebuildPerspectiveCommand(
         PerspectiveNames: [RebuildBalancePerspectiveName], Mode: RebuildMode.InPlace, IncludeStreamIds: [streamId]));
@@ -190,8 +190,7 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       new ServiceInstanceProvider(instance, "rebuild", "rebuild-host", 1),
       Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.MultiStream.MultiStreamCommandOptions { PollInterval = TimeSpan.FromHours(1) }),
       sp.GetRequiredService<ILogger<Whizbang.Core.MultiStream.MultiStreamCommandWorker>>(),
-      Whizbang.Core.Workers.NullPartitionAssignmentSource.Instance,
-      Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      Whizbang.Core.Workers.NullPartitionAssignmentSource.Instance);
     var completed = new TaskCompletionSource<Whizbang.Core.MultiStream.MultiStreamRunCompletion>(TaskCreationOptions.RunContinuationsAsynchronously);
     worker.OnRunCompleted += c => completed.TrySetResult(c);
     await worker.StartAsync(CancellationToken.None);
@@ -983,9 +982,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     var (ownStream, _) = await _arrangeRowPositionedOnAForeignStreamAsync(sp);
     await _refileFanoutChildrenAsync();
 
-    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+    var receptor = new Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+        sp.GetRequiredService<ILogger<Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor>>());
     await receptor.HandleAsync(new RebuildPerspectiveCommand(
         PerspectiveNames: [RebuildBalancePerspectiveName],
         Mode: RebuildMode.InPlace,
@@ -1372,10 +1371,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
 
   /// <summary>
   /// A single stream failing mid-rebuild must not abort the remaining streams. PerspectiveRebuilder
-  /// wraps each runner.RunAsync call in a try/catch and logs per-stream failures. The batch-level
-  /// Success flag is still true and StreamsProcessed reflects the successful streams only. Pins
-  /// that behavior so any future "fail the batch on first error" change lands deliberately with
-  /// this test flipping.
+  /// wraps each runner.RunAsync call in a try/catch and logs per-stream failures, and the other streams
+  /// are rebuilt and kept. The failure is counted (StreamsFailed) and the rebuild is not reported as a
+  /// success (#2376); StreamsProcessed reflects the successful streams only.
   /// </summary>
   [Test]
   public async Task RebuildInPlaceAsync_ContinuesAfterPerStreamFailureAsync() {
@@ -1402,11 +1400,11 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
 
       var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
 
-      // Rebuilder treats per-stream failures as non-fatal — Success is unconditional after
-      // the loop completes (see PerspectiveRebuilder.cs:111).
-      await Assert.That(result.Success).IsTrue();
+      // A per-stream failure does not stop the rest, but it is reported (#2376).
+      await Assert.That(result.Success).IsFalse();
+      await Assert.That(result.StreamsFailed).IsEqualTo(1);
       await Assert.That(result.StreamsProcessed).IsEqualTo(3);
-      await Assert.That(result.Error).IsNull();
+      await Assert.That(result.Error).Contains("1 of 4 stream(s) failed to replay");
     } finally {
       _poisonStreams.Remove(poisonStream);
     }
@@ -1712,7 +1710,8 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
 
       var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
-      await Assert.That(result.Success).IsTrue();
+      await Assert.That(result.Success).IsFalse().Because("a failed stream is reported, not a clean success (#2376)");
+      await Assert.That(result.StreamsFailed).IsEqualTo(1);
       await Assert.That(result.StreamsProcessed).IsEqualTo(2);
     } finally {
       _poisonStreams.Remove(poisonStream);
@@ -1843,9 +1842,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
           new RebuildCreditedEvent { StreamId = streamId, Amount = 42m });
     }
 
-    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+    var receptor = new Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+        sp.GetRequiredService<ILogger<Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor>>());
 
     await receptor.HandleAsync(new RebuildPerspectiveCommand(
         PerspectiveNames: [RebuildBalancePerspectiveName]));
@@ -1870,9 +1869,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
           new RebuildCreditedEvent { StreamId = streamId, Amount = 5m });
     }
 
-    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+    var receptor = new Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+        sp.GetRequiredService<ILogger<Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor>>());
 
     await receptor.HandleAsync(new RebuildPerspectiveCommand(
         PerspectiveNames: [RebuildBalancePerspectiveName],
@@ -1899,9 +1898,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       }
     }
 
-    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+    var receptor = new Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+        sp.GetRequiredService<ILogger<Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor>>());
 
     var targeted = new[] { streams[0], streams[2] };
     await receptor.HandleAsync(new RebuildPerspectiveCommand(
@@ -1937,9 +1936,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
           new RebuildStockAdjustedEvent { StreamId = inventoryStream, Delta = 1 });
     }
 
-    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+    var receptor = new Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+        sp.GetRequiredService<ILogger<Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor>>());
 
     await receptor.HandleAsync(new RebuildPerspectiveCommand(PerspectiveNames: null));
 
@@ -1985,9 +1984,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
           "prior worker crashed mid-processing");
     }
 
-    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+    var receptor = new Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+        sp.GetRequiredService<ILogger<Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor>>());
 
     await receptor.HandleAsync(new RebuildPerspectiveCommand(
         PerspectiveNames: [RebuildBalancePerspectiveName]));
@@ -2020,9 +2019,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
           new RebuildCreditedEvent { StreamId = streamId, Amount = 1m });
     }
 
-    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+    var receptor = new Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+        sp.GetRequiredService<ILogger<Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor>>());
 
     // Perspective name a different service might own, but we don't host it in this process.
     await receptor.HandleAsync(new RebuildPerspectiveCommand(
@@ -2052,9 +2051,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
           new RebuildCreditedEvent { StreamId = balanceStream, Amount = 7m });
     }
 
-    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+    var receptor = new Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+        sp.GetRequiredService<ILogger<Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor>>());
 
     await receptor.HandleAsync(new RebuildPerspectiveCommand(
         PerspectiveNames: [
@@ -2083,9 +2082,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
           new RebuildCreditedEvent { StreamId = streamId, Amount = 1m });
     }
 
-    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+    var receptor = new Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+        sp.GetRequiredService<ILogger<Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor>>());
 
     await receptor.HandleAsync(new RebuildPerspectiveCommand(
         PerspectiveNames: [RebuildBalancePerspectiveName],
@@ -2126,9 +2125,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     // at PostInboxInline; this test invokes at LocalImmediateInline which fails unless the
     // registrar also registers there.
     var registry = sp.GetRequiredService<IReceptorRegistry>();
-    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+    var receptor = new Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+        sp.GetRequiredService<ILogger<Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor>>());
     registry.Register<RebuildPerspectiveCommand>(receptor, LifecycleStage.LocalImmediateInline);
     registry.Register<RebuildPerspectiveCommand>(receptor, LifecycleStage.PreOutboxInline);
     registry.Register<RebuildPerspectiveCommand>(receptor, LifecycleStage.PostInboxInline);
@@ -2177,9 +2176,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       }
     }
 
-    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+    var receptor = new Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+        sp.GetRequiredService<ILogger<Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor>>());
 
     var excluded = new[] { streams[1], streams[3] };
     await receptor.HandleAsync(new RebuildPerspectiveCommand(
@@ -2219,9 +2218,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       }
     }
 
-    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+    var receptor = new Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+        sp.GetRequiredService<ILogger<Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor>>());
 
     await receptor.HandleAsync(new RebuildPerspectiveCommand(
         PerspectiveNames: [RebuildBalancePerspectiveName],
@@ -2257,9 +2256,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       builder.SetMinimumLevel(LogLevel.Trace);
       builder.AddProvider(new RecordingLoggerProvider(recorded));
     });
-    var logger = loggerFactory.CreateLogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>();
+    var logger = loggerFactory.CreateLogger<Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor>();
 
-    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+    var receptor = new Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(), logger);
 
     // Mix in a foreign perspective (drives the skipped-not-owned arm), an Include filter
@@ -2305,9 +2304,9 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       builder.SetMinimumLevel(LogLevel.Trace);
       builder.AddProvider(new RecordingLoggerProvider(recorded));
     });
-    var logger = loggerFactory.CreateLogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>();
+    var logger = loggerFactory.CreateLogger<Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor>();
 
-    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+    var receptor = new Whizbang.Data.Postgres.RebuildPerspectiveCommandReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(), logger);
 
     await receptor.HandleAsync(new RebuildPerspectiveCommand(
@@ -2757,7 +2756,6 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       await _appendEventAsync(eventStore, streamId, new RebuildClosedEvent { StreamId = streamId });
     }
     await _seedPreCutoverRowAsync(streamId, balance: 100m, version: 1);
-    RebuildBalancePerspective.ResetCreditsApplied();
 
     var rebuilder = new PerspectiveRebuilder(
         sp.GetRequiredService<IServiceScopeFactory>(),
@@ -2766,7 +2764,7 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
 
     await Assert.That(result.Success).IsTrue();
     await Assert.That(result.StreamsPurged).IsEqualTo(1);
-    await Assert.That(RebuildBalancePerspective.CreditsApplied).IsEqualTo(0)
+    await Assert.That(RebuildBalancePerspective.CreditsAppliedTo(streamId)).IsEqualTo(0)
       .Because("the stream ends in a purge, so folding its credits is work the last apply throws away");
     await using var check = CreateDbContext();
     await Assert.That(await check.Set<PerspectiveRow<RebuildBalanceModel>>().AnyAsync(r => r.Id == streamId)).IsFalse();
@@ -2783,7 +2781,6 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       await _appendEventAsync(eventStore, streamId, new RebuildClosedEvent { StreamId = streamId });
       await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 5m });
     }
-    RebuildBalancePerspective.ResetCreditsApplied();
 
     var rebuilder = new PerspectiveRebuilder(
         sp.GetRequiredService<IServiceScopeFactory>(),
@@ -2792,7 +2789,7 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
 
     await Assert.That(result.Success).IsTrue();
     await Assert.That(result.StreamsPurged).IsEqualTo(1).Because("the row still ends purged: a later credit does not resurrect it");
-    await Assert.That(RebuildBalancePerspective.CreditsApplied).IsEqualTo(2)
+    await Assert.That(RebuildBalancePerspective.CreditsAppliedTo(streamId)).IsEqualTo(2)
       .Because("the purge was not the last event, so the stream is replayed as before: the first credit is folded "
              + "and the one after the purge is offered to Apply to see whether it resurrects the row");
   }

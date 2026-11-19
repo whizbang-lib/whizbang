@@ -22,7 +22,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>internals/ordering-invariant</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/MessageOrderingExtensionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageOrderingExtensionsTests.cs</tests>
 public static class MessageOrderingExtensions {
   /// <summary>
   /// Sorts a sequence of message envelopes by <see cref="IMessageEnvelope.MessageId"/> ascending.

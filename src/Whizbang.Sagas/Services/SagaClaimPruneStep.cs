@@ -80,9 +80,7 @@ public sealed partial class SagaClaimPruneStep(ILogger<SagaClaimPruneStep> logge
   /// case only on its holder.
   /// </summary>
   private static bool _isThisInstancesTurn(IServiceProvider services) =>
-    services.GetService<DutyHolderWorker>() is not { } holder
-    || !holder.Roles.Contains(StartupDuties.MAINTAINER, StringComparer.Ordinal)
-    || holder.Holds(StartupDuties.MAINTAINER);
+    MaintainerDuty.IsThisInstancesTurn(services);
 
   [LoggerMessage(Level = LogLevel.Information, Message = "Pruned {Count} spent saga claim(s) taken before {Before}")]
   private static partial void LogPruned(ILogger logger, int count, DateTimeOffset before);

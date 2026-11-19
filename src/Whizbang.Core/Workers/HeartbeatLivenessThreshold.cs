@@ -27,7 +27,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/workers/instance-liveness</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatLivenessThresholdTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/HeartbeatLivenessThresholdTests.cs</tests>
 public static class HeartbeatLivenessThreshold {
   /// <summary>How stale <c>last_heartbeat_at</c> may be before the instance counts as dead.</summary>
   /// <param name="options">The heartbeat cadence the writer runs.</param>

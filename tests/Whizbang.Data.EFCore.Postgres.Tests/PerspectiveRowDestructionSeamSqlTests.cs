@@ -22,7 +22,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/111_PerspectiveRowDestructionSeam.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class PerspectiveRowDestructionSeamSqlTests : EFCoreTestBase {
   private const string TABLE = "wh_per_seam_guarded";

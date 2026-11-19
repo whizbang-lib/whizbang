@@ -37,6 +37,9 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     services.TryAddSingleton<Messaging.IInboxChannelWriter, Messaging.InboxChannelWriter>();
     services.TryAddSingleton<Messaging.IDeferredOutboxChannel, Messaging.DeferredOutboxChannel>();
     services.TryAddSingleton<Observability.IEnvelopeRegistry, Observability.EnvelopeRegistry>();
+    // The receptor interceptors, composed once: every receptor invocation path reads this pipeline, and an empty one
+    // (no interceptor registered) is skipped without any per-message work.
+    services.TryAddSingleton(sp => new Security.ReceptorInterceptorPipeline(sp.GetServices<Security.IReceptorInterceptor>()));
     services.TryAddSingleton<Messaging.IEnvelopeSerializer>(sp =>
       new Messaging.EnvelopeSerializer(sp.GetService<System.Text.Json.JsonSerializerOptions>()));
     services.TryAddSingleton<Messaging.ILifecycleMessageDeserializer>(sp =>
@@ -53,7 +56,11 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     services.TryAddSingleton<Workers.IProcessedEventCacheObserver, Workers.NullProcessedEventCacheObserver>();
     services.TryAddSingleton<Messaging.IReceptorRegistry>(Messaging.NullReceptorRegistry.Instance);
     services.TryAddSingleton<Messaging.IReceptorRegistryQuery>(sp =>
-      new Messaging.WhizbangReceptorRegistryQueryAdapter(sp.GetRequiredService<Messaging.IReceptorRegistry>()));
+      new Messaging.WhizbangReceptorRegistryQueryAdapter(
+        sp.GetRequiredService<Messaging.IReceptorRegistry>(), sp.GetService<ServiceAssemblyScope>()));
+    // The consumer registry is the receptor registry query's predicate-and-list face (#2058): one registry, so the
+    // receive boundary and every "what do I consume" reader see the same answer, a host's own query included.
+    services.TryAddSingleton<Messaging.IConsumerRegistry>(sp => sp.GetRequiredService<Messaging.IReceptorRegistryQuery>());
     services.TryAddScoped<Messaging.ILifecycleContextAccessor, Messaging.AsyncLocalLifecycleContextAccessor>();
     services.TryAddSingleton<IStreamIdExtractor>(_ => Registry.StreamIdExtractorRegistry.GetComposite());
     services.TryAddSingleton<IMessageTypeCatalog>(NullMessageTypeCatalog.Instance);
@@ -96,6 +103,7 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     services.TryAddSingleton<Perspectives.IPerspectiveSnapshotStore>(Perspectives.NullPerspectiveSnapshotStore.Instance);
     services.TryAddSingleton<Perspectives.IPerspectiveStreamLocker>(Perspectives.NullPerspectiveStreamLocker.Instance);
     services.TryAddSingleton<Startup.IStartupAssessor>(Startup.NullStartupAssessor.Instance);
+    Startup.StartupAssessmentSourceServiceCollectionExtensions.TryAddStartupAssessmentSource(services);
     services.TryAddSingleton<Startup.IDutyElector>(Startup.NullDutyElector.Instance);
     services.TryAddSingleton<Startup.IPendingDutyWorkStore>(Startup.NullPendingDutyWorkStore.Instance);
     services.TryAddSingleton<Signals.ISignalBus>(Signals.NullSignalBus.Instance);
@@ -106,10 +114,14 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     services.TryAddSingleton<Workers.IInstanceAliveLockSource>(Workers.NullInstanceAliveLockSource.Instance);
     services.TryAddSingleton<Workers.IInstanceConnectionModeSource>(Workers.NullInstanceConnectionModeSource.Instance);
     services.TryAddSingleton<Workers.IOccurrencePublishGate, Workers.NoOpOccurrencePublishGate>();
-    // Both resolvers read the message-type catalog; over the null catalog they resolve nothing, which is
+    // The resolvers read the message-type catalog; over the null catalog they resolve nothing, which is
     // what "no resolver" meant before. Generated registrations supply the same types over a real catalog.
     services.TryAddSingleton<IEventMarkerResolver, EventMarkerResolver>();
     services.TryAddSingleton<IEphemeralModeResolver, EphemeralModeResolver>();
+    // The receive path classifies a declared type it does not consume (an absorbed event) by its catalog kind (#2074).
+    services.TryAddSingleton(sp => new Messaging.CatalogMessageKinds(sp.GetRequiredService<IMessageTypeCatalog>()));
+    // The live audit path and the audit ledger rebuild resolve event types through the same catalog (#2040).
+    services.TryAddSingleton<SystemEvents.AuditTypeResolver>();
     // The payload limit reads the options, the catalog and every registered hook once, at first use.
     services.TryAddSingleton(Messaging.MessagePayloadLimits.Create);
     services.AddMetrics();

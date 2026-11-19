@@ -74,6 +74,16 @@ Describe 'the suite slices in this repository' {
     $script:Suites.component.Tag | Should -BeNullOrEmpty
   }
 
+  It 'slices the unit suite as every Unit project, the way its workflow runs it' {
+    # The unit suite runs -Mode Unit with no tag, so its slice must hold every Unit project (#2068).
+    $workflow = Get-Content (Join-Path -Path $Root -ChildPath '.github/workflows/reusable-test-unit.yml') -Raw
+    $workflow | Should -Match 'Run-Tests\.ps1 -Mode Unit '
+    $workflow | Should -Not -Match '-Tag '
+    $script:Suites.unit.Type | Should -Be 'Unit'
+    $script:Suites.unit.Tag | Should -BeNullOrEmpty
+    $script:UnslicedTypes.Contains('Unit') | Should -BeFalse -Because 'a sliced type is not also listed as unsliced'
+  }
+
   It 'leaves no integration project without a suite that runs it' {
     # #1196: five projects carried only a tag no suite selected, so 214 tests never ran in CI and
     # nothing said so. Every integration project in the solution must carry a suite's tag.
@@ -88,7 +98,7 @@ Describe 'the suite slices in this repository' {
     @($orphans) | Should -BeNullOrEmpty -Because 'an integration project no suite selects never runs in CI'
   }
 
-  It 'points each integration suite in ci.yml at its own slice' {
+  It 'points each suite in ci.yml at its own slice' {
     $ci = Get-Content (Join-Path -Path $Root -ChildPath '.github/workflows/ci.yml') -Raw
     foreach ($suite in $script:Suites.Keys) {
       $ci | Should -Match "uses: \./\.github/workflows/reusable-test-[a-z]+\.yml\s+with:\s+artifact-name: build-$suite-\$\{\{ github\.run_id \}\}" -Because "the $suite suite must download its slice"

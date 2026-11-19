@@ -21,7 +21,7 @@ namespace Whizbang.Core.Capabilities;
 /// at compile time. When the key is absent, the default decides whether the feature is on (implicitly).
 /// </param>
 /// <docs>operations/infrastructure/capabilities#declaring-a-requirement</docs>
-/// <tests>tests/Whizbang.Core.Tests/Capabilities/RequiresCapabilityAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/RequiresCapabilityAttributeTests.cs</tests>
 public sealed record CapabilityRequirement(CapabilityId Capability, string Feature, string Key, string? Value, string? Default) {
   /// <summary><c>provider/name: Feature (Key = Value)</c>, or <c>(Key)</c> when no value is named.</summary>
   /// <returns>The requirement as the verdict names it.</returns>

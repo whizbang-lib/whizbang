@@ -26,7 +26,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields#demoting-a-field</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class PhysicalFieldDemotionTests {
   private const string TABLE = PhysicalMoves.TABLE;

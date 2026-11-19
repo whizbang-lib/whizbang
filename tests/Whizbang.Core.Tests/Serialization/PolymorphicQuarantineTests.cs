@@ -104,7 +104,53 @@ public class PolymorphicQuarantineTests {
         .Any(q => q.DerivedType == typeof(PoisonedProbeEvent))).IsTrue()
       .Because("the quarantine must NAME the offender — a silent skip would hide a real contract defect");
   }
+
+  /// <summary>A base of its own, so no polymorphic metadata another test built earlier can stand in for this one.</summary>
+  public interface IMismatchedConfigureBase;
+
+  /// <summary>The healthy sibling, described by a generated context.</summary>
+  public sealed record MismatchSiblingProbe : IMismatchedConfigureBase {
+    public int Value { get; init; }
+  }
+
+  /// <summary>A derived type a misconfigured resolver describes with another type's metadata.</summary>
+  public sealed record MismatchedProbe : IMismatchedConfigureBase {
+    public int Value { get; init; }
+  }
+
+  /// <summary>
+  /// Answers for <see cref="MismatchedProbe"/> with metadata for <see cref="string"/>, as a misconfigured hand-written
+  /// resolver might. The answer is not null, so the resolvability probe admits the type; STJ refuses it only when the
+  /// trial asks the options for it, with <see cref="InvalidOperationException"/> rather than NotSupportedException.
+  /// </summary>
+  private sealed class MismatchedResolver : IJsonTypeInfoResolver {
+    public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) =>
+      type == typeof(MismatchedProbe)
+        ? JsonMetadataServices.CreateValueInfo<string>(options, JsonMetadataServices.StringConverter)
+        : null;
+  }
+
+  [Test]
+  public async Task DerivedTypeThatFailsToConfigureWithInvalidOperation_IsQuarantined_ItsSiblingStillSerializesAsync() {
+    JsonContextRegistry.RegisterContext(MismatchSiblingProbeJsonContext.Default);
+    JsonContextRegistry.RegisterContext(new MismatchedResolver());
+    JsonContextRegistry.RegisterDerivedType<IMismatchedConfigureBase, MismatchSiblingProbe>("Sibling");
+    JsonContextRegistry.RegisterDerivedType<IMismatchedConfigureBase, MismatchedProbe>("Mismatched");
+
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var baseTypeInfo = JsonContextRegistry.GetLazyPolymorphicTypeInfo<IMismatchedConfigureBase>(options);
+    var json = JsonSerializer.Serialize<IMismatchedConfigureBase>(new MismatchSiblingProbe { Value = 11 }, baseTypeInfo!);
+
+    await Assert.That(json).Contains("\"Value\":11")
+      .Because("a contract STJ rejects with InvalidOperationException degrades that type alone, as one it rejects with NotSupportedException does");
+    var quarantined = JsonContextRegistry.QuarantinedDerivedTypes.FirstOrDefault(q => q.DerivedType == typeof(MismatchedProbe));
+    await Assert.That(quarantined).IsNotNull()
+      .Because("the quarantine names the offender whichever exception its configure failed with");
+  }
 }
 
 [JsonSerializable(typeof(PolymorphicQuarantineTests.HealthyProbeEvent))]
 public sealed partial class QuarantineProbeJsonContext : JsonSerializerContext;
+
+[JsonSerializable(typeof(PolymorphicQuarantineTests.MismatchSiblingProbe))]
+public sealed partial class MismatchSiblingProbeJsonContext : JsonSerializerContext;

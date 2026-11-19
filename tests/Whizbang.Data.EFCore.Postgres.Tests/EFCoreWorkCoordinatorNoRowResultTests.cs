@@ -112,8 +112,12 @@ public class EFCoreWorkCoordinatorNoRowResultTests : EFCoreTestBase {
       + "VALUES ('55555555-5555-5555-5555-555555555555', 4242, NOW())");
 
     await _executeAsync("""
-      CREATE OR REPLACE FUNCTION wh_integrity_ledger_summary(p_max_attempts INTEGER)
-      RETURNS TABLE(unhealed_buckets BIGINT, repair_exhausted BIGINT, oldest_unhealed_secs DOUBLE PRECISION)
+      CREATE OR REPLACE FUNCTION wh_integrity_ledger_gauges(p_max_attempts INTEGER)
+      RETURNS TABLE(unhealed_buckets BIGINT, repair_exhausted BIGINT, oldest_unhealed_secs DOUBLE PRECISION,
+                    answer_pending_buckets BIGINT, answered_buckets BIGINT, deliveries_pending BIGINT,
+                    oldest_delivery_secs DOUBLE PRECISION, unhealed_deficit_events BIGINT,
+                    unhealable_buckets BIGINT, deficit_buckets BIGINT, surplus_buckets BIGINT,
+                    digest_mismatch_buckets BIGINT, unknown_kind_buckets BIGINT)
       AS $$ BEGIN RETURN; END; $$ LANGUAGE plpgsql;
       """);
 

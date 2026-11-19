@@ -51,7 +51,7 @@ namespace Whizbang.Core.Messaging;
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/receptors/lifecycle-receptors#replay-safety</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorIdempotentAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorIdempotentAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class, Inherited = false)]
 public sealed class ReceptorIdempotentAttribute : Attribute {
   /// <summary>

@@ -134,6 +134,27 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Select_EventIds_SelectsOnlyThoseEvents_WithinTheOtherFiltersAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+    var stream = TrackedGuid.New().Value;
+    var other = TrackedGuid.New().Value;
+    await _seedAsync(conn, stream, version: 1, TENANT_A, "Contracts.TypeOne");
+    await _seedAsync(conn, stream, version: 2, TENANT_A, "Contracts.TypeOne");
+    await _seedAsync(conn, other, version: 1, TENANT_A, "Contracts.TypeOne");
+    var all = await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest { TenantScope = TENANT_A, StreamIds = [stream, other] });
+    var wanted = all.First(e => e.StreamId == stream && e.Version == 2).EventId;
+    var elsewhere = all.Single(e => e.StreamId == other).EventId;
+
+    var named = await coordinator.SelectRedeliveryEventsAsync(
+      new RedeliveryRequest { TenantScope = TENANT_A, StreamIds = [stream], EventIds = [wanted, elsewhere] });
+
+    await Assert.That(named.Select(e => e.EventId).ToList()).IsEquivalentTo([wanted])
+      .Because("a named event is shipped only from the streams the request names (#2103)");
+  }
+
+  [Test]
   public async Task Select_KeysetContinuation_PagesWithoutOverlapOrLossAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
@@ -179,6 +200,146 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
       await Assert.That(versions).IsEquivalentTo(versions.Order().ToList())
         .Because("a stream's versions arrive ascending across pages — repair bundles replay in order.");
     }
+  }
+
+
+  // ── #2032: the selection ships only what the answering service authored ──
+
+  /// <summary>Seeds one event with an origin and a stored first hop naming <paramref name="firstHopService"/>.</summary>
+  private static async Task<Guid> _seedAuthoredAsync(
+      NpgsqlConnection conn, Guid streamId, int version, Guid? origin, string? firstHopService) {
+    var eventId = TrackedGuid.New().Value;
+    await using (var store = conn.CreateCommand()) {
+      store.CommandText = """
+        INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence, origin_service_id)
+        VALUES (@event, @stream, @stream, 'TestAggregate', 'Contracts.ThingCreated', '{"t":"tenant-a"}'::jsonb, @version, nextval('wh_commit_seq'), @origin)
+        """;
+      store.Parameters.AddWithValue("event", eventId);
+      store.Parameters.AddWithValue("stream", streamId);
+      store.Parameters.AddWithValue(nameof(version), version);
+      store.Parameters.AddWithValue(nameof(origin), (object?)origin ?? DBNull.Value);
+      await store.ExecuteNonQueryAsync();
+    }
+    var hops = firstHopService is null
+      ? "[]"
+      : $$"""[{"ty":0,"si":{"sn":"{{firstHopService}}","ii":"{{TrackedGuid.New().Value}}","hn":"host","pi":1},"ts":"2026-06-01T12:00:00+00:00"}]""";
+    await using var body = conn.CreateCommand();
+    body.CommandText = """
+      INSERT INTO wh_event_body (event_id, event_data, metadata)
+      VALUES (@event, '{}'::jsonb, jsonb_build_object('Hops', @hops::jsonb))
+      """;
+    body.Parameters.AddWithValue("event", eventId);
+    body.Parameters.AddWithValue(nameof(hops), hops);
+    await body.ExecuteNonQueryAsync();
+    return eventId;
+  }
+
+  [Test]
+  public async Task Select_AuthoredBy_ShipsOnlyEventsTheAnsweringServiceWroteAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+    var stream = TrackedGuid.New().Value;
+
+    var ownNamed = await _seedAuthoredAsync(conn, stream, 1, origin: null, firstHopService: "orders-svc");
+    var ownUnnamed = await _seedAuthoredAsync(conn, stream, 2, origin: null, firstHopService: null);
+    var ownOtherCase = await _seedAuthoredAsync(conn, stream, 3, origin: null, firstHopService: "ORDERS-SVC");
+    var ownUnknown = await _seedAuthoredAsync(conn, stream, 4, origin: null, firstHopService: "Unknown");
+    var received = await _seedAuthoredAsync(conn, stream, 5, origin: TrackedGuid.New().Value, firstHopService: "billing-svc");
+    var preOriginForeign = await _seedAuthoredAsync(conn, stream, 6, origin: null, firstHopService: "billing-svc");
+
+    var rows = await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest { StreamIds = [stream], AuthoredBy = "orders-svc" });
+
+    await Assert.That(rows.Select(r => r.EventId)).IsEquivalentTo([ownNamed, ownUnnamed, ownOtherCase, ownUnknown])
+      .Because("an event another service authored, whether it carries that origin or only a first hop naming it, is "
+             + "refused by every receiver (#1844), so shipping it is pure cost");
+    await Assert.That(rows.Any(r => r.EventId == received || r.EventId == preOriginForeign)).IsFalse();
+  }
+
+  [Test]
+  public async Task Select_WithoutAuthoredBy_KeepsTheEarlierSelectionAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+    var stream = TrackedGuid.New().Value;
+    var own = await _seedAuthoredAsync(conn, stream, 1, origin: null, firstHopService: "orders-svc");
+    var received = await _seedAuthoredAsync(conn, stream, 2, origin: TrackedGuid.New().Value, firstHopService: "billing-svc");
+
+    var rows = await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest { StreamIds = [stream] });
+
+    await Assert.That(rows.Select(r => r.EventId)).IsEquivalentTo([own, received]);
+  }
+
+  /// <summary>
+  /// #2092: a backfill window walks one type by the owner's commit sequence from the requester's position. Rows not yet
+  /// stamped are left for a later window (they stamp above the position), and the limit takes the lowest sequences.
+  /// </summary>
+  [Test]
+  public async Task Select_ByCommitSequence_WalksStampedRowsInCommitOrderAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+    const string TYPE = "Contracts.WindowedThing";
+    // Stream ids chosen so (stream, version) order is the reverse of commit order.
+    var late = Guid.Parse("00000000-0000-0000-0000-0000000000a1");
+    var early = Guid.Parse("ffffffff-0000-0000-0000-0000000000a2");
+    var floor = await _seedAsync(conn, early, version: 1, TENANT_A, TYPE);
+    var second = await _seedAsync(conn, early, version: 2, TENANT_A, TYPE);
+    var third = await _seedAsync(conn, late, version: 1, TENANT_A, TYPE);
+    await using (var unstamped = conn.CreateCommand()) {
+      unstamped.CommandText = """
+        INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence)
+        VALUES (@event, @stream, @stream, 'TestAggregate', @type, '{"t":"tenant-a"}'::jsonb, 2, NULL)
+        """;
+      unstamped.Parameters.AddWithValue("event", TrackedGuid.New().Value);
+      unstamped.Parameters.AddWithValue("stream", late);
+      unstamped.Parameters.AddWithValue("type", TYPE);
+      await unstamped.ExecuteNonQueryAsync();
+    }
+    var all = await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest { EventTypes = [TYPE], OrderByCommitSequence = true });
+    var floorSequence = all.Single(e => e.EventId == floor).CommitSequence;
+
+    var window = await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest {
+      EventTypes = [TYPE],
+      OrderByCommitSequence = true,
+      FromCommitSequence = floorSequence,
+    });
+    var limited = await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest {
+      EventTypes = [TYPE],
+      OrderByCommitSequence = true,
+      FromCommitSequence = floorSequence,
+      MaxEvents = 1,
+    });
+
+    await Assert.That(all.Select(e => e.EventId)).IsEquivalentTo([floor, second, third], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("commit order, not stream order, and the unstamped row waits for its sequence");
+    await Assert.That(window.Select(e => e.EventId)).IsEquivalentTo([second, third], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the window continues strictly after the position");
+    await Assert.That(limited.Select(e => e.EventId)).IsEquivalentTo([second]).Because("the bound keeps the lowest sequences");
+  }
+
+  [Test]
+  public async Task Select_ByCommitSequence_WithoutEventTypes_IsRefusedAsync() {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+
+    await Assert.That(async () => await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest { OrderByCommitSequence = true }))
+      .Throws<ArgumentException>().Because("a commit-sequence window reads one type's history through its index; every type at once has no such read");
+  }
+
+  [Test]
+  public async Task HeadCommitSequence_IsTheHighestStampedSequenceOfTheTypesAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+    await _seedAsync(conn, TrackedGuid.New().Value, version: 1, TENANT_A, "Contracts.HeadA");
+    var last = await _seedAsync(conn, TrackedGuid.New().Value, version: 1, TENANT_A, "Contracts.HeadA");
+    await _seedAsync(conn, TrackedGuid.New().Value, version: 1, TENANT_A, "Contracts.HeadB");
+    var expected = (await coordinator.SelectRedeliveryEventsAsync(new RedeliveryRequest { EventTypes = ["Contracts.HeadA"], OrderByCommitSequence = true }))
+      .Single(e => e.EventId == last).CommitSequence;
+
+    await Assert.That(await coordinator.GetRedeliveryHeadCommitSequenceAsync(["Contracts.HeadA"])).IsEqualTo(expected);
+    await Assert.That(await coordinator.GetRedeliveryHeadCommitSequenceAsync(["Contracts.HeadNone"])).IsNull();
   }
 
   // ── seeding ──────────────────────────────────────────────────────────────

@@ -248,11 +248,15 @@ public static class ServiceCollectionExtensions {
       // dead-letter queues of its own.
       return new AzureServiceBusNamespacesDeadLetterDrainer(
         transports: () => AzureServiceBusNamespacesDeadLetterDrainer.ServiceBusTransportsOf(sp.GetRequiredService<ITransport>()),
-        fleetFor: transport => new AzureServiceBusFleetDeadLetterDrainer(
+        fleetFor: (transport, deadLetterLogLevel) => new AzureServiceBusFleetDeadLetterDrainer(
           clientFactory: () => transport.Client,
           activeSubscriptions: () => transport.ActiveSubscriptions,
           importAsync: importAsync,
-          loggerFactory: loggerFactory));
+          loggerFactory: loggerFactory,
+          deadLetterLogLevel: deadLetterLogLevel),
+        // A drained message's dead-letter record is logged at the configured level (#1901).
+        deadLetterLogLevel: Whizbang.Core.Observability.DeadLetterLog.LevelFrom(
+          sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Workers.DeadLetterLoggingOptions>>()));
     });
 
     // Backlog-age duty's peek (topology arc phase 10): the transport contributes the admin-plane
@@ -390,7 +394,9 @@ public static class ServiceCollectionExtensions {
       discardPolicy: discardPolicy,
       absorbedNamespaces: absorbedNamespaces,
       timeProvider: null,
-      poisonDetector: poisonDetector);
+      poisonDetector: poisonDetector,
+      // #1996: the receptor interceptors gate a raw receptor as they gate every other receptor
+      receptorInterceptors: sp.GetService<Whizbang.Core.Security.ReceptorInterceptorPipeline>());
   }
 
   /// <summary>

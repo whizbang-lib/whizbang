@@ -141,13 +141,10 @@ public class OutstandingBudgetChurnFeedbackTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions {
         AdaptiveOutstandingBudget = true,
         PollingIntervalMilliseconds = 1,
@@ -241,13 +238,10 @@ public class OutstandingBudgetChurnFeedbackTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 1,
         PollingMaxIntervalMilliseconds = 5,

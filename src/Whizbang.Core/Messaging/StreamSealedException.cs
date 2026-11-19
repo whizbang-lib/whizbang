@@ -22,7 +22,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/stream-end-of-life#a-sealed-stream-refuses-appends</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamSealedRefusalTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamSealedRefusalTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:DirectAppend_ToASealedStream_ThrowsStreamSealedException_AndStoresNothingAsync</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
   Justification = "The exception is only meaningful with the stream, the time it was sealed and the reason; the standard constructors would produce one without them.")]

@@ -95,8 +95,12 @@ public class AzureServiceBusTransportReceiveGuardTests {
       .Because("dead-lettering would condemn a message no policy asked to condemn");
     await Assert.That(receiver.Abandoned).Count().IsEqualTo(1)
       .Because("abandoning is what returns it to the broker for redelivery");
-    await Assert.That(logger.Contains(LogLevel.Error, "Error processing message")).IsTrue()
-      .Because("the failure has to be visible: it means this build's switch and its policy disagree");
+    await Assert.That(logger.ContainsWithException(LogLevel.Warning, "Error processing message")).IsTrue()
+      .Because("the failure has to be visible: it means this build's switch and its policy disagree. The message "
+             + "is redelivered and the broker dead-letters it past its delivery count, so the attempt is a Warning "
+             + "carrying its exception (#1976)");
+    await Assert.That(logger.AnyAtOrAbove(LogLevel.Error)).IsFalse()
+      .Because("Error is kept for a dead-lettered message, and this one is redelivered");
   }
 
   // Same contract on the session pipeline, which has its own copy of the switch: a future action
@@ -117,7 +121,8 @@ public class AzureServiceBusTransportReceiveGuardTests {
     await Assert.That(receiver.Completed).IsEmpty();
     await Assert.That(receiver.DeadLettered).IsEmpty();
     await Assert.That(receiver.Abandoned).Count().IsEqualTo(1);
-    await Assert.That(logger.Contains(LogLevel.Error, "Error processing session message")).IsTrue();
+    await Assert.That(logger.ContainsWithException(LogLevel.Warning, "Error processing session message")).IsTrue();
+    await Assert.That(logger.AnyAtOrAbove(LogLevel.Error)).IsFalse();
   }
 
   // Replacing a subscription's default rule is a management-plane write. Without an administration

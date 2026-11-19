@@ -71,10 +71,15 @@ public class CreateProductWorkflowTests {
 
     // Act
     Console.WriteLine($"[TEST] Sending CreateProductCommand for ProductId={_testProd1}");
-    // Use worker hooks for deterministic waiting (bypasses lifecycle coordinator)
-    // Wait for enough perspective completions to ensure data is materialized
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 4, timeoutMilliseconds: 90000); // 2 inv + 2 BFF perspectives
+    // Use worker hooks for deterministic waiting (bypasses lifecycle coordinator), filtered to
+    // this product's stream. Inventory applies all 3 events the assertions read (ProductCreated
+    // x2 perspectives + InventoryRestocked x1); the BFF applies ProductCreated to its 2
+    // perspectives after the transport hop.
+    var inventoryTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 90000, hostFilter: "inventory");
+    var bffTask = fixture.WaitForPerspectiveProcessingAsync(
+      expectedCompletions: 2, streamId: command.ProductId.Value, timeoutMilliseconds: 90000, hostFilter: "bff");
+    var perspectiveTask = Task.WhenAll(inventoryTask, bffTask);
 
     await fixture.Dispatcher.SendAsync(command);
     Console.WriteLine("[TEST] Command sent, waiting for perspective processing...");
@@ -140,7 +145,7 @@ public class CreateProductWorkflowTests {
     // Each CreateProductCommand with InitialStock > 0 fires 3 perspective events.
     foreach (var command in commands) {
       var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-        expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+        expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
       await fixture.Dispatcher.SendAsync(command);
       await perspectiveTask;
     }
@@ -186,7 +191,7 @@ public class CreateProductWorkflowTests {
 
     // Act — use hooks for deterministic waiting
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 2, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 2, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();
@@ -220,7 +225,7 @@ public class CreateProductWorkflowTests {
     // Act — use hooks for deterministic waiting.
     // InitialStock > 0 fires 3 perspective events.
     var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, timeoutMilliseconds: 45000, hostFilter: "inventory");
+      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
     await fixture.Dispatcher.SendAsync(command);
     await perspectiveTask;
     await fixture.WaitForWorkersIdleAsync();

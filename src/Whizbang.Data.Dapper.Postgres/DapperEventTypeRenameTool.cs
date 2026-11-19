@@ -114,10 +114,15 @@ public sealed class DapperEventTypeRenameTool : IEventTypeRenameTool {
     foreach (var rename in pending) {
       cancellationToken.ThrowIfCancellationRequested();
 
+      // event_type holds the stored form (Ns.Type, Assembly), not the bare CLR name a rename carries (#2265): match the
+      // rows stored under the old name with any assembly, and write the target type's stored form, as the append path
+      // writes it. A target the catalog does not carry has no type to format, so its rows keep the assembly they had.
       var eventTypeAffected = await connection.ExecuteAsync(
         new CommandDefinition(
-          "UPDATE wh_event_store SET event_type = @New WHERE event_type = @Old",
-          new { New = rename.NewClrTypeName, Old = rename.OldClrTypeName },
+          @"UPDATE wh_event_store
+            SET event_type = COALESCE(@NewStored, @New || substr(event_type, length(@Old) + 1))
+            WHERE event_type = @Old OR starts_with(event_type, @Old || ', ')",
+          new { New = rename.NewClrTypeName, NewStored = _storedNameOf(rename), Old = rename.OldClrTypeName },
           transaction: transaction,
           cancellationToken: cancellationToken));
 
@@ -192,6 +197,20 @@ public sealed class DapperEventTypeRenameTool : IEventTypeRenameTool {
     _logger?.LogInformation(
       "Applied {Count} rename(s) affecting {RowsAffected} row(s) across 6 data tables + registry.",
       pending.Count, totalRowsAffected);
+  }
+
+  /// <summary>
+  /// The stored form (<see cref="TypeNameFormatter.Format"/>) of a rename's target type, from the catalog entry of its
+  /// pinned id, or of its new name for a manual rename; null when the catalog carries neither.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventTypeRenameToolStoredNameTests.cs:DetectedRename_WritesTheEventTypeTheAppendPathWritesForTheTargetTypeAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventTypeRenameToolStoredNameTests.cs:ManualRename_WritesTheEventTypeTheAppendPathWritesForTheTargetTypeAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventTypeRenameToolStoredNameTests.cs:ManualRename_ToANameTheCatalogDoesNotCarry_KeepsTheStoredAssemblyAsync</tests>
+  private string? _storedNameOf(PendingRename rename) {
+    var target = _catalog.GetAll().FirstOrDefault(e => rename.PinnedId is not null
+      ? string.Equals(e.PinnedId, rename.PinnedId, StringComparison.Ordinal)
+      : string.Equals(e.ClrTypeName, rename.NewClrTypeName, StringComparison.Ordinal));
+    return target is null ? null : TypeNameFormatter.Format(target.Type);
   }
 
   private sealed record RegistryRow(string? PinnedId, string ClrTypeName);

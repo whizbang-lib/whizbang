@@ -50,7 +50,6 @@ public sealed class DeadLetterRecoveryWorkerBranchCoverageTests {
     var sp = new ServiceCollection().BuildServiceProvider();
     return new DeadLetterRecoveryWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: new ImmediateSchemaGate(),
       options: options!,
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider(GENERATION),
@@ -636,12 +635,6 @@ public sealed class DeadLetterRecoveryWorkerBranchCoverageTests {
       => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
-  private sealed class ImmediateSchemaGate : ISchemaReadyGate {
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-    public void MarkReady() { }
-    public bool IsReady => true;
-  }
-
   private sealed class FixedGenerationProvider(string value) : IGenerationProvider {
     public string GetGeneration() => value;
   }
@@ -719,7 +712,6 @@ public sealed class DeadLetterRecoveryWorkerBranchCoverageTests {
     var bell = new Bell();
     var worker = new DeadLetterRecoveryWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: new ImmediateSchemaGate(),
       options: Options.Create(options),
       integrityOptions: Options.Create(integrity ?? new StreamIntegrityOptions()),
       generationProvider: new FixedGenerationProvider(GENERATION),

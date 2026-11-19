@@ -33,7 +33,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>operations/workers/claim-backpressure</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PoisonAdmissionPolicyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PoisonAdmissionPolicyTests.cs</tests>
 public sealed class PoisonAdmissionPolicy {
 
   /// <summary>Why a row was or was not admitted to the working set.</summary>

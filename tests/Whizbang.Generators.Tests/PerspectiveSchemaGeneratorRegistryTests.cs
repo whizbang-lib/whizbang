@@ -41,7 +41,7 @@ public partial class PerspectiveSchemaGeneratorRegistryTests {
   public async Task Generator_NestedModel_EmitsTheRegistryPayloadInClrFormAsync() {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(NESTED_MODEL_SOURCE);
 
-    var generated = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+    var generated = GeneratorTestHelper.GetRequiredGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     var registryLine = _line(generated, "RegistryJson =");
 
     await Assert.That(registryLine).Contains("ClrTypeName\\\":\\\"MyApp.Owner+Model\\\"")
@@ -57,7 +57,7 @@ public partial class PerspectiveSchemaGeneratorRegistryTests {
   public async Task Generator_RegistersThePayloadAtModuleLoadAsync() {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(NESTED_MODEL_SOURCE);
 
-    var generated = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+    var generated = GeneratorTestHelper.GetRequiredGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
 
     await Assert.That(generated).Contains("[global::System.Runtime.CompilerServices.ModuleInitializer]");
     await Assert.That(generated)
@@ -81,9 +81,9 @@ public partial class PerspectiveSchemaGeneratorRegistryTests {
       }
       """);
 
-    var generated = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+    var generated = GeneratorTestHelper.GetRequiredGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
 
-    var registrations = generated!.Split('\n')
+    var registrations = generated.Split('\n')
       .Where(l => l.Contains("PerspectiveDocumentModels.Register(", StringComparison.Ordinal)).ToList();
     await Assert.That(registrations.Count).IsEqualTo(1);
     await Assert.That(registrations[0]).Contains("typeof(global::MyApp.Owner.Model)")
@@ -96,7 +96,7 @@ public partial class PerspectiveSchemaGeneratorRegistryTests {
   public async Task Generator_UnnamedAssembly_NamesTheServiceUnknownAsync() {
     var result = GeneratorTestHelper.RunGeneratorOnUnnamedAssembly(new PerspectiveSchemaGenerator(), NESTED_MODEL_SOURCE);
 
-    var generated = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+    var generated = GeneratorTestHelper.GetRequiredGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
 
     await Assert.That(_line(generated, "RegistryJson =")).Contains("ServiceName\\\":\\\"Unknown\\\"")
       .Because("the EF Core driver names an unnamed assembly's service the same way");
@@ -107,7 +107,7 @@ public partial class PerspectiveSchemaGeneratorRegistryTests {
   public async Task Generator_RegistryTable_IsTheTableTheDdlCreatesAsync() {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(NESTED_MODEL_SOURCE);
 
-    var generated = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+    var generated = GeneratorTestHelper.GetRequiredGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     var table = _tableName().Match(_line(generated, "RegistryJson =")).Groups[1].Value;
 
     await Assert.That(table).IsNotEmpty();
@@ -115,8 +115,9 @@ public partial class PerspectiveSchemaGeneratorRegistryTests {
       .Because("the retention sweeps evict from the registry row's table, so it has to be the one this driver builds");
   }
 
-  private static string _line(string? source, string marker) =>
-    source!.Split('\n').First(l => l.Contains(marker, StringComparison.Ordinal));
+  private static string _line(string source, string marker) =>
+    source.Split('\n').FirstOrDefault(l => l.Contains(marker, StringComparison.Ordinal))
+      ?? throw new InvalidOperationException($"The generated schema has no line containing '{marker}'.");
 
   [GeneratedRegex("TableName\\\\\":\\\\\"([a-z0-9_]+)\\\\\"")]
   private static partial Regex _tableName();

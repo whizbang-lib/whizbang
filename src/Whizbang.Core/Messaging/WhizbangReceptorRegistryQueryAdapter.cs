@@ -12,17 +12,27 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <remarks>Registered as a singleton by
 /// <c>WorkerPipelineExtensions.AddWhizbangWorkers</c>.</remarks>
-/// <docs>internals/receptor-registry-query</docs>
+/// <docs>extending/internals/receptor-registry-query</docs>
 /// <param name="runtimeRegistry">The runtime receptor registry; when supplied, runtime-registered
 /// receptors (the control-plane surface) count as consumers at the discard gates.</param>
-public sealed class WhizbangReceptorRegistryQueryAdapter(IReceptorRegistry runtimeRegistry) : IReceptorRegistryQuery {
+/// <param name="scope">
+/// The host's service scope (#2243). When the host is scoped, only its own service's generated receptors count, so a
+/// receptor another service in the process declares never makes this host consume, subscribe to or fire for a
+/// message. <see langword="null"/> or unscoped: every loaded assembly's receptors count, as before.
+/// </param>
+/// <tests>tests/Whizbang.Core.Tests/ServiceScope/ScopedReceptorRegistryQueryTests.cs</tests>
+public sealed class WhizbangReceptorRegistryQueryAdapter(
+    IReceptorRegistry runtimeRegistry, Whizbang.Core.ServiceAssemblyScope? scope = null) : IReceptorRegistryQuery {
+  private readonly Whizbang.Core.Generated.ScopedReceptorRegistryQuery? _scoped =
+    scope is { IsScoped: true } ? new(scope) : null;
+
   /// <inheritdoc />
   public bool HasReceptors(LifecycleStage stage, string messageType)
-    => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(stage, messageType);
+    => _scoped?.HasReceptors(stage, messageType) ?? Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(stage, messageType);
 
   /// <inheritdoc />
   public bool HasInboxHandler(string messageType)
-    => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasInboxHandler(messageType);
+    => _scoped?.HasInboxHandler(messageType) ?? Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasInboxHandler(messageType);
 
   /// <inheritdoc />
   /// <remarks>
@@ -31,11 +41,11 @@ public sealed class WhizbangReceptorRegistryQueryAdapter(IReceptorRegistry runti
   /// envelope type name, or a row recovered from dead-letter custody under it (#934), is asking
   /// about the payload.
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:HasAnyConsumer_EnvelopeWrappedName_OfAStaticallyConsumedPayload_CountsAsConsumerAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:HasAnyConsumer_EnvelopeWrappedName_OfARuntimeConsumedPayload_CountsAsConsumerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:HasAnyConsumer_EnvelopeWrappedName_OfAStaticallyConsumedPayload_CountsAsConsumerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:HasAnyConsumer_EnvelopeWrappedName_OfARuntimeConsumedPayload_CountsAsConsumerAsync</tests>
   public bool HasAnyConsumer(string messageType) {
     var payloadType = EventTypeMatchingHelper.ExtractInnerPayloadTypeName(messageType);
-    return Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasAnyConsumer(payloadType)
+    return (_scoped?.HasAnyConsumer(payloadType) ?? Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasAnyConsumer(payloadType))
        || runtimeRegistry.HasRuntimeConsumerFor(payloadType);
   }
 
@@ -45,5 +55,24 @@ public sealed class WhizbangReceptorRegistryQueryAdapter(IReceptorRegistry runti
   /// the predicate surface (<see cref="HasAnyConsumer"/>) still covers them at the discard
   /// gates.</remarks>
   public IReadOnlyList<HandledMessageInfo> GetHandledMessages()
-    => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetHandledMessages();
+    => _scoped?.GetHandledMessages() ?? Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetHandledMessages();
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:GetConsumedMessages_DelegatesToGeneratedStaticAsync</tests>
+  public IReadOnlyList<ConsumedMessageInfo> GetConsumedMessages()
+    => _scoped?.GetConsumedMessages() ?? Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetConsumedMessages();
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryConsumedMessagesTests.cs:Adapter_FindConsumedMessage_ReadsTheGeneratedRegistryAsync</tests>
+  public ConsumedMessageInfo? FindConsumedMessage(string messageType)
+    => _scoped is null ? Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.FindConsumedMessage(messageType) : _scoped.FindConsumedMessage(messageType);
+
+  /// <inheritdoc />
+  /// <remarks>A scoped host answers for its own service's collective handlers only (#2243).</remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryHandledCollectiveTests.cs:Adapter_GetHandledCollectiveEventTypes_ReadsTheGeneratedRegistryAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/ServiceScope/ScopedReceptorRegistryQueryTests.cs:AScopedHost_AnswersForItsOwnServicesCollectiveHandlersOnlyAsync</tests>
+  public IReadOnlyList<string>? GetHandledCollectiveEventTypes()
+    => _scoped is null
+      ? Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetHandledCollectiveEventTypes()
+      : _scoped.GetHandledCollectiveEventTypes();
 }

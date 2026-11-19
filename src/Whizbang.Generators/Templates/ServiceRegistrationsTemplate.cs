@@ -20,17 +20,17 @@ internal static class ServiceRegistrationInitializer {
   /// Module initializer that registers service callbacks with the global registry.
   /// Runs automatically when the assembly is loaded - no explicit call needed.
   /// </summary>
-  [System.Runtime.CompilerServices.ModuleInitializer]
+  [global::System.Runtime.CompilerServices.ModuleInitializer]
   internal static void Initialize() {
     // Register lens services callback
-    global::Whizbang.Core.ServiceRegistrationCallbacks.LensServices = (services, options) => {
+    global::Whizbang.Core.ServiceRegistrationCallbacks.RegisterLensServices({{ASSEMBLY_NAME_LITERAL}}, (services, options) => {
       services.AddLensServices(o => o.IncludeSelfRegistration = options.IncludeSelfRegistration);
-    };
+    });
 
     // Register perspective services callback
-    global::Whizbang.Core.ServiceRegistrationCallbacks.PerspectiveServices = (services, options) => {
+    global::Whizbang.Core.ServiceRegistrationCallbacks.RegisterPerspectiveServices({{ASSEMBLY_NAME_LITERAL}}, (services, options) => {
       services.AddPerspectiveServices(o => o.IncludeSelfRegistration = options.IncludeSelfRegistration);
-    };
+    });
   }
 }
 

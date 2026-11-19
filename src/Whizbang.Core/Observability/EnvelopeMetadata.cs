@@ -51,12 +51,32 @@ public sealed class EnvelopeMetadata {
   public int? EphemeralTtlSeconds { get; init; }
 
   /// <summary>
+  /// The key of a superseding event (<c>[Superseding]</c>, <c>[SupersedingKey]</c>), stamped at dispatch and on receipt.
+  /// The emit chains copy it into <c>wh_event_store.supersede_key</c> for an event flagged
+  /// <c>EventFlags.Superseding</c>. Empty for a superseding type that declares no key; null otherwise.
+  /// </summary>
+  /// <docs>fundamentals/events/superseding-events#the-key</docs>
+  [System.Text.Json.Serialization.JsonPropertyName("sk")]
+  public string? SupersedingKey { get; init; }
+
+  /// <summary>
+  /// The superseding group of a superseding event (<c>[Superseding(Group = "...")]</c>, #2124), stamped beside
+  /// <see cref="SupersedingKey"/>. The emit chains copy it into <c>wh_event_store.supersede_group</c> for an event flagged
+  /// <c>EventFlags.Superseding</c>. Null for an ungrouped type, which the store matches by its event type.
+  /// </summary>
+  /// <docs>fundamentals/events/superseding-events#superseding-groups</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/EnvelopeMetadataSlimFormTests.cs:ToSlim_KeepsWhatReadersTakeFromAStoredEventAsync</tests>
+  [System.Text.Json.Serialization.JsonPropertyName("sg")]
+  public string? SupersedingGroup { get; init; }
+
+  /// <summary>
   /// The slim stored form: what readers take from a stored event, and nothing else. It keeps the message id, the
-  /// ephemeral TTL, and one Current hop carrying the message timestamp, correlation id, causation id and stream id
-  /// as the first hop holds them (where readers take them from), and the scope folded over every Current hop.
+  /// ephemeral TTL, the superseding key, and one Current hop carrying the message timestamp, correlation id, causation
+  /// id, stream id and trace parent as the first hop holds them (where readers take them from), and the scope folded over
+  /// every Current hop. The write paths build the same form in SQL (<c>_wh_slim_event_metadata</c>, migration 285).
   /// </summary>
   /// <remarks>
-  /// Dispatch context, receptor invocations, the service instance, trace parent, caller information, topic,
+  /// Dispatch context, receptor invocations, the service instance, caller information, topic,
   /// partition, sequence, execution strategy, duration, policy trail, the hop metadata dictionary and causation hops
   /// are dropped: they matter while a message is delivered and are kept on the outbox and inbox rows for that.
   /// The hop's service instance is <see cref="ServiceInstanceInfo.Unknown"/>, which the hop writer leaves out.
@@ -66,7 +86,13 @@ public sealed class EnvelopeMetadata {
   /// <tests>tests/Whizbang.Core.Tests/Observability/EnvelopeMetadataSlimFormTests.cs</tests>
   public EnvelopeMetadata ToSlim() {
     if (Hops.Count == 0) {
-      return new EnvelopeMetadata { MessageId = MessageId, Hops = [], EphemeralTtlSeconds = EphemeralTtlSeconds };
+      return new EnvelopeMetadata {
+        MessageId = MessageId,
+        Hops = [],
+        EphemeralTtlSeconds = EphemeralTtlSeconds,
+        SupersedingKey = SupersedingKey,
+        SupersedingGroup = SupersedingGroup,
+      };
     }
 
     ScopeContext? scope = null;
@@ -80,6 +106,8 @@ public sealed class EnvelopeMetadata {
     return new EnvelopeMetadata {
       MessageId = MessageId,
       EphemeralTtlSeconds = EphemeralTtlSeconds,
+      SupersedingKey = SupersedingKey,
+      SupersedingGroup = SupersedingGroup,
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -88,6 +116,9 @@ public sealed class EnvelopeMetadata {
           CorrelationId = first.CorrelationId,
           CausationId = first.CausationId,
           StreamId = first.StreamId,
+          // #1725: the first hop's trace parent, so perspective and perspective-stage receptor spans keep joining the
+          // trace the event started in.
+          TraceParent = first.TraceParent,
           Scope = scope is null ? null : ScopeDelta.CreateDelta(null, scope),
         },
       ],

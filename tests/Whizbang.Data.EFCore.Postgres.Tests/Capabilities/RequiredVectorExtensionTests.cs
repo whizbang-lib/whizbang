@@ -23,7 +23,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Capabilities;
 /// <code-under-test>src/Whizbang.Data.Postgres/PostgresRequiredExtension.cs</code-under-test>
 /// <docs>fundamentals/perspectives/vector-fields#pgvector-extension</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class RequiredVectorExtensionTests : IAsyncDisposable {
   private const string SCOPE = "db";

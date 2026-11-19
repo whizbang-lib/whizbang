@@ -52,7 +52,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Routing/MessageDiscardPolicy.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Messaging/WhizbangReceptorRegistryQueryAdapter.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class RecoveredBrokerDeadLetterDispatchIntegrationTests : EFCoreTestBase {
 
@@ -177,11 +176,8 @@ public class RecoveredBrokerDeadLetterDispatchIntegrationTests : EFCoreTestBase 
 
   /// <summary>Runs one scan of the real recovery worker, which re-enters every due dead letter.</summary>
   private static async Task _scanForRecoveryAsync(ServiceProvider provider) {
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new DeadLetterRecoveryWorker(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: gate,
       options: Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 60, ScanBatchSize = 50, EnableGenerationReplay = false }),
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       generationProvider: new DefaultGenerationProvider(),
@@ -217,7 +213,6 @@ public class RecoveredBrokerDeadLetterDispatchIntegrationTests : EFCoreTestBase 
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: new FakeFailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,

@@ -27,10 +27,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// the planner uses the index and that the rows match is <see cref="PhysicalJsonbContainmentIntegrationTests"/>.
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields#jsonb-columns</docs>
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 [SuppressMessage("Readability", "RCS1118:Mark local variable as const",
   Justification = "Captured on purpose: a const local is inlined as a literal and the parameterized path would go untested.")]
+[NotInParallel] // Switches the process-wide containment mode every perspective query compiles under: runs alone.
 public class PhysicalJsonbContainmentSqlTests {
   private const string UNUSED_CONNECTION = "Host=localhost;Database=jsonbcols;Username=u;Password=p";
 
@@ -261,22 +261,28 @@ public class PhysicalJsonbContainmentSqlTests {
     [JsonIgnore]
     public JsonbBare? Bare { get; set; }
 
-    private static int _contextsRegistered;
+    private static readonly Lock _contextsGate = new();
+    private static bool _contextsRegistered;
 
     /// <summary>
     /// Registers the model's serializer contexts once and its column mappings on every call.
     /// </summary>
     /// <remarks>
     /// The two halves differ on purpose. A serializer context is appended to a registry that has no removal, so it is
-    /// registered once per process. The column mappings live in <see cref="PhysicalFieldRegistry"/>, which other test
-    /// classes in this assembly clear before each of their tests, so they are put back every time: registering a
-    /// mapping overwrites it, and a once-per-process guard here made every later test read the columns as document
-    /// members after any of those classes had run.
+    /// registered once per process. The column mappings live in <see cref="PhysicalFieldRegistry"/>, which a test that
+    /// runs alone may clear (<c>PhysicalFieldRegistryTests</c>, <c>PhysicalJsonbContainmentRegistryResetTests</c>), so
+    /// they are put back every time: registering a mapping overwrites it, and a once-per-process guard here made every
+    /// later test read the columns as document members after one of those had run.
     /// </remarks>
     internal static void Register() {
-      if (Interlocked.Exchange(ref _contextsRegistered, 1) == 0) {
-        JsonContextRegistry.RegisterContext(JsonbColumnsJsonContext.Default);
-        JsonContextRegistry.RegisterContext(new BareResolver());
+      // Under the lock, so a test running in parallel waits until both contexts are in the registry rather than seeing
+      // the guard set and reading the model before its context is there (it then read a member's CLR name as stored).
+      lock (_contextsGate) {
+        if (!_contextsRegistered) {
+          JsonContextRegistry.RegisterContext(JsonbColumnsJsonContext.Default);
+          JsonContextRegistry.RegisterContext(new BareResolver());
+          _contextsRegistered = true;
+        }
       }
 
       PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(GridFilter), "grid_filter");

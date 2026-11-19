@@ -13,7 +13,7 @@ namespace Whizbang.Data.Postgres.Schema;
 /// Under a rolling update the instances on the previous release keep running, and keep querying, until the new
 /// ones are ready. Dropping an index the previous release still declares would take it out from under them. So
 /// each instance records, at its reconcile, every object it declares, and an object is dropped only once no
-/// live instance (one that has heartbeated within the window) declares it.
+/// live instance (one the database's one liveness rule calls live, #2027) declares it.
 /// </para>
 /// <para>
 /// An instance that is alive and has recorded nothing is on a release that predates the ledger, and what it
@@ -24,19 +24,18 @@ namespace Whizbang.Data.Postgres.Schema;
 /// <docs>fundamentals/perspectives/managed-schema-objects#settings</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ManagedSchemaReconcilerTests.cs</tests>
 internal static class ManagedSchemaFleet {
-  /// <summary>How recent a heartbeat has to be for an instance to count as running.</summary>
-  internal static readonly TimeSpan LiveWindow = TimeSpan.FromMinutes(2);
-
   /// <summary>
   /// Records what this instance declares (when it is known), and returns the objects, as <c>table:name</c>,
   /// other live instances declare; null when a live instance has recorded nothing, so the fleet is unknown.
   /// </summary>
   internal static async Task<IReadOnlySet<string>?> ReportAndReadAsync(
       NpgsqlConnection connection, string schema, Guid? self, ManagedSchemaObjectSet declared,
-      TimeSpan liveWindow, CancellationToken cancellationToken) {
+      CancellationToken cancellationToken) {
     var quoted = PgIdentifier.Quote(schema);
     var declarations = $"{quoted}.wh_managed_object_declarations";
     var instances = $"{quoted}.wh_service_instances";
+    // #2027: the one liveness rule, read as a set; the reader keeps no window of its own.
+    var live = $"(SELECT l.instance_id FROM {quoted}.wh_live_instance_ids() l)";
 
     if (self is { } instanceId) {
       await using var report = new NpgsqlCommand(
@@ -54,15 +53,13 @@ internal static class ManagedSchemaFleet {
 
     await using (var forget = new NpgsqlCommand(
       $"DELETE FROM {declarations} d WHERE NOT EXISTS (SELECT 1 FROM {instances} i "
-      + "WHERE i.instance_id = d.instance_id AND i.last_heartbeat_at > now() - @window)", connection)) {
-      forget.Parameters.AddWithValue("window", liveWindow);
+      + $"WHERE i.instance_id = d.instance_id AND i.instance_id IN {live})", connection)) {
       await forget.ExecuteNonQueryAsync(cancellationToken);
     }
 
     await using var read = new NpgsqlCommand(
       $"SELECT d.objects FROM {instances} i LEFT JOIN {declarations} d ON d.instance_id = i.instance_id "
-      + "WHERE i.last_heartbeat_at > now() - @window AND i.instance_id IS DISTINCT FROM @self", connection);
-    read.Parameters.AddWithValue("window", liveWindow);
+      + $"WHERE i.instance_id IN {live} AND i.instance_id IS DISTINCT FROM @self", connection);
     read.Parameters.Add(new NpgsqlParameter(nameof(self), NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)self ?? DBNull.Value });
 
     var fleet = new HashSet<string>(StringComparer.Ordinal);

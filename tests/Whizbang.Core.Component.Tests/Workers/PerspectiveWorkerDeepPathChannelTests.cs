@@ -54,7 +54,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       instanceProvider: new FakeInstanceProvider(),
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -134,7 +133,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions {
         EnableWorkerBatchSpans = true,
         // Verbosity must be non-Off: IsEnabled(component) gates the perspective span on
@@ -237,7 +235,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),
@@ -344,7 +341,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -440,7 +436,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         instanceProvider: instanceProvider,
         scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
         options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
         eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),
@@ -534,7 +529,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         instanceProvider: instanceProvider,
         scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
         options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
         eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),
@@ -627,7 +621,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),
@@ -688,7 +681,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       instanceProvider: new FakeInstanceProvider(),
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -755,7 +747,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         PollingIntervalMilliseconds = 50,
         NotifyHealthyPollingIntervalMilliseconds = 30_000
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -861,7 +852,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         // ever being delivered.
         MaxConcurrentDrainConsumers = 1,
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -969,7 +959,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         // batch: the signal has only the abandoned wait to land on.
         MaxConcurrentDrainConsumers = 1,
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -1063,7 +1052,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         PollingIntervalMilliseconds = 1_000_000,
         NotifyHealthyPollingIntervalMilliseconds = 1_000_000,
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -1147,7 +1135,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         // deterministically (sibling loops would otherwise keep idling forever).
         MaxConcurrentDrainConsumers = 1
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: NullEventTypeProvider.Instance,
@@ -1389,8 +1376,14 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     /// <summary>#1862: the rewind is one an ephemeral runner with no snapshot floor skips, dropping its trigger.</summary>
     public bool RewindDropsTheTrigger { get; init; }
 
-    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
-      RewindDropsTheTrigger
+    private int _rewindCallCount;
+
+    /// <summary>How many rewinds the worker asked this runner for.</summary>
+    public int RewindCallCount => Volatile.Read(ref _rewindCallCount);
+
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _rewindCallCount);
+      return RewindDropsTheTrigger
         ? Task.FromResult(new PerspectiveCursorCompletion {
           StreamId = streamId,
           PerspectiveName = perspectiveName,
@@ -1399,6 +1392,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
           DroppedStragglers = [triggeringEventId]
         })
         : RunAsync(streamId, perspectiveName, null, cancellationToken);
+    }
 
     public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _bootstrapCallCount);
@@ -1440,7 +1434,9 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     }
     public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) =>
       Task.FromResult(new List<MessageEnvelope<TMessage>>());
-    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) => Task.FromResult(-1L);
+    /// <summary>The stream's last version as the store reports it; -1 (an empty stream) unless a test sets it.</summary>
+    public long LastSequence { get; set; } = -1;
+    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) => Task.FromResult(LastSequence);
   }
 
   private sealed class ListEventTypeProvider(IReadOnlyList<Type> eventTypes) : IEventTypeProvider {

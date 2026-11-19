@@ -7,23 +7,28 @@ using System.Collections.Generic;
 namespace Whizbang.Core.Startup;
 
 /// <summary>
-/// Tuning for role assignment: duties held as a liveness-tied assignment row with an epoch,
-/// rather than as a session advisory lock held for the whole tenure.
+/// Tuning for role assignment: every duty is held as a liveness-tied assignment row with a lease
+/// and an epoch (#2044). There is no other way to hold a duty, and no session advisory lock.
 /// </summary>
 /// <remarks>
 /// <para>
 /// The lease is <see cref="RenewInterval"/> times <see cref="MissedRenewalsBeforeLapse"/>, so one
-/// slow renewal never costs the role: a holder lapses only after several renewals in a row fail to
-/// arrive. A holder renews from its own work loop, never from a timer, so a holder that is stuck
-/// stops renewing and lapses. After an involuntary lapse, that instance may not win the role back
-/// for <see cref="CooldownAfterLapse"/>, so a slow instance cannot bounce the role. A graceful
+/// slow renewal never costs the role. A holder renews from its own work loop, so a holder that is
+/// stuck stops renewing; the migrator, whose startup phases can each outlast the lease, renews on a
+/// keepalive timer from its election until schema initialization returns (#2127). Past its lease, a
+/// holder is judged by the one liveness rule, the same rule every other reader of instance liveness
+/// asks (#2140): it keeps the role while the rule calls it live and it renewed inside its
+/// <see cref="ProgressWindow"/>, so a holder busy with startup or one long unit of work keeps its
+/// role, and a holder that is connected but stuck loses it within the window. A holder the rule
+/// calls dead lapses at its lease. After an involuntary lapse, that instance may not win the role
+/// back for <see cref="CooldownAfterLapse"/>, so a slow instance cannot bounce the role. A graceful
 /// release carries no cool-down.
 /// </para>
 /// <para>
-/// Role assignment is on by default. The migrator is held by assignment too: its vote is part of the
-/// schema bootstrap, so it exists before the first migration, and migrator waiters watch the
-/// assignment row as well as the duty's session lock. Turn the whole mechanism off with
-/// <see cref="Enabled"/>, and every duty goes back to the session-lock elector.
+/// The migrator is held by assignment too: its vote is part of the schema bootstrap, so it exists
+/// before the first migration, and migrator waiters watch the assignment row. An instance on an older
+/// release that still holds a duty by its own session lock is seen through the holding it records,
+/// judged by the one liveness rule, never through the lock.
 /// </para>
 /// <para>
 /// Each duty may declare its own lease in <see cref="RoleLeases"/>. Whatever the lease, a holder that
@@ -32,17 +37,12 @@ namespace Whizbang.Core.Startup;
 /// </para>
 /// </remarks>
 /// <docs>proposals/duty-role-assignment</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/RoleAssignmentOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/RoleAssignmentOptionsTests.cs</tests>
+[Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:Database:RoleAssignment:Enabled")]
+[Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:Database:RoleAssignment:HoldLegacySessionLock")]
 public sealed class RoleAssignmentOptions {
   /// <summary>The migrator's default lease: a migration can spend longer between statements than a maintenance pass.</summary>
   public static readonly TimeSpan DefaultMigratorLease = TimeSpan.FromSeconds(30);
-
-  /// <summary>
-  /// Whether duties are held by assignment at all. Default true. When false, the role elector
-  /// delegates every duty to the session-lock elector, the holder loop holds nothing, and the
-  /// <c>roles</c> health component has nothing to report.
-  /// </summary>
-  public bool Enabled { get; set; } = true;
 
   /// <summary>How often a holder renews its lease. Default 5 seconds.</summary>
   public TimeSpan RenewInterval { get; set; } = TimeSpan.FromSeconds(5);
@@ -51,30 +51,55 @@ public sealed class RoleAssignmentOptions {
   public int MissedRenewalsBeforeLapse { get; set; } = 3;
 
   /// <summary>
+  /// How long a holder the one liveness rule calls live may go without renewing (verifying from its
+  /// work loop) before it loses the role: the role's progress check (#2140). Default 2 minutes.
+  /// <see cref="TimeSpan.Zero"/> turns it off, and the lease alone decides, as before.
+  /// </summary>
+  /// <remarks>
+  /// The window bounds how long a holder that is connected but stuck keeps its role. Inside it, a
+  /// holder busy with a slow startup or one long unit of exclusive work keeps the role instead of
+  /// lapsing at its lease and handing the role to another instance mid-work. A holder whose instance
+  /// the rule calls dead (crashed, stopped, cut off from the database) lapses at its lease whatever
+  /// the window. The window a holder declares is never shorter than its role's lease.
+  /// </remarks>
+  /// <docs>proposals/duty-role-assignment</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/RoleAssignmentOptionsTests.cs:ProgressWindow_DefaultsToTwoMinutesAsync</tests>
+  public TimeSpan ProgressWindow { get; set; } = TimeSpan.FromMinutes(2);
+
+  /// <summary>
+  /// The progress window <paramref name="role"/>'s holder declares: <see cref="TimeSpan.Zero"/> when
+  /// <see cref="ProgressWindow"/> is off, else the longer of it and the role's lease (<see cref="LeaseFor"/>).
+  /// </summary>
+  /// <param name="role">The role.</param>
+  /// <returns>The window; zero declares none.</returns>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/RoleAssignmentOptionsTests.cs:ProgressWindowFor_IsNeverShorterThanTheRolesLease_AndZeroTurnsItOffAsync</tests>
+  public TimeSpan ProgressWindowFor(string role) {
+    if (ProgressWindow <= TimeSpan.Zero) {
+      return TimeSpan.Zero;
+    }
+    var lease = LeaseFor(role);
+    return lease > ProgressWindow ? lease : ProgressWindow;
+  }
+
+  /// <summary>
+  /// How long the migrator's startup work may report no progress before its keepalive stops renewing its role (#2165).
+  /// Default <see cref="TimeSpan.Zero"/>: the schema command budget plus the migrator's progress window
+  /// (<see cref="ProgressWindowFor"/>), since one schema statement may run for the whole budget before it fails.
+  /// </summary>
+  /// <remarks>
+  /// A migrator that is alive but stuck (a hung statement, a deadlocked phase) would otherwise keep the role forever on
+  /// its keepalive, and no other instance could take the schema work over. Progress is every committed schema step,
+  /// every phase announcement and every batch or row group a long phase counts.
+  /// </remarks>
+  /// <docs>operations/infrastructure/migrations#a-stuck-migrator-loses-its-role</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigratorStallLimitTests.cs:MigratorStallLimit_DefaultsToZero_AndANegativeOneIsRefusedAsync</tests>
+  public TimeSpan MigratorStallLimit { get; set; } = TimeSpan.Zero;
+
+  /// <summary>
   /// How long an instance whose assignment lapsed must wait before it can be elected again.
   /// Default 15 seconds.
   /// </summary>
   public TimeSpan CooldownAfterLapse { get; set; } = TimeSpan.FromSeconds(15);
-
-  /// <summary>
-  /// While true, a holder also holds the duty's legacy session advisory lock, so an instance still
-  /// running the session-lock elector sees the duty as held, and a new instance defers to an old holder:
-  /// old and new never both act during a rolling deploy. It costs one pinned connection per held role.
-  /// </summary>
-  /// <remarks>
-  /// <para>
-  /// <b>Defaults to false.</b> The bridge is only needed while an instance older than role assignment is
-  /// still running, and it costs a pinned connection per held role for as long as it is on.
-  /// </para>
-  /// <para>
-  /// <b>Set it to true for one deploy</b>
-  /// (<c>Whizbang__Database__RoleAssignment__HoldLegacySessionLock=true</c>) when rolling from a release
-  /// that held duties by session lock, that is, from before role assignment. Turn it back off afterwards.
-  /// With it off, the vote still refuses while an old holder is visible, and a holder steps aside within
-  /// one renewal once it sees one, but for that renewal interval both may act.
-  /// </para>
-  /// </remarks>
-  public bool HoldLegacySessionLock { get; set; }
 
   /// <summary>
   /// How long owed duty work backs off after a failed attempt, doubled per further failure and
@@ -83,9 +108,10 @@ public sealed class RoleAssignmentOptions {
   public TimeSpan OwedWorkRetryBase { get; set; } = TimeSpan.FromSeconds(30);
 
   /// <summary>
-  /// The duties held by assignment. Default: <see cref="StartupDuties.MAINTAINER"/> and
-  /// <see cref="StartupDuties.MIGRATOR"/>; the Postgres driver adds the commit-order stamper's role
-  /// while the stamper is enabled.
+  /// The duties the holder loop holds and the <c>roles</c> health component reports. Default:
+  /// <see cref="StartupDuties.MAINTAINER"/> and <see cref="StartupDuties.MIGRATOR"/>; the Postgres
+  /// driver adds the commit-order stamper's role while the stamper is enabled. A duty not listed is
+  /// still held by assignment whenever it is asked for: every duty is a role (#2044).
   /// </summary>
   public ISet<string> Roles { get; } = new HashSet<string>(StringComparer.Ordinal) {
     StartupDuties.MAINTAINER, StartupDuties.MIGRATOR,
@@ -97,13 +123,6 @@ public sealed class RoleAssignmentOptions {
   /// <see cref="DefaultMigratorLease"/> or <see cref="Lease"/>, whichever is longer.
   /// </summary>
   public IDictionary<string, TimeSpan> RoleLeases { get; } = new Dictionary<string, TimeSpan>(StringComparer.Ordinal);
-
-  /// <summary>
-  /// How an instance on the session-lock elector locks a role, by schema, for a role whose legacy
-  /// lock is not the duty lock (the commit-order stamper's leader lock, for one). A role not listed
-  /// uses the duty lock. Read only while bridged, or to see an old holder.
-  /// </summary>
-  public IDictionary<string, Func<string?, long>> LegacyLockKeys { get; } = new Dictionary<string, Func<string?, long>>(StringComparer.Ordinal);
 
   /// <summary>The default lease a holder is granted: <see cref="RenewInterval"/> × <see cref="MissedRenewalsBeforeLapse"/>.</summary>
   public TimeSpan Lease => RenewInterval * MissedRenewalsBeforeLapse;
@@ -121,10 +140,10 @@ public sealed class RoleAssignmentOptions {
     return IsEpisodic(role) && DefaultMigratorLease > Lease ? DefaultMigratorLease : Lease;
   }
 
-  /// <summary>Whether <paramref name="duty"/> is held by assignment rather than delegated.</summary>
+  /// <summary>Whether the holder loop holds <paramref name="duty"/> and the health component reports it.</summary>
   /// <param name="duty">The duty name.</param>
-  /// <returns>True when role assignment is <see cref="Enabled"/> and the duty is in <see cref="Roles"/>.</returns>
-  public bool Manages(string duty) => Enabled && Roles.Contains(duty);
+  /// <returns>True when the duty is in <see cref="Roles"/>.</returns>
+  public bool Manages(string duty) => Roles.Contains(duty);
 
   /// <summary>
   /// Whether <paramref name="role"/> is held only while a task runs rather than continuously: the
@@ -138,8 +157,8 @@ public sealed class RoleAssignmentOptions {
 
   /// <summary>Throws when the options describe a configuration that cannot work.</summary>
   /// <exception cref="ArgumentOutOfRangeException">A non-positive renew interval, fewer than two
-  /// renewals per lease, a per-duty lease shorter than two renewals, a negative cool-down, or a
-  /// non-positive retry base.</exception>
+  /// renewals per lease, a per-duty lease shorter than two renewals, a negative cool-down, a negative
+  /// progress window, a negative migrator stall limit, or a non-positive retry base.</exception>
   public void Validate() {
     if (RenewInterval <= TimeSpan.Zero) {
       throw new ArgumentOutOfRangeException(nameof(RenewInterval), RenewInterval, "The renew interval must be positive.");
@@ -150,6 +169,13 @@ public sealed class RoleAssignmentOptions {
     }
     if (CooldownAfterLapse < TimeSpan.Zero) {
       throw new ArgumentOutOfRangeException(nameof(CooldownAfterLapse), CooldownAfterLapse, "The cool-down cannot be negative.");
+    }
+    if (MigratorStallLimit < TimeSpan.Zero) {
+      throw new ArgumentOutOfRangeException(nameof(MigratorStallLimit), MigratorStallLimit,
+        "The migrator's stall limit cannot be negative; zero derives it from the schema command budget.");
+    }
+    if (ProgressWindow < TimeSpan.Zero) {
+      throw new ArgumentOutOfRangeException(nameof(ProgressWindow), ProgressWindow, "The progress window cannot be negative; zero turns it off.");
     }
     if (OwedWorkRetryBase <= TimeSpan.Zero) {
       throw new ArgumentOutOfRangeException(nameof(OwedWorkRetryBase), OwedWorkRetryBase, "The retry base must be positive.");

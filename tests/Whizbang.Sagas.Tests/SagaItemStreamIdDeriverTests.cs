@@ -34,7 +34,9 @@ public class SagaItemStreamIdDeriverTests {
   }
 
   [Test]
+  [NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]
   public async Task TwoContainers_EachResolveADeriverForTheirOwnNamespaceAsync() {
+    using var processWide = new ProcessWideSagaNamespace();   // AddWhizbangSagas sets the process-wide namespace
     await using var configured = new ServiceCollection().AddWhizbangSagas(opts => opts.PerItemStreamNamespace = _namespace).BuildServiceProvider();
     await using var byDefault = new ServiceCollection().AddWhizbangSagas().BuildServiceProvider();
 
@@ -48,7 +50,9 @@ public class SagaItemStreamIdDeriverTests {
   }
 
   [Test]
+  [NotInParallel(ProcessWideSagaNamespace.NOT_IN_PARALLEL_KEY)]
   public async Task For_OptionsAContainerRegistered_DeriveUnderThoseOptionsAsync() {
+    using var processWide = new ProcessWideSagaNamespace();   // AddWhizbangSagas sets the process-wide namespace
     await using var provider = new ServiceCollection().AddWhizbangSagas(opts => opts.PerItemStreamNamespace = _namespace).BuildServiceProvider();
 
     var deriver = SagaItemStreamIdDeriver.For(provider.GetRequiredService<SagaOptions>());

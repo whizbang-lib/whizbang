@@ -4,7 +4,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -76,8 +78,8 @@ public class IntegrityCheckpointWorkerTests {
 
     var checkpoint = (IntegrityCheckpoint)dispatcher.Published.Single();
     await Assert.That(checkpoint.Buckets).IsEmpty()
-      .Because("a quiet window still checkpoints — ABSENCE is the liveness alarm, so silence " +
-               "must always be abnormal.");
+      .Because("the first quiet window after a start still checkpoints (#2348: later ones wait for the heartbeat): " +
+               "ABSENCE is the liveness alarm, so silence past the heartbeat must always be abnormal.");
   }
 
   [Test]
@@ -352,39 +354,88 @@ public class IntegrityCheckpointWorkerTests {
       .Because("unparking on shutdown is an ordinary stop, not a fault to report");
   }
 
+  /// <summary>
+  /// #2348: a checkpoint goes out when the origin's settled position moved since the last one sent. A window that did not
+  /// move (from equals to) is not published until <see cref="StreamIntegrityOptions.CheckpointHeartbeatMinutes"/> has
+  /// passed since the last one sent, so an idle origin sends a heartbeat every 15 minutes instead of a checkpoint every
+  /// minute, and a consumer can still tell silence from loss. A moved window goes out on the next cycle, heartbeat or not.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#checkpoints-go-out-on-change</docs>
   [Test]
-  public async Task ShutdownBeforeTheSchemaIsReady_ExitsQuietlyAsync() {
-    // The worker parks on the schema gate before its first checkpoint. A pod stopped while waiting
-    // has no integrity tables to write to, so this must not report an error on every fast restart.
-    //
-    // The gate reports when the worker reaches it. Without that, StopAsync's cancellation could
-    // beat the body to the barrier and this would assert on a worker that never waited at all.
-    var gate = new ParkedGate();
-    var worker = _buildWorker(
-      new CheckpointCoordinator(), new CaptureDispatcher(), "svc",
-      integrityOptions: new StreamIntegrityOptions { CheckpointsEnabled = true },
-      gate: gate);
+  public async Task RunCheckpointOnce_AnUnmovedWindow_WaitsForTheHeartbeat_AndAMovedOneGoesAtOnceAsync() {
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 16, 12, 0, 0, TimeSpan.Zero));
+    var coordinator = new CheckpointCoordinator {
+      Window = new IntegrityCheckpointWindow { FromCommitSequence = 9, ToCommitSequence = 9 }
+    };
+    var dispatcher = new CaptureDispatcher();
+    var worker = _buildWorker(coordinator, dispatcher, serviceName: "origin-svc",
+      integrityOptions: new StreamIntegrityOptions { CheckpointIntervalSeconds = 60, CheckpointHeartbeatMinutes = 15 },
+      clock: clock);
 
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    await gate.Entered.WaitAsync(_wait);
+    await worker.RunCheckpointOnceAsync(CancellationToken.None);   // the first one always goes: nothing sent yet
+    var afterFirst = dispatcher.Published.Count;
+    for (var minute = 1; minute < 15; minute++) {
+      clock.Advance(TimeSpan.FromMinutes(1));
+      await worker.RunCheckpointOnceAsync(CancellationToken.None);
+    }
+    var beforeHeartbeat = dispatcher.Published.Count;
+    clock.Advance(TimeSpan.FromMinutes(1));
+    await worker.RunCheckpointOnceAsync(CancellationToken.None);   // 15 minutes since the last one sent
+    var afterHeartbeat = dispatcher.Published.Count;
+    clock.Advance(TimeSpan.FromMinutes(1));
+    coordinator.Window = new IntegrityCheckpointWindow { FromCommitSequence = 9, ToCommitSequence = 12 };
+    await worker.RunCheckpointOnceAsync(CancellationToken.None);   // the position moved
 
-    await worker.StopAsync(CancellationToken.None);
-
-    await Assert.That(worker.ExecuteTask!.IsCompleted).IsTrue()
-      .Because("a canceled gate wait must settle the hosted service rather than hang shutdown");
-    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
-      .Because("stopping while migrations are still running is a routine deploy, so it must not "
-             + "log a crash on every fast restart");
+    await Assert.That(afterFirst).IsEqualTo(1);
+    await Assert.That(beforeHeartbeat).IsEqualTo(1).Because("an unmoved window is not sent before the heartbeat is due");
+    await Assert.That(afterHeartbeat).IsEqualTo(2).Because("the heartbeat goes once 15 minutes passed since the last one sent");
+    await Assert.That(dispatcher.Published.Count).IsEqualTo(3).Because("a moved window goes at once");
+    await Assert.That(coordinator.AdvanceCalls).IsEqualTo(17).Because("every cycle still advances the watermark");
   }
+
+  /// <summary>
+  /// #2348: an origin that sends heartbeats is not stale between them. A consumer calls an origin stale only once its
+  /// heartbeat plus two intervals have passed without a checkpoint, not after three intervals as before.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#checkpoints-go-out-on-change</docs>
+  [Test]
+  public async Task RunCheckpointOnce_AnOriginQuietForLessThanItsHeartbeat_IsNotStaleAsync() {
+    var now = new DateTimeOffset(2026, 11, 16, 12, 0, 0, TimeSpan.Zero);
+    var clock = new FakeTimeProvider(now);
+    var tracker = new IntegrityGapTracker();
+    var quiet = TrackedGuid.New().Value;
+    var gone = TrackedGuid.New().Value;
+    tracker.RecordCheckpoint(quiet, "quiet-svc", now.AddMinutes(-16), "quiet.requests");
+    tracker.RecordCheckpoint(gone, "gone-svc", now.AddMinutes(-18), "gone.requests");
+    var logger = new FakeLogger<IntegrityCheckpointWorker>();
+    var worker = _buildWorker(new CheckpointCoordinator {
+      Window = new IntegrityCheckpointWindow { FromCommitSequence = 9, ToCommitSequence = 9 }
+    }, new CaptureDispatcher(), serviceName: "origin-svc",
+      integrityOptions: new StreamIntegrityOptions { CheckpointIntervalSeconds = 60, CheckpointHeartbeatMinutes = 15 },
+      logger: logger, clock: clock, tracker: tracker);
+
+    await worker.RunCheckpointOnceAsync(CancellationToken.None);
+
+    var stale = logger.Collector.GetSnapshot().Select(r => r.Message).Where(m => m.Contains("has not checkpointed", StringComparison.Ordinal)).ToList();
+    await Assert.That(stale.Count).IsEqualTo(1).Because("only the origin silent past its heartbeat plus two intervals is stale");
+    await Assert.That(stale[0]).Contains("gone-svc");
+  }
+
+  /// <summary>#2348: the heartbeat defaults to 15 minutes.</summary>
+  [Test]
+  public async Task Options_CheckpointHeartbeatMinutes_DefaultsTo15Async() =>
+    await Assert.That(new StreamIntegrityOptions().CheckpointHeartbeatMinutes).IsEqualTo(15);
 
   private static IntegrityCheckpointWorker _buildWorker(
       CheckpointCoordinator coordinator, CaptureDispatcher dispatcher, string serviceName,
       CaptureTransport? transport = null, IMessageTypeCatalog? catalog = null,
       bool outboxRouting = true, ITopicRegistry? topicRegistry = null,
       ControlClassOptions? controlClass = null, StreamIntegrityOptions? integrityOptions = null,
-      ISchemaReadyGate? gate = null, ILogger<IntegrityCheckpointWorker>? logger = null) {
+      ILogger<IntegrityCheckpointWorker>? logger = null, TimeProvider? clock = null, IntegrityGapTracker? tracker = null) {
     var services = new ServiceCollection();
+    if (tracker is not null) {
+      services.AddSingleton(tracker);
+    }
     services.AddSingleton<ICheckpointMint>(new CheckpointMint(
       Options.Create(controlClass ?? new ControlClassOptions())));
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
@@ -409,15 +460,15 @@ public class IntegrityCheckpointWorkerTests {
     var sp = services.BuildServiceProvider();
     return new IntegrityCheckpointWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate ?? new SchemaReadyGate(),
       Options.Create(integrityOptions ?? new StreamIntegrityOptions()),
-      logger ?? NullLogger<IntegrityCheckpointWorker>.Instance);
+      logger ?? NullLogger<IntegrityCheckpointWorker>.Instance,
+      clock);
   }
 
   private sealed class CheckpointCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     private int _advanceCalls;
 
-    public IntegrityCheckpointWindow? Window { get; init; }
+    public IntegrityCheckpointWindow? Window { get; set; }
     public Guid LocalServiceId { get; init; } = TrackedGuid.New().Value;
     public int AdvanceCalls => Volatile.Read(ref _advanceCalls);
     public List<string> OwnAuditedEventTypes { get; init; } = [];
@@ -521,37 +572,6 @@ public class IntegrityCheckpointWorkerTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task ExecuteAsync_CanceledBeforeSchemaReady_ReturnsCleanlyAsync(
-      CancellationToken testToken) {
-    // The checkpoint reads integrity watermarks from tables the migration creates. A host that
-    // fails during migration must get a clean shutdown, not a fault.
-    var coordinator = new CheckpointCoordinator();
-    var dispatcher = new CaptureDispatcher();
-    // The gate announces the worker's arrival, so the cancellation provably lands ON the wait
-    // rather than before ExecuteAsync was ever dequeued.
-    var gate = new ParkedGate();
-    var worker = _buildWorker(coordinator, dispatcher, "origin-svc",
-      integrityOptions: new StreamIntegrityOptions { CheckpointsEnabled = true },
-      gate: gate);
-
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    await gate.Entered.WaitAsync(testToken);
-    var executeTask = worker.ExecuteTask!;
-    await cts.CancelAsync();
-    // Exiting through a cancellation catch settles RanToCompletion or Canceled by thread-pool
-    // timing, so suppress and assert completion rather than success.
-    await executeTask.WaitAsync(_wait, testToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-    await worker.StopAsync(CancellationToken.None);
-
-    await Assert.That(executeTask.IsCompleted).IsTrue();
-    await Assert.That(executeTask.IsFaulted).IsFalse();
-    await Assert.That(dispatcher.Published).IsEmpty()
-      .Because("nothing may publish before the tables the watermarks live in exist");
-  }
-
-  [Test]
-  [Timeout(30000)]
   public async Task RunCheckpointOnce_ReportsOriginsWhoseCheckpointsStoppedArrivingAsync(
       CancellationToken testToken) {
     // Every service is both origin and consumer. An origin that has gone quiet is itself an
@@ -579,7 +599,6 @@ public class IntegrityCheckpointWorkerTests {
 
     var worker = new IntegrityCheckpointWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      SchemaReadyGate.AlreadyReady(),
       Options.Create(new StreamIntegrityOptions { CheckpointIntervalSeconds = 1 }),
       NullLogger<IntegrityCheckpointWorker>.Instance);
 
@@ -605,7 +624,6 @@ public class IntegrityCheckpointWorkerTests {
 
     var worker = new IntegrityCheckpointWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      SchemaReadyGate.AlreadyReady(),
       Options.Create(new StreamIntegrityOptions()),
       NullLogger<IntegrityCheckpointWorker>.Instance);
 
@@ -652,7 +670,7 @@ public class IntegrityCheckpointWorkerTests {
   }
 
   private static IntegrityCheckpointWorker _loopWorker(
-      CountingCoordinator coordinator, ISchemaReadyGate gate, StreamIntegrityOptions options,
+      CountingCoordinator coordinator, StreamIntegrityOptions options,
       ILogger<IntegrityCheckpointWorker>? logger = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
@@ -662,28 +680,8 @@ public class IntegrityCheckpointWorkerTests {
 
     return new IntegrityCheckpointWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      gate,
       Options.Create(options),
       logger ?? NullLogger<IntegrityCheckpointWorker>.Instance);
-  }
-
-  /// <summary>
-  /// A schema gate that never opens and announces the moment a worker begins waiting on it.
-  /// <see cref="Entered"/> is the deterministic "the worker is parked at the barrier" signal; the
-  /// infinite delay then observes the stopping token exactly as the real gate's
-  /// <c>Task.WaitAsync</c> does.
-  /// </summary>
-  private sealed class ParkedGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task Entered => _entered.Task;
-    public bool IsReady => false;
-    public void MarkReady() { }
-
-    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
-    }
   }
 
   /// <summary>
@@ -713,7 +711,6 @@ public class IntegrityCheckpointWorkerTests {
     var coordinator = new CountingCoordinator { ThrowOnFirstCall = true };
     var worker = _loopWorker(
       coordinator,
-      SchemaReadyGate.AlreadyReady(),
       new StreamIntegrityOptions { CheckpointIntervalSeconds = 1 });
 
     await worker.StartAsync(testToken);
@@ -738,7 +735,6 @@ public class IntegrityCheckpointWorkerTests {
     var enabledCoordinator = new CountingCoordinator();
     var enabled = _loopWorker(
       enabledCoordinator,
-      SchemaReadyGate.AlreadyReady(),
       new StreamIntegrityOptions { CheckpointIntervalSeconds = 1 });
 
     await enabled.StartAsync(testToken);
@@ -757,7 +753,6 @@ public class IntegrityCheckpointWorkerTests {
     var disabledLog = new FirstLogSignal();
     var disabled = _loopWorker(
       disabledCoordinator,
-      SchemaReadyGate.AlreadyReady(),
       new StreamIntegrityOptions { CheckpointsEnabled = false, CheckpointIntervalSeconds = 1 },
       logger: disabledLog);
 
@@ -767,34 +762,6 @@ public class IntegrityCheckpointWorkerTests {
 
     await Assert.That(disabledCoordinator.Calls).IsEqualTo(0)
       .Because("checkpoints turned off means none are written, not merely fewer");
-  }
-
-  [Test]
-  [Timeout(30000)]
-  public async Task ExecuteAsync_WhenTheSchemaGateNeverOpens_RunsNoCheckpointAsync(
-      CancellationToken testToken) {
-    // Checkpointing before the schema exists would query tables that are not there yet. The
-    // worker waits on the gate, and a shutdown while still waiting has to return rather than
-    // hang -- StopAsync completing is what proves it did.
-    //
-    // The gate reports the worker's arrival, so the shutdown provably interrupts a wait that was
-    // actually entered. A plain never-ready gate cannot distinguish that from a body the thread
-    // pool never dequeued, and both would satisfy the zero-cycle assertion below.
-    var coordinator = new CountingCoordinator();
-    var gate = new ParkedGate();
-    var worker = _loopWorker(
-      coordinator,
-      gate,
-      new StreamIntegrityOptions { CheckpointIntervalSeconds = 1 });
-
-    await worker.StartAsync(testToken);
-    await gate.Entered.WaitAsync(testToken);
-    await worker.StopAsync(CancellationToken.None);
-
-    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
-      .Because("a shutdown that lands on the gate wait must return, not fault the hosted service");
-    await Assert.That(coordinator.Calls).IsEqualTo(0)
-      .Because("nothing may be checkpointed until the schema is ready");
   }
 
 }

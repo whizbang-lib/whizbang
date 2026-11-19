@@ -23,13 +23,17 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// <para>
 /// The runner writes the marker <em>before</em> it removes the row and clears it only <em>after</em> it writes
-/// the resurrected row, so a crash between the two leaves a marker on a live row (harmless: a live row never
-/// consults it) rather than a missing row without a marker.
+/// the resurrected row, so a crash between the two leaves a marker on a live row rather than a missing row without a
+/// marker. The runner never consults a live row's marker. The maintenance cycle does (#2294), and a stale marker is
+/// why it reads one narrowly: a marker covers only the ephemeral bodies at or before its purge event (the row's
+/// previous life), never the later bodies a resurrected row is built from, and the cursor and snapshots of a purged
+/// row are removed only when its table holds no row for the stream.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives-with-actions#purge-stays-purged</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PurgeStaysPurgedTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PurgeStaysPurgedTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePurgeMarkerStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:Reap_AStaleMarkerOnAResurrectedRow_CoversOnlyTheBodiesAtOrBeforeThePurgeAsync</tests>
 public interface IPerspectivePurgeMarkerStore {
   /// <summary>
   /// Whether the stream is purged for the perspective: a marker for that perspective, or one for every
@@ -39,6 +43,30 @@ public interface IPerspectivePurgeMarkerStore {
   /// <param name="perspectiveName">The perspective, as the runner names it.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   Task<bool> IsPurgedAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// The streams among <paramref name="streamIds"/> that are purged for the perspective: <see cref="IsPurgedAsync"/> for
+  /// many streams at once, which a set-based batch asks for every stream whose row it found missing
+  /// (<see cref="IPerspectiveStateSource"/>). The default asks each stream on its own.
+  /// </summary>
+  /// <param name="streamIds">The streams.</param>
+  /// <param name="perspectiveName">The perspective, as the runner names it.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The purged streams.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs:PurgedAmongAsync_Default_AsksEachStreamAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectivePurgeMarkerStoreTests.cs:PurgedAmongAsync_AnswersEveryStreamInOneQueryAsync</tests>
+  async Task<IReadOnlySet<Guid>> PurgedAmongAsync(
+      IReadOnlyCollection<Guid> streamIds, string perspectiveName, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(streamIds);
+    var purged = new HashSet<Guid>();
+    foreach (var streamId in streamIds) {
+      if (await IsPurgedAsync(streamId, perspectiveName, cancellationToken).ConfigureAwait(false)) {
+        purged.Add(streamId);
+      }
+    }
+    return purged;
+  }
 
   /// <summary>Records that the perspective purged the stream. Idempotent: a second purge refreshes the marker.</summary>
   /// <param name="streamId">The stream.</param>

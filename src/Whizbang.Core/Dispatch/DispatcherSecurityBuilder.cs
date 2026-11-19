@@ -45,7 +45,7 @@ namespace Whizbang.Core.Dispatch;
 /// </code>
 /// </example>
 /// <docs>fundamentals/security/message-security#explicit-security-context-api</docs>
-/// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatcherSecurityBuilderTests.cs</tests>
 public sealed partial class DispatcherSecurityBuilder {
   private readonly IDispatcher _dispatcher;
   private readonly SecurityContextType _contextType;
@@ -104,7 +104,7 @@ public sealed partial class DispatcherSecurityBuilder {
   /// </code>
   /// </example>
   /// <docs>fundamentals/security/message-security#cross-tenant-operations</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:WithTenant_SetsTenantIdOnContextAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:WithTenant_SetsTenantIdOnContextAsync</tests>
   public DispatcherSecurityBuilder WithTenant(string tenantId) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
 
@@ -240,7 +240,7 @@ public sealed partial class DispatcherSecurityBuilder {
   /// <param name="cancellationToken">Cancels the claim and the publish.</param>
   /// <returns><see langword="true"/> when this caller won the claim and published.</returns>
   /// <docs>fundamentals/security/scope-propagation#system-operations</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSecurityBuilderPublishOnceTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSecurityBuilderPublishOnceTests.cs</tests>
   public async Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default) {
     var previousContext = ScopeContextAccessor.CurrentContext;
     var previousInitiating = ScopeContextAccessor.CurrentInitiatingContext;
@@ -282,7 +282,7 @@ public sealed partial class DispatcherSecurityBuilder {
   /// </code>
   /// </example>
   /// <docs>fundamentals/security/scope-propagation#system-operations</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSecurityBuilderRunTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSecurityBuilderRunTests.cs</tests>
   public async Task<TResult> RunAsync<TResult>(Func<CancellationToken, Task<TResult>> work, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(work);
     var previousContext = ScopeContextAccessor.CurrentContext;
@@ -363,7 +363,7 @@ public sealed partial class DispatcherSecurityBuilder {
   /// <param name="mode">What completion to wait for. Required, as it is on the dispatcher.</param>
   /// <param name="cancellationToken">A cancellation token.</param>
   /// <returns>A task that completes when the chosen sync mode is satisfied.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncModeContractTests.cs:ExplicitSecurityContext_CanTerminateWithTheSyncingLocalInvokeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSyncModeContractTests.cs:ExplicitSecurityContext_CanTerminateWithTheSyncingLocalInvokeAsync</tests>
   public async ValueTask LocalInvokeAndSyncAsync<TMessage>(
       TMessage message,
       Perspectives.Sync.SyncMode mode,

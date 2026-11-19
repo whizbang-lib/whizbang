@@ -285,7 +285,6 @@ public class StartupReadyCompositeTests {
 
   [Test]
   public async Task TransportConsumerWorker_ContributesItsSubscriptionsReadySignalAsync() {
-    var gate = new EnteredSchemaGate();
     await using var sp = new ServiceCollection().BuildServiceProvider();
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new Whizbang.Core.Transports.TransportDestination("dest-a"));
@@ -299,7 +298,6 @@ public class StartupReadyCompositeTests {
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-      schemaReadyGate: gate,
       routingOptions: Options.Create(new RoutingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -313,15 +311,13 @@ public class StartupReadyCompositeTests {
     await Assert.That(contributor.ContributorName).IsEqualTo("transport-consumer");
 
     using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    // The worker is provably parked at the schema gate. Readiness is read after that point, so a
-    // contribution already settled comes back completed and fails this every time.
-    await gate.Entered;
+    // Read before the worker is started (the host starts it at Accept commands, #1636): its
+    // contribution waits for the subscriptions, so it cannot have settled yet.
     var waiting = contributor.WaitForContributorReadyAsync(cts.Token);
     await Assert.That(waiting.IsCompleted).IsFalse()
-      .Because("the worker is held at the schema gate, so its contribution must be too");
+      .Because("the worker has not subscribed yet, so its contribution must not be settled");
 
-    gate.MarkReady();
+    await worker.StartAsync(cts.Token);
     await waiting.WaitAsync(TimeSpan.FromSeconds(5));
 
     await cts.CancelAsync();
@@ -336,7 +332,6 @@ public class StartupReadyCompositeTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: new EnvelopeSerializer(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
@@ -354,24 +349,6 @@ public class StartupReadyCompositeTests {
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
-  }
-
-  /// <summary>A real schema gate that also says when a worker has started waiting on it.</summary>
-  private sealed class EnteredSchemaGate : ISchemaReadyGate {
-    private readonly SchemaReadyGate _inner = new();
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    /// <summary>Completes once a worker has reached the gate.</summary>
-    public Task Entered => _entered.Task;
-
-    public bool IsReady => _inner.IsReady;
-
-    public void MarkReady() => _inner.MarkReady();
-
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      return _inner.WaitForReadyAsync(cancellationToken);
-    }
   }
 
   /// <summary>
@@ -476,6 +453,44 @@ public class StartupReadyCompositeTests {
     await Assert.That(started.IsCompletedSuccessfully).IsTrue()
       .Because("the contributor leg must fail closed and quiet, exactly like the pipeline leg");
     await Assert.That(signal.IsReady).IsFalse();
+  }
+
+  /// <summary>
+  /// A stop while waiting ends the wait; it is not a probe (#2387). The probe delay shares the
+  /// stopping token, so on a stop it completes at once, canceled. Counting that as a probe spun
+  /// the loop through three "probes" in no time and logged "Startup is not ready after 0s" after the
+  /// host had already been told to stop. The contributor here ignores cancellation, as a slow one
+  /// can, so only the probe can notice the stop; it answers once anything says "not ready", which
+  /// is what turns the old spin into a visible failure instead of a hang.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task ReadyService_StoppedWhileWaiting_DoesNotNarrateTheStopAsAProbeAsync(CancellationToken cancellationToken) {
+    var state = new StartupPipelineState();
+    var signal = new StartupReadySignal();
+    var logger = new ReadyServiceLog();
+    var deaf = new CancellationDeafContributor("deaf-transport");
+    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [deaf], logger: logger, timeProvider: new ProbeClock());
+    await _driveAsync(state, new StartupRunPlan([_step("Migrate")]), _completed("Migrate"));
+    _ = logger.Logged("not ready").ContinueWith(_ => deaf.Answer(), cancellationToken, TaskContinuationOptions.None, TaskScheduler.Default);
+
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    var started = service.StartedAsync(cts.Token);
+    await cts.CancelAsync();
+    await started;
+
+    await Assert.That(logger.Entries.Where(e => e.Contains("not ready", StringComparison.Ordinal))).IsEmpty()
+      .Because("the clock never moved, so no probe interval passed: the only thing that happened was the stop");
+    await Assert.That(signal.IsReady).IsFalse()
+      .Because("a stopped startup never became ready, even if a contributor answers afterwards");
+  }
+
+  /// <summary>A contributor whose wait does not observe cancellation; it answers only when told to.</summary>
+  private sealed class CancellationDeafContributor(string name) : IStartupReadinessContributor {
+    private readonly TaskCompletionSource _answered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public string ContributorName => name;
+    public void Answer() => _answered.TrySetResult();
+    public Task WaitForContributorReadyAsync(CancellationToken cancellationToken) => _answered.Task;
   }
 
   /// <summary>Genuine faults must still surface — the graceful path is cancellation ONLY.</summary>

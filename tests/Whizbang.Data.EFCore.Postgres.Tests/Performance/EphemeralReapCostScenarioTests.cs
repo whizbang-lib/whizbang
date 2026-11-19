@@ -45,6 +45,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// </para>
 /// </remarks>
 [Category("Benchmark")]
+[NotInParallel] // A measurement: runs alone so it measures the code, not its neighbors.
 [Category("Performance")]
 public class EphemeralReapCostScenarioTests : EFCoreTestBase {
   /// <summary>Events seeded, each with a body. None ephemeral: the empty-answer case.</summary>

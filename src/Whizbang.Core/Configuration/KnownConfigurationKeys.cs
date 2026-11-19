@@ -31,21 +31,39 @@ internal sealed class KnownConfigurationKeys {
   /// <summary>The manifest's resource name inside Whizbang.Core (the <c>LogicalName</c> in the project file).</summary>
   internal const string RESOURCE_NAME = "Whizbang.Core.Configuration.configuration-keys.txt";
 
+  /// <summary>
+  /// The resource name of the sensitive key list (<c>sensitive-configuration-keys.txt</c>): every key bound to a
+  /// <see cref="SensitiveString"/>, recorded beside the manifest by the same test.
+  /// </summary>
+  internal const string SENSITIVE_RESOURCE_NAME = "Whizbang.Core.Configuration.sensitive-configuration-keys.txt";
+
   private const string WILDCARD = "*";
 
   private static readonly Lazy<KnownConfigurationKeys> _library =
     new(() => FromResource(typeof(KnownConfigurationKeys).Assembly, RESOURCE_NAME));
 
+  private static readonly Lazy<KnownConfigurationKeys> _sensitive =
+    new(() => FromResource(typeof(KnownConfigurationKeys).Assembly, SENSITIVE_RESOURCE_NAME));
+
   private readonly HashSet<string> _exact;
   private readonly string[][] _patterns;
+  private readonly string[] _keys;
 
-  private KnownConfigurationKeys(HashSet<string> exact, string[][] patterns) {
+  private KnownConfigurationKeys(HashSet<string> exact, string[][] patterns, string[] keys) {
     _exact = exact;
     _patterns = patterns;
+    _keys = keys;
   }
 
   /// <summary>Every key the library reads, parsed once per process from the embedded manifest.</summary>
   public static KnownConfigurationKeys Library => _library.Value;
+
+  /// <summary>Every key bound to a <see cref="SensitiveString"/>, and every connection string, parsed once per process.</summary>
+  /// <docs>operations/configuration/startup-settings-report#credentials-are-redacted-by-type</docs>
+  public static KnownConfigurationKeys Sensitive => _sensitive.Value;
+
+  /// <summary>Every key the manifest lists, in its order, with <c>*</c> segments as written.</summary>
+  public IReadOnlyList<string> Keys => _keys;
 
   /// <summary>Reads a manifest embedded as a resource.</summary>
   /// <param name="assembly">The assembly holding the resource.</param>
@@ -67,18 +85,20 @@ internal sealed class KnownConfigurationKeys {
     ArgumentNullException.ThrowIfNull(manifest);
     var exact = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     var patterns = new List<string[]>();
+    var keys = new List<string>();
     foreach (var raw in manifest.Split('\n')) {
       var line = raw.Trim();
       if (line.Length == 0 || line[0] == '#') {
         continue;
       }
-      if (line.Contains(WILDCARD, StringComparison.Ordinal)) {
+      keys.Add(line);
+      if (IsPattern(line)) {
         patterns.Add(line.Split(':'));
       } else {
         exact.Add(line);
       }
     }
-    return new KnownConfigurationKeys(exact, [.. patterns]);
+    return new KnownConfigurationKeys(exact, [.. patterns], [.. keys]);
   }
 
   /// <summary>Whether a configured key is one Whizbang reads.</summary>
@@ -92,6 +112,17 @@ internal sealed class KnownConfigurationKeys {
     var segments = key.Split(':');
     return _patterns.Any(pattern => _matches(pattern, segments));
   }
+
+  /// <summary>Whether a manifest key has a <c>*</c> segment, a name the consumer chooses.</summary>
+  /// <param name="key">The manifest key.</param>
+  /// <returns><see langword="true"/> when it does.</returns>
+  public static bool IsPattern(string key) => key.Contains(WILDCARD, StringComparison.Ordinal);
+
+  /// <summary>Whether a configured key is one a manifest key with <c>*</c> segments stands for.</summary>
+  /// <param name="pattern">The manifest key.</param>
+  /// <param name="key">The configured key.</param>
+  /// <returns><see langword="true"/> when it matches.</returns>
+  public static bool Matches(string pattern, string key) => _matches(pattern.Split(':'), key.Split(':'));
 
   private static bool _matches(string[] pattern, string[] key) {
     var last = pattern.Length - 1;

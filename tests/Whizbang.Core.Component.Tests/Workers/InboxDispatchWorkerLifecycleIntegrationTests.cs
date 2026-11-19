@@ -220,8 +220,6 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var invoker = new CapturingReceptorInvoker();
 
     var services = new ServiceCollection();
@@ -238,7 +236,6 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,

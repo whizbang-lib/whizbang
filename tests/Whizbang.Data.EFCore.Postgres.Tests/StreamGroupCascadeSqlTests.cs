@@ -26,7 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/112_StreamGroupCascadeAndApplyPathFold.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/MaintenanceWorker.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
+[NotInParallel] // Resets a process-wide registry the database tests read (#1903): runs alone, after the parallel tests.
 [Category("Shard2")]
 public class StreamGroupCascadeSqlTests : EFCoreTestBase {
   private const string LEADER_TABLE = "wh_per_sg_leader";
@@ -86,11 +86,8 @@ public class StreamGroupCascadeSqlTests : EFCoreTestBase {
       services.AddSingleton(guard);
     }
     var sp = services.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     return new MaintenanceWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(), gate,
-      Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
+      sp.GetRequiredService<IServiceScopeFactory>(), Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
       NullLogger<MaintenanceWorker>.Instance);
   }
 

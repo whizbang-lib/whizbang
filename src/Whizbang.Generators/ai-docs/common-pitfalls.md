@@ -15,6 +15,7 @@ This document lists the most common mistakes when writing source generators and 
 5. [Pitfall 5: Incorrect Resource Namespace](#pitfall-5-incorrect-resource-namespace)
 6. [Pitfall 6: Modifying Immutable Collections](#pitfall-6-modifying-immutable-collections)
 7. [Pitfall 7: Forgetting CancellationToken](#pitfall-7-forgetting-cancellationtoken)
+8. [Pitfall 8: Emitting Constant Content Once Per Discovered Type](#pitfall-8-emitting-constant-content-once-per-discovered-type)
 
 ---
 
@@ -366,6 +367,37 @@ private static ReceptorInfo? ExtractInfo(
 
 ---
 
+## Pitfall 8: Emitting Constant Content Once Per Discovered Type
+
+### The Problem
+
+A generator that emits one file per discovered type (one per DbContext, one per perspective) and puts content in it
+that does not depend on that type multiplies that content by the number of types. Nothing fails: the output compiles,
+the tests pass, and the compiler's memory grows with (types x content) until a build runner runs out.
+
+This is what #2388 was. Every DbContext's schema extensions embedded the library's whole migration set, about 9 MB
+of SQL that is the same for every context. A test assembly with 13 contexts compiled 120 MB of generated source,
+nine times its hand-written code, and its compile peaked at 18.9 GB, past the 16 GB of a hosted CI runner, where the
+build hangs instead of failing. The assembly barely grew (identical UTF-8 literals are stored once), so its size gave
+no warning.
+
+### How to Avoid
+
+- Emit content that does not depend on the discovered type **once per compilation**, in a class of its own, and have
+  each per-type file reference it by its fully qualified name (`WhizbangMigrationScripts`, emitted by
+  `EFCoreServiceRegistrationGenerator`, is the pattern).
+- When you look at what a generator emits, compare the generated source to the hand-written source
+  (`-p:EmitCompilerGeneratedFiles=true`, then size `obj/generated/<generator>`). Generated output several times the
+  size of the code it serves is the signal.
+- CI runs every full-solution build under `.github/scripts/Invoke-BuildWithinMemory.ps1`, which fails a build whose
+  memory passes 13 GB, so growth is caught as a failed check rather than a hung runner.
+- Measure a single project in isolation too, but do not trust it alone: the compiler server is shared by every
+  project in a build and, under server GC, holds what one compile grew to while it runs the next. Removing the copies
+  took the EF Core test project from 18.9 GB to 7.9 GB on its own, yet the full build only from 20.6 GB to 19.3 GB
+  until the build steps set `DOTNET_GCConserveMemory=7` (12.8 GB).
+
+---
+
 ## Quick Pitfall Reference
 
 | Pitfall | Impact | Solution |
@@ -377,6 +409,7 @@ private static ReceptorInfo? ExtractInfo(
 | **Wrong resource namespace** | "Template not found" error | Match actual namespace |
 | **Modifying ImmutableArray** | Compilation error | Use `.ToBuilder()` or `.Add()` |
 | **Forgetting CancellationToken** | Can't cancel generator | Pass `ct` to all operations |
+| **Constant content per discovered type** | Compile memory grows with types x content (#2388) | Emit it once per compilation |
 
 ---
 
@@ -391,6 +424,7 @@ Before claiming generator work complete, verify you avoided all pitfalls:
 - [ ] Template namespaces match actual file namespaces
 - [ ] ImmutableArray used correctly (`.ToBuilder()` or `.Add()`)
 - [ ] `CancellationToken` passed to all semantic operations
+- [ ] Nothing that is the same for every discovered type is emitted once per type
 
 ---
 

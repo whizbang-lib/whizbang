@@ -40,6 +40,12 @@ public sealed class ProbeCadenceMetrics {
 
   /// <summary>Probe name for the backlog-age duty.</summary>
   public const string PROBE_BACKLOG_AGE = "backlog-age";
+
+  /// <summary>The paced repair drain's tick (#2346).</summary>
+  public const string PROBE_REPAIR_DRAIN = "repair-drain";
+
+  /// <summary>The subscription backfill's tick (#2346).</summary>
+  public const string PROBE_SUBSCRIPTION_BACKFILL = "subscription-backfill";
 #pragma warning restore CA1707
 
   private static readonly string[] _knownProbes = [PROBE_DURABLE_SIGNAL_TAIL, PROBE_INSTANCE_LIFECYCLE, PROBE_BACKLOG_AGE];
@@ -53,8 +59,6 @@ public sealed class ProbeCadenceMetrics {
 
     ProbeTicks = meter.CreatePassiveCounter<long>("whizbang.probes.ticks",
       description: "Periodic probe ticks by worker and outcome; the idle series are the service's idle footprint");
-    SuppressedDutyAttempts = meter.CreatePassiveCounter<long>("whizbang.probes.suppressed_duty_attempts",
-      description: "Duty attempts answered from memory while a contention window was open, so no lock round trip was made");
 
     foreach (var probe in _knownProbes) {
       ProbeTicks.Touch(new TagList { { PROBE_TAG, probe }, { OUTCOME_TAG, OUTCOME_WORK } });
@@ -64,9 +68,6 @@ public sealed class ProbeCadenceMetrics {
 
   /// <summary>Probe ticks by worker and outcome.</summary>
   public PassiveCounter<long> ProbeTicks { get; }
-
-  /// <summary>Duty attempts suppressed by a contention window.</summary>
-  public PassiveCounter<long> SuppressedDutyAttempts { get; }
 
   /// <summary>Records one probe tick.</summary>
   /// <param name="probe">The probing worker.</param>

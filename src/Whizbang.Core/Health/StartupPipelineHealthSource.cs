@@ -31,7 +31,7 @@ namespace Whizbang.Core.Health;
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/startup-status</docs>
-/// <tests>tests/Whizbang.Core.Tests/Health/StartupPipelineHealthSourceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Health/StartupPipelineHealthSourceTests.cs</tests>
 public sealed class StartupPipelineHealthSource : IWhizbangHealthSource {
   private readonly IStartupPipelineState _state;
   private readonly IStartupReadySignal _readySignal;

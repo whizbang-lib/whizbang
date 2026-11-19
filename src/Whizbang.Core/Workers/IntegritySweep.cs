@@ -15,8 +15,33 @@ namespace Whizbang.Core.Workers;
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityAuditWorkerTests.cs</tests>
 public interface IIntegritySweepRunner {
-  /// <summary>Runs one full sweep cycle now, regardless of the counter cadence.</summary>
+  /// <summary>
+  /// Runs every enabled opt-in check now, regardless of the counter cadence: the full-history compare and the
+  /// sealed-history re-check, each only when its section enables it (#2353). With both off it runs nothing. A schedule
+  /// occurrence that names no check (one registered before #2353) runs the full-history compare only.
+  /// </summary>
   Task RunSweepOnceAsync(CancellationToken cancellationToken);
+
+  /// <summary>
+  /// Runs one opt-in check now, when its section enables it, and nothing otherwise (#2353). The full-history compare
+  /// runs as an audit cycle that heals the whole digest table and asks each origin for its full history; the
+  /// sealed-history re-check runs on its own and asks nobody.
+  /// </summary>
+  /// <param name="check">The check to run.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>resilience/stream-integrity#full-history-compare</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/IntegrityAuditWorkerCheckGatingTests.cs</tests>
+  Task RunCheckOnceAsync(IntegrityCheck check, CancellationToken cancellationToken);
+}
+
+/// <summary>The opt-in integrity checks that grow with history, each with its own section and schedule (#2353).</summary>
+/// <docs>resilience/stream-integrity#full-history-compare</docs>
+public enum IntegrityCheck {
+  /// <summary>The full-history compare (<c>Whizbang:StreamIntegrity:FullHistoryCompare</c>).</summary>
+  FullHistoryCompare = 0,
+
+  /// <summary>The sealed-history re-check (<c>Whizbang:StreamIntegrity:SealRecheck</c>).</summary>
+  SealRecheck = 1,
 }
 
 /// <summary>
@@ -29,6 +54,9 @@ public interface IIntegritySweepRunner {
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 public sealed class IntegritySweepScheduleState {
-  /// <summary>True once the sweep schedule is registered on the temporal engine.</summary>
+  /// <summary>True once the full-history compare's schedule is registered on the temporal engine.</summary>
   public bool CronActive { get; set; }
+
+  /// <summary>True once the sealed-history re-check's schedule is registered on the temporal engine (#2353).</summary>
+  public bool SealRecheckCronActive { get; set; }
 }

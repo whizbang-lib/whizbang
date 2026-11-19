@@ -28,6 +28,15 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 public class MessageTypeRegistryReconciliationHostedServiceTests {
 
   [Test]
+  public async Task DbMechanism_IsTheTypeRegistry_SoItsStatementsAreAttributedToItAsync() {
+    var sut = new MessageTypeRegistryReconciliationHostedService(
+      NullLogger<MessageTypeRegistryReconciliationHostedService>.Instance);
+
+    await Assert.That(sut.DbMechanism).IsEqualTo(Whizbang.Core.Observability.DbMechanism.TypeRegistry)
+      .Because("the reconciliation's statements are counted under the type registry, not left untagged");
+  }
+
+  [Test]
   public async Task StartAsync_CatalogAndPopulatorPresent_InvokesPopulateAsyncWithTokenAsync() {
     var catalog = new StubMessageTypeCatalog();
     var populator = new SpyPopulator();
@@ -46,40 +55,6 @@ public class MessageTypeRegistryReconciliationHostedServiceTests {
     await cts.CancelAsync();
     await Assert.That(populator.LastCancellationToken.IsCancellationRequested).IsTrue()
       .Because("The token forwarded to PopulateAsync must cooperate with shutdown — cancelling the host's startup token must cancel it.");
-  }
-
-  [Test]
-  public async Task ExecuteAsync_WithClosedSchemaGate_WaitsForMigrationsWithoutBlockingStartupAsync() {
-    var catalog = new StubMessageTypeCatalog();
-    var populator = new SpyPopulator();
-    var gate = new SchemaReadyGate();
-    var sut = new MessageTypeRegistryReconciliationHostedService(
-      NullLogger<MessageTypeRegistryReconciliationHostedService>.Instance,
-      catalog,
-      populator,
-      schemaReadyGate: gate);
-
-    using var cts = new CancellationTokenSource();
-    // The defect this locks out: the service used to populate inline in StartAsync — DB work
-    // against tables the migration may not have created yet, sequentially blocking every
-    // later hosted service on it. StartAsync must return while the gate is still closed…
-    await sut.StartAsync(cts.Token);
-    await Task.Delay(300);
-    await Assert.That(populator.PopulateAsyncCallCount).IsEqualTo(0)
-      .Because("the registry the populator reconciles lives in tables the migration creates — "
-             + "nothing may be populated before the schema gate opens");
-
-    // …and reconciliation must actually run once migrations complete.
-    gate.MarkReady();
-    var deadline = DateTime.UtcNow.AddSeconds(5);
-    while (populator.PopulateAsyncCallCount == 0 && DateTime.UtcNow < deadline) {
-      await Task.Delay(10);
-    }
-    await Assert.That(populator.PopulateAsyncCallCount).IsEqualTo(1)
-      .Because("once migrations complete the reconcile must actually run — waiting is not skipping");
-
-    await cts.CancelAsync();
-    await sut.StopAsync(CancellationToken.None);
   }
 
   [Test]

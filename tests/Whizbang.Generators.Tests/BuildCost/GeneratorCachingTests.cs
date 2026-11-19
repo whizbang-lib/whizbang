@@ -69,8 +69,8 @@ internal static class BuildCostReferences {
   public static ImmutableArray<MetadataReference> All() {
     var platform = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator);
     return [
-      .. platform.Select(p => (MetadataReference)MetadataReference.CreateFromFile(p)),
-      MetadataReference.CreateFromFile(typeof(Whizbang.Core.IEvent).Assembly.Location),
+      .. platform.Select(p => (MetadataReference)SharedMetadataReferences.FromFile(p)),
+      SharedMetadataReferences.FromFile(typeof(Whizbang.Core.IEvent).Assembly.Location),
     ];
   }
 

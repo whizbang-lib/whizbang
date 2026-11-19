@@ -33,7 +33,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Chaos;
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PgRoleElector.cs</code-under-test>
 [Category("Integration")]
 [Category("Chaos")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class MaintainerAcquisitionVacuumTests : EFCoreTestBase {
   private const string ROLE = StartupDuties.MAINTAINER;
@@ -55,7 +54,8 @@ public class MaintainerAcquisitionVacuumTests : EFCoreTestBase {
     }
   }
 
-  private async Task<(ChaosPod Pod, Recorder Acquisitions)> _podAsync(CancellationToken ct, bool maintainOnReassignment = true) {
+  private async Task<(ChaosPod Pod, Recorder Acquisitions)> _podAsync(
+      CancellationToken ct, bool maintainOnReassignment = true, TimeSpan? skipWithin = null) {
     var pod = await ChaosPod.JoinAsync(ConnectionString, CreateDbContext, ct);
     var services = new ServiceCollection();
     services.AddScoped(_ => CreateDbContext());
@@ -65,11 +65,15 @@ public class MaintainerAcquisitionVacuumTests : EFCoreTestBase {
     _providers.Add(provider);
     var vacuum = new WorkTableVacuumOnAcquisition(
       provider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new MaintenanceWorkerOptions { MaintainOnReassignment = maintainOnReassignment }),
+      Options.Create(new MaintenanceWorkerOptions {
+        MaintainOnReassignment = maintainOnReassignment,
+        // The reassignment cases below vacuum on every acquisition; the window has its own test.
+        SkipAcquisitionVacuumWithin = skipWithin ?? TimeSpan.Zero,
+      }),
       pod,
       NullLogger<WorkTableVacuumOnAcquisition>.Instance);
     var recorder = new Recorder();
-    pod.Build(ConnectionString, ConnectionString, version: null, bridge: false, pause: null, new FakeTimeProvider(), [],
+    pod.Build(ConnectionString, ConnectionString, version: null, pause: null, new FakeTimeProvider(), [],
       onAcquired: [vacuum, recorder]);
     return (pod, recorder);
   }
@@ -155,5 +159,26 @@ public class MaintainerAcquisitionVacuumTests : EFCoreTestBase {
     await Assert.That(survivor.Worker.Holds(ROLE)).IsTrue();
     await Assert.That(survivorAcquired.PreviousHolders).IsEquivalentTo(new Guid?[] { dead.InstanceId });
     await Assert.That(await _outboxVacuumsAsync(cancellationToken) - beforeTakeover).IsEqualTo(1);
+  }
+  [Test]
+  [Timeout(120000)]
+  public async Task RepeatedQuickHandOffs_VacuumOnce_BecauseTheTablesWereJustVacuumedAsync(CancellationToken cancellationToken) {
+    // #2140: a restart can move the maintainer duty more than once in a minute. The first holder vacuums; the hand-offs
+    // that follow find every work table vacuumed inside the window and leave them alone.
+    var window = new MaintenanceWorkerOptions().SkipAcquisitionVacuumWithin;
+    var (a, aAcquired) = await _podAsync(cancellationToken, skipWithin: window);
+    var (b, bAcquired) = await _podAsync(cancellationToken, skipWithin: window);
+    var before = await _outboxVacuumsAsync(cancellationToken);
+
+    await a.PassAsync(cancellationToken);
+    await b.PassAsync(cancellationToken);
+    await a.Worker.ReleaseHeldAsync();
+    await b.PassAsync(cancellationToken);
+    await b.Worker.ReleaseHeldAsync();
+    await a.PassAsync(cancellationToken);
+
+    await Assert.That(aAcquired.PreviousHolders.Count + bAcquired.PreviousHolders.Count).IsEqualTo(3)
+      .Because("the duty was acquired three times: a first assignment and two hand-offs");
+    await Assert.That(await _outboxVacuumsAsync(cancellationToken) - before).IsEqualTo(1);
   }
 }

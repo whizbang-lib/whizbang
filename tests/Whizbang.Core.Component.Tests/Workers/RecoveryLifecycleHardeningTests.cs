@@ -139,7 +139,6 @@ public sealed class RecoveryLifecycleHardeningTests {
 
     var worker = new DeadLetterRecoveryWorker(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
-      schemaReadyGate: new ImmediateGate(),
       options: Options.Create(new DeadLetterRecoveryOptions {
         ScanIntervalMinutes = 1,
         WaitForIdle = false,
@@ -237,12 +236,6 @@ public sealed class RecoveryLifecycleHardeningTests {
     await Assert.That(maintenance.Granted).IsFalse()
       .Because("recovery's spent deferrals must not open maintenance's escape — shared counters "
              + "let the lowest rank ride the highest rank's starvation");
-  }
-
-  private sealed class ImmediateGate : ISchemaReadyGate {
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-    public void MarkReady() { }
-    public bool IsReady => true;
   }
 
   private sealed class FixedGeneration : IGenerationProvider {

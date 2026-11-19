@@ -46,13 +46,10 @@ public class ClaimWorkerSignalCoalescingTests {
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: gate,
       options: Options.Create(new ClaimWorkerOptions {
         // Long backoff so the natural poll cadence doesn't add calls during the
         // observation window — every claim_work call within ~500 ms after the

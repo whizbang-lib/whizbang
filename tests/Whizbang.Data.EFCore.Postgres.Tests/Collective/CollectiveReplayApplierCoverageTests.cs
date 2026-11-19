@@ -62,8 +62,8 @@ public class CollectiveReplayApplierCoverageTests {
     }
   }
 
-  /// <summary>Inert event store: none of the cases here read from it.</summary>
-  private sealed class NoOpEventStore : IEventStore {
+  /// <summary>Inert event store, unless a case hands it collective streams to read back.</summary>
+  private sealed class NoOpEventStore(IReadOnlyDictionary<Guid, List<MessageEnvelope<IEvent>>>? streams = null) : IEventStore {
     public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -81,7 +81,7 @@ public class CollectiveReplayApplierCoverageTests {
     public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
       Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes,
       CancellationToken cancellationToken = default) =>
-      System.Linq.AsyncEnumerable.Empty<MessageEnvelope<IEvent>>();
+      (streams?.GetValueOrDefault(streamId) ?? []).ToAsyncEnumerable();
 
     public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(
       Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) =>
@@ -212,6 +212,132 @@ public class CollectiveReplayApplierCoverageTests {
              + "block or short-circuit the search");
     await Assert.That(result.Applied).IsEqualTo(1);
   }
+  // #1956: a rewind folds the row's collectives committed after where it starts. It runs in the live processing mode, so
+  // the merge must not wait for a rebuild, and the collectives committed before the start are already in its snapshot.
+  [Test]
+  public async Task InterleaveAfterAsync_OutsideARebuild_MergesTheCollectivesAfterTheStart_OnlyAsync() {
+    var (applier, before, after) = _twoCollectives();
+    var streamEvent = new MessageEnvelope<IEvent>(MessageId.New(), new ProbeEvent(), []) { LocalCommitSequence = 10 };
+
+    var merged = await applier.InterleaveAfterAsync(
+      typeof(ProbeModel), [streamEvent], new CollectiveReplayStart("tenant-a", Guid.CreateVersion7(), AfterCommitSequence: 7),
+      CancellationToken.None);
+
+    await Assert.That(merged.Select(e => e.MessageId)).IsEquivalentTo([streamEvent.MessageId, after.MessageId], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the collective committed at 5 is before the start at 7, and the one at 15 goes after the stream event at 10");
+    await Assert.That(merged.Select(e => e.MessageId)).DoesNotContain(before.MessageId);
+  }
+
+  [Test]
+  public async Task InterleaveAfterAsync_WithNoStreamEvents_ReturnsTheCollectivesAloneAsync() {
+    var (applier, before, after) = _twoCollectives();
+
+    var merged = await applier.InterleaveAfterAsync(typeof(ProbeModel), [], new CollectiveReplayStart("tenant-a"), CancellationToken.None);
+
+    await Assert.That(merged.Select(e => e.MessageId)).IsEquivalentTo([before.MessageId, after.MessageId], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("a replay whose only news since its snapshot is a collective still folds it");
+  }
+
+  [Test]
+  public async Task InterleaveAfterAsync_RefusesNullArgumentsAsync() {
+    var (applier, _, _) = _twoCollectives();
+    var start = new CollectiveReplayStart("tenant-a");
+
+    await Assert.That(async () => await applier.InterleaveAfterAsync(null!, [], start, CancellationToken.None)).ThrowsExactly<ArgumentNullException>();
+    await Assert.That(async () => await applier.InterleaveAfterAsync(typeof(ProbeModel), null!, start, CancellationToken.None)).ThrowsExactly<ArgumentNullException>();
+    await Assert.That(async () => await applier.InterleaveAfterAsync(typeof(ProbeModel), [], null!, CancellationToken.None)).ThrowsExactly<ArgumentNullException>();
+  }
+
+  // #1970: a replay that folds no collective has nothing to ask the live sink's progress about.
+  [Test]
+  public async Task InterleaveAfterAsync_WhenTheStartFollowsNoCollective_ReadsNoReachAsync() {
+    var reads = 0;
+    var (applier, _, _) = _twoCollectives(reach: (_, _) => {
+      reads++;
+      return Task.FromResult<IReadOnlyDictionary<Guid, CollectiveApplyReach>>(new Dictionary<Guid, CollectiveApplyReach>());
+    });
+
+    var merged = await applier.InterleaveAfterAsync(
+      typeof(ProbeModel), _oneStreamEvent(), new CollectiveReplayStart("tenant-a") { CollectivesThroughSequence = 20 },
+      CancellationToken.None);
+
+    await Assert.That(merged).Count().IsEqualTo(1);
+    await Assert.That(reads).IsEqualTo(0).Because("no collective follows the start, so no progress is read");
+  }
+
+  // #1970, #1981: the reach read with the collectives a replay merges in decides, per handler, which rows each folds into.
+  [Test]
+  public async Task ApplyInMemory_FoldsACollective_OnlyIntoTheRowsItsApplyReached_AndSaysItIsInFlightAsync() {
+    var through = Guid.Parse("20000000-0000-0000-0000-000000000000");
+    IReadOnlyList<Guid>? asked = null;
+    MessageEnvelope<IEvent>? queued = null;
+    var executor = new RecordingExecutor();
+    var (applier, before, after) = _twoCollectives(
+      reach: (ids, _) => {
+        asked = ids;
+        return Task.FromResult<IReadOnlyDictionary<Guid, CollectiveApplyReach>>(CollectiveApplyReach.From([
+          (queued!.MessageId.Value, _entry.EntryKey, (Guid?)through, false, false, false),
+          (queued.MessageId.Value, null, null, false, false, true),
+        ]));
+      },
+      executor: executor);
+    queued = after;
+
+    var merged = await applier.InterleaveAfterAsync(typeof(ProbeModel), [], new CollectiveReplayStart("tenant-a"), CancellationToken.None);
+    var reached = (ProbeModel)applier.ApplyInMemory(
+      typeof(ProbeModel), new ProbeModel(), Guid.Parse("10000000-0000-0000-0000-000000000000"), after.Payload);
+    var beyond = (ProbeModel)applier.ApplyInMemory(
+      typeof(ProbeModel), new ProbeModel(), Guid.Parse("30000000-0000-0000-0000-000000000000"), after.Payload);
+    var untracked = (ProbeModel)applier.ApplyInMemory(
+      typeof(ProbeModel), new ProbeModel(), Guid.Parse("30000000-0000-0000-0000-000000000000"), before.Payload);
+
+    await Assert.That(merged).Count().IsEqualTo(2);
+    await Assert.That(asked).IsEquivalentTo([before.MessageId.Value, after.MessageId.Value]);
+    await Assert.That((reached.Applied, beyond.Applied, untracked.Applied)).IsEqualTo((1, 0, 1))
+      .Because("the queued apply reached the rows up to through_id only; a collective with no record folds in full");
+    await Assert.That(applier.IsInFlight(after.Payload)).IsTrue();
+    await Assert.That(applier.IsInFlight(before.Payload)).IsFalse();
+    await Assert.That(() => applier.IsInFlight(null!)).Throws<ArgumentNullException>();
+  }
+
+  private static readonly CollectiveApplyEntry _entry = new(
+    ModelType: typeof(ProbeModel),
+    EventType: typeof(ProbeCollectiveEvent),
+    HandlerType: typeof(ProbeHandler),
+    MethodName: "Apply",
+    ScopeHandling: default,
+    SpecKind: default,
+    Invoker: (_, _, _) => new object());
+
+  // One registered collective for ProbeModel in tenant-a, twice: committed at 5 and at 15, each its own stream.
+  private static (CollectiveReplayApplier Applier, MessageEnvelope<IEvent> Before, MessageEnvelope<IEvent> After) _twoCollectives(
+      Func<IReadOnlyList<Guid>, CancellationToken, Task<IReadOnlyDictionary<Guid, CollectiveApplyReach>>>? reach = null,
+      RecordingExecutor? executor = null) {
+    var before = new MessageEnvelope<IEvent>(MessageId.New(), new ProbeCollectiveEvent(), []) { LocalCommitSequence = 5 };
+    var after = new MessageEnvelope<IEvent>(MessageId.New(), new ProbeCollectiveEvent(), []) { LocalCommitSequence = 15 };
+    var streams = new Dictionary<Guid, List<MessageEnvelope<IEvent>>> {
+      [Guid.CreateVersion7()] = [before],
+      [Guid.CreateVersion7()] = [after],
+    };
+    var records = streams.Select(s => new EventStoreRecord {
+      Id = s.Value[0].MessageId.Value,
+      StreamId = s.Key,
+      AggregateId = s.Key,
+      AggregateType = "Collective",
+      Version = 1,
+      EventType = TypeNameFormatter.Format(typeof(ProbeCollectiveEvent)),
+      EventData = null,
+      Metadata = null,
+      Scope = new Whizbang.Core.Lenses.PerspectiveScope { TenantId = "tenant-a" },
+      CommitSequence = s.Value[0].LocalCommitSequence,
+    }).ToList();
+    var services = new ServiceCollection().AddSingleton(new ProbeHandler()).BuildServiceProvider();
+    var applier = new CollectiveReplayApplier(
+      [_entry], services, new NoOpEventStore(streams), new FakeEventStoreQuery(records),
+      executor is null ? [] : new ICollectiveInMemoryExecutor[] { executor }, archivedStreams: null, reach);
+    return (applier, before, after);
+  }
+
   // A blue-green rebuild reads these names to notice a collective that committed while it ran, so the lookup
   // must name exactly this model's collective event types: once each, with or without the global:: prefix the
   // perspective registry may record, and none of another model's.

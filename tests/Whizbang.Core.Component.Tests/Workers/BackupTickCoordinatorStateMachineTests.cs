@@ -43,7 +43,6 @@ public class BackupTickCoordinatorStateMachineTests {
       registry,
       Options.Create(options),
       NullLogger<BackupTickCoordinator>.Instance,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       gate: NullNotifySignalingGate.Instance,
       timeProvider: timeProvider);
 

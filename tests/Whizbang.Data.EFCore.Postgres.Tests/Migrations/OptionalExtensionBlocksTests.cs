@@ -31,7 +31,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class OptionalExtensionBlocksTests : IAsyncDisposable {
   private const string MISSING = "wh_no_such_extension";

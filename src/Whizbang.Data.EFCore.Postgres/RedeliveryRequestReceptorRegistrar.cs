@@ -18,15 +18,21 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// outbox copy that nothing dispatched locally; and <see cref="LifecycleStage.PostInboxInline"/>, for a copy arriving
 /// from another service. So the
 /// command reaches it whether dispatched in-process (operator-initiated) or arriving over the inbox from
-/// a damaged consumer. No-ops if no registry is present (schema-only / diagnostic hosts still boot).
+/// a damaged consumer. Registered deferred (<see cref="IntegrityDeliveryRegistration"/>, #2001): every stage records the message for the maintainer's integrity delivery drain. No-ops if no registry is present (schema-only / diagnostic hosts still boot).
+/// <see cref="AuditRebuildRequestReceptor"/> joins the same three stages for the same reasons: an operator dispatches
+/// <see cref="Whizbang.Core.Commands.System.RequestAuditRebuildCommand"/> on the origin, or the audit service sends it
+/// there (#1724). <see cref="BackfillWindowAnswerReceptor"/> joins deferred, as the request does: it applies a paced
+/// backfill window's answer on the requesting side (#2092).
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryRequestReceptorTests.cs</tests>
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S6672:Generic logger injection should match enclosing type", Justification = "The registrar never logs. It receives the logger for the receptor it constructs and hands it straight over, so the category names the type that actually writes the entries.")]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S6672:Generic logger injection should match enclosing type", Justification = "The registrar never logs. It receives the loggers for the receptors it constructs and hands them straight over, so each category names the type that actually writes the entries.")]
 internal sealed class RedeliveryRequestReceptorRegistrar(
     IServiceProvider services,
     IServiceScopeFactory scopeFactory,
-    ILogger<RedeliveryRequestReceptor> receptorLogger) : IHostedService {
+    ILogger<RedeliveryRequestReceptor> receptorLogger,
+    ILogger<AuditRebuildRequestReceptor> auditRebuildLogger,
+    ILogger<BackfillWindowAnswerReceptor> backfillAnswerLogger) : IHostedService {
 
   public Task StartAsync(CancellationToken cancellationToken) {
     var registry = services.GetService<IReceptorRegistry>();
@@ -36,10 +42,15 @@ internal sealed class RedeliveryRequestReceptorRegistrar(
     if (registry is null or INullDefault) {
       return Task.CompletedTask;
     }
-    var receptor = new RedeliveryRequestReceptor(scopeFactory, receptorLogger);
-    registry.Register<RequestRedeliveryCommand>(receptor, LifecycleStage.LocalImmediateInline);
-    registry.Register<RequestRedeliveryCommand>(receptor, LifecycleStage.PreOutboxInline);
-    registry.Register<RequestRedeliveryCommand>(receptor, LifecycleStage.PostInboxInline);
+    // Deferred at every stage: building a redelivery runs on the maintainer's integrity delivery drain (#2001).
+    registry.RegisterIntegrityReceptor(new RedeliveryRequestReceptor(scopeFactory, receptorLogger), services, scopeFactory);
+    var auditRebuild = new AuditRebuildRequestReceptor(scopeFactory, auditRebuildLogger);
+    registry.Register<Whizbang.Core.Commands.System.RequestAuditRebuildCommand>(auditRebuild, LifecycleStage.LocalImmediateInline);
+    registry.Register<Whizbang.Core.Commands.System.RequestAuditRebuildCommand>(auditRebuild, LifecycleStage.PreOutboxInline);
+    registry.Register<Whizbang.Core.Commands.System.RequestAuditRebuildCommand>(auditRebuild, LifecycleStage.PostInboxInline);
+    // #2092: a paced backfill window's answer moves the backfill's durable position; deferred to the maintainer's
+    // integrity delivery drain like the request it answers.
+    registry.RegisterIntegrityReceptor(new BackfillWindowAnswerReceptor(scopeFactory, backfillAnswerLogger), services, scopeFactory);
     return Task.CompletedTask;
   }
 

@@ -131,14 +131,32 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static PropertyInfo _toPropertyInfo(IPropertySymbol p) => new(
       Name: p.Name,
 #pragma warning disable RS0030 // local format keeps UseSpecialTypes (string?/int keywords), which the shared FullyQualifiedWithNullability lacks
-      Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+      Type: TypeNameUtilities.Display(p.Type, _fullyQualifiedWithNullabilityFormat),
 #pragma warning restore RS0030
       IsValueType: _isValueType(p.Type),
       IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
       CanWrite: p.SetMethod != null,
       JsonName: _jsonPropertyName(p),
       IgnoreCondition: _jsonIgnoreCondition(p),
-      IsRequired: _isRequiredMember(p));
+      IsRequired: _isRequiredMember(p),
+      IsRequiredKeyword: p.IsRequired,
+      InitAccessorOwner: p.SetMethod is { IsInitOnly: true } && _initAccessorIsReachable(p.ContainingType)
+        ? TypeNameUtilities.FullyQualified(p.ContainingType)
+        : null);
+
+  /// <summary>
+  /// Whether generated code can call an init accessor <paramref name="owner"/> declares through
+  /// <c>[UnsafeAccessor]</c>: the accessor is looked up on the exact type the declaration names, which a generic type
+  /// or a type nested in one cannot be named as without its type parameters, and a struct would need a by-ref target.
+  /// </summary>
+  private static bool _initAccessorIsReachable(INamedTypeSymbol owner) {
+    for (var type = owner; type is not null; type = type.ContainingType) {
+      if (type.IsGenericType || type.TypeKind != TypeKind.Class) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   private const string JSON_REQUIRED_ATTRIBUTE = "System.Text.Json.Serialization.JsonRequiredAttribute";
 
@@ -183,6 +201,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_PARAMETER_NAME = "__PARAMETER_NAME__";
   private const string PLACEHOLDER_ELEMENT_TYPE = "__ELEMENT_TYPE__";
   private const string PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER = "__ELEMENT_UNIQUE_IDENTIFIER__";
+  private const string PLACEHOLDER_COLLECTION_DEFINITION = "__COLLECTION_DEFINITION__";
+  private const string PLACEHOLDER_COLLECTION_NAME = "__COLLECTION_NAME__";
   private const string PLACEHOLDER_INTERFACE_TYPE = "__INTERFACE_TYPE__";
   private const string PLACEHOLDER_INTERFACE_NAME = "__INTERFACE_NAME__";
   private const string GLOBAL_SYSTEM_PREFIX = "global::System.";
@@ -379,7 +399,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
               IsSerializable: false,
               IsComposite: false,
               Properties: _mergeSagaEventProperties(shape, baseProperties),
-              HasParameterizedConstructor: false),
+              ConstructorArgumentCount: 0),
           Inheritance: [.. _synthesizeSagaEventInheritance(
               eventFullyQualifiedName, eventBase, inheritedFromBase, shape, context.SemanticModel.Compilation)]));
     }
@@ -701,7 +721,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, $"List<{t.ElementSimpleName}>", "collection type"));
     }
     foreach (var t in iReadOnlyListTypes) {
-      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, $"IReadOnlyList<{t.ElementSimpleName}>", "collection interface type"));
+      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, $"{t.CollectionName}<{t.ElementSimpleName}>", "collection interface type"));
     }
     foreach (var t in arrayTypes) {
       context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, $"{t.ElementSimpleName}[]", "array type"));
@@ -1583,9 +1603,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     if (!iReadOnlyListTypes.IsEmpty) {
       sb.AppendLine("  // IReadOnlyList<T> types discovered in messages");
       foreach (var iReadOnlyListType in iReadOnlyListTypes) {
-        var check = snippets.IReadOnlyList
-            .Replace(PLACEHOLDER_ELEMENT_TYPE, iReadOnlyListType.ElementTypeName)
-            .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, iReadOnlyListType.ElementUniqueIdentifier);
+        var check = _fillCollectionSnippet(snippets.IReadOnlyList, iReadOnlyListType);
         sb.AppendLine(check);
         sb.AppendLine();
       }
@@ -1879,36 +1897,55 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         "PARAMETER_INFO_VALUES");
 
     foreach (var message in messages) {
-      var writableProperties = message.Properties.Where(p => p.CanWrite).ToArray();
+      var constructionMembers = _constructionMembers(message);
 
-      _generateFactoryMethod(sb, message, writableProperties);
-      _generatePropertyCreationMethod(sb, message, propertyCreationSnippet);
-      _generateCtorParamsMethod(sb, message, writableProperties, parameterInfoSnippet);
+      _generateFactoryMethod(sb, message, constructionMembers);
+      _generatePropertyCreationMethod(sb, message, constructionMembers, propertyCreationSnippet);
+      if (constructionMembers.Length > 0) {
+        _generateCtorParamsMethod(sb, message, constructionMembers, parameterInfoSnippet);
+      }
     }
 
     return sb.ToString();
   }
 
   /// <summary>
+  /// The writable members a construction sets, in the order the creator's arguments carry them: the leading
+  /// <see cref="JsonMessageTypeInfo.ConstructorArgumentCount"/> the public constructor takes, then those the object
+  /// initializer must set. Every other writable member is set after construction through its setter, and only when the
+  /// document holds its key, so a member the document lacks keeps its initializer (#2374).
+  /// </summary>
+  private static PropertyInfo[] _constructionMembers(JsonMessageTypeInfo message) {
+    var writable = message.Properties.Where(static p => p.CanWrite).ToArray();
+    var bound = message.ConstructorArgumentCount;
+    return [.. writable.Take(bound), .. writable.Skip(bound).Where(_staysInInitializer)];
+  }
+
+  /// <summary>
+  /// Whether a writable member past the constructor's arguments is set in the object initializer rather than after
+  /// construction: a <see langword="required"/> member, which a construction must set to compile; a member declared
+  /// required for reading, whose absence the reader decides (#1874); and an init-only member whose accessor generated
+  /// code cannot reach. Each of these reads as its type's default when the document lacks its key.
+  /// </summary>
+  private static bool _staysInInitializer(PropertyInfo prop) =>
+    prop.IsRequiredKeyword || prop.IsRequired || (prop.IsInitOnly && prop.InitAccessorOwner is null);
+
+  /// <summary>
   /// Generates the main Create_ factory method with deferred property initialization.
   /// Supports both parameterized constructors and object initializers.
   /// </summary>
-  private static void _generateFactoryMethod(StringBuilder sb, JsonMessageTypeInfo message, PropertyInfo[] writableProperties) {
+  private static void _generateFactoryMethod(StringBuilder sb, JsonMessageTypeInfo message, PropertyInfo[] constructionMembers) {
     sb.AppendLine($"private JsonTypeInfo<{message.FullyQualifiedName}> Create_{message.UniqueIdentifier}(JsonSerializerOptions options) {{");
 
     // Generate different code based on constructor type
     sb.AppendLine($"  var objectInfo = new JsonObjectInfoValues<{message.FullyQualifiedName}> {{");
-    if (message.HasParameterizedConstructor) {
-      sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}(");
-      _appendConstructorArgs(sb, writableProperties);
-      sb.AppendLine("      ),");
+    _appendObjectCreator(sb, message, constructionMembers);
+    if (constructionMembers.Length == 0) {
+      sb.AppendLine($"      PropertyMetadataInitializer = _ => CreatePropertiesFor_{message.UniqueIdentifier}(options)");
     } else {
-      sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}() {{");
-      _appendObjectInitializerArgs(sb, writableProperties);
-      sb.AppendLine("      },");
+      sb.AppendLine($"      PropertyMetadataInitializer = _ => CreatePropertiesFor_{message.UniqueIdentifier}(options),");
+      sb.AppendLine($"      ConstructorParameterMetadataInitializer = () => CreateCtorParamsFor_{message.UniqueIdentifier}()");
     }
-    sb.AppendLine($"      PropertyMetadataInitializer = _ => CreatePropertiesFor_{message.UniqueIdentifier}(options),");
-    sb.AppendLine($"      ConstructorParameterMetadataInitializer = () => CreateCtorParamsFor_{message.UniqueIdentifier}()");
     sb.AppendLine("  };");
     sb.AppendLine();
 
@@ -1923,21 +1960,56 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Appends typed constructor argument casts for parameterized constructors.
+  /// Appends the creator that builds the type from the construction members (<see cref="_constructionMembers"/>): the
+  /// leading <see cref="JsonMessageTypeInfo.ConstructorArgumentCount"/> go to the public constructor that takes them,
+  /// and the rest are set in an object initializer after it. A positional record whose base record contributes members
+  /// of its own has only the positional constructor, so it takes both (#2016); a parameterless construction does not
+  /// compile. A type with no construction members is built by its parameterless constructor, and every member the
+  /// document holds is set through its setter (#2374).
   /// </summary>
-  private static void _appendConstructorArgs(StringBuilder sb, PropertyInfo[] writableProperties) {
-    for (int i = 0; i < writableProperties.Length; i++) {
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextPositionalRecordTests.cs:Generator_APositionalRecordDerivingFromOpeningBalance_PassesThePositionalMemberAndInitializesTheBaseAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextMemberInitializerTests.cs</tests>
+  private static void _appendObjectCreator(StringBuilder sb, JsonMessageTypeInfo message, PropertyInfo[] constructionMembers) {
+    if (constructionMembers.Length == 0) {
+      sb.AppendLine($"      ObjectCreator = static () => new {message.FullyQualifiedName}(),");
+      return;
+    }
+
+    var bound = message.ConstructorArgumentCount;
+    if (bound == 0) {
+      sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}() {{");
+      _appendObjectInitializerArgs(sb, constructionMembers, 0);
+      sb.AppendLine("      },");
+      return;
+    }
+
+    sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}(");
+    _appendConstructorArgs(sb, constructionMembers, bound);
+    if (bound == constructionMembers.Length) {
+      sb.AppendLine("      ),");
+      return;
+    }
+    sb.AppendLine("      ) {");
+    _appendObjectInitializerArgs(sb, constructionMembers, bound);
+    sb.AppendLine("      },");
+  }
+
+  /// <summary>
+  /// Appends typed constructor argument casts for the first <paramref name="count"/> writable properties.
+  /// </summary>
+  private static void _appendConstructorArgs(StringBuilder sb, PropertyInfo[] writableProperties, int count) {
+    for (int i = 0; i < count; i++) {
       var prop = writableProperties[i];
-      var comma = i < writableProperties.Length - 1 ? "," : "";
+      var comma = i < count - 1 ? "," : "";
       sb.AppendLine($"          ({prop.Type})args[{i}]{comma}");
     }
   }
 
   /// <summary>
-  /// Appends object initializer assignments for types without parameterized constructors.
+  /// Appends object initializer assignments for the writable properties from <paramref name="start"/> on.
   /// </summary>
-  private static void _appendObjectInitializerArgs(StringBuilder sb, PropertyInfo[] writableProperties) {
-    for (int i = 0; i < writableProperties.Length; i++) {
+  private static void _appendObjectInitializerArgs(StringBuilder sb, PropertyInfo[] writableProperties, int start) {
+    for (int i = start; i < writableProperties.Length; i++) {
       var prop = writableProperties[i];
       var comma = i < writableProperties.Length - 1 ? "," : "";
       sb.AppendLine($"          {prop.Name} = ({prop.Type})args[{i}]{comma}");
@@ -1945,9 +2017,18 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Generates the deferred property creation method for a message type.
+  /// Generates the deferred property creation method for a message type, preceded by the <c>[UnsafeAccessor]</c> that
+  /// calls the init accessor of each init-only member set after construction (#2374).
   /// </summary>
-  private static void _generatePropertyCreationMethod(StringBuilder sb, JsonMessageTypeInfo message, string propertyCreationSnippet) {
+  private static void _generatePropertyCreationMethod(
+      StringBuilder sb, JsonMessageTypeInfo message, PropertyInfo[] constructionMembers, string propertyCreationSnippet) {
+    var construction = new HashSet<string>(constructionMembers.Select(static p => p.Name), StringComparer.Ordinal);
+    foreach (var prop in message.Properties.Where(p => p.IsInitOnly && !construction.Contains(p.Name))) {
+      sb.AppendLine($"[global::System.Runtime.CompilerServices.UnsafeAccessor(global::System.Runtime.CompilerServices.UnsafeAccessorKind.Method, Name = \"set_{prop.Name}\")]");
+      sb.AppendLine($"private static extern void {_initAccessorName(message, prop)}({prop.InitAccessorOwner} target, {prop.Type} value);");
+      sb.AppendLine();
+    }
+
     sb.AppendLine($"private JsonPropertyInfo[] CreatePropertiesFor_{message.UniqueIdentifier}(JsonSerializerOptions options) {{");
     sb.AppendLine($"  var properties = new JsonPropertyInfo[{message.Properties.Length}];");
     sb.AppendLine();
@@ -1955,9 +2036,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     for (int i = 0; i < message.Properties.Length; i++) {
       var prop = message.Properties[i];
       var refused = prop.IsRequired && message.RequiredMembers == RequiredMemberReading.Refused;
-      var setter = !prop.CanWrite || prop.IsInitOnly
-          ? _boundThroughConstructorSetter(prop, refused)
-          : $"(obj, value) => (({message.FullyQualifiedName})obj).{prop.Name} = value!";
+      var setter = _setter(message, prop, construction.Contains(prop.Name), refused);
 
       var propertyCode = propertyCreationSnippet
           .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
@@ -1982,6 +2061,24 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// The setter System.Text.Json calls for a member the document holds. A read-only member or a construction member
+  /// has none (<see cref="_boundThroughConstructorSetter"/>); any other member is set after construction, an init-only
+  /// one through its <c>[UnsafeAccessor]</c>, so a member the document lacks keeps its initializer (#2374).
+  /// </summary>
+  private static string _setter(JsonMessageTypeInfo message, PropertyInfo prop, bool isConstructionMember, bool refused) {
+    if (!prop.CanWrite || isConstructionMember) {
+      return _boundThroughConstructorSetter(prop, refused);
+    }
+    return prop.IsInitOnly
+      ? $"static (obj, value) => {_initAccessorName(message, prop)}(({prop.InitAccessorOwner})obj, value!)"
+      : $"(obj, value) => (({message.FullyQualifiedName})obj).{prop.Name} = value!";
+  }
+
+  /// <summary>The name of the generated <c>[UnsafeAccessor]</c> for an init-only member of a message.</summary>
+  private static string _initAccessorName(JsonMessageTypeInfo message, PropertyInfo prop) =>
+    $"InitAccessorFor_{message.UniqueIdentifier}_{prop.Name}";
+
+  /// <summary>
   /// The setter of a property set only through its constructor parameter (an init-only or positional member):
   /// none, unless the reader refuses a document missing it. System.Text.Json refuses a required property with no
   /// setter even when a constructor parameter fills it, and never calls the setter of a property a parameter fills, so
@@ -1995,11 +2092,11 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates the deferred constructor params creation method for a message type.
   /// </summary>
-  private static void _generateCtorParamsMethod(StringBuilder sb, JsonMessageTypeInfo message, PropertyInfo[] writableProperties, string parameterInfoSnippet) {
+  private static void _generateCtorParamsMethod(StringBuilder sb, JsonMessageTypeInfo message, PropertyInfo[] constructionMembers, string parameterInfoSnippet) {
     sb.AppendLine($"private JsonParameterInfoValues[] CreateCtorParamsFor_{message.UniqueIdentifier}() {{");
-    sb.AppendLine($"  var ctorParams = new JsonParameterInfoValues[{writableProperties.Length}];");
-    for (int i = 0; i < writableProperties.Length; i++) {
-      var prop = writableProperties[i];
+    sb.AppendLine($"  var ctorParams = new JsonParameterInfoValues[{constructionMembers.Length}];");
+    for (int i = 0; i < constructionMembers.Length; i++) {
+      var prop = constructionMembers[i];
       var parameterCode = parameterInfoSnippet
           .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
           .Replace(PLACEHOLDER_PARAMETER_NAME, prop.Name)
@@ -2327,19 +2424,18 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Extract properties and detect constructor
     var nestedProperties = _extractPropertiesFromType(typeSymbol);
-    bool hasParameterizedConstructor = _hasMatchingParameterizedConstructor(typeSymbol, nestedProperties);
     var clrTypeName = _getClrTypeName(typeSymbol);
 
     var nestedTypeInfo = new JsonMessageTypeInfo(
         FullyQualifiedName: typeNameToProcess,
         ClrTypeName: clrTypeName,
-        SimpleName: typeSymbol.Name,
+        SimpleName: TypeNameUtilities.SimpleName(typeSymbol),
         IsCommand: false,
         IsEvent: false,
         IsSerializable: false,
         IsComposite: false,
         Properties: nestedProperties,
-        HasParameterizedConstructor: hasParameterizedConstructor
+        ConstructorArgumentCount: _constructorArgumentCount(typeSymbol, nestedProperties)
     );
 
     nestedTypes[typeNameToProcess] = nestedTypeInfo;
@@ -2374,19 +2470,18 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
 
       var derivedProperties = _extractPropertiesFromType(derivedType);
-      var hasDerivedCtor = _hasMatchingParameterizedConstructor(derivedType, derivedProperties);
       var derivedClrTypeName = _getClrTypeName(derivedType);
 
       var derivedTypeInfo = new JsonMessageTypeInfo(
           FullyQualifiedName: derivedTypeName,
           ClrTypeName: derivedClrTypeName,
-          SimpleName: derivedType.Name,
+          SimpleName: TypeNameUtilities.SimpleName(derivedType),
           IsCommand: false,
           IsEvent: false,
           IsSerializable: false,
           IsComposite: false,
           Properties: derivedProperties,
-          HasParameterizedConstructor: hasDerivedCtor
+          ConstructorArgumentCount: _constructorArgumentCount(derivedType, derivedProperties)
       );
 
       nestedTypes[derivedTypeName] = derivedTypeInfo;
@@ -2397,7 +2492,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     if (derivedTypeNames.Count > 0 && !discoveredPolymorphicTypes.ContainsKey(typeNameToProcess)) {
       discoveredPolymorphicTypes[typeNameToProcess] = new PolymorphicTypeInfo(
           BaseTypeName: typeNameToProcess,
-          BaseSimpleName: typeSymbol.Name,
+          BaseSimpleName: TypeNameUtilities.SimpleName(typeSymbol),
           DerivedTypes: [.. derivedTypeNames]
       );
     }
@@ -2462,7 +2557,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     discoveredEnums[propertyTypeName] = new JsonEnumInfo(
         FullyQualifiedName: propertyTypeName,
-        SimpleName: typeSymbol.Name
+        SimpleName: TypeNameUtilities.SimpleName(typeSymbol)
     );
   }
 
@@ -2541,7 +2636,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       "global::System.Collections.Generic.IReadOnlyList<",
       "global::System.Collections.Generic.ICollection<",
       "global::System.Collections.Generic.IReadOnlyCollection<",
-      "global::System.Collections.Generic.IEnumerable<"
+      "global::System.Collections.Generic.IEnumerable<",
+      "global::System.Collections.Immutable.ImmutableList<"
     };
 
     var matchingPrefix = singleTypeParamCollections.FirstOrDefault(prefix =>
@@ -2943,18 +3039,17 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       typeName = typeName[..^1];
     }
 
-    const string iReadOnlyListPrefix = "global::System.Collections.Generic.IReadOnlyList<";
-
-    if (typeName.StartsWith(iReadOnlyListPrefix, StringComparison.Ordinal)) {
-      var startIndex = iReadOnlyListPrefix.Length;
+    var definition = _collectionDefinitionOf(typeName);
+    if (definition is not null) {
+      var startIndex = definition.Length + 1;
       var endIndex = typeName.LastIndexOf('>');
       if (endIndex > startIndex) {
         var rawElementTypeName = typeName[startIndex..endIndex];
         var elementTypeName = _normalizeKeywordAliases(rawElementTypeName);
 
-        // Create key using the IReadOnlyList type
-        var iReadOnlyListTypeName = $"global::System.Collections.Generic.IReadOnlyList<{elementTypeName}>";
-        if (iReadOnlyListTypes.ContainsKey(iReadOnlyListTypeName)) {
+        // Create key using the collection type
+        var collectionTypeName = $"{definition}<{elementTypeName}>";
+        if (iReadOnlyListTypes.ContainsKey(collectionTypeName)) {
           return;
         }
 
@@ -2962,23 +3057,59 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         var parts = elementTypeName.Split('.');
         var elementSimpleName = parts[^1].Replace(PLACEHOLDER_GLOBAL, "").TrimEnd('?');
 
-        iReadOnlyListTypes[iReadOnlyListTypeName] = new ReadOnlyListTypeInfo(
-            IReadOnlyListTypeName: iReadOnlyListTypeName,
+        iReadOnlyListTypes[collectionTypeName] = new ReadOnlyListTypeInfo(
+            IReadOnlyListTypeName: collectionTypeName,
             ElementTypeName: elementTypeName,
-            ElementSimpleName: elementSimpleName
+            ElementSimpleName: elementSimpleName,
+            CollectionDefinition: definition
         );
 
-        // Recursively discover IReadOnlyList in the element type
+        // Recursively discover collections in the element type
         _discoverIReadOnlyListType(elementTypeName, iReadOnlyListTypes);
       }
     }
 
-    // Also check if this is a collection containing IReadOnlyList (e.g., List<IReadOnlyList<T>>)
+    // Also check if this is a collection containing one (e.g., List<IReadOnlyList<T>>)
     var elementType = _extractElementTypeSingleLevel(typeName);
     if (elementType != null) {
       _discoverIReadOnlyListType(elementType, iReadOnlyListTypes);
     }
   }
+
+  /// <summary>
+  /// The collections that need metadata of their own: every collection interface a model or message can declare
+  /// (the serializer cannot construct an interface, and the opaque path accepts each of them, #2114) and ImmutableList
+  /// (which cannot be filled one element at a time). Each interface is read into a List, which implements all of them.
+  /// </summary>
+  private static readonly string[] _ownMetadataCollections = [
+    ReadOnlyListTypeInfo.READ_ONLY_LIST,
+    ReadOnlyListTypeInfo.LIST_INTERFACE,
+    ReadOnlyListTypeInfo.COLLECTION_INTERFACE,
+    ReadOnlyListTypeInfo.READ_ONLY_COLLECTION,
+    ReadOnlyListTypeInfo.ENUMERABLE,
+    ReadOnlyListTypeInfo.IMMUTABLE_LIST,
+  ];
+
+  /// <summary>The collection definition the type is constructed from, when it is one that needs its own metadata.</summary>
+  private static string? _collectionDefinitionOf(string typeName) {
+    foreach (var definition in _ownMetadataCollections) {
+      if (typeName.StartsWith(definition + "<", StringComparison.Ordinal)) {
+        return definition;
+      }
+    }
+    return null;
+  }
+
+  /// <summary>
+  /// Fills a collection snippet: the collection's definition and name first, since the name sits against the element
+  /// identifier placeholder in the generated identifiers, then the element.
+  /// </summary>
+  private static string _fillCollectionSnippet(string snippet, ReadOnlyListTypeInfo collection) =>
+    snippet
+      .Replace(PLACEHOLDER_COLLECTION_DEFINITION, collection.CollectionDefinition)
+      .Replace(PLACEHOLDER_COLLECTION_NAME, collection.CollectionName)
+      .Replace(PLACEHOLDER_ELEMENT_TYPE, collection.ElementTypeName)
+      .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, collection.ElementUniqueIdentifier);
 
   /// <summary>
   /// Generates lazy fields for IReadOnlyList&lt;T&gt; types.
@@ -2998,9 +3129,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "LAZY_FIELD_IREADONLYLIST");
 
     foreach (var iReadOnlyListType in iReadOnlyListTypes) {
-      var field = snippet
-          .Replace(PLACEHOLDER_ELEMENT_TYPE, iReadOnlyListType.ElementTypeName)
-          .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, iReadOnlyListType.ElementUniqueIdentifier);
+      var field = _fillCollectionSnippet(snippet, iReadOnlyListType);
       sb.AppendLine(field);
     }
 
@@ -3022,12 +3151,11 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     var sb = new System.Text.StringBuilder();
-    var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "IREADONLYLIST_TYPE_FACTORY");
+    var filled = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "IREADONLYLIST_TYPE_FACTORY");
+    var immutable = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "IMMUTABLE_COLLECTION_TYPE_FACTORY");
 
     foreach (var iReadOnlyListType in iReadOnlyListTypes) {
-      var factory = snippet
-          .Replace(PLACEHOLDER_ELEMENT_TYPE, iReadOnlyListType.ElementTypeName)
-          .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, iReadOnlyListType.ElementUniqueIdentifier);
+      var factory = _fillCollectionSnippet(iReadOnlyListType.IsImmutable ? immutable : filled, iReadOnlyListType);
       sb.AppendLine(factory);
       sb.AppendLine();
     }
@@ -3337,7 +3465,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       // This is more expensive but handles the common case of projection classes. A type with no
       // containing namespace contributes no candidates, so it reaches the Any() below over an empty
       // list, which is the same false a separate guard returned.
-      var containingNamespace = typeSymbol.ContainingNamespace;
+      var containingNamespace = TypeNameUtilities.NamespaceOf(typeSymbol);
       if (containingNamespace != null) {
         typesToCheck.AddRange(containingNamespace.GetTypeMembers());
       }
@@ -3444,7 +3572,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var iface in typeSymbol.AllInterfaces) {
       if (!_isReceptorInterfaceDefinition(TypeNameUtilities.Display(iface.OriginalDefinition))
           || iface.TypeArguments[0] is not INamedTypeSymbol messageType
-          || !_isReferencedConsumerType(messageType, typeSymbol.ContainingAssembly)) {
+          || !_isReferencedConsumerType(messageType, TypeNameUtilities.AssemblyOf(typeSymbol))) {
         continue;
       }
 
@@ -3471,8 +3599,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       !type.IsAbstract
       && !type.IsGenericType
       && _isPubliclyReachable(type)
-      && !SymbolEqualityComparer.Default.Equals(type.ContainingAssembly, self)
-      && type.ContainingAssembly.Name != WHIZBANG_CORE_ASSEMBLY;
+      && !SymbolEqualityComparer.Default.Equals(TypeNameUtilities.AssemblyOf(type), self)
+      && TypeNameUtilities.SimpleName(TypeNameUtilities.AssemblyOf(type)) != WHIZBANG_CORE_ASSEMBLY;
 
   /// <summary>True when the type implements the interface with the given fully qualified name.</summary>
   private static bool _implements(INamedTypeSymbol type, string fullyQualifiedInterfaceName) =>
@@ -3498,7 +3626,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       return [];
     }
 
-    var framework = compositeInterface.ContainingAssembly;
+    var framework = TypeNameUtilities.AssemblyOf(compositeInterface);
     var results = ImmutableArray.CreateBuilder<JsonMessageTypeInfo>();
     foreach (var assembly in compilation.SourceModule.ReferencedAssemblySymbols) {
       if (!SymbolEqualityComparer.Default.Equals(assembly, framework) && _referencesAssembly(assembly, framework)) {
@@ -3561,27 +3689,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         .Select(static p => _toPropertyInfo(p))
         .ToArray();
 
-    // Detect if type has a parameterized constructor matching all writable properties
-    // This is true for records with primary constructors like: record MyRecord(string Prop1, int Prop2)
-    // This is false for records with required properties like: record MyRecord { public required string Prop1 { get; init; } }
-    // Computed properties (CanWrite = false) are excluded from constructor matching
-    var writableProperties = properties.Where(p => p.CanWrite).ToArray();
-    bool hasParameterizedConstructor = type.Constructors.Any(c =>
-        c.DeclaredAccessibility == Accessibility.Public &&
-        c.Parameters.Length == writableProperties.Length &&
-        c.Parameters.All(p => writableProperties.Any(prop =>
-            prop.Name.Equals(p.Name, System.StringComparison.OrdinalIgnoreCase))));
-
     return new JsonMessageTypeInfo(
         FullyQualifiedName: TypeNameUtilities.FullyQualified(type),
         ClrTypeName: _getClrTypeName(type),
-        SimpleName: type.Name,
+        SimpleName: TypeNameUtilities.SimpleName(type),
         IsCommand: isCommand,
         IsEvent: isEvent,
         IsSerializable: isSerializable,
         IsComposite: isComposite,
         Properties: properties,
-        HasParameterizedConstructor: hasParameterizedConstructor
+        ConstructorArgumentCount: _constructorArgumentCount(type, properties)
     );
   }
 
@@ -3771,16 +3888,24 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Checks if a type has a parameterized constructor matching its writable properties.
-  /// Computed properties (CanWrite = false) are excluded from constructor matching.
+  /// How many of the type's writable properties, from the first, a public constructor takes in that order: all of
+  /// them for a positional record, only the positional ones for a positional record whose base record contributes
+  /// members of its own (#2016), and none when the only fitting constructor is the parameterless one. The properties
+  /// are already ordered with the constructor's parameters first (<see cref="_getAllPropertiesIncludingInherited"/>);
+  /// computed properties (CanWrite = false) are not counted. Names match case-insensitively, as a class's camelCase
+  /// parameters bind to its PascalCase properties.
   /// </summary>
-  private static bool _hasMatchingParameterizedConstructor(INamedTypeSymbol typeSymbol, PropertyInfo[] properties) {
-    var writableProperties = properties.Where(p => p.CanWrite).ToArray();
-    return typeSymbol.Constructors.Any(c =>
-        c.DeclaredAccessibility == Accessibility.Public &&
-        c.Parameters.Length == writableProperties.Length &&
-        c.Parameters.All(p => writableProperties.Any(prop =>
-            prop.Name.Equals(p.Name, System.StringComparison.OrdinalIgnoreCase))));
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextPositionalRecordTests.cs</tests>
+  private static int _constructorArgumentCount(INamedTypeSymbol typeSymbol, PropertyInfo[] properties) {
+    var writable = properties.Where(static p => p.CanWrite).Select(static p => p.Name).ToArray();
+    return typeSymbol.Constructors
+        .Where(c => c.DeclaredAccessibility == Accessibility.Public
+            && c.Parameters.Length <= writable.Length
+            && c.Parameters.Select(static (p, i) => (p.Name, i))
+                .All(parameter => writable[parameter.i].Equals(parameter.Name, StringComparison.OrdinalIgnoreCase)))
+        .Select(static c => c.Parameters.Length)
+        .DefaultIfEmpty(0)
+        .Max();
   }
 
   // ========================================
@@ -3884,10 +4009,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     var fqnByClrName = new Dictionary<string, string>(StringComparer.Ordinal);
-    var livingClrNames = new HashSet<string>(StringComparer.Ordinal);
+    var livingQualifiedNames = new HashSet<string>(StringComparer.Ordinal);
     foreach (var message in messageTypes) {
       fqnByClrName[message.ClrTypeName] = message.FullyQualifiedName;
-      livingClrNames.Add(message.ClrTypeName);
+      livingQualifiedNames.Add($"{message.ClrTypeName}, {actualAssemblyName}");
     }
 
     var emitted = new List<string>();
@@ -3897,12 +4022,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       if (!fqnByClrName.TryGetValue(alias.CurrentClrTypeName, out var fullyQualifiedName)) {
         continue;
       }
+      // A bare former name lived in this assembly; one the ledger records with an assembly (the type moved from another
+      // assembly, #2264) is the name its old events carry, as recorded.
+      var formerQualified = PinnedTypeLedger.AssemblyOf(alias.FormerClrTypeName) is null
+        ? $"{alias.FormerClrTypeName}, {actualAssemblyName}"
+        : alias.FormerClrTypeName;
       // Never shadow a live type that reuses the former name, and de-dupe.
-      if (livingClrNames.Contains(alias.FormerClrTypeName) || !seenFormerNames.Add(alias.FormerClrTypeName)) {
+      if (livingQualifiedNames.Contains(formerQualified) || !seenFormerNames.Add(formerQualified)) {
         continue;
       }
 
-      var formerQualified = $"{alias.FormerClrTypeName}, {actualAssemblyName}";
       emitted.Add(
         REGISTER_TYPE_NAME_OPEN +
         $"    \"{formerQualified}\",\n" +
@@ -3957,12 +4086,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
 
       // Record the relationship for both abstract and non-abstract base classes
-      // so derived types are discovered for polymorphic serialization
-      inheritanceList.Add(new InheritanceInfo(
-          DerivedTypeName: derivedTypeName,
-          BaseTypeName: baseTypeName,
-          IsInterface: false
-      ));
+      // so derived types are discovered for polymorphic serialization. A constructed generic base
+      // ("BaseCommand<OrderId>") has no metadata name, so the by-name check that leaves abstract bases
+      // out cannot see it; an abstract one is left out here, where its symbol is at hand (#2072).
+      if (!(currentBase.IsGenericType && currentBase.IsAbstract)) {
+        inheritanceList.Add(new InheritanceInfo(
+            DerivedTypeName: derivedTypeName,
+            BaseTypeName: baseTypeName,
+            IsInterface: false
+        ));
+      }
 
       currentBase = currentBase.BaseType;
     }

@@ -16,8 +16,8 @@ namespace Whizbang.Core.Tags;
 /// (<see cref="TagPolicyValidator"/>).
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#system-tags</docs>
-/// <tests>tests/Whizbang.Core.Tests/Tags/SystemTagsTests.cs:Audit_IsSysAuditAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/SystemTagsTests.cs:IsFrameworkTag_RejectsUnknownSysTagAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/SystemTagsTests.cs:Audit_IsSysAuditAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/SystemTagsTests.cs:IsFrameworkTag_RejectsUnknownSysTagAsync</tests>
 public static class SystemTags {
 #pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores
   /// <summary>

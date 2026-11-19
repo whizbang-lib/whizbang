@@ -27,7 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.EFCore;
 /// condition count of any single shard. No database.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RedeliveryRequestReceptor.cs</code-under-test>
-[NotInParallel("RedeliveryBuildGate")]
+[NotInParallel("RedeliveryBuildGate")] // the receptor's per-process build gate is shared state
 [Category("Shard4")]
 public class RedeliveryRequestReceptorBranchTests {
 
@@ -83,6 +83,7 @@ public class RedeliveryRequestReceptorBranchTests {
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
     await receptor.HandleAsync(new RequestRedeliveryCommand {
+      RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       TenantScope = "tenant-a",
       EventTypes = ["Contracts.ProbeHappened"],
       StreamIds = [streamId],

@@ -72,6 +72,25 @@ public sealed class EphemeralModeResolver : IEphemeralModeResolver {
     }
   }
 
+  /// <summary>
+  /// Indexes the catalog as <see cref="EphemeralModeResolver(IMessageTypeCatalog)"/> does, with the configured
+  /// retention of the framework's rewind and rebuild events (<c>Whizbang:Ephemeral:SystemEvents:Ttl</c>, #2320) applied
+  /// to their modes, so the TTL stamped on a new event is the configured one.
+  /// </summary>
+  /// <param name="catalog">The generated message-type catalog (the compile-time authority).</param>
+  /// <param name="options">The ephemeral options carrying the system-event retention.</param>
+  /// <tests>tests/Whizbang.Core.Tests/Events/System/SystemEventRetentionTests.cs:Resolver_AppliesTheConfiguredTtl_ToSystemEventsOnlyAsync</tests>
+  public EphemeralModeResolver(IMessageTypeCatalog catalog, Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.EphemeralOptions> options)
+    : this(catalog) {
+    ArgumentNullException.ThrowIfNull(options);
+    var ttl = options.Value.SystemEvents.Ttl;
+    foreach (var entry in catalog.GetAll().Where(e => e.Ephemeral is not null)) {
+      var applied = Whizbang.Core.Events.System.SystemEventRetention.Apply(entry.Type, entry.Ephemeral!, ttl);
+      _byClrTypeName[entry.ClrTypeName] = applied;
+      _byType[entry.Type] = applied;
+    }
+  }
+
   /// <inheritdoc/>
   public EphemeralInfo? Resolve(string clrTypeName) =>
     _byClrTypeName.TryGetValue(clrTypeName, out var info) ? info : null;

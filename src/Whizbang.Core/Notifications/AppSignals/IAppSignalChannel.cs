@@ -13,11 +13,33 @@ namespace Whizbang.Core.Notifications.AppSignals;
 /// <docs>fundamentals/work-coordinator/app-signals</docs>
 public interface IAppSignalChannel {
   /// <summary>
-  /// Publish a payload to all subscribers of <paramref name="topic"/>. The notification
-  /// fires on the postgres connection's COMMIT (so it can be transactionally tied to other
-  /// writes by sharing a transaction). Topics must match
+  /// Publish a payload to all subscribers of <paramref name="topic"/>. Topics must match
   /// <c>^[a-z][a-z0-9_]{0,62}$</c> and must not start with <c>wh_</c> (reserved).
   /// </summary>
+  /// <remarks>
+  /// <para>When the notification is sent (#2076):</para>
+  /// <list type="bullet">
+  ///   <item><description>
+  ///     Through a channel resolved in a scope, while that scope's framework DbContext has a transaction open: sent on the
+  ///     transaction's own connection, so subscribers hear it only when the transaction commits, and never when it (or the
+  ///     savepoint the publish was made in) rolls back. PostgreSQL delivers identical topic-and-payload publishes made in
+  ///     one transaction once.
+  ///   </description></item>
+  ///   <item><description>
+  ///     Inside a <see cref="System.Transactions.TransactionScope"/>: sent once the scope commits, and dropped when it
+  ///     rolls back, on EF Core and Dapper alike.
+  ///   </description></item>
+  ///   <item><description>
+  ///     Otherwise (no transaction, a channel held by a singleton or resolved from the root, or a transaction begun on a
+  ///     connection the framework does not track): sent at once, on a connection of its own.
+  ///   </description></item>
+  /// </list>
+  /// <para>
+  /// Sent inside a caller's DbContext transaction, a payload PostgreSQL rejects (over its 8000-byte limit) fails that
+  /// transaction. Inside a <c>TransactionScope</c> the signal is sent after the scope commits, so the caller's work
+  /// commits and the rejected send is logged.
+  /// </para>
+  /// </remarks>
   /// <exception cref="ArgumentException">If topic format is invalid.</exception>
   Task PublishAsync(string topic, string payload, CancellationToken cancellationToken = default);
 
@@ -60,22 +82,4 @@ public static class AppSignalTopicValidator {
 
   /// <summary>Builds the postgres channel name from a topic ('wh_app_' prefix).</summary>
   public static string ToChannelName(string topic) => "wh_app_" + Validate(topic);
-}
-
-/// <summary>No-op app signal channel used when notifications are disabled.</summary>
-public sealed class NoOpAppSignalChannel : IAppSignalChannel {
-  /// <inheritdoc />
-  public Task PublishAsync(string topic, string payload, CancellationToken cancellationToken = default) {
-    _ = AppSignalTopicValidator.Validate(topic);  // still validate for caller correctness
-    return Task.CompletedTask;
-  }
-  /// <inheritdoc />
-  public IDisposable Subscribe(string topic, Func<string, CancellationToken, Task> handler) {
-    _ = AppSignalTopicValidator.Validate(topic);
-    return new NoOpDisposable();
-  }
-
-  private sealed class NoOpDisposable : IDisposable {
-    public void Dispose() { }
-  }
 }

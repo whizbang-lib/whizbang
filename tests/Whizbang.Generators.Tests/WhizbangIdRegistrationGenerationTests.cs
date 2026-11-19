@@ -42,7 +42,7 @@ public class WhizbangIdRegistrationGenerationTests {
     // Assert
     var registrationSource = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangIdProviderRegistration.g.cs");
     await Assert.That(registrationSource).IsNotNull();
-    await Assert.That(registrationSource).Contains("[System.Runtime.CompilerServices.ModuleInitializer]");
+    await Assert.That(registrationSource).Contains("[global::System.Runtime.CompilerServices.ModuleInitializer]");
     await Assert.That(registrationSource).Contains("public static void Initialize()");
   }
 
@@ -64,7 +64,37 @@ public class WhizbangIdRegistrationGenerationTests {
     var registrationSource = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangIdProviderRegistration.g.cs");
     await Assert.That(registrationSource).IsNotNull();
     await Assert.That(registrationSource).Contains("WhizbangIdProviderRegistry.RegisterFactory<");
-    await Assert.That(registrationSource).Contains("new TestIdProvider(baseProvider)");
+    await Assert.That(registrationSource).Contains("new global::TestIdProvider(baseProvider)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_RegistrationRegistersEachIdsGuidConversionAsync() {
+    // Arrange
+    const string source = @"
+      using Whizbang.Core;
+
+      namespace MyApp.Ids {
+        [WhizbangId]
+        public readonly partial struct OrderId;
+
+        [WhizbangId(AcceptAnyVersion = true)]
+        public readonly partial struct ExternalUserId;
+      }
+    ";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<WhizbangIdGenerator>(source);
+
+    // Assert
+    var registrationSource = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangIdProviderRegistration.g.cs");
+    await Assert.That(registrationSource).IsNotNull();
+    await Assert.That(registrationSource).Contains(
+      "global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterGuidConversion<global::MyApp.Ids.OrderId>(global::MyApp.Ids.OrderId.From);");
+    await Assert.That(registrationSource).Contains(
+      "global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterGuidConversion<global::MyApp.Ids.ExternalUserId>(global::MyApp.Ids.ExternalUserId.From);");
+    await Assert.That(registrationSource).Contains(
+      "global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterValueMember<global::MyApp.Ids.OrderId>(static id => id.Value);");
   }
 
   [Test]
@@ -113,5 +143,57 @@ public class WhizbangIdRegistrationGenerationTests {
     // Count should be 2 (one for each ID type)
     var addSingletonCount = registrationSource.Split("AddSingleton<global::Whizbang.Core.IWhizbangIdProvider<").Length - 1;
     await Assert.That(addSingletonCount).IsEqualTo(2);
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_IdsInSeveralNamespaces_RegistrationCompilesAsync() {
+    // The registration is emitted once, under the first id's namespace, so it names every id and provider in full
+    // (#2072). A name relative to that namespace does not resolve for an id declared in another one (CS0246).
+    const string source = """
+      using Whizbang.Core;
+
+      namespace App.Orders {
+        [WhizbangId]
+        public readonly partial struct OrderId;
+      }
+
+      namespace App.Billing {
+        [WhizbangId]
+        public readonly partial struct InvoiceId;
+      }
+
+      [WhizbangId]
+      public readonly partial struct GlobalId;
+      """;
+
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<WhizbangIdGenerator>(source);
+
+    await Assert.That(errors).IsEmpty()
+      .Because("each provider lives in its own id's namespace, which the registration's namespace does not import");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_IdsInSeveralNamespaces_RegistrationNamesEachProviderInFullAsync() {
+    const string source = """
+      using Whizbang.Core;
+
+      namespace App.Orders {
+        [WhizbangId]
+        public readonly partial struct OrderId;
+      }
+
+      [WhizbangId]
+      public readonly partial struct GlobalId;
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<WhizbangIdGenerator>(source);
+
+    var registrationSource = GeneratorTestHelper.GetRequiredGeneratedSource(result, "WhizbangIdProviderRegistration.g.cs");
+    await Assert.That(registrationSource).Contains(
+      "RegisterFactory<global::App.Orders.OrderId>(baseProvider => new global::App.Orders.OrderIdProvider(baseProvider));");
+    await Assert.That(registrationSource).Contains(
+      "RegisterFactory<global::GlobalId>(baseProvider => new global::GlobalIdProvider(baseProvider));");
   }
 }

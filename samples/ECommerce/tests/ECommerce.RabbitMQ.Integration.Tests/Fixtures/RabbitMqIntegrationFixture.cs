@@ -26,6 +26,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
@@ -330,7 +331,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
           DELETE FROM inventory.wh_lifecycle_completions;
           DELETE FROM inventory.wh_outbox;
           DELETE FROM inventory.wh_inbox;
-          DELETE FROM inventory.wh_receptor_processing;
           DELETE FROM inventory.wh_message_deduplication;
           DELETE FROM inventory.wh_event_store;
           DELETE FROM inventory.wh_active_streams;
@@ -357,7 +357,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
           DELETE FROM bff.wh_lifecycle_completions;
           DELETE FROM bff.wh_outbox;
           DELETE FROM bff.wh_inbox;
-          DELETE FROM bff.wh_receptor_processing;
           DELETE FROM bff.wh_message_deduplication;
           DELETE FROM bff.wh_event_store;
           DELETE FROM bff.wh_active_streams;
@@ -426,15 +425,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
-    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang().
-    // The ECommerce.Integration.TestUtilities assembly has a module initializer that overwrites
-    // ServiceRegistrationCallbacks.Dispatcher with its own callback (which registers
-    // DistributeStageTestReceptor). That receptor requires TaskCompletionSource<ProductCreatedEvent>
-    // in its constructor, which is not registered in DI, causing a build failure.
-    // Since we explicitly call AddReceptors() and AddWhizbangDispatcher() below,
-    // the auto-registration callback is not needed.
-    ServiceRegistrationCallbacks.Dispatcher = null;
-
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services
       .AddWhizbang()
@@ -473,9 +463,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     var topicRegistryInstance = new ECommerce.Contracts.Generated.TopicRegistry();
     builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRegistry>(topicRegistryInstance);
 
-    // Register dispatcher
-    ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangDispatcher(builder.Services);
-
     // Register lenses
     builder.Services.AddScoped<IProductLens, ProductLens>();
     builder.Services.AddScoped<IInventoryLens, InventoryLens>();
@@ -511,7 +498,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.ApplyTestTimings();
 
     // Register background workers
-    builder.Services.AddHostedService<PerspectiveWorker>();
+    // AddWhizbang() hosts the perspective worker, starting at Accept commands.
 
     // Register OrderedStreamProcessor for message ordering
     builder.Services.AddSingleton<OrderedStreamProcessor>();
@@ -527,7 +514,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       }
     ));
     builder.Services.AddSingleton(consumerOptions);
-    builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
+    builder.Services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp =>
       new TransportConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         options: consumerOptions,
@@ -538,7 +525,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
         metrics: sp.GetService<TransportMetrics>(),
         logger: sp.GetRequiredService<ILogger<TransportConsumerWorker>>(),
         serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         routingOptions: Options.Create(new RoutingOptions()),
         workChannelWriter: new WorkChannelWriter(),
         claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -600,10 +586,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
-    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang().
-    // See comment in _createInventoryHost() for full explanation.
-    ServiceRegistrationCallbacks.Dispatcher = null;
-
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services
       .AddWhizbang()
@@ -632,9 +614,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     // Register TopicRegistry
     var topicRegistryInstance = new ECommerce.Contracts.Generated.TopicRegistry();
     builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRegistry>(topicRegistryInstance);
-
-    // Register dispatcher
-    ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangDispatcher(builder.Services);
 
     // Register SignalR (required by BFF lenses)
     builder.Services.AddSignalR();
@@ -679,7 +658,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.ApplyTestTimings();
 
     // Register background workers
-    builder.Services.AddHostedService<PerspectiveWorker>();
+    // AddWhizbang() hosts the perspective worker, starting at Accept commands.
 
     // RabbitMQ consumer with test-specific routing
     // BFF subscribes only to exchanges for events its perspectives handle:
@@ -701,7 +680,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       }
     ));
     builder.Services.AddSingleton(consumerOptions);
-    builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
+    builder.Services.AddWhizbangWorker(StartupStage.AcceptingCommands, sp =>
       new TransportConsumerWorker(
         transport: sp.GetRequiredService<ITransport>(),
         options: consumerOptions,
@@ -712,7 +691,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
         metrics: sp.GetService<TransportMetrics>(),
         logger: sp.GetRequiredService<ILogger<TransportConsumerWorker>>(),
         serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         routingOptions: Options.Create(new RoutingOptions()),
         workChannelWriter: new WorkChannelWriter(),
         claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
@@ -821,7 +799,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   /// unbound exchange.
   /// </summary>
   private static async Task _waitForTransportConsumersReadyAsync(Microsoft.Extensions.Hosting.IHost host, CancellationToken ct) {
-    var consumers = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+    var consumers = host.Services.GetHostedWorkers()
       .OfType<Whizbang.Core.Workers.TransportConsumerWorker>()
       .ToList();
     if (consumers.Count == 0) {
@@ -864,8 +842,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     void WireInboxDrain(string host, InboxDrainWorker? w) => WireOnce(host, "InboxDrainWorker", w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
     void WirePerspective(string host, PerspectiveWorker? w) => WireOnce(host, "PerspectiveWorker", w, x => x.IsIdle, (x, h) => x.OnWorkProcessingIdle += h, (x, h) => x.OnWorkProcessingIdle -= h);
 
-    var inventoryHostedServices = _inventoryHost!.Services.GetServices<IHostedService>().ToList();
-    var bffHostedServices = _bffHost!.Services.GetServices<IHostedService>().ToList();
+    var inventoryHostedServices = _inventoryHost!.Services.GetHostedWorkers().ToList();
+    var bffHostedServices = _bffHost!.Services.GetHostedWorkers().ToList();
 
     WireOutboxPublish("Inventory", inventoryHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
     WireOutboxPublish("BFF", bffHostedServices.OfType<OutboxPublishWorker>().FirstOrDefault());
@@ -1024,7 +1002,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     var tcs = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
     // Post-Phase-H: OutboxDrainWorker is the active publish path. Subscribe to both if
     // registered so the fixture works regardless of which worker is active.
-    var hostedServices = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>().ToList();
+    var hostedServices = InventoryHost.Services.GetHostedWorkers().ToList();
     var drainWorker = hostedServices.OfType<OutboxDrainWorker>().FirstOrDefault();
     var publishWorker = hostedServices.OfType<OutboxPublishWorker>().FirstOrDefault();
     if (drainWorker is null && publishWorker is null) {
@@ -1056,68 +1034,53 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Waits for a specific number of perspective EVENTS (not fires) to be processed using
-  /// the <see cref="PerspectiveWorker.OnPerspectiveEventProcessed"/> hook.
+  /// Waits until this fixture's perspective workers have applied
+  /// <paramref name="expectedCompletions"/> events belonging to <paramref name="streamId"/>.
   /// </summary>
   /// <remarks>
-  /// <para>
-  /// The handler fires ONCE per (perspective, stream) batch — but each fire carries an
-  /// <c>EventCount</c> that reflects how many events were processed in that batch. This
-  /// implementation SUMS EventCount so callers can specify a precise event total instead
-  /// of guessing how the worker batched them.
-  /// </para>
-  /// <para>
-  /// Example: CreateProductCommand with InitialStock &gt; 0 produces 3 events on inventory
-  /// (ProductCreated x2 + InventoryRestocked x1). Whether the worker dispatches them in 2
-  /// or 3 batches (depending on drain timing) doesn't matter — <c>expectedCompletions: 3</c>
-  /// always waits until all 3 events have actually been applied.
-  /// </para>
+  /// The stream filter is REQUIRED and no unfiltered wait exists, by design: the shared fixture's
+  /// workers keep applying a previous test's in-flight events after that test ends, and an
+  /// unfiltered counter let those stale fires satisfy the wait before this test's events were
+  /// applied (the InventoryWorker_Perspectives_Materialize and UpdateProduct_PriceOnly flakes).
+  /// See <see cref="PerspectiveProcessingWaiter"/> for the counting semantics (sums EventCount).
   /// </remarks>
-  public async Task WaitForPerspectiveProcessingAsync(
+  /// <param name="expectedCompletions">Total event applications on <paramref name="streamId"/> to wait for.</param>
+  /// <param name="streamId">The stream whose events count (for product workflows, the ProductId).</param>
+  /// <param name="timeoutMilliseconds">Caller-side wait timeout.</param>
+  /// <param name="hostFilter">"inventory", "bff", or null for both.</param>
+  public Task WaitForPerspectiveProcessingAsync(
       int expectedCompletions,
+      Guid streamId,
       int timeoutMilliseconds = 30000,
-      string? hostFilter = null,
-      Guid? streamId = null) {
+      string? hostFilter = null) =>
+    WaitForPerspectiveProcessingAsync(expectedCompletions, [streamId], timeoutMilliseconds, hostFilter);
 
-    var eventCount = 0;
-    var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    void WireWorker(PerspectiveWorker? worker) {
-      if (worker is null) {
-        return;
-      }
-
-      void handler(PerspectiveEventProcessedEvent e) {
-        // Stream-id filter eliminates cross-test contamination: prior test's in-flight
-        // events keep firing on the worker after cleanup; without this filter their
-        // EventCount satisfied the wait before THIS test's command had committed.
-        // Mirror of the ASB fixture fix.
-        if (streamId.HasValue && e.StreamId != streamId.Value) {
-          return;
-        }
-        var current = Interlocked.Add(ref eventCount, e.EventCount);
-        if (current >= expectedCompletions) {
-          tcs.TrySetResult(true);
-        }
-      }
-
-      worker.OnPerspectiveEventProcessed += handler;
-    }
-
+  /// <summary>
+  /// Waits until this fixture's perspective workers have applied
+  /// <paramref name="expectedCompletions"/> events whose stream is in <paramref name="streamIds"/>,
+  /// for tests that wait on events from several streams at once (seeding, batches).
+  /// </summary>
+  /// <remarks>
+  /// The stream filter is REQUIRED and no unfiltered wait exists, by design: see the single-stream
+  /// overload and <see cref="PerspectiveProcessingWaiter"/>.
+  /// </remarks>
+  /// <param name="expectedCompletions">Total event applications across all <paramref name="streamIds"/>.</param>
+  /// <param name="streamIds">The streams whose events count; must not be empty.</param>
+  /// <param name="timeoutMilliseconds">Caller-side wait timeout.</param>
+  /// <param name="hostFilter">"inventory", "bff", or null for both.</param>
+  public Task WaitForPerspectiveProcessingAsync(
+      int expectedCompletions,
+      IReadOnlyCollection<Guid> streamIds,
+      int timeoutMilliseconds = 30000,
+      string? hostFilter = null) {
+    var workers = new List<PerspectiveWorker?>();
     if (hostFilter is null or "inventory") {
-      var inventoryWorker = InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault();
-      WireWorker(inventoryWorker);
+      workers.Add(InventoryHost.Services.GetHostedWorker<PerspectiveWorker>());
     }
-
     if (hostFilter is null or "bff") {
-      var bffWorker = BffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault();
-      WireWorker(bffWorker);
+      workers.Add(BffHost.Services.GetHostedWorker<PerspectiveWorker>());
     }
-
-    var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
-    await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+    return PerspectiveProcessingWaiter.WaitAsync(workers, expectedCompletions, streamIds, timeoutMilliseconds);
   }
 
   /// <summary>
@@ -1172,12 +1135,10 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     }
 
     if (hostFilter is null or "inventory") {
-      WireWorker(InventoryHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault());
+      WireWorker(InventoryHost.Services.GetHostedWorker<PerspectiveWorker>());
     }
     if (hostFilter is null or "bff") {
-      WireWorker(BffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
-        .OfType<PerspectiveWorker>().FirstOrDefault());
+      WireWorker(BffHost.Services.GetHostedWorker<PerspectiveWorker>());
     }
 
     using var watchdogCts = new CancellationTokenSource();

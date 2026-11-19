@@ -29,7 +29,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// Verifies that when WorkBatch.PerspectiveStreamIds is populated,
 /// the worker batch-fetches events and uses RunWithEventsAsync.
 /// </summary>
-public class PerspectiveWorkerDrainModeTests {
+public partial class PerspectiveWorkerDrainModeTests {
 
   [Test]
   [Timeout(30000)]
@@ -97,7 +97,6 @@ public class PerspectiveWorkerDrainModeTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: eventTypeProvider,
@@ -179,7 +178,6 @@ public class PerspectiveWorkerDrainModeTests {
         PollingIntervalMilliseconds = 50,
         MaxPerspectiveEventAttempts = 10,
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -261,7 +259,6 @@ public class PerspectiveWorkerDrainModeTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(options),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -342,7 +339,6 @@ public class PerspectiveWorkerDrainModeTests {
         MaxPerspectiveEventAttempts = 10,
         MaxConcurrentDrainConsumers = 3,
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -422,7 +418,6 @@ public class PerspectiveWorkerDrainModeTests {
         PollingIntervalMilliseconds = 50,
         MaxPerspectiveEventAttempts = 10,
       }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: serviceProvider.GetRequiredService<IEventTypeProvider>(),
@@ -532,6 +527,22 @@ public class PerspectiveWorkerDrainModeTests {
 
   private sealed class DrainModeEventStore : IEventStore {
     public List<MessageEnvelope<IEvent>> DeserializedEventsToReturn { get; set; } = [];
+
+    /// <summary>The batched read (#2246), when the store reads streams in batches; null for the interface default.</summary>
+    public Func<IReadOnlyList<(Guid StreamId, Guid? FromEventId)>, IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>>? ReadMany { get; set; }
+    public List<IReadOnlyList<(Guid StreamId, Guid? FromEventId)>> ManyReads { get; } = [];
+
+    public Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
+        IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
+        CancellationToken cancellationToken = default) {
+      if (ReadMany is null) {
+        return Task.FromResult<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?>(null);
+      }
+      lock (ManyReads) {
+        ManyReads.Add(streams);
+      }
+      return Task.FromResult<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?>(ReadMany(streams));
+    }
     public int DeserializeStreamEventsCallCount { get; private set; }
 
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(

@@ -35,7 +35,7 @@ namespace Whizbang.Core.Generated;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorRegistryRuntimeRegistrationTests.cs:Register_VoidReceptor_InvokeAsyncCallsHandleAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorRegistryRuntimeRegistrationTests.cs:Register_VoidReceptor_InvokeAsyncCallsHandleAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_ZeroReceptors_GeneratesEmptyReceptorRegistryAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_ReceptorRegistry_HasCorrectStructureAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithReceptor_GeneratesReceptorRegistryAsync</tests>
@@ -72,6 +72,17 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
     }
     return found;
   }
+
+  // The receptors compiled into this registry, by id, for the startup report of a receptor two assemblies both
+  // declare (#2197, #2201)
+  private static readonly string[] _compiledReceptorIds = [
+    #region COMPILED_RECEPTOR_IDS
+    // This region will be replaced with the generated receptor ids
+    #endregion
+  ];
+
+  /// <summary>The ids of the receptors compiled into this registry, each once.</summary>
+  public IReadOnlyCollection<string> GetCompiledReceptorIds() => _compiledReceptorIds;
 
   /// <summary>
   /// Gets all receptors registered to handle the specified message type at the specified lifecycle stage.
@@ -248,7 +259,7 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
       if (typeFullName is null) {
         continue;
       }
-      if (string.Equals(_normalizeRuntimeTypeName(typeFullName), normalized, System.StringComparison.Ordinal)) {
+      if (string.Equals(_normalizeRuntimeTypeName(typeFullName), normalized, global::System.StringComparison.Ordinal)) {
         return true;
       }
     }
@@ -257,7 +268,7 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
 
   private static string _normalizeRuntimeTypeName(string typeName) {
     // Strip assembly qualifier (everything after first ", ")
-    var commaIdx = typeName.IndexOf(", ", System.StringComparison.Ordinal);
+    var commaIdx = typeName.IndexOf(", ", global::System.StringComparison.Ordinal);
     var nameOnly = commaIdx >= 0 ? typeName.Substring(0, commaIdx) : typeName;
     // CLR nested-type separator (+) → C# display format (.) so envelope strings (which use
     // ".") match Type.FullName (which uses "+" for nested types).

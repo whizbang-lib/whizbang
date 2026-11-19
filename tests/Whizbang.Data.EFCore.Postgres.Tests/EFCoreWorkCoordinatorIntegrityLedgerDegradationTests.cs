@@ -34,6 +34,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Integration")]
 [Category("Shard4")]
 public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBase {
+  // A fixed instant: these tests pass "now" explicitly, so it never needs the real clock.
+  private static readonly DateTimeOffset _fixedNow = new(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
+
 
   private static readonly Guid _originId = Guid.Parse("33333333-3333-3333-3333-333333333333");
 
@@ -81,7 +84,8 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
   [Test]
   public async Task IntegrityTryBeginReport_WithTheLedgerUnavailable_FailsOpenAsync() {
     await using var ctx = CreateDbContext();
-    await _dropFunctionAsync("wh_integrity_try_begin_report");
+    // 399 (#2256): the function the coordinator calls.
+    await _dropFunctionAsync("wh_integrity_report_outcome");
 
     var began = await _build(ctx).IntegrityTryBeginReportAsync(
       _key(), originLo: 1, originHi: 10, localLo: 1, localHi: 5,
@@ -96,7 +100,8 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
   [Test]
   public async Task IntegrityTryBeginRepair_WithTheLedgerUnavailable_FailsClosedAsync() {
     await using var ctx = CreateDbContext();
-    await _dropFunctionAsync("wh_integrity_try_begin_repair");
+    // 399 (#2256): the function the coordinator calls.
+    await _dropFunctionAsync("wh_integrity_repair_outcome");
 
     var began = await _build(ctx).IntegrityTryBeginRepairAsync(
       _key(), DateTimeOffset.UtcNow, TimeSpan.FromSeconds(30), maxAttempts: 5);
@@ -110,7 +115,8 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
   [Test]
   public async Task IntegrityMarkHealed_WithTheLedgerUnavailable_DoesNotThrowAsync() {
     await using var ctx = CreateDbContext();
-    await _dropFunctionAsync("wh_integrity_mark_healed");
+    // 399 (#2256): the function the coordinator calls.
+    await _dropFunctionAsync("wh_integrity_heal_counted");
 
     // The caller is a completion path — throwing here would fail work that actually succeeded.
     await _build(ctx).IntegrityMarkHealedAsync(_key());
@@ -122,7 +128,8 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
   [Test]
   public async Task IntegrityTryBeginReportBatch_WithTheBatchFunctionMissing_ReturnsNullSoTheCallerFallsBackAsync() {
     await using var ctx = CreateDbContext();
-    await _dropFunctionAsync("wh_integrity_try_begin_report_batch");
+    // 399 (#2256): the function the coordinator calls.
+    await _dropFunctionAsync("wh_integrity_report_divergences_counted");
 
     var results = await _build(ctx).IntegrityTryBeginReportBatchAsync(
       _originId,
@@ -139,7 +146,8 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
   [Test]
   public async Task IntegrityMarkHealedBatchWithAges_WithTheBatchFunctionMissing_ReturnsNullAsync() {
     await using var ctx = CreateDbContext();
-    await _dropFunctionAsync("wh_integrity_mark_healed_batch");
+    // 399 (#2256): the function the coordinator calls.
+    await _dropFunctionAsync("wh_integrity_heal_batch_counted");
 
     var ages = await _build(ctx).IntegrityMarkHealedBatchWithAgesAsync(_originId, [_key()]);
 
@@ -152,7 +160,8 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
   [Test]
   public async Task IntegrityMarkHealedBatch_WithTheBatchFunctionMissing_ReportsFailureAsync() {
     await using var ctx = CreateDbContext();
-    await _dropFunctionAsync("wh_integrity_mark_healed_batch");
+    // 399 (#2256): the function the coordinator calls.
+    await _dropFunctionAsync("wh_integrity_heal_batch_counted");
 
     var marked = await _build(ctx).IntegrityMarkHealedBatchAsync(_originId, [_key()]);
 
@@ -190,9 +199,90 @@ public class EFCoreWorkCoordinatorIntegrityLedgerDegradationTests : EFCoreTestBa
   }
 
   [Test]
+  public async Task IntegrityMarkAnswerPending_WithTheLedgerUnavailable_MarksNothing_AndDoesNotThrowAsync() {
+    await using var ctx = CreateDbContext();
+    await _dropFunctionAsync("wh_integrity_mark_answer_pending");
+
+    // The request already left: failing the caller now would not unsend it. Unmarked, the bucket waits out its
+    // backoff instead of its answer, which is today's behavior.
+    var marked = await _build(ctx).IntegrityMarkAnswerPendingAsync(
+      _originId, [_key()], null, null, _fixedNow, TimeSpan.FromMinutes(5));
+
+    await Assert.That(marked).IsEqualTo(0);
+    await _assertDegradedLoudlyAsync();
+  }
+
+  [Test]
+  public async Task IntegrityMarkAnswerPending_NoKeys_IsANoOpAsync() {
+    await using var ctx = CreateDbContext();
+
+    var marked = await _build(ctx).IntegrityMarkAnswerPendingAsync(
+      _originId, [], null, null, _fixedNow, TimeSpan.FromMinutes(5));
+
+    await Assert.That(marked).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task IntegrityWithdrawAnswerPending_WithTheLedgerUnavailable_WithdrawsNothing_AndDoesNotThrowAsync() {
+    await using var ctx = CreateDbContext();
+    await _dropFunctionAsync("wh_integrity_withdraw_answer_pending");
+
+    // #2223: the send already failed and the drain moves on to its next group. Not withdrawn, the bucket waits out its
+    // answer timeout instead of its backoff, and the attempt stays spent.
+    var withdrawn = await ((IWorkCoordinator)_build(ctx)).IntegrityWithdrawAnswerPendingAsync(_originId, [_key()], _fixedNow, TimeSpan.FromMinutes(5));
+
+    await Assert.That(withdrawn).IsEqualTo(0);
+    await _assertDegradedLoudlyAsync();
+  }
+
+  [Test]
+  public async Task IntegrityWithdrawAnswerPending_CanceledByShutdown_ThrowsAsync() {
+    await using var ctx = CreateDbContext();
+    using var stopping = new CancellationTokenSource();
+    await stopping.CancelAsync();
+
+    await Assert.That(async () => await ((IWorkCoordinator)_build(ctx)).IntegrityWithdrawAnswerPendingAsync(
+        _originId, [_key()], _fixedNow, TimeSpan.FromMinutes(5), stopping.Token))
+      .Throws<OperationCanceledException>()
+      .Because("a stopping host is not a ledger failure, so it is not logged as one");
+  }
+
+  [Test]
+  public async Task IntegrityWithdrawAnswerPending_NoKeys_IsANoOpAsync() {
+    await using var ctx = CreateDbContext();
+
+    var withdrawn = await ((IWorkCoordinator)_build(ctx)).IntegrityWithdrawAnswerPendingAsync(_originId, [], _fixedNow, TimeSpan.FromMinutes(5));
+
+    await Assert.That(withdrawn).IsEqualTo(0);
+    await Assert.That(_log.MessagesFor(LogLevel.Warning)).IsEmpty().Because("nothing to withdraw is not a failure");
+  }
+
+  [Test]
+  public async Task IntegrityRecordBundleAnswer_WithTheLedgerUnavailable_ReturnsNullAsync() {
+    await using var ctx = CreateDbContext();
+    await _dropFunctionAsync("wh_integrity_record_bundle_answer");
+
+    var answer = await _build(ctx).IntegrityRecordBundleAnswerAsync(
+      _originId, [Guid.Parse("55555555-5555-5555-5555-555555555555")], [3], _fixedNow);
+
+    await Assert.That(answer).IsNull()
+      .Because("null leaves the reconcile to judge the bundle as it did before, never a bundle judged on no evidence");
+    await _assertDegradedLoudlyAsync();
+  }
+
+  [Test]
+  public async Task IntegrityRecordBundleAnswer_MismatchedArrays_AreRefusedAsync() {
+    await using var ctx = CreateDbContext();
+
+    await Assert.That(async () => await _build(ctx).IntegrityRecordBundleAnswerAsync(
+        _originId, [Guid.Parse("55555555-5555-5555-5555-555555555555")], [], _fixedNow))
+      .Throws<ArgumentException>();
+  }
+
+  [Test]
   public async Task GetIntegrityLedgerSummary_WithTheLedgerUnavailable_ReturnsTheEmptySnapshotAsync() {
     await using var ctx = CreateDbContext();
-    await _dropFunctionAsync("wh_integrity_ledger_summary");
+    await _dropFunctionAsync("wh_integrity_ledger_gauges");
 
     var snapshot = await _build(ctx).GetIntegrityLedgerSummaryAsync(maxRepairAttempts: 5);
 

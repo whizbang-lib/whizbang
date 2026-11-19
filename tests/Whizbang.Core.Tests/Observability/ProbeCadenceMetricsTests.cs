@@ -60,20 +60,6 @@ public class ProbeCadenceMetricsTests {
   }
 
   [Test]
-  public async Task SuppressedDutyAttempts_AreCountedPerDutyAsync() {
-    using var factory = new TestMeterFactory();
-    var metrics = new ProbeCadenceMetrics(new WhizbangMetrics(factory));
-
-    metrics.SuppressedDutyAttempts.Add(1, new KeyValuePair<string, object?>("duty", "stamper"));
-    metrics.SuppressedDutyAttempts.Add(1, new KeyValuePair<string, object?>("duty", "stamper"));
-    metrics.SuppressedDutyAttempts.Add(1, new KeyValuePair<string, object?>("duty", "migrator"));
-
-    var series = ProbeMeterReader.ReadSeries(factory.CreatedMeters[0], "whizbang.probes.suppressed_duty_attempts");
-    await Assert.That(series.Single(s => s.Tags.TryGetValue("duty", out var d1) && Equals(d1, "stamper")).Value).IsEqualTo(2);
-    await Assert.That(series.Single(s => s.Tags.TryGetValue("duty", out var d2) && Equals(d2, "migrator")).Value).IsEqualTo(1);
-  }
-
-  [Test]
   public async Task RecordTick_WithAnEmptyProbeName_ThrowsAsync() {
     var metrics = new ProbeCadenceMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
 

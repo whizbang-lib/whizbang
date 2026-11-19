@@ -41,7 +41,7 @@ public class TableStatisticsCollectorBranchTests {
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance,
+      logger: NullLogger<TableStatisticsCollector>.Instance,
       options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions()));
 
     await worker.StartAsync(CancellationToken.None);
@@ -59,7 +59,7 @@ public class TableStatisticsCollectorBranchTests {
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: null!,
+      logger: null!,
       options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions()));
 
     await worker.StartAsync(CancellationToken.None);
@@ -86,8 +86,8 @@ public class TableStatisticsCollectorBranchTests {
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: metrics,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance,
-      options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions()),
+      logger: NullLogger<TableStatisticsCollector>.Instance,
+      options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions { CollectionInterval = TimeSpan.FromSeconds(30), CollectionJitter = 0 }),
       timeProvider: clock);
     var cycled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     worker.CycleCompleted += () => cycled.TrySetResult();
@@ -121,8 +121,8 @@ public class TableStatisticsCollectorBranchTests {
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance,
-      options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions()),
+      logger: NullLogger<TableStatisticsCollector>.Instance,
+      options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions { CollectionInterval = TimeSpan.FromSeconds(30), CollectionJitter = 0 }),
       timeProvider: clock);
     var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     worker.CycleCompleted += () => recovered.TrySetResult();

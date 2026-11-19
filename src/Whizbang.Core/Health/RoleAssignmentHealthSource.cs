@@ -22,7 +22,7 @@ namespace Whizbang.Core.Health;
 /// component reports reachability, and this one must not turn that into a second, noisier failure.
 /// </remarks>
 /// <docs>proposals/duty-role-assignment</docs>
-/// <tests>tests/Whizbang.Core.Tests/Health/RoleAssignmentHealthSourceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Health/RoleAssignmentHealthSourceTests.cs</tests>
 public sealed class RoleAssignmentHealthSource : IWhizbangHealthSource {
   private readonly IRoleAssignmentReader _reader;
   private readonly RoleAssignmentOptions _options;
@@ -68,7 +68,7 @@ public sealed class RoleAssignmentHealthSource : IWhizbangHealthSource {
 #pragma warning disable CA1031 // reported, not swallowed: the failure is the Degraded detail
     } catch (Exception ex) {
 #pragma warning restore CA1031
-      return new ComponentHealth(ComponentState.Degraded, $"role assignments could not be read: {ex.GetType().Name}");
+      return new ComponentHealth(ComponentState.Degraded, $"role assignments could not be read: {TypeNameFormatter.ForLog(ex.GetType())}");
     }
 
     var byRole = snapshots.ToDictionary(s => s.Role, StringComparer.Ordinal);

@@ -41,8 +41,6 @@ public partial class InboxDispatchWorkerTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var sp = new ServiceCollection()
       .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
       .AddSingleton<IReceptorInvoker>(new DirectiveInvoker(FanoutDirective.Proceed))
@@ -54,7 +52,6 @@ public partial class InboxDispatchWorkerTests {
       inboxChannelWriter: inbox,
       handlerCommitChannel: handlerCommit,
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 1 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: logger,

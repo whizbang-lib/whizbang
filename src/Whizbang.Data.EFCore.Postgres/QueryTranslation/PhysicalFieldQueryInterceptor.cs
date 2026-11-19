@@ -33,6 +33,7 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:Sql_Where_GuidField_UsesPhysicalColumnAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:GroupBy_PhysicalField_SqlNotClientEvalAsync</tests>
 public class PhysicalFieldQueryInterceptor : IQueryExpressionInterceptor {
+  private readonly StreamIdPrimaryKeyRewriter _streamIds = new();
   private readonly PhysicalFieldExpressionVisitor _visitor = new();
   private readonly OrdinalEqualsRewriter _ordinalEquals = new();
   private readonly SearchContainsRewriter _search = new();
@@ -44,9 +45,13 @@ public class PhysicalFieldQueryInterceptor : IQueryExpressionInterceptor {
   public Expression QueryCompilationStarting(Expression queryExpression, QueryExpressionEventData eventData) {
     ArgumentNullException.ThrowIfNull(eventData);
 
-    // First, turn Contains on a Search field into the folded search its index is built over, while the
+    // First, move filters written against the projected model (after Select(r => r.Data)) onto the row,
+    // where every pass below can see them, and add the primary key beside a filter on the stream id.
+    var rewritten = _streamIds.Visit(queryExpression);
+
+    // Then turn Contains on a Search field into the folded search its index is built over, while the
     // property is still a plain member access that says which model and field it is.
-    var rewritten = _search.Visit(queryExpression);
+    rewritten = _search.Visit(rewritten);
 
     // Then redirect promoted properties to their real columns.
     rewritten = _visitor.Visit(rewritten);
@@ -67,6 +72,11 @@ public class PhysicalFieldQueryInterceptor : IQueryExpressionInterceptor {
     // equivalent. Order matters twice over: a promoted property is already an EF.Property call by
     // now, so the containment pass cannot claim it, and an ordinal Equals is already an equality, so
     // the containment pass needs no knowledge of StringComparison.
-    return new JsonbContainmentRewriter(model).Visit(rewritten);
+    rewritten = new JsonbContainmentRewriter(model).Visit(rewritten);
+
+    // Last, a query whose result is a Split model's projected document reads the promoted columns beside it (#2304).
+    // Last because the registered projection reads the row's document and its columns directly, which no pass above
+    // has anything to change in, and because only the query's final projection may be rewritten.
+    return SplitDocumentProjectionRewriter.Rewrite(rewritten);
   }
 }

@@ -74,7 +74,7 @@ public enum PoisonQuarantineReason {
 /// </param>
 /// <param name="Now">Evaluation instant — injected, never read from the ambient clock.</param>
 /// <docs>fundamentals/dispatcher/routing#poison-messages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/PoisonMessageDetectorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/PoisonMessageDetectorTests.cs</tests>
 public readonly record struct PoisonEvaluationContext(
   string MessageId,
   DateTimeOffset? FirstEnqueuedAt,
@@ -142,7 +142,7 @@ public readonly record struct PoisonVerdict(
 /// drift).
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#poison-messages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/PoisonMessageDetectorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/PoisonMessageDetectorTests.cs</tests>
 public interface IPoisonMessageDetector {
   /// <summary>
   /// Pure decision over transport-neutral facts. No side effects — callers act on the verdict and
@@ -205,7 +205,7 @@ public interface IPoisonMessageDetector {
 /// <see cref="PoisonEvaluationContext.BrokerDeliveryCount"/>.
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#poison-messages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/PoisonMessageDetectorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/PoisonMessageDetectorTests.cs</tests>
 public sealed class PoisonMessageDetector : IPoisonMessageDetector {
   private readonly PoisonMessageOptions _options;
   private readonly TimeSpan _ageThreshold;

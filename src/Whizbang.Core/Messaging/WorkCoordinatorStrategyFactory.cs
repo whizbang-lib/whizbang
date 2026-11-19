@@ -16,12 +16,12 @@ namespace Whizbang.Core.Messaging;
 /// Uses direct <c>new</c> calls only — no reflection, no Activator.CreateInstance.
 /// </summary>
 /// <docs>data/work-coordinator-strategies</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_DefaultOptions_ReturnsScopedStrategyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithImmediateOption_ReturnsImmediateStrategyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithIntervalOption_ReturnsIntervalStrategyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithBatchOption_ReturnsBatchStrategyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Interval_ResolvesSingletonAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Batch_ResolvesSingletonAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_DefaultOptions_ReturnsScopedStrategyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithImmediateOption_ReturnsImmediateStrategyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithIntervalOption_ReturnsIntervalStrategyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithBatchOption_ReturnsBatchStrategyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Interval_ResolvesSingletonAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Batch_ResolvesSingletonAsync</tests>
 public static class WorkCoordinatorStrategyFactory {
   /// <summary>
   /// Creates a new work coordinator strategy instance based on the specified strategy type.
@@ -31,8 +31,8 @@ public static class WorkCoordinatorStrategyFactory {
   /// <param name="strategy">The strategy type to create.</param>
   /// <param name="sp">The service provider to resolve dependencies from.</param>
   /// <returns>A new IWorkCoordinatorStrategy instance.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_DefaultOptions_ReturnsScopedStrategyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithImmediateOption_ReturnsImmediateStrategyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_DefaultOptions_ReturnsScopedStrategyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithImmediateOption_ReturnsImmediateStrategyAsync</tests>
   public static IWorkCoordinatorStrategy Create(WorkCoordinatorStrategy strategy, IServiceProvider sp) {
     return strategy switch {
       WorkCoordinatorStrategy.Scoped => _createScoped(sp),
@@ -56,7 +56,8 @@ public static class WorkCoordinatorStrategyFactory {
   public static IWorkCoordinatorStrategy WrapWithStreamAffinity(IWorkCoordinatorStrategy inner, IServiceProvider sp) {
     ArgumentNullException.ThrowIfNull(inner);
     ArgumentNullException.ThrowIfNull(sp);
-    var outboxBatch = sp.GetService<IOutboxBatchStrategy>();
+    // A strategy registered directly is bounded here too (#2220).
+    var outboxBatch = Whizbang.Core.Workers.BatchStrategyResolution.Outbox(sp);
     if (outboxBatch is null) {
       return inner;
     }
@@ -68,7 +69,10 @@ public static class WorkCoordinatorStrategyFactory {
       sp.GetRequiredService<ILogger<StreamAffinityWorkCoordinatorStrategy>>(),
       auditDecisionHook: sp.GetService<Whizbang.Core.SystemEvents.IAuditDecisionHook>(),
       systemEventOptions: sp.GetOptionsValue<Whizbang.Core.SystemEvents.SystemEventOptions>(),
-      coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>());
+      coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
+      auditEventTypes: sp.GetService<Whizbang.Core.SystemEvents.AuditTypeResolver>(),
+      // #2220: the scope is the publisher's, so its open transaction is the one the publish runs inside.
+      holdsOpenTransaction: () => OpenTransactionProbe.HoldsOpenTransaction(sp));
   }
 
   private static ScopedWorkCoordinatorStrategy _createScoped(IServiceProvider sp) {
@@ -83,7 +87,9 @@ public static class WorkCoordinatorStrategyFactory {
       TracingOptions = sp.GetRequiredService<IOptionsMonitor<TracingOptions>>(),
       SystemEventOptions = sp.GetOptionsValue<Whizbang.Core.SystemEvents.SystemEventOptions>(),
       CoalesceResolver = sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
-      AuditDecisionHook = sp.GetService<Whizbang.Core.SystemEvents.IAuditDecisionHook>()
+      AuditDecisionHook = sp.GetService<Whizbang.Core.SystemEvents.IAuditDecisionHook>(),
+      AuditEventTypes = sp.GetService<Whizbang.Core.SystemEvents.AuditTypeResolver>(),
+      DeferredChannel = sp.GetRequiredService<IDeferredOutboxChannel>()
     };
     return new ScopedWorkCoordinatorStrategy(
       coordinator,
@@ -116,7 +122,8 @@ public static class WorkCoordinatorStrategyFactory {
       workChannelWriter: channelWriter,
       auditDecisionHook: sp.GetService<Whizbang.Core.SystemEvents.IAuditDecisionHook>(),
       detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(),
-      coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>()
+      coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
+      auditEventTypes: sp.GetService<Whizbang.Core.SystemEvents.AuditTypeResolver>()
     );
   }
 
@@ -137,6 +144,7 @@ public static class WorkCoordinatorStrategyFactory {
       workChannelWriter: channelWriter,
       inboxChannelWriter: sp.GetRequiredService<IInboxChannelWriter>(),
       detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(),
+      deferredChannel: sp.GetRequiredService<IDeferredOutboxChannel>(),
       metrics: sp.GetService<WorkCoordinatorMetrics>(),
       lifecycleMetrics: sp.GetService<LifecycleMetrics>()
     );
@@ -158,6 +166,7 @@ public static class WorkCoordinatorStrategyFactory {
       tracingOptions: sp.GetRequiredService<IOptionsMonitor<TracingOptions>>(),
       workChannelWriter: channelWriter,
       detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(),
+      deferredChannel: sp.GetRequiredService<IDeferredOutboxChannel>(),
       metrics: sp.GetService<WorkCoordinatorMetrics>(),
       lifecycleMetrics: sp.GetService<LifecycleMetrics>()
     );

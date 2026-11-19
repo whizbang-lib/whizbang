@@ -165,8 +165,30 @@ the pull request must contain:
 | any | A closing keyword for an accepted issue opened first | Gate · Linked issue |
 | `fix` | It closes an issue labeled `bug`, and a library fix adds or changes a test that fails without it | Review checks |
 | `feat`, `fix`, `perf` in the library | A docs-site pull request, open or merged, that names this one ([Docs](#docs-for-a-library-change)), unless a maintainer comments `/docs-not-needed` | Review checks |
-| `feat`, `fix` in the library | A `CHANGELOG.md` entry under Unreleased | Review checks |
-| `!` (breaking) | A `CHANGELOG.md` entry with an **Upgrade:** note | Gate · Pull request type |
+| `feat`, `fix` in the library | A changelog fragment, `changelog.d/<issue>.md` ([Changelog entries](#changelog-entries)) | Review checks |
+| `!` (breaking) | A changelog fragment with an **Upgrade:** note | Gate · Pull request type |
+| any, into `develop` | No lines added under `[Unreleased]` in `CHANGELOG.md` | Gate · Pull request type |
+
+#### Changelog entries
+
+A change a consumer would notice gets a changelog entry, written as a file of its own:
+`changelog.d/<issue>.md`, named by the issue the pull request fixes (or by the pull request number when
+there is none). It starts with front matter naming its category and, optionally, its subsection, then the
+entry as a list item:
+
+```markdown
+---
+category: Fixed
+subsection: Storage
+---
+- **What changed, in one sentence (#1234).** What a consumer sees now, and what they need to do.
+```
+
+`changelog.d/README.md` lists the categories and subsections. Do not edit `CHANGELOG.md` in a pull request
+into `develop`: every pull request would then change the same lines and conflict with every other, and the
+**Gate · Pull request type** check refuses an addition under `[Unreleased]`. Cutting a release gathers the
+fragments into the version's section (`docs/RELEASING.md`, "The changelog"). A pull request into a release
+branch is the exception: it edits `CHANGELOG.md` directly, under that version's heading.
 
 **Examples:**
 ```
@@ -311,6 +333,16 @@ See [ai-docs/testing-tunit.md](ai-docs/testing-tunit.md) and [ai-docs/tdd-strict
 - No cross-dependencies between generators
 
 See [src/Whizbang.Generators/ai-docs/](src/Whizbang.Generators/ai-docs/) for detailed guidelines.
+
+### Diagnostic IDs
+
+Every build diagnostic in the repository, shipped or repository-internal (generators, analyzers, the test and
+repository analyzers, the MSBuild checks in `Directory.Build.targets`), has an ID of the form `WHIZ` and three
+digits, unique across all of them. [`diagnostic-ids.txt`](diagnostic-ids.txt) lists every ID with the project that
+defines it and what it means: take the next free number in your area's block from it and add the row in the same
+pull request. A retired ID is never reused. `.github/scripts/Test-DiagnosticIds.ps1`, run by "Test · Pipeline
+scripts", fails an ID that is unlisted, listed but undefined, listed under the wrong project, given two meanings,
+or outside the `WHIZ` form (a frozen set of legacy IDs that shipped before it excepted).
 
 ### Package Versions and Lock Files
 
@@ -467,14 +499,21 @@ pull request, and every pull request is reviewed against the same standard.
 **How review is conducted**
 
 1. The required checks run automatically on every push to the pull request, and again in the merge
-   queue against the latest `develop` before it lands.
+   queue against the latest `develop` before it lands. Each change is tested once: a pull request into
+   `develop` runs the fast checks (formatting, the build, the analyzers, the unit and component suites,
+   and the review and pull-request gates); the integration suites and the coverage and Sonar gate run in
+   the merge queue, which tests up to five queued pull requests together. The queue's coverage gate
+   posts its PR quality gate comment on each pull request in the group, listing the findings in the files
+   that pull request changed, and a pull request with findings fails the queue run and leaves the queue.
+   A pull request into `main` or a release branch, which has no queue, runs everything itself.
 2. The maintainer reviews pull requests from other contributors, comments on the pull request, and
    either approves, asks for changes, or explains why a change will not be accepted.
 3. The author addresses each comment with a change or a reply. Resolved comments are marked resolved.
 4. When the checks are green and the review is approved, the maintainer adds the pull request to the
    merge queue.
 
-**What the automated checks verify** (all required; none may be skipped or overridden):
+**What the automated checks verify** (all required before a change lands, on the pull request or in the
+merge queue; none may be skipped or overridden):
 
 - the solution builds in Release with every analyzer warning treated as an error;
 - the full test matrix passes (unit, generator, PostgreSQL, RabbitMQ, Azure Service Bus, Azure Blob,
@@ -516,7 +555,8 @@ that is not signed off, no closing keyword (or one inside backticks), a target b
 a feature's docs pull request, a changelog entry). The job fails while any finding is open, warnings
 included, so each one is fixed or explicitly allowed: a line containing `review-checks:allow` is skipped,
 and `.github/review-checks-ignore.txt` lists paths the checks skip. The PR quality gate comment lists
-uncovered new lines and branches and Sonar findings the same way, and its job fails on them too.
+uncovered new lines and branches and Sonar findings the same way, and its job fails on them too; for a
+pull request into `develop` it is posted from the merge queue run.
 
 Every run posts its own comment and keeps the earlier ones, minimized as outdated, so the pull request
 shows what was found on each commit and when it was fixed; the latest comment is the one the gate

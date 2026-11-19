@@ -16,11 +16,13 @@
     to run concurrently, similar to what you see in VS Code Test Explorer.
 
 .PARAMETER MaxParallel
-    Maximum number of test projects to run in parallel (default: CPU core count)
+    Maximum number of test projects to run in parallel (default: CPU core count; 1 in an integration run that
+    tests more than one framework, as a release build does, since each framework's copy of a project shares the
+    same broker and database server)
 
 .PARAMETER ProjectFilter
     Filter to specific test projects using native .NET 10 --test-modules globbing (e.g., "Core", "EFCore.Postgres")
-    Pattern: **/bin/**/Debug/net10.0/*{Filter}*.dll
+    Pattern: **/bin/**/Debug/<framework>/*{Filter}*.dll
 
 .PARAMETER TestFilter
     Filter to specific tests by name pattern using --treenode-filter (e.g., "ProcessWorkBatchAsync")
@@ -68,6 +70,20 @@
     Timeout in seconds to detect hung tests (default: 180). If no output is received for this
     duration, a warning is displayed. After 2x this timeout, the test run is terminated.
     Set to 0 to disable hang detection.
+
+.PARAMETER HangDumpTimeout
+    Gives every test module the testing platform's hang dump (--hangdump --hangdump-timeout): after this long
+    with no test activity a module writes a dump (dotnet_<pid>_hang.dmp, with the test list in
+    dotnet_<pid>_hang.log, in its TestResults), names the tests still running, and is killed, so a hang fails
+    the run instead of holding it until a job limit cancels it (#2402). A whole number with s, m or h, e.g. 10m.
+    Empty (the default) takes no dump. Every test project references Microsoft.Testing.Extensions.HangDump
+    through Directory.Build.props; at 2.0.2 it never fired under `dotnet test`, 2.2.3 does
+    (.github/scripts/tests/TestSuiteHangDump.Tests.ps1 proves it). Not with -Coverage.
+
+.PARAMETER Framework
+    Runs only the test modules built for this target framework, one of those the build targets (a release build
+    targets net10.0 and net11.0). CI runs each framework of a release build as its own job (#2427). Empty (the
+    default) runs every framework the build targets.
 
 .PARAMETER Cleanup
     Clean up ALL test containers after tests complete, including shared containers
@@ -154,7 +170,7 @@
 .EXAMPLE
     ./Run-Tests.ps1 -Mode Unit -Configuration Release -NoBuild -ModuleCoverage
     CI form: the normal dotnet test run, with every test module writing its own line and branch
-    coverage (bin/Release/net10.0/TestResults/<guid>.cobertura.xml); no report is generated
+    coverage (bin/Release/<framework>/TestResults/<guid>.cobertura.xml); no report is generated
 
 .EXAMPLE
     ./Run-Tests.ps1 -TestFilter "Lifecycle"
@@ -222,7 +238,7 @@
     - Simplified parameter interface
 
     Native Filtering (.NET 10):
-    - ProjectFilter uses `--test-modules` with globbing patterns (**/bin/**/Debug/net10.0/*{Filter}*.dll)
+    - ProjectFilter uses `--test-modules` with globbing patterns (**/bin/**/Debug/<framework>/*{Filter}*.dll)
     - TestFilter uses `--treenode-filter` with wildcard patterns (/*/*/*/*{Filter}*)
     - Leverages Microsoft.Testing.Platform filtering for maximum performance
     - Maintains full parallelism across filtered tests
@@ -271,6 +287,9 @@ param(
                           # Shell-friendly alternative to -FailFast:$false (which breaks
                           # in zsh because $false expands to empty).
     [int]$HangTimeout = 180,  # Seconds of no output before hang warning (0 to disable)
+    [ValidatePattern('^[1-9][0-9]*[smh]$', ErrorMessage = '-HangDumpTimeout "{0}" is not a whole number of seconds, minutes or hours, such as 10m.')]
+    [string]$HangDumpTimeout = "",  # CI: hang dump after this long with no test activity (e.g. 10m); empty for none
+    [string]$Framework = "",  # Run only this target framework's modules (e.g. net10.0); empty for every framework the build targets
     [switch]$Coverage,  # Collect code coverage (outputs Cobertura XML to TestResults/)
     [switch]$ModuleCoverage,  # CI: each test module collects its own line AND branch coverage
                               # (MTP --coverage, cobertura) inside the normal `dotnet test` run.
@@ -340,6 +359,11 @@ Set-StrictMode -Version Latest
 
 # Import shared PR readiness module
 Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
+# The run's pass/fail verdict, including a crashed test process (#2231)
+$testRunVerdictModule = Join-Path $PSScriptRoot "lib" "TestRunVerdict.psm1"
+Import-Module $testRunVerdictModule -Force
+# How many test modules run at once: one at a time for an integration run on several frameworks
+Import-Module (Join-Path $PSScriptRoot "lib" "TestModuleParallelism.psm1") -Force
 
 # Build fast-mode MSBuild args (disable analyzers, XML docs, code style)
 $fastBuildArgs = @()
@@ -420,9 +444,20 @@ if ($NoFailFast) {
 
 # -Coverage runs each project through its own `dotnet run` and writes a report; -ModuleCoverage
 # adds collection to the single `dotnet test` run. Combined, the second would silently not apply.
-if ($Coverage -and $ModuleCoverage) {
-    Write-Error "-Coverage and -ModuleCoverage are alternatives; pass one."
+# A refused combination of parameters, named. Not Write-Error: under the error trap below and
+# $ErrorActionPreference = Stop it prints only "ScriptHalted", and the message is lost.
+function Exit-RefusedParameters([string]$Message) {
+    if ($env:GITHUB_ACTIONS -eq 'true') { Write-Host "::error::$Message" } else { Write-Host $Message -ForegroundColor Red }
     exit 1
+}
+
+if ($Coverage -and $ModuleCoverage) {
+    Exit-RefusedParameters "-Coverage and -ModuleCoverage are alternatives; pass one."
+}
+
+# -Coverage runs each project through its own `dotnet run`, which the hang dump options below never reach.
+if ($Coverage -and $HangDumpTimeout) {
+    Exit-RefusedParameters "-HangDumpTimeout and -Coverage cannot be combined: -Coverage runs each project on its own, without the hang dump."
 }
 
 # Initialize tee logging if -LogFile is specified
@@ -483,6 +518,40 @@ if ($CleanupOnly) {
 # Navigate to repo root
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $repoRoot
+
+# The frameworks this build targets (#2135): net11.0 day to day, net10.0 and net11.0 on a release branch.
+# Directory.Build.props decides (the same branch detection the build uses), so the runner never names a
+# framework: every test module built for one of these runs, and output left in bin/ by an older
+# framework is never mistaken for this build's.
+$script:TestFrameworks = @(((& dotnet msbuild (Join-Path $repoRoot 'Directory.Build.props') -getProperty:TargetFrameworks 2>$null) | Out-String).Trim() -split ';' |
+    ForEach-Object { $_.Trim() } | Where-Object { $_ })
+if ($script:TestFrameworks.Count -eq 0) {
+    Write-Error "Could not read TargetFrameworks from Directory.Build.props (dotnet msbuild -getProperty)."
+    exit 1
+}
+# -Framework narrows the run to one of them: CI runs each framework of a release build as its own job (#2427).
+if ($Framework) {
+    if ($Framework -notin $script:TestFrameworks) {
+        Exit-RefusedParameters "-Framework $Framework is not one this build targets ($($script:TestFrameworks -join ';'))."
+    }
+    $script:TestFrameworks = @($Framework)
+}
+# Matches bin/<config>/<framework> for any framework this build targets
+$script:FrameworkPattern = '(' + (($script:TestFrameworks | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')'
+
+# The frameworks a test project was built for, out of $script:TestFrameworks. Not every project builds them all:
+# the samples have their own Directory.Build.props and target net11.0 only, also in a release build. Falls back to
+# the full list when nothing is built yet, so the unbuilt check and the build-first path still see the project.
+function Get-BuiltTestFrameworks {
+    param([string]$ProjectPath, [string]$Config)
+    $projectName = [System.IO.Path]::GetFileNameWithoutExtension($ProjectPath)
+    $projectDirectory = [System.IO.Path]::GetDirectoryName($ProjectPath)
+    $built = @($script:TestFrameworks | Where-Object {
+        Test-Path ([System.IO.Path]::Combine($projectDirectory, "bin", $Config, $_, "$projectName.dll"))
+    })
+    if ($built.Count -eq 0) { return $script:TestFrameworks }
+    return $built
+}
 
 # Clean up any leftover test containers from previous runs
 # This ensures tests start with a clean slate even if previous runs were interrupted
@@ -923,11 +992,12 @@ function Invoke-CoverageReport {
     }
 }
 
+# Read by the finally block below, so set before anything in the try can exit: a run that exits early
+# (no test assemblies found) otherwise halts there under strict mode, and the halt hides its own error.
+$failFastTriggered = $false
 try {
     # Determine parallel level
-    if ($MaxParallel -eq 0) {
-        $MaxParallel = [Environment]::ProcessorCount
-    }
+    $MaxParallel = Get-TestModuleParallelism -Mode $Mode -Frameworks $script:TestFrameworks -Requested $MaxParallel -ProcessorCount ([Environment]::ProcessorCount)
 
     # Branded header (suppressed when called from Run-PR.ps1)
     if (-not $NoHeader) {
@@ -1028,7 +1098,7 @@ try {
     # module, and each one collects with MTP's dynamic collector, which records conditions as well
     # as lines; the statically instrumented assemblies CI used before recorded lines only, so every
     # report claimed branch-rate 1 with nothing behind it. Each module writes <guid>.cobertura.xml
-    # to its own bin/<config>/net10.0/TestResults, which is the path the CI upload globs. The
+    # to its own bin/<config>/<framework>/TestResults, which is the path the CI upload globs. The
     # collector instruments in memory, inside the test process: nothing on disk is rewritten.
     # Every test project must reference Microsoft.Testing.Extensions.CodeCoverage, or its module
     # rejects --coverage as an unknown option.
@@ -1044,6 +1114,15 @@ try {
         $testArgs += "cobertura,coverage"
         $testArgs += "--coverage-settings"
         $testArgs += (Join-Path $repoRoot "codecoverage.config")
+    }
+
+    # The platform's hang dump for every test module (#2402). After HangDumpTimeout with no test activity a module
+    # dumps itself, names the tests still running and is killed, so a hang fails here with a dump to upload instead
+    # of holding the run until the job's own limit cancels it, which writes nothing.
+    if ($HangDumpTimeout) {
+        $testArgs += "--hangdump"
+        $testArgs += "--hangdump-timeout"
+        $testArgs += $HangDumpTimeout
     }
 
     # Coverage mode: Run projects in parallel with unique output paths per project
@@ -1145,19 +1224,19 @@ try {
         }
 
         function Invoke-TestWithCoverage {
-            param([string]$ProjectPath, [string]$Config, [string]$Filter, [bool]$FailFastEnabled)
+            param([string]$ProjectPath, [string]$Framework, [string]$Config, [string]$Filter, [bool]$FailFastEnabled)
 
             $projName = [System.IO.Path]::GetFileNameWithoutExtension($ProjectPath)
             $projDir = [System.IO.Path]::GetDirectoryName($ProjectPath)
 
             # On Linux/macOS, set execute permission
             if ($IsLinux -or $IsMacOS) {
-                $testExe = Join-Path $projDir "bin" $Config "net10.0" $projName
+                $testExe = Join-Path $projDir "bin" $Config $Framework $projName
                 if (Test-Path $testExe) { chmod +x $testExe 2>$null }
             }
 
             $coverageSettingsPath = Join-Path $repoRoot "codecoverage.config"
-            $testArgs = @("run", "--project", $ProjectPath, "--configuration", $Config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
+            $testArgs = @("run", "--project", $ProjectPath, "--framework", $Framework, "--configuration", $Config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
             if ($Filter) { $testArgs += "--treenode-filter"; $testArgs += "/*/*/*/*$Filter*" }
             if ($FailFastEnabled) { $testArgs += "--fail-fast" }
             if ($ReportTrx) { $testArgs += "--report-trx" }
@@ -1175,8 +1254,10 @@ try {
             # Parse test counts from full output before truncating
             $counts = Get-TestCountsFromOutput -FullOutput $output
             return [PSCustomObject]@{
-                ProjectName = $projName
+                ProjectName = if ($script:TestFrameworks.Count -gt 1) { "$projName ($Framework)" } else { $projName }
                 ExitCode = $proc.ExitCode
+                # From the full output, before it is cut down to the failure signal (#2231).
+                CrashLines = @(Select-TestProcessCrashLine -Line ($output -split "`n"))
                 Output = (_selectFailureSignal ($output -split "`n")) -join "`n"
                 TestsPassed = $counts.Passed
                 TestsFailed = $counts.Failed
@@ -1256,9 +1337,15 @@ try {
             })
 
             try {
-                $unitTestProjects | ForEach-Object -ThrottleLimit $MaxParallel -Parallel {
-                    $projectPath = $_
+                $unitTestRuns = @(foreach ($unitProject in $unitTestProjects) {
+                    foreach ($framework in (Get-BuiltTestFrameworks -ProjectPath $unitProject -Config $Configuration)) { [PSCustomObject]@{ Path = $unitProject; Framework = $framework } }
+                })
+                $multipleFrameworks = $script:TestFrameworks.Count -gt 1
+                $unitTestRuns | ForEach-Object -ThrottleLimit $MaxParallel -Parallel {
+                    $projectPath = $_.Path
+                    $framework = $_.Framework
                     $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
+                    $runName = if ($using:multipleFrameworks) { "$projectName ($framework)" } else { $projectName }
                     $projectDir = [System.IO.Path]::GetDirectoryName($projectPath)
                     $config = $using:Configuration
                     $testFilter = $using:TestFilter
@@ -1266,13 +1353,15 @@ try {
                     $reportTrx = $using:ReportTrx
                     $resultsBag = $using:results
                     $coverageSettingsPath = Join-Path $using:repoRoot "codecoverage.config"
+                    # A parallel runspace sees none of the script's functions or modules; this one it needs.
+                    Import-Module $using:testRunVerdictModule -Force
 
                     if ($IsLinux -or $IsMacOS) {
-                        $testExe = Join-Path $projectDir "bin" $config "net10.0" $projectName
+                        $testExe = Join-Path $projectDir "bin" $config $framework $projectName
                         if (Test-Path $testExe) { chmod +x $testExe 2>$null }
                     }
 
-                    $projectArgs = @("run", "--project", $projectPath, "--configuration", $config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
+                    $projectArgs = @("run", "--project", $projectPath, "--framework", $framework, "--configuration", $config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
                     if ($testFilter) { $projectArgs += "--treenode-filter"; $projectArgs += "/*/*/*/*$testFilter*" }
                     if ($failFast) { $projectArgs += "--fail-fast" }
                     if ($reportTrx) { $projectArgs += "--report-trx" }
@@ -1324,9 +1413,12 @@ try {
                         }
                     }
 
+                    $exitCode = $LASTEXITCODE
                     $resultsBag.Add([PSCustomObject]@{
-                        ProjectName = $projectName
-                        ExitCode = $LASTEXITCODE
+                        ProjectName = $runName
+                        ExitCode = $exitCode
+                        # From the full output, before it is cut down to the failure signal (#2231).
+                        CrashLines = @(Select-TestProcessCrashLine -Line ($fullOutput -split "`n"))
                         Output = $failureSignal -join "`n"
                         TestsPassed = $tPassed
                         TestsFailed = $tFailed
@@ -1344,17 +1436,19 @@ try {
         if ($integrationTestProjects.Count -gt 0 -and -not $failFastTriggered) {
             Write-Host "Running $($integrationTestProjects.Count) integration test projects sequentially..." -ForegroundColor Cyan
 
-            foreach ($projectPath in $integrationTestProjects) {
+            :integrationRuns foreach ($projectPath in $integrationTestProjects) {
                 $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
-                Write-Host "  Testing: $projectName" -ForegroundColor Gray
+                foreach ($framework in (Get-BuiltTestFrameworks -ProjectPath $projectPath -Config $Configuration)) {
+                    Write-Host "  Testing: $projectName ($framework)" -ForegroundColor Gray
 
-                $result = Invoke-TestWithCoverage -ProjectPath $projectPath -Config $Configuration -Filter $TestFilter -FailFastEnabled $FailFast
-                $results.Add($result)
+                    $result = Invoke-TestWithCoverage -ProjectPath $projectPath -Framework $framework -Config $Configuration -Filter $TestFilter -FailFastEnabled $FailFast
+                    $results.Add($result)
 
-                if ($result.ExitCode -ne 0 -and $FailFast) {
-                    $failFastTriggered = $true
-                    Write-Host "  Stopping due to -FailFast" -ForegroundColor Red
-                    break
+                    if ($result.ExitCode -ne 0 -and $FailFast) {
+                        $failFastTriggered = $true
+                        Write-Host "  Stopping due to -FailFast" -ForegroundColor Red
+                        break integrationRuns
+                    }
                 }
             }
         }
@@ -1387,7 +1481,9 @@ try {
             $totalTestsFailed += if ($result.PSObject.Properties['TestsFailed']) { $result.TestsFailed } else { 0 }
             $totalTestsSkipped += if ($result.PSObject.Properties['TestsSkipped']) { $result.TestsSkipped } else { 0 }
 
-            if ($result.ExitCode -eq 0) {
+            # A crashed test process (#2231) failed whatever its exit code said, and was cut short.
+            $crashed = $result.ExitCode -eq 7 -or @($result.CrashLines).Count -gt 0
+            if ($result.ExitCode -eq 0 -and -not $crashed) {
                 $totalProjectsPassed++
                 if ($useAiOutput) {
                     Write-Host "  ✓ $($result.ProjectName) passed" -ForegroundColor Green
@@ -1399,9 +1495,14 @@ try {
                 # COMPLETE cobertura, and dropping it would discard real coverage. Only a project
                 # that was cut short mid-run produces a truncated one. Exit code 143 is the
                 # SIGTERM from this script's own stall/hang Kill($true); under fail-fast any
-                # failure also cancels the rest of that project's run.
-                if ($result.ExitCode -eq 143 -or $FailFast) {
+                # failure also cancels the rest of that project's run; and a crashed test process
+                # (exit code 7, or a crash line in its output) never ran the tests after the crash.
+                if ($result.ExitCode -eq 143 -or $FailFast -or $crashed) {
                     $truncatedProjects += $result.ProjectName
+                }
+                if ($crashed) {
+                    $reason = if (@($result.CrashLines).Count -gt 0) { @($result.CrashLines) -join '; ' } else { "exit code $($result.ExitCode)" }
+                    Write-Host "  TEST PROCESS CRASHED: $($result.ProjectName): $reason" -ForegroundColor Red
                 }
                 if ($useAiOutput) {
                     Write-Host "  ✗ $($result.ProjectName) failed" -ForegroundColor Red
@@ -1478,9 +1579,12 @@ try {
             #
             # Filtering by write time against the run's own start keeps this non-destructive --
             # nothing is deleted, they are simply not counted as if they were current.
-            $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" -and
-                               $_.LastWriteTimeUtc -ge $script:runStartTime }
+            #
+            # Under the configuration that ran (#2244): a -Configuration Release run that looked under Debug
+            # found nothing, or a stale Debug run's files. @(): one file is not a collection under strict mode.
+            $coberturaFiles = @(Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]$($script:FrameworkPattern)[/\\]TestResults" -and
+                               $_.LastWriteTimeUtc -ge $script:runStartTime })
 
             # Drop the cobertura of any project that failed or was killed.
             #
@@ -1567,6 +1671,29 @@ try {
         return $testType
     }
 
+    # Whether a project targets -Framework, from its evaluated TargetFramework and TargetFrameworks (#2427), not from
+    # its bin/: the samples target net11.0 alone, also in a release build, so a net10.0 leg must not select them,
+    # while a project that does target the framework and has no output for it must still fail -NoBuild. True for
+    # every project without -Framework, and when the evaluation cannot be read (the guard then names the project).
+    # One evaluation per project asked about, cached for the run.
+    $script:projectTargetsFrameworkCache = @{}
+    function Test-ProjectTargetsFramework {
+        param([string]$CsprojPath)
+        if (-not $Framework) { return $true }
+        if (-not $script:projectTargetsFrameworkCache.ContainsKey($CsprojPath)) {
+            $targets = $true
+            try {
+                $evaluated = ((& dotnet msbuild $CsprojPath -getProperty:TargetFramework -getProperty:TargetFrameworks 2>$null) | Out-String | ConvertFrom-Json).Properties
+                $frameworks = @("$($evaluated.TargetFrameworks);$($evaluated.TargetFramework)" -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                if ($frameworks.Count -gt 0) { $targets = $Framework -in $frameworks }
+            } catch {
+                $targets = $true
+            }
+            $script:projectTargetsFrameworkCache[$CsprojPath] = $targets
+        }
+        return $script:projectTargetsFrameworkCache[$CsprojPath]
+    }
+
     # Cache for project tags (project path -> array of tags)
     $script:projectTagsCache = @{}
 
@@ -1610,7 +1737,7 @@ try {
         param([System.IO.FileInfo]$DllFile)
 
         $dllName = [System.IO.Path]::GetFileNameWithoutExtension($DllFile.Name)
-        $projectDir = $DllFile.DirectoryName -replace "[/\\]bin[/\\]$Configuration[/\\]net10\.0$", ""
+        $projectDir = $DllFile.DirectoryName -replace "[/\\]bin[/\\]$Configuration[/\\]$($script:FrameworkPattern)$", ""
         $csprojPath = Join-Path $projectDir "$dllName.csproj"
 
         if (Test-Path $csprojPath) {
@@ -1640,6 +1767,20 @@ try {
 
         $testType = Get-ProjectTestType $csprojPath
         return $null -ne $testType
+    }
+
+    # Written, not Write-Error: this script stops on errors, and its trap re-throws a Write-Error as a
+    # bare "ScriptHalted" with the message lost. A workflow error annotation under GitHub Actions.
+    function Write-RunError([string]$Message) {
+        if ($env:GITHUB_ACTIONS -eq 'true') { Write-Host "::error::$Message" } else { Write-Host $Message -ForegroundColor Red }
+    }
+
+    # The one error for a run that found nothing to run (#2244), whichever selection found it, naming the
+    # selection and the build output it looked in.
+    function Exit-NoTestAssemblies([string]$Selection, [string]$Hint) {
+        Write-RunError ("No test assemblies found: $Selection matched no test DLL in bin/$Configuration/$($script:TestFrameworks -join '|'), " +
+            "so nothing ran. $Hint")
+        exit 1
     }
 
     # Helper function to ensure build exists for dynamic DLL discovery
@@ -1679,9 +1820,11 @@ try {
         $unbuilt = @(
             $declaredProjects | Where-Object {
                 $projectName = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
-                $expectedDll = [System.IO.Path]::Combine(
-                    $_.DirectoryName, "bin", $Configuration, "net10.0", "$projectName.dll")
-                -not (Test-Path $expectedDll)
+                $projectDirectory = $_.DirectoryName
+                # Unbuilt means no framework's output at all: a sample builds net11.0 only, also in a release build.
+                @($script:TestFrameworks | Where-Object {
+                    Test-Path ([System.IO.Path]::Combine($projectDirectory, "bin", $Configuration, $_, "$projectName.dll"))
+                }).Count -eq 0
             }
         )
 
@@ -1697,7 +1840,8 @@ try {
                     (Get-ProjectTestType $_.FullName) -in $selectedTestTypes -and
                     (-not $Tag -or (@(Get-ProjectTags $_.FullName) -contains $Tag)) -and
                     (-not $ProjectFilter -or $name -match $ProjectFilter) -and
-                    (-not $ExcludeProjectFilter -or $name -notmatch $ExcludeProjectFilter)
+                    (-not $ExcludeProjectFilter -or $name -notmatch $ExcludeProjectFilter) -and
+                    (Test-ProjectTargetsFramework $_.FullName)
                 })
                 if ($selected.Count -gt 0) {
                     $names = ($selected | ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) }) -join ', '
@@ -1709,14 +1853,19 @@ try {
                 }
                 return
             }
+            # A project that does not target -Framework never has its output, so it is not unbuilt.
+            $unbuilt = @($unbuilt | Where-Object { Test-ProjectTargetsFramework $_.FullName })
+            if ($unbuilt.Count -eq 0) { return }
             if (-not $useAiOutput) {
                 Write-Host "$($unbuilt.Count) declared test project(s) have no $Configuration build output; building solution first..." -ForegroundColor Yellow
             } else {
                 Write-Host "Building solution ($($unbuilt.Count) test project(s) not built)..." -ForegroundColor Gray
             }
-            & dotnet build --verbosity quiet @fastBuildArgs
+            # The configuration discovery then reads (#2244): without it the build wrote Debug, and a
+            # -Configuration Release run found no test assembly and exited 1 having run nothing.
+            & dotnet build --configuration $Configuration --verbosity quiet @fastBuildArgs
             if ($LASTEXITCODE -ne 0) {
-                Write-Error "Build failed. Cannot discover test projects."
+                Write-RunError "Build failed. Cannot discover test projects."
                 exit 1
             }
         }
@@ -1728,7 +1877,7 @@ try {
     function Test-IsPrimaryTestDll {
         param([System.IO.FileInfo]$DllFile)
         $dllName = [System.IO.Path]::GetFileNameWithoutExtension($DllFile.Name)
-        $projectDir = $DllFile.DirectoryName -replace "[/\\]bin[/\\]$Configuration[/\\]net10\.0$", ""
+        $projectDir = $DllFile.DirectoryName -replace "[/\\]bin[/\\]$Configuration[/\\]$($script:FrameworkPattern)$", ""
         $projectName = [System.IO.Path]::GetFileName($projectDir)
         return $dllName -eq $projectName
     }
@@ -1741,7 +1890,7 @@ try {
         # Find all test DLLs and filter by tag
         $tagFilteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
-            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]$($script:FrameworkPattern)[/\\]" } |
             Where-Object { $_.Name -notmatch $excludePattern } |
             Where-Object { -not $ExcludeProjectFilter -or $_.Name -notmatch $ExcludeProjectFilter } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
@@ -1764,8 +1913,7 @@ try {
                 Write-Host "Discovered $($tagFilteredDlls.Count) test projects with tag '$Tag'" -ForegroundColor Gray
             }
         } else {
-            Write-Warning "No test projects found with tag '$Tag'. Check that projects have <WhizbangTestTags>$Tag</WhizbangTestTags>."
-            exit 1
+            Exit-NoTestAssemblies "tag '$Tag'" "Check for build failures first, then that the projects have <WhizbangTestTags>$Tag</WhizbangTestTags>."
         }
     } elseif ($ProjectFilter) {
         Ensure-BuildExists
@@ -1775,7 +1923,7 @@ try {
         # every pattern here and never ran (#1196). Every match is still checked against its project's
         # declared test type, so the wider pattern admits no assembly that is not a test project.
         $filteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*$ProjectFilter*Tests.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]$($script:FrameworkPattern)[/\\]" } |
             Where-Object { $_.Name -notmatch "AppHost" } |
             Where-Object { -not $ExcludeProjectFilter -or $_.Name -notmatch $ExcludeProjectFilter } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
@@ -1789,15 +1937,14 @@ try {
                 Write-Host "Discovered $($filteredDlls.Count) test projects matching '$ProjectFilter'" -ForegroundColor Gray
             }
         } else {
-            Write-Warning "No test DLLs found matching '$ProjectFilter'. Check the project name."
-            exit 1
+            Exit-NoTestAssemblies "project filter '$ProjectFilter'" "Check for build failures first, then the project name."
         }
     } else {
         # Run every project whose WhizbangTestType this mode selects ($selectedTestTypes)
         Ensure-BuildExists
         $selectedDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
-            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]$($script:FrameworkPattern)[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
             Where-Object { Test-IsSelectedTestType $_ } |
             ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
@@ -1811,11 +1958,9 @@ try {
                 Write-Host "Discovered $($selectedDlls.Count) test projects (WhizbangTestType: $typeList)" -ForegroundColor Gray
             }
         } else {
-            Write-Error ("No test projects selected (WhizbangTestType: $typeList). Discovery reads " +
-                "<WhizbangTestType> from the .csproj behind each BUILT DLL, so a project with no output in " +
-                "bin/$Configuration/net10.0 is invisible even when the property is correct. " +
-                "Check for build failures first, then the property.")
-            exit 1
+            Exit-NoTestAssemblies "WhizbangTestType $typeList" ("Discovery reads <WhizbangTestType> from the .csproj " +
+                "behind each BUILT DLL, so a project with no output there is invisible even when the property is " +
+                "correct. Check for build failures first, then the property.")
         }
     }
 
@@ -1857,6 +2002,7 @@ try {
         $buildWarnings = @()
         $projectErrors = @()  # Track test project-level errors (not individual test failures)
         $infrastructureErrors = 0  # Track MTP infrastructure error count from summary
+        $crashLines = @()  # Lines reporting a test process that died mid-suite (#2231)
         $currentFailedTest = $null
         $capturingStackTrace = $false
         $stackTraceLines = @()
@@ -2035,6 +2181,8 @@ try {
             # Strip ANSI escape sequences for reliable regex matching
             # TUnit outputs color codes (e.g., \e[31m) that break summary line parsing
             $cleanLine = $lineStr -replace '\e\[[0-9;]*m', ''
+            # Checked before the parse below, which claims a line for one purpose only.
+            $crashLines += @(Select-TestProcessCrashLine -Line $cleanLine)
 
             # Capture test counts from TUnit progress format: [+passed/xfailed/?skipped]
             # Format: [+N/xN/?N] Assembly.dll (tfm|arch) - TestName (duration)
@@ -2315,6 +2463,7 @@ try {
 
         # Capture any stderr content for display
         $stderrContent = $stderrBuilder.ToString().Trim()
+        $crashLines += @(Select-TestProcessCrashLine -Line ($stderrContent -split "`n"))
 
         # Calculate elapsed time
         $endTime = Get-Date
@@ -2534,6 +2683,7 @@ try {
         $buildErrors = @()
         $projectErrors = @()
         $infrastructureErrors = 0
+        $crashLines = @()  # Lines reporting a test process that died mid-suite (#2231)
         $currentFailedTest = $null
         $capturingStackTrace = $false
         $stackTraceLines = @()
@@ -2578,6 +2728,8 @@ try {
             # Strip ANSI escape sequences for reliable regex matching
             # TUnit outputs color codes (e.g., \e[31m) that break summary line parsing
             $cleanLine = $lineStr -replace '\e\[[0-9;]*m', ''
+            # Checked before the parse below, which claims a line for one purpose only.
+            $crashLines += @(Select-TestProcessCrashLine -Line $cleanLine)
 
             # Capture test counts from TUnit summary format
             # Use $cleanLine because TUnit wraps these in ANSI color codes
@@ -2667,6 +2819,7 @@ try {
         }
 
         $stderrContent = $stderrBuilder.ToString().Trim()
+        $crashLines += @(Select-TestProcessCrashLine -Line ($stderrContent -split "`n"))
 
         Write-Host ""
         Write-Host "<<< END TEST OUTPUT <<<" -ForegroundColor Cyan
@@ -2747,25 +2900,24 @@ try {
         # Note: dotnet test returns 0 on success, non-zero on failure
         # Exit code 8 = all tests skipped (TUnit), not treated as failure
         #
-        # Infrastructure errors (cleanup/teardown issues) are only treated as fatal if:
-        # - Tests also failed (indicates a real problem)
-        # - No tests passed (indicates setup failure)
-        # If tests pass but cleanup throws, we log a warning but don't fail the build
-        # Non-zero exit code with zero test failures and infrastructure errors = infra issue, not test failure
-        # The .NET test platform can exit non-zero due to NamedPipeServer broken pipe during cleanup
-        $exitCodeIsInfraIssue = $processExitCode -ne 0 -and $processExitCode -ne 8 -and $totalFailed -eq 0 -and $infrastructureErrors -gt 0
-        $hasTestFailures = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0 -or ($processExitCode -ne 0 -and $processExitCode -ne 8 -and -not $exitCodeIsInfraIssue)
-        $hasInfraErrorsOnly = ($infrastructureErrors -gt 0 -or $exitCodeIsInfraIssue) -and -not $hasTestFailures
+        # Infrastructure errors (cleanup/teardown issues) are only treated as fatal if tests also failed or
+        # none passed: the .NET test platform can exit non-zero when its named pipe breaks during cleanup.
+        # A crashed test process is never that noise (#2231): it reports the same shape (a non-zero exit,
+        # no failed test, one `error:`), but every test after the crash never ran. The rules live in
+        # scripts/lib/TestRunVerdict.psm1.
+        $verdict = Get-TestRunVerdict -ExitCode $processExitCode -Passed $totalPassed -Failed $totalFailed `
+            -InfrastructureErrors $infrastructureErrors -FailFastTriggered $failFastTriggered `
+            -ProjectErrorCount $projectErrors.Count -BuildErrorCount $buildErrors.Count -CrashLines $crashLines
+        $hasErrors = $verdict.HasErrors
+        $hasTestFailures = $verdict.HasTestFailures
 
-        if ($hasInfraErrorsOnly -and $totalPassed -gt 0) {
+        if ($verdict.Crashed) {
+            Write-TestProcessCrash -Verdict $verdict -Passed $totalPassed
+        } elseif ($verdict.CleanupNoise) {
             # Infrastructure errors with passing tests - warn but don't fail
             Write-Host ""
             Write-Host "WARNING: $infrastructureErrors infrastructure error(s) during cleanup (all tests passed)" -ForegroundColor Yellow
             Write-Host "         This is typically Docker container cleanup noise and does not affect test results." -ForegroundColor DarkYellow
-            $hasErrors = $false
-        } else {
-            # Real failures or infrastructure errors without passing tests
-            $hasErrors = $hasTestFailures -or ($infrastructureErrors -gt 0 -and $totalPassed -eq 0)
         }
     } else {
         # Check both exit code AND output for failures
@@ -2801,9 +2953,9 @@ try {
         # Find all cobertura XML files from test output
         # Same staleness guard as the primary call site above: only count cobertura files this
         # run produced, or the report merges every run still sitting in TestResults.
-        $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" -and
-                           $_.LastWriteTimeUtc -ge $script:runStartTime }
+        $coberturaFiles = @(Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]$($script:FrameworkPattern)[/\\]TestResults" -and
+                           $_.LastWriteTimeUtc -ge $script:runStartTime })
 
         if ($coberturaFiles.Count -gt 0) {
             $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles -RunWasPartial ($hasTestFailures)

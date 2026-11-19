@@ -64,6 +64,8 @@ internal static class WhizbangVersionInfo
   <ItemGroup>
     <!-- Reference source generators for build-time code generation -->
     <ProjectReference Include="../Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <!-- #2343: the eligibility rules, the rule fingerprint and the SQL rule's source, in their own library. -->
+    <ProjectReference Include="../Whizbang.Rules/Whizbang.Rules.csproj" />
   </ItemGroup>
   <ItemGroup>
     <!-- Pinned-type ledger as an AdditionalFile (mirrors what the NuGet .props does for consumers):
@@ -80,11 +82,24 @@ internal static class WhizbangVersionInfo
     <EmbeddedResource Include="../../tests/Whizbang.Documentation.Tests/Baselines/configuration-keys.txt"
                       LogicalName="Whizbang.Core.Configuration.configuration-keys.txt"
                       Link="Configuration/configuration-keys.txt" />
+    <!-- #2251: the keys bound to a SensitiveString, recorded by the same test, so the startup settings report redacts
+         by type. -->
+    <EmbeddedResource Include="../../tests/Whizbang.Documentation.Tests/Baselines/sensitive-configuration-keys.txt"
+                      LogicalName="Whizbang.Core.Configuration.sensitive-configuration-keys.txt"
+                      Link="Configuration/sensitive-configuration-keys.txt" />
+    <!-- The value each key takes when nothing sets it, recorded by the same test, for the startup settings report. -->
+    <EmbeddedResource Include="../../tests/Whizbang.Documentation.Tests/Baselines/configuration-defaults.txt"
+                      LogicalName="Whizbang.Core.Configuration.configuration-defaults.txt"
+                      Link="Configuration/configuration-defaults.txt" />
   </ItemGroup>
   <ItemGroup>
     <!-- Testing support: test assemblies that access internal members. The strong-name
          public key is attached by the ItemDefinitionGroup in Directory.Build.props. -->
     <InternalsVisibleTo Include="Whizbang.Core.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Core.Unit.Dispatcher.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Core.Unit.Messaging.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Core.Unit.Perspectives.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Core.Unit.Workers.Tests" />
     <InternalsVisibleTo Include="Whizbang.Core.Component.Tests" />
     <InternalsVisibleTo Include="Whizbang.Core.Integration.Tests" />
     <InternalsVisibleTo Include="Whizbang.Partitioning.Tests" />

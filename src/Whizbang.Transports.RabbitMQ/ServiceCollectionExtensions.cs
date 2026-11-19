@@ -252,7 +252,10 @@ public static class ServiceCollectionExtensions {
               "Broker DLQ import requires an IWorkCoordinator; none is registered — message stays on the broker DLQ.");
           return await coordinator.ImportBrokerDeadLetterAsync(import, ct).ConfigureAwait(false);
         },
-        loggerFactory: sp.GetRequiredService<ILoggerFactory>());
+        loggerFactory: sp.GetRequiredService<ILoggerFactory>(),
+        // A drained message's dead-letter record is logged at the configured level (#1901).
+        deadLetterLogLevel: Whizbang.Core.Observability.DeadLetterLog.LevelFrom(
+          sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Workers.DeadLetterLoggingOptions>>()));
     });
 
     // Register transport. The NON-default TransportNamespaces (topology arc phase 8) open their

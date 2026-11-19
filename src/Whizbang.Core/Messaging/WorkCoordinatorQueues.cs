@@ -18,10 +18,13 @@ namespace Whizbang.Core.Messaging;
 /// queue operations to it while keeping its own FlushAsync, logging, and lifecycle logic.
 /// </summary>
 internal sealed class WorkCoordinatorQueues(
-    ILogger logger, IAuditDecisionHook? auditDecisionHook, CoalesceGroupResolver? coalesceResolver = null) {
+    ILogger logger, IAuditDecisionHook? auditDecisionHook, CoalesceGroupResolver? coalesceResolver = null,
+    AuditTypeResolver? auditEventTypes = null) {
   private readonly ILogger _logger = logger;
   private readonly IAuditDecisionHook? _auditDecisionHook = auditDecisionHook;
   private readonly CoalesceGroupResolver? _coalesceResolver = coalesceResolver;
+  // The catalog the audit ledger rebuild resolves through, so the live record and a rebuilt one agree (#2040).
+  private readonly AuditTypeResolver? _auditEventTypes = auditEventTypes;
   internal readonly List<OutboxMessage> OutboxMessages = [];
   internal readonly List<OutboxMessage> PendingAuditMessages = [];
   internal readonly List<InboxMessage> InboxMessages = [];
@@ -45,7 +48,8 @@ internal sealed class WorkCoordinatorQueues(
     // Audit messages are collected separately and merged AFTER lifecycle stages
     // to avoid SecurityContextRequiredException during lifecycle processing.
     if (message.IsEvent && systemEventOptions?.EventAuditEnabled == true) {
-      var auditMessage = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, systemEventOptions, _logger, _auditDecisionHook);
+      var auditMessage = AuditOutboxMessageBuilder.TryBuildAuditMessage(
+        message, systemEventOptions, _logger, _auditDecisionHook, _auditEventTypes);
       if (auditMessage != null) {
         // The audit companion rides the SAME generic path — with the built-in sys-audit
         // binding registered, this is where it gains its group + floor.

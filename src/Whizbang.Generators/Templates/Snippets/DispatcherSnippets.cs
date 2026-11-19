@@ -17,6 +17,9 @@ public class DispatcherSnippets {
   // Placeholder properties to make snippets compile
   protected IServiceProvider ServiceProvider => null!;
   protected IServiceScopeFactory _scopeFactory => null!;
+  protected ValueTask<bool> AdmitReceptorAsync<TMessage>(Type receptorType, TMessage message, IServiceProvider scopedProvider,
+      object? envelope, global::System.Threading.CancellationToken cancellationToken) => new(true);
+  protected bool AdmitReceptor<TMessage>(Type receptorType, TMessage message, IServiceProvider scopedProvider) => true;
 
   /// <summary>
   /// Example method showing snippet structure for Send routing.
@@ -35,7 +38,7 @@ public class DispatcherSnippets {
         }
       }
 
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       async ValueTask<TResult> InvokeReceptor(object msg) {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
@@ -43,6 +46,10 @@ public class DispatcherSnippets {
           // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
           // This enables receptors to access UserId, TenantId via IMessageContext
           global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+          // The receptor interceptors decide before the receptor is resolved or waits for anything (#1996)
+          if (!await AdmitReceptorAsync(typeof(__RECEPTOR_CLASS__), (__MESSAGE_TYPE__)msg, scope.ServiceProvider, null, default)) {
+            return default!;
+          }
 
           // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
           __SYNC_AWAIT_CODE__
@@ -88,7 +95,7 @@ public class DispatcherSnippets {
   protected ReceptorPublisher<TEvent> PublishRoutingExample<TEvent>(TEvent @event, Type eventType) {
     #region PUBLISH_ROUTING_SNIPPET
     if (eventType == typeof(__MESSAGE_TYPE__)) {
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       async Task PublishToReceptors(TEvent evt) {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
@@ -125,7 +132,7 @@ public class DispatcherSnippets {
   protected Func<object, IMessageEnvelope?, CancellationToken, Task>? UntypedPublishRoutingExample(Type eventType) {
     #region UNTYPED_PUBLISH_ROUTING_SNIPPET
     if (eventType == typeof(__MESSAGE_TYPE__)) {
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       async Task PublishToReceptorsUntyped(object evt, global::Whizbang.Core.Observability.IMessageEnvelope? sourceEnvelope, global::System.Threading.CancellationToken cancellationToken) {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
@@ -171,7 +178,7 @@ public class DispatcherSnippets {
   protected Func<object, IMessageEnvelope?, CancellationToken, Task<TAnswer?>>? LocalRunnerRoutingExample<TAnswer>(Type messageType, bool wantsAnswer) {
     #region LOCAL_RUNNER_ROUTING_SNIPPET
     if (messageType == typeof(__MESSAGE_TYPE__)) {
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       async Task<TAnswer?> RunLocalReceptors(object msg, global::Whizbang.Core.Observability.IMessageEnvelope? sourceEnvelope, global::System.Threading.CancellationToken cancellationToken) {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
@@ -253,7 +260,7 @@ public class DispatcherSnippets {
         }
       }
 
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       async ValueTask InvokeReceptor(object msg) {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
@@ -261,6 +268,10 @@ public class DispatcherSnippets {
           // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
           // This enables receptors to access UserId, TenantId via IMessageContext
           global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+          // The receptor interceptors decide before the receptor is resolved or waits for anything (#1996)
+          if (!await AdmitReceptorAsync(typeof(__RECEPTOR_CLASS__), (__MESSAGE_TYPE__)msg, scope.ServiceProvider, null, default)) {
+            return;
+          }
 
           // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
           __SYNC_AWAIT_CODE__
@@ -302,13 +313,18 @@ public class DispatcherSnippets {
         }
       }
 
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       TResult InvokeReceptor(object msg) {
         // Create scope for each invocation to properly handle scoped services
         using var scope = _scopeFactory.CreateScope();
         // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
         // This enables receptors to access UserId, TenantId via IMessageContext
         global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+        // The receptor interceptors decide before the receptor is resolved (#1996); a synchronous receptor needs
+        // interceptors that answer synchronously
+        if (!AdmitReceptor(typeof(__RECEPTOR_CLASS__), (__MESSAGE_TYPE__)msg, scope.ServiceProvider)) {
+          return default!;
+        }
 
         // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
         var receptor = scope.ServiceProvider.GetKeyedService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>("__RECEPTOR_CLASS__")
@@ -353,13 +369,18 @@ public class DispatcherSnippets {
         }
       }
 
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       void InvokeReceptor(object msg) {
         // Create scope for each invocation to properly handle scoped services
         using var scope = _scopeFactory.CreateScope();
         // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
         // This enables receptors to access UserId, TenantId via IMessageContext
         global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+        // The receptor interceptors decide before the receptor is resolved (#1996); a synchronous receptor needs
+        // interceptors that answer synchronously
+        if (!AdmitReceptor(typeof(__RECEPTOR_CLASS__), (__MESSAGE_TYPE__)msg, scope.ServiceProvider)) {
+          return;
+        }
 
         // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
         var receptor = scope.ServiceProvider.GetKeyedService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>("__RECEPTOR_CLASS__")
@@ -406,7 +427,7 @@ public class DispatcherSnippets {
   /// <summary>
   /// Example method showing snippet structure for diagnostic messages.
   /// </summary>
-  public void DiagnosticMessageExample(System.Text.StringBuilder message) {
+  public void DiagnosticMessageExample(global::System.Text.StringBuilder message) {
     #region DIAGNOSTIC_MESSAGE_SNIPPET
     message.AppendLine("  [__INDEX__] __RECEPTOR_NAME__");
     message.AppendLine("      Message:  __MESSAGE_NAME__");
@@ -426,6 +447,38 @@ public class DispatcherSnippets {
   }
 
   /// <summary>
+  /// How a receptor registry route resolves its receptor: the <c>__RESOLVE_RECEPTOR__</c> line of the four routing
+  /// snippets below. <c>__RECEPTOR_SERVICE__</c> is the receptor's interface, closed over its message (and response).
+  /// </summary>
+  protected async ValueTask<object?> ReceptorRegistryResolveExample(IServiceProvider sp, object msg, CancellationToken ct) {
+    var status = global::Whizbang.Core.Tracing.HandlerStatus.Success;
+    #region RECEPTOR_REGISTRY_RESOLVE_SNIPPET
+    // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
+    var receptor = sp.GetKeyedService<__RECEPTOR_SERVICE__>("__RECEPTOR_CLASS__")
+                ?? sp.GetRequiredService<__RECEPTOR_SERVICE__>();
+    #endregion
+
+    #region RECEPTOR_REGISTRY_SUPPRESSED_RESOLVE_SNIPPET
+    // [SuppressReceptorRegistration]: its owner registers it by hand or only at runtime, so a route nothing in DI can
+    // resolve skips the receptor rather than throwing (#2309)
+    var receptor = global::Whizbang.Core.Messaging.SuppressedReceptorRoute.Resolve<__RECEPTOR_SERVICE__, __RECEPTOR_CLASS__>(sp, "__RECEPTOR_CLASS__");
+    if (receptor is null) {
+      return null;
+    }
+    #endregion
+
+    #region RECEPTOR_REGISTRY_SUPPRESSED_TRACED_RESOLVE_SNIPPET
+    // [SuppressReceptorRegistration]: its owner registers it by hand or only at runtime, so a route nothing in DI can
+    // resolve skips the receptor rather than throwing (#2309); the trace records an early return, not a success
+    var receptor = global::Whizbang.Core.Messaging.SuppressedReceptorRoute.Resolve<__RECEPTOR_SERVICE__, __RECEPTOR_CLASS__>(sp, "__RECEPTOR_CLASS__");
+    if (receptor is null) {
+      status = global::Whizbang.Core.Tracing.HandlerStatus.EarlyReturn;
+      return null;
+    }
+    #endregion
+  }
+
+  /// <summary>
   /// Example method showing snippet structure for receptor registry routing.
   /// Returns a list of ReceptorInfo for a given (messageType, stage) combination.
   /// Used for async receptors with response.
@@ -441,9 +494,7 @@ public class DispatcherSnippets {
           MessageType: typeof(__MESSAGE_TYPE__),
           ReceptorId: "__RECEPTOR_CLASS__",
           InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
-            // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
-            var receptor = sp.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>("__RECEPTOR_CLASS__")
-                        ?? sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
+            __RESOLVE_RECEPTOR__
             // Returned as it is: the worker's cascade reads a Routed<T> result's route
             return await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
           },
@@ -451,7 +502,11 @@ public class DispatcherSnippets {
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
           IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
-          DefaultRouting: __DEFAULT_ROUTING__
+          // #2273: whether the receptor runs for a repaired event this service never handled
+          RunOnRepair: __RUN_ON_REPAIR__,
+          DefaultRouting: __DEFAULT_ROUTING__,
+          // The receptor class the receptor interceptors are asked about before it runs (#1996)
+          ReceptorType: typeof(__RECEPTOR_CLASS__)
         )
       };
     }
@@ -476,9 +531,7 @@ public class DispatcherSnippets {
           MessageType: typeof(__MESSAGE_TYPE__),
           ReceptorId: "__RECEPTOR_CLASS__",
           InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
-            // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
-            var receptor = sp.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>("__RECEPTOR_CLASS__")
-                        ?? sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
+            __RESOLVE_RECEPTOR__
             await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
             return null;
           },
@@ -486,7 +539,11 @@ public class DispatcherSnippets {
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
           IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
-          DefaultRouting: __DEFAULT_ROUTING__
+          // #2273: whether the receptor runs for a repaired event this service never handled
+          RunOnRepair: __RUN_ON_REPAIR__,
+          DefaultRouting: __DEFAULT_ROUTING__,
+          // The receptor class the receptor interceptors are asked about before it runs (#1996)
+          ReceptorType: typeof(__RECEPTOR_CLASS__)
         )
       };
     }
@@ -513,7 +570,7 @@ public class DispatcherSnippets {
           InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
             // Capture timing with debug-aware clock
             var clock = sp.GetService<global::Whizbang.Core.Diagnostics.IDebuggerAwareClock>();
-            var startTime = clock?.GetCurrentTimestamp() ?? System.Diagnostics.Stopwatch.GetTimestamp();
+            var startTime = clock?.GetCurrentTimestamp() ?? global::System.Diagnostics.Stopwatch.GetTimestamp();
 
             // Get tracer for explicit trace output
             var tracer = sp.GetService<global::Whizbang.Core.Tracing.ITracer>();
@@ -526,23 +583,21 @@ public class DispatcherSnippets {
                 __IS_EXPLICIT__);
 
             object? result = null;
-            System.Exception? handlerException = null;
+            global::System.Exception? handlerException = null;
             var status = global::Whizbang.Core.Tracing.HandlerStatus.Success;
 
             try {
-              // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
-              var receptor = sp.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>("__RECEPTOR_CLASS__")
-                          ?? sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
+              __RESOLVE_RECEPTOR__
               // Kept as it is: the worker's cascade reads a Routed<T> result's route
               result = await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
-            } catch (System.Exception ex) {
+            } catch (global::System.Exception ex) {
               handlerException = ex;
               status = global::Whizbang.Core.Tracing.HandlerStatus.Failed;
               throw;
             } finally {
               // Capture end time
-              var endTime = clock?.GetCurrentTimestamp() ?? System.Diagnostics.Stopwatch.GetTimestamp();
-              var durationMs = (endTime - startTime) / (double)System.Diagnostics.Stopwatch.Frequency * 1000;
+              var endTime = clock?.GetCurrentTimestamp() ?? global::System.Diagnostics.Stopwatch.GetTimestamp();
+              var durationMs = (endTime - startTime) / (double)global::System.Diagnostics.Stopwatch.Frequency * 1000;
 
               // End trace span
               tracer?.EndHandlerTrace(
@@ -560,7 +615,11 @@ public class DispatcherSnippets {
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
           IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
-          DefaultRouting: __DEFAULT_ROUTING__
+          // #2273: whether the receptor runs for a repaired event this service never handled
+          RunOnRepair: __RUN_ON_REPAIR__,
+          DefaultRouting: __DEFAULT_ROUTING__,
+          // The receptor class the receptor interceptors are asked about before it runs (#1996)
+          ReceptorType: typeof(__RECEPTOR_CLASS__)
         )
       };
     }
@@ -587,7 +646,7 @@ public class DispatcherSnippets {
           InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
             // Capture timing with debug-aware clock
             var clock = sp.GetService<global::Whizbang.Core.Diagnostics.IDebuggerAwareClock>();
-            var startTime = clock?.GetCurrentTimestamp() ?? System.Diagnostics.Stopwatch.GetTimestamp();
+            var startTime = clock?.GetCurrentTimestamp() ?? global::System.Diagnostics.Stopwatch.GetTimestamp();
 
             // Get tracer for explicit trace output
             var tracer = sp.GetService<global::Whizbang.Core.Tracing.ITracer>();
@@ -599,22 +658,20 @@ public class DispatcherSnippets {
                 __HANDLER_COUNT__,
                 __IS_EXPLICIT__);
 
-            System.Exception? handlerException = null;
+            global::System.Exception? handlerException = null;
             var status = global::Whizbang.Core.Tracing.HandlerStatus.Success;
 
             try {
-              // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
-              var receptor = sp.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>("__RECEPTOR_CLASS__")
-                          ?? sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
+              __RESOLVE_RECEPTOR__
               await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
-            } catch (System.Exception ex) {
+            } catch (global::System.Exception ex) {
               handlerException = ex;
               status = global::Whizbang.Core.Tracing.HandlerStatus.Failed;
               throw;
             } finally {
               // Capture end time
-              var endTime = clock?.GetCurrentTimestamp() ?? System.Diagnostics.Stopwatch.GetTimestamp();
-              var durationMs = (endTime - startTime) / (double)System.Diagnostics.Stopwatch.Frequency * 1000;
+              var endTime = clock?.GetCurrentTimestamp() ?? global::System.Diagnostics.Stopwatch.GetTimestamp();
+              var durationMs = (endTime - startTime) / (double)global::System.Diagnostics.Stopwatch.Frequency * 1000;
 
               // End trace span
               tracer?.EndHandlerTrace(
@@ -632,7 +689,11 @@ public class DispatcherSnippets {
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
           IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
-          DefaultRouting: __DEFAULT_ROUTING__
+          // #2273: whether the receptor runs for a repaired event this service never handled
+          RunOnRepair: __RUN_ON_REPAIR__,
+          DefaultRouting: __DEFAULT_ROUTING__,
+          // The receptor class the receptor interceptors are asked about before it runs (#1996)
+          ReceptorType: typeof(__RECEPTOR_CLASS__)
         )
       };
     }
@@ -659,7 +720,7 @@ public class DispatcherSnippets {
         }
       }
 
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       async ValueTask<object?> InvokeReceptor(object msg) {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
@@ -667,6 +728,10 @@ public class DispatcherSnippets {
           // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
           // This enables receptors to access UserId, TenantId via IMessageContext
           global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+          // The receptor interceptors decide before the receptor is resolved or waits for anything (#1996)
+          if (!await AdmitReceptorAsync(typeof(__RECEPTOR_CLASS__), (__MESSAGE_TYPE__)msg, scope.ServiceProvider, null, default)) {
+            return null;
+          }
 
           // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
           __SYNC_AWAIT_CODE__
@@ -710,7 +775,7 @@ public class DispatcherSnippets {
         }
       }
 
-      [System.Diagnostics.DebuggerStepThrough]
+      [global::System.Diagnostics.DebuggerStepThrough]
       async ValueTask<object?> InvokeReceptor(object msg) {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
@@ -718,6 +783,10 @@ public class DispatcherSnippets {
           // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
           // This enables receptors to access UserId, TenantId via IMessageContext
           global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+          // The receptor interceptors decide before the receptor is resolved or waits for anything (#1996)
+          if (!await AdmitReceptorAsync(typeof(__RECEPTOR_CLASS__), (__MESSAGE_TYPE__)msg, scope.ServiceProvider, null, default)) {
+            return null;
+          }
 
           // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
           __SYNC_AWAIT_CODE__

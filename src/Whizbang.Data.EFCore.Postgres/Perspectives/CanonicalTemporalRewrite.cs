@@ -220,6 +220,8 @@ public static class CanonicalTemporalRewrite {
     sb.Append("  IF v_touched > 0 THEN\n");
     sb.Append(CultureInfo.InvariantCulture,
       $"    {Whizbang.Data.Postgres.IndexStatistics.MarkRewrittenSql(_quoteLiteral(schema), tableLiteral)}\n");
+    // #2131: a table the statement converted records who converted it; a pass that converted nothing keeps the record.
+    sb.Append(Whizbang.Data.Postgres.StoredFormApplier.RecordSql(ledger, "table_name", tableLiteral, "    "));
     sb.Append("  END IF;\n");
     // One update per row and path, so a row with three converted keys counts three times.
     sb.Append(CultureInfo.InvariantCulture,

@@ -116,13 +116,10 @@ public class ClaimWorkerDoorbellLivenessTests {
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
-    var schemaGate = new SchemaReadyGate();
-    schemaGate.MarkReady();
     return new ClaimWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstanceProvider(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: schemaGate,
       options: Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = pollingIntervalMs,
         PollingMaxIntervalMilliseconds = Math.Max(2_000, pollingIntervalMs),

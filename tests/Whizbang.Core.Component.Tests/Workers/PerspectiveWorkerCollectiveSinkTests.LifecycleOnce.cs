@@ -204,7 +204,6 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       inboxChannelWriter: new IdleInboxChannelWriter(),
       handlerCommitChannel: new DiscardingCommitChannel(),
       failureChannel: new DiscardingFailureChannel(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       options: Options.Create(new InboxDispatchWorkerOptions()),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,

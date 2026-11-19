@@ -42,7 +42,7 @@
 #>
 [CmdletBinding()]
 param(
-  [Parameter(Mandatory = $true)][int]$PullRequest,
+  [int]$PullRequest = 0,
   [string]$Repo,
   [string]$BaseRef,
   [string]$ReportDir,
@@ -50,6 +50,25 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+<#
+    Whether a pull request's coverage gate runs in the merge queue rather than on its own CI run. A pull
+    request into develop runs only the unit and component suites (#2070); its integration suites and the
+    coverage gate run in the merge queue, which posts the gate's comment on the pull request. Measuring the
+    PR run's partial coverage would list every line only an integration suite covers.
+#>
+function Test-CoverageGateInQueue([string]$BaseRefName) {
+  return $BaseRefName -eq 'develop'
+}
+
+# Dot-sourcing for tests loads the function without reading anything.
+if ($MyInvocation.InvocationName -eq '.') { return }
+
+if ($PullRequest -le 0) {
+  Write-Error 'Pass -PullRequest <number>.'
+  exit 1
+}
+
 $root = git rev-parse --show-toplevel
 if ($LASTEXITCODE -ne 0) { Write-Error "Run from inside the repository." }
 Set-Location $root
@@ -85,7 +104,9 @@ $uncoveredBranchCount = $null
 $wholeLibrary = $null
 $wholeUntested = $null
 $coverageNote = 'no CI run found for the head commit yet'
-if ($run) {
+if (Test-CoverageGateInQueue -BaseRefName $pr.baseRefName) {
+  $coverageNote = 'not measured here: a pull request into develop runs only the unit and component suites, so its run''s coverage is partial. The coverage gate runs in the merge queue and posts its list as the PR quality gate comment on this pull request'
+} elseif ($run) {
   $covDir = Join-Path $ReportDir "coverage-$run"
   & pwsh (Join-Path $scripts 'Find-UncoveredNewLines.ps1') -CoverageRoot $covDir -BaseRef $BaseRef -DownloadFromRun $run -OutFile "$prefix-uncovered.txt" -BranchOutFile "$prefix-uncovered-branches.txt" -SummaryOutFile "$prefix-whole-library.json" 2>&1 | Out-Host
   if (Test-Path "$prefix-whole-library.json") {

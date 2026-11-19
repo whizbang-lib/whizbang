@@ -16,7 +16,7 @@ namespace Whizbang.Core.Routing;
 /// <param name="CompositeGroupKey">The strategy's composite group key for the pair —
 /// invariant: same key ⇔ same destination.</param>
 /// <docs>fundamentals/dispatcher/routing#topology-manifest</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestTests.cs:Build_PublishDestinations_AreExactProjectionsOfGetDestinationAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyManifestTests.cs:Build_PublishDestinations_AreExactProjectionsOfGetDestinationAsync</tests>
 public sealed record TopologyPublishDestination(
   string MessageTypeName,
   MessageKind Kind,
@@ -46,9 +46,9 @@ public sealed record TopologyPublishDestination(
 /// <param name="Subscriptions">The subscription set exactly as the inbox strategy
 /// returned it.</param>
 /// <docs>fundamentals/dispatcher/routing#topology-manifest</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestTests.cs:Build_RecomputedFromSameInputs_IsIdenticalAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestTests.cs:Build_NamesNoEntityTheStrategiesDidntNameAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestTests.cs:Build_StampsServiceNameFromContextAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyManifestTests.cs:Build_RecomputedFromSameInputs_IsIdenticalAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyManifestTests.cs:Build_NamesNoEntityTheStrategiesDidntNameAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyManifestTests.cs:Build_StampsServiceNameFromContextAsync</tests>
 public sealed record TopologyManifest(
   string ServiceName,
   IReadOnlyList<TopologyPublishDestination> PublishDestinations,
@@ -63,12 +63,12 @@ public sealed record TopologyManifest(
 /// what the running service actually routes.
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#topology-manifest</docs>
-/// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyManifestTests.cs</tests>
 public static class TopologyManifestBuilder {
   /// <summary>
   /// Builds the manifest: publish destinations are the union over
   /// <paramref name="messageCatalog"/> of the outbox strategy's <c>GetDestination</c>
-  /// per entry kind ("command" → <see cref="MessageKind.Command"/>, "event" →
+  /// per entry kind ("command" → <see cref="MessageKind.Command"/>, "event" and a plain "message" →
   /// <see cref="MessageKind.Event"/>; other catalog kinds such as "perspective" publish
   /// nothing and are skipped); subscriptions come from the inbox strategy's plural
   /// <c>GetSubscriptions</c> seam.
@@ -81,8 +81,9 @@ public static class TopologyManifestBuilder {
   /// <returns>The deterministic topology manifest.</returns>
   /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
   /// <docs>fundamentals/dispatcher/routing#topology-manifest</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestTests.cs:Build_PublishDestinations_AreExactProjectionsOfGetDestinationAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestTests.cs:Build_CatalogOrder_DoesNotLeakIntoManifestOrderAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyManifestTests.cs:Build_PublishDestinations_AreExactProjectionsOfGetDestinationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyManifestTests.cs:Build_CatalogOrder_DoesNotLeakIntoManifestOrderAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/TopologyManifestBranchCoverageTests.cs:Build_APlainMessage_PublishesAsItDidBeforeItHadItsOwnKindAsync</tests>
   public static TopologyManifest Build(
       IOutboxRoutingStrategy outboxStrategy,
       IInboxRoutingStrategy inboxStrategy,
@@ -128,9 +129,11 @@ public static class TopologyManifestBuilder {
   /// Maps a catalog kind string to the MessageKind it publishes as, or null when the
   /// entry publishes nothing (e.g. "perspective").
   /// </summary>
+  // "message" (#2074): a plain message, neither command nor event. The catalog called it an event before it had a kind
+  // of its own, and it publishes exactly as it did then, so the topology and what a provisioner creates do not move.
   private static MessageKind? _publishKindFor(string catalogKind) => catalogKind switch {
     "command" => MessageKind.Command,
-    "event" => MessageKind.Event,
+    "event" or "message" => MessageKind.Event,
     _ => null
   };
 }

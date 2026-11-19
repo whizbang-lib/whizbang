@@ -42,11 +42,8 @@ public partial class TransportDeadLetterDrainWorker(
   IServiceScopeFactory scopeFactory,
   IOptions<TransportDeadLetterDrainWorkerOptions> options,
   WhizbangMetrics whizbangMetrics,
-  ILogger<TransportDeadLetterDrainWorker> logger,
-  ISchemaReadyGate schemaReadyGate
+  ILogger<TransportDeadLetterDrainWorker> logger
 ) : BackgroundService {
-  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
-
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly TransportDeadLetterDrainWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<TransportDeadLetterDrainWorker> _logger = ArgumentGuard.NotNull(logger);
@@ -76,14 +73,6 @@ public partial class TransportDeadLetterDrainWorker(
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.IntervalMinutes);
-
-    if (_schemaReadyGate is not null) {
-      try {
-        await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-      } catch (OperationCanceledException) {
-        return;
-      }
-    }
 
     if (!_options.Enabled) {
       LogDisabled(_logger);

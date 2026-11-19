@@ -50,7 +50,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests {
   /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreDeadLetterRecoveryService.cs</code-under-test>
   /// <code-under-test>src/Whizbang.Core/Workers/DeadLetterRecoveryWorker.cs</code-under-test>
   [Category("Integration")]
-  [NotInParallel("EFCorePostgresTests")]
   [Category("Shard3")]
   public class RecoveredOutboxDeadLetterPublishTests : EFCoreTestBase {
     private const string TENANT = "tenant-recovered-outbox";
@@ -167,11 +166,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests {
 
     /// <summary>Runs one scan of the recovery worker, which re-drives every due dead letter.</summary>
     private static async Task _recoverAsync(ServiceProvider provider, Guid deadLetterId) {
-      var gate = new SchemaReadyGate();
-      gate.MarkReady();
       var worker = new DeadLetterRecoveryWorker(
         scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
-        schemaReadyGate: gate,
         options: Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 60, ScanBatchSize = 50, EnableGenerationReplay = false }),
         integrityOptions: Options.Create(new StreamIntegrityOptions()),
         generationProvider: new DefaultGenerationProvider(),

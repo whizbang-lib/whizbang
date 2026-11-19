@@ -13,8 +13,8 @@ namespace Whizbang.Core.Messaging;
 /// Uses record type for convenient 'with' syntax when updating context properties.
 /// </remarks>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleContextTests.cs:LifecycleExecutionContext_Constructor_StoresAllPropertiesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleContextTests.cs:LifecycleExecutionContext_OptionalProperties_CanBeNullAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/LifecycleContextTests.cs:LifecycleExecutionContext_Constructor_StoresAllPropertiesAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/LifecycleContextTests.cs:LifecycleExecutionContext_OptionalProperties_CanBeNullAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/LifecycleContextAccessorTests.cs:Current_DifferentAsyncContexts_AreIsolatedAsync</tests>
 public sealed record LifecycleExecutionContext : ILifecycleContext {
   /// <inheritdoc/>
@@ -47,6 +47,10 @@ public sealed record LifecycleExecutionContext : ILifecycleContext {
 
   /// <inheritdoc/>
   public bool IsNewEvent { get; init; } = true;
+
+  /// <inheritdoc/>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerRepairTests.cs</tests>
+  public bool IsRepair { get; init; }
 
   /// <summary>
   /// The fields the message changed, when the stage knows them better than the message does: a collective event's

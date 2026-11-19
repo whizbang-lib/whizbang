@@ -143,7 +143,7 @@ public class RabbitMQPeripheralBranchTests {
   }
 
   [Test]
-  public async Task Provisioner_DriftWithoutDriftState_StillLogsTheOwnershipErrorAsync() {
+  public async Task Provisioner_ExchangeDeclaredByAnotherHandler_LogsAtInformation_NotAsDriftAsync() {
     const string topic = "inbox.myapp.orders.commands";
     var channel = new FakeChannel { ExistingExchanges = { topic } };
     var logger = new CapturingLogger<RabbitMQInfrastructureProvisioner>();
@@ -158,8 +158,11 @@ public class RabbitMQPeripheralBranchTests {
     await Assert.That(async () => await provisioner.ProvisionManifestAsync(manifest)).ThrowsNothing();
 
     await Assert.That(logger.Entries.Any(e =>
-      e.Level == LogLevel.Error && e.Message.Contains("Topology ownership drift", StringComparison.Ordinal))).IsTrue()
-      .Because("with drift recording disabled the error log is the only signal, and it must still fire");
+      e.Level == LogLevel.Information && e.Message.Contains("another service handling commands", StringComparison.Ordinal))).IsTrue()
+      .Because("#2089: a pre-existing command-inbox exchange is what a type-filtered second handler leaves; it is recorded "
+               + "for the record at Information");
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Error)).IsFalse()
+      .Because("it cannot be told apart from a legitimate subscriber over AMQP, so it is never logged as drift");
   }
 
   #endregion

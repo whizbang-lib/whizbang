@@ -1001,12 +1001,28 @@ internal sealed class RecordingChannel : IChannel {
     return Task.CompletedTask;
   }
 
+  /// <summary>Every consumer tag a consume started, in order.</summary>
+  public List<string> ConsumedTags { get; } = [];
+
+  /// <summary>Every consumer tag a cancel was asked for, in order.</summary>
+  public List<string> CanceledTags { get; } = [];
+
+  public Exception? ExceptionToThrowOnCancel { get; set; }
+
   public Task<string> BasicConsumeAsync(string queue, bool autoAck, string consumerTag, bool noLocal, bool exclusive, IDictionary<string, object?>? arguments, IAsyncBasicConsumer consumer, CancellationToken cancellationToken = default) {
-    LastRegisteredConsumer = consumer;
+    lock (_sync) {
+      LastRegisteredConsumer = consumer;
+      ConsumedTags.Add(consumerTag);
+    }
     return Task.FromResult(consumerTag);
   }
 
-  public Task BasicCancelAsync(string consumerTag, bool noWait = false, CancellationToken cancellationToken = default) => Task.CompletedTask;
+  public Task BasicCancelAsync(string consumerTag, bool noWait = false, CancellationToken cancellationToken = default) {
+    lock (_sync) {
+      CanceledTags.Add(consumerTag);
+    }
+    return ExceptionToThrowOnCancel is null ? Task.CompletedTask : Task.FromException(ExceptionToThrowOnCancel);
+  }
 
   public ValueTask BasicAckAsync(ulong deliveryTag, bool multiple, CancellationToken cancellationToken = default) {
     lock (_sync) {
@@ -1051,7 +1067,7 @@ internal sealed class RecordingChannel : IChannel {
   public Task<QueueDeclareOk> QueueDeclarePassiveAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<uint> QueueDeleteAsync(string queue, bool ifUnused, bool ifEmpty, bool noWait = false, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<uint> QueuePurgeAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task QueueUnbindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments = null, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+  public Task QueueUnbindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
   public Task TxCommitAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task TxRollbackAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task TxSelectAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();

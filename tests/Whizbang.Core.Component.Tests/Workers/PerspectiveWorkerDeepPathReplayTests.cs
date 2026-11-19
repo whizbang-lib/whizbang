@@ -94,6 +94,8 @@ public class PerspectiveWorkerDeepPathReplayTests {
     await Assert.That(runner.RewindCallCount).IsEqualTo(1);
     await Assert.That(processedEvent?.EventCount).IsEqualTo(2)
       .Because("The replay reader's IsNew pending event is prepended; duplicates and completed events are filtered");
+    await Assert.That(processedEvent?.EventIds ?? []).IsEquivalentTo([pendingEventId, rangeLoadedEventId])
+      .Because("the hook names the events the batch reported, so a listener can count distinct applies (#2237)");
     var postPerspectiveIds = invoker.EventIdsAtStage(LifecycleStage.PostPerspectiveInline);
     await Assert.That(postPerspectiveIds).Contains(pendingEventId)
       .Because("The pending replay event must flow through PostPerspective lifecycle");
@@ -308,7 +310,6 @@ public class PerspectiveWorkerDeepPathReplayTests {
       instanceProvider: instanceProvider,
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: eventTypeProvider ?? registry,

@@ -25,8 +25,8 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>operations/workers/perspective-worker</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportCompletionAsync_CallsCoordinatorImmediately_Async</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_GetPendingCompletions_AlwaysReturnsEmpty_Async</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportCompletionAsync_CallsCoordinatorImmediately_Async</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_GetPendingCompletions_AlwaysReturnsEmpty_Async</tests>
 /// <remarks>
 /// Creates a new instant completion strategy.
 /// </remarks>

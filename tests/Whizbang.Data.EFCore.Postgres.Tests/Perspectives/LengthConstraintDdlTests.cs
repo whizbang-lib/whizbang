@@ -49,11 +49,7 @@ public class LengthConstraintDdlTests : IAsyncDisposable {
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
 
-    _databaseName = $"ck_probe_{Guid.NewGuid():N}";
-    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
-      await admin.OpenAsync();
-      await _execAsync(admin, $"CREATE DATABASE {_databaseName}");
-    }
+    _databaseName = (await PerTestDatabaseFactory.CreateAsync("ck_probe")).Name;
 
     _connectionString = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _databaseName,
@@ -62,12 +58,8 @@ public class LengthConstraintDdlTests : IAsyncDisposable {
 
   [After(Test)]
   public async ValueTask DisposeAsync() {
-    try {
-      await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-      await admin.OpenAsync();
-      await _execAsync(admin, $"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)");
-    } catch (NpgsqlException) {
-      // The container is shared and the database is per-test; a failed drop is not a test failure.
+    if (_databaseName is not null) {
+      await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
 
     GC.SuppressFinalize(this);

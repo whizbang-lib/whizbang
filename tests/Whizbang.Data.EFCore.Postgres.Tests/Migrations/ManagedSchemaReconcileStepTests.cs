@@ -23,7 +23,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </summary>
 /// <docs>fundamentals/perspectives/managed-schema-objects#every-later-start</docs>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
 public class ManagedSchemaReconcileStepTests {
   private const string TABLE = "wh_per_document_index_opted_out";

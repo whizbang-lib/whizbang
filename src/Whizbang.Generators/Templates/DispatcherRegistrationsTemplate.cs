@@ -32,13 +32,13 @@ namespace Whizbang.Core.Generated {
     /// Module initializer that registers the dispatcher callback with the global registry.
     /// Runs automatically when the assembly is loaded - no explicit call needed.
     /// </summary>
-    [System.Runtime.CompilerServices.ModuleInitializer]
+    [global::System.Runtime.CompilerServices.ModuleInitializer]
     internal static void Initialize() {
       // Register dispatcher callback - includes receptors, registry, and all dispatcher infrastructure
-      global::Whizbang.Core.ServiceRegistrationCallbacks.Dispatcher = services => {
+      global::Whizbang.Core.ServiceRegistrationCallbacks.RegisterDispatcher({{ASSEMBLY_NAME_LITERAL}}, services => {
         services.AddReceptors();
         services.AddWhizbangDispatcher();
-      };
+      });
     }
   }
 
@@ -67,7 +67,10 @@ namespace Whizbang.Core.Generated {
     [ExcludeFromCodeCoverage]
     [DebuggerNonUserCode]
     public static IServiceCollection AddWhizbangPerspectiveInvoker(this IServiceCollection services) {
-      services.AddScoped<IPerspectiveInvoker, GeneratedPerspectiveInvoker>();
+      // #2200: a contribution to the one invoker the host serves, never the invoker itself. Every assembly with
+      // perspectives registers here, and a plain AddScoped let the last one hide every other's perspectives.
+      services.TryAddScoped<GeneratedPerspectiveInvoker>();
+      global::Whizbang.Core.Perspectives.PerspectiveInvokerServiceCollectionExtensions.AddPerspectiveInvokerContribution<GeneratedPerspectiveInvoker>(services);
       return services;
     }
 
@@ -171,7 +174,10 @@ namespace Whizbang.Core.Generated {
     [ExcludeFromCodeCoverage]
     [DebuggerNonUserCode]
     public static IServiceCollection AddWhizbangReceptorRegistry(this IServiceCollection services) {
-      services.AddSingleton<IReceptorRegistry, GeneratedReceptorRegistry>();
+      // #2197: a contribution to the one registry the host serves, never the registry itself. Every assembly with
+      // receptors registers here, and a plain AddSingleton let the last one hide every other's lifecycle receptors.
+      services.TryAddSingleton<GeneratedReceptorRegistry>();
+      global::Whizbang.Core.Messaging.ReceptorRegistryServiceCollectionExtensions.AddReceptorRegistryContribution<GeneratedReceptorRegistry>(services);
       // The invoker cascades what a receptor returns at a lifecycle stage. Without a cascader the
       // container chose the invoker's constructor that has none, and every result returned at a
       // worker stage was discarded without a word in any host that did not also add a transport

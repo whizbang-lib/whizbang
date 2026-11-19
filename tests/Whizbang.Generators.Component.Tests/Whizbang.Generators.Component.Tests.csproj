@@ -67,6 +67,7 @@
     <Compile Include="../Whizbang.Generators.Tests/GeneratorTestHelper.cs" Link="Shared/GeneratorTestHelper.cs" />
     <Compile Include="../Whizbang.Generators.Tests/AnalyzerTestHelper.cs" Link="Shared/AnalyzerTestHelper.cs" />
     <Compile Include="../Whizbang.Generators.Tests/MSBuildGlobalOptions.cs" Link="Shared/MSBuildGlobalOptions.cs" />
+    <Compile Include="../Whizbang.Generators.Tests/SharedMetadataReferences.cs" Link="Shared/SharedMetadataReferences.cs" />
     <!-- MSBuildGlobalOptions reads the generator packages' build files from this assembly's resources. -->
     <EmbeddedResource Include="..\..\src\Whizbang.Generators\build\*.props;..\..\src\Whizbang.Generators\build\*.targets"
                       LogicalName="WhizbangBuild/Whizbang.Generators/%(Filename)%(Extension)" />

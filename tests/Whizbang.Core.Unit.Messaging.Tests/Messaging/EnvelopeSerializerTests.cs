@@ -1,0 +1,509 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
+using TUnit.Assertions;
+using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Generated;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Serialization;
+using Whizbang.Core.ValueObjects;
+
+namespace Whizbang.Core.Tests.Messaging;
+
+/// <summary>
+/// Tests for EnvelopeSerializer - centralized envelope serialization/deserialization.
+/// Covers typed envelope serialization to JsonElement form and message deserialization.
+/// </summary>
+[Category("Messaging")]
+[Category("Serialization")]
+public partial class EnvelopeSerializerTests {
+  private static JsonSerializerOptions _createTestJsonOptions() {
+    var options = new JsonSerializerOptions {
+      PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+      WriteIndented = false,
+      TypeInfoResolver = JsonTypeInfoResolver.Combine(
+        WhizbangIdJsonContext.Default,  // FIRST: custom converters for MessageId/CorrelationId
+        EnvelopeTestJsonContext.Default,
+        InfrastructureJsonContext.Default
+      )
+    };
+    return options;
+  }
+
+  private static MessageHop _createTestHop() {
+    return new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = ServiceInstanceInfo.Unknown,
+      Timestamp = DateTimeOffset.UtcNow
+    };
+  }
+
+  // ========================================
+  // SerializeEnvelope Tests
+  // ========================================
+
+  [Test]
+  public async Task SerializeEnvelope_WithValidEnvelope_ReturnsSerializedEnvelopeAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = msgId,
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act
+    var result = serializer.SerializeEnvelope(envelope);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result.JsonEnvelope).IsNotNull();
+    await Assert.That(result.EnvelopeType).Contains("MessageEnvelope");
+    await Assert.That(result.MessageType).Contains("EnvelopeTestMsg");
+  }
+
+  [Test]
+  public async Task SerializeEnvelope_WithNullEnvelope_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+
+    // Act & Assert
+    await Assert.That(() => serializer.SerializeEnvelope<EnvelopeTestMsg>(null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task SerializeEnvelope_WithJsonElementPayload_ThrowsInvalidOperationExceptionAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var jsonElement = JsonElement.Parse("{\"value\":\"test\"}");
+
+    // Create envelope with JsonElement payload (simulating double serialization)
+    var envelope = new MessageEnvelope<JsonElement> {
+      MessageId = msgId,
+      Payload = jsonElement,
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act & Assert - Detects double serialization because payload is already JsonElement
+    await Assert.That(() => serializer.SerializeEnvelope(envelope))
+      .Throws<InvalidOperationException>()
+      .WithMessageMatching("*DOUBLE SERIALIZATION DETECTED*");
+  }
+
+  [Test]
+  public async Task SerializeEnvelope_CapturesCorrectTypeMetadataAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = msgId,
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act
+    var result = serializer.SerializeEnvelope(envelope);
+
+    // Assert
+    await Assert.That(result.MessageType).Contains("EnvelopeTestMsg");
+    await Assert.That(result.EnvelopeType).Contains("MessageEnvelope");
+  }
+
+  [Test]
+  public async Task SerializeEnvelope_PreservesMessageIdAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = msgId,
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act
+    var result = serializer.SerializeEnvelope(envelope);
+
+    // Assert
+    await Assert.That(result.JsonEnvelope.MessageId).IsEqualTo(msgId);
+  }
+
+  [Test]
+  public async Task SerializeEnvelope_PreservesDirectedTargetAsync() {
+    // Arrange — a DIRECTED envelope (stream-integrity R0): losing Target at this conversion seam
+    // would broadcast a point-to-point message, so the copy must carry it.
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = MessageId.New(),
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Target = "damaged-svc"
+    };
+
+    // Act
+    var result = serializer.SerializeEnvelope(envelope);
+
+    // Assert
+    await Assert.That(result.JsonEnvelope.Target).IsEqualTo("damaged-svc");
+  }
+
+  [Test]
+  public async Task SerializeEnvelope_PreservesStateOnlyAsync() {
+    // Arrange — a STATE-ONLY envelope (stream-integrity Phase S): losing the marker at this
+    // conversion seam would re-fire trigger receptors on backfilled history.
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = MessageId.New(),
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      StateOnly = true
+    };
+
+    // Act
+    var result = serializer.SerializeEnvelope(envelope);
+
+    // Assert
+    await Assert.That(result.JsonEnvelope.StateOnly).IsTrue();
+  }
+
+  [Test]
+  public async Task SerializeEnvelope_PreservesRepairedAsync() {
+    // #2273: a repaired child that loses its marker at this seam would run every receptor, not only the opted-in ones.
+    var serializer = new EnvelopeSerializer(_createTestJsonOptions());
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = MessageId.New(),
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Repaired = true
+    };
+
+    var result = serializer.SerializeEnvelope(envelope);
+
+    await Assert.That(result.JsonEnvelope.Repaired).IsTrue();
+  }
+
+  [Test]
+  public async Task SerializeEnvelope_PreservesHopsAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var hop1 = _createTestHop();
+    var hop2 = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        InstanceId = Guid.NewGuid(),
+        ServiceName = "Service2",
+        HostName = "host2",
+        ProcessId = 12345
+      },
+      Timestamp = DateTimeOffset.UtcNow
+    };
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = msgId,
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = [hop1, hop2],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act
+    var result = serializer.SerializeEnvelope(envelope);
+
+    // Assert
+    await Assert.That(result.JsonEnvelope.Hops.Count).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task SerializeEnvelope_WithDefaultOptions_ThrowsNotSupportedExceptionAsync() {
+    // Arrange - use null options (no TypeInfoResolver configured)
+    // In AOT mode, JsonSerializer requires explicit TypeInfoResolver
+    var serializer = new EnvelopeSerializer(null);
+    var msgId = MessageId.New();
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = msgId,
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act & Assert - Without TypeInfoResolver, AOT serialization throws NotSupportedException
+    await Assert.That(() => serializer.SerializeEnvelope(envelope))
+      .Throws<NotSupportedException>();
+  }
+
+  // ========================================
+  // DeserializeMessage Tests
+  // ========================================
+
+  [Test]
+  public async Task DeserializeMessage_WithNullEnvelope_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+
+    // Act & Assert
+    await Assert.That(() => serializer.DeserializeMessage(null!, "SomeType"))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task DeserializeMessage_WithNullTypeName_ThrowsArgumentExceptionAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var jsonEnvelope = new MessageEnvelope<JsonElement> {
+      MessageId = msgId,
+      Payload = JsonElement.Parse("{\"value\":\"test\"}"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act & Assert
+    await Assert.That(() => serializer.DeserializeMessage(jsonEnvelope, null!))
+      .Throws<ArgumentException>();
+  }
+
+  [Test]
+  public async Task DeserializeMessage_WithEmptyTypeName_ThrowsArgumentExceptionAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var jsonEnvelope = new MessageEnvelope<JsonElement> {
+      MessageId = msgId,
+      Payload = JsonElement.Parse("{\"value\":\"test\"}"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act & Assert
+    await Assert.That(() => serializer.DeserializeMessage(jsonEnvelope, "   "))
+      .Throws<ArgumentException>();
+  }
+
+  [Test]
+  public async Task DeserializeMessage_WithUnknownTypeName_ThrowsInvalidOperationExceptionAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var jsonEnvelope = new MessageEnvelope<JsonElement> {
+      MessageId = msgId,
+      Payload = JsonElement.Parse("{\"value\":\"test\"}"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act & Assert
+    await Assert.That(() => serializer.DeserializeMessage(jsonEnvelope, "Unknown.NonExistent.Type, UnknownAssembly"))
+      .Throws<InvalidOperationException>()
+      .WithMessageMatching("*Failed to resolve message type*");
+  }
+
+  [Test]
+  public async Task DeserializeMessage_NullPayload_ThrowsAsync() {
+    var serializer = new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions());
+    var jsonEnvelope = new MessageEnvelope<JsonElement> {
+      MessageId = MessageId.New(),
+      Payload = JsonElement.Parse("null"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+    var typeName = TypeNameFormatter.Format(typeof(Whizbang.Core.Minting.RedeliveryComposite));
+
+    await Assert.That(() => serializer.DeserializeMessage(jsonEnvelope, typeName))
+      .Throws<InvalidOperationException>()
+      .WithMessageMatching("*returned null*");
+  }
+
+  // ========================================
+  // Additional SerializeEnvelope Coverage Tests
+  // ========================================
+
+  [Test]
+  public async Task SerializeEnvelope_WithNullHops_CreatesEmptyHopsListAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = msgId,
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = null!,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act
+    var result = serializer.SerializeEnvelope(envelope);
+
+    // Assert - Null hops should be converted to empty list
+    await Assert.That(result.JsonEnvelope.Hops).IsNotNull();
+    await Assert.That(result.JsonEnvelope.Hops.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task SerializeEnvelope_WithEmptyHops_PreservesEmptyListAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = msgId,
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act
+    var result = serializer.SerializeEnvelope(envelope);
+
+    // Assert
+    await Assert.That(result.JsonEnvelope.Hops).IsNotNull();
+    await Assert.That(result.JsonEnvelope.Hops.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task SerializeEnvelope_EnvelopeType_ContainsPayloadRuntimeTypeAsync() {
+    // Arrange - The envelope type name should contain the PAYLOAD runtime type,
+    // not the TMessage generic parameter, for proper type resolution on the receiving end
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = msgId,
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act
+    var result = serializer.SerializeEnvelope(envelope);
+
+    // Assert - EnvelopeType should include assembly-qualified name of the payload runtime type
+    await Assert.That(result.EnvelopeType).Contains("EnvelopeTestMsg");
+    await Assert.That(result.EnvelopeType).Contains("Whizbang.Core");
+    await Assert.That(result.MessageType).IsNotNull();
+    // MessageType should be the assembly-qualified name of the payload
+    var messageTypeLength = result.MessageType.Length;
+    await Assert.That(messageTypeLength).IsGreaterThan(0);
+  }
+
+  [Test]
+  public async Task SerializeEnvelope_PayloadSerializesToValidJsonElementAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = msgId,
+      Payload = new EnvelopeTestMsg("HelloWorld"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act
+    var result = serializer.SerializeEnvelope(envelope);
+
+    // Assert - The payload should be a valid JsonElement containing the serialized message
+    var payloadJson = result.JsonEnvelope.Payload.ToString();
+    await Assert.That(payloadJson).Contains("HelloWorld");
+  }
+
+  [Test]
+  public async Task DeserializeMessage_WithWhitespaceOnlyTypeName_ThrowsArgumentExceptionAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var jsonEnvelope = new MessageEnvelope<JsonElement> {
+      MessageId = msgId,
+      Payload = JsonElement.Parse("{\"value\":\"test\"}"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act & Assert
+    await Assert.That(() => serializer.DeserializeMessage(jsonEnvelope, "\t\n"))
+      .Throws<ArgumentException>();
+  }
+
+  // ========================================
+  // SerializedEnvelope Record Tests
+  // ========================================
+
+  [Test]
+  public async Task SerializedEnvelope_RecordEquality_WorksCorrectlyAsync() {
+    // Arrange
+    var msgId = MessageId.New();
+    var jsonEnvelope = new MessageEnvelope<JsonElement> {
+      MessageId = msgId,
+      Payload = JsonElement.Parse("{}"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    var envelope1 = new SerializedEnvelope(jsonEnvelope, "EnvelopeType", "MessageType");
+    var envelope2 = new SerializedEnvelope(jsonEnvelope, "EnvelopeType", "MessageType");
+
+    // Assert
+    await Assert.That(envelope1).IsEqualTo(envelope2);
+  }
+
+  // ========================================
+  // Test Types
+  // ========================================
+
+  /// <summary>
+  /// Test message type for envelope serialization tests.
+  /// </summary>
+  public sealed record EnvelopeTestMsg(string Value);
+
+  /// <summary>
+  /// JSON context for envelope test message types.
+  /// </summary>
+  [JsonSerializable(typeof(EnvelopeTestMsg))]
+  [JsonSerializable(typeof(MessageEnvelope<EnvelopeTestMsg>))]
+  [JsonSerializable(typeof(MessageEnvelope<JsonElement>))]
+  [JsonSerializable(typeof(object))]
+  internal sealed partial class EnvelopeTestJsonContext : JsonSerializerContext;
+
+  /// <summary>Priority step 1 on the wire: the conversion to storage form carries the declared number.</summary>
+  [Test]
+  public async Task SerializeEnvelope_CarriesThePriorityIntoTheStorageFormAsync() {
+    var serializer = new EnvelopeSerializer(_createTestJsonOptions());
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = MessageId.New(),
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Priority = 250,
+    };
+
+    var result = serializer.SerializeEnvelope(envelope);
+
+    await Assert.That(result.JsonEnvelope.Priority).IsEqualTo(250)
+      .Because("every path that stores or ships an envelope goes through this conversion; a number dropped here never reaches a row");
+  }
+}

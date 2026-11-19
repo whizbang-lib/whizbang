@@ -9,7 +9,7 @@ namespace Whizbang.Core.Lenses;
 /// </summary>
 /// <typeparam name="TModel">The log entry model type to query</typeparam>
 /// <docs>fundamentals/lenses/temporal-query</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lenses/ITemporalLensQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Lenses/ITemporalLensQueryTests.cs</tests>
 /// <remarks>
 /// <para>
 /// This interface follows the query patterns established by EF Core for SQL Server temporal tables.

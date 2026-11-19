@@ -14,9 +14,11 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Health;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -45,8 +47,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/SchemaInitializationStages.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres.Generators/Templates/DbContextSchemaExtensionTemplate.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/231_StartupStageRecord.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/277_PreflightInstanceAndRoleColumns.sql</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public sealed partial class StartupStageHostTests {
   /// <summary>Bounds each signal wait, so a stage never reached fails as that rather than as the test's timeout.</summary>
@@ -68,8 +70,9 @@ public sealed partial class StartupStageHostTests {
 
   /// <summary>
   /// A fresh database: every startup stage is entered in order and logged once as it is entered; the row records each
-  /// stage from the first one after the migration that adds the columns, with its message, entered-at time and the
-  /// phase it maps to; the instance is eligible for work exactly from Accept commands; readiness reports the stage.
+  /// stage from Preflight's last step, when the instance registers (the stage columns are Preflight's, #1636), with its
+  /// message, entered-at time and the phase it maps to; the instance is eligible for work exactly from Accept commands;
+  /// readiness reports the stage.
   /// </summary>
   [Test]
   [Timeout(300000)]
@@ -89,7 +92,9 @@ public sealed partial class StartupStageHostTests {
     ], TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because($"each stage is entered once, in order, and logged as it is; logged: {string.Join(" | ", log.Lines)}");
     await Assert.That(log.Lines).Contains("Information Stage 1 of 7: Preflight - host starting");
-    await Assert.That(log.Lines).Contains("Information Stage 2 of 7: Elect - joining the registry and voting for the migrator duty");
+    await Assert.That(log.Lines).Contains(
+      "Information Stage 1 of 7: Preflight - the bootstrap closure is in place; registering this instance");
+    await Assert.That(log.Lines).Contains("Information Stage 2 of 7: Elect - voting for the migrator duty");
     await Assert.That(log.Lines).Contains("Information Stage 2 of 7: Elect - this instance migrates the schema");
     await Assert.That(log.Lines).Contains(l => _migrateLine().IsMatch(l));
     await Assert.That(log.Lines).Contains("Information Stage 4 of 7: Converge - analyzing new indexes and reconciling managed objects");
@@ -99,23 +104,31 @@ public sealed partial class StartupStageHostTests {
     await Assert.That(log.Lines[^1]).IsEqualTo("Information Stage 7 of 7: Running - reads and writes are served");
 
     var recorded = watch.Recorded;
-    await Assert.That(recorded.Select(r => (int)r.Stage)).IsEquivalentTo([40, 50, 60, 70],
-      TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("the columns arrive with migration 231, so the stages before the pass that adds them are in the log only");
-    await Assert.That(recorded.Select(r => r.Message)).IsEquivalentTo([
-      "analyzing new indexes and reconciling managed objects",
-      "recomputing partitions before the schema-ready gate opens",
-      "the schema is ready; commands are accepted while the read models catch up",
-      "reads and writes are served",
-    ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    var migrateLine = log.Lines.Single(l => _migrateLine().IsMatch(l));
+    await Assert.That(recorded.Select(r => $"{r.Stage} {r.Message}")).IsEquivalentTo([
+      "10 the bootstrap closure is in place; registering this instance",
+      "20 voting for the migrator duty",
+      "20 this instance migrates the schema",
+      "30 " + migrateLine["Information Stage 3 of 7: Migrate - ".Length..],
+      "40 analyzing new indexes and reconciling managed objects",
+      "50 recomputing partitions before the schema-ready gate opens",
+      "60 the schema is ready; commands are accepted while the read models catch up",
+      "70 reads and writes are served",
+    ], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the stage columns are Preflight's (#1636), so the row records Preflight's last step as it is registered "
+        + "and every stage after it, on a fresh database as on a restart");
     await Assert.That(recorded.Select(r => r.Phase)).IsEquivalentTo([
-      "Migrating", "Migrating", "AcceptingCommands", "Running",
+      "Connecting", "Migrating", "Migrating", "Migrating", "Migrating", "Migrating", "AcceptingCommands", "Running",
     ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(recorded.Zip(recorded.Skip(1)).All(p => p.First.EnteredAt <= p.Second.EnteredAt)).IsTrue()
       .Because("each stage is entered after the one before it");
-    await Assert.That(recorded.Select(r => r.Eligible)).IsEquivalentTo([false, false, true, true],
-      TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("an instance becomes eligible for work exactly when it records Accept commands");
+    var version = host.Services.GetRequiredService<ILibraryVersionProvider>().LibraryVersion;
+    await Assert.That(recorded.Select(r => r.Version ?? "(none)").Distinct()).IsEquivalentTo([version])
+      .Because("the version rides the registration's own write (#1636), so the row carries it from the first stage on");
+    bool?[] eligible = [null, null, null, null, false, false, true, true];
+    await Assert.That(recorded.Select(r => r.Eligible)).IsEquivalentTo(eligible, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the eligibility rule arrives with the main pass, and from then an instance becomes eligible for work "
+        + "exactly when it records Accept commands");
 
     await Assert.That(watch.ReadinessStage).IsEqualTo(StartupStage.Migrate);
     await Assert.That(watch.ReadinessStartupDetail).StartsWith("Stage 3 of 7: Migrate - ")
@@ -130,8 +143,9 @@ public sealed partial class StartupStageHostTests {
   }
 
   /// <summary>
-  /// A restart against a current schema: the held Elect stage is written when the election registers the row, Migrate
-  /// is skipped because the schema is already current, and every stage after it is recorded.
+  /// A restart against a current schema: the row is registered at the end of Preflight, which writes the held
+  /// Preflight stage (#1636); a database one pass built is current (#2194), so Elect and Migrate are skipped, and every
+  /// stage after them is recorded.
   /// </summary>
   [Test]
   [Timeout(300000)]
@@ -149,29 +163,28 @@ public sealed partial class StartupStageHostTests {
     await host.StartAsync(cancellationToken);
     await watch.Reached(StartupStage.Running).WaitAsync(_deadline, cancellationToken);
 
-    await Assert.That(log.Lines).Contains("Information Stage 3 of 7: Migrate - skipped: the schema is already current")
+    await Assert.That(log.Lines).Contains("Information Stage 3 of 7: Migrate - skipped: the schema is current")
       .Because("a restart against a current schema runs no pass, and says so");
     await Assert.That(log.Lines).DoesNotContain(l => _migrateLine().IsMatch(l));
     var recorded = watch.Recorded;
     await Assert.That(recorded.Select(r => $"{r.Stage} {r.Message}")).IsEquivalentTo([
-      "20 joining the registry and voting for the migrator duty",
-      "20 this instance migrates the schema",
-      "30 skipped: the schema is already current",
+      "10 the schema is current; registering this instance",
+      "20 skipped: the schema is current; no migrator is needed",
+      "30 skipped: the schema is current",
       "40 analyzing new indexes and reconciling managed objects",
       "50 recomputing partitions before the schema-ready gate opens",
       "60 the schema is ready; commands are accepted while the read models catch up",
       "70 reads and writes are served",
     ], TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("Elect, held until the election registered the row, is written at registration; every stage after it as it is entered");
-    await Assert.That(recorded[0].EnteredAt).IsEqualTo(recorded[1].EnteredAt)
-      .Because("the election's outcome is progress within Elect, not a new stage");
+      .Because("Preflight, held until its last step registered the row, is written at registration; every stage after it as it is entered");
 
     await host.StopAsync(cancellationToken);
   }
 
   /// <summary>
-  /// A graceful stop: Draining is recorded on the row before any worker stops, and the instance stops being eligible
-  /// for work at once; Stopped follows once every hosted service has stopped. Both are logged as shutdown stages.
+  /// A graceful stop takes the one run-control path (#2045): Draining is recorded on the row before any worker stops, and
+  /// the instance stops being eligible for work at once; Stopped confirms the stop once the work in hand is finished and
+  /// held work and roles are released. Both are written by the path and logged as shutdown stages.
   /// </summary>
   [Test]
   [Timeout(300000)]
@@ -186,14 +199,44 @@ public sealed partial class StartupStageHostTests {
     await watch.Reached(StartupStage.Stopped).WaitAsync(_deadline, cancellationToken);
 
     await Assert.That(log.Lines.TakeLast(2)).IsEquivalentTo([
-      "Information Shutdown stage: Draining - host stopping, finishing in-flight work",
-      "Information Shutdown stage: Stopped - host stopped",
+      "Information Shutdown stage: Draining - stopping, finishing in-flight work",
+      "Information Shutdown stage: Stopped - stopped",
     ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     var draining = watch.Recorded.Single(r => r.Stage == 80);
-    await Assert.That(draining.Message).IsEqualTo("host stopping, finishing in-flight work");
+    await Assert.That(draining.Message).IsEqualTo("stopping, finishing in-flight work");
     await Assert.That(draining.Eligible).IsFalse()
       .Because("a draining instance's share goes to its peers the moment Draining is recorded, not when its heartbeat lapses");
     await Assert.That(watch.Seen.Select(s => s.Stage)).Contains(StartupStage.Stopped);
+  }
+
+  /// <summary>
+  /// The data plane and the transport consumer start only once the instance's row records Accept commands (#1636, owner
+  /// decision 2026-11-02): at the moment the row says the instance is eligible for work, none of them has started, so
+  /// none can claim or receive before it. Every one of them then starts.
+  /// </summary>
+  [Test]
+  [Timeout(300000)]
+  public async Task TheDataPlane_StartsOnlyOnceTheRowRecordsAcceptCommandsAsync(CancellationToken cancellationToken) {
+    var watch = new StageWatch(_database.ConnectionString);
+    var starts = new StartWatch();
+    using var host = _buildHost(new StageLog(), watch, starts);
+
+    await host.StartAsync(cancellationToken);
+    await watch.Reached(StartupStage.Running).WaitAsync(_deadline, cancellationToken);
+
+    await Assert.That(watch.Recorded.Single(r => r.Stage == 60).Eligible).IsTrue()
+      .Because("the transition the data plane waits for is the one that makes the row eligible");
+    await Assert.That(starts.AtAcceptCommands).Contains("ClaimWorker")
+      .Because("the watch must see the data plane, or it proves nothing");
+    await Assert.That(starts.AtAcceptCommands).Contains("TransportConsumerWorker");
+    await Assert.That(starts.StartedBeforeTheRowSaidEligible).IsEmpty()
+      .Because("a worker that starts before the row records Accept commands can claim while the instance is not eligible");
+    foreach (var worker in host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>().OfType<GatedHostedService>()
+               .Where(g => g.StartPoint == "Accept commands")) {
+      await worker.Started.WaitAsync(_deadline, cancellationToken);
+    }
+
+    await host.StopAsync(cancellationToken);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -204,7 +247,9 @@ public sealed partial class StartupStageHostTests {
   [GeneratedRegex(@"^Information Stage 3 of 7: Migrate - \d+ migration steps? to apply$")]
   private static partial Regex _migrateLine();
 
-  private IHost _buildHost(StageLog log, StageWatch watch) {
+  private IHost _buildHost(StageLog log, StageWatch watch, StartWatch? starts = null) {
+    // With a start watch the host also consumes its transport, so the watch sees the transport consumer start.
+    var withConsumer = starts is not null;
     var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { EnvironmentName = Environments.Production });
     builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
       ["ConnectionStrings:db"] = _database.ConnectionString,
@@ -214,15 +259,30 @@ public sealed partial class StartupStageHostTests {
     builder.Logging.SetMinimumLevel(LogLevel.Information);
     builder.Services.AddSingleton<ITransport>(new InProcessTransport());
     builder.Services.AddSingleton<IStartupStageObserver>(watch);
-    _ = builder.Services.AddWhizbang().WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres;
+    if (starts is not null) {
+      builder.Services.AddSingleton<IStartupStageObserver>(starts);
+    }
+    var core = builder.Services.AddWhizbang();
+    if (withConsumer) {
+      _ = core.WithRouting(static r => r.OwnDomains("stages.commands"));
+    }
+    var whizbang = core.WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres;
+    if (withConsumer) {
+      _ = whizbang.AddTransportConsumer();
+    }
     builder.Services.Replace(ServiceDescriptor.Singleton(new MessageSecurityOptions { AllowAnonymous = true }));
     var host = builder.Build();
     watch.Attach(host.Services);
+    starts?.Attach(host.Services);
     return host;
   }
 
-  /// <summary>One recorded stage, as the instance's row held it when the stage was written.</summary>
-  private sealed record RecordedStage(short Stage, string Message, DateTime EnteredAt, string Phase, bool Eligible);
+  /// <summary>
+  /// One recorded stage, as the instance's row held it when the stage was written. <paramref name="Eligible"/> is null
+  /// while the database has no eligibility rule yet: on a fresh database, before the main pass.
+  /// </summary>
+  private sealed record RecordedStage(
+    short Stage, string Message, DateTime EnteredAt, string Phase, bool? Eligible, string? Version);
 
   /// <summary>
   /// Watches the stage: completes a signal per stage reached, reads the row each time a stage is written, and at one
@@ -282,9 +342,14 @@ public sealed partial class StartupStageHostTests {
       var instanceId = _services!.GetRequiredService<IServiceInstanceProvider>().InstanceId;
       await using var connection = new NpgsqlConnection(connectionString);
       await connection.OpenAsync(cancellationToken);
-      await using var command = new NpgsqlCommand("""
-        SELECT startup_stage, startup_stage_message, startup_stage_entered_at, lifecycle_phase,
-               wh_instance_is_eligible_for_work(si)
+      await using var probe = new NpgsqlCommand(
+        "SELECT to_regprocedure('wh_instance_is_eligible_for_work(wh_service_instances)') IS NOT NULL", connection);
+      var eligibility = await probe.ExecuteScalarAsync(cancellationToken) is true
+        ? "wh_instance_is_eligible_for_work(si)"
+        : "NULL::boolean";
+      await using var command = new NpgsqlCommand($"""
+        SELECT startup_stage, startup_stage_message, startup_stage_entered_at, lifecycle_phase, {eligibility},
+               library_version
         FROM wh_service_instances si WHERE instance_id = @id
         """, connection);
       command.Parameters.AddWithValue("id", instanceId);
@@ -292,8 +357,38 @@ public sealed partial class StartupStageHostTests {
       if (!await reader.ReadAsync(cancellationToken)) {
         throw new InvalidOperationException($"a stage was reported written, but instance {instanceId} has no row");
       }
-      return new RecordedStage(
-        reader.GetInt16(0), reader.GetString(1), reader.GetDateTime(2), reader.GetString(3), reader.GetBoolean(4));
+      return new RecordedStage(reader.GetInt16(0), reader.GetString(1), reader.GetDateTime(2), reader.GetString(3),
+        reader.IsDBNull(4) ? null : reader.GetBoolean(4), reader.IsDBNull(5) ? null : reader.GetString(5));
+    }
+  }
+
+  /// <summary>
+  /// At the moment the reporter tells its observers that Accept commands is recorded (before the stage gate, which is
+  /// told after this observer), notes which workers hosted to start at Accept commands had already started.
+  /// </summary>
+  private sealed class StartWatch : IStartupStageObserver {
+    private IServiceProvider? _services;
+
+    public List<string> AtAcceptCommands { get; } = [];
+    public List<string> StartedBeforeTheRowSaidEligible { get; } = [];
+
+    public void Attach(IServiceProvider services) => _services = services;
+
+    public ValueTask OnStageChangedAsync(StartupStageSnapshot snapshot, bool recorded, CancellationToken cancellationToken) {
+      if (snapshot.Stage != StartupStage.AcceptingCommands || !recorded || AtAcceptCommands.Count > 0) {
+        return ValueTask.CompletedTask;
+      }
+      foreach (var gated in _services!.GetServices<Microsoft.Extensions.Hosting.IHostedService>().OfType<GatedHostedService>()) {
+        if (gated.StartPoint != "Accept commands") {
+          continue;
+        }
+        var name = gated.Service.GetType().Name;
+        AtAcceptCommands.Add(name);
+        if (gated.Started.IsCompleted) {
+          StartedBeforeTheRowSaidEligible.Add(name);
+        }
+      }
+      return ValueTask.CompletedTask;
     }
   }
 

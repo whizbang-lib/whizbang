@@ -47,7 +47,7 @@ public sealed class DomainTopicOutboxStrategy(ITopicRoutingStrategy topicResolve
     var ns = _topicResolver.ResolveTopic(messageType, "", null);
 
     // Routing key = type name (e.g., "tenantcreatedevent")
-    var routingKey = messageType.Name.ToLowerInvariant();
+    var routingKey = TypeNameFormatter.SimpleName(messageType).ToLowerInvariant();
 
     if (kind == MessageKind.System) {
       // DORMANT CAPABILITY (topology arc phase 3): no production call site passes System

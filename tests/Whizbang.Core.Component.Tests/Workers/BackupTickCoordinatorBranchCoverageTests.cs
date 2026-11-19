@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -25,16 +26,16 @@ public class BackupTickCoordinatorBranchCoverageTests {
     public BackupTickCoordinatorOptions Value => null!;
   }
 
-  /// <summary>Returns ready, but cancels the host's stopping source first: a shutdown requested
-  /// in the instant between schema readiness and the first loop iteration.</summary>
-  private sealed class CancelOnReadySchemaGate(CancellationTokenSource stopping) : ISchemaReadyGate {
+  /// <summary>Cancels the host's stopping source when the coordinator logs that it started: a shutdown requested in
+  /// the instant between the start and the first loop iteration.</summary>
+  private sealed class CancelOnStartedLogger(CancellationTokenSource stopping) : ILogger<BackupTickCoordinator> {
     public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public bool IsReady => true;
-    public void MarkReady() { }
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
       stopping.Cancel();
       Entered.TrySetResult();
-      return Task.CompletedTask;
     }
   }
 
@@ -59,7 +60,6 @@ public class BackupTickCoordinatorBranchCoverageTests {
         new BackupTickRegistry(),
         null!,
         NullLogger<BackupTickCoordinator>.Instance,
-        SchemaReadyGate.AlreadyReady(),
         NullNotifySignalingGate.Instance))
       .Throws<ArgumentNullException>()
       .WithParameterName("options");
@@ -72,7 +72,6 @@ public class BackupTickCoordinatorBranchCoverageTests {
         new BackupTickRegistry(),
         new NullValueOptions(),
         NullLogger<BackupTickCoordinator>.Instance,
-        SchemaReadyGate.AlreadyReady(),
         NullNotifySignalingGate.Instance))
       .Throws<ArgumentNullException>()
       .WithParameterName("options");
@@ -82,7 +81,7 @@ public class BackupTickCoordinatorBranchCoverageTests {
   [Timeout(30000)]
   public async Task ExecuteAsync_StopRequestedBeforeFirstIteration_ExitsLoopWithoutReadingIdleTimeAsync(CancellationToken testToken) {
     using var stopping = new CancellationTokenSource();
-    var schemaGate = new CancelOnReadySchemaGate(stopping);
+    var logger = new CancelOnStartedLogger(stopping);
     var tracker = new CountingTracker();
     var registry = new BackupTickRegistry();
     var ticked = 0;
@@ -92,12 +91,11 @@ public class BackupTickCoordinatorBranchCoverageTests {
       tracker: tracker,
       registry: registry,
       options: Options.Create(new BackupTickCoordinatorOptions { IdleThreshold = TimeSpan.Zero }),
-      logger: NullLogger<BackupTickCoordinator>.Instance,
-      schemaReadyGate: schemaGate,
+      logger: logger,
       gate: NullNotifySignalingGate.Instance);
 
     await coordinator.StartAsync(stopping.Token);
-    await schemaGate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    await logger.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
     var executeTask = coordinator.ExecuteTask!;
     await executeTask.WaitAsync(TimeSpan.FromSeconds(10), testToken)
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);

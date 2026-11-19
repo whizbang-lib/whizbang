@@ -64,7 +64,7 @@ Inbox row (flags preserved)
 PerspectiveRunner sees flags & Collective != 0
    │
    ├─ Resolves ICollectiveScopeResolver by Scope.ScopeKind
-   ├─ Looks up handlers in CollectiveApplyRegistry
+   ├─ Looks up handlers in ICollectiveApplyRegistry (every assembly's)
    ├─ EnterContext(scope) → ambient ScopeContextAccessor
    ├─ Invokes handler.ArchiveJobs(evt) → ICollectiveSpec<JobModel>
    │

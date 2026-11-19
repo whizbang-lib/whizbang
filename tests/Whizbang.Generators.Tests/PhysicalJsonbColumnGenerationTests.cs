@@ -155,14 +155,14 @@ public class PhysicalJsonbColumnGenerationTests {
     var generated = _modelConfiguration();
     var lines = generated.Split('\n').Select(l => l.Trim()).ToList();
 
-    var grid = lines.IndexOf("entity.Property<System.Collections.Generic.Dictionary<string, string[]>>(\"grid_filter\")");
+    var grid = lines.IndexOf("entity.Property<global::System.Collections.Generic.Dictionary<string, string[]>>(\"grid_filter\")");
     await Assert.That(grid).IsGreaterThan(-1);
     await Assert.That(lines[grid + 2]).IsEqualTo(".HasColumnType(\"jsonb\")");
     await Assert.That(lines[grid + 3])
-      .IsEqualTo($".HasConversion({CONVERTER}<System.Collections.Generic.Dictionary<string, string[]>>());");
+      .IsEqualTo($".HasConversion({CONVERTER}<global::System.Collections.Generic.Dictionary<string, string[]>>());");
 
-    var grade = lines.IndexOf("entity.Property<TestApp.Grade>(\"grade\")");
-    await Assert.That(lines[grade + 3]).IsEqualTo($".HasConversion({CONVERTER}<TestApp.Grade>());")
+    var grade = lines.IndexOf("entity.Property<global::TestApp.Grade>(\"grade\")");
+    await Assert.That(lines[grade + 3]).IsEqualTo($".HasConversion({CONVERTER}<global::TestApp.Grade>());")
       .Because("a struct is converted the same way as a class.");
   }
 
@@ -176,7 +176,7 @@ public class PhysicalJsonbColumnGenerationTests {
     await Assert.That(generated).Contains("d.Ignore(\"Labels\");", StringComparison.Ordinal);
     await Assert.That(generated).DoesNotContain("d.Ignore(\"Declared\");", StringComparison.Ordinal)
       .Because("only a jsonb column holds the value in the form the column converter reads.");
-    await Assert.That(generated).DoesNotContain($"{CONVERTER}<System.Collections.Generic.List<string>?>", StringComparison.Ordinal);
+    await Assert.That(generated).DoesNotContain($"{CONVERTER}<global::System.Collections.Generic.List<string>?>", StringComparison.Ordinal);
   }
 
   [Test]
@@ -185,7 +185,7 @@ public class PhysicalJsonbColumnGenerationTests {
     var generated = _modelConfiguration();
     var lines = generated.Split('\n').Select(l => l.Trim()).ToList();
 
-    var stamp = lines.IndexOf("entity.Property<System.DateTime>(\"stamp\")");
+    var stamp = lines.IndexOf("entity.Property<global::System.DateTime>(\"stamp\")");
     await Assert.That(stamp).IsGreaterThan(-1);
     await Assert.That(lines[stamp + 2]).IsEqualTo(".HasColumnType(\"timestamptz\");")
       .Because("the table creates the column as timestamptz, and a model claiming timestamp rejects a UTC value on write.");

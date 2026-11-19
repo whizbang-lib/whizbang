@@ -348,9 +348,9 @@ public class AliveLockLivenessSqlTests : EFCoreTestBase {
     await _releaseAliveLockAsync(holder, peer);
     var afterRelease = (await source.GetFleetAsync(CancellationToken.None)).Single(r => r.InstanceId == peer);
 
-    await Assert.That(whileHeld.AliveLockHeld).IsTrue()
+    await Assert.That(whileHeld.IsLive).IsTrue()
       .Because("the handshake must keep waiting for an older peer whose heartbeat is between slow beats");
-    await Assert.That(afterRelease.AliveLockHeld).IsFalse();
+    await Assert.That(afterRelease.IsLive).IsFalse();
   }
 
   [Test]
@@ -369,9 +369,9 @@ public class AliveLockLivenessSqlTests : EFCoreTestBase {
       await _releaseAliveLockAsync(holder, requester);
       var afterRelease = await coordinator.GetStandbyRequestAsync(CancellationToken.None);
 
-      await Assert.That(whileHeld!.RequesterAliveLockHeld).IsTrue()
+      await Assert.That(whileHeld!.RequesterIsLive).IsTrue()
         .Because("a migrator between slow beats is alive; its peers must keep standing by");
-      await Assert.That(afterRelease!.RequesterAliveLockHeld).IsFalse();
+      await Assert.That(afterRelease!.RequesterIsLive).IsFalse();
     } finally {
       await _scalarAsync<bool>(conn, $"SELECT clear_standby('{requester}'::uuid)");
     }

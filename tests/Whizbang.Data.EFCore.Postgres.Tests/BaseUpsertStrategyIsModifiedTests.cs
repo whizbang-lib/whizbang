@@ -24,7 +24,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// These tests use simple scalar models to avoid TrackedGuid mapping issues.
 /// The key validation is that version increments and data changes persist correctly.
 /// </remarks>
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class BaseUpsertStrategyIsModifiedTests : EFCoreTestBase {
   /// <summary>

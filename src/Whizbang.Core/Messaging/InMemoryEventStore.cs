@@ -67,9 +67,9 @@ public class InMemoryEventStore : IEventStore {
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_ShouldStoreEventAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_WhenEnvelopeRegistered_ShouldUseEnvelopeAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_WhenNoEnvelope_ShouldCreateMinimalEnvelopeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_ShouldStoreEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_WhenEnvelopeRegistered_ShouldUseEnvelopeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/InMemoryEventStoreTests.cs:AppendAsync_WithMessage_WhenNoEnvelope_ShouldCreateMinimalEnvelopeAsync</tests>
   public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(message);
 
@@ -307,33 +307,39 @@ public class InMemoryEventStore : IEventStore {
     }
 
     /// <summary>
-    /// The events after <paramref name="fromEventId"/> (by id, as the SQL stores filter), in the order they were
-    /// appended, with each one's version and whether it is the stream's first: the replay read (#1352, #1878).
+    /// The events after <paramref name="fromEventId"/>'s position in the stream (its version, as the SQL stores filter;
+    /// #2379), in the order they were appended, with each one's version and whether it is the stream's first: the replay
+    /// read (#1352, #1878). An anchor the stream does not hold has no position, and the read is after its id.
     /// </summary>
     public IEnumerable<(long Version, bool IsFirst, IMessageEnvelope Envelope)> ReadInStreamOrder(Guid? fromEventId) {
       lock (_lock) {
         // Null only for a stream a reader reaches between its creation and its first append, which holds no event.
         var first = _events.FirstOrDefault();
+        var anchor = fromEventId is { } from ? _events.FirstOrDefault(e => e.EventId == from) : null;
         return [.. _events
-          .Where(e => fromEventId == null || e.EventId.CompareTo(fromEventId.Value) > 0)
+          .Where(e => fromEventId == null
+            || (anchor is not null ? e.Version > anchor.Version : e.EventId.CompareTo(fromEventId.Value) > 0))
           .OrderBy(e => e.Version)
           .Select(e => (e.Version, ReferenceEquals(e, first), e.Envelope))];
       }
     }
 
+    /// <summary>
+    /// The events after <paramref name="afterEventId"/>'s position in the stream through <paramref name="upToEventId"/>'s,
+    /// in stream order, as the SQL stores read them (#2381): the batch a perspective just processed, whose cursor moves by
+    /// version. A checkpoint the stream does not hold has no position, and is compared by id; <see cref="Guid.Empty"/> as
+    /// the upper checkpoint is no bound.
+    /// </summary>
     public IEnumerable<IMessageEnvelope> ReadBetween(Guid? afterEventId, Guid upToEventId) {
       lock (_lock) {
-        // Guid.Empty means "no upper bound" - read all events
-        var query = upToEventId == Guid.Empty
-          ? _events.AsEnumerable()
-          : _events.Where(e => e.EventId.CompareTo(upToEventId) <= 0);
-
-        if (afterEventId != null) {
-          query = query.Where(e => e.EventId.CompareTo(afterEventId.Value) > 0);
-        }
-
-        return [.. query
-          .OrderBy(e => e.EventId)
+        var after = afterEventId is { } a ? _events.FirstOrDefault(e => e.EventId == a) : null;
+        var upTo = _events.FirstOrDefault(e => e.EventId == upToEventId);
+        return [.. _events
+          .Where(e => (afterEventId is null
+              || (after is not null ? e.Version > after.Version : e.EventId.CompareTo(afterEventId.Value) > 0))
+            && (upToEventId == Guid.Empty
+              || (upTo is not null ? e.Version <= upTo.Version : e.EventId.CompareTo(upToEventId) <= 0)))
+          .OrderBy(e => e.Version)
           .Select(e => e.Envelope)];
       }
     }

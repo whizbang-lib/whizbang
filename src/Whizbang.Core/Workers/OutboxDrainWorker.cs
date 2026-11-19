@@ -51,7 +51,6 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private readonly IOutboxDrainChannel _drainChannel;
   private readonly IOutboxCompletionChannel _completionChannel;
   private readonly IFailureChannel _failureChannel;
-  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly IMessagePublishStrategy _publishStrategy;
   private readonly OutboxDrainWorkerOptions _options;
   private readonly Whizbang.Core.Execution.IConcurrencyGovernor _governor;
@@ -76,6 +75,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private readonly ConcurrentDictionary<Guid, byte> _failedStreams = new();
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly ILogger<OutboxDrainWorker> _logger;
+  private readonly DatabaseFailureEscalation _databaseFailures;
+
+  /// <summary>The tracker this worker's transient database failures are reported to (#1986).</summary>
+  internal DatabaseFailureEscalation DatabaseFailures => _databaseFailures;
   private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer;
   private readonly IReceptorRegistryQuery _receptorRegistry;
   private readonly IReceptorRegistry _runtimeReceptorRegistry;
@@ -83,12 +86,13 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   // whose Attempts exceed OutboxDrainWorkerOptions.MaxOutboxAttempts get moved into
   // wh_dead_letters via IDeadLetterStore.MoveAsync before any publish attempt.
   private readonly IDeadLetterStore _deadLetterStore;
+  private readonly LogLevel _deadLetterLevel;
   private readonly IGenerationProvider _generationProvider;
   private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics;
   // #1558: the lease a held row's renewal extends it by, while the transport reports not ready.
   private readonly int _holdLeaseSeconds;
   // Slice 26.6b: cached local service identity from wh_service_config; resolved once
-  // on first drain (after schema-ready gate) and reused for envelope publish-time
+  // on first drain and reused for envelope publish-time
   // injection. Guid.Empty until resolved.
   private Guid _localServiceId;
   // Idle-state tracking for fixture cleanup-between-tests coordination. Mirrors the
@@ -191,7 +195,6 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     IOutboxDrainChannel drainChannel,
     IOutboxCompletionChannel completionChannel,
     IFailureChannel failureChannel,
-    ISchemaReadyGate schemaReadyGate,
     IOptions<OutboxDrainWorkerOptions> options,
     JsonSerializerOptions jsonOptions,
     ILogger<OutboxDrainWorker> logger,
@@ -204,7 +207,11 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     [FromKeyedServices(GOVERNOR_KEY)] Whizbang.Core.Execution.IConcurrencyGovernor governor,
     IOptions<LeaseRenewalWorkerOptions> leaseRenewalOptions,
     Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
-    Whizbang.Core.Observability.GovernorMetrics? governorMetrics = null) {
+    Whizbang.Core.Observability.GovernorMetrics? governorMetrics = null,
+    DeadLetterLoggingOptions? deadLetterLogging = null,
+    TimeProvider? timeProvider = null,
+    DatabaseFailureEscalationOptions? databaseFailureEscalation = null) {
+    _deadLetterLevel = DeadLetterLog.LevelFrom(deadLetterLogging);
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
     ArgumentNullException.ThrowIfNull(instanceProvider);
@@ -215,8 +222,6 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     _completionChannel = completionChannel;
     ArgumentNullException.ThrowIfNull(failureChannel);
     _failureChannel = failureChannel;
-    ArgumentNullException.ThrowIfNull(schemaReadyGate);
-    _schemaReadyGate = schemaReadyGate;
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     // Turn-key observability: whatever governor is in play — the keyed adaptive default or a host
     // supplied strategy under the same key — is wrapped so its decisions and their inputs reach OpenTelemetry with no
@@ -228,6 +233,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     _jsonOptions = jsonOptions;
     ArgumentNullException.ThrowIfNull(logger);
     _logger = logger;
+    // #1986: a run of transient database failures logs one Error past the threshold, and one line when it ends.
+    _databaseFailures = new DatabaseFailureEscalation(
+      nameof(OutboxDrainWorker), databaseFailureEscalation ?? new DatabaseFailureEscalationOptions(),
+      timeProvider ?? TimeProvider.System, logger);
     _publishStrategy = publishStrategy;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _receptorRegistry = receptorRegistry;
@@ -240,7 +249,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   }
 
   /// <inheritdoc />
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Worker ExecuteAsync orchestrates schema-ready gate, drain channel polling, per-stream dispatch, and shutdown propagation — the branches are tightly coupled and inlining them keeps the lease/in-flight invariants visible at one site.")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Worker ExecuteAsync orchestrates drain channel polling, per-stream dispatch, and shutdown propagation; the branches are tightly coupled and inlining them keeps the lease/in-flight invariants visible at one site.")]
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.MaxPerStream);
 
@@ -249,12 +258,6 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       LogDisabled(_logger);
       try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
       LogStopped(_logger);
-      return;
-    }
-
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-    } catch (OperationCanceledException) {
       return;
     }
 
@@ -313,6 +316,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
               await _holdForTransportAsync([.. distinctStreams], stoppingToken);
             }
           }
+          _databaseFailures.Succeeded();
         } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
           throw;
         } catch (Exception ex) {
@@ -325,8 +329,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           // continuation that lost a deadlock does not get here until its own retries are spent
           // (_continueRoundAsync, #936): the claim backstop is the last resort, not the first.
           WorkerLoopRecovery.Report(ex,
-            (transient, cause) => LogTransientBatchDrainFailed(
-              _logger, transient.Reason, transient.SqlStateOrNone, cause),
+            (transient, cause) => {
+              LogTransientBatchDrainFailed(_logger, transient.Reason, transient.SqlStateOrNone, cause);
+              _databaseFailures.Failed(transient);
+            },
             cause => LogBatchDrainFailed(_logger, cause));
         } finally {
           // Active → idle: batch done. If more stream_ids arrived during processing the
@@ -684,7 +690,8 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
               instanceId: _instanceProvider.InstanceId,
               generation: _generationProvider.GetGeneration(),
               ct: ct).ConfigureAwait(false);
-            LogOutboxDeadLettered(_logger, row.MessageId, row.Attempts, maxAttempts);
+            DeadLetterLog.MessageDeadLettered(_logger, _deadLetterLevel, exception: null, row.MessageId, row.MessageType,
+              nameof(Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded), promotionErrorText);
             _dlqMetrics?.Added.Add(1,
               new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.OUTBOX),
               new KeyValuePair<string, object?>("reason", "MaxAttemptsExceeded"));
@@ -1532,11 +1539,15 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
               "DbContext's schema.")]
   static partial void LogLocalServiceIdLookupFailed(ILogger logger, Exception ex);
 
-  [LoggerMessage(EventId = 6, Level = LogLevel.Error,
+  // #1976: the row is failed, so the attempts bound governs it and the pre-publish gate dead-letters it at the bound,
+  // which logs the dead-letter record. The attempt itself is a Warning.
+  [LoggerMessage(EventId = 6, Level = LogLevel.Warning,
     Message = "OutboxDrainWorker: failed to deserialize envelope for {MessageId}")]
   static partial void LogDeserializeFailed(ILogger logger, Guid messageId, Exception ex);
 
-  [LoggerMessage(EventId = 7, Level = LogLevel.Error,
+  // #1976: a failed publish is retried and dead-lettered at the bound, which logs the dead-letter record (EventId
+  // 1901); each attempt is a Warning carrying its exception.
+  [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
     Message = "OutboxDrainWorker: publish threw for {MessageId}")]
   static partial void LogPublishFailed(ILogger logger, Guid messageId, Exception ex);
 
@@ -1548,9 +1559,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     Message = "OutboxDrainWorker: lifecycle stage {Stage} failed for {MessageId}; publish path continues")]
   static partial void LogLifecycleStageError(ILogger logger, Guid messageId, string stage, Exception ex);
 
-  [LoggerMessage(EventId = 10, Level = LogLevel.Warning,
-    Message = "OutboxDrainWorker dead-lettered message {MessageId}: attempts={Attempts} > max={MaxAttempts}")]
-  static partial void LogOutboxDeadLettered(ILogger logger, Guid messageId, int attempts, int maxAttempts);
+  // EventId 10 (a dead letter, at Warning) is retired: every dead letter is the DeadLetterLog record (#1901).
 
   [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
     Message = "OutboxDrainWorker IDeadLetterStore.MoveAsync failed for {MessageId} — falling through to publish")]
@@ -1658,7 +1667,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// <summary>The event id of a drain batch lost to a failure that is this framework's own defect.</summary>
   internal const int BATCH_DRAIN_FAILURE_EVENT_ID = 54;
 
-  [LoggerMessage(EventId = TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID, Level = LogLevel.Error,
+  [LoggerMessage(EventId = TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID, Level = LogLevel.Warning,
     Message = "Outbox drain batch failed on a transient database failure ({Reason}, SQLSTATE {SqlState}); "
             + "the streams re-offer via the claim backstop")]
   static partial void LogTransientBatchDrainFailed(

@@ -129,7 +129,41 @@ public sealed class WorkCoordinatorMetrics {
   /// </summary>
   public Histogram<double> GateHoldDuration { get; }
 
+  // Batch buffer (#2220)
+
+  /// <summary>Appends that waited for room in the batch buffer.</summary>
+  /// <docs>messaging/outbox-pattern#bounded-buffer</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BatchBufferTests.cs:WaitsStartingAndStopping_AreEachWarnedOnce_AndTheWaitsAreMeasuredAsync</tests>
+  public PassiveCounter<long> BatchBufferAppendWaits { get; }
+
+  /// <summary>How long an append waited for room in the batch buffer.</summary>
+  /// <docs>messaging/outbox-pattern#bounded-buffer</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BatchBufferTests.cs:WaitsStartingAndStopping_AreEachWarnedOnce_AndTheWaitsAreMeasuredAsync</tests>
+  public Histogram<double> BatchBufferWaitDuration { get; }
+
+  /// <summary>Appends admitted past the batch buffer's limit because the caller held a database transaction open.</summary>
+  /// <docs>messaging/outbox-pattern#bounded-buffer</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BatchBufferTests.cs:ACallerHoldingATransactionOpen_GoesPastTheLimit_UpToTheCeiling_AndIsNamedAsync</tests>
+  public PassiveCounter<long> BatchBufferCeilingOvershoots { get; }
+
   private readonly Meter _meter;
+
+  /// <summary>
+  /// Publishes <c>whizbang.batch_buffer.messages</c> and <c>whizbang.batch_buffer.bytes</c>: what the outbox and inbox
+  /// batch strategies hold in memory now, read at every export (#2220).
+  /// </summary>
+  /// <param name="messages">Reads the buffered message count.</param>
+  /// <param name="bytes">Reads the buffered byte count.</param>
+  /// <docs>messaging/outbox-pattern#bounded-buffer</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BatchBufferTests.cs:WaitsStartingAndStopping_AreEachWarnedOnce_AndTheWaitsAreMeasuredAsync</tests>
+  public void ObserveBatchBuffer(Func<long> messages, Func<long> bytes) {
+    ArgumentNullException.ThrowIfNull(messages);
+    ArgumentNullException.ThrowIfNull(bytes);
+    _meter.CreateObservableGauge("whizbang.batch_buffer.messages", messages,
+      description: "Messages the outbox and inbox batch strategies hold in memory, waiting to be stored");
+    _meter.CreateObservableGauge("whizbang.batch_buffer.bytes", bytes, "By",
+      "Payload bytes the outbox and inbox batch strategies hold in memory, waiting to be stored");
+  }
 
   /// <summary>
   /// Publishes <c>whizbang.work_coordinator.handler_commits.queued</c>: handler results dispatched but not
@@ -139,16 +173,25 @@ public sealed class WorkCoordinatorMetrics {
   /// </summary>
   /// <param name="pending">Reads the queue depth: what waits in the channel plus what the flusher has taken up.</param>
   /// <docs>operations/observability/metrics#handler-commit-queue</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxHandlerWorkerQueueDepthTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxHandlerWorkerQueueDepthTests.cs</tests>
   public void ObserveHandlerCommitQueue(Func<long> pending) {
     ArgumentNullException.ThrowIfNull(pending);
     _meter.CreateObservableGauge("whizbang.work_coordinator.handler_commits.queued", pending,
       description: "Handler results dispatched but not yet committed: queued in the commit channel plus taken up by the flusher");
   }
 
+  /// <summary>
+  /// The stream-integrity metrics the work coordinator records the integrity ledger's opened and closed buckets on
+  /// (#2256); null when they are not registered, and then nothing is counted.
+  /// </summary>
+  /// <remarks>Carried here so the coordinator reaches every metric it records through one collaborator.</remarks>
+  public StreamIntegrityMetrics? Integrity { get; }
+
   /// <summary>Initializes a new instance of the <see cref="WorkCoordinatorMetrics"/> class.</summary>
   /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
-  public WorkCoordinatorMetrics(WhizbangMetrics whizbangMetrics) {
+  /// <param name="integrity">The stream-integrity metrics, when registered; the container supplies them.</param>
+  public WorkCoordinatorMetrics(WhizbangMetrics whizbangMetrics, StreamIntegrityMetrics? integrity = null) {
+    Integrity = integrity;
     var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
     _meter = meter;
 
@@ -186,5 +229,12 @@ public sealed class WorkCoordinatorMetrics {
     MaintenanceTaskRowsAffected = meter.CreateHistogram<long>("whizbang.maintenance.task.rows_affected", description: "Rows cleaned per task");
 
     GateHoldDuration = meter.CreateHistogram<double>("whizbang.gate.hold_duration_ms", "ms", "WorkCoordinatorGate slot-held duration; tagged with caller");
+
+    BatchBufferAppendWaits = meter.CreatePassiveCounter<long>("whizbang.batch_buffer.append_waits",
+      description: "Appends to the outbox or inbox batch strategy that waited for room in the batch buffer");
+    BatchBufferWaitDuration = meter.CreateHistogram<double>("whizbang.batch_buffer.wait_duration", "ms",
+      "How long an append waited for room in the batch buffer");
+    BatchBufferCeilingOvershoots = meter.CreatePassiveCounter<long>("whizbang.batch_buffer.ceiling_overshoots",
+      description: "Appends admitted past the batch buffer's limit because the caller held a database transaction open");
   }
 }

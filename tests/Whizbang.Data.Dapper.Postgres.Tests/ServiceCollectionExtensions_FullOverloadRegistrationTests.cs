@@ -272,10 +272,9 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
     await Assert.That(eventStoreDescriptors[0].ImplementationType).IsNull();
 
     // initializeSchema: false must NOT register the reconciliation hosted service.
-    var reconciliationHostedService = services.FirstOrDefault(d =>
-      d.ServiceType == typeof(IHostedService) &&
-      d.ImplementationType == typeof(MessageTypeRegistryReconciliationHostedService));
-    await Assert.That(reconciliationHostedService).IsNull();
+    services.AddLogging();
+    await using var unstarted = services.BuildServiceProvider();
+    await Assert.That(_reconciliation(unstarted)).IsEmpty();
   }
 
   [Test]
@@ -363,12 +362,8 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
     await Assert.That(await _tableExistsAsync("wh_per_registration_coverage")).IsTrue()
       .Because("perspectiveEntries SQL must be executed by the per-perspective hash-tracking initializer.");
 
-    // initializeSchema: true must register the reconciliation hosted service.
-    var reconciliationHostedService = services.FirstOrDefault(d =>
-      d.ServiceType == typeof(IHostedService) &&
-      d.ImplementationType == typeof(MessageTypeRegistryReconciliationHostedService));
-    await Assert.That(reconciliationHostedService).IsNotNull();
-    await Assert.That(reconciliationHostedService!.Lifetime).IsEqualTo(ServiceLifetime.Singleton);
+    // initializeSchema: true must register the reconciliation, hosted to start when the schema-ready gate opens (#1636).
+    await Assert.That(_reconciliation(started).Select(g => g.StartPoint)).IsEquivalentTo(["schema ready"]);
   }
 
   [Test]
@@ -424,14 +419,16 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
     await Assert.That(await _tableExistsAsync("wh_event_store")).IsTrue();
     await Assert.That(await _tableExistsAsync("wh_per_schema_sql_coverage")).IsTrue();
 
-    var reconciliationHostedService = services.FirstOrDefault(d =>
-      d.ServiceType == typeof(IHostedService) &&
-      d.ImplementationType == typeof(MessageTypeRegistryReconciliationHostedService));
-    await Assert.That(reconciliationHostedService).IsNotNull();
+    await Assert.That(_reconciliation(started).Select(g => g.StartPoint)).IsEquivalentTo(["schema ready"]);
 
     await using var provider = services.BuildServiceProvider();
     await Assert.That(provider.GetRequiredService<PostgresOptions>().InitialRetryAttempts).IsEqualTo(3);
   }
+
+  /// <summary>The hosted reconciliation of the message-type registry, as its wrapper.</summary>
+  private static List<Whizbang.Core.Startup.GatedHostedService> _reconciliation(IServiceProvider provider) =>
+    [.. provider.GetServices<IHostedService>().OfType<Whizbang.Core.Startup.GatedHostedService>()
+      .Where(g => g.Service is MessageTypeRegistryReconciliationHostedService)];
 
   private static ServiceDescriptor _single(IServiceCollection services, Type serviceType) =>
     services.Single(d => d.ServiceType == serviceType);

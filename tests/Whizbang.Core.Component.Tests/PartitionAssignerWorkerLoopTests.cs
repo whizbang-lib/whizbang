@@ -75,7 +75,7 @@ public class PartitionAssignerWorkerLoopTests {
       }
       // The assigner's own registration: it is eligible for work, so it is a candidate (#1638).
       return Task.FromResult<IReadOnlyList<PartitionAssignmentCandidate>>(
-        [new PartitionAssignmentCandidate(_self, InstanceConnectionMode.Pooled, false, TimeSpan.Zero)]);
+        [new PartitionAssignmentCandidate(_self, InstanceConnectionMode.Pooled, false, TimeSpan.Zero, IsLive: true)]);
     }
     public Task<PartitionAssignment?> PublishAsync(
         string role, Guid instanceId, long epoch, IReadOnlyList<Guid> members, TimeSpan lease, CancellationToken cancellationToken) =>

@@ -29,7 +29,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/QueueIndexReindexStep.cs</code-under-test>
 [Category("Integration")]
-[NotInParallel("EFCorePostgresTests")]
 [Category("Shard4")]
 public class QueueIndexReindexSqlTests : EFCoreTestBase {
   private const string PKEY = "wh_active_streams_pkey";

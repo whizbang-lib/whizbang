@@ -23,6 +23,7 @@ public partial class MigrationConstantsTests {
   private const string MIGRATION_PREFIX = "Whizbang.Data.Postgres.Migrations.";
   private static readonly string[] _theTypo = ["__ENVELOPE_FIELD_MESAGE_ID__"];
   private static readonly string[] _oneTwo = ["__ONE__", "__TWO__"];
+  private static readonly string[] _ruleOne = ["__RULE__(e)", "__ONE__"];
 
   private static IEnumerable<(string Name, string Sql)> _rawMigrations() {
     foreach (var resource in _assembly.GetManifestResourceNames().Where(n => n.StartsWith(MIGRATION_PREFIX, StringComparison.Ordinal) && n.EndsWith(".sql", StringComparison.Ordinal)).Order()) {
@@ -43,6 +44,13 @@ public partial class MigrationConstantsTests {
     await Assert.That(undefined).IsEmpty()
       .Because("a token nothing defines would reach the database as an unknown identifier; the file is the one place a literal is spelled");
     await Assert.That(MigrationConstants.Tokens.Count).IsGreaterThanOrEqualTo(8);
+  }
+
+  [Test]
+  public async Task TheNoRewindFloorMarker_IsSpelledTheSameInTheMigrationsAndInCoreAsync() {
+    // #2295: the startup step registers the marker from Core's constant and the reaper matches it from the token.
+    await Assert.That(MigrationConstants.Tokens["__ASSOCIATION_NO_REWIND_FLOOR__"])
+      .IsEqualTo($"'{Whizbang.Core.Perspectives.EphemeralRewindFloor.NO_FLOOR_ASSOCIATION_TYPE}'");
   }
 
   [Test]
@@ -105,6 +113,77 @@ public partial class MigrationConstantsTests {
     await Assert.That(() => MigrationConstants.Parse("__PATH__ = '{p,x}'")).Throws<InvalidDataException>()
       .Because("the EF Core schema path escapes braces for ExecuteSqlRawAsync before constants are substituted, so a brace in a value reaches the format parser unescaped");
     await Assert.That(() => MigrationConstants.Parse("__PATH__ = 'x}'")).Throws<InvalidDataException>();
+  }
+
+  [Test]
+  public async Task Parse_ReadsAConstantWithAnArgument_UnderItsTokenAsync() {
+    var entries = MigrationConstants.Parse("__RULE__(e) = (e.flags = 0)\n__ONE__ = 'one'\n");
+
+    await Assert.That(entries.Select(e => e.Key).ToList()).IsEquivalentTo(_ruleOne)
+      .Because("#2352: the definition keeps its argument, so the substitution knows which word to replace");
+    await Assert.That(entries[0].Value).IsEqualTo("(e.flags = 0)");
+  }
+
+  [Test]
+  public async Task Parse_RejectsAnArgumentThatIsNotOneLowerCaseName_AndAnArgumentFormDefinedTwiceAsync() {
+    await Assert.That(() => MigrationConstants.Parse("__RULE__(E) = 1")).Throws<InvalidDataException>();
+    await Assert.That(() => MigrationConstants.Parse("__RULE__(a, b) = 1")).Throws<InvalidDataException>();
+    await Assert.That(() => MigrationConstants.Parse("__RULE__() = 1")).Throws<InvalidDataException>();
+    await Assert.That(() => MigrationConstants.Parse("__RULE__(e) = 1\n__RULE__ = 2")).Throws<InvalidDataException>()
+      .Because("a token defined with and without an argument would be ambiguous");
+    await Assert.That(() => MigrationConstants.Parse("__RULE__(e) = 1\n__RULE__X__(e) = 2")).Throws<InvalidDataException>()
+      .Because("substituting __RULE__ first would eat __RULE__X__");
+  }
+
+  [Test]
+  public async Task Apply_AConstantWithAnArgument_NamesTheAlias_AndSubstitutesTheConstantsItsValueWritesAsync() {
+    var applied = MigrationConstants.Apply("WHERE __DIGEST_ELIGIBLE__(es) AND __DIGEST_ELIGIBLE__( NEW )");
+
+    await Assert.That(applied).DoesNotContain("__").Because("the value's own __DIGEST_EXEMPT_TYPES__ is substituted too");
+    await Assert.That(applied).Contains("COALESCE(es.flags, 0) & 8 = 0");
+    await Assert.That(applied).Contains("split_part(NEW.event_type, ',', 1)");
+    await Assert.That(applied).DoesNotContain("e.flags").Because("only the argument word is replaced, never a longer word");
+    await Assert.That(MigrationConstants.Tokens.ContainsKey("__DIGEST_ELIGIBLE__")).IsTrue();
+  }
+
+  /// <summary>
+  /// The argument form is read by a plain scan with no wall-clock limit: a startup that migrates on a starved host must
+  /// not fail because a pattern match ran past a timer. Only <c>__TOKEN__(alias)</c> with one identifier is substituted;
+  /// every other shape is left exactly as written, so <see cref="MigrationConstants.UnknownTokens"/> and the migration
+  /// itself report it.
+  /// </summary>
+  [Test]
+  [Arguments("__DIGEST_ELIGIBLE__")]
+  [Arguments("x __DIGEST_ELIGIBLE__ y")]
+  [Arguments("__DIGEST_ELIGIBLE__(")]
+  [Arguments("__DIGEST_ELIGIBLE__( ")]
+  [Arguments("__DIGEST_ELIGIBLE__(1e)")]
+  [Arguments("__DIGEST_ELIGIBLE__()")]
+  [Arguments("__DIGEST_ELIGIBLE__(es")]
+  [Arguments("__DIGEST_ELIGIBLE__(es ")]
+  [Arguments("__DIGEST_ELIGIBLE__(es x)")]
+  [Arguments("__DIGEST_ELIGIBLE__ (es)")]
+  public async Task Apply_AnArgumentFormNotWrittenAsOneAlias_IsLeftAsWrittenAsync(string sql) {
+    await Assert.That(MigrationConstants.Apply(sql)).IsEqualTo(sql);
+  }
+
+  [Test]
+  public async Task Apply_AnArgumentForm_TakesAnyIdentifier_AndEveryCallInTheTextAsync() {
+    var applied = MigrationConstants.Apply("a __DIGEST_ELIGIBLE__(\t_e9\n) b __DIGEST_ELIGIBLE__(es)__DIGEST_ELIGIBLE__(x");
+
+    await Assert.That(applied).StartsWith("a (COALESCE(_e9.flags, 0) & 8 = 0");
+    await Assert.That(applied).Contains(") b (COALESCE(es.flags, 0) & 8 = 0");
+    await Assert.That(applied).EndsWith("))__DIGEST_ELIGIBLE__(x").Because("the unfinished last call is left as written");
+  }
+
+  [Test]
+  [Arguments("e", "es")]
+  [Arguments("e.a e", "es.a es")]
+  [Arguments("_e e_ ee 9e e9 é e", "_e e_ ee 9e e9 é es")]
+  [Arguments("(e)", "(es)")]
+  [Arguments("none", "none")]
+  public async Task RenameWord_ReplacesTheWordOnlyWhereItStandsAloneAsync(string text, string expected) {
+    await Assert.That(MigrationConstants.RenameWord(text, "e", "es")).IsEqualTo(expected);
   }
 
   [GeneratedRegex("__[A-Z][A-Z0-9_]*__")]

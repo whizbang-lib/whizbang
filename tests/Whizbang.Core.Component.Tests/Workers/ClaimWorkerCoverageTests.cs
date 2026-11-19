@@ -129,38 +129,14 @@ public class ClaimWorkerCoverageTests {
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
-  /// <summary>
-  /// A never-ready schema gate that publishes when a waiter arrives.
-  /// </summary>
-  /// <remarks>
-  /// Distinguishes "the worker is parked on the closed gate" from "the thread pool has not
-  /// dequeued ExecuteAsync yet". Only the first makes zero claims and zero heartbeats evidence
-  /// that the early return fired, rather than evidence that nothing ran.
-  /// </remarks>
-  private sealed class SignallingSchemaGate : ISchemaReadyGate {
-    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    /// <summary>Completes the moment the worker begins waiting on this gate.</summary>
-    public Task Entered => _entered.Task;
-
-    public bool IsReady => _ready.Task.IsCompleted;
-    public void MarkReady() => _ready.TrySetResult();
-
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
-      _entered.TrySetResult();
-      return _ready.Task.WaitAsync(cancellationToken);
-    }
-  }
-
   private static (ClaimWorker Worker, RecordingCoordinator Coord) _build(
       RecordingCoordinator coord,
       ClaimWorkerOptions options,
-      ISchemaReadyGate? schemaGate = null,
       IWorkChannelWriter? outboxChannel = null,
       IPerspectiveChannelWriter? perspectiveChannel = null,
       ClaimChurnFeedback? churnFeedback = null,
-      Microsoft.Extensions.Logging.ILogger<ClaimWorker>? logger = null) {
+      Microsoft.Extensions.Logging.ILogger<ClaimWorker>? logger = null,
+      DatabaseFailureEscalationOptions? escalation = null) {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coord);
@@ -169,7 +145,6 @@ public class ClaimWorkerCoverageTests {
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new StubInstance(),
       notificationListener: new NoOpWorkNotificationListener(),
-      schemaReadyGate: schemaGate ?? SchemaReadyGate.AlreadyReady(),
       options: Options.Create(options),
       logger: logger ?? NullLogger<ClaimWorker>.Instance,
       outboxChannel: outboxChannel ?? new WorkChannelWriter(),
@@ -181,11 +156,15 @@ public class ClaimWorkerCoverageTests {
       signalingGate: NullNotifySignalingGate.Instance,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: NullSignalBus.Instance,
-      churnFeedback: churnFeedback);
+      churnFeedback: churnFeedback,
+      databaseFailureEscalation: escalation);
     return (worker, coord);
   }
 
   private sealed class WorkerHarness(ClaimWorker worker, CancellationTokenSource cts) : IDisposable {
+    /// <summary>The running worker, for a test that drives its cycles itself.</summary>
+    public ClaimWorker Worker => worker;
+
     public void Dispose() {
       cts.Cancel();
       try { worker.StopAsync(CancellationToken.None).GetAwaiter().GetResult(); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
@@ -199,8 +178,9 @@ public class ClaimWorkerCoverageTests {
       IWorkChannelWriter? outboxChannel = null,
       IPerspectiveChannelWriter? perspectiveChannel = null,
       ClaimChurnFeedback? churnFeedback = null,
-      Microsoft.Extensions.Logging.ILogger<ClaimWorker>? logger = null) {
-    var (worker, _) = _build(coord, options, outboxChannel: outboxChannel, perspectiveChannel: perspectiveChannel, churnFeedback: churnFeedback, logger: logger);
+      Microsoft.Extensions.Logging.ILogger<ClaimWorker>? logger = null,
+      DatabaseFailureEscalationOptions? escalation = null) {
+    var (worker, _) = _build(coord, options, outboxChannel: outboxChannel, perspectiveChannel: perspectiveChannel, churnFeedback: churnFeedback, logger: logger, escalation: escalation);
     var cts = new CancellationTokenSource();
     worker.StartAsync(cts.Token).GetAwaiter().GetResult();
     return new WorkerHarness(worker, cts);
@@ -225,10 +205,38 @@ public class ClaimWorkerCoverageTests {
     var reported = logger.Collector.GetSnapshot()
       .Where(e => e.Id.Id == ClaimWorker.TRANSIENT_FAILURE_EVENT_ID).ToList();
     await Assert.That(reported).Count().IsEqualTo(1);
-    await Assert.That(reported[0].Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning);
+    await Assert.That(reported[0].Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning)
+      .Because("#1986: the claim is retried on the next tick and loses nothing, so each transient failure is a Warning");
     await Assert.That(reported[0].Message).Contains(TransientDatabaseFailure.DEADLOCK, StringComparison.Ordinal);
     await Assert.That(reported[0].Message).Contains("40P01", StringComparison.Ordinal);
     await Assert.That(reported[0].Exception).IsTypeOf<FakeDbException>();
+    await Assert.That(logger.Collector.GetSnapshot().Where(e => e.Level >= Microsoft.Extensions.Logging.LogLevel.Error)).IsEmpty()
+      .Because("#1986: one deadlock is far below the escalation threshold, so it pages nobody");
+  }
+
+  /// <summary>
+  /// The claim loop reports its transient failures to the escalation and tells it when a claim comes back: with a
+  /// threshold of one failure, the deadlocked tick logs the one Error and the next claim the recovery line.
+  /// </summary>
+  [Test]
+  public async Task ClaimTick_TransientFailurePastTheThreshold_EscalatesOnceAndSaysWhenItRecoversAsync() {
+    var coord = new RecordingCoordinator { NextClaimException = FakeDbException.WithSqlState("08006", message: "the connection dropped") };
+    var logger = new EventIdSignalingLogger<ClaimWorker>();
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 10,
+      PollingMaxIntervalMilliseconds = 50,
+    }, logger: logger, escalation: new DatabaseFailureEscalationOptions { ConsecutiveFailures = 1, FailingFor = TimeSpan.Zero });
+
+    await logger.WhenLoggedAsync(DatabaseFailureEscalation.RECOVERED_EVENT_ID, TimeSpan.FromSeconds(10));
+
+    var escalated = logger.LinesWith(DatabaseFailureEscalation.ESCALATED_EVENT_ID);
+    await Assert.That(escalated).Count().IsEqualTo(1);
+    await Assert.That(escalated[0].Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Error);
+    await Assert.That(escalated[0].Message).Contains(nameof(ClaimWorker), StringComparison.Ordinal);
+    var recovered = logger.LinesWith(DatabaseFailureEscalation.RECOVERED_EVENT_ID);
+    await Assert.That(recovered).Count().IsEqualTo(1)
+      .Because("#1986: every later claim succeeds, and the recovery is said once, not once per claim");
+    await Assert.That(recovered[0].Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Information);
   }
 
   // ============================================================
@@ -265,59 +273,6 @@ public class ClaimWorkerCoverageTests {
   // ============================================================
   // ExecuteAsync: canceled schema-ready wait (line 344)
   // ============================================================
-
-  /// <summary>
-  /// A canceled schema-ready wait must stop the worker outright, before the loop ever gets near
-  /// claim_work. If this catch were dropped (or widened into a catch-all that logs and falls
-  /// through), a shutdown landing while migrations are still pending would either fault the worker
-  /// or let it race into the claim loop against a database nobody ever confirmed was ready.
-  /// </summary>
-  [Test]
-  [Timeout(30000)]
-  public async Task SchemaGateWaitCanceled_StopsTheWorkerBeforeAnyClaimAsync(CancellationToken testToken) {
-    var gate = new SignallingSchemaGate(); // Never marked ready — the wait blocks until canceled.
-    var coord = new RecordingCoordinator();
-    var (worker, _) = _build(coord, new ClaimWorkerOptions {
-      PollingIntervalMilliseconds = 20,
-      PollingMaxIntervalMilliseconds = 60,
-    }, schemaGate: gate);
-
-    using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
-    await worker.StartAsync(cts.Token);
-
-    // Wait until the worker is provably parked on the gate before canceling. StartAsync only
-    // queues ExecuteAsync via Task.Run(_, stoppingToken); Task.Run never runs the delegate when
-    // the token is already canceled at dequeue time and the task settles Canceled instead — which
-    // satisfies IsCompleted, leaves IsFaulted false, and leaves both call counts at zero. Every
-    // assertion below was therefore equally true of a worker that never started, so canceling
-    // straight after StartAsync tested the thread pool rather than the catch.
-    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10), testToken);
-    await cts.CancelAsync();
-
-    // ExecuteTask completing on its own is the signal that the early return fired, rather than the
-    // loop trying to run against a schema nobody confirmed was ready.
-    // SuppressThrowing because the task may end RanToCompletion (the catch swallowed the
-    // cancellation) or Canceled (the token was already canceled when ExecuteAsync first ran),
-    // depending on how quickly the thread pool picks it up. Both are graceful exits; rethrowing
-    // one of them makes this test fail only under a loaded suite, which is what it did.
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10), testToken)
-      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-
-    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
-      .Because("a host shutting down mid-migration must not leave the claim loop parked on the gate");
-
-    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
-      .Because("canceling the schema-ready wait is an ordinary shutdown path, not an error — it "
-             + "must not fault the worker");
-    await Assert.That(coord.CallCount).IsEqualTo(0)
-      .Because("the gate never opened, so claim_work must never have been issued against an "
-             + "unmigrated schema");
-    await Assert.That(coord.HeartbeatCallCount).IsEqualTo(0)
-      .Because("the early return happens before the startup heartbeat registration runs too");
-
-    await worker.StopAsync(CancellationToken.None);
-    worker.Dispose();
-  }
 
   // ============================================================
   // ExecuteAsync: canceled startup heartbeat (line 356)
@@ -492,16 +447,33 @@ public class ClaimWorkerCoverageTests {
         }),
       }
     };
+    // The test drives every claim cycle itself: both poll intervals are far longer than the test, so the loop claims
+    // only when SignalNewWork wakes it, and each step waits for exactly the claim it caused. A step rings as soon as the
+    // previous claim has STARTED, so the doorbell often lands while that claim is still running. That is correct by
+    // construction: a doorbell that rings during a claim which served nothing new (an empty or a repeat claim, which
+    // every claim here after the first is) is kept for the next claim, which then skips the repeat-spacing nap
+    // (ClaimWorkerReemissionBackoffTests.RepeatedWorkSet_DoorbellDuringTheRepeatClaim_IsKeptForTheNextClaim_WhichSkipsTheNapAsync).
+    // Before that fix the repeat claim spent the doorbell and the loop napped the full ten minutes, which is how this
+    // test still timed out after it stopped racing the loop's 20-60 ms timers.
     using var harness = _startWorker(coord, new ClaimWorkerOptions {
-      PollingIntervalMilliseconds = 20,
-      PollingMaxIntervalMilliseconds = 60,
+      PollingIntervalMilliseconds = 600_000,
+      PollingMaxIntervalMilliseconds = 600_000,
       MaxStreamsPerBatch = 2000,
       MinStreamsPerBatch = 25,
       ClaimWindowGrowthStep = 100,
       AdaptiveClaimWindow = true,
     }, churnFeedback: churnFeedback);
+    async Task claimOnceMoreAsync() {
+      var next = coord.CallCount + 1;
+      harness.Worker.SignalNewWork();
+      await coord.WaitForCallsAsync(next, TimeSpan.FromSeconds(5));
+    }
 
-    await coord.WaitForCallsAsync(4, TimeSpan.FromSeconds(5));
+    // The first claim needs no wake: the loop claims as soon as it starts.
+    await coord.WaitForCallsAsync(1, TimeSpan.FromSeconds(5));
+    for (var cycle = 0; cycle < 3; cycle++) {
+      await claimOnceMoreAsync();
+    }
     await Assert.That(coord.LastMaxStreams).IsGreaterThan(25)
       .Because("the window must actually have grown above its floor here, or a later narrowing "
              + "would not be distinguishable from the window simply never having moved");
@@ -509,40 +481,25 @@ public class ClaimWorkerCoverageTests {
     // Phase 2: switch to the stream-id-only shape (no materialized attempts) and report heavy
     // re-claim churn through the SAME path the drain worker uses — the claim response alone cannot
     // see this churn on this shape.
-    // Floor-wide sample: AdaptiveClaimWindow now ignores any sample narrower than the floor, in
-    // BOTH directions. That rule exists because one re-offered row reads as 100% churn on paper,
-    // and a loop that halved on it walked a 1000-stream window down to the floor in under a second
-    // while the queue held a single row. So the churn has to be reported over at least
-    // MinStreamsPerBatch rows to be considered at all.
+    // Floor-wide sample: AdaptiveClaimWindow ignores any sample narrower than the floor, in BOTH
+    // directions, because one re-offered row reads as 100% churn on paper. So the churn has to be
+    // reported over at least MinStreamsPerBatch rows to be considered at all.
     coord.BatchToReturn = new WorkBatch {
       OutboxWork = [],
       PerspectiveWork = [],
       InboxWork = [],
-      // Floor-wide here too: under the new rule a claim narrower than MinStreamsPerBatch does not
-      // move the window in EITHER direction, so a 4-id batch would leave the window pinned and the
-      // narrowing this test exists to prove could never be observed.
       InboxStreamIds = [.. Enumerable.Range(0, 30).Select(_ => TrackedGuid.New().Value)],
     };
 
-    // The swap has to be visible to a WHOLE cycle before the churn is reported, and that ordering
-    // is the difference between this test measuring adaptivity and measuring the scheduler.
-    // ClaimWorker takes the feedback unconditionally and destructively on every cycle
-    // (_churnFeedback?.Take() in _observeChurn), so a cycle still holding the clean phase-1 batch
-    // will consume this report and spend it against thirty first-attempt rows. The evidence is then
-    // gone, every later cycle reads Observed=0, which is UNMEASURED rather than clean, and the
-    // window neither grows nor shrinks again: the assertion below sees the width equal to the peak
-    // and reports a failure to narrow that is really a failure to deliver the sample. Reported
-    // once a cycle that BEGAN after the swap has completed, the churn can only ever be consumed
-    // against the stream-id shape, which is the path under test.
-    var callsAtSwap = coord.CallCount;
-    await coord.WaitForCallsAsync(callsAtSwap + 2, TimeSpan.FromSeconds(5));
-
+    // ClaimWorker takes the feedback destructively after every claim, so the report must be consumed against the
+    // stream-id shape, never the clean phase-1 batch. One driven claim after the swap returns the stream-id batch;
+    // the report lands after that claim was made, so it is consumed by that cycle or the next one, both on the
+    // stream-id shape, and the claim after those two asks with the narrowed window. Nothing grows the window back
+    // meanwhile: an unmeasured cycle blocks growth.
+    await claimOnceMoreAsync();
     churnFeedback.Report([.. Enumerable.Repeat(2, 27), .. Enumerable.Repeat(1, 3)]); // 27 of 30 re-claimed
-
-    // One more cycle is all the shrink needs, since the very next claim consumes the report; the
-    // buffer is for a loaded machine, not for the mechanism. Nothing here can grow the window back,
-    // because an unmeasured cycle blocks growth exactly as an unmeasured drain does.
-    await coord.WaitForCallsAsync(coord.CallCount + 4, TimeSpan.FromSeconds(5));
+    await claimOnceMoreAsync();
+    await claimOnceMoreAsync();
 
     // Compared against the peak rather than a width sampled before the swap. Growth continues
     // until the swapped batch lands, so a sampled width is only a lower bound on how wide the

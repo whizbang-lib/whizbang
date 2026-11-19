@@ -18,21 +18,21 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Workers;
 
 /// <summary>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:Constructor_NullTransport_ThrowsArgumentNullExceptionAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:Constructor_NullReadinessCheck_ThrowsArgumentNullExceptionAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:IsReadyAsync_DefaultReadinessCheck_ReturnsTrueAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_SuccessfulPublish_ShouldReturnSuccessResultAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_TransportFailure_ShouldReturnFailureResultAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithNullScope_ShouldPublishSuccessfullyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithStreamId_ShouldIncludeInEnvelopeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithRoutingStrategy_CommandRoutedToInboxAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithoutRoutingStrategy_CommandStillRoutedToInboxAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithStreamId_AddsStreamIdToDestinationMetadataAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithNullStreamId_DoesNotAddStreamIdToMetadataAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_WithStreamId_PopulatesStreamIdOnBulkPublishItemAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_SameAddressDifferentStreams_GroupsByStreamIdAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_SameAddressSameStream_KeepsInSingleBatchAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_MixedNullAndNonNullStreamIds_GroupsCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:Constructor_NullTransport_ThrowsArgumentNullExceptionAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:Constructor_NullReadinessCheck_ThrowsArgumentNullExceptionAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:IsReadyAsync_DefaultReadinessCheck_ReturnsTrueAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_SuccessfulPublish_ShouldReturnSuccessResultAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_TransportFailure_ShouldReturnFailureResultAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithNullScope_ShouldPublishSuccessfullyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithStreamId_ShouldIncludeInEnvelopeAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithRoutingStrategy_CommandRoutedToInboxAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithoutRoutingStrategy_CommandStillRoutedToInboxAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithStreamId_AddsStreamIdToDestinationMetadataAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithNullStreamId_DoesNotAddStreamIdToMetadataAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_WithStreamId_PopulatesStreamIdOnBulkPublishItemAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_SameAddressDifferentStreams_GroupsByStreamIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_SameAddressSameStream_KeepsInSingleBatchAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_MixedNullAndNonNullStreamIds_GroupsCorrectlyAsync</tests>
 /// Default implementation of IMessagePublishStrategy that publishes messages via ITransport.
 /// AUTOMATICALLY routes commands to shared inbox topic to ensure delivery.
 /// Events use their destination directly (already namespace topics).
@@ -104,7 +104,7 @@ public partial class TransportPublishStrategy(
   // Derived once: short transport tag for OTEL dimensions. Maps "AzureServiceBusTransport"
   // → "asb", "RabbitMQTransport" → "rabbitmq", etc. Unknown transport types fall back to the
   // class name so the dashboard still shows *something* distinguishable.
-  private string _transportTag => _transport.GetType().Name switch {
+  private string _transportTag => TypeNameFormatter.SimpleName(_transport.GetType()) switch {
     "AzureServiceBusTransport" => "asb",
     "RabbitMQTransport" => "rabbitmq",
     "InMemoryTransport" => "inmemory",
@@ -273,7 +273,7 @@ public partial class TransportPublishStrategy(
           MessageId = work.MessageId,
           Success = false,
           CompletedStatus = work.Status, // Already stored, publish failed
-          Error = $"{ex.GetType().Name}: {ex.Message}",
+          Error = $"{TypeNameFormatter.ForLog(ex.GetType())}: {ex.Message}",
           Reason = reason,
         };
       }
@@ -284,8 +284,8 @@ public partial class TransportPublishStrategy(
   /// Whether this strategy supports bulk publishing.
   /// Returns true when the underlying transport declares the BulkPublish capability.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:SupportsBulkPublish_WithBulkCapableTransport_ReturnsTrueAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:SupportsBulkPublish_WithoutBulkCapableTransport_ReturnsFalseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:SupportsBulkPublish_WithBulkCapableTransport_ReturnsTrueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:SupportsBulkPublish_WithoutBulkCapableTransport_ReturnsFalseAsync</tests>
   public bool SupportsBulkPublish =>
     _transport.Capabilities.HasFlag(TransportCapabilities.BulkPublish);
 
@@ -295,14 +295,14 @@ public partial class TransportPublishStrategy(
   /// Event-store-only messages (null/empty destination) are returned as immediate successes.
   /// Partial failures are handled per-group: if a group's transport call throws, all items in that group fail.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_SingleDestination_CallsTransportOnceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_MultipleDestinations_GroupsByAddressAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_EventStoreOnlyItems_ReturnSuccessWithoutCallingTransportAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_TransportThrowsForGroup_FailsOnlyThatGroupAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_PerItemRoutingKeys_SetCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_EmptyList_ReturnsEmptyResultsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_PartialItemResults_MapsCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_AllEventStoreOnly_NoTransportCallsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_SingleDestination_CallsTransportOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_MultipleDestinations_GroupsByAddressAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_EventStoreOnlyItems_ReturnSuccessWithoutCallingTransportAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_TransportThrowsForGroup_FailsOnlyThatGroupAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_PerItemRoutingKeys_SetCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_EmptyList_ReturnsEmptyResultsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_PartialItemResults_MapsCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_AllEventStoreOnly_NoTransportCallsAsync</tests>
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "A batch is grouped by resolved destination, each group is pre-serialized and preflighted per item, published with the same throttle retry the singular path uses, and then one group outcome is mapped back onto every item in it. The per-item passes on both sides of the single call are what make a partial failure attributable.")]
   public async Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(
     IReadOnlyList<OutboxWork> workItems,
@@ -442,7 +442,7 @@ public partial class TransportPublishStrategy(
               MessageId = work.MessageId,
               Success = false,
               CompletedStatus = work.Status,
-              Error = $"{caught.GetType().Name}: {caught.Message}",
+              Error = $"{TypeNameFormatter.ForLog(caught.GetType())}: {caught.Message}",
               Reason = reason,
             });
           }
@@ -552,16 +552,11 @@ public partial class TransportPublishStrategy(
         $"MessageId: {work.MessageId}, MessageType: {work.MessageType}");
     }
 
-    // IMPORTANT: For events, set RoutingKey to the event's namespace path (e.g., "myapp.users.UserCreated")
-    // This is used as the Subject property in Azure Service Bus for SqlFilter matching.
-    // Without this, the Subject defaults to "message" and SqlFilter patterns like "[Subject] LIKE 'myapp.users.%'" won't match.
-    var eventTypeName = _extractTypeName(work.MessageType)?.ToLowerInvariant() ?? "";
-    var eventNamespace = _extractNamespace(work.MessageType)?.ToLowerInvariant() ?? "";
-
-    // Build full routing key: namespace.typename (e.g., "myapp.users.events.usercreated")
-    var eventRoutingKey = string.IsNullOrEmpty(eventNamespace)
-      ? eventTypeName
-      : $"{eventNamespace}.{eventTypeName}";
+    // IMPORTANT: For events, set RoutingKey to the event's subject, its lowercased CLR-form name
+    // (e.g., "myapp.users.events.usercreated"). This is used as the Subject property in Azure Service Bus for SqlFilter
+    // matching: without it the Subject defaults to "message" and no subject filter matches. The excluded-event-types rule
+    // (#2175) filters on the same EventSubject rendering, so the two cannot disagree.
+    var eventRoutingKey = string.IsNullOrWhiteSpace(work.MessageType) ? "" : EventSubject.For(work.MessageType);
 
     return new TransportDestination(
       Address: work.Destination,

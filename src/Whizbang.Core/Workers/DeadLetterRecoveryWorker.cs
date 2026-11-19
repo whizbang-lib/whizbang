@@ -39,7 +39,6 @@ namespace Whizbang.Core.Workers;
 #pragma warning disable S107 // DI-injection constructor: every parameter is a registered service or an optional seam, and a parameter object would only move the list (same reasoning as Dispatcher)
 public partial class DeadLetterRecoveryWorker(
   IServiceScopeFactory scopeFactory,
-  ISchemaReadyGate schemaReadyGate,
   IOptions<DeadLetterRecoveryOptions> options,
   IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions> integrityOptions,
   IGenerationProvider generationProvider,
@@ -52,7 +51,6 @@ public partial class DeadLetterRecoveryWorker(
 ) : BackgroundService {
 #pragma warning restore S107
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
-  private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly DeadLetterRecoveryOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   // #684: the disabled-subsystem discard must run in THIS worker too — quarantine policies
   // like PoisonRedeliveryLoop (MaxAttempts=0) hold before any dispatch, so the inbox-gate
@@ -78,7 +76,6 @@ public partial class DeadLetterRecoveryWorker(
   // Lazily built on first scan so it reads the bound options. Null when adaptivity is off.
   private AdaptiveStreamBatch? _adaptiveBatch;
   private bool _adaptiveBatchInit;
-  private bool _signalSubscribed;
 
   /// <summary>NOTIFY signal handler — wakes on a DeadLetterReady signal so the next scan runs within ms.</summary>
   private void _onSignal(Whizbang.Core.Notifications.WorkSignalCategory category) {
@@ -90,15 +87,6 @@ public partial class DeadLetterRecoveryWorker(
 
   /// <summary>Number of parked wake waiters the scan loop currently holds: 0 or 1, never more.</summary>
   internal int PendingWakeWaiters => _wake.PendingWaiters;
-
-  /// <inheritdoc />
-  public override Task StopAsync(CancellationToken cancellationToken) {
-    if (_signalSubscribed) {
-      _notificationListener.OnSignal -= _onSignal;
-      _signalSubscribed = false;
-    }
-    return base.StopAsync(cancellationToken);
-  }
 
   private int _noServiceLogged;
 
@@ -158,27 +146,36 @@ public partial class DeadLetterRecoveryWorker(
   public bool IsLoopBreakerOpen => _breakerOpenedAt is not null;
 
   /// <inheritdoc />
-  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup arms the notification listener, the generation replay and the held-message campaign, each optional and each allowed to fail without stopping the worker, and the loop then separates shutdown cancellation from a scan that threw.")]
+  /// <remarks>
+  /// The DeadLetterReady handler is added and removed here, by the run that owns it (#2409). The host runs this method
+  /// on a thread of its own, so a StopAsync that removed the handler could run while this was still adding it and leave
+  /// it attached to a listener that outlives the worker; removing it in this method's own <c>finally</c> leaves none.
+  /// </remarks>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    LogStarted(_logger, _options.ScanIntervalMinutes);
-
-    // Slice 7c — subscribe to the DeadLetterReady NOTIFY signal. The wh_dead_letters
+    // Slice 7c: subscribe to the DeadLetterReady NOTIFY signal. The wh_dead_letters
     // AFTER INSERT trigger (migration 056) fires this on every new DLQ row so the
     // worker wakes within ms instead of waiting up to ScanIntervalMinutes.
-    if (_notificationListener.IsConfigured && !_signalSubscribed) {
+    var listensForSignals = _notificationListener.IsConfigured;
+    if (listensForSignals) {
       _notificationListener.OnSignal += _onSignal;
-      _signalSubscribed = true;
     }
+    try {
+      await _runAsync(stoppingToken).ConfigureAwait(false);
+    } finally {
+      if (listensForSignals) {
+        _notificationListener.OnSignal -= _onSignal;
+      }
+    }
+  }
+
+  /// <summary>The worker's run: the startup sweeps, then the scan loop until stopped.</summary>
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Startup runs the generation replay and the held-message campaign, each optional and each allowed to fail without stopping the worker, and the loop then separates shutdown cancellation from a scan that threw.")]
+  private async Task _runAsync(CancellationToken stoppingToken) {
+    LogStarted(_logger, _options.ScanIntervalMinutes);
 
     if (!_options.Enabled) {
       LogDisabled(_logger);
       try { await Task.Delay(Timeout.Infinite, stoppingToken); } catch (OperationCanceledException) { /* stopping is the normal way out of this wait */ }
-      return;
-    }
-
-    try {
-      await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
-    } catch (OperationCanceledException) {
       return;
     }
 
@@ -452,8 +449,9 @@ public partial class DeadLetterRecoveryWorker(
     // gated on settledness: re-driving puts work back onto the same queues, so doing it mid-drain
     // is how a recovery becomes a second storm.
     HousekeepingCoordinator.Decision? housekeepingDecision = null;
+    IWorkCoordinator? coordinatorForBacklog = null;
     if (_housekeeping is not null && _options.WaitForIdle) {
-      var coordinatorForBacklog = scope.ServiceProvider.GetService<IWorkCoordinator>();
+      coordinatorForBacklog = scope.ServiceProvider.GetService<IWorkCoordinator>();
       ServiceBacklog? backlog = null;
       if (coordinatorForBacklog is not null) {
         try {
@@ -463,6 +461,8 @@ public partial class DeadLetterRecoveryWorker(
         }
       }
       var decision = _housekeeping.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, backlog);
+      // #2288: the first deferral of a run goes to the store, so the forced-pass ceiling survives a restart.
+      await HousekeepingDeferralStore.RecordAsync(coordinatorForBacklog, decision, _logger, ct).ConfigureAwait(false);
       if (!decision.Granted) {
         LogRecoveryDeferred(_logger, decision.Reason, backlog?.UnprocessedInboxRows ?? -1);
         return;
@@ -693,6 +693,8 @@ public partial class DeadLetterRecoveryWorker(
         // A decision exists only when the coordinator granted the slot (see the TryBegin above),
         // so _housekeeping is non-null whenever housekeepingDecision is.
         _housekeeping!.End(HousekeepingCoordinator.Activity.DeadLetterRecovery);
+        // A pass that ended re-arms the stored ceiling for every instance (#2288), as End re-arms the in-memory one.
+        await HousekeepingDeferralStore.ClearAsync(coordinatorForBacklog, housekeepingDecision.Value, _logger).ConfigureAwait(false);
       }
     }
   }
@@ -724,7 +726,7 @@ public partial class DeadLetterRecoveryWorker(
     InboxMessage message;
     try {
       message = ReceivedInboxMessageBuilder.BuildRedelivery(scope, redelivery);
-    } catch (Exception ex) when (ex is System.Text.Json.JsonException or NotSupportedException or InvalidOperationException) {
+    } catch (Exception ex) when (Serialization.SerializationFailure.IsSerializationFailure(ex)) {
       LogReentryRefused(_logger, entry.DeadLetterId, ex);
       await svc.MarkHoldingAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
       Interlocked.Increment(ref _totalHeld);

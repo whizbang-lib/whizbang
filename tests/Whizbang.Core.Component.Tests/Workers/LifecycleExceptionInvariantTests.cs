@@ -112,15 +112,12 @@ public partial class LifecycleExceptionInvariantTests {
   public async Task OutboxDrainWorker_PostOutboxLifecycleThrows_EnqueuesFailureAsync() {
     var failure = new FakeFailureChannel();
     var sp = new ServiceCollection().BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new OutboxDrainWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new FakeServiceInstanceProvider(),
       drainChannel: new FakeOutboxDrainChannel(),
       completionChannel: new NoOpOutboxCompletionChannel(),
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -196,15 +193,12 @@ public partial class LifecycleExceptionInvariantTests {
   public async Task InboxDispatchWorker_PreInboxLifecycleThrows_EnqueuesFailureAsync() {
     var failure = new FakeFailureChannel();
     var sp = new ServiceCollection().BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new FakeServiceInstanceProvider(),
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: new FakeHandlerCommitChannel(),
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { Enabled = true }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
@@ -257,15 +251,12 @@ public partial class LifecycleExceptionInvariantTests {
   public async Task InboxDispatchWorker_PostInboxLifecycleThrows_EnqueuesFailureAsync() {
     var failure = new FakeFailureChannel();
     var sp = new ServiceCollection().BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var worker = new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       instanceProvider: new FakeServiceInstanceProvider(),
       inboxChannelWriter: new FakeInboxChannelWriter(),
       handlerCommitChannel: new FakeHandlerCommitChannel(),
       failureChannel: failure,
-      schemaReadyGate: gate,
       options: Options.Create(new InboxDispatchWorkerOptions { Enabled = true }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,

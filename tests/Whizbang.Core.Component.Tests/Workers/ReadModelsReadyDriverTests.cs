@@ -86,7 +86,6 @@ public class ReadModelsReadyDriverTests {
       instanceProvider: new StubInstanceProvider(),
       scopeFactory: inner.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions()),
-      schemaReadyGate: schemaGate,
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: new InstantCompletionStrategy(NullLogger<InstantCompletionStrategy>.Instance),
       eventTypeProvider: NullEventTypeProvider.Instance,

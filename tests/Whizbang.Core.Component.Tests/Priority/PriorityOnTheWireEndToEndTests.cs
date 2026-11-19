@@ -188,7 +188,6 @@ public class PriorityOnTheWireEndToEndTests {
       scopeFactory: consumerProvider.GetRequiredService<IServiceScopeFactory>(),
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
       orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       envelopeSerializer: serializer,
       receptorRegistry: new SubscribedRegistry(),
@@ -206,8 +205,6 @@ public class PriorityOnTheWireEndToEndTests {
     workerServices.TryAddWhizbangDefaults();
     workerServices.AddSingleton<IWorkCoordinator>(coordinator);
     await using var workerProvider = workerServices.BuildServiceProvider();
-    var gate = new SchemaReadyGate();
-    gate.MarkReady();
     var drainChannel = new DrainChannel();
     var completion = new CompletionChannel();
     var drain = new OutboxDrainWorker(
@@ -216,7 +213,6 @@ public class PriorityOnTheWireEndToEndTests {
       drainChannel: drainChannel,
       completionChannel: completion,
       failureChannel: new FailureChannel(),
-      schemaReadyGate: gate,
       options: Options.Create(new OutboxDrainWorkerOptions { Enabled = true }),
       jsonOptions: options,
       logger: NullLogger<OutboxDrainWorker>.Instance,
@@ -259,7 +255,6 @@ public class PriorityOnTheWireEndToEndTests {
       new InstanceProvider(),
       inboxDrainChannel,
       inboxChannel,
-      gate,
       Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       options,
       NullLogger<InboxDrainWorker>.Instance);

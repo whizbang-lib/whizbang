@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Collections.Concurrent;
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
@@ -19,20 +20,20 @@ public class RebuildBalancePerspective :
     IPerspectiveFor<RebuildBalanceModel, RebuildNonCreatingEvent>,
     IPerspectiveFor<RebuildBalanceModel, RebuildBalanceSetEvent>,
     IPerspectiveFor<RebuildBalanceModel, RebuildLabelSetEvent>,
+    IPerspectiveFor<RebuildBalanceModel, RebuildBalanceRestatedEvent>,
     IPerspectiveWithActionsFor<RebuildBalanceModel, RebuildClosedEvent> {
 
   public RebuildBalancePerspective() { }
 
-  private static int _creditsApplied;
+  // Counted per stream rather than in one process-wide total: the tests run in parallel, and another test folding a
+  // credit into its own stream must not move the count a test reads for its stream (#2069).
+  private static readonly ConcurrentDictionary<Guid, int> _creditsApplied = new();
 
-  /// <summary>How many credits were folded since <see cref="ResetCreditsApplied"/>: the evidence a replay was skipped.</summary>
-  public static int CreditsApplied => Volatile.Read(ref _creditsApplied);
-
-  /// <summary>Starts a count of folded credits.</summary>
-  public static void ResetCreditsApplied() => Interlocked.Exchange(ref _creditsApplied, 0);
+  /// <summary>How many credits were folded into <paramref name="streamId"/>: the evidence a replay was skipped.</summary>
+  public static int CreditsAppliedTo(Guid streamId) => _creditsApplied.GetValueOrDefault(streamId);
 
   public RebuildBalanceModel Apply(RebuildBalanceModel currentData, RebuildCreditedEvent @event) {
-    Interlocked.Increment(ref _creditsApplied);
+    _creditsApplied.AddOrUpdate(@event.StreamId, 1, static (_, count) => count + 1);
     return new RebuildBalanceModel {
       Id = @event.StreamId,
       Balance = currentData.Balance + @event.Amount
@@ -63,6 +64,12 @@ public class RebuildBalancePerspective :
   // A second last-write-wins field, so a test can compare a whole row and not only the field it expected to change.
   public RebuildBalanceModel Apply(RebuildBalanceModel currentData, RebuildLabelSetEvent @event) {
     return new RebuildBalanceModel { Id = @event.StreamId, Balance = currentData.Balance, Label = @event.Label };
+  }
+
+  // A superseding restatement (#2152): the newest of each account key carries the whole balance, so the reaper can remove
+  // the older ones, the stream's first event among them.
+  public RebuildBalanceModel Apply(RebuildBalanceModel currentData, RebuildBalanceRestatedEvent @event) {
+    return new RebuildBalanceModel { Id = @event.StreamId, Balance = @event.Balance, Label = currentData.Label };
   }
 
   // A closed account leaves no row. Mirrors a real projection that purges on a terminal event -- the
@@ -109,6 +116,16 @@ public record RebuildLabelSetEvent : IEvent {
   [StreamId]
   public required Guid StreamId { get; init; }
   public required string Label { get; init; }
+}
+
+/// <summary>Restates the balance in full: a superseding event, so an older one of the same key is reaped (#2152).</summary>
+[Whizbang.Core.Attributes.Superseding]
+public record RebuildBalanceRestatedEvent : IEvent {
+  [StreamId]
+  public required Guid StreamId { get; init; }
+  [Whizbang.Core.Attributes.SupersedingKey]
+  public required string Account { get; init; }
+  public required decimal Balance { get; init; }
 }
 
 public record RebuildClosedEvent : IEvent {

@@ -30,7 +30,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/event-store</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreDecoratorForwardingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EventStoreDecoratorForwardingTests.cs</tests>
 /// <param name="inner">The wrapped event store.</param>
 public abstract class ForwardingEventStoreDecorator(IEventStore inner) : IEventStore {
   /// <summary>The wrapped store every non-intercepted member forwards to.</summary>
@@ -82,10 +82,31 @@ public abstract class ForwardingEventStoreDecorator(IEventStore inner) : IEventS
     Inner.GetCommitSequenceAsync(eventId, cancellationToken);
 
   /// <inheritdoc />
+  public virtual Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
+      IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) =>
+    Inner.ReadPolymorphicManyAsync(streams, eventTypes, cancellationToken);
+
+  /// <inheritdoc />
+  public virtual Task<IReadOnlyDictionary<Guid, long?>> GetCommitSequencesAsync(
+      IReadOnlyCollection<Guid> eventIds, CancellationToken cancellationToken = default) =>
+    Inner.GetCommitSequencesAsync(eventIds, cancellationToken);
+
+  /// <inheritdoc />
   public virtual Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) =>
     Inner.HasStreamEventsBeforeAsync(streamId, beforeEventId, cancellationToken);
 
   /// <inheritdoc />
   public virtual Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
     Inner.HasStreamEventsBeforeAsync(streamId, beforeEventId, eventTypes, cancellationToken);
+
+  /// <inheritdoc />
+  public virtual Task<IReadOnlySet<Guid>> StreamsWithEventsBeforeAsync(
+      IReadOnlyList<(Guid StreamId, Guid BeforeEventId)> probes, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) =>
+    Inner.StreamsWithEventsBeforeAsync(probes, eventTypes, cancellationToken);
+
+  /// <inheritdoc />
+  public virtual Task<DateTime?> GetStreamStartedAtAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+    Inner.GetStreamStartedAtAsync(streamId, cancellationToken);
 }

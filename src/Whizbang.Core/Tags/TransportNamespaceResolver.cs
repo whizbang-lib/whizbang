@@ -33,9 +33,9 @@ namespace Whizbang.Core.Tags;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/message-tags#transport-namespace-routing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TransportNamespaceResolverTests.cs:Resolve_BoundTag_ReturnsRoutedKeyAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TransportNamespaceResolverTests.cs:Resolve_NoBindingsAtAll_ReturnsDefaultAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TransportNamespaceResolverTests.cs:Resolve_ResolutionIsCachedPerTypeNameAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/TransportNamespaceResolverTests.cs:Resolve_BoundTag_ReturnsRoutedKeyAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/TransportNamespaceResolverTests.cs:Resolve_NoBindingsAtAll_ReturnsDefaultAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/TransportNamespaceResolverTests.cs:Resolve_ResolutionIsCachedPerTypeNameAsync</tests>
 public sealed class TransportNamespaceResolver {
   private readonly TagOptions _tagOptions;
   private readonly Func<IEnumerable<MessageTagRegistration>> _registrationSource;

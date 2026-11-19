@@ -19,7 +19,7 @@ namespace Whizbang.Core.Observability;
 /// <remarks>
 /// Every instrument here carries <c>traffic_class</c> and <c>transport_namespace</c>, because the
 /// question these metrics exist to answer is comparative: one class starving another, or one
-/// namespace's quota exhausted while its neighbour idles. A single aggregate number for the whole
+/// namespace's quota exhausted while its neighbor idles. A single aggregate number for the whole
 /// host was exactly what made the motivating incident invisible.
 /// </remarks>
 /// <docs>operations/observability/metrics#traffic-classes</docs>

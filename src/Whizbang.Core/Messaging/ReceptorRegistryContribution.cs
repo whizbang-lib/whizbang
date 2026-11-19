@@ -18,7 +18,7 @@ namespace Whizbang.Core.Messaging;
 /// <see cref="Whizbang.Core.Generated.WhizbangReceptorRegistryQuery"/> for the
 /// production-bug history that motivated the AssemblyRegistry-based redesign).
 /// </remarks>
-/// <docs>internals/receptor-registry-query</docs>
+/// <docs>extending/internals/receptor-registry-query</docs>
 public sealed class ReceptorRegistryContribution {
   /// <summary>Message types whose handler / lifecycle receptor / perspective / tag-attribute
   /// is registered in this assembly.</summary>
@@ -40,4 +40,27 @@ public sealed class ReceptorRegistryContribution {
   /// tests keep compiling and simply contribute no handled-message metadata.
   /// </summary>
   public IReadOnlyList<HandledMessageInfo> HandledMessages { get; init; } = [];
+
+  /// <summary>
+  /// Every message type this assembly consumes (the <see cref="AnyConsumerTypes"/> set), in the assembly-qualified
+  /// wire form with whether each is an event. NOT <c>required</c>: contributions built by older generator output or
+  /// hand-built in tests keep compiling and enumerate nothing.
+  /// </summary>
+  /// <docs>extending/internals/receptor-registry-query#what-a-service-consumes</docs>
+  public IReadOnlyList<ConsumedMessageInfo> ConsumedMessages { get; init; } = [];
+
+  /// <summary>
+  /// The collective event types a <c>[CollectiveApplyFor]</c> handler in this assembly applies, in the
+  /// assembly-qualified wire form the event store's <c>event_type</c> holds. Null (the default) for a contribution an
+  /// older generator built, or one built by hand: such an assembly may hold handlers nobody can see, so the merged
+  /// answer is then unknown rather than missing them (#2145).
+  /// </summary>
+  /// <docs>fundamentals/messaging/collective-events#only-handled-types-are-queued</docs>
+  public IReadOnlyCollection<string>? HandledCollectiveEventTypes { get; init; }
+
+  /// <summary>
+  /// The assembly that declared these receptors, so a host's view counts only its own service's (#2243).
+  /// <see langword="null"/> for a contribution built without one, which every host counts.
+  /// </summary>
+  public string? AssemblyName { get; init; }
 }
