@@ -31,6 +31,7 @@
        property, so the project's own OutputType is known here. -->
   <ItemGroup Condition="'$(OutputType)' == 'Exe'">
     <Compile Include="$(MSBuildThisFileDirectory)TestRunnerDefaults.cs" Link="TestRunnerDefaults.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)KeyedNotInParallelRunsApart.cs" Link="KeyedNotInParallelRunsApart.cs" />
   </ItemGroup>
 
   <!-- Repository-internal test analyzers (src/Whizbang.TestAnalyzers): test code that cannot verify anything is a
