@@ -1,4 +1,6 @@
-# TEMPORARY (#2446): second pass, hardware-error evidence from the win-arm64 runner. Scratch branch only.
+# TEMPORARY (#2446), second stress pass on the win-arm64 runner: develop with runtime async on (A) and off (B), and
+# develop just before #2242 (C: no runtime async, TUnit 1.12.125, CodeCoverage 18.3.2), each with module coverage on
+# and off, at CI's 20 parallel modules; plus a tight loop of the module that crashed. Scratch branch only.
 name: Stress 2446
 
 on:
@@ -13,10 +15,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  evidence:
+  stress:
     runs-on: [self-hosted, Windows, ARM64]
-    timeout-minutes: 15
+    timeout-minutes: 300
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      OUT: ${{ github.workspace }}\stress-out
     steps:
+      - name: Record start
+        shell: pwsh
+        run: |
+          "STRESS_START=$([DateTime]::UtcNow.ToString('o'))" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force -Path $env:OUT, "$env:OUT\evidence", "$env:OUT\logs", "$env:OUT\dumps" | Out-Null
+
       - name: Collect hardware-error and runtime-crash evidence
         shell: pwsh
         continue-on-error: true
@@ -57,7 +69,264 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: stress-2446-evidence2
+          name: stress-2446-hw-evidence
           path: ${{ runner.temp }}/evidence2
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Checkout A (runtime async on)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: a
+          clean: true
+
+      - name: Checkout B (runtime async off)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: b
+          clean: true
+
+      # The installer reads global.json from the working directory, which is the workspace root here.
+      - name: Stage global.json for the SDK installer
+        shell: pwsh
+        run: Copy-Item a/global.json . -Force
+
+      - name: Checkout C (develop before #2242)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: c
+          ref: 910588c1614f611956245ff899dbbc8b60736957
+          clean: true
+
+      - name: Setup .NET
+        uses: ./a/.github/actions/setup-dotnet-retry
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Machine info
+        shell: pwsh
+        working-directory: a
+        run: |
+          dotnet --info | Out-File "$env:OUT\dotnet-info.txt"
+          Get-Content "$env:OUT\dotnet-info.txt" | Select-Object -First 40 | Write-Host
+          $cs = Get-CimInstance Win32_ComputerSystem; $os = Get-CimInstance Win32_OperatingSystem
+          "Host $($cs.Name) RAM $([math]::Round($cs.TotalPhysicalMemory/1GB,1)) GB, logical CPUs $([Environment]::ProcessorCount), OS $($os.Caption) $($os.Version)" | Tee-Object "$env:OUT\machine.txt" | Write-Host
+          Get-CimInstance Win32_PageFileUsage | Format-List | Out-String | Tee-Object -Append "$env:OUT\machine.txt" | Write-Host
+          Get-PSDrive -PSProvider FileSystem | Format-Table -AutoSize | Out-String | Write-Host
+
+      - name: Build A (runtime async on)
+        shell: pwsh
+        working-directory: a
+        run: |
+          dotnet restore --locked-mode
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet build --no-restore -c Release -p:WhizbangReleaseTargetFrameworks=net11.0 -p:RunAnalyzers=false -nodeReuse:false
+          exit $LASTEXITCODE
+
+      - name: Build B (runtime async off)
+        shell: pwsh
+        working-directory: b
+        run: |
+          dotnet restore --locked-mode
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet build --no-restore -c Release -p:WhizbangReleaseTargetFrameworks=net11.0 -p:RunAnalyzers=false -p:UseRuntimeAsync=false -nodeReuse:false
+          exit $LASTEXITCODE
+
+      - name: Build C (develop before #2242)
+        shell: pwsh
+        working-directory: c
+        run: |
+          dotnet restore --locked-mode
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet build --no-restore -c Release -p:WhizbangReleaseTargetFrameworks=net11.0 -p:RunAnalyzers=false -nodeReuse:false
+          exit $LASTEXITCODE
+
+      # Proves the builds differ: methods carrying MethodImplAttributes.Async (0x2000) are runtime-async methods.
+      - name: Verify runtime async per build
+        shell: pwsh
+        run: |
+          $report = foreach ($v in 'a', 'b', 'c') {
+            foreach ($dll in 'src/Whizbang.Core/bin/Release/net11.0/Whizbang.Core.dll',
+                             'tests/Whizbang.Transports.RabbitMQ.Tests/bin/Release/net11.0/Whizbang.Transports.RabbitMQ.Tests.dll',
+                             'tests/Whizbang.Transports.RabbitMQ.Tests/bin/Release/net11.0/Whizbang.Transports.RabbitMQ.dll') {
+              $p = Join-Path $v $dll
+              if (-not (Test-Path $p)) { "$v $dll : missing"; continue }
+              $fs = [IO.File]::OpenRead((Resolve-Path $p))
+              try {
+                $pe = [System.Reflection.PortableExecutable.PEReader]::new($fs)
+                $md = [System.Reflection.Metadata.PEReaderExtensions]::GetMetadataReader($pe)
+                $n = 0
+                foreach ($h in $md.MethodDefinitions) { if (([int]$md.GetMethodDefinition($h).ImplAttributes -band 0x2000) -ne 0) { $n++ } }
+                "$v $dll : $n runtime-async methods"
+              } finally { $fs.Dispose() }
+            }
+          }
+          $report | Tee-Object "$env:OUT\runtime-async-check.txt" | Write-Host
+
+      - name: Stress loop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $Dirs = @{ A = (Join-Path $env:GITHUB_WORKSPACE 'a'); B = (Join-Path $env:GITHUB_WORKSPACE 'b'); C = (Join-Path $env:GITHUB_WORKSPACE 'c') }
+          $logDir = "$env:OUT\logs"; $dumpDir = "$env:OUT\dumps"
+          $results = "$env:OUT\results.csv"
+          'idx,variant,kind,coverage,parallel,startUtc,seconds,exitCode,crash,otherFailure,minAvailMB,peakCommitMB,commitLimitMB,crashLine' | Out-File $results -Encoding utf8
+          $deadline = [DateTime]::Parse($env:STRESS_START).ToUniversalTime().AddMinutes(262)
+
+          # A crash leaves a dump (heap) named for the process.
+          $env:DOTNET_DbgEnableMiniDump = '1'
+          $env:DOTNET_DbgMiniDumpType = '2'
+          $env:DOTNET_DbgMiniDumpName = Join-Path $dumpDir '%e_%p_%t.dmp'
+          $env:DOTNET_CreateDumpDiagnostics = '1'
+
+          $memCsv = "$env:OUT\memory.csv"
+          $sampler = Start-Job -ArgumentList $memCsv -ScriptBlock {
+            param($f)
+            'utc,availMB,committedMB,limitMB' | Out-File $f -Encoding utf8
+            while ($true) {
+              try {
+                $m = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory
+                '{0},{1},{2},{3}' -f [DateTime]::UtcNow.ToString('o'), $m.AvailableMBytes, [math]::Round($m.CommittedBytes / 1MB), [math]::Round($m.CommitLimit / 1MB) | Add-Content $f
+              } catch { }
+              Start-Sleep -Seconds 2
+            }
+          }
+
+          $crashPattern = '0x80131506|Internal CLR error|-1073741819|3221225477|0xC0000005|Fatal error\.|TEST PROCESS CRASHED|host process exited unexpectedly'
+
+          function Get-MemStats([DateTime]$from, [DateTime]$to) {
+            $rows = Import-Csv $memCsv | Where-Object { $t = [DateTime]::Parse($_.utc).ToUniversalTime(); $t -ge $from -and $t -le $to }
+            if (-not $rows) { return @('', '', '') }
+            $avail = ($rows | ForEach-Object { [int]$_.availMB } | Measure-Object -Minimum).Minimum
+            $commit = ($rows | ForEach-Object { [int]$_.committedMB } | Measure-Object -Maximum).Maximum
+            $limit = ($rows | Select-Object -Last 1).limitMB
+            return @($avail, $commit, $limit)
+          }
+
+          function Save-Dumps($dir, $tag) {
+            Get-ChildItem $dir -Recurse -Include *.dmp -ErrorAction SilentlyContinue |
+              ForEach-Object { Move-Item $_.FullName (Join-Path $dumpDir "$tag-$($_.Name)") -Force -ErrorAction SilentlyContinue }
+          }
+
+          function Clear-Results($dir) {
+            Save-Dumps $dir 'moved'
+            Get-ChildItem $dir -Recurse -Directory -Filter TestResults -ErrorAction SilentlyContinue |
+              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+          function Add-Result($idx, $variant, $kind, $cov, $par, $start, $code, $logs) {
+            $end = [DateTime]::UtcNow
+            $text = ($logs | ForEach-Object { Get-Content $_ -Raw -ErrorAction SilentlyContinue }) -join "`n"
+            $hit = [regex]::Match($text, "(?m)^.*($crashPattern).*$")
+            $crash = [int]($hit.Success -or $code -eq -1073741819 -or $code -eq 3221225477)
+            $other = [int](-not $crash -and $code -ne 0)
+            $line = if ($hit.Success) { ($hit.Value.Trim() -replace '[,"\r\n]', ' ') } else { '' }
+            if ($line.Length -gt 200) { $line = $line.Substring(0, 200) }
+            $mem = Get-MemStats $start $end
+            '{0},{1},{2},{13},{3},{4},{5},{6},{7},{8},{9},{10},{11},"{12}"' -f $idx, $variant, $kind, $par, $start.ToString('o'),
+              [int]($end - $start).TotalSeconds, $code, $crash, $other, $mem[0], $mem[1], $mem[2], $line, $cov | Add-Content $results
+            Write-Host ("[{0}] #{1} {2} {3} cov={13} p{4}: exit {5} crash={6} other={7} minAvail={8}MB peakCommit={9}/{10}MB {11}s {12}" -f
+              $end.ToString('HH:mm:ss'), $idx, $variant, $kind, $par, $code, $crash, $other, $mem[0], $mem[1], $mem[2], [int]($end - $start).TotalSeconds, $line, $cov)
+          }
+
+          function Invoke-Suite($variant, $cov, $idx) {
+            $dir = $Dirs[$variant]
+            Clear-Results $dir
+            $log = Join-Path $logDir ('{0:D3}-{1}-suite-{2}.log' -f $idx, $variant, $cov)
+            $covArgs = if ($cov -eq 'on') { @('-ModuleCoverage') } else { @('-NoFailFast') }
+            $start = [DateTime]::UtcNow
+            Push-Location $dir
+            & pwsh -NoProfile -File scripts/Run-Tests.ps1 -Mode Unit -Configuration Release -NoBuild @covArgs -ReportTrx -HangDumpTimeout 10m -Framework net11.0 -MaxParallel 20 *> $log
+            $code = $LASTEXITCODE
+            Pop-Location
+            Save-Dumps $dir ('{0:D3}-{1}' -f $idx, $variant)
+            Add-Result $idx $variant 'suite' $cov 20 $start $code @($log)
+          }
+
+          # Four concurrent copies of the module that crashed, run directly with high test parallelism.
+          function Invoke-Direct($variant, $cov, $idx) {
+            $dir = $Dirs[$variant]
+            $mod = Join-Path $dir 'tests\Whizbang.Transports.RabbitMQ.Tests\bin\Release\net11.0\Whizbang.Transports.RabbitMQ.Tests.dll'
+            $start = [DateTime]::UtcNow
+            $procs = foreach ($k in 1..4) {
+              $rd = Join-Path $env:RUNNER_TEMP ('rmq-{0}-{1}-{2}' -f $variant, $idx, $k)
+              $log = Join-Path $logDir ('{0:D3}-{1}-rmq-{2}-{3}.log' -f $idx, $variant, $cov, $k)
+              $dargs = @("`"$mod`"", '--maximum-parallel-tests', '64', '--results-directory', "`"$rd`"")
+              if ($cov -eq 'on') { $dargs += @('--coverage', '--coverage-output-format', 'cobertura', '--coverage-settings', "`"$(Join-Path $dir 'codecoverage.config')`"") }
+              $p = Start-Process dotnet -PassThru -NoNewWindow -RedirectStandardOutput $log -RedirectStandardError "$log.err" -ArgumentList $dargs
+              [pscustomobject]@{ P = $p; Log = $log; Rd = $rd; K = $k; H = $p.Handle }
+            }
+            foreach ($x in $procs) {
+              if (-not $x.P.WaitForExit(600000)) { $x.P.Kill($true) }
+              $x.P.WaitForExit()
+              Save-Dumps $x.Rd ('{0:D3}-{1}-rmq{2}' -f $idx, $variant, $x.K)
+              Add-Result $idx $variant ("rmq{0}" -f $x.K) $cov 64 $start $x.P.ExitCode @($x.Log, "$($x.Log).err")
+              Remove-Item $x.Rd -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+          $cells = @(('A', 'on'), ('B', 'on'), ('C', 'on'), ('A', 'off'), ('B', 'off'), ('C', 'off'))
+          $cycle = 0; $idx = 0
+          while ([DateTime]::UtcNow -lt $deadline) {
+            # Rotate the starting cell each cycle so no cell always runs first or last.
+            $order = foreach ($j in 0..($cells.Count - 1)) { , $cells[($j + $cycle) % $cells.Count] }
+            foreach ($cell in $order) {
+              if ([DateTime]::UtcNow -ge $deadline) { break }
+              $idx++; Invoke-Suite $cell[0] $cell[1] $idx
+            }
+            foreach ($cell in $order) {
+              if ([DateTime]::UtcNow -ge $deadline) { break }
+              $idx++; Invoke-Direct $cell[0] $cell[1] $idx
+            }
+            $cycle++
+          }
+          Stop-Job $sampler; Remove-Job $sampler -Force
+          Write-Host "Finished $cycle cycles, $idx iterations"
+
+      - name: Summary
+        if: always()
+        shell: pwsh
+        run: |
+          $r = Import-Csv "$env:OUT\results.csv"
+          $md = @('## #2446 stress pass 2: A develop RA on, B develop RA off, C pre-#2242 (old test stack); coverage on/off', '', (Get-Content "$env:OUT\machine.txt" -ErrorAction SilentlyContinue | Select-Object -First 1), '',
+            '```', (Get-Content "$env:OUT\runtime-async-check.txt" -ErrorAction SilentlyContinue), '```', '',
+            '| Variant | Kind | Coverage | Parallel | Runs | Crashes | Other failures | Min available MB | Peak commit MB | Commit limit MB |',
+            '|---|---|---|---|---|---|---|---|---|---|')
+          $r | Group-Object variant, { if ($_.kind -like 'rmq*') { 'rmq' } else { $_.kind } }, coverage | Sort-Object Name | ForEach-Object {
+            $g = $_.Group
+            $min = ($g | Where-Object minAvailMB | ForEach-Object { [int]$_.minAvailMB } | Measure-Object -Minimum).Minimum
+            $peak = ($g | Where-Object peakCommitMB | ForEach-Object { [int]$_.peakCommitMB } | Measure-Object -Maximum).Maximum
+            $md += '| {0} | {1} | {9} | {2} | {3} | {4} | {5} | {6} | {7} | {8} |' -f $g[0].variant, $(if ($g[0].kind -like 'rmq*') { 'rmq x4 direct' } else { 'suite' }), $g[0].parallel,
+              $g.Count, ($g | Measure-Object crash -Sum).Sum, ($g | Measure-Object otherFailure -Sum).Sum, $min, $peak, ($g | Where-Object commitLimitMB | Select-Object -Last 1).commitLimitMB, $g[0].coverage
+          }
+          $md += ''; $md += '### Crashes and failures'; $md += ''
+          $r | Where-Object { $_.crash -eq '1' -or $_.otherFailure -eq '1' } | ForEach-Object { $md += "- #$($_.idx) $($_.variant) $($_.kind) cov=$($_.coverage) p$($_.parallel) exit $($_.exitCode) crash=$($_.crash) minAvail=$($_.minAvailMB)MB: $($_.crashLine)" }
+          $md += ''; $md += 'Dumps: ' + ((Get-ChildItem "$env:OUT\dumps" -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Name) ($([math]::Round($_.Length/1MB)) MB)" }) -join ', ')
+          $md -join "`n" | Out-File -Append $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          $md -join "`n" | Write-Host
+
+      - name: Upload logs and results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: stress-2446-pass2-logs
+          path: |
+            stress-out/*.csv
+            stress-out/*.txt
+            stress-out/logs
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload dumps
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: stress-2446-pass2-dumps
+          path: stress-out/dumps
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Free disk
+        if: always()
+        shell: pwsh
+        run: Remove-Item a, b, c, stress-out, global.json -Recurse -Force -ErrorAction SilentlyContinue
