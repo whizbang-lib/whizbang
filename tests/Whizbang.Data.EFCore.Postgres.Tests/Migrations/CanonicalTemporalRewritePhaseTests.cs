@@ -328,11 +328,16 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
       FROM generate_series(1, 200);
       """);
 
-    return [("fence", """
-      UPDATE wh_per_fence
-      SET data = data || jsonb_build_object('OccurredAt',
-            (EXTRACT(EPOCH FROM (data ->> 'OccurredAt')::timestamptz) * 1000000)::bigint)
-      WHERE jsonb_typeof(data -> 'OccurredAt') = 'string';
+    // Marked as rewritten, as every rewrite the phase runs marks a table it changed: the mark is what says row versions
+    // were superseded (#2419).
+    return [("fence", $"""
+      DO $fence$ BEGIN
+        UPDATE wh_per_fence
+        SET data = data || jsonb_build_object('OccurredAt',
+              (EXTRACT(EPOCH FROM (data ->> 'OccurredAt')::timestamptz) * 1000000)::bigint)
+        WHERE jsonb_typeof(data -> 'OccurredAt') = 'string';
+        {IndexStatistics.MarkRewrittenSql("'public'", "'wh_per_fence'")}
+      END $fence$;
       """)];
   }
 
@@ -444,6 +449,37 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
     await Assert.That(ran).IsTrue();
     await Assert.That(log.Entries.Any(e => e.Message.Contains("older than", StringComparison.Ordinal)))
       .IsFalse();
+  }
+
+  /// <summary>
+  /// #2419: a pass that converted no row but recorded its bookkeeping (the temporal ledger's row for a table it has not
+  /// seen settled, a stored-form journal entry) superseded nothing an index reads, so it waits for no one either.
+  /// </summary>
+  /// <remarks>
+  /// The record is a write, so the transaction has an id, and the fence waited for every older transaction that has
+  /// written, in any database of the server. On a busy shared server that stalled a restart's schema pass for as long
+  /// as an unrelated transaction ran, up to the command timeout, with nothing above Information in the log. The holder
+  /// here has written, so it is older than the pass by construction, and it stays open until the test ends.
+  /// </remarks>
+  [Test]
+  public async Task APassThatOnlyRecordsItsBookkeepingWaitsForNoOneAsync() {
+    await using var holder = _connect();
+    await holder.OpenAsync();
+    await using var writer = await holder.BeginTransactionAsync();
+    await using (var write = new NpgsqlCommand("INSERT INTO marker (note) VALUES ('older writer')", holder, writer)) {
+      await write.ExecuteNonQueryAsync();
+    }
+    var log = new SignalingListLogger();
+
+    var run = CanonicalTemporalRewritePhase.ApplyAsync(
+      _connect, LOCK_ID, [("ledger only", "INSERT INTO marker (note) VALUES ('ledger row');")], TIMEOUT_SECONDS, log);
+    var first = await Task.WhenAny(run, log.WaitForAsync("older than")).WaitAsync(_signalTimeout);
+
+    await Assert.That(first).IsSameReferenceAs(run)
+      .Because("no table was rewritten, so no superseded row version can meet an index, and the older writer is unrelated");
+    await Assert.That(await run).IsTrue();
+    await Assert.That(log.Entries.Any(e => e.Message.Contains("older than", StringComparison.Ordinal))).IsFalse();
+    await writer.RollbackAsync();
   }
 
   /// <summary>Nothing to rewrite takes no lock and opens no connection.</summary>

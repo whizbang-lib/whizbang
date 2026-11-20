@@ -609,6 +609,40 @@ public class StoredFormMigrationTests : IAsyncDisposable {
     await Assert.That(log).DoesNotContain("brought forward");
   }
 
+  // ─── Marked as rewritten (issue #2419) ───────────────────────────────────────────────────────────────────
+  // A migration that changed rows marks its table, as every rewrite the phase runs does: the phase analyzes a marked
+  // table after it commits, and waits out older snapshots only when a table was marked, so a pass that only wrote its
+  // bookkeeping does not stall startup behind unrelated transactions.
+
+  [Test]
+  public async Task AGeneratedMigrationThatConvertedRows_MarksItsTableAsync() {
+    await _seedAsync("""{"Status": 123}""");
+
+    var log = await _applyAsync(_generated("wh_per_thing.Status:Int32->String#marked", StoredFormStep.ToText("Status")));
+
+    await Assert.That(log).Contains("Analyzed public.wh_per_thing");
+  }
+
+  [Test]
+  public async Task AGeneratedMigrationWithNothingToConvert_DoesNotMarkItsTableAsync() {
+    await _seedAsync("""{"Status": "Open"}""");
+
+    var log = await _applyAsync(_generated("wh_per_thing.Status:Int32->String#unmarked", StoredFormStep.ToText("Status")));
+
+    await Assert.That(log).Contains("nothing left to convert, settled");
+    await Assert.That(log).DoesNotContain("Analyzed ");
+  }
+
+  [Test]
+  public async Task ACustomMigration_MarksItsTableAsync() {
+    await _seedAsync("""{"Count": 1}""");
+
+    var log = await _applyAsync(StoredFormMigrationSql.Custom("public", TABLE, new IncrementCount()));
+
+    await Assert.That(log).Contains("Analyzed public.wh_per_thing")
+      .Because("a custom migration's SQL is never assumed to have changed nothing");
+  }
+
   // ─── Helpers ─────────────────────────────────────────────────────────────────────────────────────────────
 
   private sealed class IncrementCount : IStoredFormMigration {
