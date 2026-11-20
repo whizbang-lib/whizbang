@@ -93,6 +93,7 @@ public static class StoredFormMigrationSql {
         rebuilds.Add(new StoredFormIndexRebuild(schema, table, rebuild.Name, rebuild.CreateStatement));
       }
     }
+    body.Append(_markRewritten(schema, table));
     body.Append(_journalWrite(schema, table, name, GENERATED, settledWhen: "NOT v_changed"));
     body.Append(CultureInfo.InvariantCulture, $"""
         IF v_changed THEN
@@ -135,6 +136,7 @@ public static class StoredFormMigrationSql {
     if (parkedPerspectives.Length > 0) {
       body.Append(StoredFormStep.RetryParkedStreams(parkedPerspectives).Render(new StepContext(name, schema, table)));
     }
+    body.Append(_markRewritten(schema, table));
     body.Append(_journalWrite(schema, table, name, CUSTOM, settledWhen: "true"));
     body.Append(CultureInfo.InvariantCulture,
       $"  RAISE NOTICE USING MESSAGE = format('%s: stored-form migration %s: applied, %s row update(s)', {SqlText.Literal(table)}, {SqlText.Literal(name)}, v_touched);\n");
@@ -255,6 +257,12 @@ public static class StoredFormMigrationSql {
 
       """ + _recordApplier(journal, name, kind);
   }
+
+  // #2419: a migration that changed rows marks its table, as every rewrite the phase runs does, so the phase analyzes it
+  // once committed and waits out the snapshots that can still see the rows it replaced. One that changed nothing leaves
+  // no mark, and its journal write alone makes the phase wait for no one.
+  private static string _markRewritten(string schema, string table) =>
+    $"  IF v_changed THEN\n    {IndexStatistics.MarkRewrittenSql(SqlText.Literal(schema), SqlText.Literal(table))}\n  END IF;\n";
 
   // #2131: a pass that converted rows, or ran a custom migration (never assumed reversible), records who applied it; a
   // pass that converted nothing keeps what is recorded.
