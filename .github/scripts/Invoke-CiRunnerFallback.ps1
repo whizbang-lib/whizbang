@@ -126,10 +126,10 @@ function Invoke-RunnerWatch {
           foreach ($s in $stuck) { Write-Host "::warning title=Runner fallback::$($s.Name): $($s.Reason)" }
           try {
             $null = & $InvokeApi 'POST' "/repos/$Repository/actions/workflows/$script:FallbackWorkflow/dispatches" ([ordered]@{ ref = $DefaultBranch; inputs = [ordered]@{ 'run-id' = $RunId } })
-            Write-Host 'Cancelling the run; ci-runner-fallback.yml re-runs its failed jobs on GitHub-hosted runners once it has stopped.'
+            Write-Host 'Canceling the run; ci-runner-fallback.yml re-runs its failed jobs on GitHub-hosted runners once it has stopped.'
           }
           catch {
-            Write-Host "::warning title=Runner fallback::The re-runner could not be started ($($_.Exception.Message)); cancelling anyway, re-run failed jobs by hand."
+            Write-Host "::warning title=Runner fallback::The re-runner could not be started ($($_.Exception.Message)); canceling anyway, re-run failed jobs by hand."
           }
           $null = & $InvokeApi 'POST' "/repos/$Repository/actions/runs/$RunId/cancel" $null
           return 'cancel'

@@ -6,7 +6,7 @@ name: CI runner fallback
 # Re-runs a CI run's failed jobs on GitHub-hosted runners when a self-hosted pool machine was lost (#1880):
 #   - on CI finishing with a failure in which every failed job was a pool job whose machine was lost (it lost
 #     communication, was shut down, exceeded its time or was never acquired), or the gate failing after it;
-#   - when CI's watcher (Plan · Watch self-hosted jobs) asks, after cancelling a run whose only remaining work was
+#   - when CI's watcher (Plan · Watch self-hosted jobs) asks, after canceling a run whose only remaining work was
 #     pool jobs no machine would start.
 # A job that failed for any other reason means nothing is re-run. A re-run job takes ubuntu-latest: every routed job
 # takes the picker's plan only in the attempt it was made for. Merge-queue runs are never re-run (the queue has

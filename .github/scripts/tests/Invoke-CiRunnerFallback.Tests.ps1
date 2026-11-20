@@ -147,7 +147,7 @@ Describe 'Invoke-RunnerWatch' {
     ($Said -join "`n") | Should -BeLike '*Test · Unit*queued 20 minutes; no online runner*'
   }
 
-  It 'stops when every other job has finished on two polls in a row, without cancelling anything' {
+  It 'stops when every other job has finished on two polls in a row, without canceling anything' {
     $running = [pscustomobject]@{ jobs = @((New-Job -Name $Watcher -Status 'in_progress'), (New-Job -Status 'in_progress')) }
     $done = [pscustomobject]@{ jobs = @((New-Job -Name $Watcher -Status 'in_progress'), (New-Job -Status 'completed' -Conclusion 'success')) }
     $api = New-FakeApi @{ "GET $JobsPath" = (New-Queue @($running, $done, $running, $done, $done)) }
@@ -256,7 +256,7 @@ Describe 'Get-FallbackDecision' {
   It 'leaves a canceled run alone when the watcher did not ask (someone canceled it by hand)' {
     $d = Get-Decision -Run (New-Run -Conclusion 'cancelled') -Jobs @(New-Job -Status 'completed' -Conclusion 'cancelled')
     $d.Rerun | Should -BeFalse
-    $d.Reason | Should -BeLike '*concluded cancelled*'
+    $d.Reason | Should -BeLike '*concluded cancelled*'  # review-checks:allow: 'cancelled' is the GitHub API conclusion value
   }
 
   It 'leaves a run the watcher asked about alone when it did not end canceled' {
