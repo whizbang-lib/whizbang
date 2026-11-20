@@ -29,18 +29,26 @@ namespace Whizbang.Core.Security;
 /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorGateTests.cs</tests>
 internal static partial class ReceptorInterceptorGate {
   /// <summary>
-  /// The registered pipeline when it holds at least one interceptor, otherwise null. Reads the registered
+  /// The registered pipeline when it holds at least one interceptor, otherwise null: what an ahead-of-time admission
+  /// check asks, since a pipeline that only records can deny nothing. Reads the registered
   /// <see cref="ReceptorInterceptorPipeline"/>, and builds one from the registered interceptors when a container never
   /// ran the framework defaults, so an interceptor registered on its own is still enforced.
   /// </summary>
-  internal static ReceptorInterceptorPipeline? Active(IServiceProvider serviceProvider) {
-    var pipeline = serviceProvider.GetService<ReceptorInterceptorPipeline>();
-    if (pipeline is null) {
-      // GetService, not GetServices: a host's minimal provider may not resolve enumerables at all
-      var interceptors = serviceProvider.GetService<IEnumerable<IReceptorInterceptor>>();
-      pipeline = interceptors is null ? null : new ReceptorInterceptorPipeline(interceptors);
-    }
-    return pipeline is { IsEmpty: false } ? pipeline : null;
+  internal static ReceptorInterceptorPipeline? Active(IServiceProvider serviceProvider) =>
+    ForInvocation(serviceProvider) is { HasInterceptors: true } pipeline ? pipeline : null;
+
+  /// <summary>
+  /// The pipeline a receptor invocation runs: <see cref="Active"/>'s, or one that only records admitted invocations
+  /// (command audit, #2470); null when there is neither, so a host with neither does no per-message work.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/CommandAuditDispatchTests.cs:CommandAuditOnly_HoldsAPipelineThatDecidesNothingAsync</tests>
+  internal static ReceptorInterceptorPipeline? ForInvocation(IServiceProvider serviceProvider) {
+    // GetService, not GetServices: a host's minimal provider may not resolve enumerables at all
+    var pipeline = serviceProvider.GetService<ReceptorInterceptorPipeline>()
+      ?? new ReceptorInterceptorPipeline(
+        serviceProvider.GetService<IEnumerable<IReceptorInterceptor>>() ?? [],
+        serviceProvider.GetService<IEnumerable<IReceptorAdmissionRecorder>>() ?? []);
+    return pipeline.IsEmpty ? null : pipeline;
   }
 
   /// <summary>
@@ -55,7 +63,12 @@ internal static partial class ReceptorInterceptorGate {
       IServiceProvider scopedProvider,
       CancellationToken cancellationToken) {
     var result = await pipeline.EvaluateFirstDenialAsync(receptorType, envelope, context, cancellationToken).ConfigureAwait(false);
-    return Decide(result, receptorType, envelope, scopedProvider);
+    if (!Decide(result, receptorType, envelope, scopedProvider)) {
+      return false;
+    }
+    // Recorded only once every interceptor allowed, so a denied receptor is never audited (#2470)
+    await pipeline.RecordAdmittedAsync(receptorType, envelope, context, scopedProvider, cancellationToken).ConfigureAwait(false);
+    return true;
   }
 
   /// <summary>
@@ -77,7 +90,11 @@ internal static partial class ReceptorInterceptorGate {
         $"A receptor interceptor did not complete synchronously for the synchronous receptor {TypeNameFormatter.DisplayName(receptorType)}. " +
         "A synchronous receptor runs on the caller's thread, so every interceptor that applies to it must answer synchronously.");
     }
-    return Decide(pending.Result, receptorType, envelope, scopedProvider);
+    if (!Decide(pending.Result, receptorType, envelope, scopedProvider)) {
+      return false;
+    }
+    pipeline.RecordAdmitted(receptorType, envelope, context, scopedProvider);
+    return true;
   }
 
   /// <summary>

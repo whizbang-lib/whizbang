@@ -838,11 +838,11 @@ public abstract partial class Dispatcher(
     return _reEmissionDiagnostic;
   }
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
-  // The receptor interceptors (#1996), resolved once: null when none is registered, so a receptor invocation then
-  // costs one null check and no service resolution
-  private readonly Security.ReceptorInterceptorPipeline? _receptorInterceptors = Security.ReceptorInterceptorGate.Active(serviceProvider);
+  // The receptor interceptors (#1996) and admission recorders (#2470), resolved once: null when neither is
+  // registered, so a receptor invocation then costs one null check and no service resolution
+  private readonly Security.ReceptorInterceptorPipeline? _receptorInterceptors = Security.ReceptorInterceptorGate.ForInvocation(serviceProvider);
 
-  /// <summary>Whether any receptor interceptor is registered, so receptor invocations are gated (#1996).</summary>
+  /// <summary>Whether any receptor interceptor (#1996) or admission recorder (#2470) is registered, so receptor invocations pass the gate.</summary>
   internal bool HasReceptorInterceptors => _receptorInterceptors is not null;
   // Where the detached stages this dispatcher starts are recorded, so a stopping host waits for them before it disposes
   // the provider they resolve their receptors from (#1721). A container that never ran TryAddWhizbangDefaults has no
