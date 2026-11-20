@@ -38,54 +38,66 @@ public sealed class ConcreteSubtypeIndex {
   public IReadOnlyList<string> SubtypesOf(string baseType) =>
       _subtypes.TryGetValue(baseType, out var subtypes) ? subtypes : [];
 
-  /// <summary>Finds the concrete subtypes of each of <paramref name="baseTypes"/> (fully qualified) in <paramref name="compilation"/>.</summary>
+  /// <summary>
+  /// Finds the concrete subtypes of each of <paramref name="baseTypes"/> (fully qualified) in <paramref name="compilation"/>,
+  /// in one walk of its types: each concrete class's base classes and interfaces are looked up among the base types, so
+  /// the cost is the number of types, whatever the number of base types (#1690).
+  /// </summary>
   public static ConcreteSubtypeIndex Build(Compilation compilation, IEnumerable<string> baseTypes) {
     var subtypes = new Dictionary<string, List<string>>(System.StringComparer.Ordinal);
-    var examined = 0;
+    var targets = new Dictionary<ISymbol, List<string>>(SymbolEqualityComparer.Default);
     foreach (var baseType in baseTypes.Distinct(System.StringComparer.Ordinal)) {
       var result = new List<string>();
       subtypes[baseType] = result;
-      var baseSymbol = compilation.GetTypeByMetadataName(baseType.Replace("global::", ""));
-      if (baseSymbol is not null) {
-        _walkNamespace(compilation.GlobalNamespace, baseSymbol, result, ref examined);
+      // Two names that resolve to one symbol share its list, as two walks for the same symbol found the same types.
+      if (compilation.GetTypeByMetadataName(baseType.Replace("global::", "")) is { } baseSymbol) {
+        if (targets.TryGetValue(baseSymbol, out var shared)) {
+          subtypes[baseType] = shared;
+        } else {
+          targets[baseSymbol] = result;
+        }
       }
+    }
+    var examined = 0;
+    if (targets.Count > 0) {
+      _walkNamespace(compilation.GlobalNamespace, targets, ref examined);
     }
     return new ConcreteSubtypeIndex(subtypes, examined);
   }
 
-  private static void _walkNamespace(INamespaceSymbol ns, INamedTypeSymbol target, List<string> result, ref int examined) {
+  private static void _walkNamespace(INamespaceSymbol ns, Dictionary<ISymbol, List<string>> targets, ref int examined) {
     foreach (var type in ns.GetTypeMembers()) {
-      _checkTypeAndNestedTypes(type, target, result, ref examined);
+      _checkTypeAndNestedTypes(type, targets, ref examined);
     }
     foreach (var childNs in ns.GetNamespaceMembers()) {
-      _walkNamespace(childNs, target, result, ref examined);
+      _walkNamespace(childNs, targets, ref examined);
     }
   }
 
-  private static void _checkTypeAndNestedTypes(INamedTypeSymbol type, INamedTypeSymbol target, List<string> result, ref int examined) {
+  private static void _checkTypeAndNestedTypes(INamedTypeSymbol type, Dictionary<ISymbol, List<string>> targets, ref int examined) {
     examined++;
-    if (!type.IsAbstract && type.TypeKind == TypeKind.Class && _isSubtypeOf(type, target)) {
-      result.Add(TypeNameHelper.GetFullyQualifiedName(type));
+    if (!type.IsAbstract && type.TypeKind == TypeKind.Class) {
+      _addToEachBaseType(type, targets);
     }
     // Recurse into nested types (e.g., events nested inside static contract classes)
     foreach (var nested in type.GetTypeMembers()) {
-      _checkTypeAndNestedTypes(nested, target, result, ref examined);
+      _checkTypeAndNestedTypes(nested, targets, ref examined);
     }
   }
 
-  // Whether type implements or inherits from target.
-  private static bool _isSubtypeOf(INamedTypeSymbol type, INamedTypeSymbol target) {
-    if (target.TypeKind == TypeKind.Interface) {
-      return type.AllInterfaces.Contains(target, SymbolEqualityComparer.Default);
-    }
-
-    var current = type.BaseType;
-    while (current is not null) {
-      if (SymbolEqualityComparer.Default.Equals(current, target)) {
-        return true;
+  // Adds the concrete type to the list of every base type it implements or inherits from. Each interface and each base
+  // class is met once, so the type is added to a list at most once.
+  private static void _addToEachBaseType(INamedTypeSymbol type, Dictionary<ISymbol, List<string>> targets) {
+    string? name = null;
+    foreach (var implemented in type.AllInterfaces) {
+      if (targets.TryGetValue(implemented, out var list)) {
+        list.Add(name ??= TypeNameHelper.GetFullyQualifiedName(type));
       }
-      current = current.BaseType;
     }
-    return false;
+    for (var current = type.BaseType; current is not null; current = current.BaseType) {
+      if (targets.TryGetValue(current, out var list)) {
+        list.Add(name ??= TypeNameHelper.GetFullyQualifiedName(type));
+      }
+    }
   }
 }

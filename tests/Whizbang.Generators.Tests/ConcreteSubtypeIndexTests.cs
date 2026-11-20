@@ -72,6 +72,25 @@ public class ConcreteSubtypeIndexTests {
     await Assert.That(index.SubtypesOf("global::TestNamespace.IUnused")).IsEmpty();
   }
 
+  /// <summary>
+  /// Two names of one type, and a type that is both a base class and an implemented interface's implementer, each get
+  /// every subtype exactly once.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task SubtypesOf_TwoNamesOfOneType_AreTheSameSubtypes_EachListedOnceAsync() {
+    var index = _index("global::TestNamespace.Shape", "TestNamespace.Shape", "global::TestNamespace.IShape");
+
+    await Assert.That(index.SubtypesOf("TestNamespace.Shape")).IsEquivalentTo(
+      index.SubtypesOf("global::TestNamespace.Shape"), TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(index.SubtypesOf("global::TestNamespace.Shape")).IsEquivalentTo(
+      ["global::TestNamespace.Circle", "global::TestNamespace.Square", "global::TestNamespace.Contracts.NestedShape"],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(index.SubtypesOf("global::TestNamespace.IShape")).IsEquivalentTo(
+      ["global::TestNamespace.Circle", "global::TestNamespace.Square"],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
   /// <summary>A base type the compilation cannot resolve, or one the index was not built for, has no subtypes.</summary>
   [Test]
   [RequiresAssemblyFiles]
