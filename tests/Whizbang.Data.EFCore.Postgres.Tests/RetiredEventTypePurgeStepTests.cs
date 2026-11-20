@@ -48,11 +48,14 @@ public class RetiredEventTypePurgeStepTests : EFCoreTestBase {
 
     var first = await new RetiredEventTypePurgeStep(logger).PurgeAsync(services, CancellationToken.None);
     var second = await new RetiredEventTypePurgeStep(logger).PurgeAsync(services, CancellationToken.None);
+    var third = await new RetiredEventTypePurgeStep(logger).PurgeAsync(services, CancellationToken.None);
 
     await Assert.That((first.Batches, first.EventsRetired, first.StreamsRetired, first.StreamsWaiting, first.Status))
       .IsEqualTo((2, 2L, 2, 0, "ok")).Because("two batches of one stream, then the cycle's budget is spent");
     await Assert.That((second.Batches, second.EventsRetired, second.StreamsRetired))
       .IsEqualTo((2, 1L, 1)).Because("the next cycle takes the rest, and stops at the first batch that finds nothing");
+    await Assert.That((third.Batches, third.EventsRetired, third.StreamsWaiting)).IsEqualTo((1, 0L, 0))
+      .Because("once nothing is left, a cycle spends one batch finding that out and logs nothing");
     await Assert.That(await _countAsync(conn, RETIRED)).IsEqualTo(0L);
     await Assert.That(await _countAsync(conn, KEEP)).IsEqualTo(3L);
     await Assert.That(logger.Entries.Count(e => e.Contains("removed", StringComparison.Ordinal))).IsEqualTo(2);

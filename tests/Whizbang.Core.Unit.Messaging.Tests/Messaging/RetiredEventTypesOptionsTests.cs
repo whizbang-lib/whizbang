@@ -36,7 +36,7 @@ public class RetiredEventTypesOptionsTests {
   [Test]
   public async Task RetiredNames_AreTheNamesWithoutTheirAssembly_OnceEach_InOrdinalOrderAsync() {
     var options = new RetiredEventTypesOptions {
-      Names = { "Contracts.Zeta, Contracts", "global::Contracts.Alpha", "Contracts.Zeta", " Contracts.Outer+Nested " },
+      Names = { "Contracts.Zeta, Contracts", "global::Contracts.Alpha", "Contracts.Zeta", " Contracts.Outer+Nested ", " " },
     };
 
     await Assert.That(options.RetiredNames()).IsEquivalentTo(["Contracts.Alpha", "Contracts.Outer+Nested", "Contracts.Zeta"]);
