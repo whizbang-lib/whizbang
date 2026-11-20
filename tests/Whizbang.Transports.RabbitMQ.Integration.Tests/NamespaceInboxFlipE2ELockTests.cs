@@ -45,7 +45,7 @@ namespace Whizbang.Transports.RabbitMQ.Integration.Tests;
 /// </remarks>
 [Category("Integration")]
 [NotInParallel("RabbitMQ")]
-public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
+public sealed class NamespaceInboxFlipE2ELockTests {
   private const string ORDERS_ENTITY = "inbox.wbtopo.orders.commands";
   private const string BILLING_ENTITY = "inbox.wbtopo.billing.commands";
   private const string FIFO_ENTITY = "inbox.wbtopo.fifo.commands";
@@ -64,9 +64,7 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async Task CleanupAsync() => await DisposeAsync();
-
-  public async ValueTask DisposeAsync() {
+  public async Task CleanupAsync() {
     foreach (var disposable in _disposables) {
       try {
         await disposable.DisposeAsync();
