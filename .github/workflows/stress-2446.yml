@@ -1,6 +1,4 @@
-# TEMPORARY (#2446): A/B stress of the net11.0 unit suite on the win-arm64 runner, runtime async on (A) versus
-# off (B, -p:UseRuntimeAsync=false), at --max-parallel-test-modules 20 (as CI) and 8, with module coverage as CI
-# runs it, plus a tight loop of the module that crashed. Lives only on the scratch branch stress/2446-clr-crash.
+# TEMPORARY (#2446): second pass, hardware-error evidence from the win-arm64 runner. Scratch branch only.
 name: Stress 2446
 
 on:
@@ -15,308 +13,51 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  stress:
+  evidence:
     runs-on: [self-hosted, Windows, ARM64]
-    timeout-minutes: 300
-    env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      DOTNET_NOLOGO: '1'
-      OUT: ${{ github.workspace }}\stress-out
+    timeout-minutes: 15
     steps:
-      - name: Record start
-        shell: pwsh
-        run: |
-          "STRESS_START=$([DateTime]::UtcNow.ToString('o'))" >> $env:GITHUB_ENV
-          New-Item -ItemType Directory -Force -Path $env:OUT, "$env:OUT\evidence", "$env:OUT\logs", "$env:OUT\dumps" | Out-Null
-
-      # Windows' own record of the original crash (run 44656667917, about 02:06-02:11 UTC on 2026-11-20).
-      - name: Collect Windows evidence of the original crash
+      - name: Collect hardware-error and runtime-crash evidence
         shell: pwsh
         continue-on-error: true
         run: |
-          $ev = "$env:OUT\evidence"
-          $start = [DateTime]::SpecifyKind([DateTime]'2026-11-20T01:50:00', 'Utc').ToLocalTime()
-          $end = [DateTime]::SpecifyKind([DateTime]'2026-11-20T02:30:00', 'Utc').ToLocalTime()
-          foreach ($log in 'Application', 'System') {
+          $ev = Join-Path $env:RUNNER_TEMP 'evidence2'
+          New-Item -ItemType Directory -Force -Path $ev | Out-Null
+          $since = [DateTime]'2026-10-01'
+          $cs = Get-CimInstance Win32_ComputerSystem; $bios = Get-CimInstance Win32_BIOS; $cpu = Get-CimInstance Win32_Processor
+          "Model: $($cs.Manufacturer) $($cs.Model)`nBIOS: $($bios.SMBIOSBIOSVersion) $($bios.ReleaseDate)`nCPU: $($cpu.Name)`nOS: $((Get-CimInstance Win32_OperatingSystem).Version)" | Tee-Object "$ev\machine.txt" | Write-Host
+          $queries = [ordered]@{
+            'whea'          = @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WHEA-Logger'; StartTime = $since }
+            'system-errors' = @{ LogName = 'System'; Level = 1, 2; StartTime = [DateTime]'2026-11-18' }
+            'kernel-power'  = @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 41; StartTime = $since }
+            'dotnet-1023'   = @{ LogName = 'Application'; ProviderName = '.NET Runtime'; Id = 1023, 1025, 1026; StartTime = $since }
+            'app-error'     = @{ LogName = 'Application'; ProviderName = 'Application Error'; Id = 1000; StartTime = $since }
+            'wer-1001'      = @{ LogName = 'Application'; ProviderName = 'Windows Error Reporting'; Id = 1001; StartTime = $since }
+          }
+          foreach ($name in $queries.Keys) {
             try {
-              $events = Get-WinEvent -FilterHashtable @{ LogName = $log; StartTime = $start; EndTime = $end } -ErrorAction Stop
-              $events | Select-Object TimeCreated, Id, ProviderName, LevelDisplayName, Message |
-                Format-List | Out-File "$ev\$log-events-window.txt" -Width 400
-              $events | Where-Object { $_.ProviderName -in '.NET Runtime', 'Application Error', 'Windows Error Reporting' -or $_.Id -in 1000, 1001, 1023, 1025, 1026, 2004 } |
-                Select-Object TimeCreated, Id, ProviderName, Message | Format-List |
-                Out-File "$ev\$log-crash-events.txt" -Width 400
-              Write-Host "$log : $($events.Count) events in window"
-            } catch { Write-Host "$log : $($_.Exception.Message)" }
+              $e = Get-WinEvent -FilterHashtable $queries[$name] -ErrorAction Stop
+              $e | Select-Object TimeCreated, Id, ProviderName, LevelDisplayName, Message | Format-List | Out-File "$ev\$name.txt" -Width 400
+              Write-Host "$name : $($e.Count)"
+              $e | Group-Object { $_.TimeCreated.ToString('yyyy-MM-dd') } | Sort-Object Name | ForEach-Object { "  $($_.Name) $($_.Count)" } | Write-Host
+            } catch { Write-Host "$name : $($_.Exception.Message)" }
           }
-          # Every .NET Runtime / Application Error / WER event since 2026-11-18, to place the crash among others.
-          try {
-            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = [DateTime]'2026-11-18'; ProviderName = '.NET Runtime', 'Application Error', 'Windows Error Reporting' } -ErrorAction Stop |
-              Select-Object TimeCreated, Id, ProviderName, Message | Format-List | Out-File "$ev\Application-since-1118.txt" -Width 400
-          } catch { Write-Host "since-1118: $($_.Exception.Message)" }
-          $roots = @(
-            'C:\ProgramData\Microsoft\Windows\WER\ReportArchive',
-            'C:\ProgramData\Microsoft\Windows\WER\ReportQueue',
-            (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\WER\ReportArchive'),
-            (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\WER\ReportQueue'),
-            (Join-Path $env:LOCALAPPDATA 'CrashDumps')
-          )
-          foreach ($root in $roots) {
-            if (-not (Test-Path $root)) { Write-Host "absent: $root"; continue }
-            $items = Get-ChildItem $root -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge [DateTime]'2026-11-18' }
-            Write-Host "$root : $(@($items).Count) entries since 2026-11-18"
-            $items | Select-Object Name, LastWriteTime, Length | Format-Table -AutoSize | Out-File -Append "$ev\wer-listing.txt" -Width 400
-            foreach ($item in $items | Where-Object { $_.Name -match 'dotnet|testhost|Whizbang|createdump|clr' }) {
-              $dest = Join-Path $ev ('wer-' + ($root -replace '[:\\ ]', '_') + '-' + $item.Name)
-              try { Copy-Item $item.FullName $dest -Recurse -Force -ErrorAction Stop } catch { Write-Host "copy failed: $($item.FullName): $($_.Exception.Message)" }
-            }
+          foreach ($root in 'C:\ProgramData\Microsoft\Windows\WER\ReportArchive', 'C:\ProgramData\Microsoft\Windows\WER\ReportQueue') {
+            Get-ChildItem $root -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'Kernel_*' -or $_.Name -like '*LiveKernel*' } |
+              Select-Object -First 10 | ForEach-Object {
+                Get-ChildItem $_.FullName -File | Where-Object { $_.Extension -ne '.dmp' -and $_.Length -lt 5MB } |
+                  ForEach-Object { Copy-Item $_.FullName (Join-Path $ev ("{0}-{1}" -f $_.Directory.Name, $_.Name)) -ErrorAction SilentlyContinue }
+              }
           }
-          Get-ChildItem $ev -Recurse | Select-Object FullName, Length | Format-Table -AutoSize | Out-String -Width 400 | Write-Host
+          Get-ChildItem 'C:\Windows\LiveKernelReports' -Recurse -ErrorAction SilentlyContinue | Select-Object FullName, LastWriteTime, Length |
+            Format-Table -AutoSize | Out-File "$ev\livekernelreports.txt" -Width 400
+          Get-ChildItem $ev | Select-Object Name, Length | Format-Table -AutoSize | Out-String | Write-Host
 
-      - name: Upload evidence
+      - name: Upload
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: stress-2446-evidence
-          path: stress-out/evidence
+          name: stress-2446-evidence2
+          path: ${{ runner.temp }}/evidence2
           if-no-files-found: warn
           retention-days: 14
-
-      - name: Checkout A (runtime async on)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: a
-          clean: true
-
-      - name: Checkout B (runtime async off)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: b
-          clean: true
-
-      # The installer reads global.json from the working directory, which is the workspace root here.
-      - name: Stage global.json for the SDK installer
-        shell: pwsh
-        run: Copy-Item a/global.json . -Force
-
-      - name: Setup .NET
-        uses: ./a/.github/actions/setup-dotnet-retry
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: Machine info
-        shell: pwsh
-        working-directory: a
-        run: |
-          dotnet --info | Out-File "$env:OUT\dotnet-info.txt"
-          Get-Content "$env:OUT\dotnet-info.txt" | Select-Object -First 40 | Write-Host
-          $cs = Get-CimInstance Win32_ComputerSystem; $os = Get-CimInstance Win32_OperatingSystem
-          "Host $($cs.Name) RAM $([math]::Round($cs.TotalPhysicalMemory/1GB,1)) GB, logical CPUs $([Environment]::ProcessorCount), OS $($os.Caption) $($os.Version)" | Tee-Object "$env:OUT\machine.txt" | Write-Host
-          Get-CimInstance Win32_PageFileUsage | Format-List | Out-String | Tee-Object -Append "$env:OUT\machine.txt" | Write-Host
-          Get-PSDrive -PSProvider FileSystem | Format-Table -AutoSize | Out-String | Write-Host
-
-      - name: Build A (runtime async on)
-        shell: pwsh
-        working-directory: a
-        run: |
-          dotnet restore --locked-mode
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          dotnet build --no-restore -c Release -p:WhizbangReleaseTargetFrameworks=net11.0 -p:RunAnalyzers=false -nodeReuse:false
-          exit $LASTEXITCODE
-
-      - name: Build B (runtime async off)
-        shell: pwsh
-        working-directory: b
-        run: |
-          dotnet restore --locked-mode
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          dotnet build --no-restore -c Release -p:WhizbangReleaseTargetFrameworks=net11.0 -p:RunAnalyzers=false -p:UseRuntimeAsync=false -nodeReuse:false
-          exit $LASTEXITCODE
-
-      # Proves the two builds differ: methods carrying MethodImplAttributes.Async (0x2000) are runtime-async methods.
-      - name: Verify runtime async per build
-        shell: pwsh
-        run: |
-          $report = foreach ($v in 'a', 'b') {
-            foreach ($dll in 'src/Whizbang.Core/bin/Release/net11.0/Whizbang.Core.dll',
-                             'tests/Whizbang.Transports.RabbitMQ.Tests/bin/Release/net11.0/Whizbang.Transports.RabbitMQ.Tests.dll',
-                             'tests/Whizbang.Transports.RabbitMQ.Tests/bin/Release/net11.0/Whizbang.Transports.RabbitMQ.dll') {
-              $p = Join-Path $v $dll
-              if (-not (Test-Path $p)) { "$v $dll : missing"; continue }
-              $fs = [IO.File]::OpenRead((Resolve-Path $p))
-              try {
-                $pe = [System.Reflection.PortableExecutable.PEReader]::new($fs)
-                $md = [System.Reflection.Metadata.PEReaderExtensions]::GetMetadataReader($pe)
-                $n = 0
-                foreach ($h in $md.MethodDefinitions) { if (([int]$md.GetMethodDefinition($h).ImplAttributes -band 0x2000) -ne 0) { $n++ } }
-                "$v $dll : $n runtime-async methods"
-              } finally { $fs.Dispose() }
-            }
-          }
-          $report | Tee-Object "$env:OUT\runtime-async-check.txt" | Write-Host
-
-      - name: Stress loop
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Continue'
-          $A = Join-Path $env:GITHUB_WORKSPACE 'a'
-          $B = Join-Path $env:GITHUB_WORKSPACE 'b'
-          $logDir = "$env:OUT\logs"; $dumpDir = "$env:OUT\dumps"
-          $results = "$env:OUT\results.csv"
-          'idx,variant,kind,parallel,startUtc,seconds,exitCode,crash,otherFailure,minAvailMB,peakCommitMB,commitLimitMB,crashLine' | Out-File $results -Encoding utf8
-          $deadline = [DateTime]::Parse($env:STRESS_START).ToUniversalTime().AddMinutes(262)
-
-          # A crash leaves a dump (heap) named for the process.
-          $env:DOTNET_DbgEnableMiniDump = '1'
-          $env:DOTNET_DbgMiniDumpType = '2'
-          $env:DOTNET_DbgMiniDumpName = Join-Path $dumpDir '%e_%p_%t.dmp'
-          $env:DOTNET_CreateDumpDiagnostics = '1'
-
-          $memCsv = "$env:OUT\memory.csv"
-          $sampler = Start-Job -ArgumentList $memCsv -ScriptBlock {
-            param($f)
-            'utc,availMB,committedMB,limitMB' | Out-File $f -Encoding utf8
-            while ($true) {
-              try {
-                $m = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory
-                '{0},{1},{2},{3}' -f [DateTime]::UtcNow.ToString('o'), $m.AvailableMBytes, [math]::Round($m.CommittedBytes / 1MB), [math]::Round($m.CommitLimit / 1MB) | Add-Content $f
-              } catch { }
-              Start-Sleep -Seconds 2
-            }
-          }
-
-          $crashPattern = '0x80131506|Internal CLR error|-1073741819|3221225477|0xC0000005|Fatal error\.|TEST PROCESS CRASHED|host process exited unexpectedly'
-
-          function Get-MemStats([DateTime]$from, [DateTime]$to) {
-            $rows = Import-Csv $memCsv | Where-Object { $t = [DateTime]::Parse($_.utc).ToUniversalTime(); $t -ge $from -and $t -le $to }
-            if (-not $rows) { return @('', '', '') }
-            $avail = ($rows | ForEach-Object { [int]$_.availMB } | Measure-Object -Minimum).Minimum
-            $commit = ($rows | ForEach-Object { [int]$_.committedMB } | Measure-Object -Maximum).Maximum
-            $limit = ($rows | Select-Object -Last 1).limitMB
-            return @($avail, $commit, $limit)
-          }
-
-          function Save-Dumps($dir, $tag) {
-            Get-ChildItem $dir -Recurse -Include *.dmp -ErrorAction SilentlyContinue |
-              ForEach-Object { Move-Item $_.FullName (Join-Path $dumpDir "$tag-$($_.Name)") -Force -ErrorAction SilentlyContinue }
-          }
-
-          function Clear-Results($dir) {
-            Save-Dumps $dir 'moved'
-            Get-ChildItem $dir -Recurse -Directory -Filter TestResults -ErrorAction SilentlyContinue |
-              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-          }
-
-          function Add-Result($idx, $variant, $kind, $par, $start, $code, $logs) {
-            $end = [DateTime]::UtcNow
-            $text = ($logs | ForEach-Object { Get-Content $_ -Raw -ErrorAction SilentlyContinue }) -join "`n"
-            $hit = [regex]::Match($text, "(?m)^.*($crashPattern).*$")
-            $crash = [int]($hit.Success -or $code -eq -1073741819 -or $code -eq 3221225477)
-            $other = [int](-not $crash -and $code -ne 0)
-            $line = if ($hit.Success) { ($hit.Value.Trim() -replace '[,"\r\n]', ' ') } else { '' }
-            if ($line.Length -gt 200) { $line = $line.Substring(0, 200) }
-            $mem = Get-MemStats $start $end
-            '{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},"{12}"' -f $idx, $variant, $kind, $par, $start.ToString('o'),
-              [int]($end - $start).TotalSeconds, $code, $crash, $other, $mem[0], $mem[1], $mem[2], $line | Add-Content $results
-            Write-Host ("[{0}] #{1} {2} {3} p{4}: exit {5} crash={6} other={7} minAvail={8}MB peakCommit={9}/{10}MB {11}s {12}" -f
-              $end.ToString('HH:mm:ss'), $idx, $variant, $kind, $par, $code, $crash, $other, $mem[0], $mem[1], $mem[2], [int]($end - $start).TotalSeconds, $line)
-          }
-
-          function Invoke-Suite($variant, $par, $idx) {
-            $dir = if ($variant -eq 'A') { $A } else { $B }
-            Clear-Results $dir
-            $log = Join-Path $logDir ('{0:D3}-{1}-suite-p{2}.log' -f $idx, $variant, $par)
-            $start = [DateTime]::UtcNow
-            Push-Location $dir
-            & pwsh -NoProfile -File scripts/Run-Tests.ps1 -Mode Unit -Configuration Release -NoBuild -ModuleCoverage -ReportTrx -HangDumpTimeout 10m -Framework net11.0 -MaxParallel $par *> $log
-            $code = $LASTEXITCODE
-            Pop-Location
-            Save-Dumps $dir ('{0:D3}-{1}' -f $idx, $variant)
-            Add-Result $idx $variant 'suite' $par $start $code @($log)
-          }
-
-          # Four concurrent copies of the module that crashed, run directly with high test parallelism and coverage.
-          function Invoke-Direct($variant, $idx) {
-            $dir = if ($variant -eq 'A') { $A } else { $B }
-            $mod = Join-Path $dir 'tests\Whizbang.Transports.RabbitMQ.Tests\bin\Release\net11.0\Whizbang.Transports.RabbitMQ.Tests.dll'
-            $start = [DateTime]::UtcNow
-            $procs = foreach ($k in 1..4) {
-              $rd = Join-Path $env:RUNNER_TEMP ('rmq-{0}-{1}-{2}' -f $variant, $idx, $k)
-              $log = Join-Path $logDir ('{0:D3}-{1}-rmq-{2}.log' -f $idx, $variant, $k)
-              $p = Start-Process dotnet -PassThru -NoNewWindow -RedirectStandardOutput $log -RedirectStandardError "$log.err" -ArgumentList @(
-                "`"$mod`"", '--maximum-parallel-tests', '64', '--results-directory', "`"$rd`"",
-                '--coverage', '--coverage-output-format', 'cobertura', '--coverage-settings', "`"$(Join-Path $dir 'codecoverage.config')`"")
-              [pscustomobject]@{ P = $p; Log = $log; Rd = $rd; K = $k; H = $p.Handle }
-            }
-            foreach ($x in $procs) {
-              if (-not $x.P.WaitForExit(600000)) { $x.P.Kill($true) }
-              $x.P.WaitForExit()
-              Save-Dumps $x.Rd ('{0:D3}-{1}-rmq{2}' -f $idx, $variant, $x.K)
-              Add-Result $idx $variant ("rmq{0}" -f $x.K) 64 $start $x.P.ExitCode @($x.Log, "$($x.Log).err")
-              Remove-Item $x.Rd -Recurse -Force -ErrorAction SilentlyContinue
-            }
-          }
-
-          $cycle = 0; $idx = 0
-          while ([DateTime]::UtcNow -lt $deadline) {
-            $order = @(('A', 20), ('B', 20), ('A', 8), ('B', 8))
-            if ($cycle % 2 -eq 1) { [array]::Reverse($order) }
-            foreach ($cell in $order) {
-              if ([DateTime]::UtcNow -ge $deadline) { break }
-              $idx++; Invoke-Suite $cell[0] $cell[1] $idx
-            }
-            foreach ($v in $(if ($cycle % 2) { 'B', 'A' } else { 'A', 'B' })) {
-              if ([DateTime]::UtcNow -ge $deadline) { break }
-              $idx++; Invoke-Direct $v $idx
-            }
-            $cycle++
-          }
-          Stop-Job $sampler; Remove-Job $sampler -Force
-          Write-Host "Finished $cycle cycles, $idx iterations"
-
-      - name: Summary
-        if: always()
-        shell: pwsh
-        run: |
-          $r = Import-Csv "$env:OUT\results.csv"
-          $md = @('## #2446 stress: runtime async on (A) vs off (B)', '', (Get-Content "$env:OUT\machine.txt" -ErrorAction SilentlyContinue | Select-Object -First 1), '',
-            '```', (Get-Content "$env:OUT\runtime-async-check.txt" -ErrorAction SilentlyContinue), '```', '',
-            '| Variant | Kind | Parallel | Runs | Crashes | Other failures | Min available MB | Peak commit MB | Commit limit MB |',
-            '|---|---|---|---|---|---|---|---|---|')
-          $r | Group-Object variant, { if ($_.kind -like 'rmq*') { 'rmq' } else { $_.kind } }, parallel | Sort-Object Name | ForEach-Object {
-            $g = $_.Group
-            $min = ($g | Where-Object minAvailMB | ForEach-Object { [int]$_.minAvailMB } | Measure-Object -Minimum).Minimum
-            $peak = ($g | Where-Object peakCommitMB | ForEach-Object { [int]$_.peakCommitMB } | Measure-Object -Maximum).Maximum
-            $md += '| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} |' -f $g[0].variant, $(if ($g[0].kind -like 'rmq*') { 'rmq x4 direct' } else { 'suite' }), $g[0].parallel,
-              $g.Count, ($g | Measure-Object crash -Sum).Sum, ($g | Measure-Object otherFailure -Sum).Sum, $min, $peak, ($g | Where-Object commitLimitMB | Select-Object -Last 1).commitLimitMB
-          }
-          $md += ''; $md += '### Crashes and failures'; $md += ''
-          $r | Where-Object { $_.crash -eq '1' -or $_.otherFailure -eq '1' } | ForEach-Object { $md += "- #$($_.idx) $($_.variant) $($_.kind) p$($_.parallel) exit $($_.exitCode) crash=$($_.crash) minAvail=$($_.minAvailMB)MB: $($_.crashLine)" }
-          $md += ''; $md += 'Dumps: ' + ((Get-ChildItem "$env:OUT\dumps" -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Name) ($([math]::Round($_.Length/1MB)) MB)" }) -join ', ')
-          $md -join "`n" | Out-File -Append $env:GITHUB_STEP_SUMMARY -Encoding utf8
-          $md -join "`n" | Write-Host
-
-      - name: Upload logs and results
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: stress-2446-logs
-          path: |
-            stress-out/*.csv
-            stress-out/*.txt
-            stress-out/logs
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Upload dumps
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: stress-2446-dumps
-          path: stress-out/dumps
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Free disk
-        if: always()
-        shell: pwsh
-        run: Remove-Item a, b, stress-out, global.json -Recurse -Force -ErrorAction SilentlyContinue
