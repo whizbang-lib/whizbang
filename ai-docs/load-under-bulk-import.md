@@ -217,6 +217,68 @@ queue table's statistics are part of the claim's correctness, and the claim keep
 autovacuum cannot. Any test that asserts a plan bound states which statistics it ran on; the fixtures
 above analyze after every fill on purpose, and that is why none of them could see this.
 
+## Finding 1, round five: the drain's calls read the queue and the history, not their batch (#2286)
+
+A fan-out to 100,000 new streams applied at about 80 rows a second against 389 at 10,000, and the time per 1,000
+streams claimed grew from 2.6 s to 11.9 s with the backlog, in both perspective write modes. With every row still
+under the lease it was stored with, the claim's re-offer was not the cause (2,002 index entries for 1,000 held streams
+at 10,000 and at 40,000 pending rows). The calls around it were. Two things grow during a fan-out: the backlog still
+pending, and the history already applied (a cursor and an applied-ledger row per stream). A fan-out that outlasts the
+lease its rows were stored under (five minutes) also leaves most of them orphaned, so the claim acquires them again.
+`PerspectiveWorkQueueBacklogCostSqlTests` measures each call in rows read over 10,000 pending and 10,000 applied
+streams and over four times both, for a batch of 1,000 streams with lapsed leases, each planned for its arguments:
+
+| Call (batch of 1,000 streams) | Before, at 10,000 | at 40,000 | What read the backlog |
+|---|---|---|---|
+| `claim_orphaned_perspective_events` | 61,011 | 212,011 | the window's two ledger EXISTS, hashed over the whole ledger; its earlier-event NOT EXISTS, an anti join over every pending row; the lease UPDATE ... FROM the locked rows, a pass over the queue |
+| `wh_lease_claimed_streams` | 20,005 | 41,005 | the claimed streams joined to the whole ledger, twice |
+| `get_stream_events` | 26,022 | 87,022 | the event store scanned whole and hashed against the batch, and the lease tested as a range over a lease index (every row the instance holds, or every lapsed row) |
+| `complete_perspective` | 65,016 | 89,017 | the doorbell's search for unowned streams, a hash of the whole ledger; the rewind-flag settle, a pass over every cursor (no index answers `status & 32`) |
+| `cleanup_completed_streams` | 10,004 | 39,004 | the eviction's perspective NOT EXISTS, a hash of every pending row |
+
+Nothing in the SQL told the planner to do that, and nothing stopped it: a batch that is a few percent of a table
+makes a full scan and a hash look as cheap as a probe per key, so a join, an anti join, an EXISTS or an
+`UPDATE ... FROM` written over a batch is a plan choice that grows with the table. The generic plan a long-lived
+connection may settle on probed some of them instead, so which ran depended on the connection's history. Migration 536
+takes the choice away, with three constructions:
+
+- a `LATERAL` subquery with `LIMIT 1`, which the planner cannot flatten into a join, so it runs as one index probe per
+  row of the batch;
+- a scalar subquery with `LIMIT 1` in a `WHERE` (never turned into a join, and never hashed: only `EXISTS` and `IN`
+  sublinks get a hashed alternative, and a `LIMIT 1` inside `EXISTS` is simply removed);
+- the batch as an index condition, `key = ANY(ARRAY(SELECT ... FROM <cte>))`, which the planner estimates at a handful
+  of keys whatever the batch holds, for the rows an `UPDATE` or a lock must reach.
+
+A test on a lease that must not drive the plan is written `(...) IS TRUE`, which keeps it out of every index
+condition. After, at 10,000 and at 40,000: 21,001 and 22,001 rows to acquire (the window is eight rows per stream by design), 1,000 and 1,000 for the ledger write, 8,000 and 8,000 to fetch, 47,012 and 10,013 to complete (see the crossover below), 2,001 and 2,001 to evict.
+
+Left as found, and why:
+
+- `process_perspective_event_completions` deletes the completed work rows `USING` the batch's ids, which a JSON array
+  gives the planner as 100 rows whatever the batch; on a table of 10,000 rows a scan is the cheaper plan and from
+  somewhere under 40,000 rows the primary key is. `update_perspective_cursors` behaves the same over the cursor table
+  (two passes over 10,000 cursors at the smaller depth, its key at the larger). Neither grows past the crossover.
+  `update_perspective_cursors` is also redefined by another change in flight (migration 531), so it is left to that
+  change rather than copied here.
+- The claim's re-offer walk (`claim_work`) reads `idx_perspective_lease_expiry` instead of `idx_perspective_held_lanes`
+  when the statistics say every lease has lapsed, which a fan-out that outlasted its leases leaves behind: right after
+  re-acquiring 1,000 streams, one claim read 1,001,001 index entries, a scan of the instance's holdings per step of the
+  walk. It is bounded by the batch squared, not the backlog, and needs `claim_work` redefined; it is a follow-up.
+- `commit_handler_result`, the store, slowed sharply with the backlog on one long-lived session (seeding 40,000 streams
+  500 at a time took minutes on the default plan cache and 11 s with custom plans forced): another plan that outlived
+  the table it was made for. Not a work-queue call; a follow-up.
+
+**Rule:** a statement given a batch of keys reaches every other table through a construction the planner cannot turn
+into a scan of that table, and a test measures it at a backlog and at four times it, with the history grown alongside,
+planned both for its arguments and generically. `PerspectiveWorkQueueBacklogCostSqlTests` does that for the five calls.
+
+**Measure rows read, not buffers (#2462).** A comparison or ceiling over shared buffers moves with the server: a cache
+another session invalidated is reloaded from the catalogs, a btree metapage is read again after a relation cache reset,
+and a rolled-back statement leaves dead rows the next one walks. `PartitionAssignmentClaimCostScenarioTests` failed
+under load and passed alone for exactly that. `Performance/RowsRead` counts index entries and sequentially scanned rows
+the backend read from the test's own schema (`pg_stat_get_xact_tuples_returned`, before and after, inside the
+statement's transaction); vacuum before each measurement that follows a rolled-back one.
+
 ## Finding 2: maintenance ran at the peak
 
 `close_digest_epochs` occupied about two backends on the consumer and one on the producer for a

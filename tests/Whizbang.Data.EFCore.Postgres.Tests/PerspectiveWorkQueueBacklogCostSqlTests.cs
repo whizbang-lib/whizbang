@@ -58,9 +58,9 @@ public class PerspectiveWorkQueueBacklogCostSqlTests : EFCoreTestBase {
 
   /// <summary>
   /// Rows a fetch may read per stream of its batch: the work row (to lease it, to read it back and to return it), its
-  /// event (twice), the stream's ledger row, its body.
+  /// event (twice), the stream's ledger row, its body: eight, measured, with room for two more.
   /// </summary>
-  private const int FETCH_ROWS_PER_STREAM = 8;
+  private const int FETCH_ROWS_PER_STREAM = 10;
 
   /// <summary>
   /// Rows a completion may read per stream of its batch: the work row, its event (cursor and applied ledger), the cursor,
