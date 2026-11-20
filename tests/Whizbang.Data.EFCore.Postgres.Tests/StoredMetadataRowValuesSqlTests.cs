@@ -218,18 +218,18 @@ public class StoredMetadataRowValuesSqlTests : EFCoreTestBase {
     await _appendAsync(conn, dapper, $$"""{"message_id":"{{dapper}}","hops":{{hops}}}""", _scopeJson(_scope));
     await _executeAsync(conn, "SELECT * FROM wh_distill_event_metadata(1000)");
 
-    var traced = await _traceAsync(conn, ef);
+    var (tracedSource, traced) = await _traceAsync(conn, ef);
     await _executeAsync(conn, "DELETE FROM wh_traces");
-    var row = await _traceAsync(conn, ef);
-    var dapperRow = await _traceAsync(conn, dapper);
+    var (rowSource, row) = await _traceAsync(conn, ef);
+    var (_, dapperRow) = await _traceAsync(conn, dapper);
 
-    await Assert.That(traced.Source).IsEqualTo("trace");
-    await Assert.That(traced.Metadata.GetProperty("MessageId").GetGuid()).IsEqualTo(ef).Because("the trace's answer names its message id");
-    await Assert.That(row.Source).IsEqualTo("row");
-    await Assert.That(row.Metadata.GetProperty("MessageId").GetGuid()).IsEqualTo(ef).Because("so does the row's");
-    await Assert.That(row.Metadata.GetProperty("Hops")[0].GetProperty("sc").GetProperty("v").GetProperty("Sc").GetProperty("t").GetString())
+    await Assert.That(tracedSource).IsEqualTo("trace");
+    await Assert.That(traced.GetProperty("MessageId").GetGuid()).IsEqualTo(ef).Because("the trace's answer names its message id");
+    await Assert.That(rowSource).IsEqualTo("row");
+    await Assert.That(row.GetProperty("MessageId").GetGuid()).IsEqualTo(ef).Because("so does the row's");
+    await Assert.That(row.GetProperty("Hops")[0].GetProperty("sc").GetProperty("v").GetProperty("Sc").GetProperty("t").GetString())
       .IsEqualTo("tenant-a").Because("and the row's hop has its scope back, from the scope column");
-    await Assert.That(dapperRow.Metadata.GetProperty("message_id").GetGuid()).IsEqualTo(dapper)
+    await Assert.That(dapperRow.GetProperty("message_id").GetGuid()).IsEqualTo(dapper)
       .Because("a row in the Dapper store's form gets its message id back under that store's key");
   }
 

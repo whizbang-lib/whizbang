@@ -548,7 +548,14 @@ public partial class DapperPostgresEventStore(
         continue;
       }
       try {
-        var jsonb = new JsonbPersistenceModel { DataJson = raw.EventData, MetadataJson = raw.Metadata ?? "{}", ScopeJson = raw.Scope, EventId = raw.EventId };
+        // #2323: a row whose metadata left out its message id has it from its event id; a row with no metadata at all
+        // still names none, and is skipped as unreadable, as before.
+        var jsonb = new JsonbPersistenceModel {
+          DataJson = raw.EventData,
+          MetadataJson = raw.Metadata ?? "{}",
+          ScopeJson = raw.Scope,
+          EventId = raw.Metadata is null ? null : raw.EventId,
+        };
         var eventData = _deserializeEventData(jsonb, concreteType);
         var (messageId, hops) = _deserializeMetadataAndHops(jsonb);
         StoredScope.RestoreInto(hops, StoredScope.Read(jsonb.ScopeJson, JsonOptions));

@@ -85,7 +85,7 @@ public sealed class EnvelopeMetadata {
   /// <docs>data/event-store#row-values</docs>
   /// <tests>tests/Whizbang.Core.Tests/Observability/EnvelopeMetadataRowValuesTests.cs</tests>
   public static MessageId MessageIdOf(EnvelopeMetadata? metadata, Guid eventId) =>
-    metadata is not null && metadata.MessageId.Value != Guid.Empty ? metadata.MessageId : MessageId.From(eventId);
+    metadata is not null && metadata.MessageId.Value != Guid.Empty ? metadata.MessageId : new MessageId(eventId);
 
   /// <summary>
   /// The slim stored form: what readers take from a stored event, and nothing else. It keeps the message id, the
