@@ -52,13 +52,18 @@ namespace Whizbang.Data.Postgres;
 /// command timeout, and a pass that converted nothing returns at once.
 /// </para>
 /// <para>
-/// A table a rewrite changed is analyzed after the commit (issue #1004). The rewrite marks the table
-/// with <see cref="IndexStatistics.MarkRewrittenSql"/>, in a transaction-local setting, so a rewrite
-/// rolled back to its savepoint is not analyzed.
+/// A rewrite that changed a table marks it with <see cref="IndexStatistics.MarkRewrittenSql"/>, in a
+/// transaction-local setting, so a rewrite rolled back to its savepoint leaves no mark. A marked table is
+/// analyzed after the commit (issue #1004), and the mark is what says the pass converted anything: a pass
+/// that wrote only its bookkeeping (the temporal ledger's row for a table, a stored-form journal entry)
+/// superseded nothing an index reads, and waits for no one (issue #2419). Every rewrite this phase runs
+/// marks the tables it changes.
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#statements-that-need-a-commit-between-them</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/CanonicalTemporalRewritePhaseTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/CanonicalTemporalRewritePhaseTests.cs:APassThatOnlyRecordsItsBookkeepingWaitsForNoOneAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/StoredFormMigrationTests.cs:AGeneratedMigrationThatConvertedRows_MarksItsTableAsync</tests>
 public static class CanonicalTemporalRewritePhase {
   private const string SAVEPOINT = "wh_rewrite";
 
@@ -207,7 +212,10 @@ public static class CanonicalTemporalRewritePhase {
     // as they were (#1004). Analyzed after the commit, outside any transaction, each table once.
     await IndexStatistics.AnalyzeAsync(connection, rewritten, log, cancellationToken);
 
-    if (writer is not null) {
+    // #2419: only a table a rewrite marked has superseded row versions an index can meet. A pass that wrote nothing but its
+    // bookkeeping (the temporal ledger's row, a stored-form journal entry) still has a transaction id, and waiting on it
+    // waited for every older writing transaction on the server, in any database, for as long as one ran.
+    if (writer is not null && rewritten.Count > 0) {
       // The initializer indexes the rewritten keys as soon as this returns, with a plain CREATE
       // INDEX, which also indexes every row version an open snapshot can still see. A snapshot
       // older than this commit can still see the rows in their old rendering, and the index's cast

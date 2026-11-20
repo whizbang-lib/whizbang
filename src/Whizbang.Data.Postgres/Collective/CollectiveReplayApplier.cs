@@ -22,9 +22,10 @@ namespace Whizbang.Data.Postgres.Collective;
 /// <strong>Interleave.</strong> A collective event is its own single-event stream unless it carries an ordering
 /// key, in which case it shares its key's stream. During a rebuild this loads the tenant's collective events for
 /// the model being rebuilt and merges them into the stream's event list. The stream's own events keep the order the
-/// runner gave them (its replay order); each collective goes in before the first of them it was committed before, by
-/// commit sequence when both carry one and by message id otherwise. The collectives are taken in message-id order,
-/// and those sharing a stream are put in commit order among themselves, the order the live sink applied them in. Tenant scoping is essential: a collective for global template
+/// runner gave them (its replay order); each collective goes in after every one of them it was committed after, by
+/// commit sequence when both carry one and by message id otherwise, wherever the replay order put that event (#2449).
+/// The collectives are taken in message-id order, and those sharing a stream are put in commit order among themselves,
+/// the order the live sink applied them in. Tenant scoping is essential: a collective for global template
 /// G in tenant A must never fold into tenant B's row for the same G.
 /// </para>
 /// <para>
@@ -274,28 +275,71 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
   /// Merges the collectives into the stream's own events without reordering the stream's events: the runner hands
   /// them over already in replay order (origin, then commit, then id), and re-sorting the whole list by id folded a
   /// stream whose first event carried its highest id with that event last, so the rebuild's write carried a stale
-  /// commit sequence and the store's ordering guard refused it (#1346). A collective goes before the first stream
-  /// event it precedes: by commit sequence when both carry one, by message id otherwise.
+  /// commit sequence and the store's ordering guard refused it (#1346). A collective goes after every stream event it
+  /// was committed after (by commit sequence when both carry one, by message id otherwise), wherever the replay put that
+  /// event. The replay order need not rise with the commit sequence: a late-arriving event replays at its origin
+  /// position (#2257, #2379), and placing a collective before the first event committed after it put it ahead of that
+  /// late event and of the older events replaying after it, which then overwrote it (#2449). So a collective precedes a
+  /// stream event only when it precedes that event and every event after it, read from <see cref="_suffixFloors"/>.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveReplayApplierCoverageTests.cs:InterleaveAfterAsync_WithALateEventReplayedAtItsOrigin_KeepsEachCollectiveAfterEveryEventItFollowedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveReplayApplierCoverageTests.cs:InterleaveAfterAsync_WithAnUnsequencedLateEvent_KeepsEachCollectiveAfterEveryEventItFollowedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveReplayApplierCoverageTests.cs:InterleaveAfterAsync_WhenOnlyUnsequencedEventsFollow_PlacesASequencedCollectiveByTheirIdsAsync</tests>
   private static List<MessageEnvelope<IEvent>> _mergeIntoStreamOrder(
       IReadOnlyList<MessageEnvelope<IEvent>> streamEvents, List<MessageEnvelope<IEvent>> collectives) {
+    var floors = _suffixFloors(streamEvents);
     var merged = new List<MessageEnvelope<IEvent>>(streamEvents.Count + collectives.Count);
     var next = 0;
-    foreach (var streamEvent in streamEvents) {
-      while (next < collectives.Count && _precedes(collectives[next], streamEvent)) {
-        merged.Add(collectives[next++]);
+    foreach (var collective in collectives) {
+      while (next < streamEvents.Count && !_precedesAll(collective, floors[next])) {
+        merged.Add(streamEvents[next++]);
       }
-      merged.Add(streamEvent);
+      merged.Add(collective);
     }
-    merged.AddRange(collectives.Skip(next));
+    merged.AddRange(streamEvents.Skip(next));
     return merged;
   }
 
-  /// <summary>Whether <paramref name="collective"/> was committed before <paramref name="streamEvent"/>.</summary>
-  private static bool _precedes(MessageEnvelope<IEvent> collective, MessageEnvelope<IEvent> streamEvent) =>
-    collective.LocalCommitSequence is long collectiveSequence && streamEvent.LocalCommitSequence is long streamSequence
-      ? collectiveSequence < streamSequence
-      : collective.MessageId.Value.CompareTo(streamEvent.MessageId.Value) < 0;
+  /// <summary>
+  /// The lowest positions among a stream event and every event after it in replay order: the lowest commit sequence of
+  /// those that carry one, the lowest id of those that carry none, and the lowest id of all of them.
+  /// </summary>
+  private readonly record struct SuffixFloor(long? Sequence, Guid? UnsequencedId, Guid Id);
+
+  /// <summary>The <see cref="SuffixFloor"/> at each position of <paramref name="streamEvents"/>, built from the end.</summary>
+  private static SuffixFloor[] _suffixFloors(IReadOnlyList<MessageEnvelope<IEvent>> streamEvents) {
+    var floors = new SuffixFloor[streamEvents.Count];
+    long? sequence = null;
+    Guid? unsequencedId = null;
+    Guid? id = null;
+    for (var i = streamEvents.Count - 1; i >= 0; i--) {
+      var streamEvent = streamEvents[i];
+      var eventId = streamEvent.MessageId.Value;
+      if (streamEvent.LocalCommitSequence is long eventSequence) {
+        sequence = sequence is long lowest && lowest <= eventSequence ? lowest : eventSequence;
+      } else {
+        unsequencedId = _lower(unsequencedId, eventId);
+      }
+      id = _lower(id, eventId);
+      floors[i] = new SuffixFloor(sequence, unsequencedId, id.Value);
+    }
+    return floors;
+  }
+
+  private static Guid _lower(Guid? current, Guid candidate) =>
+    current is Guid lowest && lowest.CompareTo(candidate) <= 0 ? lowest : candidate;
+
+  /// <summary>
+  /// Whether <paramref name="collective"/> was committed before every stream event <paramref name="floor"/> covers: by
+  /// commit sequence against those that carry one when it does, and by message id against the rest.
+  /// </summary>
+  private static bool _precedesAll(MessageEnvelope<IEvent> collective, SuffixFloor floor) {
+    var id = collective.MessageId.Value;
+    return collective.LocalCommitSequence is long sequence
+      ? (floor.Sequence is not long lowest || sequence < lowest)
+        && (floor.UnsequencedId is not Guid unsequenced || id.CompareTo(unsequenced) < 0)
+      : id.CompareTo(floor.Id) < 0;
+  }
 
   /// <summary>
   /// Collectives that share an ordering key share a stream, and the live sink applied that stream in commit order
