@@ -465,6 +465,48 @@ Test run summary: Passed! - A.Tests.dll (net11.0|arm64)
   }
 }
 
+# Coverage is measured on one framework, the development one (#2135). A release build runs each suite once per
+# framework, and the other framework's leg runs its tests without collecting, so its reports never reach the gate.
+Describe 'Run-Tests.ps1 -CoverageFramework' -Skip:$NoPosixShell {
+  BeforeAll {
+    $script:Passing = @'
+Test run summary: Passed! - A.Tests.dll (net11.0|arm64)
+  total: 3
+  failed: 0
+  succeeded: 3
+  skipped: 0
+'@
+  }
+
+  It 'with coverage measured on net11.0, <Case>' -ForEach @(
+    @{ Case = 'collects it on the net11.0 leg'; Framework = 'net11.0'; Collects = $true },
+    @{ Case = 'runs the net10.0 leg without it'; Framework = 'net10.0'; Collects = $false },
+    @{ Case = 'collects it on a run of every framework'; Framework = ''; Collects = $true }) {
+    $repo = New-FakeRepo
+    Set-Built $repo 'Release' -Frameworks @('net10.0', 'net11.0')
+    $arguments = @('-Mode', 'Unit', '-Configuration', 'Release', '-NoBuild', '-ModuleCoverage', '-CoverageFramework', 'net11.0')
+    if ($Framework) { $arguments += @('-Framework', $Framework) }
+    $r = Invoke-RunTests -Repo $repo -Frameworks 'net10.0;net11.0' -Arguments $arguments -TestOutput $Passing
+    $test = (($r.Calls | Where-Object { $_ -match '^dotnet test ' }) -join "`n")
+    $test | Should -Not -BeNullOrEmpty
+    if ($Collects) {
+      $test | Should -Match ' --coverage '
+    } else {
+      $test | Should -Not -Match '--coverage'
+      $r.Output | Should -Match 'Coverage is measured on net11\.0 only; this net10\.0 leg runs its tests without collecting it\.'
+    }
+    $r.ExitCode | Should -Be 0
+  }
+
+  It 'collects coverage on every framework without it' {
+    $repo = New-FakeRepo
+    Set-Built $repo 'Release' -Frameworks @('net10.0', 'net11.0')
+    $r = Invoke-RunTests -Repo $repo -Frameworks 'net10.0;net11.0' -Arguments @('-Mode', 'Unit', '-Configuration', 'Release', '-NoBuild', '-ModuleCoverage', '-Framework', 'net10.0') -TestOutput $Passing
+    (($r.Calls | Where-Object { $_ -match '^dotnet test ' }) -join "`n") | Should -Match ' --coverage '
+    $r.ExitCode | Should -Be 0
+  }
+}
+
 Describe 'Run-Tests.ps1 builds the configuration it runs (#2244)' -Skip:$NoPosixShell {
   BeforeAll {
     $script:Passing = @'

@@ -189,7 +189,8 @@ jobs:
         run: |
           # The expected coverage count is DERIVED, never configured: every suite leg is a job named
           # "Test · <suite> / Run suite", or "Test · <suite> / Run suite (<framework>)" for each framework of a
-          # release build (#2427), and uploads exactly one coverage-* artifact. All suites need only
+          # release build (#2427), and each suite (each shard) uploads exactly one coverage-* artifact, from its leg
+          # on the coverage framework (#2135; expected-coverage.jq). All suites need only
           # Build, so once Build succeeds every leg exists in the jobs list (queued or not), and the
           # leg count is final. A hardcoded count hung this step forever after a reshard.
           # Ends on job STATE, not a poll budget: runner queueing can delay suites for most of an
@@ -243,24 +244,25 @@ jobs:
               sleep 30; continue
             fi
 
-            EXPECTED=$(jq "[.jobs[] | select($SUITE)] | length" <<< "$JOBS")
+            LEGS=$(jq "[.jobs[] | select($SUITE)] | length" <<< "$JOBS")
             DONE=$(jq "[.jobs[] | select($SUITE and .conclusion == \"success\")] | length" <<< "$JOBS")
+            EXPECTED=$(jq -r -f .github/scripts/expected-coverage.jq <<< "$JOBS")
             COUNT=$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
               --jq '[.artifacts[].name | select(startswith("coverage-"))] | length' || echo 0)
-            if [ "$DONE" -eq "$EXPECTED" ]; then
+            if [ "$DONE" -eq "$LEGS" ]; then
               if [ "$EXPECTED" -gt 0 ] && [ "$COUNT" -ge "$EXPECTED" ]; then
-                echo "All $EXPECTED suites green; $COUNT coverage artifacts present."
+                echo "All $LEGS suite legs green; $COUNT of $EXPECTED coverage artifacts present."
                 exit 0
               fi
               # Every suite finished green but an artifact is missing: allow a short grace for
               # listing lag, then fail loudly instead of hanging.
               GRACE=$((GRACE + 1))
               if [ "$GRACE" -gt 4 ]; then
-                echo "::error::$EXPECTED suite legs finished green but only $COUNT coverage-* artifacts exist. A suite leg stopped uploading coverage, or the suite job naming changed (legs must be named 'Test · <suite> / Run suite', with ' (<framework>)' on a release build)."
+                echo "::error::$LEGS suite legs of $EXPECTED suites finished green but only $COUNT coverage-* artifacts exist. A suite's coverage-framework leg stopped uploading coverage, or the suite job naming changed (legs must be named 'Test · <suite> / Run suite', with ' (<framework>)' on a release build)."
                 exit 1
               fi
             fi
-            echo "$DONE/$EXPECTED suites green, $COUNT coverage artifacts present — sleeping 30s"
+            echo "$DONE/$LEGS suite legs green, $COUNT of $EXPECTED coverage artifacts present; sleeping 30s"
             sleep 30
           done
 

@@ -52,6 +52,12 @@ on:
           pins its own, ["net11.0"] on every branch. A suite leg that selects only sample tests runs one leg per
           framework in this list instead (#2427).
         value: ${{ jobs.build.outputs.sample-test-frameworks }}
+      coverage-framework:
+        description: >-
+          The one target framework coverage is measured on: WhizbangDevelopmentTargetFramework in Directory.Build.props,
+          net11.0. A suite's leg on any other framework runs its tests without collecting coverage, so Quality, Sonar
+          and Codecov read one compilation of the library (#2135).
+        value: ${{ jobs.build.outputs.coverage-framework }}
 
 env:
   DOTNET_VERSION: '10.0.x'
@@ -73,6 +79,7 @@ jobs:
     outputs:
       test-frameworks: ${{ steps.frameworks.outputs.test-frameworks }}
       sample-test-frameworks: ${{ steps.frameworks.outputs.sample-test-frameworks }}
+      coverage-framework: ${{ steps.frameworks.outputs.coverage-framework }}
 
     steps:
       - name: Checkout
@@ -88,6 +95,7 @@ jobs:
 
       # Directory.Build.props decides the frameworks from the branch (WhizbangReleaseBuild), as Run-Tests.ps1 reads
       # them, so the suites split into the same frameworks this build compiles. The samples' own props pin theirs.
+      # Coverage is measured on the development framework alone (coverage-framework, #2135).
       - name: Name the frameworks the tests target
         id: frameworks
         shell: pwsh
@@ -103,6 +111,10 @@ jobs:
             Write-Host "$($output.Name): $json"
             "$($output.Name)=$json" >> $env:GITHUB_OUTPUT
           }
+          $coverage = ((dotnet msbuild Directory.Build.props -getProperty:WhizbangDevelopmentTargetFramework) | Out-String).Trim()
+          if (-not $coverage) { throw 'Could not read WhizbangDevelopmentTargetFramework from Directory.Build.props.' }
+          Write-Host "coverage-framework: $coverage"
+          "coverage-framework=$coverage" >> $env:GITHUB_OUTPUT
 
       - name: Cache NuGet packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
