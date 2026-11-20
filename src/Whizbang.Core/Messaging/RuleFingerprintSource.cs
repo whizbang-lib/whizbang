@@ -37,16 +37,23 @@ public sealed class CatalogRuleFingerprintSource : IRuleFingerprintSource {
 
   private readonly Lazy<IReadOnlyDictionary<string, string>> _hashes;
 
-  /// <summary>A source over the catalog and the stream lifecycle settings.</summary>
+  /// <summary>A source over the catalog, the stream lifecycle settings and the retired event types.</summary>
   /// <param name="catalog">The message-type catalog.</param>
   /// <param name="lifecycle">
   /// The stream lifecycle settings. Required: an end-of-life action is part of a type's rules, so a source built without
   /// them would fingerprint every type as having none and halt a pair whose peer read its settings (WHIZ501).
   /// </param>
-  public CatalogRuleFingerprintSource(IMessageTypeCatalog catalog, IOptions<StreamLifecycleOptions> lifecycle) {
+  /// <param name="retired">
+  /// The retired event types (#2329), or null for none. A retired type is no longer in the catalog, so its rule comes
+  /// from here; the turnkey registration always passes it.
+  /// </param>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CatalogRuleFingerprintSourceTests.cs:For_CoversEachRetiredName_AsRetired_ThoughTheCatalogNoLongerDeclaresItAsync</tests>
+  public CatalogRuleFingerprintSource(
+      IMessageTypeCatalog catalog, IOptions<StreamLifecycleOptions> lifecycle, IOptions<RetiredEventTypesOptions>? retired = null) {
     ArgumentNullException.ThrowIfNull(catalog);
     ArgumentNullException.ThrowIfNull(lifecycle);
-    _hashes = new(() => RulesOf(catalog, lifecycle.Value).ToDictionary(r => r.Key, r => r.Value.Hash(), StringComparer.Ordinal),
+    _hashes = new(() => RulesOf(catalog, lifecycle.Value, retired?.Value)
+        .ToDictionary(r => r.Key, r => r.Value.Hash(), StringComparer.Ordinal),
       LazyThreadSafetyMode.ExecutionAndPublication);
   }
 
@@ -70,8 +77,10 @@ public sealed class CatalogRuleFingerprintSource : IRuleFingerprintSource {
   /// <summary>Every event type's rules, by its name without the assembly.</summary>
   /// <param name="catalog">The catalog.</param>
   /// <param name="lifecycle">The stream lifecycle settings, or null.</param>
+  /// <param name="retired">The retired event types (#2329), or null for none: each is covered as retired.</param>
   /// <returns>The rules of each event type.</returns>
-  public static IReadOnlyDictionary<string, TypeRules> RulesOf(IMessageTypeCatalog catalog, StreamLifecycleOptions? lifecycle) {
+  public static IReadOnlyDictionary<string, TypeRules> RulesOf(
+      IMessageTypeCatalog catalog, StreamLifecycleOptions? lifecycle, RetiredEventTypesOptions? retired = null) {
     ArgumentNullException.ThrowIfNull(catalog);
     // not the digest rule: the per-type DigestExempt field a fingerprint carries, read from the one exempt list
     var exempt = new HashSet<string>(DigestExemptTypes.TypeNames, StringComparer.Ordinal);
@@ -87,6 +96,10 @@ public sealed class CatalogRuleFingerprintSource : IRuleFingerprintSource {
         EndOfLife = lifecycle is not null && lifecycle.Types.TryGetValue(name, out var type) ? type.Action.ToString() : null,
         DigestExempt = exempt.Contains(name),
       };
+    }
+    // #2329: a retired type's class is deleted, so the catalog no longer has it; startup refuses a name it still declares.
+    foreach (var name in retired?.RetiredNames() ?? []) {
+      rules[name] = new TypeRules(name) { Retired = true };
     }
     return rules;
   }

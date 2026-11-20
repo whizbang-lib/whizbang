@@ -87,4 +87,26 @@ public class CatalogRuleFingerprintSourceTests {
     await Assert.That(() => CatalogRuleFingerprintSource.RulesOf(null!, null)).Throws<ArgumentNullException>();
     await Assert.That(RuleTypeName.Of("global::Contracts.Placed, Contracts ")).IsEqualTo("Contracts.Placed");
   }
+
+  /// <summary>
+  /// #2329: a retired type is no longer in the catalog (the application deleted it), so its rule comes from configuration:
+  /// the source covers it, as retired, and a peer that has not retired it holds a different hash for it.
+  /// </summary>
+  [Test]
+  public async Task For_CoversEachRetiredName_AsRetired_ThoughTheCatalogNoLongerDeclaresItAsync() {
+    var retired = new RetiredEventTypesOptions { Names = { "Contracts.CouponIssued, Contracts" } };
+    var source = new CatalogRuleFingerprintSource(new Catalog(_event(typeof(Placed))), Options.Create(new StreamLifecycleOptions()),
+      Options.Create(retired));
+
+    var rules = source.RulesFor(["Contracts.CouponIssued, Contracts", TypeNameFormatter.Format(typeof(Placed))]);
+
+    await Assert.That(rules.TypeHashes.Keys).IsEquivalentTo(["Contracts.CouponIssued", _placed]);
+    await Assert.That(rules.TypeHashes["Contracts.CouponIssued"]).IsEqualTo(new TypeRules("Contracts.CouponIssued") { Retired = true }.Hash());
+    await Assert.That(source.RulesFor(null).TypeHashes.Keys).Contains("Contracts.CouponIssued")
+      .Because("every type this service has a rule for is in its service fingerprint");
+    await Assert.That(CatalogRuleFingerprintSource.RulesOf(new Catalog(), null, retired)["Contracts.CouponIssued"].Retired).IsTrue();
+    await Assert.That(new CatalogRuleFingerprintSource(new Catalog(), Options.Create(new StreamLifecycleOptions()))
+      .RulesFor(["Contracts.CouponIssued"]).TypeHashes).IsEmpty()
+      .Because("without the retired setting the type is unknown here, so it is not shared");
+  }
 }

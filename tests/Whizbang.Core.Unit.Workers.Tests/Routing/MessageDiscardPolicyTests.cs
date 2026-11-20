@@ -71,6 +71,35 @@ public class MessageDiscardPolicyTests {
     await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.None);
   }
 
+  /// <summary>
+  /// #2329: a retired type is discarded at receive whatever else would keep it (a consumer, an absorbed namespace), with
+  /// its own reason, and logged at Information once per type: an origin still sending it is a rollout not yet finished.
+  /// </summary>
+  [Test]
+  public async Task EvaluateReceive_ARetiredType_IsDiscardedAsRetired_EvenWhenConsumedOrAbsorbedAsync() {
+    using var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests.Retired");
+    var routing = new RoutingOptions();
+    routing.AbsorbNamespaces("Test.Contracts");
+    var logger = new RecordingLogger<MessageDiscardPolicy>();
+    var policy = new MessageDiscardPolicy(registry: new TestRegistry { Consumed = { CONSUMED_TYPE } }, logger: logger, meter: meter,
+      routingOptions: Options.Create(routing), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      retired: Options.Create(new RetiredEventTypesOptions { Names = { CONSUMED_TYPE } }));
+
+    var decision = policy.EvaluateReceive(CONSUMED_TYPE + ", Test.Contracts", topic: "t", subscription: "s");
+    policy.RecordDiscard(MessageDiscardGate.Receive, decision, CONSUMED_TYPE);
+    policy.RecordDiscard(MessageDiscardGate.Receive, decision, CONSUMED_TYPE);
+
+    await Assert.That(decision.ShouldDiscard).IsTrue();
+    await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.RetiredType);
+    await Assert.That(policy.IsRetired(CONSUMED_TYPE)).IsTrue();
+    await Assert.That(policy.EvaluateReceive(UNCONSUMED_TYPE, "t", "s").ShouldDiscard).IsFalse()
+      .Because("an unconsumed type in an absorbed namespace is still kept; only the retired type is turned away");
+    await Assert.That(logger.Entries.Select(e => e.Level)).IsEquivalentTo([LogLevel.Information, LogLevel.Debug])
+      .Because("the first sighting of a retired type is surfaced, the rest are routine");
+    await Assert.That(_newPolicy().Policy.IsRetired(CONSUMED_TYPE)).IsFalse()
+      .Because("a policy built without the retired setting retires nothing");
+  }
+
   private static MessageDiscardPolicy _newPolicyWithAbsorb(Meter meter, params string[] absorb) {
     var routing = new RoutingOptions();
     routing.AbsorbNamespaces(absorb);

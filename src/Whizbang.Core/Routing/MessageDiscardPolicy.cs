@@ -67,6 +67,16 @@ public interface IMessageDiscardPolicy {
   MessageDiscardDecision EvaluateOutbox(string payloadClrType);
 
   /// <summary>
+  /// Whether the payload type is retired (#2329): its events are discarded at receive whatever else would keep them,
+  /// and stream integrity never compares them. The default retires nothing.
+  /// </summary>
+  /// <param name="payloadClrType">The payload type name, in any form.</param>
+  /// <returns>True when the type is retired.</returns>
+  /// <docs>fundamentals/events/retired-event-types#the-receive-boundary</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/MessageDiscardPolicyTests.cs:EvaluateReceive_ARetiredType_IsDiscardedAsRetired_EvenWhenConsumedOrAbsorbedAsync</tests>
+  bool IsRetired(string payloadClrType) => false;
+
+  /// <summary>
   /// Record a discard — emits a structured log entry at the appropriate level (per
   /// <see cref="MessageDiscardReason"/>) and increments the <c>whizbang.message.skipped</c>
   /// OTel counter with consistent tags. Callers invoke this exactly once after acting
@@ -91,6 +101,7 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   private readonly PassiveCounter<long> _skippedCounter;
   private readonly IReadOnlySet<string> _absorbedNamespaces;
   private readonly IEventMarkerResolver _markerResolver;
+  private readonly Messaging.RetiredEventTypesOptions? _retired;
   // The tag attributes this host has a hook for. A tagged event is work for this host only where
   // one of these is the tag it carries.
   private readonly HashSet<Type> _hookedTagAttributes;
@@ -127,19 +138,23 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   /// <param name="coreOptions">Supplies the host's tag hooks, so an event whose only reason to exist
   /// here is a tag this host acts on is kept rather than dropped for having no receptor. Optional —
   /// when null, a tag is no reason to keep anything, which is the behavior that shipped.</param>
+  /// <param name="retired">The retired event types (#2329): discarded at receive whatever else would keep them.
+  /// Optional; when null, nothing is retired. The turnkey registration always passes it.</param>
   public MessageDiscardPolicy(
       IConsumerRegistry registry,
       ILogger<MessageDiscardPolicy> logger,
       Meter meter,
       IOptions<RoutingOptions> routingOptions,
       IEventMarkerResolver markerResolver,
-      Configuration.WhizbangCoreOptions? coreOptions = null) {
+      Configuration.WhizbangCoreOptions? coreOptions = null,
+      IOptions<Messaging.RetiredEventTypesOptions>? retired = null) {
     ArgumentNullException.ThrowIfNull(registry);
     _registry = registry;
     ArgumentNullException.ThrowIfNull(logger);
     _logger = logger;
     ArgumentNullException.ThrowIfNull(meter);
     _markerResolver = markerResolver;
+    _retired = retired?.Value;
     _absorbedNamespaces = routingOptions.Value.AbsorbedNamespaces;
     _hookedTagAttributes = coreOptions?.Tags.HookRegistrations.Select(h => h.AttributeType).ToHashSet() ?? [];
     _skippedCounter = meter.CreatePassiveCounter<long>(
@@ -160,6 +175,13 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
     if (_isBodyClaimEnvelope(payloadClrType)) {
       return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
     }
+    // #2329: a retired type is turned away first, whatever below would keep it.
+    if (IsRetired(payloadClrType)) {
+      return new MessageDiscardDecision(
+        ShouldDiscard: true,
+        Reason: MessageDiscardReason.RetiredType,
+        Detail: $"Payload type '{payloadClrType}' is retired ({Messaging.RetiredEventTypesOptions.SECTION}); its events are not stored again");
+    }
     if (_isCompositeType(payloadClrType)) {
       return new MessageDiscardDecision(ShouldDiscard: false, MessageDiscardReason.None);
     }
@@ -174,6 +196,9 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
       Reason: MessageDiscardReason.NoLocalConsumer,
       Detail: $"No local receptor or perspective consumes payload type '{payloadClrType}'");
   }
+
+  /// <inheritdoc />
+  public bool IsRetired(string payloadClrType) => _retired is { Names.Count: > 0 } retired && retired.IsRetired(payloadClrType);
 
   /// <summary>
   /// True when the payload's event namespace is in <see cref="RoutingOptions.AbsorbedNamespaces"/>. The
