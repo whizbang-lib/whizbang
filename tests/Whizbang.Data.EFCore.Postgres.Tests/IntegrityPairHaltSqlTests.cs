@@ -127,7 +127,7 @@ public class IntegrityPairHaltSqlTests : EFCoreTestBase {
     var loadedAfterResume = await coordinator.IntegrityLoadPairHaltsAsync();
     var next = await coordinator.IntegrityRecordPairHaltAsync(_halt("orders-svc", IntegrityPairSide.Origin, _t0.AddHours(5)));
 
-    await Assert.That(loadedAfterResume!).IsEmpty().Because("a resumed halt is history, not state a new process takes up");
+    await Assert.That(loadedAfterResume).IsEmpty().Because("a resumed halt is history, not state a new process takes up");
     await Assert.That(next!.HaltedAt).IsEqualTo(_t0.AddHours(5)).Because("a new halt starts its own clock");
     await Assert.That(await _countAsync(
         "SELECT COUNT(*) FROM wh_integrity_pair_halts WHERE resumed_at = '2026-11-20T09:45:00Z'::timestamptz"))

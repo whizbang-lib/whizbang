@@ -81,7 +81,9 @@ public sealed partial class RedeliveryRequestReceptor(
     // types it shares; a request from a release that predates the fingerprint is refused too. An operator's request and
     // a subscription backfill window are not judged by a digest, so they are served whatever the rules.
     if (!message.OperatorRequested && message.BackfillId is null
-        && !IntegrityPairGuard.Resolve(services).Admit(message.RequesterService, IntegrityPairSide.Origin, message.RuleFingerprint).IsAgreed) {
+        && !(await IntegrityPairGuard.Resolve(services)
+          .AdmitAsync(coordinator, message.RequesterService, IntegrityPairSide.Origin, message.RuleFingerprint, cancellationToken)
+          .ConfigureAwait(false)).IsAgreed) {
       metrics?.RedeliveryRequestsIgnored.Add(1, new KeyValuePair<string, object?>("reason", "pair_halted"));
       IntegrityTracing.SetOutcome(span, IntegrityTracing.OUTCOME_PAIR_HALTED);
       return;

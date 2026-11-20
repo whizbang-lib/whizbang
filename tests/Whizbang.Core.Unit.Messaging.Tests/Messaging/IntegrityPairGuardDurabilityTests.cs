@@ -37,7 +37,7 @@ public class IntegrityPairGuardDurabilityTests {
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-      Entries.Add((logLevel, formatter(state, exception)));
+      Entries.Add((logLevel, exception is null ? formatter(state, exception) : $"{formatter(state, exception)} {exception.Message}"));
   }
 
   /// <summary>A store that keeps halts as the database would: one open halt per pair, the earliest halted-at kept.</summary>
@@ -47,6 +47,8 @@ public class IntegrityPairGuardDurabilityTests {
     public int Loads { get; private set; }
     public int Records { get; private set; }
     public Exception? FailLoad { get; set; }
+    public TaskCompletionSource? HoldLoad { get; set; }
+    public Action? DuringRecord { get; set; }
     public Exception? FailWrites { get; set; }
 
     public Task<IReadOnlyList<IntegrityPairHaltRecord>?> IntegrityLoadPairHaltsAsync(CancellationToken cancellationToken = default) {
@@ -55,7 +57,12 @@ public class IntegrityPairGuardDurabilityTests {
         FailLoad = null;
         throw failure;
       }
-      return Task.FromResult<IReadOnlyList<IntegrityPairHaltRecord>?>([.. Open.Values]);
+      return HoldLoad is { } hold ? _afterAsync(hold.Task) : Task.FromResult<IReadOnlyList<IntegrityPairHaltRecord>?>([.. Open.Values]);
+    }
+
+    private async Task<IReadOnlyList<IntegrityPairHaltRecord>?> _afterAsync(Task hold) {
+      await hold;
+      return [.. Open.Values];
     }
 
     public Task<IntegrityPairHaltRecord?> IntegrityRecordPairHaltAsync(IntegrityPairHaltRecord halt, CancellationToken cancellationToken = default) {
@@ -63,10 +70,13 @@ public class IntegrityPairGuardDurabilityTests {
       if (FailWrites is { } failure) {
         throw failure;
       }
+      DuringRecord?.Invoke();
       var key = (halt.Peer, halt.Side);
-      var kept = Open.TryGetValue(key, out var open)
-        ? halt with { HaltedAt = open.HaltedAt < halt.HaltedAt ? open.HaltedAt : halt.HaltedAt, AlertedAt = open.AlertedAt }
-        : halt;
+      var kept = halt;
+      if (Open.TryGetValue(key, out var open)) {
+        var earliest = open.HaltedAt < halt.HaltedAt ? open.HaltedAt : halt.HaltedAt;
+        kept = halt with { HaltedAt = earliest, AlertedAt = open.AlertedAt };
+      }
       Open[key] = kept;
       return Task.FromResult<IntegrityPairHaltRecord?>(kept);
     }
@@ -223,11 +233,12 @@ public class IntegrityPairGuardDurabilityTests {
     _ = await other.AdmitAsync(store, PEER, IntegrityPairSide.Consumer, _differing());
     var (guard, _) = _process(time, TimeSpan.FromHours(2));
     _ = guard.Admit(PEER, IntegrityPairSide.Consumer, _matching());   // learned live, before the load
+    var loadsBefore = store.Loads;   // the other process's own load
 
     _ = await guard.AdmitAsync(store, "billing-svc", IntegrityPairSide.Consumer, _matching());
     _ = await guard.AdmitAsync(store, "billing-svc", IntegrityPairSide.Consumer, _matching());
 
-    await Assert.That(store.Loads).IsEqualTo(1).Because("one read per process");
+    await Assert.That(store.Loads - loadsBefore).IsEqualTo(1).Because("one read per process");
     await Assert.That(guard.Pairs.Single(p => p.Peer == PEER).HaltedSince).IsNull()
       .Because("a verdict this process reached itself is newer than the kept copy");
   }
@@ -298,5 +309,63 @@ public class IntegrityPairGuardDurabilityTests {
 
     await Assert.That(halted.IsAgreed).IsFalse().Because("an engine without the table still guards, in memory");
     await Assert.That(resumed.IsAgreed).IsTrue();
+  }
+
+  [Test]
+  public async Task ConcurrentFirstVerdicts_ShareOneLoadAsync() {
+    var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var store = new HaltStore { HoldLoad = hold };
+    var (guard, _) = _process(new FakeTimeProvider(_t0), TimeSpan.FromHours(2));
+
+    var first = guard.AdmitAsync(store, PEER, IntegrityPairSide.Origin, _matching());
+    var second = guard.AdmitAsync(store, "billing-svc", IntegrityPairSide.Origin, _matching());
+    hold.SetResult();
+    _ = await first;
+    _ = await second;
+
+    await Assert.That(store.Loads).IsEqualTo(1).Because("the second verdict waits on the load the first started");
+  }
+
+  [Test]
+  public async Task AnAlertAnotherInstanceAlreadyRaised_IsTakenUp_AndNotRaisedAgainAsync() {
+    var store = new HaltStore();
+    var time = new FakeTimeProvider(_t0);
+    var (guard, log) = _process(time, TimeSpan.FromHours(2));
+    _ = await guard.AdmitAsync(store, "billing-svc", IntegrityPairSide.Origin, _matching());   // loaded before the halt
+    store.Open[(PEER, IntegrityPairSide.Origin)] = new IntegrityPairHaltRecord(PEER, IntegrityPairSide.Origin,
+      RulePairHaltReason.TypeRules, [SHARED], 1, 1, "fp", 1, 1, "fp", _t0.AddHours(-3), _t0.AddHours(-1));   // a sibling's
+
+    _ = await guard.AdmitAsync(store, PEER, IntegrityPairSide.Origin, _differing());
+    time.Advance(TimeSpan.FromMinutes(1));
+    _ = await guard.AdmitAsync(store, PEER, IntegrityPairSide.Origin, _differing());
+
+    await Assert.That(guard.Pairs.Single(p => p.Peer == PEER).Alerted).IsTrue();
+    await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Critical)).IsFalse()
+      .Because("one service has one halt, and its alert already went out");
+  }
+
+  [Test]
+  public async Task AnAlertDueAtOnce_IsKeptWithTheHaltAsync() {
+    var store = new HaltStore();
+    var (guard, log) = _process(new FakeTimeProvider(_t0), TimeSpan.Zero);
+
+    _ = await guard.AdmitAsync(store, PEER, IntegrityPairSide.Consumer, _differing());
+
+    await Assert.That(log.Entries.Count(e => e.Level == LogLevel.Critical)).IsEqualTo(1);
+    await Assert.That(store.Open[(PEER, IntegrityPairSide.Consumer)].AlertedAt).IsEqualTo(_t0);
+    await Assert.That(guard.Pairs.Single().Alerted).IsTrue();
+  }
+
+  [Test]
+  public async Task APairThatResumedWhileItsHaltWasBeingWritten_StaysResumedAsync() {
+    var store = new HaltStore();
+    var (guard, _) = _process(new FakeTimeProvider(_t0), TimeSpan.FromHours(2));
+    _ = await guard.AdmitAsync(store, "billing-svc", IntegrityPairSide.Origin, _matching());
+    store.DuringRecord = () => guard.Admit(PEER, IntegrityPairSide.Origin, _matching());   // a concurrent message agrees
+
+    _ = await guard.AdmitAsync(store, PEER, IntegrityPairSide.Origin, _differing());
+
+    await Assert.That(guard.Pairs.Single(p => p.Peer == PEER).HaltedSince).IsNull()
+      .Because("taking up the kept halt must not undo a resumption that happened meanwhile");
   }
 }

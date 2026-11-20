@@ -84,7 +84,9 @@ public sealed partial class IntegrityCheckpointReceptor(
       ?? (IReadOnlyCollection<string>)[];
     // #2362: the origin stays known and its address and ownership are kept, but its counts are verified only while the
     // two apply the same rules to the types it counted. A halted pair keeps its pending gaps as they were.
-    if (!IntegrityPairGuard.Resolve(services).Admit(message.OriginServiceName, IntegrityPairSide.Consumer, message.RuleFingerprint).IsAgreed) {
+    if (!(await IntegrityPairGuard.Resolve(services)
+        .AdmitAsync(coordinator, message.OriginServiceName, IntegrityPairSide.Consumer, message.RuleFingerprint, cancellationToken)
+        .ConfigureAwait(false)).IsAgreed) {
       return;
     }
     var repairBudget = options.MaxAutoRepairRequestsPerCheckpoint;

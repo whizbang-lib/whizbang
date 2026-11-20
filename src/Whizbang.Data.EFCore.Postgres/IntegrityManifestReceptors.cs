@@ -167,7 +167,8 @@ public sealed partial class IntegrityManifestRequestReceptor(
     // answered with this side's, so it reports the same halt; one that sent none predates them and is not answered.
     var pairGuard = IntegrityPairGuard.Resolve(services);
     var rules = pairGuard.Stamp(eventTypes);
-    if (!pairGuard.Admit(message.RequesterService, IntegrityPairSide.Origin, message.RuleFingerprint).IsAgreed) {
+    if (!(await pairGuard.AdmitAsync(coordinator, message.RequesterService, IntegrityPairSide.Origin, message.RuleFingerprint, cancellationToken)
+        .ConfigureAwait(false)).IsAgreed) {
       if (message.RuleFingerprint is not null) {
         await _publishHaltedAnswerAsync(services, coordinator, transport, serializer, options, message, rules, cancellationToken)
           .ConfigureAwait(false);
@@ -519,7 +520,9 @@ public sealed partial class IntegrityManifestReceptor(
     // #2362: compare only while the pair applies the same rules to the types it shares. An answer without the origin's
     // rules comes from a release that predates them and may fold another way; an origin that halted the pair answers
     // only to carry its rules, so this side reports the same halt.
-    var verdict = IntegrityPairGuard.Resolve(services).Admit(message.OriginServiceName, IntegrityPairSide.Consumer, message.RuleFingerprint);
+    var verdict = await IntegrityPairGuard.Resolve(services)
+      .AdmitAsync(coordinator, message.OriginServiceName, IntegrityPairSide.Consumer, message.RuleFingerprint, cancellationToken)
+      .ConfigureAwait(false);
     if (!verdict.IsAgreed || message.PairHalted) {
       return;
     }

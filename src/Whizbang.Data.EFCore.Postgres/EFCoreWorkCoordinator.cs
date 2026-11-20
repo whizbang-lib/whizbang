@@ -973,6 +973,75 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>#2377: one read per process start, of the open halts only (one per peer and side).</remarks>
+  public Task<IReadOnlyList<IntegrityPairHaltRecord>?> IntegrityLoadPairHaltsAsync(CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync<IReadOnlyList<IntegrityPairHaltRecord>?>(async (cmd, schema) => {
+      cmd.CommandText = $"""
+        SELECT peer, side, reason, differing_types, local_semantics_version, local_eligibility_sql_version,
+               local_fingerprint, peer_semantics_version, peer_eligibility_sql_version, peer_fingerprint, halted_at, alerted_at
+        FROM {schema}.wh_integrity_pair_halts WHERE resumed_at IS NULL ORDER BY peer, side
+        """;
+      var halts = new List<IntegrityPairHaltRecord>();
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        halts.Add(new IntegrityPairHaltRecord(
+          reader.GetString(0), (IntegrityPairSide)reader.GetInt16(1), (Whizbang.Rules.RulePairHaltReason)reader.GetInt16(2),
+          reader.GetFieldValue<string[]>(3), reader.GetInt32(4), reader.GetInt32(5), reader.GetString(6),
+          reader.IsDBNull(7) ? null : reader.GetInt32(7), reader.IsDBNull(8) ? null : reader.GetInt32(8),
+          reader.IsDBNull(9) ? null : reader.GetString(9),
+          reader.GetFieldValue<DateTimeOffset>(10), reader.IsDBNull(11) ? null : reader.GetFieldValue<DateTimeOffset>(11)));
+      }
+      return halts;
+    }, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<IntegrityPairHaltRecord?> IntegrityRecordPairHaltAsync(IntegrityPairHaltRecord halt, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(halt);
+    return _withCoordinatorCommandAsync<IntegrityPairHaltRecord?>(async (cmd, schema) => {
+      cmd.CommandText = $"""
+        SELECT halted_at, alerted_at FROM {schema}.wh_integrity_pair_halt_record(
+          @p_peer, @p_side, @p_reason, @p_types, @p_local_semantics, @p_local_sql, @p_local_fingerprint,
+          @p_peer_semantics, @p_peer_sql, @p_peer_fingerprint, @p_at)
+        """;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_peer", halt.Peer));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_side", (short)halt.Side));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_reason", (short)halt.Reason));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_types", halt.DifferingTypes.ToArray()));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_local_semantics", halt.LocalSemanticsVersion));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_local_sql", halt.LocalEligibilitySqlVersion));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_local_fingerprint", halt.LocalFingerprint));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter<int?>("p_peer_semantics", NpgsqlTypes.NpgsqlDbType.Integer) { TypedValue = halt.PeerSemanticsVersion });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter<int?>("p_peer_sql", NpgsqlTypes.NpgsqlDbType.Integer) { TypedValue = halt.PeerEligibilitySqlVersion });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter<string?>("p_peer_fingerprint", NpgsqlTypes.NpgsqlDbType.Text) { TypedValue = halt.PeerFingerprint });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_at", halt.HaltedAt));
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      _ = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);   // one row, always
+      return halt with {
+        HaltedAt = reader.GetFieldValue<DateTimeOffset>(0),
+        AlertedAt = reader.IsDBNull(1) ? null : reader.GetFieldValue<DateTimeOffset>(1),
+      };
+    }, cancellationToken);
+  }
+
+  /// <inheritdoc />
+  public Task IntegrityRecordPairHaltAlertAsync(string peer, IntegrityPairSide side, DateTimeOffset at, CancellationToken cancellationToken = default) =>
+    _recordPairHaltStampAsync("wh_integrity_pair_halt_alerted", peer, side, at, cancellationToken);
+
+  /// <inheritdoc />
+  public Task IntegrityRecordPairResumedAsync(string peer, IntegrityPairSide side, DateTimeOffset at, CancellationToken cancellationToken = default) =>
+    _recordPairHaltStampAsync("wh_integrity_pair_halt_resumed", peer, side, at, cancellationToken);
+
+  private Task<bool> _recordPairHaltStampAsync(string function, string peer, IntegrityPairSide side, DateTimeOffset at, CancellationToken cancellationToken) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      cmd.CommandText = $"SELECT {schema}.{function}(@p_peer, @p_side, @p_at)";
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_peer", peer));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_side", (short)side));
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_at", at));
+      _ = await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      return true;
+    }, cancellationToken);
+
+  /// <inheritdoc />
   public Task<IntegrityGapTrackerState?> IntegrityLoadGapTrackerStateAsync(CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync<IntegrityGapTrackerState?>(async (cmd, schema) => {
       // #2104: one read per process start, two primary-key-ordered scans of small tables (one row per origin, one per
