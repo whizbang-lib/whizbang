@@ -381,62 +381,6 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       (type.TypeKind == TypeKind.Class && !type.IsSealed);
 
   /// <summary>
-  /// Finds all concrete (non-abstract) types in the compilation that derive from or implement
-  /// the given type. Used for polymorphic receptor expansion.
-  /// </summary>
-  internal static System.Collections.Generic.List<string> FindConcreteSubtypes(
-      Compilation compilation, string baseTypeFQN) {
-    var baseSymbol = compilation.GetTypeByMetadataName(
-        baseTypeFQN.Replace("global::", ""));
-    if (baseSymbol is null) {
-      return [];
-    }
-
-    var result = new System.Collections.Generic.List<string>();
-    _walkNamespaceForSubtypes(compilation.GlobalNamespace, baseSymbol, result);
-    return result;
-  }
-
-  private static void _walkNamespaceForSubtypes(
-      INamespaceSymbol ns, INamedTypeSymbol target, System.Collections.Generic.List<string> result) {
-    foreach (var type in ns.GetTypeMembers()) {
-      _checkTypeAndNestedTypes(type, target, result);
-    }
-    foreach (var childNs in ns.GetNamespaceMembers()) {
-      _walkNamespaceForSubtypes(childNs, target, result);
-    }
-  }
-
-  private static void _checkTypeAndNestedTypes(
-      INamedTypeSymbol type, INamedTypeSymbol target, System.Collections.Generic.List<string> result) {
-    if (!type.IsAbstract && type.TypeKind == TypeKind.Class && _isSubtypeOf(type, target)) {
-      result.Add(TypeNameHelper.GetFullyQualifiedName(type));
-    }
-    // Recurse into nested types (e.g., events nested inside static contract classes)
-    foreach (var nested in type.GetTypeMembers()) {
-      _checkTypeAndNestedTypes(nested, target, result);
-    }
-  }
-
-  /// <summary>
-  /// Checks if <paramref name="type"/> implements or inherits from <paramref name="target"/>.
-  /// </summary>
-  private static bool _isSubtypeOf(INamedTypeSymbol type, INamedTypeSymbol target) {
-    if (target.TypeKind == TypeKind.Interface) {
-      return type.AllInterfaces.Contains(target, SymbolEqualityComparer.Default);
-    }
-
-    var current = type.BaseType;
-    while (current is not null) {
-      if (SymbolEqualityComparer.Default.Equals(current, target)) {
-        return true;
-      }
-      current = current.BaseType;
-    }
-    return false;
-  }
-
-  /// <summary>
   /// Extracts lifecycle stages from [FireAt] attributes on a receptor class.
   /// Returns an array of fully qualified lifecycle stage enum names (e.g., "Whizbang.Core.LifecycleStage.PostPerspectiveDetached").
   /// Returns empty array if no [FireAt] attributes found (receptor will default to ImmediateDetached).
@@ -2203,13 +2147,16 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 /// <param name="Subtypes">The concrete subtypes of each polymorphic message type a receptor handles.</param>
 internal sealed record ReceptorCompilationFacts(string? AssemblyName, EquatableArray<PolymorphicMessageSubtypes> Subtypes) {
   /// <summary>Reads the facts for <paramref name="receptors"/> from <paramref name="compilation"/>.</summary>
-  public static ReceptorCompilationFacts From(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) =>
-    new(compilation.AssemblyName, [.. receptors
+  public static ReceptorCompilationFacts From(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
+    var messageTypes = receptors
         .Where(static r => r.IsPolymorphicMessageType)
         .Select(static r => r.MessageType)
         .Distinct()
-        .Select(messageType => new PolymorphicMessageSubtypes(
-          messageType, [.. ReceptorDiscoveryGenerator.FindConcreteSubtypes(compilation, messageType)]))]);
+        .ToList();
+    var index = ConcreteSubtypeIndex.Build(compilation, messageTypes);
+    return new(compilation.AssemblyName, [.. messageTypes
+        .Select(messageType => new PolymorphicMessageSubtypes(messageType, [.. index.SubtypesOf(messageType)]))]);
+  }
 
   /// <summary>The concrete subtypes of <paramref name="messageType"/>, one of the polymorphic types a receptor handles.</summary>
   public EquatableArray<string> ConcreteSubtypesOf(string messageType) =>
