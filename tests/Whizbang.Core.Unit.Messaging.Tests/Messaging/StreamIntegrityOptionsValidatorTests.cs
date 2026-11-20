@@ -53,11 +53,11 @@ public class StreamIntegrityOptionsValidatorTests {
   [Arguments(0)]
   [Arguments(-1)]
   public async Task Validate_ARepairProgressWindowBelowOneMinute_FailsNamingTheKeyAsync(int minutes) {
-    var result = new StreamIntegrityOptionsValidator().Validate(null, new StreamIntegrityOptions { RepairProgressWindowMinutes = minutes });
+    var result = new StreamIntegrityOptionsValidator().Validate(null, new StreamIntegrityOptions { CompletionWindowMinutes = minutes });
 
     await Assert.That(result.Failed).IsTrue()
       .Because("progress and an ETA over an empty window divide by nothing (#2261)");
-    await Assert.That(result.FailureMessage).Contains("Whizbang:StreamIntegrity:RepairProgressWindowMinutes");
+    await Assert.That(result.FailureMessage).Contains("Whizbang:StreamIntegrity:CompletionWindowMinutes");
   }
 
   [Test]

@@ -12,7 +12,7 @@ namespace Whizbang.Core.Tests.Observability;
 
 /// <summary>
 /// #2261: integrity completion reported directly. <c>verified_percent</c> (per origin, and all origins weighted by what
-/// each committed), <c>repair_progress_percent</c> and <c>backlog_eta_seconds</c> are conveniences derived from base
+/// each committed), <c>repair_close_ratio_percent</c> and <c>backlog_eta_seconds</c> are conveniences derived from base
 /// meters; each reports no series at all until it has a reading, and a reading that has no value (nothing opened in the
 /// window, a backlog that is not shrinking) reports none rather than a misleading number.
 /// </summary>
@@ -21,7 +21,9 @@ namespace Whizbang.Core.Tests.Observability;
 public class StreamIntegrityCompletionMetricsTests {
   private const string VERIFIED = "whizbang.stream_integrity.verified_percent";
   private const string VERIFIED_ALL = "whizbang.stream_integrity.verified_percent_all_origins";
-  private const string PROGRESS = "whizbang.stream_integrity.repair_progress_percent";
+  private const string CLOSE_RATIO = "whizbang.stream_integrity.repair_close_ratio_percent";
+  // #2317: the close ratio's name until it was renamed; still reported, with the same value, for one release.
+  private const string DEPRECATED_PROGRESS = "whizbang.stream_integrity.repair_progress_percent";
   private const string ETA = "whizbang.stream_integrity.backlog_eta_seconds";
 
   private static StreamIntegrityMetrics _metrics() =>
@@ -44,7 +46,10 @@ public class StreamIntegrityCompletionMetricsTests {
 
     await Assert.That(names).Contains(VERIFIED).Because("dashboards and alerts name these instruments");
     await Assert.That(names).Contains(VERIFIED_ALL);
-    await Assert.That(names).Contains(PROGRESS);
+    await Assert.That(names).Contains(CLOSE_RATIO)
+      .Because("#2317: 100 * closed / opened is a ratio of two rates, so its name says ratio, not progress");
+    await Assert.That(names).Contains(DEPRECATED_PROGRESS)
+      .Because("#2317: the old name stays for one release so a dashboard built on it does not go blank on upgrade");
     await Assert.That(names).Contains(ETA);
   }
 
@@ -52,7 +57,7 @@ public class StreamIntegrityCompletionMetricsTests {
   public async Task BeforeAnyReading_NoDerivedGaugeReportsASeriesAsync() {
     var metrics = _metrics();
 
-    foreach (var name in new[] { VERIFIED, VERIFIED_ALL, PROGRESS, ETA }) {
+    foreach (var name in new[] { VERIFIED, VERIFIED_ALL, CLOSE_RATIO, DEPRECATED_PROGRESS, ETA }) {
       await Assert.That(ProbeMeterReader.ReadDoubleSeries(_meterOf(metrics), name)).IsEmpty()
         .Because($"{name} has no value before its first reading, and a zero would read as no progress at all");
     }
@@ -99,30 +104,47 @@ public class StreamIntegrityCompletionMetricsTests {
   }
 
   [Test]
-  public async Task ARepairProgressReading_ReportsEachValueItHasAsync() {
+  public async Task ARepairRatesReading_ReportsEachValueItHasAsync() {
     var metrics = _metrics();
 
-    metrics.UpdateRepairProgress(new RepairProgressReading { Reported = true, ProgressPercent = 75.0, EtaSeconds = 10_800.0 });
+    metrics.UpdateRepairRates(new RepairRatesReading { Reported = true, CloseRatioPercent = 75.0, EtaSeconds = 10_800.0 });
 
-    await Assert.That(ProbeMeterReader.ReadDoubleSeries(_meterOf(metrics), PROGRESS).Single().Value).IsEqualTo(75.0);
+    await Assert.That(ProbeMeterReader.ReadDoubleSeries(_meterOf(metrics), CLOSE_RATIO).Single().Value).IsEqualTo(75.0);
     await Assert.That(ProbeMeterReader.ReadDoubleSeries(_meterOf(metrics), ETA).Single().Value).IsEqualTo(10_800.0);
 
-    metrics.UpdateRepairProgress(new RepairProgressReading { Reported = true, ProgressPercent = 120.0 });
+    metrics.UpdateRepairRates(new RepairRatesReading { Reported = true, CloseRatioPercent = 120.0 });
 
-    await Assert.That(ProbeMeterReader.ReadDoubleSeries(_meterOf(metrics), PROGRESS).Single().Value).IsEqualTo(120.0);
+    await Assert.That(ProbeMeterReader.ReadDoubleSeries(_meterOf(metrics), CLOSE_RATIO).Single().Value).IsEqualTo(120.0);
     await Assert.That(ProbeMeterReader.ReadDoubleSeries(_meterOf(metrics), ETA)).IsEmpty()
       .Because("a backlog that is not shrinking has no ETA, and reports none rather than a sentinel");
   }
 
   [Test]
-  public async Task WithdrawingTheRepairProgress_StopsBothGaugesAsync() {
+  public async Task TheDeprecatedProgressName_ReportsExactlyTheCloseRatio_AndIsWithdrawnWithItAsync() {
     var metrics = _metrics();
-    metrics.UpdateRepairProgress(new RepairProgressReading { Reported = true, ProgressPercent = 75.0, EtaSeconds = 60.0 });
 
-    metrics.UpdateRepairProgress(null);
+    metrics.UpdateRepairRates(new RepairRatesReading { Reported = true, CloseRatioPercent = 560.0 });
 
-    await Assert.That(metrics.CurrentRepairProgressForTest.Reported).IsFalse();
-    await Assert.That(ProbeMeterReader.ReadDoubleSeries(_meterOf(metrics), PROGRESS)).IsEmpty()
+    await Assert.That(ProbeMeterReader.ReadDoubleSeries(_meterOf(metrics), DEPRECATED_PROGRESS).Single().Value).IsEqualTo(560.0)
+      .Because("#2317: a dashboard still on the old name reads the same number until it moves to repair_close_ratio_percent");
+    await Assert.That(ProbeMeterReader.ReadDoubleSeries(_meterOf(metrics), CLOSE_RATIO).Single().Value).IsEqualTo(560.0);
+
+    metrics.UpdateRepairRates(new RepairRatesReading { Reported = true });
+
+    await Assert.That(ProbeMeterReader.ReadDoubleSeries(_meterOf(metrics), DEPRECATED_PROGRESS)).IsEmpty()
+      .Because("no openings in the window is no measurement under either name");
+    await Assert.That(ProbeMeterReader.ReadDoubleSeries(_meterOf(metrics), CLOSE_RATIO)).IsEmpty();
+  }
+
+  [Test]
+  public async Task WithdrawingTheRepairRates_StopsEveryGaugeAsync() {
+    var metrics = _metrics();
+    metrics.UpdateRepairRates(new RepairRatesReading { Reported = true, CloseRatioPercent = 75.0, EtaSeconds = 60.0 });
+
+    metrics.UpdateRepairRates(null);
+
+    await Assert.That(metrics.CurrentRepairRatesForTest.Reported).IsFalse();
+    await Assert.That(ProbeMeterReader.ReadDoubleSeries(_meterOf(metrics), CLOSE_RATIO)).IsEmpty()
       .Because("one instance per service reports these, as it does the backlog they are computed from");
     await Assert.That(ProbeMeterReader.ReadDoubleSeries(_meterOf(metrics), ETA)).IsEmpty();
   }

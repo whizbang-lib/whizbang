@@ -72,14 +72,14 @@ public class IntegrityCompletionTests {
   [Arguments(200L, 150L, 75.0)]
   [Arguments(50L, 100L, 200.0)]
   [Arguments(10L, 0L, 0.0)]
-  public async Task RepairProgressPercent_IsClosedOverOpenedAsync(long opened, long closed, double expected) {
+  public async Task RepairCloseRatioPercent_IsClosedOverOpenedAsync(long opened, long closed, double expected) {
     // Above 100: more closed than opened in the window, so the backlog shrank.
-    await Assert.That(IntegrityCompletion.RepairProgressPercent(opened, closed)).IsEqualTo(expected);
+    await Assert.That(IntegrityCompletion.RepairCloseRatioPercent(opened, closed)).IsEqualTo(expected);
   }
 
   [Test]
-  public async Task RepairProgressPercent_WithNothingOpened_IsNoMeasurementAsync() {
-    await Assert.That(IntegrityCompletion.RepairProgressPercent(0, 30)).IsNull()
+  public async Task RepairCloseRatioPercent_WithNothingOpened_IsNoMeasurementAsync() {
+    await Assert.That(IntegrityCompletion.RepairCloseRatioPercent(0, 30)).IsNull()
       .Because("a percentage of nothing is not a number; a window with no openings has no progress to report");
   }
 
