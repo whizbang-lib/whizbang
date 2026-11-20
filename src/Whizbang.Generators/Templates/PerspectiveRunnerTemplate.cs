@@ -1612,7 +1612,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             var collectiveMark = collectiveFence is { } fenceBefore
                 ? await _collectiveMarkAfterWriteAsync(fenceBefore, perspectiveName, streamId, cancellationToken)
                 : new CollectiveMark(Deferred: false, ThroughSequence: null);
-            if (!collectiveMark.Deferred) {
+            if (!collectiveMark.Deferred && await _cadenceSnapshotSlotTakenAsync(streamId, perspectiveName, cancellationToken)) {
+              // #2456: the boundary snapshot keeps the slot; the count restarts so the slot is not asked again every batch.
+              _eventsSinceLastSnapshot.TryRemove(streamId, out _);
+            } else if (!collectiveMark.Deferred) {
               // Slice 26.11: resolve commit_sequence for the snapshot anchor so subsequent
               // rewinds can locate the snapshot by commit_sequence (deterministic) rather
               // than event_id (subject to UUIDv7 generation-time race). Null is OK: the
@@ -2792,7 +2795,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           && !pendingPurge && updatedModel is not null && producedByApply && heldThrough.Settled) {
         eventsSinceIntermediateSnapshot++;
         // A due snapshot waits for the next point where the fold is a version prefix (#2379).
-        if (eventsSinceIntermediateSnapshot >= rewindSnapshotInterval && prefixAt is not null) {
+        if (eventsSinceIntermediateSnapshot >= rewindSnapshotInterval && prefixAt is not null
+            && !await _cadenceSnapshotSlotTakenAsync(streamId, perspectiveName, cancellationToken)) {
           try {
             // Slice 26.11: resolve commit_sequence for the intermediate snapshot too,
             // so a rewind triggered by a "very late" event with commit_sequence between
@@ -2958,7 +2962,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // rewinds — defeating the deterministic-replay invariant the column was added for.
       if (_snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
           && !pendingPurge && updatedModel is not null && producedByApply && lastSuccessfulEventId.HasValue
-          && outcome.CollectivesSettled) {
+          && outcome.CollectivesSettled
+          && !await _cadenceSnapshotSlotTakenAsync(streamId, perspectiveName, cancellationToken)) {
         // #2379: taken at the event with the highest version the replay read, so the snapshot's version names the events
         // it holds (the floor's and every one read above it). The last event folded can sit lower in a stream the replay
         // folds in origin order.
@@ -3378,12 +3383,27 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // the row. At the cursor the row already is that model, so the bootstrap at the cursor is taken as before. A model with
   // collectives folds the row's collectives too (#2456), as a rewind from the same floor would: those placed before the
   // last of the stream's events through the boundary, and none placed after all of them.
+  // #2456: the snapshot written at the reap boundary takes the slot, and the snapshots below or above it go: only the
+  // boundary moves an ephemeral perspective's floor, and the stream keeps the one snapshot its cadence allows.
   public async Task<global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome> TryBootstrapSnapshotThroughAsync(
       Guid streamId,
       string perspectiveName,
       Guid lastProcessedEventId,
       Guid boundaryEventId,
       CancellationToken cancellationToken = default) {
+    var outcome = await _bootstrapThroughAsync(streamId, perspectiveName, lastProcessedEventId, boundaryEventId, cancellationToken);
+    if (outcome == global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Written) {
+      await _snapshotStore!.PruneOldSnapshotsAsync(streamId, perspectiveName, _snapshotCadence().Retention, cancellationToken);
+    }
+    return outcome;
+  }
+
+  private async Task<global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome> _bootstrapThroughAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid lastProcessedEventId,
+      Guid boundaryEventId,
+      CancellationToken cancellationToken) {
     if (boundaryEventId == lastProcessedEventId) {
       return await TryBootstrapSnapshotAsync(streamId, perspectiveName, lastProcessedEventId, cancellationToken);
     }
@@ -3505,6 +3525,17 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     }
     return (folded, held.Mark);
   }
+
+  /// <summary>
+  /// Whether a snapshot the live apply or a replay would take must give way to the one the stream holds (#2456). An
+  /// ephemeral perspective keeps one snapshot, its rewind floor, and the floor moves only to a point the grace window has
+  /// closed on: the reap boundary, through the reap-driven bootstrap. A snapshot at the tip sits above bodies still inside
+  /// the window, so it fills an empty slot but never replaces the snapshot there: replacing a boundary snapshot left a late
+  /// event below the tip with no floor once the bodies under the boundary were reaped. A Sourced perspective's cadence is
+  /// unchanged.
+  /// </summary>
+  private async Task<bool> _cadenceSnapshotSlotTakenAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken) =>
+      _isEphemeralPerspective && await _snapshotStore!.HasAnySnapshotAsync(streamId, perspectiveName, cancellationToken);
 
   // The snapshot cadence: every how many applied events a run snapshots, and how many snapshots a stream keeps.
   // Ephemeral perspectives snapshot on their own aggressive, single-slot cadence so a fresh rewind floor exists
