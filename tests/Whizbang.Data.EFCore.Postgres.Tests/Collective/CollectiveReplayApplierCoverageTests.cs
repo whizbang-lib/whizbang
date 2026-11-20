@@ -363,7 +363,7 @@ public class CollectiveReplayApplierCoverageTests {
   // event without a sequence must not pull a collective ahead of an event it was minted after.
   [Test]
   public async Task InterleaveAfterAsync_WithAnUnsequencedLateEvent_KeepsEachCollectiveAfterEveryEventItFollowedAsync() {
-    var (applier, collectives) = _collectivesAt((_id(0x10), 5), (_id(0x25), null));
+    var (applier, collectives) = _collectivesAt((_id(0x05), null), (_id(0x10), 5), (_id(0x25), null));
     var late = _streamEvent(_id(0x30), null);
     var sequenced = _streamEvent(_id(0x20), 10);
 
@@ -371,9 +371,10 @@ public class CollectiveReplayApplierCoverageTests {
       typeof(ProbeModel), [late, sequenced], new CollectiveReplayStart("tenant-a"), CancellationToken.None);
 
     await Assert.That(merged.Select(e => e.MessageId)).IsEquivalentTo(
-      [collectives[0].MessageId, late.MessageId, sequenced.MessageId, collectives[1].MessageId],
+      [collectives[0].MessageId, collectives[1].MessageId, late.MessageId, sequenced.MessageId, collectives[2].MessageId],
       TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("the unsequenced collective's id follows the event at 10's id, and that event replays after the late one");
+      .Because("the first two collectives precede both events, and the unsequenced one minted after the event at 10 "
+             + "follows it, which replays after the late one");
   }
 
   // #2449: a sequenced collective compared with an unsequenced event goes by id, and the events after that one in the
