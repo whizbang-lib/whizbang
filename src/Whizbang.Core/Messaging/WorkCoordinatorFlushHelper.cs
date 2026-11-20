@@ -51,7 +51,8 @@ internal readonly record struct FlushContext(
   WorkCoordinatorMetrics? Metrics = null,
   string Strategy = "",
   bool RaiseOnMixedStream = false,
-  DetachedLifecycleWork? DetachedWork = null);
+  DetachedLifecycleWork? DetachedWork = null,
+  bool IsolatePreStoreFailures = false);
 
 /// <summary>
 /// Shim used by the four <see cref="IWorkCoordinatorStrategy"/> implementations to flush
