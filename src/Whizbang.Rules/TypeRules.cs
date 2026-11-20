@@ -51,7 +51,7 @@ public sealed record TypeRules(string TypeName) {
   public string Canonical() =>
     string.Create(CultureInfo.InvariantCulture,
       $"type={TypeName};ephemeral={Ephemeral};superseding={Superseding};group={SupersedingGroup};key={SupersedingKey};"
-      + $"terminal={Terminal};end_of_life={EndOfLife};digest_exempt={DigestExempt}");
+      + $"terminal={Terminal};end_of_life={EndOfLife};digest_exempt={DigestExempt};retired={Retired}");
 
   /// <summary>The rules' hash: the first 16 lowercase hex digits of the SHA-256 of <see cref="Canonical"/>.</summary>
   /// <returns>The hash.</returns>

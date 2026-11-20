@@ -32,13 +32,15 @@ public class TypeRulesTests {
       Terminal = true,
       EndOfLife = "Archive",
       DigestExempt = true,
+      Retired = true,
     };
 
     await Assert.That(rules.Canonical()).IsEqualTo(
       "type=Contracts.OrderPlaced;ephemeral=WhenConsumed;Memory;superseding=True;group=g;key=Model;terminal=True;"
-      + "end_of_life=Archive;digest_exempt=True");
+      + "end_of_life=Archive;digest_exempt=True;retired=True");
     await Assert.That(_base.Canonical()).IsEqualTo(
-      "type=Contracts.OrderPlaced;ephemeral=;superseding=False;group=;key=;terminal=False;end_of_life=;digest_exempt=False");
+      "type=Contracts.OrderPlaced;ephemeral=;superseding=False;group=;key=;terminal=False;end_of_life=;digest_exempt=False;"
+      + "retired=False");
   }
 
   /// <summary>Each rule field, changed alone, changes the hash: a rule a fingerprint ignored could differ unseen.</summary>
@@ -53,6 +55,8 @@ public class TypeRulesTests {
       _base with { Terminal = true },
       _base with { EndOfLife = "Archive" },
       _base with { DigestExempt = true },
+      // #2329: a retired type is counted by no digest, so two services that disagree on it must halt their pair.
+      _base with { Retired = true },
     ];
 
     var hashes = variants.Select(v => v.Hash()).Append(_base.Hash()).ToList();
