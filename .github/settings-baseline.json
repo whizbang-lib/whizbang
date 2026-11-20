@@ -12,7 +12,7 @@
     }
   },
   "actions": {
-    "fork_approval": "first_time_contributors",
+    "fork_approval": "all_external_contributors",
     "organization": {
       "allowed_actions": "all",
       "enabled_repositories": "all",
@@ -308,13 +308,13 @@
         },
         {
           "parameters": {
-            "check_response_timeout_minutes": 90,
+            "check_response_timeout_minutes": 120,
             "grouping_strategy": "ALLGREEN",
-            "max_entries_to_build": 5,
+            "max_entries_to_build": 1,
             "max_entries_to_merge": 5,
             "merge_method": "MERGE",
-            "min_entries_to_merge": 1,
-            "min_entries_to_merge_wait_minutes": 5
+            "min_entries_to_merge": 3,
+            "min_entries_to_merge_wait_minutes": 15
           },
           "type": "merge_queue"
         },
