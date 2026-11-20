@@ -77,6 +77,7 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   private int _processedConsumer;
   private DateTimeOffset _clock = _t0;
   private TimeProvider? _consumerClock;
+  private Func<ServiceProvider>? _buildConsumer;
 
   private TwoServiceHarness(Dictionary<string, EventFlags> markers) => _markers = markers;
 
@@ -130,8 +131,9 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
       rules: originRules);
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(h.OriginId, ORIGIN_NAME, DateTimeOffset.UnixEpoch, ORIGIN_REQUEST_TOPIC);
-    h._consumerProvider = h._buildProvider(h.Consumer, h._consumerTransport, h._consumerDispatcher, CONSUMER_NAME, both, tracker,
+    h._buildConsumer = () => h._buildProvider(h.Consumer, h._consumerTransport, h._consumerDispatcher, CONSUMER_NAME, both, tracker,
       consumedEventTypes, consumerClock, consumerRules, consumerMetrics);
+    h._consumerProvider = h._buildConsumer();
     h._originRequestReceptor = new IntegrityManifestRequestReceptor(
       h._originProvider.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestRequestReceptor>.Instance);
     h._originRedeliveryReceptor = new RedeliveryRequestReceptor(
@@ -139,6 +141,17 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
     h._consumerManifestReceptor = new IntegrityManifestReceptor(
       h._consumerProvider.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
     return h;
+  }
+
+  /// <summary>
+  /// #2377: the consumer restarts. Its services, and with them its pair guard, are built again over the same store, so
+  /// whatever the guard knew in memory is gone and only what the store kept carries over.
+  /// </summary>
+  public async Task RestartConsumerAsync() {
+    await _consumerProvider!.DisposeAsync();
+    _consumerProvider = _buildConsumer!();
+    _consumerManifestReceptor = new IntegrityManifestReceptor(
+      _consumerProvider.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
   }
 
   public async ValueTask DisposeAsync() {
@@ -513,7 +526,7 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
     // #2362: each side's rules and its own pair guard, as the turnkey registration gives every service.
     services.AddSingleton(rules ?? CatalogRuleFingerprintSource.Empty);
     services.AddSingleton(sp => new IntegrityPairGuard(sp.GetRequiredService<IRuleFingerprintSource>(), Options.Create(options),
-      NullLogger<IntegrityPairGuard>.Instance));
+      NullLogger<IntegrityPairGuard>.Instance, sp.GetService<TimeProvider>()));
     services.AddScoped<IWorkCoordinator>(_ =>
       new EFCoreWorkCoordinator<WorkCoordinationDbContext>(new WorkCoordinationDbContext(store.Options), _json));
     services.AddSingleton<ITransport>(transport);

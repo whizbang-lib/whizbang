@@ -137,7 +137,7 @@ public class SchemaCommandBoundarySegmentTests {
 /// <docs>operations/infrastructure/migrations#statements-that-need-a-commit-between-them</docs>
 [Category("Integration")]
 [Category("Shard1")]
-public class SchemaCommandBoundaryTests : IAsyncDisposable {
+public class SchemaCommandBoundaryTests {
   private const string TABLE = "wh_per_boundary";
   private const string INDEX = "idx_boundary_occurredat_json";
   private const string OLD_RENDERING = "2026-04-21T22:38:17.357886+00:00";
@@ -199,12 +199,11 @@ public class SchemaCommandBoundaryTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_databaseName is not null) {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
 
-    GC.SuppressFinalize(this);
   }
 
   /// <summary>

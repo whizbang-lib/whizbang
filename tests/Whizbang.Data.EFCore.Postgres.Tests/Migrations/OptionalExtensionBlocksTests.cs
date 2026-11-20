@@ -32,7 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 [Category("Integration")]
 [Category("Shard1")]
-public class OptionalExtensionBlocksTests : IAsyncDisposable {
+public class OptionalExtensionBlocksTests {
   private const string MISSING = "wh_no_such_extension";
   private string _databaseName = null!;
   private string _connectionString = null!;
@@ -46,11 +46,10 @@ public class OptionalExtensionBlocksTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_databaseName is not null) {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
-    GC.SuppressFinalize(this);
   }
 
   private async Task<string> _scalarAsync(string sql) {

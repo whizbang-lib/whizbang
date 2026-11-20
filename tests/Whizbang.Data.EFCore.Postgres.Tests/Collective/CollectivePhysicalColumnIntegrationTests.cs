@@ -37,7 +37,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 [Category("Integration")]
 [Category("CollectiveEvents")]
 [Category("Shard3")]
-public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
+public class CollectivePhysicalColumnIntegrationTests {
   private const string SPLIT_TABLE = "wh_per_physical_ticket";
   private const string EXTRACTED_TABLE = "wh_per_physical_order";
 
@@ -666,11 +666,6 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
       _databaseName = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   private PhysicalDbContext _newContext() {

@@ -28,7 +28,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <tests>No tests found</tests>
 [Category("Integration")]
 [Category("Shard1")]
-public class PhysicalFieldIntegrationTests : IAsyncDisposable {
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable", Justification = "#1954: the [After(Test)] hook disposes them, the fixture's one teardown; a disposable fixture would be disposed by TUnit a second time.")]
+public class PhysicalFieldIntegrationTests {
   private static readonly Uuid7IdProvider _idProvider = new();
 
   static PhysicalFieldIntegrationTests() {
@@ -152,11 +153,6 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
 
       _testDatabaseName = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   private async Task _initializeSchemaAsync() {

@@ -42,7 +42,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.SecondPass;
 [Category("Integration")]
 [Category("CollectiveEvents")]
 [Category("Shard3")]
-public class CollectiveAdapterNullAndSchemaTests : IAsyncDisposable {
+public class CollectiveAdapterNullAndSchemaTests {
   private const string TABLE = "wh_per_nullable_ticket";
   private const string SCHEMA = "public";
   private const string TENANT = "t-null";
@@ -229,11 +229,6 @@ public class CollectiveAdapterNullAndSchemaTests : IAsyncDisposable {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
       _databaseName = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   private NullableDbContext _newContext() {

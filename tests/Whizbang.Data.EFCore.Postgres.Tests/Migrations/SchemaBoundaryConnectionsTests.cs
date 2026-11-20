@@ -34,7 +34,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <docs>operations/infrastructure/migrations#statements-that-need-a-commit-between-them</docs>
 [Category("Integration")]
 [Category("Shard1")]
-public class SchemaBoundaryConnectionsTests : IAsyncDisposable {
+public class SchemaBoundaryConnectionsTests {
   private NpgsqlDataSource _dataSource = null!;
   private string _connectionString = null!;
 
@@ -51,12 +51,11 @@ public class SchemaBoundaryConnectionsTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_dataSource is not null) {
       await _dataSource.DisposeAsync();
     }
 
-    GC.SuppressFinalize(this);
   }
 
   /// <summary>A context configured the way the turnkey registration configures one.</summary>

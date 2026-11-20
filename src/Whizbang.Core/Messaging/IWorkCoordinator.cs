@@ -2261,6 +2261,61 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<bool>?>(null);
 
   /// <summary>
+  /// #2377: the pair guard's open halts (one per peer and side, not yet resumed), read once by a new process so a halt
+  /// that began before a restart keeps its halted-at time and its alert. Null = unsupported: the guard keeps its state in
+  /// memory, as before.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The open halts, or null.</returns>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityPairHaltSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityPairHalts_WithoutProviderSupport_KeepNothingAsync</tests>
+  Task<IReadOnlyList<IntegrityPairHaltRecord>?> IntegrityLoadPairHaltsAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<IntegrityPairHaltRecord>?>(null);
+
+  /// <summary>
+  /// #2377: keeps a pair's halt as it is now (a new halt, or the same pair halted for another reason). One open halt is
+  /// kept per peer and side: recording it again updates what it says and keeps the earliest halted-at, so a second
+  /// instance of the service, or a restart, runs the alert clock from when the pair first halted. Null = unsupported.
+  /// </summary>
+  /// <param name="halt">The halt.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The open halt as kept (its halted-at and alerted-at may be earlier than this call's), or null.</returns>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityPairHaltSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityPairHalts_WithoutProviderSupport_KeepNothingAsync</tests>
+  Task<IntegrityPairHaltRecord?> IntegrityRecordPairHaltAsync(IntegrityPairHaltRecord halt, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IntegrityPairHaltRecord?>(null);
+
+  /// <summary>
+  /// #2377: stamps the open halt of a pair with the time it was alerted, once; a later call keeps the first time. A no-op
+  /// for engines that keep no halts.
+  /// </summary>
+  /// <param name="peer">The other service's name.</param>
+  /// <param name="side">Which end this service is.</param>
+  /// <param name="at">When the alert went out.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task.</returns>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityPairHaltSqlTests.cs</tests>
+  Task IntegrityRecordPairHaltAlertAsync(string peer, IntegrityPairSide side, DateTimeOffset at, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// #2377: closes the open halt of a pair with the time it resumed. The closed halt stays as history for the
+  /// <c>PairHistory</c> retention. A no-op for engines that keep no halts.
+  /// </summary>
+  /// <param name="peer">The other service's name.</param>
+  /// <param name="side">Which end this service is.</param>
+  /// <param name="at">When the pair resumed.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task.</returns>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityPairHaltSqlTests.cs</tests>
+  Task IntegrityRecordPairResumedAsync(string peer, IntegrityPairSide side, DateTimeOffset at, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
   /// #2104: what the store keeps of the integrity gap tracker (known origins, pending gaps), read once by a new process.
   /// Null = unsupported: the tracker starts empty, as before, and learns from the next checkpoints.
   /// </summary>
@@ -2990,7 +3045,7 @@ public interface IWorkCoordinator {
 
   /// <summary>
   /// Reads the service's ledger buckets opened and closed since <paramref name="since"/> from the shared tally (#2261),
-  /// for <c>repair_progress_percent</c> and <c>backlog_eta_seconds</c>. Defaults to null (no reading) for engines with no
+  /// for <c>repair_close_ratio_percent</c> and <c>backlog_eta_seconds</c>. Defaults to null (no reading) for engines with no
   /// ledger: the gauges then report no series, never a zero.
   /// </summary>
   /// <param name="since">The window's start.</param>

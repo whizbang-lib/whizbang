@@ -64,8 +64,8 @@ public sealed class StreamIntegrityOptionsValidator : IValidateOptions<StreamInt
     _atLeastOne(failures, "UnownedTypeOriginSilenceDays", options.UnownedTypeOriginSilenceDays,
       "it is how long an origin may be silent before its ledger rows for a type no service owns are forgotten, and below a "
       + "day an origin between two checkpoints would read as silent (#2185)");
-    _atLeastOne(failures, "RepairProgressWindowMinutes", options.RepairProgressWindowMinutes,
-      "it is the window repair progress and the backlog ETA are computed over, and an empty window divides by nothing (#2261)");
+    _atLeastOne(failures, "CompletionWindowMinutes", options.CompletionWindowMinutes,
+      "it is the window the close ratio and the backlog ETA are computed over, and an empty window divides by nothing (#2261, #2317)");
     _atLeastOne(failures, "Sealing:EpochWidth", options.Sealing.EpochWidth,
       "it is how many sequence positions one sealed epoch covers, and an epoch below one position covers nothing (#2353)");
     _atLeastOne(failures, "Sealing:MaxClosuresPerCycle", options.Sealing.MaxClosuresPerCycle,

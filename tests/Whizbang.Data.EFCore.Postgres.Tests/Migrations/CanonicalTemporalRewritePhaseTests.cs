@@ -36,7 +36,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <docs>operations/infrastructure/migrations#statements-that-need-a-commit-between-them</docs>
 [Category("Integration")]
 [Category("Shard1")]
-public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
+public class CanonicalTemporalRewritePhaseTests {
   private const long LOCK_ID = 987654321;
   private const int TIMEOUT_SECONDS = 30;
 
@@ -55,12 +55,11 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_databaseName is not null) {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
 
-    GC.SuppressFinalize(this);
   }
 
   private async Task _executeAsync(string sql) {

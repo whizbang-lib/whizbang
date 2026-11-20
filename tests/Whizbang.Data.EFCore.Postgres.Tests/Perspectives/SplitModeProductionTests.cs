@@ -27,7 +27,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </summary>
 [Category("Integration")]
 [Category("Shard4")]
-public class SplitModeProductionTests : IAsyncDisposable {
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable", Justification = "#1954: the [After(Test)] hook disposes them, the fixture's one teardown; a disposable fixture would be disposed by TUnit a second time.")]
+public class SplitModeProductionTests {
   private static readonly Uuid7IdProvider _idProvider = new();
 
   static SplitModeProductionTests() {
@@ -191,8 +192,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
       _testDatabaseName = null;
     }
   }
-
-  public async ValueTask DisposeAsync() { await TeardownAsync(); GC.SuppressFinalize(this); }
 
   private async Task _initializeSchemaAsync() {
     await using var connection = new NpgsqlConnection(_connectionString);

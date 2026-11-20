@@ -21,7 +21,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/perspectives/physical-fields#stream-id-filters</docs>
 [Category("Integration")]
 [Category("Shard1")]
-public class StreamIdPrimaryKeyIntegrationTests : IAsyncDisposable {
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable", Justification = "#1954: the [After(Test)] hook disposes them, the fixture's one teardown; a disposable fixture would be disposed by TUnit a second time.")]
+public class StreamIdPrimaryKeyIntegrationTests {
   private const string TABLE = "wh_per_stream_id_pk_test";
   private const string DRAFT_TABLE = "wh_per_stream_id_pk_draft_test";
 
@@ -152,11 +153,6 @@ public class StreamIdPrimaryKeyIntegrationTests : IAsyncDisposable {
       await PerTestDatabaseFactory.DropAsync(_testDatabaseName);
       _testDatabaseName = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   private IQueryable<OrderModel> _models() =>

@@ -325,6 +325,7 @@ Whizbang:StreamIntegrity:BulkBackfillThresholdEvents
 Whizbang:StreamIntegrity:CheckpointHeartbeatMinutes
 Whizbang:StreamIntegrity:CheckpointIntervalSeconds
 Whizbang:StreamIntegrity:CheckpointsEnabled
+Whizbang:StreamIntegrity:CompletionWindowMinutes
 Whizbang:StreamIntegrity:ControlMessageTimeToLiveMinutes
 Whizbang:StreamIntegrity:DivergenceReportCooldownMinutes
 Whizbang:StreamIntegrity:EpochClosureEnabled
@@ -370,6 +371,7 @@ Whizbang:StreamIntegrity:ReattributionBatchSize
 Whizbang:StreamIntegrity:ReattributionEnabled
 Whizbang:StreamIntegrity:ReattributionIntervalSeconds
 Whizbang:StreamIntegrity:RepairAnswerTimeoutMinutes
+Whizbang:StreamIntegrity:RepairCloseRatioGaugeEnabled
 Whizbang:StreamIntegrity:RepairDrainBatchSize
 Whizbang:StreamIntegrity:RepairDrainEnabled
 Whizbang:StreamIntegrity:RepairDrainRatePerSecond

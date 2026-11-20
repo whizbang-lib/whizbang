@@ -28,7 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <docs>operations/diagnostics/whiz306</docs>
 [Category("Integration")]
 [Category("Shard4")]
-public class TableStatisticsProviderTests : IAsyncDisposable {
+public class TableStatisticsProviderTests {
   private string _databaseName = null!;
   private NpgsqlDataSource _dataSource = null!;
 
@@ -45,7 +45,7 @@ public class TableStatisticsProviderTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     await _dataSource.DisposeAsync();
 
     if (_databaseName is not null) {
@@ -54,7 +54,6 @@ public class TableStatisticsProviderTests : IAsyncDisposable {
 
     }
 
-    GC.SuppressFinalize(this);
   }
 
   /// <summary>

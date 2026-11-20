@@ -30,6 +30,8 @@
                       LogicalName="WhizbangBuild/Whizbang.Generators/%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\..\src\Whizbang.Data.EFCore.Postgres.Generators\build\*.props;..\..\src\Whizbang.Data.EFCore.Postgres.Generators\build\*.targets"
                       LogicalName="WhizbangBuild/Whizbang.Data.EFCore.Postgres.Generators/%(Filename)%(Extension)" />
+    <!-- #2382: the registration file the EF Core generator emits, pinned byte for byte. -->
+    <EmbeddedResource Include="Snapshots\*.txt" LogicalName="Whizbang.Generators.Tests.Snapshots.%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>
     <!-- Reference to the generator projects we're testing -->
