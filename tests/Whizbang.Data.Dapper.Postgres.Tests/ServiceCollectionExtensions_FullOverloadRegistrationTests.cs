@@ -163,7 +163,7 @@ public class ServiceCollectionExtensions_FullOverloadValidationTests {
 /// </para>
 /// </summary>
 [Category("Integration")]
-public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncDisposable {
+public class ServiceCollectionExtensions_FullOverloadRegistrationTests {
   private static readonly KeyValuePair<string, string>[] _emptyEntries = [];
 
   private static readonly KeyValuePair<string, string>[] _perspectiveEntries = [
@@ -207,11 +207,6 @@ public class ServiceCollectionExtensions_FullOverloadRegistrationTests : IAsyncD
       _testDatabaseName = null;
       _connectionString = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   [Test]

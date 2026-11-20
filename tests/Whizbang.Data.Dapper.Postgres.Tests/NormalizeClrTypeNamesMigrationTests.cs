@@ -18,7 +18,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// gated on the wh_settings 'clr_type_name_format_version' marker so it never re-scans once at v2.
 /// </summary>
 [Category("Integration")]
-public class NormalizeClrTypeNamesMigrationTests : IAsyncDisposable {
+public class NormalizeClrTypeNamesMigrationTests {
   private string? _testDatabaseName;
   private string? _connectionString;
 
@@ -55,11 +55,6 @@ public class NormalizeClrTypeNamesMigrationTests : IAsyncDisposable {
     } catch { /* ignore */ }
     _testDatabaseName = null;
     _connectionString = null;
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   [Test]

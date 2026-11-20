@@ -24,7 +24,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// </summary>
 /// <docs>fundamentals/messaging/message-priority#on-the-wire</docs>
 /// <code-under-test>src/Whizbang.Data.Dapper.Postgres/DapperPostgresEventStore.cs</code-under-test>
-public sealed class DapperPostgresEventStorePriorityTests : IDisposable {
+public sealed class DapperPostgresEventStorePriorityTests {
   private PostgresTestBase _testBase = null!;
 
   [Before(Test)]
@@ -36,13 +36,8 @@ public sealed class DapperPostgresEventStorePriorityTests : IDisposable {
   [After(Test)]
   public async Task CleanupAsync() {
     if (_testBase != null) {
-      await _testBase.DisposeAsync();
+      await _testBase.TeardownAsync();
     }
-  }
-
-  public void Dispose() {
-    _testBase?.DisposeAsync().AsTask().Wait();
-    GC.SuppressFinalize(this);
   }
 
   private DapperPostgresEventStore _store() {

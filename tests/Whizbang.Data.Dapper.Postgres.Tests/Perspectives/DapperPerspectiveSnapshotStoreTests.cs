@@ -22,7 +22,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
 /// Tests CRUD operations, pruning, and edge cases for perspective snapshot storage.
 /// </summary>
 [Category("Integration")]
-public sealed class DapperPerspectiveSnapshotStoreTests : IDisposable {
+public sealed class DapperPerspectiveSnapshotStoreTests {
   private TestFixture _testBase = null!;
   private DapperPerspectiveSnapshotStore _store = null!;
 
@@ -33,14 +33,9 @@ public sealed class DapperPerspectiveSnapshotStoreTests : IDisposable {
     _store = new DapperPerspectiveSnapshotStore(_testBase.TestConnectionString);
   }
 
-  public void Dispose() {
-    _testBase?.DisposeAsync().AsTask().GetAwaiter().GetResult();
-    GC.SuppressFinalize(this);
-  }
-
   [After(Test)]
   public async Task CleanupAsync() {
-    await _testBase.DisposeAsync();
+    await _testBase.TeardownAsync();
   }
 
   #region CreateSnapshotAsync Tests

@@ -23,7 +23,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// <see cref="PostgresSchemaInitializerBranchTests"/>) so each test controls exactly what schema exists
 /// going in.
 /// </summary>
-public class PostgresSchemaInitializerCoverageTests : IAsyncDisposable {
+public class PostgresSchemaInitializerCoverageTests {
   private string? _testDatabaseName;
   private string? _connectionString;
   private string _testConnectionString => _connectionString ?? throw new InvalidOperationException("Test not initialized");
@@ -65,11 +65,6 @@ public class PostgresSchemaInitializerCoverageTests : IAsyncDisposable {
       _testDatabaseName = null;
       _connectionString = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   /// <summary>Minimal provider so a test can force a specific set of migration scripts to run.</summary>

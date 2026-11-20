@@ -19,7 +19,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// Uses SharedPostgresContainer with per-test database isolation.
 /// </summary>
 /// <docs>core-concepts/message-associations</docs>
-public class MessageAssociationRegistryTests : IAsyncDisposable {
+public class MessageAssociationRegistryTests {
   private string? _testDatabaseName;
   private string? _connectionString;
 
@@ -69,11 +69,6 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
       _testDatabaseName = null;
       _connectionString = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   /// <summary>

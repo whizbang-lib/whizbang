@@ -17,7 +17,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// Goal: 100% line and branch coverage
 /// Uses SharedPostgresContainer with per-test database isolation.
 /// </summary>
-public class PostgresSchemaInitializerTests : IAsyncDisposable {
+public class PostgresSchemaInitializerTests {
   private string? _testDatabaseName;
   private string? _connectionString;
   private string _testConnectionString => _connectionString ?? throw new InvalidOperationException("Test not initialized");
@@ -64,11 +64,6 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
       _testDatabaseName = null;
       _connectionString = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   /// <summary>

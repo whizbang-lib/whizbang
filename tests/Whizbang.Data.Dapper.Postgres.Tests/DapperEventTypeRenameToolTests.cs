@@ -21,7 +21,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// Verifies drift detection and the cross-table UPDATE executed in a single transaction.
 /// </summary>
 [Category("Integration")]
-public class DapperEventTypeRenameToolTests : IAsyncDisposable {
+public class DapperEventTypeRenameToolTests {
   private string? _testDatabaseName;
   private string? _connectionString;
   private PostgresConnectionFactory? _connectionFactory;
@@ -63,11 +63,6 @@ public class DapperEventTypeRenameToolTests : IAsyncDisposable {
       _testDatabaseName = null;
       _connectionString = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   [Test]

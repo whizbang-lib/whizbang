@@ -23,7 +23,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// </remarks>
 /// <docs>operations/infrastructure/migrations</docs>
 [Category("Integration")]
-public class ApplicationSchemaObjectsTests : IAsyncDisposable {
+public class ApplicationSchemaObjectsTests {
   private string? _databaseName;
   private string _connectionString = null!;
 
@@ -46,7 +46,7 @@ public class ApplicationSchemaObjectsTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_databaseName is not null) {
       try {
         await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
@@ -56,8 +56,6 @@ public class ApplicationSchemaObjectsTests : IAsyncDisposable {
         // The container is shared and the database is per-test; a failed drop is not a test failure.
       }
     }
-
-    GC.SuppressFinalize(this);
   }
 
   /// <summary>

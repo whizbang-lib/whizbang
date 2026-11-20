@@ -19,7 +19,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Dapper.Postgres/PostgresSchemaInitializer.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/RetiredReceptorTable.cs</code-under-test>
 [Category("Integration")]
-public class DapperRetiredReceptorTableTests : IAsyncDisposable {
+public class DapperRetiredReceptorTableTests {
   private const string DROP = "%ReceptorProcessingTableIsDropped%";
   private string? _databaseName;
   private string _connectionString = null!;
@@ -37,7 +37,7 @@ public class DapperRetiredReceptorTableTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_databaseName is not null) {
       try {
         await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
@@ -47,7 +47,6 @@ public class DapperRetiredReceptorTableTests : IAsyncDisposable {
         // The container is shared and the database is per-test; a failed drop is not a test failure.
       }
     }
-    GC.SuppressFinalize(this);
   }
 
   [Test]

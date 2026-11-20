@@ -21,7 +21,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/210_RemoveRewindLifecycleEventsFromApplicationStreams.sql</code-under-test>
 [Category("Integration")]
-public class RemoveRewindLifecycleEventsMigrationTests : IAsyncDisposable {
+public class RemoveRewindLifecycleEventsMigrationTests {
   private const string MIGRATION = "210_RemoveRewindLifecycleEventsFromApplicationStreams";
   private const string MARKER = "rewind_lifecycle_event_cleanup_version";
   private const string STARTED = "Whizbang.Core.Events.System.PerspectiveRewindStarted, Whizbang.Core";
@@ -61,11 +61,6 @@ public class RemoveRewindLifecycleEventsMigrationTests : IAsyncDisposable {
     }
     _testDatabaseName = null;
     _connectionString = null;
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   [Test]

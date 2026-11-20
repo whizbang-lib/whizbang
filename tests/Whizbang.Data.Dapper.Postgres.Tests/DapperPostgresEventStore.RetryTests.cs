@@ -38,7 +38,7 @@ public record PostgresRetryTestEvent : IEvent {
 /// These tests cover implementation-specific paths not exercised by contract tests.
 /// Each test gets its own isolated PostgreSQL container for parallel execution.
 /// </summary>
-public sealed class DapperPostgresEventStoreRetryTests : IDisposable {
+public sealed class DapperPostgresEventStoreRetryTests {
 
   private TestFixture _testBase = null!;
   private DapperPostgresEventStore _store = null!;
@@ -68,12 +68,7 @@ public sealed class DapperPostgresEventStoreRetryTests : IDisposable {
 
   [After(Test)]
   public async Task CleanupAsync() {
-    await _testBase.DisposeAsync();
-  }
-
-  public void Dispose() {
-    _testBase?.DisposeAsync().AsTask().Wait();
-    GC.SuppressFinalize(this);
+    await _testBase.TeardownAsync();
   }
 
   /// <summary>
