@@ -106,13 +106,13 @@ jobs:
 
       - name: Run PostgreSQL Integration Tests (pre-built)
         if: inputs.artifact-name != ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag Postgres -NoBuild -ModuleCoverage -ReportTrx -ProjectFilter '${{ inputs.project-filter }}' -TestFilter '${{ inputs.test-filter }}' -HangDumpTimeout 15m -Framework '${{ matrix.framework }}'
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag Postgres -NoBuild -ModuleCoverage -ReportTrx -ProjectFilter '${{ inputs.project-filter }}' -TestFilter '${{ inputs.test-filter }}' -HangDumpTimeout 15m -CrashDumpType Heap -Framework '${{ matrix.framework }}'
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
       - name: Run PostgreSQL Integration Tests (built here)
         if: inputs.artifact-name == ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -ModuleCoverage -Configuration Release -Tag Postgres -ReportTrx -ProjectFilter '${{ inputs.project-filter }}' -TestFilter '${{ inputs.test-filter }}' -HangDumpTimeout 15m -Framework '${{ matrix.framework }}'
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -ModuleCoverage -Configuration Release -Tag Postgres -ReportTrx -ProjectFilter '${{ inputs.project-filter }}' -TestFilter '${{ inputs.test-filter }}' -HangDumpTimeout 15m -CrashDumpType Heap -Framework '${{ matrix.framework }}'
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
@@ -140,6 +140,24 @@ jobs:
             tests/**/TestResults/*_hang.log
             samples/**/TestResults/*_hang.dmp
             samples/**/TestResults/*_hang.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # A module whose process the runtime kills (an internal CLR error, an access violation, a FailFast) writes
+      # <module>_<pid>_crash.dmp and the tests still running, <module>_<id>_crash.sequence.log, beside the hang
+      # dumps (Run-Tests.ps1 -CrashDumpType above), so a crash leaves a dump to analyze, not only an exit code (#2446).
+      - name: Upload crash dumps
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: crashdump-postgres${{ inputs.shard-name != '' && format('-{0}', inputs.shard-name) || '' }}${{ env.FRAMEWORK_SUFFIX }}-${{ github.run_attempt }}
+          path: |
+            TestResults/*_crash.dmp
+            TestResults/*_crash.sequence.log
+            tests/**/TestResults/*_crash.dmp
+            tests/**/TestResults/*_crash.sequence.log
+            samples/**/TestResults/*_crash.dmp
+            samples/**/TestResults/*_crash.sequence.log
           if-no-files-found: ignore
           retention-days: 7
 

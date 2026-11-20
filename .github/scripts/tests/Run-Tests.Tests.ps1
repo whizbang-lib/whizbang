@@ -308,6 +308,65 @@ Test run summary: Passed! - A.Tests.dll (net10.0|arm64)
   }
 }
 
+# A test module whose process the runtime kills (an internal CLR error, an access violation, a FailFast) used to leave
+# only an exit code: nothing to say what the process was doing (#2446). -CrashDumpType hands every module the testing
+# platform's crash dump, so the process that dies writes a dump of that type for the suite to upload.
+Describe 'Run-Tests.ps1 -CrashDumpType (#2446)' -Skip:$NoPosixShell {
+  BeforeAll {
+    $script:Passing = @'
+Test run summary: Passed! - A.Tests.dll (net10.0|arm64)
+  total: 3
+  failed: 0
+  succeeded: 3
+  skipped: 0
+'@
+  }
+
+  It 'gives every test module a <Type> crash dump in a <Mode> run, beside coverage and the hang dump' -ForEach @(
+    @{ Mode = 'Unit'; TestType = 'Unit'; Type = 'Heap' }
+    @{ Mode = 'AiUnit'; TestType = 'Unit'; Type = 'Mini' }
+    @{ Mode = 'Component'; TestType = 'Component'; Type = 'Triage' }
+    @{ Mode = 'Integration'; TestType = 'Integration'; Type = 'Full' }) {
+    $repo = New-FakeRepo -TestType $TestType
+    Set-Built $repo 'Release'
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', $Mode, '-Configuration', 'Release', '-NoBuild', '-ModuleCoverage', '-HangDumpTimeout', '10m', '-CrashDumpType', $Type) -TestOutput $Passing
+    $calls = $r.Calls -join "`n"
+    $calls | Should -Match "(?m)^dotnet test .*--crashdump --crashdump-type $Type( |$)"
+    $calls | Should -Match '(?m)^dotnet test .*--coverage '
+    $calls | Should -Match '(?m)^dotnet test .*--hangdump '
+    $r.ExitCode | Should -Be 0
+  }
+
+  It 'takes no crash dump unless asked' {
+    $repo = New-FakeRepo
+    Set-Built $repo 'Release'
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', 'Unit', '-Configuration', 'Release', '-NoBuild') -TestOutput $Passing
+    ($r.Calls -join "`n") | Should -Match '(?m)^dotnet test ' -Because 'the test step must have run, or the absence below would prove nothing'
+    ($r.Calls -join "`n") | Should -Not -Match '--crashdump'
+    $r.ExitCode | Should -Be 0
+  }
+
+  It 'refuses the type <Type>, which the platform does not know' -ForEach @(@{ Type = 'Huge' }, @{ Type = 'heapdump' }) {
+    $repo = New-FakeRepo
+    Set-Built $repo 'Release'
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', 'Unit', '-Configuration', 'Release', '-NoBuild', '-CrashDumpType', $Type) -TestOutput $Passing
+    ($r.Calls -join "`n") | Should -Not -Match '(?m)^dotnet test '
+    $r.ExitCode | Should -Not -Be 0
+    $r.Output | Should -Match 'CrashDumpType'
+    $r.Output | Should -Not -Match 'cannot be found that matches parameter name' -Because 'the script must know the parameter and refuse the value'
+  }
+
+  It 'refuses it with -Coverage, whose per-project runs would silently not take it' {
+    $repo = New-FakeRepo
+    Set-Built $repo 'Release'
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', 'AiUnit', '-Coverage', '-Configuration', 'Release', '-NoBuild', '-CrashDumpType', 'Heap') -TestOutput $Passing
+    ($r.Calls -join "`n") | Should -Not -Match '(?m)^dotnet (test|run) '
+    $r.ExitCode | Should -Not -Be 0
+    $r.Output | Should -Match '-CrashDumpType and -Coverage'
+    $r.Output | Should -Not -Match 'ScriptHalted'
+  }
+}
+
 # A release build tests net10.0 and net11.0. An integration test module of each framework shares one broker and one
 # database server with the other's, so two run at once read each other's dead letters and contend for the server.
 Describe 'Get-TestModuleParallelism' {

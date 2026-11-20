@@ -81,6 +81,18 @@
     through Directory.Build.props; at 2.0.2 it never fired under `dotnet test`, 2.2.3 and later do
     (.github/scripts/tests/TestSuiteHangDump.Tests.ps1 proves it). Not with -Coverage.
 
+.PARAMETER CrashDumpType
+    Gives every test module the testing platform's crash dump (--crashdump --crashdump-type): a module whose process
+    the runtime kills (an internal CLR error, an access violation, an Environment.FailFast) writes a dump of this
+    type, <module>_<pid>_crash.dmp, with the tests still running in <module>_<id>_crash.sequence.log, to
+    TestResults under the repository root (the working directory of `dotnet test`), so a crash leaves something to
+    analyze instead of only an exit code (#2446). The hang dump never fires
+    on a process that dies. One of Mini, Heap, Triage or Full; CI takes Heap, the managed heap and every thread's
+    stack without a full dump's size. Empty (the default) takes no dump. Every test project references
+    Microsoft.Testing.Extensions.CrashDump through Directory.Build.props
+    (.github/scripts/tests/TestSuiteCrashDump.Tests.ps1 proves the dump is written beside coverage and the hang
+    dump). Not with -Coverage.
+
 .PARAMETER Framework
     Runs only the test modules built for this target framework, one of those the build targets (a release build
     targets net10.0 and net11.0). CI runs each framework of a release build as its own job (#2427). Empty (the
@@ -290,6 +302,8 @@ param(
     [int]$HangTimeout = 180,  # Seconds of no output before hang warning (0 to disable)
     [ValidatePattern('^[1-9][0-9]*[smh]$', ErrorMessage = '-HangDumpTimeout "{0}" is not a whole number of seconds, minutes or hours, such as 10m.')]
     [string]$HangDumpTimeout = "",  # CI: hang dump after this long with no test activity (e.g. 10m); empty for none
+    [ValidateSet("Mini", "Heap", "Triage", "Full")]
+    [string]$CrashDumpType = "",  # CI: crash dump of this type when a test process crashes (e.g. Heap); empty for none
     [string]$Framework = "",  # Run only this target framework's modules (e.g. net10.0); empty for every framework the build targets
     [switch]$Coverage,  # Collect code coverage (outputs Cobertura XML to TestResults/)
     [switch]$ModuleCoverage,  # CI: each test module collects its own line AND branch coverage
@@ -461,6 +475,9 @@ if ($Coverage -and $ModuleCoverage) {
 # -Coverage runs each project through its own `dotnet run`, which the hang dump options below never reach.
 if ($Coverage -and $HangDumpTimeout) {
     Exit-RefusedParameters "-HangDumpTimeout and -Coverage cannot be combined: -Coverage runs each project on its own, without the hang dump."
+}
+if ($Coverage -and $CrashDumpType) {
+    Exit-RefusedParameters "-CrashDumpType and -Coverage cannot be combined: -Coverage runs each project on its own, without the crash dump."
 }
 
 # Initialize tee logging if -LogFile is specified
@@ -1128,6 +1145,15 @@ try {
         $testArgs += "--hangdump"
         $testArgs += "--hangdump-timeout"
         $testArgs += $HangDumpTimeout
+    }
+
+    # The platform's crash dump for every test module (#2446). A module whose process the runtime kills writes
+    # <module>_<pid>_crash.dmp to TestResults, where the suites upload it from; without it a crash leaves only an exit
+    # code. It works beside --coverage and --hangdump (TestSuiteCrashDump.Tests.ps1).
+    if ($CrashDumpType) {
+        $testArgs += "--crashdump"
+        $testArgs += "--crashdump-type"
+        $testArgs += $CrashDumpType
     }
 
     # Coverage mode: Run projects in parallel with unique output paths per project
