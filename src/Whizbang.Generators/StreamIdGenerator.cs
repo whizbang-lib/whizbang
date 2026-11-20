@@ -204,6 +204,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
       StrongIdType = strongIdType,
       StrongIdSettable = strongIdSettable,
       InheritFromClauses = inheritFromClauses,
+      EffectivePolicy = _effectivePolicy(typeSymbol),
     };
   }
 
@@ -310,6 +311,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
       StrongIdType = strongIdType,
       StrongIdSettable = strongIdSettable,
       InheritFromClauses = inheritFromClauses,
+      EffectivePolicy = _effectivePolicy(typeSymbol),
     };
   }
 
@@ -340,6 +342,23 @@ public class StreamIdGenerator : IIncrementalGenerator {
     !hasGenerate
     && SymbolEqualityComparer.Default.Equals(streamIdProperty.ContainingType, typeSymbol)
     && _anyBaseGenerates(typeSymbol);
+
+  /// <summary>
+  /// The <c>[GenerateStreamId]</c> policy that applies to exactly <paramref name="typeSymbol"/> (#1905, #1908): that of
+  /// the nearest level of its chain, itself first, that generates or, by declaring its own stream id, declines a base's
+  /// generation (#1893); (false, false) when no level does. Every level is read from its symbol, so a base compiled in
+  /// another assembly counts as one in this assembly does, and the answer needs no ordering of type checks at runtime.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdTypeTableGeneratorTests.cs</tests>
+  private static (bool ShouldGenerate, bool OnlyIfEmpty) _effectivePolicy(INamedTypeSymbol typeSymbol) {
+    for (var level = typeSymbol; level is not null; level = level.BaseType) {
+      if (_resolveStreamId(level) is { } resolved
+          && (resolved.HasGenerate || _declinesInheritedGenerate(level, resolved.Choice.Property, resolved.HasGenerate))) {
+        return (resolved.HasGenerate, resolved.OnlyIfEmpty);
+      }
+    }
+    return (false, false);
+  }
 
   /// <summary>
   /// Whether any base type of <paramref name="typeSymbol"/> resolves to a stream id with <c>[GenerateStreamId]</c>,
@@ -406,6 +425,9 @@ public class StreamIdGenerator : IIncrementalGenerator {
 
     // Generate GetStreamIdType dispatch cases (#2072)
     template = _generateStreamIdTypeRegion(template, events, commands, composites);
+
+    // Generate the per-type table and its writers (#1905, #1908)
+    template = _generateTypeTableRegions(template, events, commands, composites);
 
     // Generate [ModuleInitializer] registration code
     template = _generateModuleInitializerRegion(template, events, commands, composites);
@@ -922,6 +944,80 @@ public class StreamIdGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Generates the TYPE_ENTRIES and TYPE_ENTRY_SETTERS regions: one table entry per message type, ordered by type name,
+  /// holding the type's own reader, stream-id type, effective policy and, when its stream id can be written, a writer of
+  /// its own (#1905, #1908). A type that is both an event and a command gets the event's entry, as the event dispatch
+  /// answers first today.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdTypeTableGeneratorTests.cs</tests>
+  private static string _generateTypeTableRegions(
+      string template,
+      ImmutableArray<StreamIdInfo> eventsWithStreamId,
+      ImmutableArray<CommandStreamIdInfo> commandsWithStreamId,
+      ImmutableArray<StreamIdInfo> compositesWithStreamId) {
+    var rows = eventsWithStreamId.Select(e => new TableRow(e.EventType, "TryExtractAsGuid", e.StrongIdType, e.EffectivePolicy,
+          _setterCase(e.EventType, e.PropertyName, e.PropertyType, e.IsPropertyInitOnly, e.StrongIdSettable, e.StrongIdType, e.InheritFromClauses, "SET_STREAM_ID_EVENT_CASE", PLACEHOLDER_EVENT_TYPE)))
+      .Concat(commandsWithStreamId.Select(c => new TableRow(c.CommandType, "TryExtractAsGuidFromCommand", c.StrongIdType, c.EffectivePolicy,
+          _setterCase(c.CommandType, c.PropertyName, c.PropertyType, c.IsPropertyInitOnly, c.StrongIdSettable, c.StrongIdType, c.InheritFromClauses, "SET_STREAM_ID_COMMAND_CASE", PLACEHOLDER_COMMAND_TYPE))))
+      .Concat(compositesWithStreamId.Select(c => new TableRow(c.EventType, "TryExtractAsGuid", c.StrongIdType, c.EffectivePolicy, null)))
+      .GroupBy(r => r.MessageType, StringComparer.Ordinal)
+      .Select(g => g.First())
+      .OrderBy(r => r.MessageType, StringComparer.Ordinal)
+      .ToList();
+
+    var entrySnippet = TemplateUtilities.ExtractSnippet(typeof(StreamIdGenerator).Assembly, SNIPPET_FILE, "TYPE_ENTRY");
+    var setterSnippet = TemplateUtilities.ExtractSnippet(typeof(StreamIdGenerator).Assembly, SNIPPET_FILE, "TYPE_ENTRY_SETTER");
+    var entries = new StringBuilder();
+    var setters = new StringBuilder();
+    for (var i = 0; i < rows.Count; i++) {
+      var row = rows[i];
+      var index = i.ToString(CultureInfo.InvariantCulture);
+      var set = "null";
+      if (row.SetterCase is { } setterCase) {
+        set = $"static (message, streamId, sourceStreamIdType) => SetStreamIdOf{index}(message, streamId, sourceStreamIdType)";
+        setters.AppendLine(setterSnippet
+          .Replace("__SETTER_CASE__", setterCase)
+          .Replace(PLACEHOLDER_INDEX, index));
+      }
+      entries.AppendLine(entrySnippet
+        .Replace(PLACEHOLDER_MESSAGE_TYPE, row.MessageType)
+        .Replace("__EXTRACT__", row.Extractor)
+        .Replace("__STREAM_ID_TYPE__", row.StrongIdType ?? "global::System.Guid")
+        .Replace("__SHOULD_GENERATE__", _csharpBool(row.Policy.ShouldGenerate))
+        .Replace("__ONLY_IF_EMPTY__", _csharpBool(row.Policy.OnlyIfEmpty))
+        .Replace("__SET__", set));
+    }
+
+    template = TemplateUtilities.ReplaceRegion(template, "TYPE_ENTRIES", entries.ToString().TrimEnd());
+    return TemplateUtilities.ReplaceRegion(template, "TYPE_ENTRY_SETTERS", setters.ToString().TrimEnd());
+  }
+
+  /// <summary>One row of the per-type table, before it is rendered.</summary>
+  private sealed record TableRow(
+      string MessageType, string Extractor, string? StrongIdType, (bool ShouldGenerate, bool OnlyIfEmpty) Policy, string? SetterCase);
+
+  /// <summary>
+  /// The setter case for one type, the same one the type-ordered <c>SetStreamId</c> uses (a strong id through its
+  /// <c>From</c>, a Guid directly), or null when the stream id cannot be written.
+  /// </summary>
+  private static string? _setterCase(
+      string messageType, string propertyName, string propertyType, bool initOnly, bool strongIdSettable,
+      string? strongIdType, string inheritFromClauses, string guidSnippet, string typePlaceholder) {
+    if (initOnly) {
+      return null;
+    }
+    if (strongIdSettable) {
+      return _strongIdSetterCase(messageType, propertyName, strongIdType!, inheritFromClauses, 0);
+    }
+    return _isGuidProperty(propertyType)
+      ? TemplateUtilities.ExtractSnippet(typeof(StreamIdGenerator).Assembly, SNIPPET_FILE, guidSnippet)
+          .Replace(typePlaceholder, messageType)
+          .Replace(PLACEHOLDER_PROPERTY_NAME, propertyName)
+          .Replace(PLACEHOLDER_INDEX, "0")
+      : null;
+  }
+
+  /// <summary>
   /// Generates MODULE_INITIALIZER_REGISTRATION region.
   /// </summary>
   private static string _generateModuleInitializerRegion(
@@ -932,7 +1028,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
 
     var hasExtractors = !eventsWithStreamId.IsEmpty || !commandsWithStreamId.IsEmpty || !compositesWithStreamId.IsEmpty;
     if (hasExtractors) {
-      const string registrationCode = "global::Whizbang.Core.Registry.StreamIdExtractorRegistry.Register(new GeneratedStreamIdExtractor(), priority: 100);";
+      const string registrationCode = "global::Whizbang.Core.Registry.StreamIdTypeRegistry.Register(StreamIdExtractors.TypeEntries());";
       return TemplateUtilities.ReplaceRegion(template, "MODULE_INITIALIZER_REGISTRATION", registrationCode);
     }
 

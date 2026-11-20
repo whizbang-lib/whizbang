@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Collections.Concurrent;
+
 namespace Whizbang.Core.Registry;
 
 /// <summary>
@@ -24,10 +26,33 @@ namespace Whizbang.Core.Registry;
 /// <docs>extending/attributes/streamid#how-a-message-type-finds-its-stream-id</docs>
 /// <tests>tests/Whizbang.Core.Tests/Registry/StreamIdTypeRegistryTests.cs</tests>
 public static class StreamIdTypeRegistry {
+  private static readonly ConcurrentDictionary<Type, StreamIdTypeEntry> _entries = new();
+  private static readonly ConcurrentDictionary<Type, Resolved> _resolved = new();
+
+  /// <summary>Registrations made visible so far: what <see cref="Generation"/> reports.</summary>
+  private static long _published;
+
+  /// <summary>Runs on the registering thread after its entries are visible and before they are counted; tests only.</summary>
+  [ThreadStatic]
+  private static Action? _beforePublishForTests;
+
+  /// <summary>An answer and the generation it was computed at; null <see cref="Entry"/> when no entry answers.</summary>
+  private sealed record Resolved(StreamIdTypeEntry? Entry, long AtGeneration);
+
   /// <summary>Registers the entries of one assembly. A type that already has an entry keeps it.</summary>
   /// <param name="entries">One entry per message type the assembly compiles.</param>
+  /// <remarks>
+  /// A type is compiled in one assembly and so has one entry; a second registration of it (a test, a reloaded module)
+  /// is ignored rather than allowed to change an answer already given. The generation advances after the entries are
+  /// in place, never before, so a lookup that reads the new generation always sees them.
+  /// </remarks>
   public static void Register(params StreamIdTypeEntry[] entries) {
     ArgumentNullException.ThrowIfNull(entries);
+    foreach (var entry in entries) {
+      _entries.TryAdd(entry.MessageType, entry);
+    }
+    _beforePublishForTests?.Invoke();
+    Interlocked.Increment(ref _published);
   }
 
   /// <summary>The entry that answers for <paramref name="messageType"/>: its own, else its nearest registered base type's.</summary>
@@ -35,7 +60,20 @@ public static class StreamIdTypeRegistry {
   /// <returns>The entry, or null when neither the type nor any base type has one.</returns>
   public static StreamIdTypeEntry? Resolve(Type messageType) {
     ArgumentNullException.ThrowIfNull(messageType);
-    return null;
+
+    // Read before the entries, so an answer computed while a registration lands is recorded against the earlier
+    // generation and recomputed on the next lookup.
+    var generation = Generation;
+    if (_resolved.TryGetValue(messageType, out var cached) && cached.AtGeneration == generation) {
+      return cached.Entry;
+    }
+
+    StreamIdTypeEntry? found = null;
+    for (var type = messageType; type is not null && found is null; type = type.BaseType) {
+      _entries.TryGetValue(type, out found);
+    }
+    _resolved[messageType] = new Resolved(found, generation);
+    return found;
   }
 
   /// <summary>
@@ -44,14 +82,17 @@ public static class StreamIdTypeRegistry {
   /// inside that window without depending on how two threads interleave (#1900).
   /// </summary>
   internal static IDisposable BeforePublishForTests(Action callback) {
-    ArgumentNullException.ThrowIfNull(callback);
-    return new Scope();
+    var previous = _beforePublishForTests;
+    _setBeforePublish(callback);
+    return new Scope(previous);
   }
 
-  private sealed class Scope : IDisposable {
-    public void Dispose() { }
+  private static void _setBeforePublish(Action? callback) => _beforePublishForTests = callback;
+
+  private sealed class Scope(Action? previous) : IDisposable {
+    public void Dispose() => _setBeforePublish(previous);
   }
 
   /// <summary>How many registrations are visible; a cached answer computed at an earlier value is recomputed.</summary>
-  public static long Generation => 0;
+  public static long Generation => Interlocked.Read(ref _published);
 }

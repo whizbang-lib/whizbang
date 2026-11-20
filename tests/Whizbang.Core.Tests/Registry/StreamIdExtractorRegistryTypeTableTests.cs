@@ -107,4 +107,21 @@ public class StreamIdExtractorRegistryTypeTableTests {
     await Assert.That(StreamIdExtractorRegistry.GetStreamIdType(typeof(Unrelated))).IsEqualTo(typeof(string));
     await Assert.That(StreamIdExtractorRegistry.SetStreamId(message, _extractorId)).IsTrue();
   }
+
+  public class CoveredAlone;
+
+  /// <summary>With no extractor registered at all, the table still answers a type it covers.</summary>
+  [Test]
+  public async Task WithNoExtractorsAtAll_TheTableStillAnswersAsync() {
+    AssemblyRegistry<IStreamIdExtractor>.ClearForTesting();
+    try {
+      StreamIdTypeRegistry.Register(new StreamIdTypeEntry(typeof(CoveredAlone), _ => _tableId, typeof(Guid)));
+
+      await Assert.That(StreamIdExtractorRegistry.ExtractStreamId(new CoveredAlone(), typeof(CoveredAlone))).IsEqualTo(_tableId);
+      await Assert.That(StreamIdExtractorRegistry.ExtractStreamId(new Unrelated(), typeof(Unrelated))).IsNull();
+    } finally {
+      StreamIdExtractorRegistry.Register(new Whizbang.Core.Generated.GeneratedStreamIdExtractor(), priority: 100);
+      StreamIdExtractorRegistry.Register(new Whizbang.Core.Tests.Generated.GeneratedStreamIdExtractor(), priority: 100);
+    }
+  }
 }

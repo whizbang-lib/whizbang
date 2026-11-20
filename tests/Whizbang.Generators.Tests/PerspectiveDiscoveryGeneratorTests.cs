@@ -743,6 +743,57 @@ namespace TestNamespace {
     await Assert.That(whiz030.GetMessage(CultureInfo.InvariantCulture)).Contains("StreamId");
   }
 
+  /// <summary>A perspective event whose stream id comes from one interface is accepted, as the extractor reads it (#1908).</summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_EventWithAStreamIdFromAnInterface_IsAcceptedAsync() {
+    const string source = """
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      namespace TestNamespace {
+        public interface IOrderKeyed { [StreamId] Guid OrderId { get; } }
+        public record OrderCreatedEvent : IEvent, IOrderKeyed { public Guid OrderId { get; init; } }
+        public record OrderModel { public Guid OrderId { get; set; } }
+        public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+          public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) => currentData;
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    await Assert.That(result.Diagnostics.Any(d => d.Id is "WHIZ030" or "WHIZ031")).IsFalse();
+    await Assert.That(GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs")).Contains("OrderPerspective");
+  }
+
+  /// <summary>
+  /// A perspective event with one [StreamId] property in its class chain and an interface naming another has no single
+  /// stream id (#1908), so it is reported rather than given one.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_EventWhoseInterfaceNamesAnotherStreamId_ReportsWHIZ031Async() {
+    const string source = """
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      namespace TestNamespace {
+        public interface ICustomerKeyed { [StreamId] Guid CustomerId { get; } }
+        public abstract record OrderEventBase : IEvent { [StreamId] public Guid OrderId { get; init; } }
+        public record OrderCreatedEvent : OrderEventBase, ICustomerKeyed { public Guid CustomerId { get; init; } }
+        public record OrderModel { public Guid OrderId { get; set; } }
+        public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+          public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) => currentData;
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    await Assert.That(result.Diagnostics.Any(d => d.Id == "WHIZ031")).IsTrue();
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task PerspectiveDiscoveryGenerator_EventWithMultipleStreamIds_ReportsWHIZ031DiagnosticAsync() {

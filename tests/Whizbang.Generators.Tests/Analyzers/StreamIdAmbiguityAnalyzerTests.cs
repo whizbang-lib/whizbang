@@ -108,6 +108,26 @@ public class StreamIdAmbiguityAnalyzerTests {
     await Assert.That(reported[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("Concrete");
   }
 
+  /// <summary>
+  /// An interface's stream id implemented explicitly, or only by the interface's default body, has no property generated
+  /// code can read on the type, so it is not a source and leaves the other one alone; a property with no [StreamId] is
+  /// never a source.
+  /// </summary>
+  [Test]
+  public async Task ExplicitAndDefaultImplementations_AreNotSourcesAsync() {
+    var diagnostics = await _diagnosticsAsync(INTERFACES + """
+      public interface IDefaulted { [StreamId] Guid DefaultId => Guid.Empty; }
+      public interface INamed { string Name { get; } }
+      public class OrderNoted : IEvent, IOrderKeyed, ICustomerKeyed, IDefaulted, INamed {
+        public Guid OrderId { get; set; }
+        Guid ICustomerKeyed.CustomerId => Guid.Empty;
+        public string Name { get; set; } = "";
+      }
+      """);
+
+    await Assert.That(diagnostics.Any(d => d.Id == WHIZ036)).IsFalse();
+  }
+
   [Test]
   public async Task TheAnalyzer_DeclaresWhiz036AsAnErrorAsync() {
     var descriptor = new StreamIdAttributeAnalyzer().SupportedDiagnostics.Single(d => d.Id == WHIZ036);

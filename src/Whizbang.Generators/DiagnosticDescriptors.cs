@@ -16,7 +16,7 @@ public static class DiagnosticDescriptors {
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/DiagnosticDescriptorsTests.cs:RetiredDiagnosticIds_AreNeverDeclaredAgainAsync</tests>
   public static readonly System.Collections.Immutable.ImmutableArray<string> RETIRED_IDS = [
-    "WHIZ003", "WHIZ005", "WHIZ020", "WHIZ023", "WHIZ042", "WHIZ050", "WHIZ051", "WHIZ052", "WHIZ057", "WHIZ803",
+    "WHIZ003", "WHIZ005", "WHIZ017", "WHIZ020", "WHIZ023", "WHIZ042", "WHIZ050", "WHIZ051", "WHIZ052", "WHIZ057", "WHIZ803",
   ];
 
   private const string CATEGORY = "Whizbang.SourceGeneration";
@@ -1082,29 +1082,6 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ017: Warning - a type declares its own <c>[StreamId]</c> and no <c>[GenerateStreamId]</c>, under a base
-  /// type in another assembly that declares <c>[GenerateStreamId]</c>.
-  /// </summary>
-  /// <docs>operations/diagnostics/whiz017</docs>
-  /// <remarks>
-  /// A derived type with its own <c>[StreamId]</c> does not inherit its base's <c>[GenerateStreamId]</c> (#1893), and
-  /// within one assembly the generator emits that opt-out. Each assembly has its own stream id extractor, though, and
-  /// the base assembly's answers "generate" first for the derived type, so across assemblies the base's policy still
-  /// applies (#1904). The fix is to say what the derived type wants: declare <c>[GenerateStreamId]</c> on it, or keep
-  /// the base in the derived type's assembly.
-  /// </remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdCrossAssemblyGenerationAnalyzerTests.cs:OwnStreamId_UnderAGeneratingBaseInAnotherAssembly_ReportsWhiz017Async</tests>
-  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdCrossAssemblyGenerationAnalyzerTests.cs:TheAnalyzer_DeclaresWhiz017AsAWarningAsync</tests>
-  public static readonly DiagnosticDescriptor GenerationOptOutAcrossAssemblies = new(
-      id: "WHIZ017",
-      title: "Stream ID Generation Opt-Out Cannot Hold Across Assemblies",
-      messageFormat: "Type {0} declares its own [StreamId] '{1}' and no [GenerateStreamId], but base type {2} declares [GenerateStreamId]; the base's [GenerateStreamId] will still apply because the base is in another assembly ({3}). Declare [GenerateStreamId] on {0}, or move {2} into the same assembly.",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Warning,
-      isEnabledByDefault: true,
-      description: "A derived type with its own [StreamId] and no [GenerateStreamId] opts out of its base's stream id generation, but only when the base is compiled in the same assembly. A base in another assembly is matched by that assembly's extractor first, so its [GenerateStreamId] still applies to the derived type."
-  );
-  /// <summary>
   /// WHIZ018: Error - <c>[StreamId(InheritFrom = ...)]</c> lists a type that is not a strong id (#2072).
   /// </summary>
   /// <docs>operations/diagnostics/whiz018</docs>
@@ -1174,6 +1151,29 @@ public static class DiagnosticDescriptors {
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
       description: "IHasStreamId is the explicit runtime contract and wins over the generated setter. With a strong-id [StreamId] the two disagree: the stream id the dispatcher writes is not the one the message is routed by."
+  );
+
+  /// <summary>
+  /// WHIZ036: Error - a type gets <c>[StreamId]</c> from two or more sources naming different properties and declares none
+  /// of its own (#1908).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz036</docs>
+  /// <remarks>
+  /// The sources are interfaces the type implements and the stream id its base type resolves to. One property named by
+  /// several of them is one source. Depth defines no winner between two interfaces, or between an interface and a base
+  /// class, so the type has no stream id and no extractor; the fix is to say which one it is with a <c>[StreamId]</c> on
+  /// the type itself.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdAmbiguityAnalyzerTests.cs:TwoInterfacesNamingDifferentProperties_ReportWhiz036Async</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdAmbiguityAnalyzerTests.cs:TheAnalyzer_DeclaresWhiz036AsAnErrorAsync</tests>
+  public static readonly DiagnosticDescriptor AmbiguousInheritedStreamId = new(
+      id: "WHIZ036",
+      title: "Stream ID Is Ambiguous",
+      messageFormat: "{0} gets [StreamId] from more than one source naming different properties ({1}) and declares none of its own, so it has no stream id. Declare [StreamId] on the property of {0} that is its stream id.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "A type that inherits [StreamId] from two interfaces, or from an interface and a base class, that name different properties has no single stream id. Declaring [StreamId] on the type itself settles which one it is."
   );
 
   /// <summary>

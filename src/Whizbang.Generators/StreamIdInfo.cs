@@ -58,6 +58,13 @@ public sealed record StreamIdInfo(
   /// <c>StrongIdStreamIds.AcceptClauses</c>); empty when it lists none.
   /// </summary>
   public string InheritFromClauses { get; init; } = "";
+
+  /// <summary>
+  /// The <c>[GenerateStreamId]</c> policy that applies to this exact type (#1905, #1908): the policy of the nearest level
+  /// of its chain, itself first, that generates or declines a base's generation (#1893), wherever that level is
+  /// compiled; (false, false) when none does.
+  /// </summary>
+  public (bool ShouldGenerate, bool OnlyIfEmpty) EffectivePolicy { get; init; }
 }
 
 /// <summary>
@@ -123,4 +130,11 @@ public sealed record CommandStreamIdInfo(
   /// <c>StrongIdStreamIds.AcceptClauses</c>); empty when it lists none.
   /// </summary>
   public string InheritFromClauses { get; init; } = "";
+
+  /// <summary>
+  /// The <c>[GenerateStreamId]</c> policy that applies to this exact type (#1905, #1908): the policy of the nearest level
+  /// of its chain, itself first, that generates or declines a base's generation (#1893), wherever that level is
+  /// compiled; (false, false) when none does.
+  /// </summary>
+  public (bool ShouldGenerate, bool OnlyIfEmpty) EffectivePolicy { get; init; }
 }

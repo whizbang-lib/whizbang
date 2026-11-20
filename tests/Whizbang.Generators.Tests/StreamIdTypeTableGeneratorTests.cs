@@ -72,8 +72,8 @@ public class StreamIdTypeTableGeneratorTests {
       namespace App;
       {types}
       """), EXTRACTORS);
-    var start = code.IndexOf("StreamIdTypeRegistry.Register(", StringComparison.Ordinal);
-    return start < 0 ? "" : code[start..code.IndexOf(");", start, StringComparison.Ordinal)];
+    var start = code.IndexOf("TypeEntries() => [", StringComparison.Ordinal);
+    return start < 0 ? "" : code[start..code.IndexOf("];", start, StringComparison.Ordinal)];
   }
 
   // ========================================

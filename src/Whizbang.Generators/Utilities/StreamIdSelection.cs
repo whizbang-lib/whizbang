@@ -57,14 +57,55 @@ internal static class StreamIdSelection {
       .Select(g => g.First())];
   }
 
-  /// <summary>The stream id the generators use for <paramref name="type"/>, or null when it has none.</summary>
+  /// <summary>The stream id the generators use for <paramref name="type"/>, or null when it has none or it is ambiguous.</summary>
   /// <remarks>
-  /// The constructor-parameter fallback runs only when the search found nothing at the type itself, so the type declares
-  /// no <c>[StreamId]</c> property and every declaration left is a parameter; one with no matching property is skipped.
+  /// The stream id is the one source <see cref="Sources"/> finds. With none, the type's own <c>[StreamId]</c> constructor
+  /// parameter is taken, when one has a matching property. With two or more, the type has no stream id: WHIZ036 reports
+  /// it, and the generators emit nothing for it (#1908).
   /// </remarks>
-  internal static Choice? Select(INamedTypeSymbol type) =>
-    SelectInherited(type, includeSelf: true)
-      ?? _toChoice(Declared(type).FirstOrDefault(d => d.Property is not null));
+  internal static Choice? Select(INamedTypeSymbol type) {
+    var sources = Sources(type);
+    return sources.Count switch {
+      0 => _toChoice(Declared(type).FirstOrDefault(d => d.Property is not null)),
+      1 => sources[0],
+      _ => null,
+    };
+  }
+
+  /// <summary>
+  /// The distinct stream-id properties <paramref name="type"/> gets (#1908). A type that declares its own (an override
+  /// first, then a plain property) gets that one alone. Otherwise it gets its base type's sources, together with a
+  /// <c>[StreamId]</c> from each interface it implements that its base type does not, read through the property that
+  /// implements it. Sources naming the same property are one; more than one is an ambiguity. An interface's stream id that
+  /// the type implements explicitly, or only through the interface's default body, has no property generated code can
+  /// read on the type, and is not a source.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdAmbiguityAnalyzerTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdTypeTableGeneratorTests.cs</tests>
+  internal static List<Choice> Sources(INamedTypeSymbol? type) {
+    if (type is null || type.SpecialType == SpecialType.System_Object) {
+      return [];
+    }
+    var declared = Declared(type);
+    var own = declared.FirstOrDefault(d => d.IsOverride && d.Property is not null)
+      ?? declared.FirstOrDefault(d => d.Parameter is null);
+    if (own is not null) {
+      return [_toChoice(own)!];
+    }
+
+    var sources = Sources(type.BaseType);
+    var inherited = type.BaseType?.AllInterfaces ?? [];
+    foreach (var contract in type.AllInterfaces.Where(i => !inherited.Contains(i, SymbolEqualityComparer.Default))) {
+      foreach (var member in contract.GetMembers().OfType<IPropertySymbol>()) {
+        if (_streamIdAttribute(member) is { } attribute
+            && type.FindImplementationForInterfaceMember(member) is IPropertySymbol { CanBeReferencedByName: true, ContainingType.TypeKind: not TypeKind.Interface } implementation
+            && !sources.Any(s => SymbolEqualityComparer.Default.Equals(s.Property, implementation))) {
+          sources.Add(new Choice(implementation, null, false, attribute));
+        }
+      }
+    }
+    return sources;
+  }
 
   /// <summary>
   /// The stream id found by searching the levels only, without the type's own plain constructor parameter: from the
