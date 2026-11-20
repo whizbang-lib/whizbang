@@ -62,9 +62,9 @@ Describe 'Measure-UploadSpeed' {
   }
 
   It 'measures nothing when <Case>' -ForEach @(
-    @{ Case = 'the upload failed'; Started = 0; Finished = 1000; Uploaded = $false }
+    @{ Case = 'the upload failed'; Started = 0; Finished = 1000; Uploaded = $false; NoStart = $false }
     @{ Case = 'no start time was recorded'; Started = 0L; Finished = 1000; Uploaded = $true; NoStart = $true }
-    @{ Case = 'the clock went backwards'; Started = 5000; Finished = 1000; Uploaded = $true }
+    @{ Case = 'the clock went backwards'; Started = 5000; Finished = 1000; Uploaded = $true; NoStart = $false }
   ) {
     $started = if ($NoStart) { $null } else { $Started }
     Measure-UploadSpeed -UploadMB 200 -StartedMs $started -FinishedMs $Finished -Uploaded $Uploaded | Should -BeNullOrEmpty
@@ -153,9 +153,9 @@ Describe 'Invoke-RunnerSelfCheck' {
         param([version]$Pwsh = '7.4.6', $FreeGB = 80, [bool]$Docker = $true, [string]$Outcome = 'success', [string]$Runner = 'wpc')
         $script:Out = Join-Path $TestDrive "record-$([guid]::NewGuid().ToString('N')).txt"
         $script:Summary = Join-Path $TestDrive "summary-$([guid]::NewGuid().ToString('N')).md"
-        $script:RecordFile = Join-Path $TestDrive "record-$([guid]::NewGuid().ToString('N'))" 'runner-check.txt'
+        $script:RecordPath = Join-Path $TestDrive "record-$([guid]::NewGuid().ToString('N'))" 'runner-check.txt'
         $free = $FreeGB; $dockerOk = $Docker
-        Invoke-RunnerSelfCheck -Mode Record -OutputFile $Out -SummaryFile $Summary -RecordFile $RecordFile -RunnerName $Runner `
+        Invoke-RunnerSelfCheck -Mode Record -OutputFile $Out -SummaryFile $Summary -RecordFile $RecordPath -RunnerName $Runner `
           -UploadMB 200 -StartedMs 0 -UploadOutcome $Outcome -MinDiskGB 20 -Nonce '9-1-1' -NowMs { 10000 } `
           -PwshVersion $Pwsh -GetFreeSpaceGB { $free }.GetNewClosure() -DockerProbe { $dockerOk }.GetNewClosure()
       }
@@ -166,7 +166,7 @@ Describe 'Invoke-RunnerSelfCheck' {
       $o = Read-Output $Out
       $o['ok'] | Should -Be 'true'
       $o['key'] | Should -Be 'ci-runner-check/v1/wpc/ok/up-20/docker-yes/9-1-1'
-      Get-Content -Raw $RecordFile | Should -BeLike '*ci-runner-check/v1/wpc/ok/*'
+      Get-Content -Raw $RecordPath | Should -BeLike '*ci-runner-check/v1/wpc/ok/*'
       Get-Content -Raw $Summary | Should -BeLike '*wpc*passed*20 MB/s*'
     }
 
@@ -185,6 +185,31 @@ Describe 'Invoke-RunnerSelfCheck' {
       $o.ContainsKey('key') | Should -BeFalse
       Get-Content -Raw $Summary | Should -BeLike "*bad/name*cannot go in a self-check key*"
     }
+  }
+}
+
+Describe 'The script run as the workflow runs it' {
+  It 'plans no check, and exits 0, without a runner-pool token' {
+    $out = Join-Path $TestDrive 'entry-plan.txt'
+    $saved = [Environment]::GetEnvironmentVariable('RUNNER_POOL_TOKEN')
+    try {
+      [Environment]::SetEnvironmentVariable('RUNNER_POOL_TOKEN', $null)
+      $said = pwsh -NoProfile -File $ScriptPath -Mode Plan -Organization 'whizbang-lib' -OutputFile $out -SummaryFile ''
+      $LASTEXITCODE | Should -Be 0
+    } finally { [Environment]::SetEnvironmentVariable('RUNNER_POOL_TOKEN', $saved) }
+    (Read-Output $out)['slots'] | Should -Be '[]'
+    ($said -join "`n") | Should -BeLike '*no runner-pool token*'
+  }
+
+  It 'records this machine, measuring its disk under the work path' {
+    $out = Join-Path $TestDrive 'entry-record.txt'
+    $record = Join-Path $TestDrive 'entry' 'record.txt'
+    pwsh -NoProfile -File $ScriptPath -Mode Record -RunnerName 'probe-test' -UploadMB 200 -StartedMs '' -UploadOutcome 'failure' `
+      -Nonce '1-1-1' -MinDiskGB 0 -RecordFile $record -WorkPath $TestDrive -OutputFile $out -SummaryFile '' | Out-Null
+    $LASTEXITCODE | Should -Be 0
+    $o = Read-Output $out
+    $o['ok'] | Should -Be 'true'
+    $o['key'] | Should -BeLike 'ci-runner-check/v1/probe-test/ok/up-na/docker-*/1-1-1'
   }
 }
 

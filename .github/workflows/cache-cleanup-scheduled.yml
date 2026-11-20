@@ -25,9 +25,11 @@ jobs:
         run: |
           echo "Fetching cache list for $REPO..."
 
-          # Get all caches sorted by last accessed (oldest first)
+          # Get all caches sorted by last accessed (oldest first). The runner self-check records
+          # (ci-runner-check/...) are a few bytes each and are what lets the pool take jobs at all (#1880):
+          # deleting them would send every job to GitHub-hosted runners until the next self-check.
           gh api "repos/$REPO/actions/caches" \
-            --jq '.actions_caches | sort_by(.last_accessed_at) | .[] | "\(.id) \(.key) \(.size_in_bytes)"' \
+            --jq '.actions_caches | map(select(.key | startswith("ci-runner-check/") | not)) | sort_by(.last_accessed_at) | .[] | "\(.id) \(.key) \(.size_in_bytes)"' \
             > /tmp/caches.txt
 
           TOTAL=$(wc -l < /tmp/caches.txt | tr -d ' ')
