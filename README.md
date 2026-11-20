@@ -15,6 +15,7 @@
   <a href="https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang"><img src="https://sonarcloud.io/api/project_badges/measure?project=whizbang-lib_whizbang&metric=alert_status" alt="Quality Gate Status"></a>
   <a href="https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/"><img src="https://img.shields.io/nuget/v/SoftwareExtravaganza.Whizbang.Core.svg" alt="NuGet"></a>
   <a href="https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/"><img src="https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Core.svg?label=nuget%20pre-release" alt="NuGet pre-release"></a>
+  <a href="https://whizba.ng/docs/getting-started/supported-frameworks"><img src="https://img.shields.io/badge/.NET-10.0%20%7C%2011.0-512BD4.svg" alt=".NET 10.0 | 11.0"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
 </p>
 
@@ -251,7 +252,7 @@ The eligibility rules storage cleanup and stream integrity share, versioned only
 
 ## Requirements
 
-- **.NET 10**
+- **.NET 10 or .NET 11**: every package ships net10.0 and net11.0 builds, supported for as long as Microsoft supports each version (see [Supported frameworks](https://whizba.ng/docs/getting-started/supported-frameworks))
 - **PostgreSQL** for the production stores (tested against PostgreSQL 17). Search fields use the `pg_trgm`
   extension, and the framework creates it when the server allows.
 - RabbitMQ or Azure Service Bus when services talk across processes; neither is needed in-process.
