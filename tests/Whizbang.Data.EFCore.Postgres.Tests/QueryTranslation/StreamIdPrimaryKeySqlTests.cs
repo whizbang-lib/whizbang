@@ -268,7 +268,7 @@ public class StreamIdPrimaryKeySqlTests {
       .Select(r => new { r.Data.OrderId, r.Data.Price })
       .ToQueryString();
 
-    await Assert.That(sql).Contains("SELECT w.id, w.price");
+    await Assert.That(sql).Contains("SELECT w.id AS \"OrderId\", w.price AS \"Price\"");
     await Assert.That(sql).DoesNotContain("'OrderId'");
   }
 
@@ -288,10 +288,10 @@ public class StreamIdPrimaryKeySqlTests {
     await using var db = _newContext();
     var sql = db.Set<PerspectiveRow<OrderModel>>().Select(r => r.Data)
       .Where(x => x.Title == "a")
-      .Select(x => new { x.OrderId, x.Price })
+      .Select(x => new { x.OrderId, x.Price, Urgent = x.Title.StartsWith("rush") })
       .ToQueryString();
 
-    await Assert.That(sql).Contains("SELECT w.id, w.price");
+    await Assert.That(sql).Contains("SELECT w.id AS \"OrderId\", w.price AS \"Price\", ");
     await Assert.That(sql).DoesNotContain("'OrderId'");
   }
 
@@ -351,6 +351,54 @@ public class StreamIdPrimaryKeySqlTests {
 
     await Assert.That(sql).Contains("'OrderId'");
     await Assert.That(sql).Contains("ORDER BY w.id");
+  }
+
+  /// <summary>A read of the stream id over a group's members reads each member row's id.</summary>
+  [Test]
+  public async Task GroupedMembers_MaxOfStreamId_ReadsTheRowIdAsync() {
+    await using var db = _newContext();
+    var query = db.Set<PerspectiveRow<OrderModel>>().Select(r => r.Data)
+      .GroupBy(x => x.Title)
+      .Select(g => new { g.Key, Last = g.Max(x => x.OrderId) });
+
+    var rewritten = new StreamIdPrimaryKeyRewriter().Visit(query.Expression).ToString();
+
+    await Assert.That(rewritten).Contains("Max(x => x.Id)");
+    await Assert.That(rewritten).DoesNotContain("OrderId");
+  }
+
+  /// <summary>
+  /// A filter over a group's members tests the document, as a top-level filter does: a design choice (#2423) that only
+  /// reads move to the row's id, so a filter never finds a row by its id that its document would not match.
+  /// </summary>
+  [Test]
+  public async Task GroupedMembers_CountWhereStreamId_KeepsTheDocumentTestAsync() {
+    var id = _probeId;
+    await using var db = _newContext();
+    var query = db.Set<PerspectiveRow<OrderModel>>().Select(r => r.Data)
+      .GroupBy(x => x.Title)
+      .Select(g => new { g.Key, Matching = g.Count(x => x.OrderId == id) });
+
+    var rewritten = new StreamIdPrimaryKeyRewriter().Visit(query.Expression).ToString();
+
+    await Assert.That(rewritten).Contains("x.Data.OrderId ==");
+  }
+
+  /// <summary>A subquery filter inside a projection tests the document too; the subquery's own reads still read the row's id.</summary>
+  [Test]
+  public async Task SubqueryInsideAProjection_KeepsItsFilterAndReadsItsIdAsync() {
+    var id = _probeId;
+    await using var db = _newContext();
+    var others = db.Set<PerspectiveRow<OrderModel>>();
+    var query = db.Set<PerspectiveRow<OrderModel>>()
+      .Select(r => new {
+        Same = others.Where(o => o.Data.OrderId == id).Select(o => o.Data.OrderId).FirstOrDefault(),
+      });
+
+    var rewritten = new StreamIdPrimaryKeyRewriter().Visit(query.Expression).ToString();
+
+    await Assert.That(rewritten).Contains("o.Data.OrderId ==");
+    await Assert.That(rewritten).Contains("Select(o => o.Id)");
   }
 
   /// <summary>A model whose stream id is not registered keeps reading it from the document.</summary>
