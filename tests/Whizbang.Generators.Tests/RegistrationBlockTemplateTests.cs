@@ -19,8 +19,9 @@ namespace Whizbang.Generators.Tests;
 /// still equal it.
 /// </summary>
 /// <remarks>
-/// Regenerate the snapshot, when a change to the output is intended, with <c>WHIZBANG_UPDATE_SNAPSHOTS=1</c>; the diff
-/// is the review.
+/// When a change to the output is intended, replace Snapshots/EFCoreModelRegistration.snapshot.txt with the output this
+/// test reports (normalized as <c>_normalized</c> does); the diff is the review. The test only reads the snapshot, as an
+/// embedded resource, so it stays a pure unit test (#1264).
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres.Generators/EFCoreServiceRegistrationGenerator.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres.Generators/Templates/Snippets/EFCoreSnippets.cs</code-under-test>
@@ -177,10 +178,6 @@ public partial class RegistrationBlockTemplateTests {
     var generated = _normalized(
       result.GeneratedSources.Single(s => s.HintName == "EFCoreModelRegistration.g.cs").SourceText.ToString());
 
-    if (Environment.GetEnvironmentVariable("WHIZBANG_UPDATE_SNAPSHOTS") == "1") {
-      await File.WriteAllTextAsync(_snapshotPath(), generated);
-    }
-
     await Assert.That(generated).Contains("StreamIdRegistry.Register<global::TestApp.ItemModel>")
       .Because("the source must reach every kind, or an equal snapshot proves nothing about it");
     await Assert.That(generated).Contains("SplitDocumentRegistry.Register<global::TestApp.CaseModel>");
@@ -191,12 +188,17 @@ public partial class RegistrationBlockTemplateTests {
   }
 
   /// <summary>
-  /// The two things that differ by where the generator runs and are not the block's doing: the line break AppendLine
-  /// writes is the platform's (the snapshot is checked out with LF everywhere), and the header names the generator's
-  /// version.
+  /// The three things that differ by where the generator runs and are not the block's doing: the line break AppendLine
+  /// writes is the platform's (the snapshot is checked out with LF everywhere), the header names the generator's
+  /// version, and the registered library version provider is stamped with the build's version.
   /// </summary>
   private static string _normalized(string generated) =>
-    _generatorVersion().Replace(generated.Replace("\r\n", "\n", StringComparison.Ordinal), "at generator v{GENERATOR_VERSION}");
+    _libraryVersion().Replace(
+      _generatorVersion().Replace(generated.Replace("\r\n", "\n", StringComparison.Ordinal), "at generator v{GENERATOR_VERSION}"),
+      "LibraryVersionProvider(\"{LIBRARY_VERSION}\")");
+
+  [System.Text.RegularExpressions.GeneratedRegex(@"LibraryVersionProvider\(""[^""]*""\)")]
+  private static partial System.Text.RegularExpressions.Regex _libraryVersion();
 
   [System.Text.RegularExpressions.GeneratedRegex(@"at generator v\S+")]
   private static partial System.Text.RegularExpressions.Regex _generatorVersion();
@@ -206,18 +208,5 @@ public partial class RegistrationBlockTemplateTests {
       ?? throw new InvalidOperationException($"The snapshot resource {SNAPSHOT_RESOURCE} is missing");
     using var reader = new StreamReader(stream);
     return reader.ReadToEnd();
-  }
-
-  // Found from the test assembly's location, since the build maps source paths: walk up to the repository root.
-  private static string _snapshotPath() {
-    var dir = AppContext.BaseDirectory;
-    while (dir is not null) {
-      var candidate = Path.Combine(dir, "tests", "Whizbang.Generators.Tests");
-      if (Directory.Exists(Path.Combine(dir, "src", "Whizbang.Core")) && Directory.Exists(candidate)) {
-        return Path.Combine(candidate, "Snapshots", "EFCoreModelRegistration.snapshot.txt");
-      }
-      dir = Path.GetDirectoryName(dir);
-    }
-    throw new InvalidOperationException("Could not locate the whizbang repository root from AppContext.BaseDirectory");
   }
 }

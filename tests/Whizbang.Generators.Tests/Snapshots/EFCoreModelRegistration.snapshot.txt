@@ -612,7 +612,7 @@ public static class GeneratedModelRegistration {
       // Register JsonSerializerOptions for Whizbang components
       services.AddSingleton(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
       services.TryAddSingleton<global::Whizbang.Core.Observability.ILibraryVersionProvider>(
-        new global::Whizbang.Core.Observability.LibraryVersionProvider("0.100.0-local.111"));
+        new global::Whizbang.Core.Observability.LibraryVersionProvider("{LIBRARY_VERSION}"));
     });
 
     // Register initialization callback for EnsureWhizbangInitializedAsync()

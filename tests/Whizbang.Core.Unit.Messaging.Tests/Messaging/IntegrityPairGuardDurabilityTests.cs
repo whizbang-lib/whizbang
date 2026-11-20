@@ -313,7 +313,7 @@ public class IntegrityPairGuardDurabilityTests {
 
   [Test]
   public async Task ConcurrentFirstVerdicts_ShareOneLoadAsync() {
-    var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var hold = new TaskCompletionSource();
     var store = new HaltStore { HoldLoad = hold };
     var (guard, _) = _process(new FakeTimeProvider(_t0), TimeSpan.FromHours(2));
 
