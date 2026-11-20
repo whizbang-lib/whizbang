@@ -247,7 +247,9 @@ The silver criteria (<https://www.bestpractices.dev/criteria/1>), in the order o
 (project 15090, level 1). Silver needs passing plus every silver MUST; a SHOULD or SUGGESTED may be
 Unmet with a justification. Assessed against the repository on 2026-10-04.
 
-**Status**: every MUST is Met except `access_continuity`, which needs the owner (see below). The other rows can be entered today.
+**Status** (rechecked 2026-11-20 against the site's record for project 15090): every silver criterion is
+answered, at 98%. Two rows need changing on the site: `version_tags_signed` is now Met, and the
+`build_repeatable` justification no longer matches CI and should be corrected (see below).
 
 ## Silver: what is left
 
@@ -255,7 +257,8 @@ Unmet with a justification. Assessed against the repository on 2026-10-04.
 |---|---|---|---|
 | `access_continuity` | MUST | A second trusted person able to create and close issues, merge, and release within a week: owner on the GitHub organization, co-owner on the nuget.org packages, access to the docs domain, named in `GOVERNANCE.md` (section Continuity). Today the organization has one member and one admin. | owner only |
 | `bus_factor` | SHOULD | Unmet until a second regular contributor exists. | Unmet, justified |
-| `version_tags_signed` | SUGGESTED | Release tags are created unsigned by the release workflow; leave Unmet or sign tags in the workflow. | optional |
+| `build_repeatable` | MUST | **Correction.** The site says Met because "the release path rebuilds the tested commit and fails if the binaries' hashes differ". Since #2068 (closed 2026-11-05) it does not: `docs/RELEASING.md` (verify-rebuild) records that byte-for-byte identity is not a gate, because source generators emit some assemblies nondeterministically and ILRepack writes a fresh module id per merge. This criterion requires a bit-for-bit result, so the accurate answer is Unmet until that nondeterminism is fixed (the same work closes gold's `build_reproducible`). Changing it lowers silver; keeping Met needs a justification that is true. | owner decides |
+| `version_tags_signed` | SUGGESTED | Done: every release tag since #1438 (PR #1550, merged 2026-10-20) is signed keylessly with gitsign; change the site's answer to Met. | enter Met |
 
 ## Basics
 
@@ -302,7 +305,7 @@ Unmet with a justification. Assessed against the repository on 2026-10-04.
 | `build_standard_variables` | N/A | No native binaries are built; the output is managed .NET assemblies. |
 | `build_preserve_debug` | Met | Every package ships portable symbols in a `.snupkg` with embedded sources. |
 | `build_non_recursive` | Met | MSBuild builds the solution from its project reference graph, not by recursing into directories. |
-| `build_repeatable` | Met | Builds are deterministic, and CI proves it: the release path rebuilds the tested commit and fails if the binaries' hashes differ from the tested build. |
+| `build_repeatable` | **Unmet (correction, owner decides)** | Unmet for now. Builds are configured to be deterministic (ContinuousIntegrationBuild, dependencies locked by hash), but not every assembly is bit-for-bit identical between builds of the same commit: some source-generated code and the ILRepack merge step vary. CI instead verifies that a release is built from the tested commit with the same SDK and the same assembly set, and every release carries a signed SLSA provenance statement naming each package by its SHA-256 digest. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/RELEASING.md> |
 | `installation_common` | Met | Installed and removed with NuGet (`dotnet add package` / `dotnet remove package`). |
 | `installation_standard_variables` | Met | NuGet decides where packages are written and honors its standard settings (`NUGET_PACKAGES`, `nuget.config`). |
 | `installation_development_quick` | Met | Clone, `dotnet build`, and `pwsh scripts/Run-Tests.ps1`; integration suites start their databases and brokers in containers. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#setting-up-your-development-environment> |
@@ -330,7 +333,7 @@ Unmet with a justification. Assessed against the repository on 2026-10-04.
 | `crypto_certificate_verification` | Met | Certificate verification is the .NET default and no shipped package overrides it. |
 | `crypto_verification_private` | Met | Same: verification happens before any data is sent, and nothing disables it. |
 | `signed_releases` | Met | Every stable release is signed keylessly with Sigstore by the release workflow (no private key exists on any distribution site), and SECURITY.md explains how to verify a GitHub release asset and a nuget.org package. <https://github.com/whizbang-lib/whizbang/blob/develop/SECURITY.md#verifying-a-release> |
-| `version_tags_signed` | Unmet | Release tags are created by the automated release workflow and are not signed. The releases themselves are signed: every stable release carries a Sigstore-signed provenance statement covering each package. <https://github.com/whizbang-lib/whizbang/blob/develop/SECURITY.md#verifying-a-release> |
+| `version_tags_signed` | **Met (change from Unmet)** | Every release tag (vX.Y.Z, and every beta and rc tag) is signed keylessly with Sigstore's gitsign by the workflow that published the release, and SECURITY.md shows how to verify one with gitsign verify-tag. Tags created before signing was introduced are unsigned. <https://github.com/whizbang-lib/whizbang/blob/develop/SECURITY.md#verifying-a-release> |
 | `input_validation` | Met | Incoming messages deserialize only through JSON metadata registered at compile time (an allowlist); a type with no registered metadata is never deserialized, payload size is limited, and public APIs validate their arguments. |
 | `hardening` | Met | Native AOT and trimming (no reflection), nullable reference types, warnings as errors, authenticated encryption, and payload size limits. |
 | `assurance_case` | Met | Threat model, trust boundaries, secure design principles applied, and the common weaknesses countered. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/security-assurance-case.md> |
@@ -347,64 +350,99 @@ Unmet with a justification. Assessed against the repository on 2026-10-04.
 # Gold level
 
 The gold criteria (<https://www.bestpractices.dev/criteria/2>), in the order of the gold form (project
-15090, level 2). Gold needs silver plus every gold MUST. Assessed against the repository on 2026-10-05.
-As in the sections above, every Justification cell is the text to enter on the site.
+15090, level 2). Gold needs silver plus every gold MUST (a SHOULD may be Unmet with a justification).
 
-**Status**: not started. Gold requires silver first, and three gold MUSTs need more people than the
-project has today (see below).
+**Checked on 2026-11-20** against the project's public record
+(<https://www.bestpractices.dev/projects/15090.json>), the repository on `develop`, the organization's
+settings (read-only API) and the live sites. The site showed Passing, Silver 98%, Gold 30%, with 13
+gold criteria unanswered (`?`). Every row below says what the site holds now and what to enter. The
+**Enter** cell is the exact status value; the **Justification** cell is the exact text to paste, with its
+evidence URL inside it (the form's "Met URL" criteria need a URL in the justification).
 
-## Gold: what is left
+## Gold: summary
+
+| | Count | Criteria |
+|---|---|---|
+| Already answered, keep | 10 | `achieve_silver` (computed by the site), `bus_factor`, `repo_distributed`, `test_invocation`, `test_continuous_integration`, `crypto_used_network`, `crypto_tls12`, `hardening`, `dynamic_analysis`, `dynamic_analysis_enable_assertions` |
+| Unanswered, enter **Met** | 8 | `copyright_per_file`, `license_per_file`, `require_2FA`, `secure_2FA`, `code_review_standards`, `test_statement_coverage90`, `test_branch_coverage80`, `hardened_site` |
+| Unanswered, enter **Unmet** | 5 | `contributors_unassociated`, `small_tasks`, `two_person_review`, `build_reproducible`, `security_review` |
+| Unanswered, enter **N/A** | 0 | |
+
+(`achieve_silver` is set by the site, not entered, so 22 rows are entered by hand.)
+
+## Gold: unmet, and what it would take
 
 | Criterion | Kind | What closes it | Who |
 |---|---|---|---|
-| `achieve_silver` | MUST | Silver's last MUST, `access_continuity`. | owner |
-| `bus_factor`, `contributors_unassociated`, `two_person_review` | MUST | At least two significant contributors from different organizations, and a second person reviewing at least half of all changes before release. Structural: not reachable by documentation or tooling. | needs a second regular contributor |
-| `security_review` | MUST | A security review within the last five years that considers the security requirements and boundaries. The assurance case is the basis; the review itself must be carried out and recorded by a project member. | owner |
+| `achieve_silver` | MUST | Silver's `access_continuity` (and `build_repeatable`, see the silver correction above). | owner |
+| `bus_factor` | MUST | A second person able to carry the project: regular contributions, merge and release rights. | needs a second maintainer |
+| `contributors_unassociated` | MUST | At least two significant contributors in the last year (the site's indicators: 50 commits, 1,000 lines of code or 20 pages of docs) who are not paid by the same organization. Today the only contributors besides the maintainer are paid by the maintainer's organization. | needs an outside contributor |
+| `two_person_review` | MUST | At least half of all changes reviewed by someone other than the author before release. Of the last 400 merged pull requests (2026-08-20 to 2026-11-20), 8 were approved by someone other than the author. | needs a second reviewer |
+| `security_review` | MUST | Complete and sign off the 2026 security review workbook (draft pull request #1155, `docs/security-review-2026.md`, prepared 2026-10-10): every Decision cell, the findings table and the sign-off are empty and need a human reviewer. Once merged, answer Met with its URL. | owner |
+| `build_reproducible` | MUST | Byte-for-byte identical packages from the same commit. `docs/RELEASING.md` (verify-rebuild) records that this does not hold: source generators emit some assemblies nondeterministically (`[LoggerMessage]` partial-class ordering) and ILRepack writes a fresh module id (MVID) per merge, so CI compares SDK and assembly set, not hashes (#2068, #691). Closing it means fixing those sources of nondeterminism, then restoring a hash comparison of two independent builds of the same commit at the same version. No issue tracks this yet. | engineering work, needs an issue |
+| `small_tasks` | MUST | The process exists (the `good first issue` label, defined and linked from CONTRIBUTING), but no open issue carries the label: the three that did were closed on 2026-10-06. Label two or three open, self-contained issues with the steps written in them, then answer Met with the alternative text below. | owner, minutes |
 
 ## Basics
 
-| Criterion | Answer | Justification |
-|---|---|---|
-| `achieve_silver` | Unmet | Silver is in progress; one criterion (continuity of access) remains. <https://www.bestpractices.dev/projects/15090> |
-| `bus_factor` | Unmet | One maintainer does most of the work today, so the bus factor is 1. <https://github.com/whizbang-lib/whizbang/graphs/contributors> |
-| `contributors_unassociated` | Unmet | The project has one significant contributor today; other contributions have been occasional. <https://github.com/whizbang-lib/whizbang/graphs/contributors> |
-| `copyright_per_file` | Met | Every source file (C#, SQL, PowerShell, shell, YAML, TypeScript, JavaScript, SCSS, Python) starts with `Copyright (c) whizbang-lib contributors.`; C# is enforced by the build (`.editorconfig` `file_header_template`, rule IDE0073) and every file by `reuse lint` on each pull request. Files with no place for a header (documentation, data, project files, images), code-generation templates (copied into consumers' generated code), generated code and line-sensitive test fixtures are declared in `REUSE.toml`. <https://github.com/whizbang-lib/whizbang/blob/develop/REUSE.toml> |
-| `license_per_file` | Met | The same header names the license as an SPDX identifier (MIT), and `REUSE.toml` declares it for the files listed there; the repository is REUSE 3.3 compliant, checked by `reuse lint` on every pull request. <https://github.com/whizbang-lib/whizbang/blob/develop/REUSE.toml> |
+| Criterion | On the site | Enter | Justification |
+|---|---|---|---|
+| `achieve_silver` | Unmet | (computed) | Set by the site once silver is earned. |
+| `bus_factor` | Unmet | Unmet (keep) | One maintainer does most of the work today, so the bus factor is 1. The governance document describes how a regular contributor takes on maintainer responsibilities. <https://github.com/whizbang-lib/whizbang/blob/develop/GOVERNANCE.md#roles> |
+| `contributors_unassociated` | ? | Unmet | Unmet. In the twelve months to 2026-11-20 the maintainer wrote over 99% of the non-automated commits; the only other contributors (58 and 7 commits) are paid by the same organization as the maintainer, so under this criterion they are associated. <https://github.com/whizbang-lib/whizbang/graphs/contributors> |
+| `copyright_per_file` | ? | Met | Every source file (C#, SQL, PowerShell, shell, YAML, TypeScript, JavaScript, SCSS, Python) starts with "Copyright (c) whizbang-lib contributors."; C# is also enforced by the build (.editorconfig file_header_template, rule IDE0073). Files with no place for a header (documentation, data, project files, images) and code-generation templates (their text is copied into consumers' generated code) are declared in REUSE.toml, which has no catch-all. `reuse lint` (REUSE 3.3) runs on every pull request as the required "Gate · License headers" check. <https://github.com/whizbang-lib/whizbang/blob/develop/REUSE.toml> |
+| `license_per_file` | ? | Met | The same header carries "SPDX-License-Identifier: MIT", and REUSE.toml declares the license for the files listed there; the repository is REUSE 3.3 compliant, checked by `reuse lint` on every pull request. <https://github.com/whizbang-lib/whizbang/blob/develop/REUSE.toml> |
 
 ## Change Control
 
-| Criterion | Answer | Justification |
-|---|---|---|
-| `repo_distributed` | Met | Git, hosted on GitHub. |
-| `small_tasks` | Met | Small, self-contained tasks are labeled `good first issue`, each with the steps to do it, and CONTRIBUTING points new contributors to them. <https://github.com/whizbang-lib/whizbang/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22> |
-| `require_2FA` | Met | The GitHub organization requires two-factor authentication for every member and outside collaborator, so no one can change the repository or read private vulnerability reports without it. <https://github.com/whizbang-lib> |
-| `secure_2FA` | Met | The governance document requires everyone with write access to use an authenticator app, passkey or security key rather than SMS. <https://github.com/whizbang-lib/whizbang/blob/develop/GOVERNANCE.md#how-decisions-are-made> |
+| Criterion | On the site | Enter | Justification |
+|---|---|---|---|
+| `repo_distributed` | Met | Met (keep) | Repository on GitHub, which uses git. git is distributed. |
+| `small_tasks` | ? | Unmet | Unmet for now. Small, self-contained tasks are labeled "good first issue" (defined as "Small and self-contained, with the steps in the issue") and CONTRIBUTING points new contributors to the label, but no open issue carries it at the moment. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#finding-something-to-work-on> |
+| `small_tasks` (once open issues are labeled) | ? | Met | Small, self-contained tasks are labeled "good first issue", each with the steps to do it, and CONTRIBUTING points new contributors to them. <https://github.com/whizbang-lib/whizbang/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22> |
+| `require_2FA` | ? | Met | The whizbang-lib GitHub organization requires two-factor authentication for every member and outside collaborator (two_factor_requirement_enabled is true, recorded in the settings baseline that a weekly drift check compares against), so no one can change the repository or read private vulnerability reports without it. <https://github.com/whizbang-lib/whizbang/blob/develop/.github/settings-baseline.json> |
+| `secure_2FA` | ? | Met | The organization allows only secure two-factor methods (GitHub's "Only allow secure two-factor methods" setting), so SMS is not accepted, and the governance document requires everyone with write access to use an authenticator app, passkey or security key. <https://github.com/whizbang-lib/whizbang/blob/develop/GOVERNANCE.md#how-decisions-are-made> |
 
 ## Quality
 
-| Criterion | Answer | Justification |
-|---|---|---|
-| `code_review_standards` | Met | CONTRIBUTING documents how review is conducted, what the required checks verify, what the reviewer checks (correctness and fit, tests, security, performance, documentation, writing) and what is required to merge. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#code-review> |
-| `two_person_review` | Unmet | There is one active maintainer, and a pull request author cannot approve their own pull request; changes are gated by automated checks, which do not count as review by another person. |
-| `build_reproducible` | Met | Builds are deterministic, and the release path rebuilds the tested commit and fails unless the binaries' hashes match the tested build. <https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml> |
-| `test_invocation` | Met | Tests run with the standard `dotnet test`. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/TEST-FILTERING.md> |
-| `test_continuous_integration` | Met | Every pull request is built and runs the unit and component suites, and the merge queue runs the full matrix on each change, on the latest `develop`, before it lands. <https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml> |
-| `test_statement_coverage90` | Met | Line coverage is 100% on SonarCloud. <https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang> |
-| `test_branch_coverage80` | Met | Branch coverage is 93.3% on SonarCloud, collected on every pull request; the merge gate also fails any pull request that adds an untested hand-written decision. <https://sonarcloud.io/component_measures?id=whizbang-lib_whizbang&metric=branch_coverage> |
+| Criterion | On the site | Enter | Justification |
+|---|---|---|---|
+| `code_review_standards` | ? | Met | CONTRIBUTING documents how review is conducted, what the required checks verify, what the reviewer checks (correctness and fit, tests, security, performance, documentation, writing) and what is required to merge. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#code-review> |
+| `two_person_review` | ? | Unmet | Unmet. There is one active maintainer and a pull request author cannot approve their own pull request: of the last 400 merged pull requests (2026-08-20 to 2026-11-20), 8 were approved by someone other than the author. Every change passes the same required automated checks, which do not count as review by another person. <https://github.com/whizbang-lib/whizbang/blob/develop/GOVERNANCE.md#how-decisions-are-made> |
+| `build_reproducible` | ? | Unmet | Unmet. Builds are deterministic in configuration (ContinuousIntegrationBuild with deterministic source paths, and dependencies locked by hash in packages.lock.json), but not yet bit-for-bit: some source-generated code and the ILRepack merge step vary between builds, so CI verifies that a release is built from the tested commit with the same SDK and assembly set rather than comparing hashes. Tamper evidence for published packages is the signed SLSA provenance. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/RELEASING.md> |
+| `test_invocation` | Met | Met (keep) | Tests run with the standard dotnet test (or dotnet run per project); scripts/Run-Tests.ps1 wraps the common modes. |
+| `test_continuous_integration` | Met | Met (keep) | (as entered) |
+| `test_statement_coverage90` | ? | Met | Line coverage of the library is 100% on SonarCloud (9 uncovered of 86,023 lines, which rounds to 100%; Codecov reports 99.8%), collected on every change by the test suites, which are FLOSS (MIT, in this repository); the merge gate fails any pull request that leaves an added line unexecuted. What is excluded and why is documented in ai-docs/coverage-exclusions.md. <https://sonarcloud.io/component_measures?id=whizbang-lib_whizbang&metric=line_coverage> |
+| `test_branch_coverage80` | ? | Met | Branch coverage of the library is 100% on SonarCloud (15 uncovered of 39,046 conditions), collected on every change by the same FLOSS test suites; the whole-library gate fails any pull request that leaves an outcome of a hand-written decision untested. <https://sonarcloud.io/component_measures?id=whizbang-lib_whizbang&metric=branch_coverage> |
 
 ## Security
 
-| Criterion | Answer | Justification |
-|---|---|---|
-| `crypto_used_network` | Met | The library has no network protocol of its own and no default endpoint; every connection uses the scheme and TLS settings in the application's connection string, and Azure Service Bus is TLS only. |
-| `crypto_tls12` | Met | TLS comes from the .NET runtime, which negotiates TLS 1.2 or later. |
-| `hardened_site` | Met | The repository (GitHub), the package site (nuget.org) and the docs site all send the hardening headers. The docs site sends Strict-Transport-Security, a Content-Security-Policy that allows only its own scripts, its fonts and its search model's hosts, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, a Referrer-Policy and a Permissions-Policy. <https://securityheaders.com/?q=https%3A%2F%2Fwhizba.ng> |
-| `security_review` | Unmet | The security assurance case documents the requirements and boundaries; a review against it has not yet been carried out and recorded. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/security-assurance-case.md> |
-| `hardening` | Met | Native AOT and trimming (no reflection), nullable reference types, warnings as errors, authenticated encryption, and payload size limits. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/security-assurance-case.md> |
+| Criterion | On the site | Enter | Justification |
+|---|---|---|---|
+| `crypto_used_network` | Met | Met (keep) | (as entered) |
+| `crypto_tls12` | Met | Met (keep) | (as entered) |
+| `hardened_site` | ? | Met | The repository (GitHub) and package site (nuget.org) send the hardening headers, and so does the project site https://whizba.ng: Strict-Transport-Security, a Content-Security-Policy (default-src 'self', object-src 'none', frame-ancestors 'none', base-uri 'self', form-action 'self'), X-Content-Type-Options: nosniff and X-Frame-Options: DENY, plus a Referrer-Policy and a Permissions-Policy. <https://securityheaders.com/?q=https%3A%2F%2Fwhizba.ng> |
+| `security_review` | ? | Unmet | Unmet for now. The security assurance case documents the requirements, the trust boundaries and the weaknesses countered, and a 2026 review against it has been prepared, but it has not yet been completed and signed off by a reviewer. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/security-assurance-case.md> |
+| `hardening` | Met | Met (keep) | (as entered) |
 
 ## Analysis
 
-| Criterion | Answer | Justification |
-|---|---|---|
-| `dynamic_analysis` | Met | Property-based tests (FsCheck) run on every pull request and in the merge queue, so every commit a release is cut from has passed them; Stryker.NET mutation testing checks the tests catch injected faults. <https://github.com/whizbang-lib/whizbang/blob/develop/ai-docs/testing-tunit.md#property-tests-with-fscheck> |
-| `dynamic_analysis_enable_assertions` | Met | Argument guards and invariant checks are always on, not compiled out, and the property tests assert invariants directly on generated inputs. |
+| Criterion | On the site | Enter | Justification |
+|---|---|---|---|
+| `dynamic_analysis` | Met | Met (keep) | (as entered) |
+| `dynamic_analysis_enable_assertions` | Met | Met (keep) | (as entered) |
+
+## Gold: notes for the person entering these
+
+- `hardened_site`: the docs site's CSP allows `'unsafe-inline'` in `script-src` and `style-src`. The
+  four required headers are all present with restrictive framing, object and base rules, so Met is
+  defensible; a strict reviewer may call the inline allowance permissive. Removing it is a docs-site
+  change (nonces or hashes for the inline scripts).
+- `secure_2FA`: GitHub's API does not report the "Only allow secure two-factor methods" setting. It
+  was confirmed in the organization's Authentication security settings on 2026-10-20; glance at it
+  again before submitting.
+- `test_statement_coverage90` / `test_branch_coverage80`: Codecov's develop total (99.79%) counts
+  partial lines as misses, which is why it is lower than SonarCloud's figure; both are far above the
+  thresholds. Coverage is collected with Microsoft's code coverage extension for the test platform, which is not itself FLOSS; the criterion requires the test suites to be FLOSS (they are) and a FLOSS tool able to measure C# to exist (coverlet is one), not that the collector be FLOSS. If a reviewer reads it the other way, coverlet.collector is already pinned in Directory.Packages.props.
+- The site also lists `homepage_url` and `report_url` as `?` in the passing section. Passing is already
+  100%, so they do not affect any level; filling them (https://whizba.ng and
+  https://github.com/whizbang-lib/whizbang/issues) is harmless.
