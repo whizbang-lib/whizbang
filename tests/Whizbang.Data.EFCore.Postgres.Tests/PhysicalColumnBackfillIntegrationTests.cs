@@ -36,7 +36,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 [Category("Integration")]
 [Category("Shard2")]
-public class PhysicalColumnBackfillIntegrationTests : IAsyncDisposable {
+public class PhysicalColumnBackfillIntegrationTests {
   static PhysicalColumnBackfillIntegrationTests() {
     AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
   }
@@ -118,11 +118,6 @@ public class PhysicalColumnBackfillIntegrationTests : IAsyncDisposable {
     if (!string.IsNullOrEmpty(_testDatabaseName)) {
       await PerTestDatabaseFactory.DropAsync(_testDatabaseName);
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   private TestDbContext _context() => new(new DbContextOptionsBuilder<TestDbContext>().UseNpgsql(_connectionString).Options);

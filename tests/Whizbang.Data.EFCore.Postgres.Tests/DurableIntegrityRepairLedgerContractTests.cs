@@ -35,7 +35,7 @@ public sealed class DurableIntegrityRepairLedgerContractTests : IntegrityRepairL
     foreach (var ctx in _contexts) {
       await ctx.DisposeAsync();
     }
-    await _database.DisposeAsync();
+    await _database.TeardownAsync();
   }
 
   /// <inheritdoc />

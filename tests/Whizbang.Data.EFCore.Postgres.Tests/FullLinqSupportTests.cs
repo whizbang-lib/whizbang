@@ -29,7 +29,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 [Category("Integration")]
 [Category("Shard2")]
-public class FullLinqSupportTests : IAsyncDisposable {
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable", Justification = "#1954: the [After(Test)] hook disposes them, the fixture's one teardown; a disposable fixture would be disposed by TUnit a second time.")]
+public class FullLinqSupportTests {
   private static readonly Uuid7IdProvider _idProvider = new();
 
   static FullLinqSupportTests() {
@@ -121,7 +122,6 @@ public class FullLinqSupportTests : IAsyncDisposable {
 
     _testDatabaseName = (await PerTestDatabaseFactory.CreateAsync("full_linq")).Name;
 
-
     var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _testDatabaseName,
       Timezone = "UTC",
@@ -168,11 +168,6 @@ public class FullLinqSupportTests : IAsyncDisposable {
 
       _testDatabaseName = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   private async Task _initializeSchemaAsync() {

@@ -31,7 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Integration")]
 [Category("Shard2")]
-public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
+public class MultiPerspectivePostgresUpsertSymmetryTests {
   private static readonly Uuid7IdProvider _idProvider = new();
 
   private static Guid _newGuid() => (Guid)_idProvider.NewGuid();
@@ -131,11 +131,6 @@ public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
       await PerTestDatabaseFactory.DropAsync(_testDatabaseName);
       _testDatabaseName = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   private async Task _initializeSchemaAsync() {

@@ -28,7 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 [Category("Integration")]
 [Category("Shard4")]
-public class LengthConstraintDdlTests : IAsyncDisposable {
+public class LengthConstraintDdlTests {
   private const string TABLE = "ck_probe";
 
   private string _databaseName = null!;
@@ -57,12 +57,11 @@ public class LengthConstraintDdlTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_databaseName is not null) {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
 
-    GC.SuppressFinalize(this);
   }
 
   /// <summary>

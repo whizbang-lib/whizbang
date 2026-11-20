@@ -33,7 +33,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 [SuppressMessage("Readability", "RCS1118:Mark local variable as const",
   Justification = "These locals are captured into an expression tree on purpose. A const local is inlined by the compiler as a literal, which turns the parameterized filter under test into a constant one: in the matrix that collapses every /param row onto its /const twin, and elsewhere it stops exercising the captured-parameter path altogether.")]
 [NotInParallel] // Switches the process-wide containment mode every perspective query compiles under: runs alone.
-public sealed class JsonbContainmentNamingTests : IDisposable {
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable", Justification = "#1954: the [After(Test)] hook disposes them, the fixture's one teardown; a disposable fixture would be disposed by TUnit a second time.")]
+public sealed class JsonbContainmentNamingTests {
   private const string UNUSED_CONNECTION = "Host=localhost;Database=naming;Username=u;Password=p";
 
   [SuppressIndexAdvisory("compiled, never run")]
@@ -94,7 +95,6 @@ public sealed class JsonbContainmentNamingTests : IDisposable {
   private readonly NamingDbContext _db = new(_options);
 
   /// <summary>Releases this test's context.</summary>
-  public void Dispose() => _db.Dispose();
   private IQueryable<PerspectiveRow<RenamedModel>> _rows => _db.Set<PerspectiveRow<RenamedModel>>();
 
   /// <summary>
@@ -209,6 +209,10 @@ public sealed class JsonbContainmentNamingTests : IDisposable {
     }
   }
 
+  // #1954: the one teardown; the class is not also IDisposable, which TUnit would dispose after this hook.
   [After(Test)]
-  public void RestoreSwitch() => JsonbContainmentSwitch.Reset();
+  public void RestoreSwitch() {
+    JsonbContainmentSwitch.Reset();
+    _db.Dispose();
+  }
 }

@@ -37,7 +37,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/Perspectives/CanonicalTemporalRewrite.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard4")]
-public class CanonicalTemporalRewriteIntegrationTests : IAsyncDisposable {
+public class CanonicalTemporalRewriteIntegrationTests {
   private const long LOCK_ID = 192837465;
   private const int TIMEOUT_SECONDS = 60;
   private const string TABLE_COLUMNS =
@@ -67,11 +67,10 @@ public class CanonicalTemporalRewriteIntegrationTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_databaseName is not null) {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
-    GC.SuppressFinalize(this);
   }
 
   private async Task _executeAsync(string sql) {

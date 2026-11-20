@@ -45,7 +45,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// <docs>apis/graphql/filtering</docs>
 [Category("Integration")]
 [Category("Shard5")]
-public class GraphQLWhizbangIdFilterIndexTests : IAsyncDisposable {
+public class GraphQLWhizbangIdFilterIndexTests {
   private const string TABLE = "wh_per_id_filter";
 
   // Enough rows that the plan is about the index rather than a table that fits in a page.
@@ -197,12 +197,11 @@ public class GraphQLWhizbangIdFilterIndexTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_databaseName is not null) {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
 
-    GC.SuppressFinalize(this);
   }
 
   private static async Task _executeAsync(string connectionString, string sql) {

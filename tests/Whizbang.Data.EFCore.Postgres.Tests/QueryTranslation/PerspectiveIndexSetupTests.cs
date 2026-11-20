@@ -34,7 +34,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 [Category("Integration")]
 [Category("Shard1")]
-public class PerspectiveIndexSetupTests : IAsyncDisposable {
+public class PerspectiveIndexSetupTests {
   private const string TABLE = "wh_per_index_setup";
 
   private string _databaseName = null!;
@@ -59,12 +59,11 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_databaseName is not null) {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
 
-    GC.SuppressFinalize(this);
   }
 
   private async Task _executeAsync(string sql) {

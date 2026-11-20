@@ -39,7 +39,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 [Category("Integration")]
 [Category("Shard1")]
-public class ComplexTypeJsonMappingTests : IAsyncDisposable {
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable", Justification = "#1954: the [After(Test)] hook disposes them, the fixture's one teardown; a disposable fixture would be disposed by TUnit a second time.")]
+public class ComplexTypeJsonMappingTests {
   private static readonly Uuid7IdProvider _idProvider = new();
 
   static ComplexTypeJsonMappingTests() {
@@ -113,7 +114,6 @@ public class ComplexTypeJsonMappingTests : IAsyncDisposable {
 
     _testDatabaseName = (await PerTestDatabaseFactory.CreateAsync("complex_json")).Name;
 
-
     var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _testDatabaseName,
       Timezone = "UTC",
@@ -159,11 +159,6 @@ public class ComplexTypeJsonMappingTests : IAsyncDisposable {
 
       _testDatabaseName = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   private async Task _initializeSchemaAsync() {

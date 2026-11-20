@@ -24,7 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Capabilities;
 /// <docs>fundamentals/perspectives/vector-fields#pgvector-extension</docs>
 [Category("Integration")]
 [Category("Shard4")]
-public class RequiredVectorExtensionTests : IAsyncDisposable {
+public class RequiredVectorExtensionTests {
   private const string SCOPE = "db";
   private string? _databaseName;
   private string _connectionString = null!;
@@ -43,7 +43,7 @@ public class RequiredVectorExtensionTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_databaseName is not null) {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
       _databaseName = null;
@@ -52,7 +52,6 @@ public class RequiredVectorExtensionTests : IAsyncDisposable {
       await _executeAsync(SharedPostgresContainer.ConnectionString, $"DROP ROLE IF EXISTS {_role}");
       _role = null;
     }
-    GC.SuppressFinalize(this);
   }
 
   private static async Task _executeAsync(string connectionString, string sql) {

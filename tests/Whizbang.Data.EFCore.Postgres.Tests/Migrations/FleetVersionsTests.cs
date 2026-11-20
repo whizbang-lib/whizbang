@@ -31,7 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <code-under-test>src/Whizbang.Data.Postgres/FleetVersions.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard4")]
-public class FleetVersionsTests : IAsyncDisposable {
+public class FleetVersionsTests {
   private static readonly Guid _self = Guid.CreateVersion7();
 
   private string _databaseName = null!;
@@ -53,11 +53,10 @@ public class FleetVersionsTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_databaseName is not null) {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
-    GC.SuppressFinalize(this);
   }
 
   private async Task _executeAsync(string sql) {

@@ -37,7 +37,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// databases at once, a <c>CREATE DATABASE</c> can lose the race for the template (55006), which the factory retries.
 /// </para>
 /// </remarks>
-public abstract class EFCoreTestBase : IAsyncDisposable {
+public abstract class EFCoreTestBase {
   static EFCoreTestBase() {
     // Configure Npgsql to use DateTimeOffset for TIMESTAMPTZ columns globally
     AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
@@ -108,11 +108,6 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
       await PerTestDatabaseFactory.DropAsync(_testDatabaseName);
       _testDatabaseName = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   /// <summary>

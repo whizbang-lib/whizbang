@@ -24,7 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Capabilities;
 /// <docs>operations/infrastructure/capabilities#requirement-sources</docs>
 [Category("Integration")]
 [Category("Shard4")]
-public class TwoDatabaseHostRequirementTests : IAsyncDisposable {
+public class TwoDatabaseHostRequirementTests {
   private const string VECTORS = "vectors";
   private const string PLAIN = "plain";
 
@@ -51,12 +51,11 @@ public class TwoDatabaseHostRequirementTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     foreach (var name in new[] { _vectorDatabase, _plainDatabase }.OfType<string>()) {
       await PerTestDatabaseFactory.DropAsync(name);
     }
     (_vectorDatabase, _plainDatabase) = (null, null);
-    GC.SuppressFinalize(this);
   }
 
   private static async Task _executeAsync(string connectionString, string sql) {

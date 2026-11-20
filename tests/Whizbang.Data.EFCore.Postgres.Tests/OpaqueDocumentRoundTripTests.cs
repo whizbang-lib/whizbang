@@ -77,7 +77,7 @@ public static class OpaqueDocumentFixture {
 [Category("Integration")]
 [Category("Shard4")]
 [NotInParallel("PersistenceProfileRegistry")]
-public class OpaqueDocumentRoundTripTests : IAsyncDisposable {
+public class OpaqueDocumentRoundTripTests {
   private const string TABLE = "wh_per_opaque_document";
 
   private static readonly DateTime _startedAt = new(2026, 3, 4, 5, 6, 7, 890, DateTimeKind.Utc);
@@ -145,14 +145,13 @@ public class OpaqueDocumentRoundTripTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_dataSource is not null) {
       await _dataSource.DisposeAsync();
     }
     if (_databaseName is not null) {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
-    GC.SuppressFinalize(this);
   }
 
   private OpaqueContext _context() =>

@@ -38,7 +38,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// <docs>fundamentals/perspectives/jsonb-containment</docs>
 [Category("Integration")]
 [Category("Shard1")]
-public class PerspectiveDateFormatLockTests : IAsyncDisposable {
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable", Justification = "#1954: the [After(Test)] hook disposes them, the fixture's one teardown; a disposable fixture would be disposed by TUnit a second time.")]
+public class PerspectiveDateFormatLockTests {
   private const string TABLE = "wh_per_date_format";
 
   /// <summary>
@@ -175,7 +176,7 @@ public class PerspectiveDateFormatLockTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_context is not null) {
       await _context.DisposeAsync();
       _context = null;
@@ -185,7 +186,6 @@ public class PerspectiveDateFormatLockTests : IAsyncDisposable {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
 
-    GC.SuppressFinalize(this);
   }
 
   private async Task<string?> _scalarAsync(

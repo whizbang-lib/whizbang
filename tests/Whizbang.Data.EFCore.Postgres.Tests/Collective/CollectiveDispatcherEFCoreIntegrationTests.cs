@@ -46,7 +46,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 [Category("Integration")]
 [Category("CollectiveEvents")]
 [Category("Shard3")]
-public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
+public class CollectiveDispatcherEFCoreIntegrationTests {
   static CollectiveDispatcherEFCoreIntegrationTests() {
     AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
   }
@@ -414,11 +414,6 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       await PerTestDatabaseFactory.DropAsync(_testDatabaseName);
       _testDatabaseName = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   internal sealed class JobModel {
