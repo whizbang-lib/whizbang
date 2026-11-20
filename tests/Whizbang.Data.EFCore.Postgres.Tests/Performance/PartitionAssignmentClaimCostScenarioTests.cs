@@ -74,6 +74,34 @@ public class PartitionAssignmentClaimCostScenarioTests : EFCoreTestBase {
     await Assert.That(report.Breaches).IsEmpty().Because($"a declared ceiling was passed. {rendered}");
   }
 
+  /// <summary>
+  /// The claim's measured cost is the claim's alone (#2462): another session invalidating what this session cached about
+  /// the claim's tables (an analyze, as autovacuum runs one on a loaded server) between two measurements of the same
+  /// claim does not move the number. A count that includes catalog reloads, index metapage rereads or the debris an
+  /// earlier rolled-back claim left behind measures the server and the order of the test, not the claim.
+  /// </summary>
+  [Test]
+  [Timeout(600000)]
+  public async Task TheClaimCost_IsNotMovedByAnotherSessionsWork_Async(CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    var version = await _fillAsync(conn, 20);
+    _ = await _planAsync(conn, null, cancellationToken);
+    _ = await _planAsync(conn, version, cancellationToken);
+
+    var first = await _planAsync(conn, version, cancellationToken);
+    await using (var other = new NpgsqlConnection(ConnectionString)) {
+      await other.OpenAsync(cancellationToken);
+      await using var analyze = other.CreateCommand();
+      analyze.CommandText = "ANALYZE wh_service_instances; ANALYZE wh_outbox; ANALYZE wh_published_partition_assignment;";
+      _ = await analyze.ExecuteNonQueryAsync(cancellationToken);
+    }
+    var second = await _planAsync(conn, version, cancellationToken);
+
+    await Assert.That(second.SharedBuffersVisited).IsEqualTo(first.SharedBuffersVisited)
+      .Because("the same claim on the same rows does the same work, whatever another session did in between");
+  }
+
   private static async Task<QueryPlan> _planAsync(
       NpgsqlConnection conn, PartitionAssignmentVersion? version, CancellationToken cancellationToken) {
     await using var tx = await conn.BeginTransactionAsync(cancellationToken);
