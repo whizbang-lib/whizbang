@@ -187,23 +187,20 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task ReadPolymorphicAsync_MetadataMissingMessageId_ThrowsAsync() {
-    // Arrange - valid JSON object but no message_id key
+  public async Task ReadPolymorphicAsync_MetadataMissingMessageId_ReadsTheRowsEventIdAsync() {
+    // Arrange - valid JSON object but no message_id key: the form a row takes when its message id is its event id (#2323)
     var store = _createStore();
     var streamId = (Guid)TrackedGuid.New();
-    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "payload"), "{}");
+    var eventId = (Guid)TrackedGuid.New();
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "payload"), "{}", eventId: eventId);
 
     // Act
-    InvalidOperationException? caught = null;
-    try {
-      await _readPolymorphicAsync(store, streamId, [typeof(TestEvent)]);
-    } catch (InvalidOperationException ex) {
-      caught = ex;
-    }
+    var events = await _readPolymorphicAsync(store, streamId, [typeof(TestEvent)]);
 
     // Assert
-    await Assert.That(caught).IsNotNull();
-    await Assert.That(caught!.Message).Contains("message_id not found in metadata");
+    await Assert.That(events).Count().IsEqualTo(1);
+    await Assert.That(events[0].MessageId.Value).IsEqualTo(eventId)
+      .Because("a row that leaves out its message id has it from its event id");
   }
 
   // ========================================

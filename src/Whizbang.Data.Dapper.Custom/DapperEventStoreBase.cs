@@ -156,6 +156,7 @@ public abstract class DapperEventStoreBase : IEventStore {
   protected abstract string GetEventsBetweenSql();
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStoredMetadataRowValuesTests.cs:EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync</tests>
   public async Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(
       Guid streamId,
       Guid? afterEventId,
@@ -188,6 +189,7 @@ public abstract class DapperEventStoreBase : IEventStore {
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStoredMetadataRowValuesTests.cs:EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync</tests>
   public async Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
       Guid streamId,
       Guid? afterEventId,
@@ -266,7 +268,7 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// Builds a MessageEnvelope from deserialized event data and the raw row metadata/scope.
   /// </summary>
   private MessageEnvelope<TMessage> _buildEnvelope<TMessage>(TMessage payload, EventRow row) {
-    var (messageId, hops, dispatchContext) = _deserializeMetadataAndHops(row.Metadata, row.EventType);
+    var (messageId, hops, dispatchContext) = _deserializeMetadataAndHops(row.Metadata, row.EventType, row.EventId);
     StoredScope.RestoreInto(hops, StoredScope.Read(row.Scope, JsonOptions));
 
     return new MessageEnvelope<TMessage> {
@@ -279,14 +281,13 @@ public abstract class DapperEventStoreBase : IEventStore {
     };
   }
 
-  private (Guid messageId, List<MessageHop> hops, MessageDispatchContext? dispatchContext) _deserializeMetadataAndHops(string metadataJson, string eventType) {
+  private (Guid messageId, List<MessageHop> hops, MessageDispatchContext? dispatchContext) _deserializeMetadataAndHops(string metadataJson, string eventType, Guid? eventId) {
     var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
     var metadataDict = JsonSerializer.Deserialize(metadataJson, metadataDictTypeInfo) as Dictionary<string, JsonElement>
                        ?? throw new InvalidOperationException($"Failed to deserialize metadata for event type {eventType}");
 
-    var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
-      ? Guid.Parse(msgIdElem.GetString()!)
-      : throw new InvalidOperationException("message_id not found in metadata");
+    // #2323: a row whose message id is its event id leaves it out.
+    var messageId = JsonbPersistenceModel.MessageIdOf(metadataDict, eventId);
 
     List<MessageHop> hops;
     if (metadataDict.TryGetValue("hops", out var hopsElem)) {
@@ -309,6 +310,11 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// Internal row structure for Dapper mapping (3-column JSONB pattern).
   /// </summary>
   protected class EventRow {
+    /// <summary>
+    /// The row's event id (<c>wh_event_store.event_id</c>), when the read selects it: the message id of a row whose
+    /// metadata left it out (#2323).
+    /// </summary>
+    public Guid? EventId { get; set; }
     public string EventType { get; set; } = string.Empty;
     public string EventData { get; set; } = string.Empty;
     public string Metadata { get; set; } = string.Empty;
