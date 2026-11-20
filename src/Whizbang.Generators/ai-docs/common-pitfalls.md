@@ -386,6 +386,13 @@ no warning.
 - Emit content that does not depend on the discovered type **once per compilation**, in a class of its own, and have
   each per-type file reference it by its fully qualified name (`WhizbangMigrationScripts`, emitted by
   `EFCoreServiceRegistrationGenerator`, is the pattern).
+- When the shared content is logic that each per-type file runs over its own types, emit it once as a generic base
+  class and have each per-type file derive from it, supplying only what varies as traits and overrides. The perspective
+  runners are the pattern (#2401): each runner repeated about 190 KB of runner logic, and the generator's time went
+  into copying that template once per perspective (#1689). `PerspectiveRunnerBaseTemplate.cs` is now emitted once per
+  assembly as `PerspectiveRunnerBase<TPerspective, TModel>`, and a runner (`PerspectiveRunnerClassTemplate.cs`) is
+  about 4 KB. `PerspectiveRunnerGeneratedSizeTests` pins both halves: one base per assembly, and a runner holding only
+  its perspective's parts.
 - When you look at what a generator emits, compare the generated source to the hand-written source
   (`-p:EmitCompilerGeneratedFiles=true`, then size `obj/generated/<generator>`). Generated output several times the
   size of the code it serves is the signal.

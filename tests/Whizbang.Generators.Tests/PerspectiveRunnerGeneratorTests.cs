@@ -2123,8 +2123,9 @@ namespace TestNamespace {
     await Assert.That(runnerSource).Contains("UpsertAsync(");
     await Assert.That(runnerSource).DoesNotContain("PhysicalFieldValues(global::");
     await Assert.That(runnerSource).DoesNotContain("var physicalFieldValues = new");
-    // Issue #928: both scope branches write onto the row version the apply read.
-    await Assert.That(string.Concat(runnerSource!.Where(c => !char.IsWhiteSpace(c))).Split("metadata,expectedVersion,cancellationToken").Length - 1).IsEqualTo(2);
+    // Issue #928: every upsert the shared base makes (both scope branches, and the physical-fields one a model with
+    // physical fields takes) writes onto the row version the apply read.
+    await Assert.That(string.Concat(runnerSource!.Where(c => !char.IsWhiteSpace(c))).Split("metadata,expectedVersion,cancellationToken").Length - 1).IsEqualTo(3);
     await Assert.That(runnerSource).Contains("ReadForApplyAsync(streamId, cancellationToken)");
   }
 
