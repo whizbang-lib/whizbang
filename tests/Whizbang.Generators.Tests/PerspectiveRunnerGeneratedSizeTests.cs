@@ -55,6 +55,25 @@ public class PerspectiveRunnerGeneratedSizeTests {
     await Assert.That(runner).Contains(": PerspectiveRunnerBase<global::TestApp.OrderProjection, global::TestApp.Order>");
   }
 
+  /// <summary>
+  /// A second perspective adds its runner and nothing else: the shared base is emitted once, whatever the number of
+  /// perspectives, so the generator processes the large template once per run rather than once per perspective.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task ASecondPerspective_AddsOnlyItsOwnRunner_TheSharedBaseIsEmittedOnceAsync() {
+    var one = _generatedBytes(ORDER_PROJECTION);
+    var two = _generatedBytes(ORDER_PROJECTION + INVOICE_PROJECTION);
+
+    await Assert.That(two - one).IsLessThan(MAX_RUNNER_BYTES)
+      .Because("each further perspective costs only its own runner");
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(PREAMBLE + ORDER_PROJECTION + INVOICE_PROJECTION);
+    var bases = GeneratorTestHelper.GetAllGeneratedSources(result)
+      .Count(static s => s.FileName.EndsWith("PerspectiveRunnerBase.g.cs", StringComparison.Ordinal));
+    await Assert.That(bases).IsEqualTo(1);
+  }
+
   /// <summary>An assembly with no perspective gets no runner base: it would be dead code there.</summary>
   [Test]
   [RequiresAssemblyFiles]
