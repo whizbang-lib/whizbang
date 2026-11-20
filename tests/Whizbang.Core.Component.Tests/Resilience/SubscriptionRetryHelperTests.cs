@@ -276,16 +276,21 @@ public class SubscriptionRetryHelperTests {
     await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Healthy);
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(1);
 
+    // The reconnect records Healthy after it hooks the new subscription, so waiting for the hook still raced the
+    // assertion below (it read Recovering on CI). Wait for the state itself to come back to Healthy from Recovering.
+    var healthyAgain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    state.StatusChanged = (_, previous, status) => {
+      if (previous == SubscriptionStatus.Recovering && status == SubscriptionStatus.Healthy) {
+        healthyAgain.TrySetResult();
+      }
+    };
+
     // Trigger non-application-initiated disconnect
     var subscription = (DisconnectableMockSubscription)state.Subscription!;
     var disconnectException = new InvalidOperationException("Connection lost");
     subscription.TriggerDisconnect("Connection lost", exception: disconnectException, applicationInitiated: false);
 
-    // Wait for the reconnected subscription to be HOOKED, not merely requested: the helper records Healthy
-    // after the transport call returns, so waiting on the call itself raced the assertion below (it read
-    // Recovering on CI). The handler is attached just before Healthy is recorded, which happens on the same
-    // flow before the helper returns, but the hook is the latest signal this transport offers.
-    await transport.WaitForHookedSubscriptionCountAsync(2, TimeSpan.FromSeconds(10));
+    await healthyAgain.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Assert - should have attempted reconnection
     await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Healthy);
@@ -409,39 +414,8 @@ public class SubscriptionRetryHelperTests {
     private readonly int _failFirstNAttempts = failFirstNAttempts;
     private readonly bool _returnDisconnectableSubscription = returnDisconnectableSubscription;
     private int _attemptCount;
-    private readonly Lock _lock = new();
 
     public int SubscribeCallCount { get; private set; }
-
-    private int _hookedSubscriptionCount;
-    private readonly List<(int TargetCount, TaskCompletionSource Signal)> _hookedWaiters = [];
-
-    /// <summary>
-    /// Completes once <paramref name="count"/> returned subscriptions have had a disconnect handler
-    /// attached: the helper's last step for a subscription it has already marked Healthy.
-    /// </summary>
-    public Task WaitForHookedSubscriptionCountAsync(int count, TimeSpan timeout) {
-      var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-      lock (_lock) {
-        if (_hookedSubscriptionCount >= count) {
-          tcs.TrySetResult();
-        } else {
-          _hookedWaiters.Add((count, tcs));
-        }
-      }
-      return tcs.Task.WaitAsync(timeout);
-    }
-
-    private void _onSubscriptionHooked() {
-      lock (_lock) {
-        _hookedSubscriptionCount++;
-        foreach (var (target, signal) in _hookedWaiters) {
-          if (_hookedSubscriptionCount >= target) {
-            signal.TrySetResult();
-          }
-        }
-      }
-    }
 
     public bool IsInitialized => true;
 
@@ -473,7 +447,7 @@ public class SubscriptionRetryHelperTests {
       }
 
       ISubscription subscription = _returnDisconnectableSubscription
-        ? new DisconnectableMockSubscription(_onSubscriptionHooked)
+        ? new DisconnectableMockSubscription()
         : new MockSubscription();
 
       return Task.FromResult(subscription);
@@ -516,14 +490,11 @@ public class SubscriptionRetryHelperTests {
   /// <summary>
   /// A mock subscription that exposes the ability to trigger disconnect events for testing.
   /// </summary>
-  private sealed class DisconnectableMockSubscription(Action? onHandlerAttached = null) : ISubscription {
+  private sealed class DisconnectableMockSubscription : ISubscription {
     private EventHandler<SubscriptionDisconnectedEventArgs>? _onDisconnected;
 
     public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected {
-      add {
-        _onDisconnected += value;
-        onHandlerAttached?.Invoke();
-      }
+      add => _onDisconnected += value;
       remove => _onDisconnected -= value;
     }
 
