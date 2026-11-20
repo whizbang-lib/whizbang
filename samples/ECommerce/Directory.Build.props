@@ -41,9 +41,10 @@
     <DefineConstants Condition="'$(TransportProvider)' == 'AzureServiceBus'">AZURESERVICEBUS</DefineConstants>
   </PropertyGroup>
 
-  <!-- Hang dumps (#2402), as in the root Directory.Build.props: every test module a suite runs accepts
-       Run-Tests.ps1 -HangDumpTimeout's options. This file does not import the parent props, so it is repeated here. -->
+  <!-- Hang dumps (#2402) and crash dumps (#2446), as in the root Directory.Build.props: every test module a suite
+       runs accepts Run-Tests.ps1 -HangDumpTimeout's and -CrashDumpType's options. This file does not import the parent props, so it is repeated here. -->
   <ItemGroup Condition="'$(WhizbangTestType)' != '' and '$(WhizbangTestType)' != 'Benchmark'">
+    <PackageReference Include="Microsoft.Testing.Extensions.CrashDump" />
     <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />
   </ItemGroup>
 

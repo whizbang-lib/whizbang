@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- A test module whose one test kills its process, with the crash dump extension and platform the product test
+       projects resolve (the repository's Directory.Packages.props), so TestSuiteCrashDump.Tests.ps1 proves the crash
+       dump is written under `dotnet test` as the CI suites run it (#2446). Not in shapes.slnx: the coverage shapes
+       never build it. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Microsoft.Testing.Extensions.CrashDump" />
+    <!-- The coverage collector and the hang dump, so the crash dump is proven beside both, as every suite runs it. -->
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />
+  </ItemGroup>
+</Project>
