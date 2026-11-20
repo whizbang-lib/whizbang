@@ -4,7 +4,7 @@
 -- The reverse of 537_StoredMetadataLeavesOutWhatTheRowHolds.sql (#2323): the emit chains go back to their last word in
 -- 461, wh_append_event to 453, wh_convert_event_metadata_history to 298 and wh_trace_metadata to 286, and the helpers go.
 -- Rows already trimmed stay trimmed: a library at or after 537 reads them; one from before it cannot read their message
--- id. The wh_settings row 'metadata_row_values_trimmed' stays, so re-applying 537 does not restart the history walk.
+-- id. The wh_settings row 'metadata_trim_row_values' stays: the latch is one-way.
 
 -- ── _emit_event_store_chain: last word 453, copied whole, folding a superseding copy as its key's slot (461) ──
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -1701,6 +1701,8 @@ COMMENT ON FUNCTION __SCHEMA__.wh_trace_metadata(UUID[]) IS
   'Issue #1726: each event''s full metadata (staged form, else row + trace + route, else the row), payload and route '
   'id, and the source that answered (staged, trace or row). Read by the Postgres trace store.';
 
+SELECT __SCHEMA__.drop_all_overloads('wh_open_metadata_trim_gate');
+SELECT __SCHEMA__.drop_all_overloads('_wh_metadata_trim_on');
 SELECT __SCHEMA__.drop_all_overloads('_wh_metadata_needs_conversion');
 SELECT __SCHEMA__.drop_all_overloads('_wh_is_slim_event_metadata');
 SELECT __SCHEMA__.drop_all_overloads('_wh_restore_row_values');

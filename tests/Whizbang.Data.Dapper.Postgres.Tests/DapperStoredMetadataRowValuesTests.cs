@@ -34,6 +34,12 @@ public class DapperStoredMetadataRowValuesTests : PostgresTestBase {
   [Test]
   public async Task EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync() {
     var store = _eventStore();
+    await using (var gate = new NpgsqlConnection(ConnectionString)) {
+      // The trim gate open, as once every live instance reads trimmed rows (DapperHeartbeat test below, the EF Core
+      // StoredMetadataTrimGateSqlTests for the gate itself).
+      _ = await gate.ExecuteAsync(
+        "INSERT INTO wh_settings (setting_key, setting_value, value_type) VALUES ('metadata_trim_row_values', 'true', 'boolean')");
+    }
     var stream = (Guid)TrackedGuid.New();
     var envelopes = new[] { _envelope(stream), _envelope(stream) };
     foreach (var envelope in envelopes) {
@@ -83,6 +89,20 @@ public class DapperStoredMetadataRowValuesTests : PostgresTestBase {
       .Because("a row that left it out has its event id");
     await Assert.That(() => JsonbPersistenceModel.MessageIdOf([], null)).Throws<InvalidOperationException>()
       .Because("a read that selects no event id cannot rebuild one, and says so as it always did");
+  }
+
+  [Test]
+  public async Task RecordHeartbeatAsync_WritesTheStoredFormLevel_TheTrimGateCountsAsync() {
+    var coordinator = new DapperWorkCoordinator(ConnectionString, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+    var instance = (Guid)TrackedGuid.New();
+
+    var accepted = await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(instance, "svc", "host", 1));
+
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await Assert.That(accepted).IsTrue();
+    await Assert.That(await conn.ExecuteScalarAsync<int?>(
+      "SELECT (metadata ->> 'stored_form_level')::int FROM wh_service_instances WHERE instance_id = @instance", new { instance }))
+      .IsEqualTo(HeartbeatRequest.STORED_FORM_LEVEL).Because("the Dapper driver's heartbeat says this build reads trimmed rows");
   }
 
   // ===== Helpers =====

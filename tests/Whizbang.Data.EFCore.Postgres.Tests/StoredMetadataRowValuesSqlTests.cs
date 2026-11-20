@@ -19,7 +19,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// #2323: the slim stored form leaves out what the row already holds in its own columns. The message id is left out
 /// when it equals <c>wh_event_store.event_id</c>, and the slim hop's scope when it is the scope value alone and equals
 /// <c>wh_event_store.scope</c>; anything the row does not hold is kept. Every write path stores the trimmed form, history
-/// conversion trims rows written before it, and reconstruction puts both back.
+/// conversion trims rows written before it, and reconstruction puts both back. Every test here runs with the trim gate
+/// open; <c>StoredMetadataTrimGateSqlTests</c> covers when it opens.
 /// </summary>
 /// <docs>data/event-store#row-values</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/537_StoredMetadataLeavesOutWhatTheRowHolds.sql</code-under-test>
@@ -246,9 +247,14 @@ public class StoredMetadataRowValuesSqlTests : EFCoreTestBase {
 
   private static string _scopeJson(PerspectiveScope scope) => JsonSerializer.Serialize(scope, _json.GetTypeInfo(typeof(PerspectiveScope)));
 
+  /// <summary>Opens a connection on a database whose trim gate is open (StoredMetadataTrimGateSqlTests covers the gate).</summary>
   private async Task<NpgsqlConnection> _openAsync() {
     var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
+    await _executeAsync(connection, """
+      INSERT INTO wh_settings (setting_key, setting_value, value_type) VALUES ('metadata_trim_row_values', 'true', 'boolean')
+      ON CONFLICT (setting_key) DO NOTHING
+      """);
     return connection;
   }
 

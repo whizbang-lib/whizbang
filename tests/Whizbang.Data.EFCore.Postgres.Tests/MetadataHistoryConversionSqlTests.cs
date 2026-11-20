@@ -50,7 +50,7 @@ public class MetadataHistoryConversionSqlTests : EFCoreTestBase {
       "SELECT jsonb_array_length(metadata -> 'Hops') = 1 AND NOT (metadata -> 'Hops' -> 0 ? 'si') FROM wh_event_body WHERE event_id = @e", ("e", historic)))
       .IsTrue().Because("the hop list is reduced to the slim hop");
     await Assert.That(await _scalarAsync<bool>(conn,
-      "SELECT b.metadata = _wh_trim_row_values(_wh_slim_event_metadata(@full::jsonb, _wh_route_id('MyApp.Orders.OrderPlaced', @full::jsonb -> 'Hops')), b.event_id, NULL) FROM wh_event_body b WHERE b.event_id = @e",
+      "SELECT b.metadata = _wh_slim_event_metadata(@full::jsonb, _wh_route_id('MyApp.Orders.OrderPlaced', @full::jsonb -> 'Hops')) FROM wh_event_body b WHERE b.event_id = @e",
       ("e", historic), ("full", _fullJson(historic, hops)))).IsTrue().Because("the converted row is exactly what the write paths store for it now");
     await Assert.That(await _rowAsync(conn, current)).IsEqualTo(currentBefore)
       .Because("a row written since slim metadata carries its route id, and is never rewritten (same tuple, same bytes)");

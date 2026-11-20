@@ -30,8 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class StoredMetadataWriteSqlTests : EFCoreTestBase {
   private const string ORDER_PLACED = "MyApp.Orders.OrderPlaced, MyApp";
   private static readonly DateTimeOffset _t0 = new(2026, 3, 1, 10, 0, 0, TimeSpan.Zero);
-  // #2323: the message id is the row's event id, so the row leaves it out (StoredMetadataRowValuesSqlTests).
-  private static readonly string[] _slimKeys = ["Hops", "ephemeral_expires_at", "rid"];
+  private static readonly string[] _slimKeys = ["Hops", "MessageId", "ephemeral_expires_at", "rid"];
   private static readonly string[] _slimHopKeys = ["ca", "co", "sc", "st", "tp", "ts"];
 
   // ===== The default: slim row, route id, staged full form, on every path =====
@@ -87,9 +86,7 @@ public class StoredMetadataWriteSqlTests : EFCoreTestBase {
     await Assert.That(row.RootElement.TryGetProperty("Hops", out _)).IsFalse().Because("no hop list is added where none was written");
 
     using var dapper = JsonDocument.Parse(await _bodyMetaAsync(conn, dapperForm));
-    await Assert.That(dapper.RootElement.TryGetProperty("message_id", out _)).IsFalse()
-      .Because("the Dapper store's message id is the row's event id, so the row leaves it out (#2323)");
-    await Assert.That(dapper.RootElement.GetProperty("correlation_id").GetString()).IsEqualTo("c")
+    await Assert.That(dapper.RootElement.GetProperty("message_id").GetString()).IsEqualTo(dapperForm.ToString())
       .Because("the Dapper store reads its own keys back, so they are kept");
     await Assert.That(dapper.RootElement.GetProperty("pri").GetInt32()).IsEqualTo(7);
     var slimHop = dapper.RootElement.GetProperty("hops").EnumerateArray().Single();
@@ -228,7 +225,7 @@ public class StoredMetadataWriteSqlTests : EFCoreTestBase {
     var keys = row.RootElement.EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal).ToArray();
     if (exactKeys) {
       await Assert.That(keys).IsEquivalentTo(expectExpiry ? _slimKeys : _slimKeys.Where(k => k != "ephemeral_expires_at"))
-        .Because("the row keeps the slim hop, the ephemeral expiry when there is one, and the route id");
+        .Because("the row keeps the message id, the slim hop, the ephemeral expiry when there is one, and the route id");
     } else {
       await Assert.That(keys.Except(["ett"], StringComparer.Ordinal)).IsEquivalentTo(_slimKeys.Where(k => k != "ephemeral_expires_at"))
         .Because("a driver's own form keeps its keys (an ephemeral TTL among them), never the dispatch context or receptor invocations");

@@ -7,8 +7,9 @@
 --              back (#2323).
 --
 --              A slim row (285) still repeated two values wh_event_store holds for it: the message id, which is the
---              row's event_id, and the slim hop's scope, which is the row's scope column. Every write path (both emit
---              chains and wh_append_event) now stores the slim form less those two, through _wh_trim_row_values:
+--              row's event_id, and the slim hop's scope, which is the row's scope column. Once the trim gate is open
+--              (below), every write path (both emit chains and wh_append_event) stores the slim form less those two,
+--              through _wh_trim_row_values:
 --
 --                the message id   left out when it equals the row's event id, under the key the writer used
 --                                 (MessageId, or message_id in the Dapper store's form); a message id that differs
@@ -23,15 +24,29 @@
 --              Every reader already restored a row's scope onto a first hop that carries none (#1855), so a trimmed scope
 --              reads back as it was written, on this release and on the ones before it. The message id is read from the
 --              row's event id when the metadata has none (EnvelopeMetadata.MessageIdOf, the Dapper store's readers), which
---              a library from before this release cannot do: see Reversal.
+--              a library from before this release cannot do. So the write paths trim only once every live instance can:
+--
+--                the marker     each heartbeat of this release writes stored_form_level (HeartbeatRequest
+--                               .STORED_FORM_LEVEL, 1) into its registry row's metadata; an earlier release writes
+--                               none, which reads as "cannot read trimmed rows"
+--                the gate       wh_open_metadata_trim_gate, called by the metadata-trim-gate maintenance step, latches
+--                               wh_settings 'metadata_trim_row_values' = 'true' once at least one instance is live (the
+--                               one liveness rule, wh_live_instance_ids) and every live instance has level 1 or higher;
+--                               an empty registry keeps it closed, so a new service opens it once its own first
+--                               heartbeat is in
+--                the latch      one-way: nothing clears it, so an instance of an earlier release that starts after it
+--                               cannot read the trimmed rows; rolling back below this release then is not supported
+--                the write path reads the one flag once per call (_wh_metadata_trim_on), a primary-key probe beside the
+--                               settings read it already makes; no fleet scan
 --
 --              Rows the trim does not reach: full rows (debug mode, the Full form, a type kept full) are the metadata as
 --              written and keep everything; the staged full form is unchanged.
 --
---              History: wh_convert_event_metadata_history converts a row written before 285 to the trimmed slim form, and
---              now also trims a row already in the slim form (_wh_metadata_needs_conversion) without counting its route
---              again. Its cursor is reset once (wh_settings 'metadata_row_values_trimmed'), so the next walk trims the
---              slim rows written before this migration; rows already trimmed are passed over.
+--              History: wh_convert_event_metadata_history follows the same gate. While it is closed it converts a row
+--              written before 285 to the slim form as before; once it is open it converts such a row to the trimmed slim
+--              form and also trims a row already in the slim form (_wh_metadata_needs_conversion), without counting its
+--              route again. Opening the gate starts its walk over (the cursor is reset in the statement that latches),
+--              so the slim rows written before are trimmed; rows already trimmed are passed over.
 --
 --              Reconstruction: wh_trace_metadata puts the message id and the hop scope back (_wh_restore_row_values), so
 --              its answer is the metadata as before.
@@ -42,12 +57,13 @@
 --              Number 537: reserved for this change.
 --
 -- Reversal: lossy (the functions go back to their last words; rows already trimmed stay trimmed, and are readable only
---           by a library at or after this release)
+--           by a library at or after this release; the latch stays)
 -- Dependencies: 285 (_wh_metadata_write_settings, _wh_metadata_kept_full, _wh_route_id, _wh_slim_event_metadata),
 --               286 (_wh_reconstruct_metadata, _wh_try_uuid, wh_routes, wh_traces), 298 (wh_metadata_history_conversion),
 --               453 (wh_append_event), 461 (the emit chains)
 -- Objects: _wh_canonical_scope, _wh_scope_names_something, _wh_trim_row_values, _wh_restore_row_values,
---          _wh_is_slim_event_metadata, _wh_metadata_needs_conversion, _emit_event_store_chain,
+--          _wh_is_slim_event_metadata, _wh_metadata_needs_conversion, _wh_metadata_trim_on, wh_open_metadata_trim_gate,
+--          _emit_event_store_chain,
 --          _emit_event_store_chain_for_inbox, wh_append_event, wh_convert_event_metadata_history, wh_trace_metadata
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
@@ -58,6 +74,8 @@ SELECT __SCHEMA__.drop_all_overloads('_wh_trim_row_values');
 SELECT __SCHEMA__.drop_all_overloads('_wh_restore_row_values');
 SELECT __SCHEMA__.drop_all_overloads('_wh_is_slim_event_metadata');
 SELECT __SCHEMA__.drop_all_overloads('_wh_metadata_needs_conversion');
+SELECT __SCHEMA__.drop_all_overloads('_wh_metadata_trim_on');
+SELECT __SCHEMA__.drop_all_overloads('wh_open_metadata_trim_gate');
 
 -- ===========================================================================================
 -- The row's values
@@ -201,22 +219,103 @@ COMMENT ON FUNCTION __SCHEMA__._wh_is_slim_event_metadata(JSONB) IS
   'Issue #2323: whether stored metadata is in the slim form (route id, no dc or rin, at most one hop naming no service '
   'instance), as opposed to a full row.';
 
--- Whether history conversion rewrites a row: it was written before 285 (no route id), or it is in the slim form and
--- still holds a value its row's columns hold.
+-- Whether history conversion rewrites a row: it was written before 285 (no route id), or, once the trim gate is open
+-- (p_trim), it is in the slim form and still holds a value its row's columns hold.
 -- <docs>data/event-store#history-conversion</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataRowValuesSqlTests.cs:Convert_ASlimRowWrittenBeforeTheTrim_IsTrimmed_AndItsRouteIsNotCountedAgainAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataRowValuesSqlTests.cs:Convert_AFullRowWithItsRouteId_IsNotTouchedAsync</tests>
-CREATE OR REPLACE FUNCTION __SCHEMA__._wh_metadata_needs_conversion(p_metadata JSONB, p_event_id UUID, p_scope JSONB)
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataTrimGateSqlTests.cs:Conversion_WaitsForTheGate_ThenTrimsWhatItWroteAndWhatWasSlimAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__._wh_metadata_needs_conversion(p_metadata JSONB, p_event_id UUID, p_scope JSONB, p_trim BOOLEAN)
 RETURNS BOOLEAN AS $$
   SELECT jsonb_typeof(p_metadata) = 'object'
     AND (NOT (p_metadata ? 'rid')
-         OR (__SCHEMA__._wh_is_slim_event_metadata(p_metadata)
+         OR (p_trim
+             AND __SCHEMA__._wh_is_slim_event_metadata(p_metadata)
              AND __SCHEMA__._wh_trim_row_values(p_metadata, p_event_id, p_scope) IS DISTINCT FROM p_metadata));
 $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
-COMMENT ON FUNCTION __SCHEMA__._wh_metadata_needs_conversion(JSONB, UUID, JSONB) IS
-  'Issue #2323: whether history conversion rewrites a row: no route id (written before 285), or slim and still holding '
-  'a value its row''s columns hold.';
+COMMENT ON FUNCTION __SCHEMA__._wh_metadata_needs_conversion(JSONB, UUID, JSONB, BOOLEAN) IS
+  'Issue #2323: whether history conversion rewrites a row: no route id (written before 285), or, once the trim gate is '
+  'open, slim and still holding a value its row''s columns hold.';
+
+-- ===========================================================================================
+-- The trim gate
+-- ===========================================================================================
+
+-- Whether the write paths trim: the latch wh_open_metadata_trim_gate writes. One primary-key probe of wh_settings; only
+-- the latched value ('true') opens it.
+-- <docs>data/event-store#trim-gate</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataTrimGateSqlTests.cs:Writes_BeforeTheGateOpens_AreUntrimmedAndReadByAnEarlierReader_AndAfterItAreTrimmedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataTrimGateSqlTests.cs:Gate_ASettingWrittenByHandOtherThanTrue_IsNotOpenAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__._wh_metadata_trim_on()
+RETURNS BOOLEAN AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM __SCHEMA__.wh_settings s
+    WHERE s.setting_key = 'metadata_trim_row_values' AND s.setting_value = 'true');
+$$ LANGUAGE sql STABLE;
+
+COMMENT ON FUNCTION __SCHEMA__._wh_metadata_trim_on() IS
+  'Issue #2323: whether the trim gate is open (wh_settings metadata_trim_row_values = true), read once per call by the '
+  'write paths and history conversion.';
+
+-- Opens the trim gate once every live instance reads trimmed rows: at least one instance is live (the one liveness
+-- rule), and each live instance's registry row says stored_form_level 1 or higher in its metadata (an earlier release
+-- writes none). The latch is one-way: once written it is never cleared, whatever instances come later, and the statement
+-- that writes it also starts the history conversion's walk over, so the slim rows written before are trimmed.
+-- Returns 'open' (already), 'opened' (this call), or 'closed (n of m live instances read trimmed rows)'.
+-- <docs>data/event-store#trim-gate</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataTrimGateSqlTests.cs:Gate_AFreshService_OpensOnlyOnceThisInstanceHasRegisteredWithItsMarkerAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataTrimGateSqlTests.cs:Gate_StaysClosedWhileALiveInstanceLacksTheMarker_AndOpensOnceItIsGoneOrStaleAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataTrimGateSqlTests.cs:Gate_OnceOpen_StaysOpen_WhenAnInstanceWithoutTheMarkerAppearsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataTrimGateSqlTests.cs:Conversion_WaitsForTheGate_ThenTrimsWhatItWroteAndWhatWasSlimAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_open_metadata_trim_gate()
+RETURNS TEXT AS $$
+DECLARE
+  v_live BIGINT;
+  v_ready BIGINT;
+  v_opened BOOLEAN;
+BEGIN
+  IF __SCHEMA__._wh_metadata_trim_on() THEN
+    RETURN 'open';
+  END IF;
+
+  SELECT count(*),
+         count(*) FILTER (WHERE jsonb_typeof(si.metadata -> 'stored_form_level') = 'number'
+                            AND (si.metadata ->> 'stored_form_level')::NUMERIC >= 1)
+    INTO v_live, v_ready
+  FROM __SCHEMA__.wh_service_instances si
+  WHERE si.instance_id IN (SELECT l.instance_id FROM __SCHEMA__.wh_live_instance_ids() l);
+
+  IF v_live = 0 OR v_ready < v_live THEN
+    RETURN 'closed (' || v_ready || ' of ' || v_live || ' live instances read trimmed rows)';
+  END IF;
+
+  WITH latched AS (
+    INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description, updated_at, updated_by)
+    VALUES ('metadata_trim_row_values', 'true', 'boolean',
+            'Migration 537 (#2323): every live instance read trimmed stored metadata when this was written, so the write '
+            'paths leave out the message id and hop scope a row holds. One-way: never cleared.',
+            NOW(), 'wh_open_metadata_trim_gate')
+    ON CONFLICT (setting_key) DO UPDATE SET setting_value = 'true', updated_at = NOW(), updated_by = EXCLUDED.updated_by
+    WHERE __SCHEMA__.wh_settings.setting_value IS DISTINCT FROM 'true'
+    RETURNING 1
+  ), restarted AS (
+    UPDATE __SCHEMA__.wh_metadata_history_conversion
+    SET last_event_id = NULL, completed_at = NULL, updated_at = NOW()
+    WHERE only_row AND EXISTS (SELECT 1 FROM latched)
+    RETURNING 1
+  )
+  SELECT EXISTS (SELECT 1 FROM latched) INTO v_opened;
+
+  RETURN CASE WHEN v_opened THEN 'opened' ELSE 'open' END;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_open_metadata_trim_gate() IS
+  'Issue #2323: latches wh_settings metadata_trim_row_values (one-way) once at least one instance is live and every live '
+  'instance''s registry metadata says stored_form_level >= 1, and starts the history conversion''s walk over in the same '
+  'statement. Returns open, opened, or closed (n of m live instances read trimmed rows). Called by the metadata-trim-gate '
+  'maintenance step.';
 
 -- ===========================================================================================
 -- The write paths
@@ -299,6 +398,7 @@ DECLARE
   v_any_archived BOOLEAN;                  -- 271: a stream of the batch is archived (and not sealed)
   v_write_form TEXT;                       -- 285: Full, Slim or Linked
   v_full_for TEXT[];                       -- 285: the type names and namespaces kept full
+  v_trim BOOLEAN;                          -- 537: the trim gate is open (wh_settings metadata_trim_row_values)
   v_keep_all BOOLEAN;                      -- 285: debug mode or the Full form keeps every row full
 BEGIN
   IF p_outbox_message_ids IS NULL OR cardinality(p_outbox_message_ids) = 0 THEN
@@ -359,6 +459,8 @@ BEGIN
   -- 285 (#1725): the stored-metadata settings, read once for the whole batch.
   SELECT s.write_form, s.full_for, s.keep_all INTO v_write_form, v_full_for, v_keep_all
   FROM __SCHEMA__._wh_metadata_write_settings() s;
+  -- 537 (#2323): the trim gate, read once for the whole batch, beside the settings.
+  v_trim := __SCHEMA__._wh_metadata_trim_on();
 
   -- Phase 4.5A-equivalent: store outbox events into wh_event_store with sequential versioning.
   -- Phase H step 10 slice 1: ORDER BY o.message_id (UUIDv7 = chronological at the source)
@@ -429,9 +531,10 @@ BEGIN
       CASE
         WHEN v_keep_all OR __SCHEMA__._wh_metadata_kept_full(split_part(cr.event_type, ',', 1), v_full_for)
         THEN cr.full_meta || jsonb_build_object('rid', cr.route_id)
-        -- 537 (#2323): less what the row holds in its own columns, its event id and its scope.
-        ELSE __SCHEMA__._wh_trim_row_values(
+        -- 537 (#2323): once the trim gate is open, less what the row holds in its own columns, its event id and scope.
+        WHEN v_trim THEN __SCHEMA__._wh_trim_row_values(
                __SCHEMA__._wh_slim_event_metadata(cr.full_meta, cr.route_id), cr.message_id, cr.scope::jsonb)
+        ELSE __SCHEMA__._wh_slim_event_metadata(cr.full_meta, cr.route_id)
       END AS body_meta
     FROM computed_routes cr
   ),
@@ -771,6 +874,7 @@ DECLARE
   v_archived_refused UUID[];               -- 271: the rows an archived stream refused
   v_write_form TEXT;                       -- 285: Full, Slim or Linked
   v_full_for TEXT[];                       -- 285: the type names and namespaces kept full
+  v_trim BOOLEAN;                          -- 537: the trim gate is open (wh_settings metadata_trim_row_values)
   v_keep_all BOOLEAN;                      -- 285: debug mode or the Full form keeps every row full
   v_any_collective BOOLEAN;                -- 367: an event this pass stored carries the collective flag
 BEGIN
@@ -900,6 +1004,8 @@ BEGIN
   -- 285 (#1725): the stored-metadata settings, read once for the whole batch.
   SELECT s.write_form, s.full_for, s.keep_all INTO v_write_form, v_full_for, v_keep_all
   FROM __SCHEMA__._wh_metadata_write_settings() s;
+  -- 537 (#2323): the trim gate, read once for the whole batch, beside the settings.
+  v_trim := __SCHEMA__._wh_metadata_trim_on();
 
   -- Auto-create event_store rows for inbox rows owned by this instance that:
   --   - are events (is_event = true)
@@ -1041,9 +1147,10 @@ BEGIN
       CASE
         WHEN v_keep_all OR __SCHEMA__._wh_metadata_kept_full(split_part(cr.event_type, ',', 1), v_full_for)
         THEN cr.full_meta || jsonb_build_object('rid', cr.route_id)
-        -- 537 (#2323): less what the row holds in its own columns, its event id and its scope.
-        ELSE __SCHEMA__._wh_trim_row_values(
+        -- 537 (#2323): once the trim gate is open, less what the row holds in its own columns, its event id and scope.
+        WHEN v_trim THEN __SCHEMA__._wh_trim_row_values(
                __SCHEMA__._wh_slim_event_metadata(cr.full_meta, cr.route_id), cr.message_id, cr.scope::jsonb)
+        ELSE __SCHEMA__._wh_slim_event_metadata(cr.full_meta, cr.route_id)
       END AS body_meta
     FROM computed_routes cr
   ),
@@ -1518,8 +1625,10 @@ BEGIN
   v_body_meta := CASE
     WHEN v_keep_all OR __SCHEMA__._wh_metadata_kept_full(split_part(p_event_type, ',', 1), v_full_for)
     THEN v_full || jsonb_build_object('rid', v_route_id)
-    -- 537 (#2323): less what the row holds in its own columns, its event id and its scope.
-    ELSE __SCHEMA__._wh_trim_row_values(__SCHEMA__._wh_slim_event_metadata(v_full, v_route_id), p_event_id, p_scope)
+    -- 537 (#2323): once the trim gate is open, less what the row holds in its own columns, its event id and scope.
+    WHEN __SCHEMA__._wh_metadata_trim_on()
+    THEN __SCHEMA__._wh_trim_row_values(__SCHEMA__._wh_slim_event_metadata(v_full, v_route_id), p_event_id, p_scope)
+    ELSE __SCHEMA__._wh_slim_event_metadata(v_full, v_route_id)
   END;
 
   -- 295 (#1729): a superseding event's key, from the metadata the driver stamped it in, on a row carrying the flag only.
@@ -1662,6 +1771,7 @@ DECLARE
   v_full_for TEXT[];
   v_debug BOOLEAN;
   v_convert BOOLEAN;
+  v_trim BOOLEAN;  -- 537: the trim gate is open
   v_trace_from TIMESTAMPTZ;
   v_from UUID;
   v_completed TIMESTAMPTZ;
@@ -1683,6 +1793,9 @@ BEGIN
   -- other value of metadata_convert_history is the default, on. A trace window that is not a whole number is the
   -- default, as a missing one is.
   SELECT s.write_form, s.full_for INTO v_form, v_full_for FROM __SCHEMA__._wh_metadata_write_settings() s;
+  -- 537 (#2323): until the trim gate is open, a converted row keeps what an earlier release needs, and a slim row is
+  -- left as it is.
+  v_trim := __SCHEMA__._wh_metadata_trim_on();
   SELECT
     COALESCE(bool_or(CASE WHEN st.setting_key = 'debug_mode'
                           THEN lower(btrim(st.setting_value)) IN ('true', 't', '1', 'yes', 'y', 'on') END), FALSE),
@@ -1739,7 +1852,7 @@ BEGIN
       b.event_id,
       t.type_name,
       es.created_at,
-      (es.event_id IS NOT NULL AND __SCHEMA__._wh_metadata_needs_conversion(b.metadata, es.event_id, es.scope)) AS needs,
+      (es.event_id IS NOT NULL AND __SCHEMA__._wh_metadata_needs_conversion(b.metadata, es.event_id, es.scope, v_trim)) AS needs,
       __SCHEMA__._wh_metadata_kept_full(t.type_name, v_full_for) AS kept
     FROM (
       SELECT eb.event_id, eb.metadata
@@ -1769,7 +1882,7 @@ BEGIN
       FROM __SCHEMA__.wh_event_body b
       JOIN __SCHEMA__.wh_event_store es ON es.event_id = b.event_id
       WHERE b.event_id = ANY(v_need_ids)
-        AND __SCHEMA__._wh_metadata_needs_conversion(b.metadata, b.event_id, es.scope)
+        AND __SCHEMA__._wh_metadata_needs_conversion(b.metadata, b.event_id, es.scope, v_trim)
       ORDER BY b.event_id
       FOR UPDATE OF b SKIP LOCKED
     ),
@@ -1784,9 +1897,9 @@ BEGIN
     ),
     converted AS (
       UPDATE __SCHEMA__.wh_event_body b
-      SET metadata = __SCHEMA__._wh_trim_row_values(
+      SET metadata = CASE WHEN v_trim THEN __SCHEMA__._wh_trim_row_values(
         CASE WHEN bt.fresh THEN __SCHEMA__._wh_slim_event_metadata(bt.full_meta, bt.route_id) ELSE bt.full_meta END,
-        bt.event_id, bt.scope)
+        bt.event_id, bt.scope) ELSE __SCHEMA__._wh_slim_event_metadata(bt.full_meta, bt.route_id) END
       FROM batch bt
       WHERE b.event_id = bt.event_id
       RETURNING b.event_id
@@ -1866,7 +1979,7 @@ BEGIN
   FROM __SCHEMA__.wh_event_body b
   JOIN __SCHEMA__.wh_event_store es ON es.event_id = b.event_id
   WHERE b.event_id = ANY(v_need_ids)
-    AND __SCHEMA__._wh_metadata_needs_conversion(b.metadata, b.event_id, es.scope);
+    AND __SCHEMA__._wh_metadata_needs_conversion(b.metadata, b.event_id, es.scope, v_trim);
   IF v_held_count = 0 THEN
     v_cursor := v_scanned_ids[cardinality(v_scanned_ids)];
   ELSE
@@ -1874,7 +1987,7 @@ BEGIN
     FROM __SCHEMA__.wh_event_body b
     JOIN __SCHEMA__.wh_event_store es ON es.event_id = b.event_id
     WHERE b.event_id = ANY(v_need_ids)
-      AND __SCHEMA__._wh_metadata_needs_conversion(b.metadata, b.event_id, es.scope)
+      AND __SCHEMA__._wh_metadata_needs_conversion(b.metadata, b.event_id, es.scope, v_trim)
     ORDER BY b.event_id
     LIMIT 1;
     SELECT u.id INTO v_cursor FROM unnest(v_scanned_ids) AS u(id) WHERE u.id < v_held ORDER BY u.id DESC LIMIT 1;
@@ -1953,20 +2066,3 @@ $$ LANGUAGE sql STABLE;
 COMMENT ON FUNCTION __SCHEMA__.wh_trace_metadata(UUID[]) IS
   'Issue #1726: each event''s full metadata (staged form, else row + trace + route, else the row), payload and route '
   'id, and the source that answered (staged, trace or row). Read by the Postgres trace store. 537 (#2323): with the message id and the slim hop''s scope the row leaves out put back.';
-
--- ===========================================================================================
--- Once: the history walk starts over, so it trims the slim rows written before this migration
--- ===========================================================================================
-
--- Gated by its own wh_settings row, so a re-run of this file (the redefinition closure) does not start the walk again.
-WITH marked AS (
-  INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description, updated_at, updated_by)
-  VALUES ('metadata_row_values_trimmed', '537', 'integer',
-          'Migration 537 (#2323) restarted the history conversion walk once, so slim rows written before it are trimmed.',
-          NOW(), 'migration:537_StoredMetadataLeavesOutWhatTheRowHolds')
-  ON CONFLICT (setting_key) DO NOTHING
-  RETURNING 1
-)
-UPDATE __SCHEMA__.wh_metadata_history_conversion
-SET last_event_id = NULL, completed_at = NULL, updated_at = NOW()
-WHERE only_row AND EXISTS (SELECT 1 FROM marked);

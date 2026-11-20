@@ -37,6 +37,8 @@ public class StoredMetadataRowValuesReadTests : EFCoreTestBase {
   public async Task EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _connectionAsync(dbContext);
+    // The trim gate open, as once every live instance reads trimmed rows (StoredMetadataTrimGateSqlTests).
+    await _execAsync(conn, "INSERT INTO wh_settings (setting_key, setting_value, value_type) VALUES ('metadata_trim_row_values', 'true', 'boolean')");
     var stream = (Guid)TrackedGuid.New();
     var plain = _hop(ScopeDelta.FromPerspectiveScope(_scope));
     var withRoles = _hop(ScopeDelta.CreateDelta(null, new ScopeContext {

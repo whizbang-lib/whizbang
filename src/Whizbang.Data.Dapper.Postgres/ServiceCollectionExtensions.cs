@@ -566,6 +566,9 @@ public static class ServiceCollectionExtensions {
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataDistillationStep>(
       MetadataDistillationStep.FromServices));
     // The maintenance step that converts rows written with full metadata before slim stored metadata (#1727).
+    // #2323: the trim gate, ahead of the history conversion, so the cycle that opens it starts trimming history.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataTrimGateStep>(
+      MetadataTrimGateStep.FromServices));
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
       MetadataHistoryConversionStep.FromServices));
     // #2326: the maintenance step that converts audit records written before the pointer default to the pointer form.

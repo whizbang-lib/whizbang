@@ -378,6 +378,9 @@ public static class PostgresDriverExtensions {
         // TURNKEY: the maintenance step that converts rows written with full metadata before slim stored metadata to the
         // slim form plus their route id (#1727), under the maintainer duty.
         // <docs>data/event-store#history-conversion</docs>
+        // #2323: the trim gate, ahead of the history conversion, so the cycle that opens it starts trimming history.
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataTrimGateStep>(
+          MetadataTrimGateStep.FromServices));
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
           MetadataHistoryConversionStep.FromServices));
         // TURNKEY: the maintenance step that converts audit records written before the pointer default (#1588) to the
