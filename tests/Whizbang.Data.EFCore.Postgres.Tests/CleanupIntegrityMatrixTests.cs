@@ -354,9 +354,9 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     /// </summary>
     RetiredType,
     /// <summary>
-    /// Both sides declare the type retired, but a destruction hold keeps one of the consumer's streams waiting (#2329):
-    /// the two sides then hold different amounts of the type's history, and integrity must neither report the
-    /// difference nor send the purged events back.
+    /// Both sides declare the type retired, but a destruction hold keeps one stream waiting on each side, a different one
+    /// (#2329): each side then holds history of the type the other has purged, and integrity must neither report the
+    /// difference nor send the purged events back, in either direction.
     /// </summary>
     RetiredTypeHeld,
   }
@@ -633,8 +633,8 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     public override string RuleChangedType => RETIRED;
 
     public override async Task SeedAsync(Harness h) {
-      // Long-lived mixed streams: the retired type sits between events of a type that stays. With a hold, a second
-      // stream whose retired event the consumer cannot remove yet.
+      // Long-lived mixed streams: the retired type sits between events of a type that stays. With a hold, two streams,
+      // each held on one side.
       for (var i = 0; i < (held ? 2 : 1); i++) {
         var stream = (Guid)TrackedGuid.New();
         Streams.Add(stream);
@@ -648,8 +648,8 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     protected override async Task CleanOnAsync(Harness h, Store store) {
       // A retirement is a rule change: the side declares the type retired, and maintenance purges its stored events.
       h.RulesOf(store).DeclareRetired(RETIRED);
-      if (held && store == h.Consumer) {
-        await Harness.HoldEveryEventOfAsync(store, Streams[1], RETIRED);
+      if (held) {
+        await Harness.HoldEveryEventOfAsync(store, store == h.Origin ? Streams[1] : Streams[0], RETIRED);
       }
       await Harness.ExecuteAsync(store, "SELECT * FROM wh_retire_event_types(@n, 500)", ("n", new[] { RuleTypeName.Of(RETIRED) }));
     }
@@ -686,6 +686,7 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     private readonly MatrixRules _originRules = new();
     private readonly MatrixRules _consumerRules = new();
     private readonly List<Guid> _restored = [];
+    private readonly System.Diagnostics.Metrics.Meter _discardMeter = new("Whizbang.Tests.CleanupIntegrityMatrix.Discard");
     private readonly List<Guid> _redelivered = [];
     private readonly Dictionary<Guid, (Guid Stream, string Type, int Flags, string? Key, long Seq)> _emitted = [];
     private string _consumerDbName = "";
@@ -758,6 +759,7 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     }
 
     public async ValueTask DisposeAsync() {
+      _discardMeter.Dispose();
       if (_originProvider is not null) {
         await _originProvider.DisposeAsync();
       }
@@ -991,7 +993,10 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
       var bundle = _payload<RedeliveryComposite>(envelope);
       _redelivered.AddRange(bundle.InnerEventIds);
       using var scope = _consumerProvider!.CreateScope();
-      var result = CompositeInboxFanout.TryExpand(bundle, envelope, scope.ServiceProvider);
+      // As the inbox worker does (#736): a child the receive gate would turn away is dropped at expansion.
+      var policy = scope.ServiceProvider.GetRequiredService<Whizbang.Core.Routing.IMessageDiscardPolicy>();
+      var result = CompositeInboxFanout.TryExpand(bundle, envelope, scope.ServiceProvider,
+        hasConsumer: type => !policy.EvaluateReceive(type, string.Empty, string.Empty).ShouldDiscard);
       if (result.Outcome != CompositeInboxFanout.FanoutOutcome.Expanded) {
         throw new InvalidOperationException($"the redelivery bundle did not expand: {result.Outcome} {result.Detail}");
       }
@@ -1294,6 +1299,12 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
       services.AddSingleton<IIntegrityRepairLedger>(sp =>
         new CoordinatorIntegrityRepairLedger(sp.GetRequiredService<IServiceScopeFactory>()));
       services.AddSingleton<IConsumerRegistry>(new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery());
+      // The shared discard policy, as the turnkey registration wires it, over this side's retired types (#2329): the receive
+      // boundary and stream integrity's comparisons both ask it.
+      services.AddSingleton<Whizbang.Core.Routing.IMessageDiscardPolicy>(new Whizbang.Core.Routing.MessageDiscardPolicy(
+        new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery(), NullLogger<Whizbang.Core.Routing.MessageDiscardPolicy>.Instance,
+        _discardMeter, Options.Create(new Whizbang.Core.Routing.RoutingOptions()), new MatrixMarkers(),
+        retired: Options.Create(rules.RetiredOptions)));
       // The consumer's catalog: what the fan-out derives a redelivered child's flags from, by its type name.
       services.AddSingleton<IEventMarkerResolver>(new MatrixMarkers());
       if (tracker is not null) {
@@ -1365,23 +1376,26 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     private const string EPHEMERAL_MODE = "WhenConsumed;PersistedRow";
     private readonly HashSet<string> _declaredEphemeral = new(StringComparer.Ordinal) { RuleTypeName.Of(EPHEMERAL) };
 
-    private readonly HashSet<string> _declaredRetired = new(StringComparer.Ordinal);
 
     /// <summary>Declares <paramref name="eventType"/> ephemeral on this side.</summary>
     public void DeclareEphemeral(string eventType) => _declaredEphemeral.Add(RuleTypeName.Of(eventType));
 
-    /// <summary>Declares <paramref name="eventType"/> retired on this side (#2329).</summary>
-    public void DeclareRetired(string eventType) => _declaredRetired.Add(RuleTypeName.Of(eventType));
+    /// <summary>The types this side has declared retired (#2329), as its configuration would bind them.</summary>
+    public RetiredEventTypesOptions RetiredOptions { get; } = new();
 
-    /// <summary>The types this side has declared retired, by their names without the assembly.</summary>
-    public IReadOnlyCollection<string> Retired => _declaredRetired;
+    /// <summary>Declares <paramref name="eventType"/> retired on this side (#2329).</summary>
+    public void DeclareRetired(string eventType) {
+      if (!RetiredOptions.IsRetired(eventType)) {
+        RetiredOptions.Names.Add(RuleTypeName.Of(eventType));
+      }
+    }
 
     public RuleSet RulesFor(IEnumerable<string>? eventTypes) {
       var covered = new Dictionary<string, string>(StringComparer.Ordinal);
       foreach (var name in (eventTypes ?? [DURABLE, SUPERSEDING, EPHEMERAL, LATER_EPHEMERAL, FILLER, AT_MOST_ONCE, RETIRED]).Select(RuleTypeName.Of)) {
         covered[name] = new TypeRules(name) {
           Ephemeral = _declaredEphemeral.Contains(name) ? EPHEMERAL_MODE : null,
-          Retired = _declaredRetired.Contains(name),
+          Retired = RetiredOptions.IsRetired(name),
         }.Hash();
       }
       return new RuleSet(RuleSemantics.VERSION, RuleSemantics.ELIGIBILITY_SQL_VERSION, covered);
