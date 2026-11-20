@@ -226,6 +226,66 @@ jobs:
           -MinUploadMBps "$env:MIN_UPLOAD_MBPS" -CheckMaxAgeHours "$env:CHECK_MAX_AGE_HOURS"
 
   # ============================================================================
+  # Watch self-hosted jobs (#1880)
+  #
+  # GitHub cannot move a queued job to another runner, so a pool job whose machine went away queues for up to a
+  # day. This watches the run's pool jobs and, once one has been queued 10 minutes with no online machine carrying
+  # its labels (or 45 minutes whatever the machines say) AND no other job is still running, starts
+  # ci-runner-fallback.yml and cancels the run; the re-runner then re-runs the failed jobs, which take
+  # ubuntu-latest (the attempt guard). It never touches a running job: a slow but alive machine is left to the
+  # job's own timeout, and waiting for the running jobs first means the cancel throws away no finished work.
+  # A machine lost mid-job fails its job; ci-runner-fallback.yml re-runs that once the run has finished.
+  # Off the gate's needs and continue-on-error: the watcher can never turn CI red. Rules:
+  # .github/scripts/Invoke-CiRunnerFallback.ps1; runbook: .github/WORKFLOWS.md, "Runner selection".
+  # ============================================================================
+
+  runner-watch:
+    name: Plan · Watch self-hosted jobs
+    needs: [pick-runner]
+    if: ${{ needs.pick-runner.outputs.pool == 'true' && needs.pick-runner.outputs.attempt == github.run_attempt }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    continue-on-error: true
+    permissions:
+      contents: read
+      actions: write   # cancel this run, and start the re-runner
+    env:
+      HAS_POOL_APP: ${{ secrets.RUNNER_POOL_APP_ID != '' && secrets.RUNNER_POOL_APP_PRIVATE_KEY != '' }}
+    steps:
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+
+      # Which machines are online, to tell a job waiting its turn from one no machine will take.
+      - name: Create the runner-pool app token
+        id: app-token
+        if: env.HAS_POOL_APP == 'true'
+        continue-on-error: true
+        timeout-minutes: 1
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.RUNNER_POOL_APP_ID }}
+          private-key: ${{ secrets.RUNNER_POOL_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-organization-self-hosted-runners: read
+
+      - name: Watch the pool jobs
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUNNER_POOL_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'develop' }}
+          ORGANIZATION: ${{ github.repository_owner }}
+          GROUP: ${{ vars.RUNNER_POOL_GROUP || 'Default' }}
+        run: >-
+          ./.github/scripts/Invoke-CiRunnerFallback.ps1 -Mode Watch -Repository "$env:REPOSITORY" -RunId "$env:RUN_ID"
+          -DefaultBranch "$env:DEFAULT_BRANCH" -Organization "$env:ORGANIZATION" -GroupName "$env:GROUP"
+
+  # ============================================================================
   # Queue-validated push optimization
   #
   # The merge queue fast-forwards develop to the EXACT SHA it just ran the full

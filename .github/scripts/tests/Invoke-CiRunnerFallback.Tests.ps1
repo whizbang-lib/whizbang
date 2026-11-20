@@ -336,6 +336,100 @@ Describe 'Invoke-RunnerRerun' {
   }
 }
 
+Describe 'Invoke-CiRunnerFallback' {
+  BeforeAll {
+    $script:EntryArgs = @{
+      Mode = 'Watch'; Repository = $Repo; RunId = '500'; SelfName = $Watcher; DefaultBranch = 'develop'; Organization = 'whizbang-lib'
+      GroupName = 'Default'; Trigger = 'watcher'; QueuedMinutes = 10; CeilingMinutes = 45; SummaryFile = ''
+    }
+    $script:Clock = { $script:Now }
+    $script:NoSleep = { }
+  }
+
+  It 'does nothing, and says so, without a token' {
+    $said = Invoke-CiRunnerFallback -Arguments $EntryArgs -Token '' -Now $Clock -Sleep $NoSleep 6>&1
+    $said[-1] | Should -Be 'skipped'
+    ($said -join "`n") | Should -BeLike '*No GH_TOKEN*'
+  }
+
+  It 'watches with the runner list read through the pool token' {
+    Mock Invoke-RunnerWatch { $script:GotRunners = & $GetRunners; 'done' }
+    $pool = New-FakeApi @{}
+    $poolApi = { param($Path, $Token) [pscustomobject]@{ runner_groups = @([pscustomobject]@{ id = 7; name = 'Default'; visibility = 'all' }); runners = @(New-Runner) } }
+    Invoke-CiRunnerFallback -Arguments $EntryArgs -Token 't' -PoolToken 'p' -Api $pool -PoolApi $poolApi -Now $Clock -Sleep $NoSleep | Should -Be 'done'
+    @($GotRunners).name | Should -Be @('r1')
+    Should -Invoke Invoke-RunnerWatch -Times 1 -ParameterFilter { $RunId -eq '500' -and $DefaultBranch -eq 'develop' -and $SelfName -eq $Watcher }
+  }
+
+  It 'watches without the machines when there is no pool token' {
+    Mock Invoke-RunnerWatch { try { & $GetRunners; 'read' } catch { $_.Exception.Message } }
+    Invoke-CiRunnerFallback -Arguments $EntryArgs -Token 't' -Api (New-FakeApi @{}) -PoolApi { } -Now $Clock -Sleep $NoSleep | Should -Be 'no runner-pool token'
+  }
+
+  It 'builds its own clients from the tokens when given none' {
+    Mock Invoke-RunnerWatch { 'done' }
+    Invoke-CiRunnerFallback -Arguments $EntryArgs -Token 't' -Now $Clock -Sleep $NoSleep | Should -Be 'done'
+    Should -Invoke Invoke-RunnerWatch -Times 1 -ParameterFilter { $null -ne $InvokeApi }
+  }
+
+  It 're-runs in Rerun mode' {
+    Mock Invoke-RunnerRerun { 'reran' }
+    $rerun = $EntryArgs.Clone(); $rerun.Mode = 'Rerun'
+    Invoke-CiRunnerFallback -Arguments $rerun -Token 't' -Api (New-FakeApi @{}) -Now $Clock -Sleep $NoSleep | Should -Be 'reran'
+    Should -Invoke Invoke-RunnerRerun -Times 1 -ParameterFilter { $Trigger -eq 'watcher' -and $RunId -eq '500' }
+  }
+
+  It 'warns, and never throws, when anything inside throws' {
+    Mock Invoke-RunnerRerun { throw 'boom' }
+    $rerun = $EntryArgs.Clone(); $rerun.Mode = 'Rerun'
+    $said = Invoke-CiRunnerFallback -Arguments $rerun -Token 't' -Api (New-FakeApi @{}) -Now $Clock -Sleep $NoSleep 6>&1
+    $said[-1] | Should -Be 'failed'
+    ($said -join "`n") | Should -BeLike '*boom*'
+  }
+}
+
+Describe 'New-GitHubApiClient' {
+  It 'sends the method, the token and a JSON body, and returns the parsed JSON' {
+    $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $probe.Start(); $port = $probe.LocalEndpoint.Port; $probe.Stop()
+    $listener = [System.Net.HttpListener]::new()
+    $listener.Prefixes.Add("http://127.0.0.1:$port/")
+    $listener.Start()
+    try {
+      $serve = $listener.GetContextAsync()
+      $job = Start-ThreadJob -ArgumentList $ScriptPath, $port -ScriptBlock {
+        param($path, $p)
+        . $path
+        $client = New-GitHubApiClient -Token 'secret-token' -BaseUrl "http://127.0.0.1:$p" -TimeoutSec 10
+        & $client 'POST' '/repos/x/dispatches' ([ordered]@{ ref = 'develop' })
+        & $client 'GET' '/repos/x/runs/1' $null
+      }
+      $context = $serve.GetAwaiter().GetResult()
+      $context.Request.HttpMethod | Should -Be 'POST'
+      $context.Request.Headers['Authorization'] | Should -Be 'Bearer secret-token'
+      $context.Request.Url.PathAndQuery | Should -Be '/repos/x/dispatches'
+      [IO.StreamReader]::new($context.Request.InputStream).ReadToEnd() | Should -Be '{"ref":"develop"}'
+      $bytes = [Text.Encoding]::UTF8.GetBytes('{"ok":true}')
+      $context.Response.ContentType = 'application/json'
+      $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+      $context.Response.Close()
+      $second = $listener.GetContextAsync().GetAwaiter().GetResult()
+      $second.Request.HttpMethod | Should -Be 'GET'
+      $second.Request.HasEntityBody | Should -BeFalse
+      $bytes = [Text.Encoding]::UTF8.GetBytes('{"id":1}')
+      $second.Response.ContentType = 'application/json'
+      $second.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+      $second.Response.Close()
+      $results = @($job | Wait-Job | Receive-Job)
+      $results[0].ok | Should -BeTrue
+      $results[1].id | Should -Be 1
+    } finally {
+      $listener.Stop()
+      $job | Remove-Job -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
 Describe 'The workflows' {
   BeforeAll {
     $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '..' '..' '..')).Path
@@ -354,8 +448,8 @@ Describe 'The workflows' {
     $Fallback | Should -Match '(?m)^  workflow_run:\s*$'
     $Fallback | Should -Match '(?m)^    workflows: \[CI\]\s*$'
     $Fallback | Should -Match '(?m)^  workflow_dispatch:\s*$'
-    $Fallback | Should -Match '(?m)^      actions: write\s*$'
-    $Fallback | Should -Match '(?m)^      checks: read\s*$'
+    $Fallback | Should -Match '(?m)^      actions: write\b'
+    $Fallback | Should -Match '(?m)^      checks: read\b'
     $Fallback | Should -Match '-Mode Rerun'
     # Never checks out the code of the run it judges.
     $Fallback | Should -Not -Match 'head_sha|head_branch'

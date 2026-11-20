@@ -192,13 +192,15 @@ $work = if ($selfCheck.WorkPath) { $selfCheck.WorkPath } else { (Get-Location).P
 $invokeApi = New-GitHubApiInvoker
 $poolToken = $env:RUNNER_POOL_TOKEN
 $org = $selfCheck.Organization; $group = $selfCheck.GroupName
+# The closures see only their captured variables, so the functions they call are captured too.
+$readPool = ${function:Get-RunnerPoolState}; $freeSpace = ${function:Get-FreeSpaceGB}
 Invoke-RunnerSelfCheck -Mode $selfCheck.Mode -OutputFile $selfCheck.OutputFile -SummaryFile $selfCheck.SummaryFile `
   -GetPoolState {
     if (-not $poolToken) { throw 'no runner-pool token (the RUNNER_POOL_APP_ID and RUNNER_POOL_APP_PRIVATE_KEY secrets)' }
-    Get-RunnerPoolState -InvokeApi $invokeApi -Organization $org -GroupName $group -PoolToken $poolToken
+    & $readPool -InvokeApi $invokeApi -Organization $org -GroupName $group -PoolToken $poolToken
   }.GetNewClosure() `
   -UploadFile $selfCheck.UploadFile -UploadMB $selfCheck.UploadMB -RecordFile $selfCheck.RecordFile -RunnerName $selfCheck.RunnerName `
   -StartedMs $(if ($selfCheck.StartedMs) { [long]$selfCheck.StartedMs } else { $null }) -UploadOutcome $selfCheck.UploadOutcome `
   -MinDiskGB $selfCheck.MinDiskGB -Nonce $selfCheck.Nonce `
-  -GetFreeSpaceGB { Get-FreeSpaceGB -Path $work -Drives @([System.IO.DriveInfo]::GetDrives() | Where-Object IsReady) }.GetNewClosure()
+  -GetFreeSpaceGB { & $freeSpace -Path $work -Drives @([System.IO.DriveInfo]::GetDrives() | Where-Object IsReady) }.GetNewClosure()
 exit 0

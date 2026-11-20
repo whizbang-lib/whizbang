@@ -785,8 +785,14 @@ Describe 'Which class each ci.yml job takes' {
   }
 
   It 'routes no other job, so pack, publish, release, gate and planning jobs stay on GitHub-hosted runners' {
-    $routed = @($CiJobs.Keys | Where-Object { $CiJobs[$_] -match 'pick-runner\.outputs' })
+    # A class output, not attempt or pool: the watcher reads those to decide whether to run, and runs on ubuntu-latest.
+    $classOutput = 'pick-runner\.outputs\.(' + ((@((Get-CiRunnerClass).Keys) | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')\b'
+    $routed = @($CiJobs.Keys | Where-Object { $CiJobs[$_] -match $classOutput })
     @($routed | Sort-Object) | Should -Be @($Expected.Keys | Sort-Object)
+  }
+
+  It 'runs the watcher on ubuntu-latest, whatever the plan (#1880)' {
+    $CiJobs['runner-watch'] | Should -Match '(?m)^    runs-on: ubuntu-latest\s*$'
   }
 
   It 'never makes the gate wait on the picker' {
