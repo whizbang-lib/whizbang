@@ -272,17 +272,38 @@ public class OnlineTableRewriteStepTests {
     await Assert.That(string.Join(",", coordinator.Squeezed)).IsEqualTo("wh_outbox,wh_inbox");
   }
 
+  /// <summary>
+  /// #2434: a table larger than the whole budget used to be passed over by every cycle, so the largest tables, which
+  /// hold most of the index bloat, were never rewritten. It now gets a cycle of its own: the cycle that reaches it first
+  /// rewrites it and nothing else.
+  /// </summary>
   [Test]
-  public async Task Budget_ATableLargerThanTheWholeBudget_IsNeverRewritten_AndSaysWhatToRaiseAsync() {
+  public async Task Budget_ATableLargerThanTheWholeBudget_FirstInTheQueue_GetsTheCycleToItselfAsync() {
     var (coordinator, logger) = await _runAsync(new SqueezeCoordinator {
-      Candidates = { _requested("wh_event_store", 9.0, 2048 * MIB) },
+      Candidates = { _requested("wh_event_store", 9.0, 2048 * MIB), _requested("wh_outbox", 4.0, 100 * MIB) },
     }, budgetBytes: 1024 * MIB);
 
-    await Assert.That(coordinator.Squeezed).IsEmpty();
-    await Assert.That(coordinator.Cleared).IsEmpty().Because("the request stays queued");
-    await Assert.That(_messages(logger).Single(m => m.Contains("wh_event_store", StringComparison.Ordinal))).IsEqualTo(
+    await Assert.That(string.Join(",", coordinator.Squeezed)).IsEqualTo("wh_event_store")
+      .Because("the table over the budget is rewritten alone, so one cycle never copies more than it and nothing else");
+    await Assert.That(_messages(logger)).Contains(
       "Online rewrite: wh_event_store (2147483648 bytes) is larger than Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle "
-      + "(1073741824), so no cycle rewrites it until the budget is raised");
+      + "(1073741824), so this cycle rewrites it alone");
+    await Assert.That(_messages(logger)).Contains(
+      "Online rewrite: wh_outbox (104857600 bytes) is deferred to a later cycle: it does not fit the 0 bytes left "
+      + "of Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle (1073741824)");
+  }
+
+  [Test]
+  public async Task Budget_ATableLargerThanTheWholeBudget_BehindOneAlreadyTaken_WaitsForACycleOfItsOwnAsync() {
+    var (coordinator, logger) = await _runAsync(new SqueezeCoordinator {
+      Candidates = { _requested("wh_outbox", 9.0, 100 * MIB), _requested("wh_event_store", 4.0, 2048 * MIB) },
+    }, budgetBytes: 1024 * MIB);
+
+    await Assert.That(string.Join(",", coordinator.Squeezed)).IsEqualTo("wh_outbox");
+    await Assert.That(coordinator.Cleared).DoesNotContain("wh_event_store").Because("its request stays queued");
+    await Assert.That(_messages(logger)).Contains(
+      "Online rewrite: wh_event_store (2147483648 bytes) is larger than Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle "
+      + "(1073741824), so it waits for a cycle that reaches it before any other table");
   }
 
   [Test]

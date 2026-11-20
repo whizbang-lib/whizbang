@@ -174,8 +174,27 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
         EventTypesCodeGen: [.. eventTypesCodeGen.Distinct()],
         AllowsMixed: _allowsMixedEphemeralAndSourced(classSymbol),
         AllowsMixedStreams: MixedStreamOptIn.AllowsStreams(classSymbol),
-        MixedStreamPairs: _mixedStreamPairs(singleStreamInterfaces, globalInterfaces)
+        MixedStreamPairs: _mixedStreamPairs(singleStreamInterfaces, globalInterfaces),
+        UnconditionalPurges: _unconditionalPurges(classSymbol, singleStreamInterfaces, globalInterfaces)
     );
+  }
+
+  /// <summary>
+  /// The events whose implementing Apply can only purge the row, in the stored names the runtime compares (#2314), by
+  /// the runner's own terminal-purge rule (<see cref="PerspectiveRunnerGenerator.CanOnlyPurge"/>), or null when none can.
+  /// Each event's Apply is the first interface member named Apply that takes it as its second parameter, as the runner
+  /// dispatches it; an event no such member takes (an interface that applies it by another name) is never listed.
+  /// </summary>
+  private static EquatableArray<string>? _unconditionalPurges(
+      INamedTypeSymbol classSymbol, List<INamedTypeSymbol> singleStreamInterfaces, List<INamedTypeSymbol> globalInterfaces) {
+    var declared = classSymbol.AllInterfaces.SelectMany(static i => i.GetMembers("Apply").OfType<IMethodSymbol>()).ToList();
+    string[] purges = [.. singleStreamInterfaces.SelectMany(i => i.TypeArguments.Skip(1))
+      .Concat(globalInterfaces.SelectMany(i => i.TypeArguments.Skip(2)))
+      .Distinct<ITypeSymbol>(SymbolEqualityComparer.Default)
+      .Where(e => declared.FirstOrDefault(m => SymbolEqualityComparer.Default.Equals(m.Parameters.Skip(1).Select(static p => p.Type).FirstOrDefault(), e)) is { } member
+        && PerspectiveRunnerGenerator.CanOnlyPurge(classSymbol.FindImplementationForInterfaceMember(member) as IMethodSymbol))
+      .Select(TypeNameUtilities.FormatTypeNameForRuntime)];
+    return purges.Length == 0 ? null : purges;
   }
 
   /// <summary>
@@ -420,10 +439,10 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// The close of one registration with its object initializer: the mixing opt-in (#2250), the stream allowance and the
-  /// mixed pairs it applies (#2255), each only when set.
+  /// mixed pairs it applies (#2255), and the event types whose Apply can only purge (#2314), each only when set.
   /// </summary>
   private static string _initializer(PerspectiveRegistryInfo perspective) {
-    var members = new List<string>(3);
+    var members = new List<string>(4);
     if (perspective.AllowsMixed) {
       members.Add("AllowsMixedEphemeralAndSourced = true");
     }
@@ -432,6 +451,9 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     }
     if (perspective.MixedStreamPairs is { } pairs) {
       members.Add($"MixedStreamPairs = [{string.Join(", ", pairs)}]");
+    }
+    if (perspective.UnconditionalPurges is { } purges) {
+      members.Add($"UnconditionalPurgeEventTypes = [{string.Join(", ", purges.Select(static p => $"\"{p}\""))}]");
     }
     return members.Count == 0 ? "    )," : $"    ) {{ {string.Join(", ", members)} }},";
   }
@@ -534,6 +556,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
 /// <param name="AllowsMixed">Whether the perspective carries [DangerouslyAllowMixedEphemeralAndSourcedEvents] (#2250)</param>
 /// <param name="AllowsMixedStreams">Whether that attribute sets Streams = MixedStreams.Allow (#2255)</param>
 /// <param name="MixedStreamPairs">The generated MixedStreamPair constructions of the (ephemeral, Sourced) pairs it applies, or null (#2255)</param>
+/// <param name="UnconditionalPurges">Runtime-format event types whose Apply can only purge the row, or null (#2314)</param>
 internal sealed record PerspectiveRegistryInfo(
     string ClassName,
     string SimpleName,
@@ -544,5 +567,6 @@ internal sealed record PerspectiveRegistryInfo(
     EquatableArray<string> EventTypesCodeGen,
     bool AllowsMixed = false,
     bool AllowsMixedStreams = false,
-    EquatableArray<string>? MixedStreamPairs = null
+    EquatableArray<string>? MixedStreamPairs = null,
+    EquatableArray<string>? UnconditionalPurges = null
 );

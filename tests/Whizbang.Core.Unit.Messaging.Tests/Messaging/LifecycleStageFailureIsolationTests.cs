@@ -263,6 +263,110 @@ public class LifecycleStageFailureIsolationTests {
     await Assert.That(invoker.InvokedAt(LifecycleStage.PreDistributeInline)).IsEquivalentTo([first.MessageId]);
   }
 
+  /// <summary>
+  /// #2313: an interval or batch flush carries the queued messages of many callers, and the queue is cleared before it
+  /// runs. A PreDistributeInline failure for one message used to stop the flush before the store, so every other
+  /// caller's message was lost with it. Now the failing message is refused (not stored, its failure logged against it)
+  /// and every other message is stored; nothing is thrown, because the flush belongs to no one caller.
+  /// </summary>
+  [Test]
+  public async Task SharedFlush_PreDistributeInlineFailure_RefusesOnlyThatMessage_StoresTheRest_AndThrowsNothingAsync() {
+    var failing = _outbox();
+    var passing = _outbox();
+    var passingInbox = _inbox();
+    var invoker = new FailingForInvoker(failing.MessageId) { FailOnlyAt = LifecycleStage.PreDistributeInline };
+    var coordinator = new Whizbang.Core.Tests.Workers.NoOpWorkCoordinator();
+    var logger = new FakeLogger();
+    await using var provider = _flushProvider(invoker, coordinator);
+
+    await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+      _flushContext(provider, [failing, passing], logger) with { InboxMessages = [passingInbox], IsolatePreStoreFailures = true },
+      default);
+
+    await Assert.That(coordinator.StoredOutboxMessages.Select(m => m.MessageId)).IsEquivalentTo([passing.MessageId])
+      .Because("another caller's message is stored although one message in the same flush was refused");
+    await Assert.That(coordinator.StoredMessages.Select(m => m.MessageId)).IsEquivalentTo([passingInbox.MessageId]);
+    await Assert.That(invoker.InvokedAt(LifecycleStage.PreDistributeInline))
+      .IsEquivalentTo([failing.MessageId, passing.MessageId, passingInbox.MessageId])
+      .Because("every message's pre-store receptors run; one failure does not skip the rest");
+    await Assert.That(invoker.InvokedAt(LifecycleStage.PostDistributeInline)).IsEquivalentTo([passing.MessageId, passingInbox.MessageId])
+      .Because("a refused message was never stored, so it is never distributed");
+    await Assert.That(logger.Collector.GetSnapshot().Any(r => r.Level == LogLevel.Error
+        && r.Message.Contains(failing.MessageId.ToString(), StringComparison.Ordinal))).IsTrue()
+      .Because("the refused message's failure is reported against that message");
+  }
+
+  [Test]
+  public async Task SharedFlush_PreDistributeInlineFailure_WithoutALogger_StillStoresTheRestAsync() {
+    var failing = _outbox();
+    var passing = _outbox();
+    var invoker = new FailingForInvoker(failing.MessageId) { FailOnlyAt = LifecycleStage.PreDistributeInline };
+    var coordinator = new Whizbang.Core.Tests.Workers.NoOpWorkCoordinator();
+    await using var provider = _flushProvider(invoker, coordinator);
+
+    await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+      _flushContext(provider, [failing, passing]) with { Logger = null, IsolatePreStoreFailures = true }, default);
+
+    await Assert.That(coordinator.StoredOutboxMessages.Select(m => m.MessageId)).IsEquivalentTo([passing.MessageId]);
+  }
+
+  [Test]
+  public async Task IntervalStrategy_PreDistributeInlineFailure_StoresEveryOtherCallersMessage_AndThrowsToNoCallerAsync() {
+    var failing = _outbox();
+    var passing = _outbox();
+    var invoker = new FailingForInvoker(failing.MessageId) { FailOnlyAt = LifecycleStage.PreDistributeInline };
+    var coordinator = new Whizbang.Core.Tests.Workers.NoOpWorkCoordinator();
+    await using var provider = _flushProvider(invoker, coordinator);
+    var strategy = new IntervalWorkCoordinatorStrategy(
+      coordinator: coordinator,
+      instanceProvider: new FakeInstanceProvider(),
+      options: new WorkCoordinatorOptions { IntervalMilliseconds = 3_600_000, PartitionCount = 4 },
+      logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<IntervalWorkCoordinatorStrategy>.Instance,
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new FailingForDeserializer(),
+      tracingOptions: new Whizbang.Testing.Options.StaticOptionsMonitor<Whizbang.Core.Tracing.TracingOptions>(new Whizbang.Core.Tracing.TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork(),
+      deferredChannel: new DeferredOutboxChannel());
+    await using (strategy) {
+      strategy.QueueOutboxMessage(failing);
+      strategy.QueueOutboxMessage(passing);
+
+      await strategy.FlushAndGetBatchAsync(WorkBatchOptions.SkipInboxClaiming);
+    }
+
+    await Assert.That(coordinator.StoredOutboxMessages.Select(m => m.MessageId)).IsEquivalentTo([passing.MessageId])
+      .Because("the other caller's message is stored; the failing receptor refused only its own message");
+  }
+
+  [Test]
+  public async Task BatchStrategy_PreDistributeInlineFailure_StoresEveryOtherCallersMessage_AndThrowsToNoCallerAsync() {
+    var failing = _outbox();
+    var passing = _outbox();
+    var invoker = new FailingForInvoker(failing.MessageId) { FailOnlyAt = LifecycleStage.PreDistributeInline };
+    var coordinator = new Whizbang.Core.Tests.Workers.NoOpWorkCoordinator();
+    await using var provider = _flushProvider(invoker, coordinator);
+    var strategy = new BatchWorkCoordinatorStrategy(
+      coordinator: coordinator,
+      instanceProvider: new FakeInstanceProvider(),
+      options: new WorkCoordinatorOptions { BatchSize = 100, IntervalMilliseconds = 3_600_000, PartitionCount = 4 },
+      logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<BatchWorkCoordinatorStrategy>.Instance,
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new FailingForDeserializer(),
+      tracingOptions: new Whizbang.Testing.Options.StaticOptionsMonitor<Whizbang.Core.Tracing.TracingOptions>(new Whizbang.Core.Tracing.TracingOptions()),
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork(),
+      deferredChannel: new DeferredOutboxChannel());
+    await using (strategy) {
+      strategy.QueueOutboxMessage(failing);
+      strategy.QueueOutboxMessage(passing);
+
+      await strategy.FlushAndGetBatchAsync(WorkBatchOptions.SkipInboxClaiming);
+    }
+
+    await Assert.That(coordinator.StoredOutboxMessages.Select(m => m.MessageId)).IsEquivalentTo([passing.MessageId])
+      .Because("the other caller's message is stored; the failing receptor refused only its own message");
+  }
+
   [Test]
   public async Task InlineStage_AReceptorTheInvokerIsolates_IsLoggedByNameAsync() {
     // An invoker that isolates its receptors reports each one that threw; the entry names the receptor, the message type
@@ -353,7 +457,7 @@ public class LifecycleStageFailureIsolationTests {
     return services.BuildServiceProvider();
   }
 
-  private static FlushContext _flushContext(ServiceProvider provider, OutboxMessage[] outbox) =>
+  private static FlushContext _flushContext(ServiceProvider provider, OutboxMessage[] outbox, ILogger? logger = null) =>
     new(
       Coordinator: null,
       ScopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
@@ -366,7 +470,7 @@ public class LifecycleStageFailureIsolationTests {
       OutboxFailures: [],
       InboxFailures: [],
       LifecycleMessageDeserializer: new FailingForDeserializer(),
-      Logger: new FakeLogger(),
+      Logger: logger ?? new FakeLogger(),
       TracingOptions: null,
       LifecycleMetrics: null,
       WorkChannelWriter: null,

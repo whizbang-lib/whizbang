@@ -168,6 +168,46 @@ public class MaintenanceWorkerReapDrivenSnapshotTests {
       .Because("The reap-driven step bootstraps a snapshot for each (stream, perspective) whose bodies are about to be reaped.");
   }
 
+  /// <summary>#2296: the bootstrap is taken through the reap boundary the target names, not at the cursor.</summary>
+  [Test]
+  public async Task RunMaintenanceOnce_ATargetWithAReapBoundary_IsBootstrappedThroughItAsync() {
+    var streamId = Guid.NewGuid();
+    var cursorEvent = Guid.NewGuid();
+    var boundaryEvent = Guid.NewGuid();
+    var coord = new FakeCoordinator { Pairs = [new EphemeralSnapshotTarget(streamId, "MyPerspective", cursorEvent, boundaryEvent)] };
+    var runner = new BoundaryRunner();
+
+    await _buildWorker(coord, new FakeRegistry(runner)).RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(runner.Calls).IsEquivalentTo([(streamId, cursorEvent, boundaryEvent)]);
+  }
+
+  [Test]
+  public async Task RunMaintenanceOnce_ATargetThatNamesNoBoundary_IsBootstrappedAtTheCursorAsync() {
+    var streamId = Guid.NewGuid();
+    var cursorEvent = Guid.NewGuid();
+    var coord = new FakeCoordinator { Pairs = [new EphemeralSnapshotTarget(streamId, "MyPerspective", cursorEvent)] };
+    var runner = new BoundaryRunner();
+
+    await _buildWorker(coord, new FakeRegistry(runner)).RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(runner.Calls).IsEquivalentTo([(streamId, cursorEvent, cursorEvent)]);
+  }
+
+  private sealed class BoundaryRunner : IPerspectiveRunner {
+    public List<(Guid StreamId, Guid Cursor, Guid Boundary)> Calls { get; } = [];
+    public Type PerspectiveType => typeof(object);
+    public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException("the worker bootstraps through the boundary");
+    public Task<SnapshotBootstrapOutcome> TryBootstrapSnapshotThroughAsync(
+        Guid streamId, string perspectiveName, Guid lastProcessedEventId, Guid boundaryEventId, CancellationToken cancellationToken = default) {
+      Calls.Add((streamId, lastProcessedEventId, boundaryEventId));
+      return Task.FromResult(SnapshotBootstrapOutcome.Written);
+    }
+    public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+  }
+
   [Test]
   public async Task RunMaintenanceOnce_NoRunnerRegistry_IsInertAsync() {
     // A non-perspective host has no runner registry — the reap-driven step must short-circuit BEFORE the

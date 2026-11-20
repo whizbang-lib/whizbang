@@ -96,8 +96,10 @@ internal static class CoordinatorCatalogSql {
   /// <summary>
   /// The (stream, perspective) pairs with an ephemeral body past its rewind grace, consumed, that no snapshot covers by
   /// version and whose row the perspective has not purged (#2294), for perspectives that keep a rewind floor (#2295): the
-  /// snapshots to take before the body is reaped.
+  /// snapshots to take before the body is reaped. Each names its reap boundary, the eligible body with the highest version,
+  /// which the snapshot is taken through (#2296).
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:PairsNeedingSnapshot_NameTheReapBoundary_TheLastBodyAboutToBeReaped_NotTheCursorAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:PairsNeedingSnapshot_APurgedPair_IsNotATarget_AndItsBodyIsOfferedForDestructionAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperLifecycleAndCatalogTests.cs:EphemeralPairsNeedingSnapshot_APairWhoseRowThePerspectivePurged_IsNotATargetAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralOnlyReadModelReapSqlTests.cs:PairsNeedingSnapshot_AReadModelThatKeepsNoFloor_IsNotATarget_AndItsBodyIsOfferedForDestructionAsync</tests>
@@ -105,7 +107,8 @@ internal static class CoordinatorCatalogSql {
   internal static async Task<IReadOnlyList<EphemeralSnapshotTarget>> EphemeralPairsNeedingSnapshotAsync(
       DbCommand cmd, string prefix, CancellationToken cancellationToken) {
     cmd.CommandText =
-      "SELECT DISTINCT es.stream_id, ma.target_name, c.last_event_id " +
+      // #2296: one target per pair, naming its reap boundary, the eligible body with the highest version.
+      "SELECT es.stream_id, ma.target_name, c.last_event_id, (array_agg(es.event_id ORDER BY es.version DESC))[1] " +
       $"FROM {prefix}wh_event_body eb " +
       $"JOIN {prefix}wh_event_store es ON es.event_id = eb.event_id " +
       $"LEFT JOIN {prefix}wh_ephemeral_type_grace g ON g.event_type = es.event_type " +
@@ -129,11 +132,12 @@ internal static class CoordinatorCatalogSql {
       // stays a target: a stale marker can stand on a resurrected, live row. As in the reap.
       $"AND NOT EXISTS (SELECT 1 FROM {prefix}wh_stream_purge_markers pm JOIN {prefix}wh_event_store pv " +
       "  ON pv.event_id = pm.purge_event_id AND pv.stream_id = pm.stream_id " +
-      "  WHERE pm.stream_id = es.stream_id AND pm.perspective_name = ma.target_name AND es.version <= pv.version)";
+      "  WHERE pm.stream_id = es.stream_id AND pm.perspective_name = ma.target_name AND es.version <= pv.version) " +
+      "GROUP BY es.stream_id, ma.target_name, c.last_event_id";
     var list = new List<EphemeralSnapshotTarget>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      list.Add(new EphemeralSnapshotTarget(reader.GetGuid(0), reader.GetString(1), reader.GetGuid(2)));
+      list.Add(new EphemeralSnapshotTarget(reader.GetGuid(0), reader.GetString(1), reader.GetGuid(2), reader.GetGuid(3)));
     }
     return list;
   }

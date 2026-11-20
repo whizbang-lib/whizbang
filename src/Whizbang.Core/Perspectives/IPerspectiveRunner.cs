@@ -330,4 +330,29 @@ public interface IPerspectiveRunner {
     await BootstrapSnapshotAsync(streamId, perspectiveName, lastProcessedEventId, cancellationToken).ConfigureAwait(false);
     return SnapshotBootstrapOutcome.NotReported;
   }
+
+  /// <summary>
+  /// Takes the reap-driven bootstrap snapshot at the reap boundary rather than at the cursor (#2296): the model as of
+  /// <paramref name="boundaryEventId"/>, the last event whose body the maintenance cycle is about to reap, so a late event
+  /// placed below the cursor but above the boundary still finds a rewind floor.
+  /// </summary>
+  /// <remarks>
+  /// The default, for a runner that cannot fold to a boundary, takes the bootstrap at the cursor
+  /// (<see cref="TryBootstrapSnapshotAsync"/>).
+  /// </remarks>
+  /// <param name="streamId">Stream to bootstrap</param>
+  /// <param name="perspectiveName">Perspective to bootstrap</param>
+  /// <param name="lastProcessedEventId">The cursor's last processed event ID</param>
+  /// <param name="boundaryEventId">The last event, by version, whose body the cycle is about to reap</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>What the bootstrap did.</returns>
+  /// <docs>fundamentals/events/ephemeral-events#the-reap-boundary-snapshot</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ReapBoundarySnapshotRunnerTests.cs</tests>
+  Task<SnapshotBootstrapOutcome> TryBootstrapSnapshotThroughAsync(
+    Guid streamId,
+    string perspectiveName,
+    Guid lastProcessedEventId,
+    Guid boundaryEventId,
+    CancellationToken cancellationToken = default) =>
+    TryBootstrapSnapshotAsync(streamId, perspectiveName, lastProcessedEventId, cancellationToken);
 }

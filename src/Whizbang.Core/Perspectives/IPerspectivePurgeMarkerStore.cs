@@ -76,6 +76,38 @@ public interface IPerspectivePurgeMarkerStore {
   Task MarkPurgedAsync(Guid streamId, string perspectiveName, Guid? purgeEventId, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Writes the purge markers a row purged before markers existed never got (#2314): for at most
+  /// <paramref name="batchSize"/> (stream, perspective) pairs whose row is missing, which carry no marker and have no work
+  /// pending, and whose cursor's last event is one of <paramref name="purgingTypes"/> for that perspective (an event type
+  /// whose Apply can only purge). The marker names that event. A pair whose last event could have left the row in place
+  /// is never marked: a wrong marker makes the runner skip the stream's later events. The default writes none.
+  /// </summary>
+  /// <param name="purgingTypes">(perspective name, event type) pairs, the type in the event store's form.</param>
+  /// <param name="batchSize">The most pairs examined in one call.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The markers written.</returns>
+  /// <docs>fundamentals/perspectives/perspectives-with-actions#purge-stays-purged</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgeMarkerBackfillSqlTests.cs</tests>
+  Task<int> BackfillMarkersAsync(
+      IReadOnlyList<(string PerspectiveName, string EventType)> purgingTypes, int batchSize,
+      CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
+  /// How many pairs, up to <paramref name="cap"/>, the backfill leaves unmarked although their row is missing: settled,
+  /// with no marker, and a cursor whose last event is not one of <paramref name="purgingTypes"/> (#2314). They keep their
+  /// cursor and snapshots; the count makes them visible. The default counts none.
+  /// </summary>
+  /// <param name="purgingTypes">(perspective name, event type) pairs, the type in the event store's form.</param>
+  /// <param name="cap">The most pairs counted.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The pairs counted, at most <paramref name="cap"/>.</returns>
+  /// <docs>fundamentals/perspectives/perspectives-with-actions#purge-stays-purged</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgeMarkerBackfillSqlTests.cs</tests>
+  Task<long> CountUnmarkedRowlessPairsAsync(
+      IReadOnlyList<(string PerspectiveName, string EventType)> purgingTypes, int cap,
+      CancellationToken cancellationToken = default) => Task.FromResult(0L);
+
+  /// <summary>
   /// Forgets the perspective's purge of the stream after an Apply resurrected it. A marker for every
   /// perspective is left in place: it still governs the others, and this perspective's row now exists.
   /// </summary>

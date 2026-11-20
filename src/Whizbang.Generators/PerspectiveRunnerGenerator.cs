@@ -1339,8 +1339,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// <c>ApplyResult&lt;T&gt;.Purge()</c>, <c>ModelAction.Purge</c> or <c>(null, ModelAction.Purge)</c> (the last two convert
   /// to <c>ApplyResult&lt;T&gt;</c>), as an expression body or a block holding only that return. Anything else, a condition,
   /// another statement, is left out: a wrong call deletes a row that should have survived, so the analysis only says
-  /// yes when the body leaves no other outcome.
+  /// yes when the body leaves no other outcome. The perspective registry reads the same rule (#2314).
   /// </summary>
+  internal static bool CanOnlyPurge(IMethodSymbol? implementation) => _canOnlyPurge(implementation);
+
   private static bool _canOnlyPurge(IMethodSymbol? implementation) =>
     implementation is { DeclaringSyntaxReferences.Length: 1 }
     && implementation.DeclaringSyntaxReferences[0].GetSyntax() is MethodDeclarationSyntax declaration

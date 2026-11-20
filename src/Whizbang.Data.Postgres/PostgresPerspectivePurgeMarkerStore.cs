@@ -19,7 +19,8 @@ namespace Whizbang.Data.Postgres;
 public sealed class PostgresPerspectivePurgeMarkerStore(
   Func<CancellationToken, ValueTask<NpgsqlConnection>> openConnection,
   string? schema = null) : IPerspectivePurgeMarkerStore {
-  private readonly string _table = (schema is null ? string.Empty : SqlText.Identifier(schema) + ".") + "wh_stream_purge_markers";
+  private readonly string _prefix = schema is null ? string.Empty : SqlText.Identifier(schema) + ".";
+  private string _table => _prefix + "wh_stream_purge_markers";
 
   /// <inheritdoc />
   public async Task<bool> IsPurgedAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) {
@@ -71,6 +72,44 @@ public sealed class PostgresPerspectivePurgeMarkerStore(
     command.Parameters.AddWithValue(perspectiveName);
     command.Parameters.Add(new NpgsqlParameter { Value = (object?)purgeEventId ?? DBNull.Value, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Uuid });
     await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  /// <remarks>One call of <c>wh_backfill_purge_markers</c> (migration 533).</remarks>
+  public async Task<int> BackfillMarkersAsync(
+      IReadOnlyList<(string PerspectiveName, string EventType)> purgingTypes, int batchSize,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(purgingTypes);
+    await using var connection = await openConnection(cancellationToken).ConfigureAwait(false);
+    await using var command = _purgingTypesCommand($"SELECT {_prefix}wh_backfill_purge_markers($1, $2, $3)", connection, purgingTypes, batchSize);
+    return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  /// <inheritdoc />
+  /// <remarks>One call of <c>wh_count_unmarked_rowless_pairs</c> (migration 533).</remarks>
+  public async Task<long> CountUnmarkedRowlessPairsAsync(
+      IReadOnlyList<(string PerspectiveName, string EventType)> purgingTypes, int cap,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(purgingTypes);
+    await using var connection = await openConnection(cancellationToken).ConfigureAwait(false);
+    await using var command = _purgingTypesCommand($"SELECT {_prefix}wh_count_unmarked_rowless_pairs($1, $2, $3)", connection, purgingTypes, cap);
+    return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  // The (perspective, event type) pairs as two parallel arrays, and the limit.
+  private static NpgsqlCommand _purgingTypesCommand(
+      string sql, NpgsqlConnection connection, IReadOnlyList<(string PerspectiveName, string EventType)> purgingTypes, int limit) {
+    var command = new NpgsqlCommand(sql, connection);
+    command.Parameters.Add(new NpgsqlParameter {
+      Value = purgingTypes.Select(p => p.PerspectiveName).ToArray(),
+      NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text
+    });
+    command.Parameters.Add(new NpgsqlParameter {
+      Value = purgingTypes.Select(p => p.EventType).ToArray(),
+      NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text
+    });
+    command.Parameters.AddWithValue(limit);
+    return command;
   }
 
   /// <inheritdoc />

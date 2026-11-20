@@ -3370,6 +3370,93 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Written;
   }
 
+  // #2296: the reap-driven bootstrap is taken THROUGH the reap boundary, the last body the cycle is about to reap, not at
+  // the cursor. A snapshot at the cursor was a rewind floor only for a late event placed after it: a late event below the
+  // cursor found no floor once the bodies below were reaped, and an ephemeral perspective dropped it. The model as of the
+  // boundary is folded from the floor below it (the latest snapshot, or the stream's start) through the boundary, from
+  // bodies the coverage gate has kept, since every body above the latest snapshot is still stored. Nothing is written to
+  // the row. At the cursor the row already is that model, so the bootstrap at the cursor is taken as before. A model with
+  // collectives is snapshotted at the cursor as before: a fold to the boundary would have to fold the row's collectives
+  // committed before it, which this does not.
+  public async Task<global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome> TryBootstrapSnapshotThroughAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid lastProcessedEventId,
+      Guid boundaryEventId,
+      CancellationToken cancellationToken = default) {
+    if (boundaryEventId == lastProcessedEventId || _modelHasCollectives()) {
+      return await TryBootstrapSnapshotAsync(streamId, perspectiveName, lastProcessedEventId, cancellationToken);
+    }
+    if (_snapshotStore is null || _snapshotOptions?.Value.Enabled != true) {
+      return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.SnapshotsOff;
+    }
+
+    var floor = await _snapshotStore.GetSnapshotFloorAsync(streamId, perspectiveName, boundaryEventId, cancellationToken);
+    __MODEL_TYPE_NAME__? model = null;
+    if (floor is not null) {
+      model = FromSnapshotJson(floor.SnapshotData);
+      if (model is null) {
+        // The bodies below the floor may be reaped already, so a fold from the stream's start could not reproduce them.
+        _logger.LogWarning(
+            "Bootstrap snapshot of {PerspectiveName} stream {StreamId} through event {BoundaryEventId} not taken: the snapshot below it at {FloorEventId} cannot be read, and the history it covers may be reaped",
+            perspectiveName, streamId, boundaryEventId, floor.SnapshotEventId);
+        return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Refused;
+      }
+    } else if (await _deletedArchiveExtentAsync(streamId, cancellationToken) is not null) {
+      _logger.LogWarning(
+          "Bootstrap snapshot of {PerspectiveName} stream {StreamId} through event {BoundaryEventId} not taken: the stream's archived history was deleted, so a fold from its start would be partial",
+          perspectiveName, streamId, boundaryEventId);
+      return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Refused;
+    }
+
+    var read = new global::System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
+    var events = floor is { ArchivedThroughVersion: not null, SnapshotVersion: int afterVersion }
+        ? _eventStore.ReadPolymorphicThroughArchiveAsync(streamId, floor.SnapshotEventId, afterVersion, _handledEventTypes, cancellationToken)
+        : _eventStore.ReadPolymorphicAsync(streamId, floor?.SnapshotEventId, _handledEventTypes, cancellationToken);
+    await foreach (var envelope in events) {
+      read.Add(envelope);
+    }
+    if (read.Find(e => e.MessageId.Value == boundaryEventId) is not { LocalStreamVersion: long boundaryVersion }) {
+      _logger.LogWarning(
+          "Bootstrap snapshot of {PerspectiveName} stream {StreamId} through event {BoundaryEventId} not taken: the boundary event is not read with its stream version after the snapshot below it",
+          perspectiveName, streamId, boundaryEventId);
+      return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Refused;
+    }
+
+    // Every event up to the boundary, in the order a replay folds them (#2379).
+    var through = global::Whizbang.Core.Perspectives.ReplayEventOrder.Order(
+        [.. read.Where(e => e.LocalStreamVersion is long version && version <= boundaryVersion)]);
+    // The live apply's own fold (#2246), so the boundary model is folded exactly as the row was: a purge stays purged
+    // unless an Apply resurrects it, an Apply that throws is skipped, and a scaffold no Apply returned is no model.
+    var fold = new ApplyState {
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      Perspective = _serviceProvider.GetRequiredService<__PERSPECTIVE_CLASS_NAME__>(),
+      UpdatedModel = model ?? CreateEmptyModel(streamId),
+      HasWrittenUpdate = model is not null,
+      PendingPurge = model is null && await _isPurgedAsync(streamId, perspectiveName, cancellationToken),
+    };
+    _foldEvents(fold, through, enableEventSpans: false, new List<string>(), cancellationToken);
+    var purged = fold.PendingPurge;
+    var producedByApply = fold.HasWrittenUpdate && fold.UpdatedModel is not null;
+    model = fold.UpdatedModel;
+    if (purged || !producedByApply) {
+      _logger.LogInformation(
+          "Bootstrap snapshot of {PerspectiveName} stream {StreamId} through event {BoundaryEventId} not taken: the stream has no row as of that event",
+          perspectiveName, streamId, boundaryEventId);
+      return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.RowMissing;
+    }
+
+    var boundaryCommitSequence = await _eventStore.GetCommitSequenceAsync(boundaryEventId, cancellationToken);
+    var snapshotData = ToSnapshotJson(model!);
+    await _snapshotStore.CreateSnapshotAsync(
+        streamId, perspectiveName, boundaryEventId, boundaryCommitSequence, snapshotData, null, cancellationToken);
+    _logger.LogDebug(
+        "Bootstrap snapshot created for {PerspectiveName} stream {StreamId} through its reap boundary at event {EventId}",
+        perspectiveName, streamId, boundaryEventId);
+    return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Written;
+  }
+
   // The snapshot cadence: every how many applied events a run snapshots, and how many snapshots a stream keeps.
   // Ephemeral perspectives snapshot on their own aggressive, single-slot cadence so a fresh rewind floor exists
   // within the grace window before consumed bodies are reaped; Sourced perspectives use the standard

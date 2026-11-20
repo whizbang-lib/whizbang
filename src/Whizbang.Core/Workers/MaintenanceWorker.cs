@@ -1148,7 +1148,9 @@ public sealed partial class MaintenanceWorker(
       try {
         // #2294: success is reported only for a snapshot that was written. A bootstrap that found no row used to be
         // logged as one, and the bodies it was meant to cover were held for good.
-        var outcome = await runner.TryBootstrapSnapshotAsync(target.StreamId, target.PerspectiveName, target.LastEventId, ct);
+        // #2296: through the reap boundary, so the snapshot is a floor for a late event below the cursor too.
+        var outcome = await runner.TryBootstrapSnapshotThroughAsync(
+          target.StreamId, target.PerspectiveName, target.LastEventId, target.BoundaryEventId ?? target.LastEventId, ct);
         switch (outcome) {
           case SnapshotBootstrapOutcome.Written:
             LogReapDrivenSnapshot(_logger, target.PerspectiveName, target.StreamId);
@@ -1822,8 +1824,9 @@ public sealed class MaintenanceWorkerOptions {
   /// <see cref="Workers.TableRewriteStrategy.PgSqueeze"/> (<c>Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle</c>).
   /// Default 1 GiB. pg_squeeze writes a full copy of each table it rewrites, plus the WAL for it, so this bounds the extra
   /// disk and WAL one cycle can cause. Queued tables are taken largest bloat first; one that does not fit what is left
-  /// waits for a later cycle, and one larger than the whole budget is never rewritten until it is raised. <c>0</c>
-  /// rewrites nothing.
+  /// waits for a later cycle. One larger than the whole budget gets a cycle of its own (#2434): the cycle that reaches it
+  /// before any other table rewrites it alone, so a cycle never copies more than the larger of the budget and that one
+  /// table. <c>0</c> rewrites nothing.
   /// </summary>
   /// <docs>operations/infrastructure/storage-maintenance#online-rewrite</docs>
   public long OnlineRewriteMaxBytesPerCycle { get; set; } = 1L << 30;

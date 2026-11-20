@@ -41,6 +41,12 @@ public readonly record struct DistributeLifecycleContext(
   /// inline stage that can still refuse the write always has.
   /// </summary>
   internal InlineStageFailureHandling InlineFailures { get; init; }
+
+  /// <summary>
+  /// Where <see cref="InlineStageFailureHandling.RefuseFailedMessages"/> records the id of each message a receptor (or
+  /// the reading of its payload) failed for, so the caller stores only the others (#2313).
+  /// </summary>
+  internal ISet<Guid>? RefusedMessageIds { get; init; }
 }
 
 /// <summary>
@@ -56,6 +62,13 @@ internal enum InlineStageFailureHandling {
 
   /// <summary>Every receptor of every message runs and each failure is logged; nothing is thrown.</summary>
   RunEveryReceptorAndLog = 2,
+
+  /// <summary>
+  /// Every receptor of every message runs and each failure is logged; the id of each message that failed is recorded in
+  /// <see cref="DistributeLifecycleContext.RefusedMessageIds"/> and nothing is thrown. A flush that carries many callers'
+  /// messages uses it before the store, so a refusal costs only the refused message (#2313).
+  /// </summary>
+  RefuseFailedMessages = 3,
 }
 
 /// <summary>
@@ -76,7 +89,8 @@ internal enum InlineStageFailureHandling {
 /// only its own message. The detached stage always runs every receptor of every message and logs each failure. The
 /// inline stage does what <see cref="DistributeLifecycleContext"/> asks: stop at the first failure (the default, for a
 /// stage that can still refuse the write), or run every receptor of every message, log each failure, and then either
-/// throw the first one or nothing.
+/// throw the first one or nothing. A flush that carries many callers' messages runs its pre-store stage refusing only the
+/// messages that failed (<see cref="InlineStageFailureHandling.RefuseFailedMessages"/>, #2313).
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-stages#distribute-failures</docs>
@@ -132,7 +146,7 @@ public static partial class LifecycleInvocationHelper {
     // failure and needs none, so a flush that never fails allocates nothing per message for this.
     var failures = context.InlineFailures == InlineStageFailureHandling.StopAtFirstFailure
       ? null
-      : new StageFailures(context.Logger, context.Metrics, inlineStage);
+      : new StageFailures(context.Logger, context.Metrics, inlineStage) { Refused = context.RefusedMessageIds };
     var stage = new StageInvocation(inlineStage, context.ScopeFactory, context.LifecycleMessageDeserializer, context.EnableLifecycleTracing, context.Metrics, failures);
     await _processOutboxMessagesAsync(outboxSnapshot, stage, ct);
     await _processInboxMessagesAsync(inboxSnapshot, stage, ct);
@@ -329,27 +343,31 @@ public static partial class LifecycleInvocationHelper {
   private sealed class StageFailures(ILogger? logger, LifecycleMetrics? metrics, LifecycleStage flushStage) : IReceptorFailureSink {
     private ExceptionDispatchInfo? _first;
 
+    /// <summary>Where the id of each message that failed is recorded, when the stage refuses failed messages (#2313).</summary>
+    public ISet<Guid>? Refused { get; init; }
+
     public void OnReceptorFailed(IMessageEnvelope envelope, LifecycleStage stage, string receptorId, Exception exception) {
       var messageType = TypeNameFormatter.DisplayName(envelope.Payload.GetType());
       if (logger is not null) {
         Log.ReceptorFailed(logger, exception, receptorId, stage, messageType, envelope.MessageId.Value);
       }
-      _record(messageType, exception);
+      _record(messageType, envelope.MessageId.Value, exception);
     }
 
     public void RecordMessageFailure(string messageType, Guid messageId, Exception exception) {
       if (logger is not null) {
         Log.MessageFailed(logger, exception, flushStage, messageType, messageId);
       }
-      _record(messageType, exception);
+      _record(messageType, messageId, exception);
     }
 
     /// <summary>Throws the stage's first failure as it was thrown, or returns when none failed.</summary>
     public void ThrowFirst() => _first?.Throw();
 
-    private void _record(string messageType, Exception exception) {
+    private void _record(string messageType, Guid messageId, Exception exception) {
       _recordReceptorError(metrics, flushStage, messageType, exception);
       _first ??= ExceptionDispatchInfo.Capture(exception);
+      Refused?.Add(messageId);
     }
   }
 

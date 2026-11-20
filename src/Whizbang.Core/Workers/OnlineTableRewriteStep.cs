@@ -42,8 +42,8 @@ namespace Whizbang.Core.Workers;
 /// is cleared once the rewrite ran, since a compact table rewritten at a lower fillfactor measures larger, not smaller
 /// (#2300). They are taken largest bloat ratio first, ties by name. A table whose heap does not fit what is
 /// left of the budget is deferred to a later cycle and the next smaller one that fits is taken, so one large table does
-/// not hold the rest back; a table larger than the whole budget is never rewritten, and the log names the setting to
-/// raise. A cycle with nothing to rewrite says so once, at Information, with the queue's length, the threshold and how
+/// not hold the rest back. A table larger than the whole budget gets a cycle of its own (#2434): the cycle that reaches it
+/// before any other table rewrites it and nothing else, and one behind a table already taken waits for such a cycle. A cycle with nothing to rewrite says so once, at Information, with the queue's length, the threshold and how
 /// many tables the post-rewrite floor held back, and each attempt is recorded on the table statistics meter (#2319).
 /// </para>
 /// </remarks>
@@ -255,10 +255,19 @@ public sealed partial class OnlineTableRewriteStep(
 
   /// <summary>
   /// Whether the table fits what is left of the budget, spending it when it does; logs, and counts it over budget, when
-  /// it does not.
+  /// it does not. A table larger than the whole budget fits only a cycle that has spent nothing, and spends all of it
+  /// (#2434).
   /// </summary>
   private bool _fits(Cycle cycle, TableRewriteCandidate candidate, long budget, ref long left) {
     if (candidate.SizeBytes > budget) {
+      // #2434: a table larger than the whole budget gets a cycle of its own: the cycle that reaches it before any other
+      // table rewrites it and nothing else. One behind a table already taken waits for such a cycle. A budget of 0
+      // still rewrites nothing.
+      if (budget > 0 && left == budget) {
+        left = 0;
+        LogTakesTheCycleAlone(_logger, candidate.TableName, candidate.SizeBytes, BUDGET_KEY, budget);
+        return true;
+      }
       cycle.OverBudget++;
       LogLargerThanBudget(_logger, candidate.TableName, candidate.SizeBytes, BUDGET_KEY, budget);
       return false;
@@ -349,9 +358,13 @@ public sealed partial class OnlineTableRewriteStep(
   [LoggerMessage(EventId = 1, Level = LogLevel.Warning, Message = "Online rewrite skipped: {Reason}; requested tables stay queued")]
   static partial void LogSkipped(ILogger logger, string reason);
 
-  [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
-    Message = "Online rewrite: {Table} ({Bytes} bytes) is larger than {Key} ({Budget}), so no cycle rewrites it until the budget is raised")]
+  [LoggerMessage(EventId = 2, Level = LogLevel.Information,
+    Message = "Online rewrite: {Table} ({Bytes} bytes) is larger than {Key} ({Budget}), so it waits for a cycle that reaches it before any other table")]
   static partial void LogLargerThanBudget(ILogger logger, string table, long bytes, string key, long budget);
+
+  [LoggerMessage(EventId = 14, Level = LogLevel.Information,
+    Message = "Online rewrite: {Table} ({Bytes} bytes) is larger than {Key} ({Budget}), so this cycle rewrites it alone")]
+  static partial void LogTakesTheCycleAlone(ILogger logger, string table, long bytes, string key, long budget);
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Information,
     Message = "Online rewrite: {Table} ({Bytes} bytes) is deferred to a later cycle: it does not fit the {Left} bytes left of {Key} ({Budget})")]

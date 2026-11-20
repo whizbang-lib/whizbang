@@ -279,6 +279,9 @@ public static class WorkerPipelineExtensions {
         sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>(),
         sp.GetService<Whizbang.Core.Capabilities.ICapabilityRegistry>(),
         sp.GetRequiredService<ILogger<OnlineTableRewriteStep>>())));
+    // #2314: rows purged before purge markers existed get their marker where the generator proves the purge.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IMaintenanceStep, PurgeMarkerBackfillStep>(sp =>
+      new PurgeMarkerBackfillStep(sp.GetRequiredService<ILogger<PurgeMarkerBackfillStep>>())));
     // #1746: bloated indexes on the queue tables that churn to empty are rebuilt concurrently, one per cycle, fleet-once.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IMaintenanceStep, QueueIndexReindexStep>(sp =>
       new QueueIndexReindexStep(

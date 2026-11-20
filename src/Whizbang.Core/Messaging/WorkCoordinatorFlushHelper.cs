@@ -29,6 +29,9 @@ namespace Whizbang.Core.Messaging;
 /// <see cref="StreamSealedException"/> (#1733).
 /// <c>DetachedWork</c> (#1721) is where the flush records the detached lifecycle stages it starts, so the stopping host
 /// waits for them before it disposes the service provider they resolve their receptors from.
+/// <c>IsolatePreStoreFailures</c> (#2313) is set by a flush that carries many callers' queued messages (the interval and
+/// batch strategies): a PreDistributeInline failure refuses only its own message, every other message is stored, and
+/// nothing is thrown, because no one caller owns the flush.
 /// </remarks>
 internal readonly record struct FlushContext(
   IWorkCoordinator? Coordinator,
@@ -51,7 +54,8 @@ internal readonly record struct FlushContext(
   WorkCoordinatorMetrics? Metrics = null,
   string Strategy = "",
   bool RaiseOnMixedStream = false,
-  DetachedLifecycleWork? DetachedWork = null);
+  DetachedLifecycleWork? DetachedWork = null,
+  bool IsolatePreStoreFailures = false);
 
 /// <summary>
 /// Shim used by the four <see cref="IWorkCoordinatorStrategy"/> implementations to flush
@@ -79,7 +83,7 @@ internal readonly record struct FlushContext(
 /// persist the queued state and signal the publisher to wake.
 /// </para>
 /// </remarks>
-internal static class WorkCoordinatorFlushHelper {
+internal static partial class WorkCoordinatorFlushHelper {
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One flush decides, for each of six independent streams (outbox rows, inbox rows, outbox completions and failures, inbox completions and failures, and commit notifications), whether there is anything to send and which channel to send it on. The branches are one per stream and do not nest.")]
   internal static async Task<WorkBatch> ExecuteFlushAsync(
     FlushContext ctx,
@@ -120,9 +124,11 @@ internal static class WorkCoordinatorFlushHelper {
       // ScopeFactory path, so the factory itself is the only source.
       var lifecycleScopeFactory = ctx.ScopeFactory;
 
+      var outboxMessages = ctx.OutboxMessages;
+      var inboxMessages = ctx.InboxMessages;
       var distributeContext = new DistributeLifecycleContext(
-        ctx.OutboxMessages,
-        ctx.InboxMessages,
+        outboxMessages,
+        inboxMessages,
         lifecycleScopeFactory,
         ctx.LifecycleMessageDeserializer,
         ctx.Logger,
@@ -131,11 +137,25 @@ internal static class WorkCoordinatorFlushHelper {
         ctx.DetachedWork);
 
       if (!ctx.SkipLifecycle) {
+        // #2313: a flush that carries many callers' messages (interval, batch) refuses only the messages a pre-store
+        // receptor failed for and stores the rest; it belongs to no one caller, so nothing is thrown. A flush its caller
+        // awaits for its own messages (immediate, scoped) still stops at the first failure and stores nothing.
+        HashSet<Guid>? refused = ctx.IsolatePreStoreFailures ? [] : null;
         await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
           LifecycleStage.PreDistributeDetached,
           LifecycleStage.PreDistributeInline,
-          distributeContext,
+          refused is null
+            ? distributeContext
+            : distributeContext with { InlineFailures = InlineStageFailureHandling.RefuseFailedMessages, RefusedMessageIds = refused },
           ct).ConfigureAwait(false);
+        if (refused is { Count: > 0 }) {
+          outboxMessages = [.. outboxMessages.Where(m => !refused.Contains(m.MessageId))];
+          inboxMessages = [.. inboxMessages.Where(m => !refused.Contains(m.MessageId))];
+          distributeContext = distributeContext with { OutboxMessages = outboxMessages, InboxMessages = inboxMessages };
+          if (ctx.Logger is { } refusalLogger) {
+            LogRefusedBeforeStore(refusalLogger, refused.Count, ctx.Strategy, string.Join(", ", refused));
+          }
+        }
 
         LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
           LifecycleStage.DistributeDetached,
@@ -146,8 +166,8 @@ internal static class WorkCoordinatorFlushHelper {
       // #1546: a flush its caller awaits asks the store to raise a mixed-stream refusal to that caller; every other
       // flush leaves it to the store to dead-letter the refused row and keep the rest of the write.
       OutboxMessage[] outboxToStore = ctx.RaiseOnMixedStream
-        ? [.. ctx.OutboxMessages.Select(m => m with { RaiseOnMixedStream = true })]
-        : ctx.OutboxMessages;
+        ? [.. outboxMessages.Select(m => m with { RaiseOnMixedStream = true })]
+        : outboxMessages;
       if (ctx.PendingAuditMessages is { Length: > 0 }) {
         outboxToStore = [.. outboxToStore, .. ctx.PendingAuditMessages];
       }
@@ -161,8 +181,8 @@ internal static class WorkCoordinatorFlushHelper {
           ct).ConfigureAwait(false);
       }
 
-      if (ctx.InboxMessages.Length > 0) {
-        await coordinator.StoreInboxMessagesAsync(ctx.InboxMessages, partitionCount, ct).ConfigureAwait(false);
+      if (inboxMessages.Length > 0) {
+        await coordinator.StoreInboxMessagesAsync(inboxMessages, partitionCount, ct).ConfigureAwait(false);
       }
 
       var completionChannel = scopedProvider?.GetService<IOutboxCompletionChannel>();
@@ -214,7 +234,7 @@ internal static class WorkCoordinatorFlushHelper {
       if (outboxToStore.Length > 0) {
         ctx.WorkChannelWriter?.SignalNewWorkAvailable();
       }
-      if (ctx.InboxMessages.Length > 0) {
+      if (inboxMessages.Length > 0) {
         var inboxChannelWriter = scopedProvider?.GetService<IInboxChannelWriter>();
         inboxChannelWriter?.SignalNewInboxWorkAvailable();
       }
@@ -263,6 +283,10 @@ internal static class WorkCoordinatorFlushHelper {
     }
     return fallback.PartitionCount > 0 ? fallback.PartitionCount : 10000;
   }
+
+  [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
+    Message = "{Count} message(s) refused by a PreDistributeInline receptor were not stored by the {Strategy} flush; every other message in it was: {MessageIds}")]
+  private static partial void LogRefusedBeforeStore(ILogger logger, int count, string strategy, string messageIds);
 
   private static readonly WorkBatch _empty = new() {
     OutboxWork = [],
