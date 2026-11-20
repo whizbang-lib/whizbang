@@ -13,7 +13,7 @@ namespace Whizbang.Data.Tests;
 /// Base class for Dapper integration tests.
 /// Sets up an in-memory SQLite database with the Whizbang schema.
 /// </summary>
-public abstract class DapperTestBase : IDisposable, IAsyncDisposable {
+public abstract class DapperTestBase {
   private static int _typeHandlersRegistered;
 
   public SqliteConnection Connection { get; private set; } = null!;
@@ -51,25 +51,6 @@ public abstract class DapperTestBase : IDisposable, IAsyncDisposable {
     } catch {
       // Swallow exceptions during cleanup to prevent masking test failures
     }
-  }
-
-  public void Dispose() {
-    Dispose(disposing: true);
-    GC.SuppressFinalize(this);
-  }
-
-  /// <summary>Releases the connection; a fixture that owns more overrides this and calls the base.</summary>
-  protected virtual void Dispose(bool disposing) {
-    if (disposing) {
-      Connection?.Dispose();
-    }
-  }
-
-  public async ValueTask DisposeAsync() {
-    if (Connection != null) {
-      await Connection.DisposeAsync();
-    }
-    GC.SuppressFinalize(this);
   }
 
   private async Task _initializeDatabaseAsync() {

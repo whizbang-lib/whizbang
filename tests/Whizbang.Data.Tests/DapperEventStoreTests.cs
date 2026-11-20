@@ -13,7 +13,7 @@ namespace Whizbang.Data.Tests;
 /// Inherits all contract tests from EventStoreContractTests.
 /// </summary>
 [InheritsTests]
-public sealed class DapperEventStoreTests : EventStoreContractTests, IDisposable {
+public sealed class DapperEventStoreTests : EventStoreContractTests {
   private DapperTestBase _testBase = null!;
 
   [Before(Test)]
@@ -32,11 +32,6 @@ public sealed class DapperEventStoreTests : EventStoreContractTests, IDisposable
     var policyEngine = new PolicyEngine();
     var eventStore = new DapperSqliteEventStore(_testBase.ConnectionFactory, _testBase.Executor, jsonOptions, policyEngine);
     return Task.FromResult<IEventStore>(eventStore);
-  }
-
-  public void Dispose() {
-    _testBase?.DisposeAsync().AsTask().Wait();
-    GC.SuppressFinalize(this);
   }
 
   // SQLite uses single envelope column, not 3-column JSONB model.

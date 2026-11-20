@@ -35,7 +35,7 @@ namespace Whizbang.Data.Tests;
 /// row shape (EventType/EventData/Metadata/Scope), so malformed rows can be seeded
 /// directly with SQL and read back through the public base-class API.
 /// </remarks>
-public sealed class DapperEventStoreBaseTests : IDisposable {
+public sealed class DapperEventStoreBaseTests {
   private static readonly JsonSerializerOptions _jsonOptions = JsonOptionsHelper.CreateOptions();
 
   private DapperTestBase _testBase = null!;
@@ -49,11 +49,6 @@ public sealed class DapperEventStoreBaseTests : IDisposable {
   [After(Test)]
   public void Cleanup() {
     _testBase?.Cleanup();
-  }
-
-  public void Dispose() {
-    _testBase?.DisposeAsync().AsTask().Wait();
-    GC.SuppressFinalize(this);
   }
 
   // ========================================
