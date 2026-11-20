@@ -608,6 +608,46 @@ public class SplitModeProductionTests : IAsyncDisposable {
       .Because("GROUP BY should use physical column, not JSONB extraction");
   }
 
+  // #2424: grouped and aggregated over the projected model, as a GraphQL or REST composer writes it after
+  // Select(r => r.Data). The document holds each promoted field's default, so a read of the document put every row in
+  // one group and summed zeros, and the query still succeeded.
+  [Test]
+  [Timeout(60000)]
+  public async Task GroupBy_OverTheProjectedModel_GroupsAndSumsByTheColumnsAsync(CancellationToken ct) {
+    var tenantId = Guid.CreateVersion7();
+    await _insertSplitRowAsync(tenantId, "books", 10.00m, "A", "a", null, null);
+    await _insertSplitRowAsync(tenantId, "books", 15.00m, "B", "b", null, null);
+    await _insertSplitRowAsync(tenantId, "games", 40.00m, "C", "c", null, null);
+
+    var groups = await _context!.Set<PerspectiveRow<SplitProductionModel>>()
+        .Select(r => r.Data)
+        .GroupBy(x => x.Category)
+        .Select(g => new { g.Key, Count = g.Count(), Total = g.Sum(x => x.Price) })
+        .OrderBy(g => g.Key)
+        .ToListAsync(ct);
+
+    await Assert.That(groups.Select(g => (g.Key, g.Count, g.Total)))
+      .IsEquivalentTo([("books", 2, 25.00m), ("games", 1, 40.00m)], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("each row's category and price live only in their columns under Split storage");
+  }
+
+  // #2424: an aggregate straight over the projected model reads the column too.
+  [Test]
+  [Timeout(60000)]
+  public async Task Aggregate_OverTheProjectedModel_ReadsTheColumnAsync(CancellationToken ct) {
+    var tenantId = Guid.CreateVersion7();
+    await _insertSplitRowAsync(tenantId, "books", 10.00m, "A", "a", null, null);
+    await _insertSplitRowAsync(tenantId, "games", 40.00m, "C", "c", null, null);
+    var models = _context!.Set<PerspectiveRow<SplitProductionModel>>().Select(r => r.Data);
+
+    var total = await models.SumAsync(x => x.Price, ct);
+    var highest = await models.MaxAsync(x => x.Price, ct);
+    var expensive = await models.CountAsync(x => x.Price > 20m, ct);
+
+    await Assert.That((total, highest, expensive)).IsEqualTo((50.00m, 40.00m, 1))
+      .Because("the document holds a zero price for every row under Split storage");
+  }
+
   [Test]
   [Timeout(60000)]
   [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
