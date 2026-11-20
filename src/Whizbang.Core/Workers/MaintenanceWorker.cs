@@ -1822,8 +1822,9 @@ public sealed class MaintenanceWorkerOptions {
   /// <see cref="Workers.TableRewriteStrategy.PgSqueeze"/> (<c>Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle</c>).
   /// Default 1 GiB. pg_squeeze writes a full copy of each table it rewrites, plus the WAL for it, so this bounds the extra
   /// disk and WAL one cycle can cause. Queued tables are taken largest bloat first; one that does not fit what is left
-  /// waits for a later cycle, and one larger than the whole budget is never rewritten until it is raised. <c>0</c>
-  /// rewrites nothing.
+  /// waits for a later cycle. One larger than the whole budget gets a cycle of its own (#2434): the cycle that reaches it
+  /// before any other table rewrites it alone, so a cycle never copies more than the larger of the budget and that one
+  /// table. <c>0</c> rewrites nothing.
   /// </summary>
   /// <docs>operations/infrastructure/storage-maintenance#online-rewrite</docs>
   public long OnlineRewriteMaxBytesPerCycle { get; set; } = 1L << 30;
