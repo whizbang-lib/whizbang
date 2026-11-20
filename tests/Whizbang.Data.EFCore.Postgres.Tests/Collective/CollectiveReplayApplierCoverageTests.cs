@@ -338,6 +338,92 @@ public class CollectiveReplayApplierCoverageTests {
     return (applier, before, after);
   }
 
+  // #2449: since #2257 a late-arriving event replays at its origin position, so the stream's replay order no longer
+  // rises with its commit sequence. A collective goes after every stream event it was committed after, wherever the
+  // replay put that event; the late event's high commit sequence must not pull a collective ahead of the older
+  // events that replay after it, which would let them overwrite it.
+  [Test]
+  public async Task InterleaveAfterAsync_WithALateEventReplayedAtItsOrigin_KeepsEachCollectiveAfterEveryEventItFollowedAsync() {
+    var (applier, collectives) = _collectivesAt((_id(0x05), 5), (_id(0x15), 15), (_id(0x30), 30));
+    var late = _streamEvent(_id(0x40), 40);
+    var first = _streamEvent(_id(0x10), 10);
+    var second = _streamEvent(_id(0x20), 20);
+
+    var merged = await applier.InterleaveAfterAsync(
+      typeof(ProbeModel), [late, first, second], new CollectiveReplayStart("tenant-a"), CancellationToken.None);
+
+    await Assert.That(merged.Select(e => e.MessageId)).IsEquivalentTo(
+      [collectives[0].MessageId, late.MessageId, first.MessageId, collectives[1].MessageId, second.MessageId, collectives[2].MessageId],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the collective at 5 precedes every event, the one at 15 follows the event at 10 only, and the one at 30 "
+             + "follows the events at 10 and 20, which replay after the late event at 40");
+  }
+
+  // #2449, the same rule where a stream event or a collective has no commit sequence and the two compare by id: a late
+  // event without a sequence must not pull a collective ahead of an event it was minted after.
+  [Test]
+  public async Task InterleaveAfterAsync_WithAnUnsequencedLateEvent_KeepsEachCollectiveAfterEveryEventItFollowedAsync() {
+    var (applier, collectives) = _collectivesAt((_id(0x10), 5), (_id(0x25), null));
+    var late = _streamEvent(_id(0x30), null);
+    var sequenced = _streamEvent(_id(0x20), 10);
+
+    var merged = await applier.InterleaveAfterAsync(
+      typeof(ProbeModel), [late, sequenced], new CollectiveReplayStart("tenant-a"), CancellationToken.None);
+
+    await Assert.That(merged.Select(e => e.MessageId)).IsEquivalentTo(
+      [collectives[0].MessageId, late.MessageId, sequenced.MessageId, collectives[1].MessageId],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the unsequenced collective's id follows the event at 10's id, and that event replays after the late one");
+  }
+
+  // #2449: a sequenced collective compared with an unsequenced event goes by id, and the events after that one in the
+  // replay have no sequence to compare with at all.
+  [Test]
+  public async Task InterleaveAfterAsync_WhenOnlyUnsequencedEventsFollow_PlacesASequencedCollectiveByTheirIdsAsync() {
+    var (applier, collectives) = _collectivesAt((_id(0x35), 1));
+    var sequenced = _streamEvent(_id(0x20), 10);
+    var unsequenced = _streamEvent(_id(0x30), null);
+
+    var merged = await applier.InterleaveAfterAsync(
+      typeof(ProbeModel), [sequenced, unsequenced], new CollectiveReplayStart("tenant-a"), CancellationToken.None);
+
+    await Assert.That(merged.Select(e => e.MessageId)).IsEquivalentTo(
+      [sequenced.MessageId, unsequenced.MessageId, collectives[0].MessageId],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the collective's id follows the unsequenced event's, which replays after the event at 10");
+  }
+
+  /// <summary>A fixed UUIDv7-shaped id whose order among the others is its last byte.</summary>
+  private static Guid _id(byte order) => new($"01937000-0000-7000-8000-0000000000{order:x2}");
+
+  private static MessageEnvelope<IEvent> _streamEvent(Guid id, long? sequence) =>
+    new(MessageId.From(id), new ProbeEvent(), []) { LocalCommitSequence = sequence };
+
+  // One registered collective for ProbeModel in tenant-a per (id, commit sequence), each its own stream.
+  private static (CollectiveReplayApplier Applier, List<MessageEnvelope<IEvent>> Collectives) _collectivesAt(
+      params (Guid Id, long? Sequence)[] at) {
+    var collectives = at
+      .Select(c => new MessageEnvelope<IEvent>(MessageId.From(c.Id), new ProbeCollectiveEvent(), []) { LocalCommitSequence = c.Sequence })
+      .ToList();
+    var streams = collectives.ToDictionary(_ => Guid.CreateVersion7(), c => new List<MessageEnvelope<IEvent>> { c });
+    var records = streams.Select(s => new EventStoreRecord {
+      Id = s.Value[0].MessageId.Value,
+      StreamId = s.Key,
+      AggregateId = s.Key,
+      AggregateType = "Collective",
+      Version = 1,
+      EventType = TypeNameFormatter.Format(typeof(ProbeCollectiveEvent)),
+      EventData = null,
+      Metadata = null,
+      Scope = new Whizbang.Core.Lenses.PerspectiveScope { TenantId = "tenant-a" },
+      CommitSequence = s.Value[0].LocalCommitSequence,
+    }).ToList();
+    var services = new ServiceCollection().AddSingleton(new ProbeHandler()).BuildServiceProvider();
+    var applier = new CollectiveReplayApplier(
+      [_entry], services, new NoOpEventStore(streams), new FakeEventStoreQuery(records), [], archivedStreams: null);
+    return (applier, collectives);
+  }
+
   // A blue-green rebuild reads these names to notice a collective that committed while it ran, so the lookup
   // must name exactly this model's collective event types: once each, with or without the global:: prefix the
   // perspective registry may record, and none of another model's.
