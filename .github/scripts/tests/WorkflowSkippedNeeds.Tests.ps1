@@ -59,7 +59,7 @@ BeforeAll {
   }
 
   function script:Test-HasStatusFunction([string]$Condition) {
-    return $Condition -match '\b(always|failure|cancelled)\(\)'
+    return $Condition -match '\b(always|failure|cancelled)\(\)'  # review-checks:allow: cancelled() is GitHub's function name
   }
 
   # Each job with no status function that has a job with one anywhere above it.
