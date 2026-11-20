@@ -129,6 +129,17 @@ public class SnapshotBootstrapOutcomeTests {
     await Assert.That(((BootstrapOnlyRunner)runner).Calls).IsEqualTo(1);
   }
 
+  [Test]
+  public async Task TryBootstrapThrough_OnARunnerThatCannotFoldToABoundary_BootstrapsAtTheCursorAsync() {
+    // #2296: a runner that does not fold to the reap boundary takes the bootstrap at the cursor, as before.
+    IPerspectiveRunner runner = new BootstrapOnlyRunner();
+
+    var outcome = await runner.TryBootstrapSnapshotThroughAsync(Guid.NewGuid(), "P", Guid.NewGuid(), Guid.NewGuid());
+
+    await Assert.That(outcome).IsEqualTo(SnapshotBootstrapOutcome.NotReported);
+    await Assert.That(((BootstrapOnlyRunner)runner).Calls).IsEqualTo(1);
+  }
+
   internal static string _name<TPerspective>() => typeof(TPerspective).FullName!;
 
   internal static IPerspectiveRunner _runner<TPerspective, TModel>(

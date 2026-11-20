@@ -1148,7 +1148,9 @@ public sealed partial class MaintenanceWorker(
       try {
         // #2294: success is reported only for a snapshot that was written. A bootstrap that found no row used to be
         // logged as one, and the bodies it was meant to cover were held for good.
-        var outcome = await runner.TryBootstrapSnapshotAsync(target.StreamId, target.PerspectiveName, target.LastEventId, ct);
+        // #2296: through the reap boundary, so the snapshot is a floor for a late event below the cursor too.
+        var outcome = await runner.TryBootstrapSnapshotThroughAsync(
+          target.StreamId, target.PerspectiveName, target.LastEventId, target.BoundaryEventId ?? target.LastEventId, ct);
         switch (outcome) {
           case SnapshotBootstrapOutcome.Written:
             LogReapDrivenSnapshot(_logger, target.PerspectiveName, target.StreamId);

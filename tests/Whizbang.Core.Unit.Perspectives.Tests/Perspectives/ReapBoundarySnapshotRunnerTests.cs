@@ -68,6 +68,41 @@ public class ReapBoundarySnapshotRunnerTests {
   }
 
   [Test]
+  public async Task ALaterBootstrap_FoldsFromTheSnapshotBelowItsBoundary_OverTheBodiesStillStoredAsync() {
+    var (streamId, events, store) = _stream(5);
+    var rows = new InMemoryRows<FloorPresenceModel>();
+    await rows.UpsertAsync(streamId, new FloorPresenceModel { Id = streamId, Pings = 5 });
+    var snapshots = new VersionedSnapshotStore(store);
+    var runner = _runner(store, rows, snapshots);
+    var name = _name<KeptFloorPresencePerspective>();
+    await runner.TryBootstrapSnapshotThroughAsync(streamId, name, lastProcessedEventId: events[4], boundaryEventId: events[1]);
+    store.Reap(events[0], events[1]);
+
+    var outcome = await runner.TryBootstrapSnapshotThroughAsync(streamId, name, lastProcessedEventId: events[4], boundaryEventId: events[3]);
+
+    await Assert.That(outcome).IsEqualTo(SnapshotBootstrapOutcome.Written);
+    await Assert.That(snapshots.PingsAt(events[3])).IsEqualTo(4)
+      .Because("the two events the first snapshot holds, then events 3 and 4 from the bodies still stored");
+  }
+
+  [Test]
+  public async Task ABootstrap_WhoseSnapshotBelowCannotBeRead_IsRefused_AndWritesNothingAsync() {
+    var (streamId, events, store) = _stream(4);
+    var rows = new InMemoryRows<FloorPresenceModel>();
+    await rows.UpsertAsync(streamId, new FloorPresenceModel { Id = streamId, Pings = 4 });
+    var snapshots = new VersionedSnapshotStore(store);
+    snapshots.Written.Add((events[0], "{}"));
+    var runner = _runner(store, rows, snapshots);
+
+    var outcome = await runner.TryBootstrapSnapshotThroughAsync(
+      streamId, _name<KeptFloorPresencePerspective>(), lastProcessedEventId: events[3], boundaryEventId: events[2]);
+
+    await Assert.That(outcome).IsEqualTo(SnapshotBootstrapOutcome.Refused)
+      .Because("the history the unreadable snapshot covers may be reaped, so a fold from the start could not reproduce it");
+    await Assert.That(snapshots.Written).Count().IsEqualTo(1);
+  }
+
+  [Test]
   public async Task ABootstrapWhoseBoundaryIsTheCursor_SnapshotsTheRowAtTheCursor_AsBeforeAsync() {
     var (streamId, events, store) = _stream(3);
     var rows = new InMemoryRows<FloorPresenceModel>();

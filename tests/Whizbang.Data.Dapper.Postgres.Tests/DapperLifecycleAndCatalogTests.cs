@@ -93,7 +93,7 @@ public class DapperLifecycleAndCatalogTests : PostgresTestBase {
 
     var targets = await coordinator.GetEphemeralPairsNeedingSnapshotAsync();
 
-    await Assert.That(targets).IsEquivalentTo([new EphemeralSnapshotTarget(stream, PERSPECTIVE, eventId)])
+    await Assert.That(targets).IsEquivalentTo([new EphemeralSnapshotTarget(stream, PERSPECTIVE, eventId, BoundaryEventId: eventId)])
       .Because("the body is ephemeral, consumed, past its grace, and no snapshot covers its version");
   }
 

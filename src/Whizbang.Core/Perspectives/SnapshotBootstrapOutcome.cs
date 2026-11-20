@@ -35,4 +35,11 @@ public enum SnapshotBootstrapOutcome {
   /// what it did. Whether a snapshot was written is unknown.
   /// </summary>
   NotReported = 4,
+
+  /// <summary>
+  /// The model as of the reap boundary cannot be folded from what is stored: the snapshot below the boundary cannot be
+  /// read, the stream's archived history was deleted, or the boundary event cannot be placed (#2296). Nothing was
+  /// written; the bodies stay until a later bootstrap covers them.
+  /// </summary>
+  Refused = 5,
 }
