@@ -15,7 +15,13 @@ namespace Whizbang.Core.Observability;
 /// <tests>tests/Whizbang.Core.Tests/Generated/InfrastructureJsonContextTests.cs:InfrastructureJsonContext_SerializesEnvelopeMetadata_Async</tests>
 public sealed class EnvelopeMetadata {
   /// <summary>The unique identifier for the message this metadata belongs to.</summary>
-  public required MessageId MessageId { get; init; }
+  /// <remarks>
+  /// Not required when read: a stored row leaves the message id out when it equals the row's event id (#2323), and
+  /// readers take it from the row through <see cref="MessageIdOf"/>. Every writer still sets it.
+  /// </remarks>
+  /// <docs>data/event-store#row-values</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/EnvelopeMetadataRowValuesTests.cs:Read_MetadataWithoutAMessageId_ReadsTheRest_AndTheMessageIdIsTheRowsEventIdAsync</tests>
+  public MessageId MessageId { get; init; }
   /// <summary>The ordered list of hops recording the message's journey through the system.</summary>
   public required List<MessageHop> Hops { get; init; }
   /// <summary>
@@ -68,6 +74,18 @@ public sealed class EnvelopeMetadata {
   /// <tests>tests/Whizbang.Core.Tests/Observability/EnvelopeMetadataSlimFormTests.cs:ToSlim_KeepsWhatReadersTakeFromAStoredEventAsync</tests>
   [System.Text.Json.Serialization.JsonPropertyName("sg")]
   public string? SupersedingGroup { get; init; }
+
+  /// <summary>
+  /// The message id of a stored event: the one its metadata holds, or, when the row left it out because it equals the
+  /// row's event id (#2323), the event id.
+  /// </summary>
+  /// <param name="metadata">The row's metadata, or null for a row read without it.</param>
+  /// <param name="eventId">The row's event id (<c>wh_event_store.event_id</c>).</param>
+  /// <returns>The message id the event was written with.</returns>
+  /// <docs>data/event-store#row-values</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/EnvelopeMetadataRowValuesTests.cs</tests>
+  public static MessageId MessageIdOf(EnvelopeMetadata? metadata, Guid eventId) =>
+    metadata is not null && metadata.MessageId.Value != Guid.Empty ? metadata.MessageId : MessageId.From(eventId);
 
   /// <summary>
   /// The slim stored form: what readers take from a stored event, and nothing else. It keeps the message id, the

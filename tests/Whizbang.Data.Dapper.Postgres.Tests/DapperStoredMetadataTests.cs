@@ -59,8 +59,8 @@ public class DapperStoredMetadataTests : PostgresTestBase {
     using var row = JsonDocument.Parse(await conn.ExecuteScalarAsync<string>("SELECT metadata::text FROM wh_event_body WHERE event_id = @id", new { id }) ?? "{}");
     var slimHop = row.RootElement.GetProperty("hops").EnumerateArray().Single();
     await Assert.That(slimHop.TryGetProperty("si", out _)).IsFalse().Because("the slim hop names no service instance");
-    await Assert.That(row.RootElement.GetProperty("message_id").GetString()).IsEqualTo(id.ToString())
-      .Because("the Dapper store reads its own form back, so its keys are kept");
+    await Assert.That(row.RootElement.TryGetProperty("message_id", out _)).IsFalse()
+      .Because("the message id is the row's event id, so the row leaves it out and the store reads it from the row (#2323)");
     await Assert.That(slimHop.GetProperty("tp").GetString()).IsEqualTo(hop.TraceParent);
     var routeId = RouteNormalizer.RouteId(TypeNameFormatter.Format(typeof(DapperMixedStreamProbeNoted)), envelope.Hops);
     await Assert.That(row.RootElement.GetProperty("rid").GetGuid()).IsEqualTo(routeId)
@@ -107,8 +107,8 @@ public class DapperStoredMetadataTests : PostgresTestBase {
     using var row = JsonDocument.Parse(await conn.ExecuteScalarAsync<string>("SELECT metadata::text FROM wh_event_body WHERE event_id = @id", new { id }) ?? "{}");
     await Assert.That(row.RootElement.GetProperty("hops").EnumerateArray().Single().TryGetProperty("si", out _)).IsFalse()
       .Because("the store's own hop list (hops) is reduced to the slim hop");
-    await Assert.That(row.RootElement.GetProperty("message_id").GetString()).IsEqualTo(id.ToString())
-      .Because("the store reads its own keys back, so they are kept");
+    await Assert.That(row.RootElement.TryGetProperty("message_id", out _)).IsFalse()
+      .Because("the converted row leaves out the message id its event id holds, as a write path does (#2323)");
     await Assert.That(row.RootElement.GetProperty("rid").GetGuid())
       .IsEqualTo(RouteNormalizer.RouteId(TypeNameFormatter.Format(typeof(DapperMixedStreamProbeNoted)), envelope.Hops));
   }
