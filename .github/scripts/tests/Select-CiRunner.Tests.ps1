@@ -867,3 +867,87 @@ Describe 'Every step an any-os job reaches runs on Windows' {
     }
   }
 }
+
+Describe 'Re-runs re-plan (#1880)' {
+  # "Re-run failed jobs" re-runs the failed jobs and their dependents but not the picker, so they kept the labels the
+  # picker chose in the first attempt; after a machine left the pool the re-run queued for good on a label no runner
+  # had. The picker now says which attempt it planned for, and every routed job takes the plan only in that attempt:
+  # a job re-run in a later attempt without the picker goes to ubuntu-latest, and "re-run all jobs" re-runs the picker,
+  # so its plan is fresh again.
+  BeforeAll {
+    $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '..' '..' '..')).Path
+    $script:Workflows = Join-Path $Root '.github' 'workflows'
+    $script:HostedLiteral = [regex]::Escape(" || '`"ubuntu-latest`"') }}")
+
+    # The violations of the rule in one workflow's text: each runs-on that reads the picker's plan without checking the
+    # attempt, each reusable-workflow call that passes the plan without the attempt, and each reusable workflow whose
+    # runs-on input is used without its runner-plan-attempt input.
+    function script:Get-ReplanViolation([string]$Text, [string]$Name) {
+      $violations = [System.Collections.Generic.List[string]]::new()
+      $guardedNeeds = '^\s+runs-on: \$\{\{ fromJSON\(needs\.pick-runner\.outputs\.attempt == github\.run_attempt && needs\.pick-runner\.outputs\.[a-z-]+' + $HostedLiteral + '\s*$'
+      $guardedInput = '^\s+runs-on: \$\{\{ fromJSON\(inputs\.runner-plan-attempt == github\.run_attempt && inputs\.runs-on' + $HostedLiteral + '\s*$'
+      $lines = $Text -split "`n"
+      foreach ($line in $lines) {
+        if ($line -match '^    runs-on: .*pick-runner\.outputs' -and $line -notmatch $guardedNeeds) { $violations.Add("${Name}: $($line.Trim())") }
+        if ($line -match '^    runs-on: .*inputs\.runs-on' -and $line -notmatch $guardedInput) { $violations.Add("${Name}: $($line.Trim())") }
+      }
+      # A call that passes the plan as an input passes the attempt it was planned for too.
+      $callers = [regex]::Split($Text, '(?m)^(?=  [A-Za-z0-9_-]+:\s*$)')
+      foreach ($job in $callers) {
+        if ($job -match '(?m)^      runs-on: \$\{\{ needs\.pick-runner\.outputs\.[a-z-]+ \}\}' -and
+          $job -notmatch '(?m)^      runner-plan-attempt: \$\{\{ needs\.pick-runner\.outputs\.attempt \}\}') {
+          $violations.Add("${Name}: a call passes the picker's plan without runner-plan-attempt")
+        }
+      }
+      if ($Text -match '(?m)^      runs-on:\s*$' -and $Text -match 'workflow_call:' -and $Text -notmatch '(?m)^      runner-plan-attempt:\s*$') {
+        $violations.Add("${Name}: takes a runs-on input without a runner-plan-attempt input")
+      }
+      return @($violations)
+    }
+  }
+
+  It 'says which attempt the plan is for' {
+    (Get-Content -Raw (Join-Path $Workflows 'ci.yml')) | Should -Match '(?m)^      attempt: \$\{\{ github\.run_attempt \}\}\s*$'
+  }
+
+  It 'takes the plan only in the attempt it was made for, in <_>' -ForEach @(
+    'ci.yml', 'reusable-build.yml', 'reusable-quality-build.yml', 'reusable-quality.yml', 'reusable-test-unit.yml',
+    'reusable-test-component.yml', 'reusable-test-postgres.yml', 'reusable-test-inmemory.yml', 'reusable-test-rabbitmq.yml',
+    'reusable-test-servicebus.yml', 'reusable-test-azureblob.yml', 'reusable-test-integration.yml'
+  ) {
+    Get-ReplanViolation -Text (Get-Content -Raw (Join-Path $Workflows $_)) -Name $_ | Should -BeNullOrEmpty
+  }
+
+  It 'covers every workflow that runs where the picker says' {
+    $routed = @(Get-ChildItem $Workflows -Filter '*.yml' | Where-Object { (Get-Content -Raw $_.FullName) -match 'pick-runner\.outputs|inputs\.runs-on' } |
+        ForEach-Object Name | Sort-Object)
+    $routed | Should -Be @('ci.yml', 'reusable-build.yml', 'reusable-quality-build.yml', 'reusable-quality.yml', 'reusable-test-azureblob.yml',
+      'reusable-test-component.yml', 'reusable-test-inmemory.yml', 'reusable-test-integration.yml', 'reusable-test-postgres.yml',
+      'reusable-test-rabbitmq.yml', 'reusable-test-servicebus.yml', 'reusable-test-unit.yml')
+  }
+
+  It 'catches the regression it was written for' {
+    $old = @"
+jobs:
+  format:
+    needs: [pick-runner]
+    runs-on: `${{ fromJSON(needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
+  unit-tests:
+    uses: ./.github/workflows/reusable-test-unit.yml
+    with:
+      runs-on: `${{ needs.pick-runner.outputs.any-os }}
+"@
+    @(Get-ReplanViolation -Text $old -Name 'old').Count | Should -Be 2
+    $reusable = @"
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        type: string
+jobs:
+  test:
+    runs-on: `${{ fromJSON(inputs.runs-on || '"ubuntu-latest"') }}
+"@
+    @(Get-ReplanViolation -Text $reusable -Name 'reusable').Count | Should -Be 2
+  }
+}
