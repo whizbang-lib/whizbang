@@ -93,7 +93,7 @@ public sealed partial class IntegrityPairGuard {
   private readonly ILogger _logger;
   private readonly Counter<long>? _halts;
   private readonly Counter<long>? _alerts;
-  private readonly object _hydrateLock = new();
+  private readonly Lock _hydrateLock = new();
   private bool _hydrated;
   private Task? _hydrating;
 
