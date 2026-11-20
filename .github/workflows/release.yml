@@ -274,6 +274,10 @@ jobs:
               auto)
                 # Use GitVersion's calculated version as-is
                 ;;
+              *)
+                echo "::error::Unknown release type '$INPUT_RELEASE_TYPE'; expected auto, major, minor or patch."
+                exit 1
+                ;;
             esac
 
             if [ -n "$PRERELEASE" ]; then

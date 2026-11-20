@@ -130,6 +130,29 @@ public class StartupStageGatedServiceTests {
   }
 
   /// <summary>
+  /// A start whose token is already canceled when it is given (a host's start aborted before this service's turn) ends
+  /// the wrapper the same way. The base class runs the wait through <c>Task.Run</c> with a token linked to the start's,
+  /// so a start canceled before the thread pool ran the wait left the wrapper canceled without the wait ever running, on
+  /// some target frameworks and depending on timing. The wrapper links the start's token itself, so the wait always runs.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task AStartAlreadyCanceled_EndsTheWrapperWithoutAFaultOrACancellationAsync(CancellationToken cancellationToken) {
+    var gate = new StartupStageGate(new SchemaReadyGate());
+    var inner = new RecordingService(gate, StartupStage.Coordinate);
+    using var wrapper = new StartupStageGatedService<RecordingService>(inner, StartupStage.Coordinate, gate);
+
+    await wrapper.StartAsync(new CancellationToken(canceled: true));
+    await Task.WhenAny(wrapper.ExecuteTask!).WaitAsync(cancellationToken);
+
+    await Assert.That(wrapper.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("a start canceled before the wait ran is the host stopping early, not the service failing");
+    await Assert.That(inner.Starts).IsEqualTo(0);
+    await wrapper.StopAsync(cancellationToken);
+    await Assert.That(inner.Stops).IsEqualTo(0);
+  }
+
+  /// <summary>
   /// The same, through a host: its start is canceled while a gated service waits for its stage, and the host neither
   /// logs the wait as a failed service nor fails its stop. A host counts a canceled background service as a failed one
   /// unless it is already stopping, which a canceled start is not: it logs it at Error, and from .NET 11 also rethrows

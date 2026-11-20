@@ -11,7 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4457.0] - 2026-11-19
+
 ### Added
+
+- **Packages are built for .NET 10 and .NET 11 (#2135).** Every runtime package ships `net10.0` and `net11.0`
+  builds, both tested before release, so an application can stay on .NET 10 (long-term support) or move to
+  .NET 11 without waiting on W!. Source generators and analyzers are unchanged (`netstandard2.0`). Building W!
+  itself now needs the .NET 11 SDK. **Upgrade:** nothing to change; NuGet picks the build that matches the
+  application's target framework.
 
 #### Security
 - **Receptor interceptors run before every receptor (#1996).** The registered `IReceptorInterceptor`s (composed in a
@@ -469,6 +477,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`Whizbang:Database:SignalRetention`, env `Whizbang__Database__SignalRetention`, default `7.00:00:00`) replaces the
   fixed seven days, and a window of zero or less is rejected at startup. The sweep now deletes in batches; it still
   never removes a signal some pod has not delivered.
+- **The ephemeral history walk names what keeps each ephemeral type's history from being reclassified, and can
+  release it for that type's streams only (#2250).** With `Whizbang:Ephemeral:ReconcileHistoricalOnStartup` on, a
+  stream that also holds a durable event of another type stays Sourced; the walk now records, per ephemeral type and
+  blocking type, the events and streams held back, their approximate size, a sample stream and the route that writes
+  the blocking type (service, topic, caller class and member). It is logged when a type's walk finishes and at startup,
+  and published as the gauge `whizbang.ephemeral.blocked_events` (meter `Whizbang.Ephemeral`). Each entry ends in what
+  to do: mark the blocking type `[Ephemeral]`, release it, or keep it; the release names the read models that apply it
+  and prints the exact setting line. The report is on by default (`Whizbang:Ephemeral:BlockerReport:Enabled`); off, the
+  walk records, logs and gauges nothing. `Whizbang:Ephemeral:ReleaseBlockers:<EphemeralType>` lists the blocking types
+  to reclassify with an ephemeral type, only in streams that hold it and only when that leaves the stream wholly
+  ephemeral; the default is empty, so no durable event changes without it. Turning the report on (the default on
+  upgrade) or changing a release list walks the type's history once more from its first event; events already
+  reclassified are left as they are. A read model that carries `[DangerouslyAllowMixedEphemeralAndSourcedEvents]` is
+  reported once per process too: ready to drop the attribute and its durable `Apply` methods when none of its durable
+  inputs has a stored event left, otherwise each input's stored events, streams and streams holding both kinds, linked
+  to the blocker entry it appears in; the generated registry now carries the opt-in
+  (`PerspectiveRegistrationInfo.AllowsMixedEphemeralAndSourced`). New migration 392 (`wh_ephemeral_blockers`).
+- **A read model can let the ephemeral and Sourced events it applies share a stream (#2255).**
+  `[DangerouslyAllowMixedEphemeralAndSourcedEvents(Streams = MixedStreams.Allow)]` allows each (ephemeral type, Sourced
+  type) pair the read model applies, but only when every read model that applies both types opts in the same way; one
+  that does not keeps the pair refused, and the new analyzer warning WHIZ139 names it. For an allowed pair, either kind
+  may be appended to a stream holding the other (any other type is still refused there, WHIZ133), the ephemeral history
+  walk reclassifies the ephemeral events in such streams and keeps the Sourced ones, the reaper reaps the ephemeral
+  bodies on their normal rules, and a read model that applies only the Sourced type still rebuilds those streams while
+  the opted-in read model's full rebuild of them is refused. `MixedStreams.Refuse`, the default, and the attribute
+  without the property change nothing. The blocker report offers a fourth action, allow mixing, with the exact
+  attribute line and the read models that must carry it, and an allowed pair is no longer a blocker. The generated
+  registry carries each read model's pairs (`PerspectiveRegistrationInfo.MixedStreams`, `MixedStreamPairs`); the
+  type-definition reconciler writes the allowed pairs to the store at startup (`IWorkCoordinator.SyncMixedStreamAllowancesAsync`,
+  and a `GetStateBasedStreamIdsAsync` overload that passes over allowed ephemeral types), on both Postgres drivers.
+  New migration 393 (`wh_mixed_stream_allowances`).
+- **A perspective table can be rewritten by a blue-green rebuild when no online rewrite extension is usable (#2301).**
+  `Whizbang:Workers:Maintenance:TableRewriteStrategy = Online` rewrites with whatever the server allows, from the
+  maintenance cycle: pg_squeeze when it is Ready, else pg_repack run in process, else a blue-green rebuild of the one
+  perspective that writes the table (from `wh_perspective_registry.perspective_names`). A rebuild replays every stream,
+  which costs more I/O than copying rows, so it ranks last. The rebuilt table is written at its declared fillfactor,
+  since the shadow takes the live table's storage settings (#2299). Framework tables, and tables several perspectives
+  share, cannot be rebuilt from events: they wait and the cycle says so. The rewrite runs under the same gate and byte
+  budget as the other online strategies, and at most `BlueGreenRewriteMaxPerCycle` (new, default 1) rebuilds start per
+  cycle. `Online` requires no extension, so it never stops a start, and it never uses `VACUUM FULL`. `Auto` is unchanged
+  and never starts an online rewrite of any kind.
+- **Only one blue-green rebuild of a table runs at a time, fleet-wide (#2301).** Two rebuilds of one table shared its
+  shadow table, so a second rebuild could drop the first one's shadow mid-replay. Each blue-green rebuild now holds the
+  table's duty, `perspective-rebuild:<table>` (`PerspectiveRebuildDuty.For`), won through the service's duty elector and
+  kept alive while it runs, from before it creates the shadow until the swap is done; a second rebuild on the same
+  instance is refused before it votes. A rebuild that finds the duty held fails at once with
+  `another blue-green rebuild of <table> is in flight` in `RebuildResult.Error`; one whose elector cannot answer, has
+  evicted the instance or is halted fails closed with the reason; with no elector registered the rebuild runs, guarded on
+  the instance alone, and the host logs that once. The maintenance cycle reads the role assignments and passes a held
+  table over, leaving its request queued. The swapped-in table is now analyzed. `IPerspectiveTableSwapper` gains
+  `FindPerspectiveAsync` (with a default), and `RebuildTrigger` gains `TableRewrite`.
+- **Each completed table rewrite records which strategy carried it out (#2301).** `wh_table_rewrite_history` (migration
+  407) holds the table, the strategy (`VacuumFull`, `PgSqueeze`, `PgRepack` or `BlueGreenRebuild`), the reason
+  (`Bloat` or `FillFactorDecrease`) and the bloat ratio before and after. It is written by `wh_complete_table_rewrite`,
+  which also clears the request, and is kept to 90 days and 1,000 rows by the write that adds a row.
+  `IWorkCoordinator` gains `CompleteTableRewriteAsync` (by default, it clears the request and records nothing).
+- **A connection behind a transaction-mode pooler can stop resetting its session on every return (#2347).** Set
+  `Whizbang:Postgres:<connection>:TransactionPooler` to `true` (for example `Whizbang__Postgres__db__TransactionPooler`)
+  and the EF Core driver's pools set `No Reset On Close=true`, so no `DISCARD ALL` is sent each time a connection goes
+  back to its pool. Off by default: against a direct server the reset keeps one borrower's session state from reaching
+  the next. A Dapper service writes `No Reset On Close=true` into its connection string instead.
+- **Operational records of cleanup and integrity roll off after a resting period (#2354).** Every framework table is
+  classified as State (kept) or Rolling (rests, then goes) in `OperationalTableRegistry`, and a guard test fails the
+  build on a table in neither. A new maintenance task (`operational_retention`) removes closed Rolling rows past their
+  category's resting period in bounded batches: the origin rewrite log by age as well as by row count (its start moves
+  with it, so it never vouches for a generation it no longer holds), and finished (`Restored`) archive restore requests
+  (migration 451). `Whizbang:OperationalRetention:Default` is 14 days, with per-category overrides. Metrics
+  `operational_rows`, `operational_oldest_age_seconds` and `operational_rows_expired`, tagged by `category` only.
+  **Upgrade:** rewrite-log generations older than 14 days are removed; a consumer that far behind resets its seal and
+  re-verifies once, as one behind the row cap always did.
+- **Archived objects are never updated, and deletions can be delayed, so a database and its archive can be restored
+  to the same point in time (#2367).** The Azure Blob archive store now writes every object create-only and never
+  purges: its one delete is the ordinary blob delete, so with soft delete on a deleted object stays recoverable for the
+  account's retention period. A write that finds its name taken keeps the object there and checks it; anything other
+  than the expected bytes refuses the write. For storage without soft delete, `Whizbang:Archive:AzureBlob:DeleteAfter`
+  (off by default) delays every queued object deletion, and with it set the maintenance step sweeps the container once
+  a day for objects nothing names that are older than the delay. The sweep runs only in a container claimed for this
+  database: the first write creates a create-only owner marker, `whizbang-archive-owner`, holding the database's
+  `archive_database_id` (migration 465), and a sweep in a container another database claimed, or one it cannot claim,
+  deletes nothing, logs why and counts `whizbang.archive.orphan_sweep.refused` (meter `Whizbang.Archive.AzureBlob`,
+  tagged `reason`). Writes and reads never depend on the marker. A new docs page, "Restoring an Environment with an
+  Archive", gives the steps.
 
 #### Audit
 - **Security system events are stored, each kind behind its own switch (#1599).** `SystemEventOptions` gains
@@ -500,6 +590,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `wh_stream_digests` and `wh_message_deduplication`; an insert threshold of 10000 on `wh_event_store`, which keeps
   its visibility map current for index-only scans; and the same on `wh_event_body`'s TOAST table. A scale factor
   grows with the table, so a large table used to hold hundreds of thousands of dead rows before a vacuum.
+- **The paced repair drain caps the repair answers it waits for at once (#2184).** An answer can land hours after its
+  request, so lowering the request rate did not bound the load late answers put on a service's store: answers to
+  requests sent over hours could arrive together. The drain now claims no new ledger row while
+  `Whizbang:StreamIntegrity:MaxOutstandingRepairAnswers` buckets (default 500, 0 turns the cap off) await their answer,
+  and never more than the room left under it, resuming as answers land or time out. At the default rate of 5 rows a
+  second, 500 answers is 100 seconds of requests, so a drain whose answers land within that never meets the cap. A hold
+  is logged once as a warning when it starts and once when it ends, and counted in
+  `whizbang.stream_integrity.repair_drain_holds`. The count is read from a new index on the ledger that the maintenance
+  pass builds concurrently after the migrations; nothing to configure.
+- **Stream-integrity ledger rows for a type no service owns age out once the origin that reported them stops reporting
+  (#2185).** A type no claim and no owned domain contains is compared against the origin that reports it, so while that
+  origin reports, its rows heal or refresh. Once it stopped, nothing compared them again and no owner could repair them,
+  so they held `whizbang.stream_integrity.unhealed_buckets` up for good. The integrity audit now forgets them, in the
+  same sweep that forgets rows filed under a non-owner, once the origin's last report (the later of its last
+  checkpoint and the rows' last report) is older than `Whizbang:StreamIntegrity:UnownedTypeOriginSilenceDays`
+  (default 7). An origin that comes back has its divergence found again by the next audit.
+- **Audit records written before the pointer default are converted to pointers (#2326).** Each `EventAudited`
+  record stored before #1588 carries `OriginalBody`, a full copy of the audited event. A new maintenance step
+  (`audit-body-conversion`, both Postgres drivers) walks the audit records in bounded, resumable batches through the
+  per-type history walker and removes that copy, keeping every other field, so `OriginalEventId` still finds the
+  audited event. Records of types declared `[AuditEvent(IncludeBody = true)]` keep their body, and nothing is converted
+  while `AuditBodyDefault` is `Include`. What is left is reported as
+  `whizbang.maintenance.pending_rows{task=convert_audit_record_bodies}`.
+- **The eligibility rules have their own library, `Whizbang.Rules` (#2343).** It holds the per-type rule model, the
+  rule fingerprint and pair comparison, the rule versions and the source of the SQL eligibility rule, and
+  `Whizbang.Core` references it, so it arrives as a dependency with nothing to install. Its own version
+  (`rules-version.txt`) changes only when what the rules mean changes, and a guard fails the build on a rule change
+  without a new version. The package ships at the release's version for now.
+- **Rule semantics version 2, rules version 2.0.0 (#2343, #2363, #2364).** A digest now means what the cuts that
+  carry their digest and the superseding key slot make it mean, so the rule fingerprint carries semantics version 2.
+  A service on this release and one on version 1, or on a release that sends no fingerprint, halt their pair during a
+  rolling deploy instead of reading a cut as a loss; the pair resumes on its own once both run version 2.
 
 #### Startup
 - **Assess is the first stage of startup, and its one verdict binds everything after it (part of #1636).**
@@ -605,6 +727,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   type) in the assembly's manifest, `ConfigurationManifestRegistry.FindRemovedKey` answers the startup check, and a
   package built on Whizbang declares its own removed keys the same way. All eight former entries moved to the
   attribute. A key removed with nothing in its place logs event 3, naming no replacement.
+- **Older instances stand down cluster-wide when a newer version comes online (#2022).** A newer instance, once it
+  serves, publishes a durable `NewerVersionOnlineSignal` when an older instance is online; every older running instance
+  asks the one Assess verdict again (also on an instance that died or left, and on the standby watcher's slow cadence)
+  and stands down through the one run-control path, the same path as a pause and a stop: stop claiming, finish or
+  release held work, release roles, record `StandingBy`. The row's stage message says why (the newer version and the
+  instance it runs on), logged once (`StandbyWatcher` event 3). The maintenance role moves on the newer instance's
+  normal vote. Assess now reads the live, serving instances beside the migration ledger, in both drivers, so an
+  instance that starts while a newer one is online stands down at once.
+  - **Both versions, the application first:** an instance stands down when a strictly newer application or library
+    (W!) version is online. One rule orders them (`UpgradeOrder`): the application version first (the newest
+    application has priority), like with like (SemVer, or a host deploy number); the library, by SemVer, decides when the
+    application versions are equal, unknown or of different schemes. Equal versions do nothing, and an older instance
+    never stands a newer one down. The coordination source guard fails any version comparison outside the rule.
+  - **The rollback gate (behavior change):** an instance serves a database a newer version has touched only when
+    nothing was applied after its own version: no W! migration applied by a newer library, and no application schema
+    change (a perspective table, an association, an application object) applied by a newer application or library.
+    Anything applied since stands it down at Assess with an error naming each change and who applied it, and that a
+    migration cannot be reversed yet (down migrations: #2122). This replaces "the ledger records a newer version":
+    an application or W! rollback with nothing migrated since now serves normally, where before any newer version the
+    ledger named stood it down. Migration 359 records who applied each change (`wh_schema_migrations.applied_version_id`,
+    kept by a trigger: set on an insert or a content-hash change, kept through skips and re-stamps, never moved by a
+    failure). 359 rewrites no ledger row: a row last applied before it names its applier in `version_id` (carried over
+    on its next write), a row last skipped names nobody and never blocks, and a ledger older than 359 takes the version
+    that last stamped each row, as before. Stored-form conversions (`wh_stored_form_migrations`) record no
+    version yet and are not gated.
+  - **An override for incompatibility verdicts:** `Whizbang:Startup:OverrideIncompatibility` (off by default) lets an
+    instance start when Assess would stand it down for an incompatibility: the schema newer than its build, or a change
+    it cannot reverse applied since its version. It starts as `Current` (no election, no pass, no converge, nothing
+    applied and no migration run backward), logs at every start at Error (`StartupAssessmentSource` event 3) that it
+    runs past the verdict, with the verdict and its full reason, and records that reason on its instance row
+    (`wh_service_instances.incompatibility_override`, migration 360). It never lifts the stand-down for a newer
+    version online, nor the refusal of a build whose own version is missing or unreadable. Only the one verdict reads
+    and honors it (`StartupAssessment.OverriddenReason` is how everything else learns of it).
+  - **Behavior change:** a stood-down instance resumes (through the run-control path, re-entering the pipeline at
+    Assess) when the verdict no longer says stand down, for example when the newer instance died; before, an instance
+    stood down by the runtime re-assessment stayed down until replaced. A change applied since its version still keeps
+    it down.
+  - `IOnlineVersionReader` (both Postgres drivers) reads the online instances' versions; `EFCorePostgresStartupAssessor`
+    takes the application version and the instance identity.
+- **Migrations go up and down: an older version rolls back what can be reversed, and refuses loudly what cannot
+  (#2122).** The migration ledger now records how each change it applies is reversed (migration 386): `reversible`,
+  `lossy` (reversing discards data the newer version wrote) or `irreversible`, with the reverse script stored beside it
+  at apply time, so an older version rolls back from the record. A library migration declares its kind in its header
+  (`-- Reversal: ...`) and ships its reverse as `NNN_Name.down.sql`; a build guard fails a new migration that declares
+  nothing. The EF Core driver generates the reverse of a perspective table it created (dropping it, lossy) and of the
+  associations (registered again by the older version). When an older version starts against a database a newer version
+  migrated, and nothing newer is online, its Assess verdict is Migrate with a rollback owed when every change since its
+  version is reversible; the elected migrator runs the reverse scripts newest first, under the schema lock, in one
+  transaction, with progress logging, and then migrates as usual. A lossy change needs
+  `Whizbang:Startup:AllowLossyRollback=true`; an irreversible one always stands the instance down with an error naming
+  the change and the versions. Every migration before this release, every stored-form conversion and every change the
+  Dapper driver makes to a perspective table count as irreversible, so those rollbacks are refused exactly as before.
+  An instance already running whose verdict comes to owe a rollback (for example, it stood down for a newer version
+  that applied only reversible changes and then died) never resumes in place: it exits as an intended
+  `UpgradeStandDown`, and its restart runs startup, where the elected migrator rolls the schema back.
+  **Upgrade:** a migration added to the library after 384 must declare `-- Reversal:` in its header.
 
 #### Messaging & delivery
 - **A derived type can override an inherited `[StreamId]` on purpose (#1833).** `[StreamId(Override = true)]` on a
@@ -640,6 +818,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scans every provider under `Whizbang:Offloads:AzureBlob:<name>`, registers a blob store for each,
   enables the claim-check hook, and binds the selector from `Whizbang:BodyOffload`. A no-op when no
   providers are configured, so offload is opt-in by config presence with zero per-service code.
+- **An app signal published inside a transaction is delivered on its commit (#2076).** `IAppSignalChannel` is now
+  resolved per scope over the signal bus (`AddWhizbangAppSignalChannel`, called by the Postgres driver). A publish
+  through a channel resolved in a scope whose framework DbContext has a transaction open is sent on that transaction's
+  connection: subscribers hear it only when it commits, never when it (or the savepoint it was made in) rolls back, and
+  PostgreSQL delivers identical topic-and-payload publishes in one transaction once. Inside a `TransactionScope` the
+  signal is sent once the scope commits and dropped on rollback, on EF Core and Dapper alike. Everything else is sent at
+  once, as before: no transaction, a channel held by a singleton or resolved from the root, and a transaction begun on a
+  Dapper connection of the caller's own. Callers do not change. The Postgres driver registers the new
+  `IAppSignalTransactionSource` for every framework DbContext. **Upgrade notes:** a custom `ISignalTopicTransport`
+  implements `PublishTopicAsync(topic, payload, DbTransaction? transaction, ...)`; a payload PostgreSQL rejects (over
+  8000 bytes) published inside a caller's DbContext transaction now fails that transaction (inside a
+  `TransactionScope` the caller's work commits and the rejected send is logged); code that resolved `IAppSignalChannel`
+  and expected the `SignalBus` instance now receives a per-scope channel over it.
+- **A service can opt out of event types it does not want, and the broker stops delivering them (#2175).** Nothing
+  changes by default: every event on a subscribed topic is still delivered, and one with no local consumer is still
+  discarded at the receive boundary and recorded. Name the types to exclude with `routing.ExcludeEventType<T>()` or
+  the configuration key `Whizbang:Routing:ExcludedEventTypes` (both lists are merged). On Azure Service Bus each event
+  subscription then carries one rule, `sys.Label IS NULL OR NOT (sys.Label IN (...))`, over only the types published
+  to its topic; a subscription that excludes nothing keeps its `$Default` rule untouched. Startup fails when an
+  excluded type is one the service consumes; a type on an absorbed namespace is allowed, with a warning that it will
+  not be delivered or stored. Startup also warns when a type is unknown to the application or on a topic the service
+  does not subscribe to, and logs each subscription's effective rule. The broker evaluates the SQL rule more slowly
+  than the default match-all rule, so only subscriptions that exclude something pay a small broker-side throughput
+  cost, outweighed by the delivery work saved. The rule
+  is reconciled at every subscribe, in place and without ever leaving the subscription with no rule, so instances
+  converge during a rollout; a version without this feature does not touch it. One topic's rule is capped at the
+  broker's 1,024-character SQL filter limit: over it, nothing is excluded and an error is logged. Custom
+  `IServiceBusAdminClient` implementations gain `UpdateRuleAsync`, whose default throws `NotSupportedException`
+  (the rule is then not applied and a warning is logged).
+- **What the outbox and inbox batch strategies hold in memory is bounded per process (#2220).** A burst that outran the
+  database used to grow the heap until the process was killed. Every registered outbox and inbox batch strategy is now
+  wrapped in `BoundedOutboxBatchStrategy` or `BoundedInboxBatchStrategy`, and an append waits for room once
+  `Whizbang:BatchBuffer:MaxBufferedMessages` (default 10,000) or the byte limit is reached: `MaxBufferedBytes` when set,
+  else `MaxBufferedBytesFraction` (default 0.05) of the process memory limit. Room comes back when a batch is stored or
+  reported failed. A message larger than the byte limit is admitted alone; interactive callers keep the work coordinator
+  gate's reserve share; a publish inside an open database transaction may go past the limit up to
+  `TransactionCeilingMultiplier` (default 2) and is logged; shutdown cancels waiting appends. New metrics:
+  `whizbang.batch_buffer.messages`, `.bytes`, `.append_waits`, `.wait_duration` and `.ceiling_overshoots`. The limits
+  appear in the startup settings report with the inputs they were derived from.
+- **Outbox writes from many streams are coalesced into one flush by default (#2220).** The default outbox batch
+  strategy is now `CoalescingOutboxBatchStrategy`: each stream maps to one of `Whizbang:Workers:CoalescingOutbox:Partitions`
+  (default 4) partitions with one window and one drain, so a burst over thousands of single-message streams becomes a
+  few flushes of up to `MaxSize` (500) messages instead of a flush, a buffer and a gate waiter per stream. A stream's
+  messages stay in order. A batch strategy registered directly as `IOutboxBatchStrategy` or `IInboxBatchStrategy` is
+  now bounded by the batch buffer too. Choosing the `Batch` work coordinator strategy never changed how outbox writes
+  are batched, and the documentation no longer recommends it for bulk imports.
+  **Upgrade:** to keep the per-stream batcher, register `AddWhizbangOutboxStrategy<SlidingWindowOutboxBatchStrategy>()`.
+- **A stream of events can be published as composites cut by count, size and a debounced time window (#2285).**
+  `source.ToCompositeBatches(factory, options)` turns an `IAsyncEnumerable` of events into composites, and
+  `dispatcher.PublishCompositeBatchesAsync(source, factory, options, cancellationToken)` publishes each one and awaits
+  it, so the bounded outbox buffer holds the producer back. A batch is cut at whichever comes first: the message count
+  (by default the composite's `MaxInnerEventsAllowed`, never above it), the serialized size (by default three quarters
+  of the body-offload threshold, which sits below the transport's largest message), or time (sent once no event has
+  arrived for `DebounceInterval`, and never later than `MaxWait` after its first event). An event larger than the byte
+  limit goes alone, order and each event's stream are kept, and no event read from the source is dropped when it fails
+  or is canceled. The service defaults bind from `Whizbang:CompositeBatches` and appear in the startup settings report;
+  WHIZ150 accepts a composite built in the helpers' `factory`.
 
 #### Work coordination, perspectives & sagas
 - **The build holds a perspective's `Apply` methods to the interfaces it implements (#1936).** The perspective
@@ -739,6 +974,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MaxDeferral` is not; with neither set the one-hour time applies. A zero or negative `MaxDeferral` fails
   startup naming the key. The turnkey coordinator now measures its dwell and ceiling on the registered
   `TimeProvider`.
+- **A caller can wait until every queued work-table write has landed (#1899).** The drain workers report idle as soon
+  as they have queued their completions, and the five flush workers write them later, so a caller that waited for
+  idle and then touched the work tables (a test fixture cleaning between tests, an operator before a manual purge)
+  could race a late write and deadlock against it. Every `BatchFlusher<T>` and every flush worker now implements
+  `IQueuedWriteFlusher`: `IsIdle`, `OnWorkProcessingIdle`, `WaitForIdleAsync` and `Activity`, counting a write from
+  the moment it is offered until the flush carrying it returns or it is given up (dropped after its last attempt,
+  refused by a stopped flusher, or abandoned at shutdown). The worker pipeline registers `IQueuedWritesLandedSignal`,
+  whose `WaitForAllLandedAsync` completes once every hosted flush worker has been idle at the same moment. Items
+  written through a flusher's `Writer` now count toward `Pending` like enqueued ones; four of the five flush workers
+  wrote that way, so their queued writes were invisible to it before.
+- **A row cap can be keyed by a model property (#2330).** `[RowCap(PerProperty = nameof(Model.JobId), Max = N)]`
+  keeps the newest `N` rows per value of that property (by last update) and evicts the rest with their cursors and all
+  but their latest snapshot, as the other caps do. The property is read from the stored document under its declared
+  name. It outranks `PerScope` and `PerTenant`, and takes effect only with `Max` set.
 
 #### Context, identity & serialization
 - **WHIZ017 warns when a stream id generation opt-out cannot hold across assemblies.** A type that declares its own
@@ -777,6 +1026,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   body-path (inline vs offload) decision reads the size off the result.
 - Canonical `EventTypeMatchingHelper.BuildTypeLookup` / `TryResolveType` — one normalized
   stored-`EventType` → `Type` resolver shared by every event-store read path.
+- **Strong ids can accept any Guid version (#2071).** `[WhizbangId(AcceptAnyVersion = true)]` generates an id whose
+  checked entry points, `From(Guid)`, `From(TrackedGuid)`, `Parse`, the explicit cast and the transport JSON reader,
+  take any non-empty Guid, so name-derived (v5, v8), hash-derived and externally issued (v4) identities can be strong
+  ids. `Guid.Empty` throws `ArgumentException` there. The public constructor and the `Value` initializer stay
+  unchecked on every id, as before: they are the load path for EF Core and the persistence converter, so a stored row
+  whose id field was never set still loads. `New()` still produces UUIDv7. On an opt-in id, `CompareTo`, the `<` and
+  `>` operators, `IsTimeOrdered` and `GetTimestamp()` no longer reflect time order, and the id loses index locality;
+  the framework's ordering guarantees rely on its own message and event ids and are unaffected. When two
+  `[WhizbangId]` attributes for the same id disagree on the option, the id keeps the UUIDv7 rule and the new WHIZ029
+  warning points at each ignored opt-in. Without the option nothing changes.
+- **A strong-id stream id checks the stream it inherits (#2072).** A message a receptor returns without a stream takes
+  the stream of the message that caused it. When its `[StreamId]` is a strong id, it now takes that stream only from a
+  source whose stream id is a plain `Guid`, the same strong id, or a strong id its new
+  `[StreamId(InheritFrom = [typeof(OrderId)])]` lists, and only through the id's `From`, so an id that takes only
+  UUIDv7 refuses an inherited Guid of another version. A listed id is matched as the exact type the attribute names,
+  also when the strong-id generator emits it from a property's `[WhizbangId]`, so an id of the same simple name in
+  another namespace is still refused. On a refusal the message's stream id stays empty and the
+  dispatcher uses no inherited stream for its envelope: a message with `[GenerateStreamId]` mints its own id, one
+  without it has none, and a warning is logged once per pair of types. The generated setter writes a strong-id stream
+  id (through `From`), so `[GenerateStreamId]` on one works, and WHIZ013 now covers an init-only one. New analyzer
+  diagnostics: WHIZ018 (`InheritFrom` lists a type that is not a strong id), WHIZ019 (`InheritFrom` on a stream id
+  that is not a strong id), WHIZ034 (`InheritFrom` lists the stream id's own type) and WHIZ035 (`IHasStreamId` beside a
+  strong-id `[StreamId]`, which the dispatcher then never writes).
+- **Public API: `IStreamIdExtractor` gains two default members (#2072).** `Type? GetStreamIdType(Type messageType)`
+  reports a message type's stream-id type: its strong id, or `Guid` for a stream id that is not a strong id (default
+  `null`, an unknown type, which a setter reads as a plain `Guid` source). The generated extractor answers for every
+  type it extracts, so the registry reads a message's stream-id type from the same extractor as its value, even when
+  the message derives from a base in another assembly whose stream id is a strong id. And
+  `bool SetStreamId(object message, Guid streamId, Type? sourceStreamIdType)` (default: calls
+  `SetStreamId(object, Guid)`) sets an inherited stream id, told the source's stream-id type. `SetStreamId(object, Guid)`
+  is unchanged and treats the value as a plain `Guid` source. `StreamIdExtractorRegistry` gains the matching
+  `GetStreamIdType` and `SetStreamId` overload, and `StreamIdAttribute` gains `InheritFrom`. A custom extractor keeps
+  compiling and behaves as before.
 
 #### Observability & tooling
 - **The perspective worker's cooldown cache reports when it goes over its cap (#1828).** `RecentlyProcessedEventCache.OnCapacityExceeded` (`Action<int>`, the resident count) is raised when an insert takes
@@ -857,6 +1139,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changes the namespace. Dashboards that sum `estimated_bytes` across tables will see the new tables' bytes.
 - **API hygiene** — a `SyncMode` enum + `LocalInvokeAndSyncAsync(msg, SyncMode, ct)` overload; the old
   timeout-based overloads are now `[Obsolete]`.
+- **Two stream-integrity gauges show how much data is left to heal and how much repair cannot heal (#2203).**
+  `whizbang.stream_integrity.unhealed_deficit_events` is the sum of the missing events in the buckets repair can still
+  act on (neither unhealable nor exhausted), so a bucket missing a hundred thousand events no longer reads the same as
+  one missing a single event. `whizbang.stream_integrity.unhealable_buckets` counts the unhealable ledger rows, so the
+  `unhealed_buckets` headline splits into repairable and unhealable. Both are one value per service, read in the same
+  periodic ledger read as the existing ledger gauges; nothing to configure. The ledger gauges function gains two
+  columns at the end, so a caller naming the earlier columns is unchanged.
+- **`PerspectiveEventProcessedEvent.EventIds` names the events each processed batch reports (#2237).**
+  `PerspectiveWorker.OnPerspectiveEventProcessed` carried only `EventCount`, so a listener waiting for applies had to
+  add up batch sizes, and a batch can name events an earlier batch already reported (a rewind replays its stream). A
+  sum could therefore be met while an apply was still pending. `EventIds` lets a listener count distinct events per
+  perspective and stream. The sample e-commerce seed test now waits that way, for every seeded product in both
+  inventory perspectives, so it can no longer read a product before it is applied.
+- **Every setting a service runs with is logged once it is running, with credentials redacted by type (#2251).**
+  At the Running stage the service writes one Information entry per settings section, naming every setting in the
+  configuration key manifest with its value and its source: configured (and by which provider), default, or derived
+  (with the inputs it was derived from, such as the memory limit or the gate size). A test fails when a manifest key is
+  missing from the report. `Whizbang:Startup:LogSettings = false` turns it off and logs only that it is off. Settings that
+  hold credentials are now `SensitiveString`, which writes a redaction (host and database, never the credential) in
+  `ToString`, logs, formatting and JSON, binds from configuration under native AOT, and is read with `Reveal()`.
+  **Upgrade:** `AzureBlobArchiveOptions.ConnectionString`, `AzureBlobOffloadOptions.ConnectionString`,
+  `WhizbangNotificationOptions.DirectConnectionString` and `WhizbangPinnedPoolOptions.ConnectionString` are
+  `SensitiveString?`. Assigning a string still compiles; code that reads one as a string calls `.Reveal()`.
+- **The limits the worker pipeline derives are reported with their inputs (#2251).** The thread-pool floor, the work
+  coordinator gate's interactive reserve (and the permits of a gate sized from the pool), the perspective drain width
+  and the inbox dispatch fan-out appear in the startup settings report as derived values, each with what it was derived
+  from.
+- **The stream-integrity repair backlog is reported as gauges, with buckets opened and closed counted, so completion
+  and an ETA are visible (#2256).** `whizbang.stream_integrity.ledger_open_buckets` (tagged `origin` and `state`:
+  `unhealable`, `exhausted`, `waiting`, `answered`, `open`) and `whizbang.stream_integrity.outbound_deliveries` are
+  read in one grouped query by the instance holding the maintainer duty, and by no other, so a sum across instances
+  counts the backlog once. `whizbang.stream_integrity.ledger_buckets_opened` (`how`: `new`, `reopened`) and
+  `ledger_buckets_closed` (`how`: `healed`, `forgotten`, `unhealable`) count each bucket once, so completion over a
+  window is `closed / opened` and an ETA is the open backlog over the close rate. Migration 399 gives each ledger
+  function a counting form and keeps the existing names as wrappers, so a release still running during a rolling
+  deploy is unaffected; it is reversible. The batch heal now also heals the bucket of an unscoped (no tenant) stream,
+  which it previously never matched.
+- **Unhealed stream-integrity buckets are split by kind, so missing data reads apart from id disagreement (#2260).**
+  `whizbang.stream_integrity.unhealed_buckets_by_kind` reports the unhealed buckets tagged `kind`: `deficit` (fewer
+  events here than at the origin, the only kind repair heals), `surplus` (more events here), `digest_mismatch` (the
+  same number of events under different ids) and `unknown` (a bucket no comparison has classified yet). The four add up
+  to `unhealed_buckets`, which keeps its single untagged series, and `unhealed_deficit_events` still counts only the
+  events genuinely missing. Read in the same periodic ledger read; nothing to configure. Migration 400 adds four
+  columns at the end of the ledger gauges function and is reversible.
+- **Stream-integrity completion is reported directly: verified percent, repair progress percent and backlog ETA
+  (#2261).** `whizbang.stream_integrity.verified_percent` (per `origin_service_id`) is each origin's verified watermark
+  as a percentage of the latest commit sequence its checkpoints announced, and `verified_percent_all_origins` weighs
+  every origin by what it committed. `whizbang.stream_integrity.repair_progress_percent` is the ledger buckets closed
+  as a percentage of those opened over a rolling window, and `whizbang.stream_integrity.backlog_eta_seconds` is the
+  repairable open backlog over the window's net close rate, with no measurement while the backlog is flat or growing.
+  Progress and ETA are per service: every instance adds its own opened and closed counts to a shared per-minute tally,
+  and the maintainer duty's holder reads it, so restarts and per-pod counters do not distort them. All three are
+  derived from base meters, documented with their formulas, and each can be switched off
+  (`Whizbang:StreamIntegrity:VerifiedPercentGaugeEnabled`, `RepairProgressGaugeEnabled`, `BacklogEtaGaugeEnabled`,
+  all on by default); the window is `RepairProgressWindowMinutes` (default 60). Migration 401 adds the tally and the
+  kept watermark; its reverse is lossy (the tally's minutes are dropped). `verified_percent` saws to zero whenever a
+  seal resets on an origin generation bump until seals stop resetting (#2262).
+- **The maintenance meter reports how much storage cleanup has left to do, not only what it removed (#2289).**
+  `whizbang.maintenance.pending_rows`, tagged by `task` (the values `whizbang.maintenance.rows_affected` uses) and
+  `capped`, is the rows each maintenance task whose predicate an index serves would remove now: completed perspective
+  events, deduplication rows past their window, instance-eviction tombstones, idle collective ordering heads and idle
+  routes. Each count reads at most `Whizbang:TableStatistics:PendingReclamationCountCap` rows (default 10000) and
+  reports `capped="true"` when it stops there. `whizbang.ephemeral.history_walk_remaining`, tagged by `event_type`, is
+  the events each incomplete ephemeral history walk has yet to visit. Both are read by `PendingReclamationSampler` on
+  one instance per `Whizbang:TableStatistics:PendingReclamationSampleInterval` (default five minutes, `00:00:00` turns
+  it off), never inside the maintenance cycle, on both Postgres drivers. Tasks with no supporting index (the completed
+  outbox and inbox purges, the recovered dead-letter purge, the ephemeral body reaper and the perspective TTL and row
+  cap reaps) report nothing rather than a guess. `ITableStatisticsProvider` gains `SamplePendingReclamationAsync`
+  (null by default). New migration 401.
+- **Every background database statement names the mechanism that ran it.** The text leads with
+  `/* whizbang:<mechanism> */`, so a sample of `pg_stat_activity` attributes database load to claiming, flushing,
+  leases, maintenance, integrity audits and the rest, and the new `Whizbang.Database` meter records
+  `whizbang.db.statements`, `whizbang.db.duration` and `whizbang.db.rows` tagged by `mechanism`. A framework statement
+  with no mechanism counts as `untagged`. No extra statements are sent, and the liveness connection is never tagged.
+- **Idle integrity pollers wait longer while they find nothing.** The paced repair drain and the subscription backfill
+  ticked once a second on the maintainer even with nothing to do. Each now doubles its wait on every idle tick up to
+  `Whizbang:StreamIntegrity:IdlePollCeilingSeconds` (60 by default) and returns to one second on the first tick that
+  finds work, so a new deficit or backfill waits at most a minute to start. `whizbang.probes.ticks` counts each tick as
+  `work` or `idle` under the probes `repair-drain` and `subscription-backfill`.
+- **Stream integrity has its own traces, a Grafana dashboard and Prometheus alert rules (#2365).** A new activity
+  source, `Whizbang.Integrity`, has spans for an audit cycle, a comparison (`integrity.audit`), an origin's answer, a
+  repair request, a repair and a re-check. Manifest asks, manifests, redelivery requests and redelivery bundles carry a
+  `RequestId` and a `TraceParent`, so an origin's answer and a consumer's repair join the trace that asked for them
+  across services; a message from an older release carries neither and its receiver starts a new trace. With the paced
+  repair drain on (the default), each deficit row keeps the trace of the comparison that recorded it (migration 491),
+  and the drain's request starts in it, so the audit, the answer and the repair are one trace either way. Spans carry
+  counts, never a stream, tenant or event id. New instruments on `Whizbang.StreamIntegrity`, none tagged per stream or
+  tenant: `recheck_enabled`, `recheck_last_run_timestamp` and `recheck_coverage_ratio` (by `check`), and per lane
+  `epoch_frontier`, `seal_age_seconds` and `open_window_events` (by `origin_service_id`), with `origin_generation` and
+  `carried_streams`, read by the maintainer duty's holder through `wh_integrity_seal_reading` (migrations 490 and 492);
+  and the counters `seal_lowered` (by `reason`: `rewrite`, `rule_change`, or `unknown` for an origin on an older
+  release; a manifest now says why the origin's history moved in the optional `HistoryMovedReason`),
+  `carried_compactions` (by `kind`) and `redelivered_then_reaped` (buckets a redelivery filled that a later comparison
+  found short again, once per answer, migration 493); and on `Whizbang.Maintenance`, `eligible_not_yet_deleted` (by
+  `task`), the streams due for a cut that the seal gate holds (migration 494).
+  `dashboards/grafana/whizbang-integrity.json` and `dashboards/prometheus/whizbang-integrity-alerts.yml` ship beside the
+  storage dashboard, with alerts for a halted pair (on the pair guard's own `pair_halt_alerts` counter, so it follows
+  `PairGuard:HaltedAlertAfter`), a sustained deficit, re-check drift, a seal that stops advancing, a re-check falling
+  behind, the retention sweep falling behind and a refused archive orphan sweep. A build test fails when the dashboard
+  or a rule names a metric the library does not declare. `AddWhizbangInstrumentation()` on an OpenTelemetry tracer
+  builder subscribes every Whizbang activity source (`WhizbangActivitySource.All`).
+- **Service Bus deliveries explain themselves in the logs (#2406).** Every delivery the transport gives back to the
+  broker without completing or dead-lettering it is a Warning naming the message id, its type, the subscription, the
+  delivery count and the reason (a paused or disposed subscription, or a failed handler); a paused subscription used to
+  abandon silently. Every delivery handed to the handler is a Debug line with its id and delivery count, and a delivery
+  that arrives with a delivery count above 1 is one Information line naming it. Together they tell "the handler never
+  saw this delivery" from "the handler saw it and did not settle it" for a message the broker dead-letters with
+  MaxDeliveryCountExceeded. With a level off, its line costs one level check and allocates nothing.
 
 ### Changed
 
@@ -1422,8 +1812,345 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a reviewed exception. Strong copyleft (AGPL, GPL, SSPL) never passes on the dependency review allow list, and in
   the pipeline only for a container image run unmodified in CI that the script names: today only the REUSE image
   behind `Gate · License headers` (GPL-3.0-or-later), accepted in #1938.
+- **Changelog entries are fragments, gathered when a release is cut (#2168).** A pull request into `develop`
+  adds its entry as `changelog.d/<issue>.md` (category, optional subsection, then the entry) instead of
+  editing `CHANGELOG.md`, so two pull requests never conflict over it. Start Release renders every fragment,
+  together with anything still under `[Unreleased]`, into a `## [X.Y.Z] - <date>` section in the same signed
+  commit as the version bump, and deletes the fragments it gathered; fragments merged after the cut wait for
+  the next release. `Merge-ChangelogFragments.ps1 -DryRun` previews the section. A breaking change's
+  **Upgrade:** note and the review checks' changelog entry are satisfied by a fragment, and a pull request
+  into `develop` that adds lines under `[Unreleased]` is refused with a pointer to `changelog.d/`. Pull
+  requests into a release branch still edit `CHANGELOG.md` directly.
+
+#### Storage
+- **A perspective table has an index on `updated_at` only when it declares row retention or its model declares the
+  index (#2087).** Every update rewrites `updated_at`, and the btree every table carried over it kept PostgreSQL from
+  making any update HOT (measured on PostgreSQL 17 at fillfactor 80: no HOT updates with the index, about 56 percent
+  without it). Neither driver's schema builds it by default now. A table enrolled in row retention keeps it, because
+  the sliding-TTL and row-cap sweeps range-scan the column: the managed-object reconcile reads enrollment from
+  `wh_perspective_registry`, as the sweeps do, and builds the index on an enrolled table that lacks it, at a start or
+  in the maintenance step's next window. A model that sorts or filters on `UpdatedAt` asks for it with
+  `[PerspectiveIndex(PerspectiveRowColumns.UpdatedAt)]`, alone, in a composite
+  (`[PerspectiveIndex(nameof(TenantId), PerspectiveRowColumns.UpdatedAt)]`) or as a partial index (`Where = ...`);
+  `PerspectiveRowColumns.CreatedAt` names `created_at` the same way. On every other table the reconcile retires the
+  `idx_<table>_updated_at` index an earlier release built (and the Dapper driver's `ix_<table>_updated_at`), under its
+  usual rules: one start records it first, and a running instance of an earlier release holds it until it stops. The
+  Dapper driver now also builds every `[PerspectiveIndex]` a model declares, as the EF Core driver does.
+  **Upgrade:** a query that orders or filters on `UpdatedAt` against a table without row retention loses its index
+  unless the model declares it with `[PerspectiveIndex(PerspectiveRowColumns.UpdatedAt)]`. To keep an index without
+  declaring it, pin it (`Whizbang:Schema:Reconcile:Pins`, or a `whizbang:pin` comment on the index).
+- **Superseding events no longer maintain an index nothing reads (#2166).** Migration 365 drops
+  `idx_event_store_superseding` (295). Since 352 every superseding probe (the emit queue, the reaper's newest check and
+  the history reconcile) matches on the event's group, which `idx_event_store_superseding_group` serves, ungrouped
+  events included; the type-keyed index was never chosen, while every keyed write into the event store still updated it.
+- **A read model that applies only ephemeral events takes no snapshots by default, and its ephemeral history is
+  reclaimed without one (#2295).** Whether a perspective snapshots is now decided by what it consumes. One that
+  applies only durable events, or durable and ephemeral events, is unchanged. One that applies only ephemeral events
+  writes no snapshot, live or bootstrapped, and its ephemeral bodies are reaped once consumed and past their grace and
+  TTL, with no snapshot coverage gate; a late event that would need a rewind below them is dropped and logged, as an
+  ephemeral perspective already did when it had no floor, and an evicted row of it starts fresh from the next event.
+  The EF Core driver registers a `no_rewind_floor` marker association for such a perspective, which the reaper reads;
+  without it (another driver, an older instance) the gate stays. **Upgrade:** mark a perspective that applies only
+  ephemeral events with `[KeepEphemeralRewindFloor]` if it needs rewinds after the rewind grace window; it then keeps
+  the previous behavior. Snapshots such a perspective took before this release are left in place.
+- **A lowered fillfactor on a perspective table is rewritten once by the online rewrite (#2300).** A start that lowers
+  a table's fillfactor while the table holds rows still queues a rewrite request, and now records why: the fillfactor
+  the pages were packed at and the lower one in force (`wh_fillfactor_rewrite_requests`, migration 405). Such a table is
+  offered to the maintenance cycle's online rewrite (`TableRewriteStrategy` `PgSqueeze`, or `PgRepack` in process)
+  whatever its bloat, within `OnlineRewriteMaxBytesPerCycle`, and its request is cleared once the rewrite ran, so it is
+  rewritten once per change. Until then a compact table waited for bloat it would never reach (#1594), and the rows
+  already stored stayed on full pages. Without an online strategy the request waits and each start logs which tables
+  wait and what would rewrite them; `VACUUM FULL` is never used for it, whatever `AllowTableRewrite` says. A raised
+  fillfactor keeps the bloat rule. `TableRewriteCandidate` gains `Reason` (`TableRewriteReason.Bloat` or
+  `FillFactorDecrease`). With pg_repack in `External` mode, your job should also rewrite the tables
+  `wh_tables_owed_fillfactor_rewrite()` lists and call `wh_clear_table_rewrite` after each.
+- **The framework's rewind and rebuild events are ephemeral, kept 30 days by default (#2320).**
+  `PerspectiveRebuildStarted`, `PerspectiveRebuildProgress`, `PerspectiveRebuildCompleted`,
+  `PerspectiveRebuildFailed`, `PerspectiveRewindStarted` and `PerspectiveRewindCompleted` are operational bookkeeping
+  in streams of their own, and were stored forever. They now implement `IEphemeralSystemEvent`, so their bodies are
+  reaped once `Whizbang:Ephemeral:SystemEvents:Ttl` (default `30.00:00:00`, greater than zero) has passed since each
+  was written. Events already stored are reclassified by the history walk when
+  `Whizbang:Ephemeral:ReconcileHistoricalOnStartup` is on, and age out on the same rule. Being ephemeral, they are no
+  longer audited. `StreamRewindStarted` and `StreamRewindCompleted` name the application stream and stay durable.
+- **The historical metadata conversion is faster, configurable, and says how much is left (#2322).** It converted a
+  fixed 20,000 rows a maintenance cycle, so a database with millions of full-form rows took days and nothing said how
+  far it had to go. A cycle now runs up to `Whizbang:Workers:Maintenance:MetadataHistoryConversion:MaxBatchesPerCycle`
+  batches (default 200) of `BatchSize` rows (default 1000), and starts none once `TimeBudget` (default 30 seconds) has
+  passed. Each cycle logs the rows left to read and about how many cycles that is, warns when it converted nothing
+  and could not move on while rows remain, and the remainder is reported as
+  `whizbang.maintenance.pending_rows{task=convert_metadata_history}` (`wh_metadata_history_remaining`).
+- **A cut carries its digest, so truncating, archiving or purging history never makes a service look short or long to
+  another (#2363).** A prefix truncate, close the books, an archive, a purge and an end-of-life cut keep the stream's
+  digest and record what they removed beside it (carried) and beside the sealed epoch it sat in, instead of
+  subtracting it, refolding the epochs and bumping the origin generation. A cut removes only history this service has
+  sealed: while `Whizbang:StreamIntegrity:Sealing:Enabled` is on, one that reaches unsealed history returns
+  `awaiting_seal` and the end-of-life step asks again later; `Sealing:CutWaitsForConsumers` (off by default) also waits
+  for every consumer's reported seal. A purged stream refuses a redelivered event, and the per-stream carried detail
+  rolls off after the new `CarriedDetail` resting period (`Whizbang:OperationalRetention:CarriedDetail`, 14 days by
+  default). **Upgrade:** an archive or a restore no longer bumps the origin generation; code that read the generation
+  an archive returned as proof that something moved should read `ArchiveWriteResult.Archived` instead.
+- **A superseding (latest-wins) type counts its key, not each copy, so reaping older copies never changes a digest
+  (#2364).** Every integrity digest counts a key's slot (its stream, group and key) once, where its first copy was
+  stored, whichever copies a service still holds. The superseded-event reaper deletes older copies and no longer
+  subtracts them, refolds sealed epochs or bumps the origin generation, so it no longer matters which service reaps
+  first. **Upgrade:** on first start after the upgrade, each service recounts the stored digests and sealed epochs of
+  its streams that hold a superseding event once, and bumps its origin generation once when its own epochs moved, so
+  its consumers re-verify from the epochs once.
+
+#### Audit
+- **The stream-integrity checkpoint gap tracker judges ownership by the same rule as the manifest comparison and the
+  repair ledger (#2186).** A checkpoint bucket of a type in this service's own owned domains is no longer counted
+  against another origin that only received the type's events, so the integrity engine has exactly one ownership
+  judgment, and a source guard fails any comparison path that judges another way. The older map-only check,
+  `IntegrityDomainOwnership.IsOwnedByAnother`, is removed.
+  **Upgrade:** a caller of `IsOwnedByAnother(type, origin)` calls `IsNotAuthoritative(type, origin, ownedDomains)`,
+  passing this service's own owned domains (an empty list keeps the old answer).
+- **A whole-type repair answer marks its type lane only once every one of its bundles has committed, in any order
+  (#2340).** An answer's bundles can ride several broker sessions: one per stream for a requester that does not accept
+  bundles spanning streams, and one per scope when the answer's events carry different scopes. The bundle that said it
+  was the answer's last could then commit first, find that no bundle before it had brought anything, and mark the type
+  lane as one repair cannot change while earlier bundles still had events to store. Each bundle now names its answer
+  and its place in it, and the last one says how many bundles the answer has (`RedeliveryComposite.AnswerId`,
+  `AnswerBundleIndex`, `AnswerBundleCount`; read as `RedeliveryAnswerWindow.Part`). The receiver records each bundle
+  of a whole-type answer (migration 530, table `wh_integrity_answer_progress`) and judges the type lanes only when the
+  count is complete: a lane is marked when no bundle of the answer brought anything for it, the answer as a whole
+  covered the window the request asked for, and its last bundle carried every stream of the type whole. An answer whose
+  bundles stop coming leaves its lanes waiting out their answer timeout, and its progress is removed a day later.
+  `RedeliveryPump.BeginAnswer` now takes a required `answersWholeType`. A bundle from an origin on an older version names
+  no answer and is judged as before. **Upgrade:** a direct caller of `RedeliveryPump.BeginAnswer` passes
+  `answersWholeType`: true only when the request named no streams and no events.
+- **The integrity audit repairs a coverage gap in its own service and sends nothing (#2344).** At
+  `AutoRepairCapped` the audit sent a `RebuildPerspectiveCommand` per gap, a system command broadcast to every service,
+  so each service hosting a perspective of that name rebuilt a stream it never found missing. The audit now runs the
+  rebuild in-process through `IPerspectiveRebuildRequestHandler`, the handling the command's receptor also runs (routing
+  to the streams' owners and the background queue included), and puts nothing on the transport. An operator's
+  `RebuildPerspectiveCommand` is still broadcast. A host without rebuild handling reports the gap as not repaired and
+  logs a warning.
+- **An idle origin sends its continuity checkpoint as a heartbeat, not every minute (#2348).** A checkpoint now goes
+  out when the origin's settled position moved since the last one; while it does not move, one goes out every
+  `Whizbang:StreamIntegrity:CheckpointHeartbeatMinutes` (15 by default), so idle checkpoint traffic grows with writes,
+  not with time and the number of services. A consumer calls an origin stale once its heartbeat plus two intervals
+  pass without a checkpoint (17 minutes by default, was 3). **Upgrade:** while a fleet is mixed, a consumer still on
+  the previous release may log the stale-origin warning for an idle origin on this release; it is a log line only and
+  stops once that consumer is upgraded. Set `CheckpointHeartbeatMinutes` to 0 to keep sending every interval.
+- **The full-history compare is bounded and runs in slices (#2361).** `FullHistoryCompare:Lookback` (default 90 days)
+  limits it to recent history: the heal covers streams last written within it, and the ask to each origin starts at the
+  oldest epoch sealed within it instead of at the start of history. `FullHistoryCompare:MaxPerRun` (default 10,000)
+  limits one run's heal to that many streams after a stored cursor, and the next run resumes there. New metrics:
+  `compare_streams_covered`, `compare_slices`, `compare_passes_completed` and `compare_pass_runs`.
+- **Integrity stops for a service pair whose eligibility rules differ, and says why (#2362).** Every manifest request,
+  manifest, checkpoint and redelivery request now carries its sender's rule fingerprint: the rule-semantics version,
+  the SQL eligibility rule's version and a hash of each covered event type's declared rules (ephemeral mode,
+  superseding group and key, terminal, end-of-life action, digest exemption). The receiver compares it with its own
+  over the types the two share; on a mismatch it compares, repairs and redelivers nothing for that pair, logs one
+  Error naming both sides' versions and the differing types, and reports `pair_state`, `pair_halted_seconds` and
+  `pair_halts`. A pair still halted after `Whizbang:StreamIntegrity:PairGuard:HaltedAlertAfter` (default 2 hours) is
+  logged at Critical and counted in `pair_halt_alerts`. The pair resumes on its own once the rules match. Operator
+  redelivery requests and subscription backfills are not guarded. **Upgrade:** a service on an earlier release sends no
+  fingerprint and is treated as a mismatch, so integrity between it and an upgraded service pauses until both run this
+  release; nothing is repaired across the mixed pair during a rolling deployment, which is intended.
+- **An audit no longer asks an origin whose state has not moved (#2349).** After the window above the seal matches in
+  full, the consumer remembers, per origin, the seal, the origin's generation, the origin's last checkpoint position
+  and the highest position it holds from that origin, and skips the ask while all four are unchanged. It still asks at
+  least once per `Whizbang:StreamIntegrity:MaxAskSkipMinutes` (default 60; 0 asks every cycle, as before). An origin with
+  nothing settled above the asked start now answers with `NothingSettledAbove` instead of staying silent, so the
+  consumer can tell an unchanged origin from a lost answer; it still folds nothing for such a window. New metrics:
+  `manifest_asks_skipped` and `manifest_answers_unchanged`; `manifests_requested` gains a `reason` tag. Migration 459
+  adds the memo columns to `wh_integrity_seals` and `last_asked_at` to `wh_integrity_known_origins`.
+
+#### Startup
+- **Registration validation reads factories that build a service only when another is registered (#1907).** A
+  factory of the shape `sp => sp.GetService<X>() is { } x ? new T(...) : standIn` is now checked for what its building
+  branch needs only when `X` is registered, and `services.TryAdd(ServiceDescriptor.Singleton<T>(factory))`
+  registrations are read too. The transport consumer's worker, which is built only when a transport is registered
+  (#1876), is checked again for every service it needs on a host with a broker, and a host without one still starts.
+  Two registrations of the same type now contribute every dependency either names, where only the first one's were
+  checked. A composition that was missing one of these services now fails validation at startup, naming it.
+- **The rollback gate sees stored-form conversions (#2131).** A stored-form conversion now records which library and
+  application version applied it (migration 385): the stored-form migrations and the declared-key pass in
+  `wh_stored_form_migrations`, the canonical temporal rewrite in `wh_perspective_forms`. A pass that converts rows, or
+  runs a custom migration, records its versions; one that finds nothing to convert keeps what is recorded. Startup's
+  Assess counts a conversion a newer version applied like any other change applied since an older version, so an
+  older instance started after a newer one converted stored documents stands down naming the conversion
+  (`stored-form:<name>` or `temporal-form:<table>`) and who applied it. Conversions recorded before this release name
+  nobody and never stand an instance down. Nothing to change.
+- **A stuck migrator's role lapses, so another instance takes the schema work over (#2165).** The migrator's keepalive
+  renewed its role on a timer for as long as startup ran, so an instance that was alive but stuck (a hung statement, a
+  deadlocked phase) kept the role indefinitely. It now renews only while the schema work reports progress (each
+  committed step, each phase, each batch or table a long phase reaches); once nothing has been reported for longer than
+  the stall limit it stops renewing, logs a warning once, and the lease lapses to the normal vote. The limit is the
+  schema command budget plus the migrator's progress window by default, and
+  `Whizbang:Database:RoleAssignment:MigratorStallLimit` sets it explicitly.
+- **Every per-assembly registration follows one rule: the latest wins, and a hidden one is reported (#2201).** When two
+  different assemblies register the same item (the same perspective, the same receptor, the same model for the same
+  DbContext), the registration made latest is used, and startup logs a warning naming the item and both assemblies
+  and saying which registration was hidden. The new setting `Whizbang:Startup:RegistrationCollisions` decides what a
+  collision does: `Warn` (the default) starts with the latest registration, and `Fail` stops startup with an error
+  naming every collision. A perspective two assemblies both declare, which the first registered answered for, is now
+  answered by the latest; the event types two assemblies both know are now listed latest registered first, and are
+  not collisions, since both name the same type. **Upgrade:** nothing to change unless a startup warning names a
+  collision; then remove one of the two registrations, or keep the latest and set the mode to `Warn` explicitly.
+- **Every assembly's EF Core perspective models are registered (#2201).** The model registration ran only the most
+  recently registered assembly's callback, so models declared in every other assembly were not registered. Each
+  assembly now keeps one entry, keyed by its name: the driver runs every assembly's registration for its DbContext,
+  and a re-registration from the same assembly (a test calling the generated `Initialize()` again, a hot reload)
+  replaces only that assembly's own entry. A model two assemblies both register for the same DbContext follows the
+  rule above.
+
+#### Messaging & delivery
+- **A repair answer bundles across streams by scope instead of one stream per bundle (#2268).** A redelivery
+  request names up to the drain batch of streams, most of them an event or two short, and the origin answered each
+  stream with its own bundle: about one broker message per missing event, competing with application traffic on a
+  broker with a per-namespace message-rate ceiling. The origin now bundles an answer the way the windowed backfill
+  (#2092) already does: events group by scope only, up to `RedeliveryPumpOptions.MaxInnerEventsPerComposite` (500)
+  and `MaxBytesPerComposite` (192 KB), each child naming the stream it is stored on, and each stream's events contiguous
+  and in (stream, version) order. Fifty one-event streams now answer in one message instead of fifty (0.02 messages
+  per answered bucket instead of 1.0; a full 500-event page of one-event streams, 0.002). Every bundle of one answer
+  rides one broker session, a name-based id of the origin, the reply topic, the requester and the scope
+  (`RedeliveryPump.AnswerSessionFor`), so a stream that spans bundles or selection pages still arrives in order, two
+  tenants never share a bundle or a session, and answers from different origins or to different requesters are not
+  serialized behind each other. The receiver files each child under its own stream and answers each stream's ledger
+  bucket, as before. A bundle that changed nothing still marks its buckets unchangeable at commit; a stream whose
+  events were all present, bundled with a stream the answer repaired, is answered and marked by the next answer that
+  changes nothing.
+  **Upgrade:** only a requester on this release asks for the new shape (`RequestRedeliveryCommand.AcceptsStreamSpanningBundles`,
+  set on every request it sends); a requester on an earlier release files every child of a bundle under the bundle's own
+  stream, so it is still answered one stream per bundle. During a rolling deploy of the requesting service, an instance
+  still on a release before v0.2626.0 that receives a stream-spanning answer requested by an upgraded instance files
+  its children under the answer's session key; finish the rollout before the next repair cycle.
+- **A repaired event runs a receptor only when this service can prove it never handled it (#2273).** An event that
+  stream-integrity repair delivers is now stored and projected state only unless three things hold: the receptor is
+  declared `[RunOnRepair]`, the event's origin time is inside `Whizbang:StreamIntegrity:RepairReceptorLookback`
+  (a duration, default seven days), and a new handled ledger (`wh_receptor_handled`, migration 403) shows this service
+  never handled it. The ledger is written by the inbox completion, kept for the lookback (partitioned by event id),
+  and records when its coverage starts, so raising the lookback cannot make an incomplete window look complete. The
+  `whizbang.stream_integrity.repaired_events` counter reports each repaired event by `delivery` (`state_only` or
+  `receptors`) and `reason`. **Upgrade:** a receptor that should converge state from repaired events, and is
+  idempotent, adds `[RunOnRepair]`; every other receptor no longer runs for repaired events.
+- **Sealing, the seal re-check and the full-history compare each have their own configuration (#2353).** Three
+  sections under `Whizbang:StreamIntegrity`: `Sealing` (on by default: `Enabled`, `EpochWidth`, which is now the
+  configuration path of the store's epoch width, and `MaxClosuresPerCycle`), `SealRecheck` (off by default: `Enabled`,
+  `Schedule`, `Lookback` 30 days, `RecheckEvery` 7 days, `MaxEpochsPerRun`, `OnDrift` `Refold` or `ReportOnly`) and
+  `FullHistoryCompare` (off by default: `Enabled`, `Schedule`). Each enabled check registers its own schedule and each
+  occurrence names its check. The re-check no longer restarts at epoch 0: every sealed epoch records when it was sealed
+  and last re-checked (`wh_digest_epoch_seals`, migration 450), and a run takes the epochs sealed within the lookback,
+  least recently re-checked first. New metrics: `epochs_sealed`, `epochs_rechecked`, `check_drift_found` and
+  `check_duration`, tagged by `check` only. `EpochClosureEnabled`, `MaxEpochClosuresPerMaintenanceCycle`,
+  `MaxEpochVerificationsPerSweep` and `FullSweepCron` keep working as aliases for one release; a section key wins.
+  **Upgrade:** the seal re-check and the full-history compare (the whole-store heal and the full-history ask), which ran
+  nightly or on every seventh audit, are now **off by default**. Sealing and the routine windowed audit are unchanged.
+  Set `Whizbang:StreamIntegrity:SealRecheck:Enabled` and `Whizbang:StreamIntegrity:FullHistoryCompare:Enabled` to
+  `true` to keep them. `Sealing:EpochWidth` is written to `integrity_epoch_width` before each closure pass, so a value
+  set by hand in `wh_settings` is replaced by the configured one (lanes already closed keep their pinned width).
+
+#### Work coordination, perspectives & sagas
+- **The claim leases no new inbox rows while the inbox working set is full (#1853).** With the working-set byte budget
+  (`InboxDrainWorkerOptions.MaxHeldPayloadBytes`, #1793), a row that did not fit was handed back uncharged, but the
+  claim kept leasing new rows on every poll, so a full working set cost a claim, a fetch and a release per poll for
+  nothing while the service was under memory pressure. Once the drain turns rows away, the claim leases no new inbox
+  rows until the working set has drained to where the smallest of them fits, then resumes at once; inbox work already
+  held is still offered, and outbox and perspective acquisition are unaffected. The claim worker logs when it pauses
+  and resumes. `claim_work` gains `p_acquire_inbox` (migration 390), defaulting to the previous behavior.
+- **The perspective worker writes a batch's rows set-based, by default (#2246).** The pairs of a claimed or drained
+  batch whose perspective writes set-based are prepared together, and their rows are written with one statement per
+  table and shape (insert, guarded update, purge) through the DbContext each perspective's store uses, instead of one
+  read and one upsert per stream. A batch reads no row for a stream it knows is new, reads the other rows of a
+  perspective with two statements, asks the purge markers, the history probe and the commit sequences once, and on the
+  claimed path reads its pairs' cursors and events once. A row another writer changed, a row the database rejects and a
+  pair the batch cannot prepare (a rewind, a bootstrap snapshot, a purge marker, another provider) are applied on the
+  per-stream path, and a failure stays with its own stream. The affinity gates and apply locks of a batch are taken as
+  a set, in one order. A conformance suite holds both modes to the same read model. Measured on a fan-out of 10,000
+  new streams, set-based mode is almost twice as fast (389 against 209 rows per second) and sends the database about
+  one percent of the statements; at 100,000 streams both modes are bound by the work-queue calls over the backlog.
+  `PerspectiveWorkerOptions.WriteMode` selects the mode for the service (`PerspectiveWriteMode.SetBased`, the default,
+  or `PerStream`, the path before this change), and `[PerspectiveWriteMode]` on a perspective overrides it. New seams:
+  `IPerspectiveWriteSink` (one per DbContext, registered by the PostgreSQL driver), `IPerspectiveStateSource` and
+  `BatchedPerspectiveStateSource`, `PerspectiveApplyLockSet`, and `IApplyBatchStrategy` in
+  `Whizbang.Core.Perspectives` as the flush policy (default `FlushEveryBatchStrategy`).
+  **Upgrade:** to keep the per-stream writes, set `PerspectiveWorkerOptions.WriteMode = PerspectiveWriteMode.PerStream`.
+  New interface members, each with a default that keeps a custom implementation compiling and working per stream:
+  `IPerspectiveStore.PrepareWrite`, `PreparePurge` and `ReadForApplyManyAsync`;
+  `IPerspectivePurgeMarkerStore.PurgedAmongAsync`;
+  `IEventStore.GetCommitSequencesAsync`, `StreamsWithEventsBeforeAsync` and `ReadPolymorphicManyAsync`;
+  `IPerspectiveRunner.ReadEventsAsync`, `SelectEvents`, `PrepareAsync` and `CompleteAsync`; and
+  `IWorkCoordinator.ReadsCursorsInBatches`. An event-store decorator that changes what a read returns should override
+  `ReadPolymorphicManyAsync` as it overrides `ReadPolymorphicAsync`, or return null from it.
+  `Whizbang.Core.Messaging.IApplyBatchStrategy`, `SlidingWindowApplyBatchStrategy` and `SlidingWindowApplyOptions` are
+  removed: they were never called by the worker.
+  `BatchedPerspectiveStateSource` takes its logger as a required parameter, with a parameterless constructor for no
+  logging.
+- **A filter on a perspective model's `Guid` `[StreamId]` property also reads the row by its primary key (#2302).**
+  `Where(r => r.Data.OrderId == id)` and `ids.Contains(...)` now add `id = @id` (or `id = ANY (...)`) beside the
+  document test, so a point read by id uses the primary key instead of a document search. Filters, sorts and
+  projections written after `Select(r => r.Data)`, as GraphQL filtering and sorting layers write them, are moved
+  onto the row (`Where`, `OrderBy`, `ThenBy` and their descending forms move beneath the projection, and a following
+  `Select` is folded into it), so they reach the primary key and `[PhysicalField]` columns too. The document test is kept, so no query returns
+  a row it did not before; a row whose `[StreamId]` property was set to something other than its stream id is no
+  longer found by that property. A comparison with a null value, and a set that can hold null, are not answered by
+  the key, so they keep finding the documents with no stream id. String and strongly-typed keys, and tests under `OR`
+  or `NOT`, are unchanged.
+  Nothing to configure: the generator registers each model's stream id.
+
+#### Context, identity & serialization
+- **Strong ids work as GraphQL arguments, input fields and results (#2073).** A HotChocolate schema gives every
+  generated `[WhizbangId]` type it uses a scalar named after the type (`OrderId`), written as a UUID string
+  (`@specifiedBy` RFC 9562), so a resolver takes `OrderId` directly. Input goes through the id's own `From(Guid)`: a
+  value that is not a UUID, not UUIDv7, or empty for an id declared with `AcceptAnyVersion = true` is a GraphQL error
+  with the code `WHIZBANG_INVALID_ID` and the reason, raised during input coercion, so the resolver never runs. On by
+  default: `AddWhizbangLenses()` adds the scalars, and `AddWhizbangIds()` adds them to an executor without lenses;
+  calling either more than once, or both, adds each scalar once. A scalar is added only for an id the schema takes
+  or returns, so the framework's own ids (`StreamId`, `EventId`, `MessageId`, `CorrelationId`) appear only in a
+  schema that uses them, and a consumer id with one of those names gets its own scalar. Each id's conversion is read
+  when the schema refers to the id, after running the generated module initializer of the id's assembly, so no code
+  in that assembly has to run before the schema is built. The generated registration records each id's
+  `From(Guid)` through the new `WhizbangIdProviderRegistry.RegisterGuidConversion<TId>`, read with
+  `GetGuidConversions()`. **Upgrade note (breaking for GraphQL clients):** a strong-id field, argument or input field
+  that was an object or input type with a `value` field (`orderId { value }`, `{ orderId: { value: "..." } }`) is now
+  the id's scalar (`orderId`, `{ orderId: "..." }`), and the `OrderId`/`OrderIdInput` types are replaced by
+  `scalar OrderId`. A filter on a strong-id field compares the id itself: `where: { id: { value: { eq: "..." } } }`
+  becomes `where: { id: { eq: "..." } }`, with `neq`, `in` and `nin`, through a new `OrderIdOperationFilterInput`
+  that replaces `OrderIdFilterInput`. Its operands are the id's scalar, so a filter value is checked like an
+  argument. Entity Framework Core translates each operation to SQL both inside a perspective document and for a
+  value-converted column: in a document the filter compares the Guid inside the id, which the containment rewrite
+  answers from the whole-document index of `[PerspectiveQueries(MatchOnAnyField = true)]` (a strong id cannot carry
+  an index of its own, WHIZ303), and on a column it compares the id with an id through the column's converter. `in`
+  and `nin` join their comparisons as a balanced tree, so a list of thousands of ids translates rather than
+  overflowing the stack and ending the process. The generated
+  registration also records each id's `Value` member through the new
+  `WhizbangIdProviderRegistry.RegisterValueMember<TId>`, read with `GetValueMembers()`. Sorting does not change (`order: { id: DESC }`). Update
+  client queries and filters, and regenerate generated client types against the new schema.
+
+#### Observability & tooling
+- **The table-statistics probe reads every five minutes, spread across the fleet (#2349).** Each instance read the
+  tables' sizes, bloat, unused indexes and queue depths every 30 seconds, about 5% of all statement time for figures
+  that move over minutes. `Whizbang:TableStatistics:CollectionInterval` now defaults to five minutes, and each wait is
+  lengthened by a random share of up to `CollectionJitter` (0.2 by default) so instances started together do not read
+  together. The gauges keep the last reading in between. **Upgrade:** a dashboard that relied on 30-second freshness
+  sets `CollectionInterval` back to `00:00:30`.
+
+### Removed
+
+#### Work coordination, perspectives & sagas
+- **Unused coordination tables and their readers are gone.** `wh_partition_assignments` had no reader or writer: the
+  bootstrap no longer creates it and migration 463 drops it. `wh_receptor_processing` had no writer, yet the claim
+  probed it on every poll; the claim, the instance release paths, the stream purge (which no longer reports a
+  `wh_receptor_processing` row), the queue-statistics refresh and the rewind cleanup no longer touch it, and
+  `claim_orphaned_receptor_work` is dropped. Migration 464 then drops the table. Because migration 031 indexes it, the
+  bootstrap creates it only until 464 has recorded its current hash, so a database migrating from empty, and a pass
+  that runs 031 again, has it when 031 runs and loses it at 464.
+- **Public API: the types of the unused tables are removed.** `PartitionAssignmentsSchema` and `ReceptorProcessingSchema`
+  declared the dropped tables; `ReceptorProcessingRecord`, `ReceptorProcessingStatus`, `ReceptorProcessingCompletion`
+  and `ReceptorProcessingFailure` described rows nothing wrote and were accepted by no coordinator method.
+  `RetiredReceptorTable` (Whizbang.Data.Postgres) is new: the bootstrap statement both drivers run. **Upgrade:** delete
+  any reference to the removed types; there is no replacement.
 
 ### Fixed
+
+- **A startup-gated hosted service whose start is canceled before its wait runs no longer ends canceled (#2416).** The
+  host's start token went to the base class, which runs the wait through `Task.Run` with it, so a start canceled
+  before the thread pool ran the wait left the service canceled without the wait ever running, and a host that is not
+  yet stopping counts that as a failed service. The service now links the start's token into the wait itself.
+
 - **The service backlog count no longer scans every processed inbox row, and a processed row's leftover lease no
   longer counts as in-flight work (#2162).** Its live-lease part had no unprocessed filter, so no index on the inbox
   state table could answer it and every call read the whole table, processed history included (about 126 ms and 33k
@@ -3466,6 +4193,943 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reflection-based `JsonSerializer` (AOT-correct; WhizbangId-bearing model fields no longer collapse to `{}`).
 - Perspective runner stream-id extraction walks the event's inheritance chain, so a `[StreamId]` declared
   on a base event type is detected (previously only directly-declared keys were found).
+- **A recursive type in a perspective model keeps every level (#2112).** A model holding a type that reaches itself (a
+  tree node with `List<TNode> Children`, `IList<TNode>`, `ImmutableList<TNode>`, or two types holding each other) was
+  stored on the Entity Framework driver as mapped properties, and Entity Framework maps a recursive complex type one
+  level deep: every level below the first self-reference was dropped on write and read back as null, with no error at
+  model build, save or query. The generator now stores such a model as one opaque document (the form an array of records
+  already takes), so the whole tree round-trips at any depth, and the new WHIZ202 (Info) reports the recursive property,
+  at any depth, saying the model is opaque and why. WHIZ200 no longer tells an author with `TNode[] Children` (or an array of any type
+  that is recursive further down) to switch to `List<TNode>`, which is what led into the truncation. A type reached twice
+  without recursion stays mapped. WHIZ304 and the index advisory (WHIZ302) name a recursive member as recursive, with
+  that reason, instead of as one "the mapped path cannot construct". The generated message JSON context now provides metadata for `IList<T>` and
+  `ImmutableList<T>` (as it did for `IReadOnlyList<T>`), and discovers the element type behind an `ImmutableList<T>`:
+  without it, any opaque document or message holding one could not be serialized at all (`NotSupportedException`,
+  "JsonTypeInfo metadata ... was not provided"). **Upgrade notes:** no schema change: the `data` column is `jsonb` in both forms, and a
+  row an earlier release wrote reads on the new path. Such a row holds only the first level of the recursion: the rest
+  was never written and nothing in the database can restore it; rebuilding the perspective (re-projecting from its
+  events) writes the whole tree. **Perspectives whose models are recursive must be rebuilt after upgrading; the startup
+  log names them.** Nothing is rebuilt automatically. On the first start against a database an earlier release
+  migrated, the instance doing the schema work logs one Warning per such perspective whose table holds rows (event id
+  2112, `RecursivePerspectiveNeedsRebuild`), naming the perspective (the name a rebuild takes) and its table. It reads
+  the migration ledger: new migration `361_RecursiveDocumentsStoredWhole` changes nothing and its row marks a database
+  migrated by this release, so a fresh database and every later start are silent. `[Indexed]` and promoted-field document indexes on the model are no longer generated,
+  as for any opaque model (WHIZ304); indexes an earlier release created stay until dropped. A build treating warnings
+  as errors is not affected: WHIZ202 reports a recursive model at Info, since it is stored correctly and there is
+  nothing to change (`WhizbangOpaqueArrayWarning=false` or a suppression on the property turns the report off).
+  **New error WHIZ201:** a perspective model whose recursive types form a circular reference cannot be saved. A tree
+  (`Node.Children`), two types holding collections of each other and a linked list (`Link.Next`) are writable; a
+  recursion that stores a collection and also a single-valued reference back up the document (`Node.Children` with
+  `Node.Parent`, `Order.Lines` with `Line.Order`, or deeper, `Order.Lines`, `Line.Detail`, `Detail.Order`) lets an
+  element reach its container, and is now a build error at the back-reference. Leave the reference out of the stored
+  model (`[JsonIgnore]`) and restore it after reading, or store the container's identifier. An object cycle the
+  analyzer cannot see (`Next` with `Prev`, a node placed among its own descendants) fails the write with the
+  serializer's cycle detection and stores nothing; it is never truncated in silence.
+- **A collection interface of records serializes on an opaque model or message (#2114).** The generated message JSON
+  context had metadata for `IReadOnlyList<T>` only among the collection interfaces, so a perspective model stored as one
+  opaque document (or any message) holding an `ICollection<T>`, `IReadOnlyCollection<T>` or `IEnumerable<T>` failed its
+  first write with `NotSupportedException` ("JsonTypeInfo metadata ... was not provided"). The mapped path cannot fill
+  those interfaces, so every perspective model declaring one of records was stored opaquely and could not be written at
+  all. The context now provides metadata for each, read back into a `List<T>`. No upgrade step and no schema change.
+- **An upgrade from a release before #1681 no longer re-runs every older migration (#2125).** Releases before #1681
+  (2026-10-23) recorded each migration's ledger hash over its raw text, and #1681 added a license header to every
+  migration file in the same release that moved to normalized hashes. The step that moves those rows onto normalized
+  hashes compared them with the raw hash of today's headered text, which no earlier release recorded, so it recognized
+  none of them: the first start after the upgrade re-ran every migration that release had applied (204 from v0.2623.1),
+  including the full, single-transaction backfill in 087, which could hold a service in the migrate stage longer than its
+  restart window. The step now recognizes every form an earlier release recorded for a file that has not changed: the
+  raw hash with or without that header (on the EF Core driver, also without the indentation its generator gives the
+  line the header displaced), and on the EF Core driver for a context in a named schema, the text as the
+  earlier schema qualifier rendered it (it reached inside comments and literals; `EarlierReleaseMigrationText`). Matching
+  rows are rewritten to the normalized hash without running the migration, and the count is logged at Information. A file
+  whose content really changed still runs. The upgrade tests stand a database on the hashes v0.2623.1 recorded, captured
+  from its published packages by `scripts/Capture-LegacyMigrationLedger.ps1`. A database that has already been through
+  that re-run needs nothing: its rows already hold normalized hashes.
+- **How long the record of an instance's exits is kept is an operator setting (#2126).** `wh_record_instance_exit`
+  removed rows of `wh_instance_exits` older than a fixed 30 days with each write. The window is now
+  `wh_settings.instance_exit_retention_days`, published from `Whizbang:Workers:Maintenance:Retention:InstanceExitDays`
+  (`MaintenanceRetentionOptions.InstanceExitDays`) like every other retention window, and 30 days when nothing sets it
+  (migration 364, in the bootstrap closure with 363's definition; the function is now PL/pgSQL so it can probe for
+  `wh_settings`, which the closure runs before on a new database).
+- **A crash on any thread goes through the one exit path (#2126).** The exit path subscribes to the process's own
+  failure events when the host starts (`IProcessCrashEvents`, `ProcessCrashEvents.Instance` unless a test registers
+  its own), once, and gives them back when its exit completes. An exception nothing caught is a `Crash` (exit code 1)
+  unless an exit is already under way, whose cause stands: it halts through the run-control path (releasing roles and
+  leases), writes the detailed entry, records the durable row, sets the exit code, and then deregisters the instance
+  (its leases and row), which a graceful stop leaves to the shutdown service that a dying process never reaches; all of
+  it bounded by `WhizbangInstanceExit.CrashExitBudget` (5 seconds) on the exit path's clock, as well as by the token
+  the steps are given, so nothing it does can hold the dying process, throw into the runtime's handler, or exit twice.
+  A faulted task nobody observed is said at Error (event 2, `UnobservedTaskException`) and does not end the process,
+  since the runtime does not end it either.
+- **A starting instance is no longer evicted during a long Elect or Migrate (#2126).** An instance registers at the end
+  of Preflight, but its heartbeat started only once its schema was ready, and the registration recorded no liveness
+  window, so the one liveness rule judged it by 30 seconds and any live peer's reap evicted an instance still electing
+  or migrating. The heartbeat now starts at registration: the worker pipeline hosts it at Elect
+  (`HeartbeatWorker.StartsAt`), and a test fails if it moves later. Until the schema-ready gate opens, a beat goes
+  through `IWorkCoordinator.RecordStartupHeartbeatAsync` (migration 362, `wh_record_startup_heartbeat`, in the bootstrap
+  closure so it exists from Preflight on), which refreshes the heartbeat, the connection mode and the liveness window of
+  the instance's existing row and nothing else: it never inserts a row, never writes the stage or the lifecycle phase
+  (the stage record stays their one writer), reaps no peer and refuses an evicted instance. The first beat after the
+  gate opens is due at once and is the full heartbeat, which registers, reaps and announces the join as before. The
+  registration itself records the connection mode and the liveness window (`InstanceRegistrationLiveness`), so the rule
+  judges the row by its own window from the moment it exists. Readiness is unchanged: a starting instance stays out of
+  the claim ranking and the partition assignment, holds no role but the migrator, and reads as migrating in the fleet
+  status, until it records Accept commands. On the Dapper driver, which applies no bootstrap closure and registers after
+  its pass, a startup beat before the pass has created the function is accepted and writes nothing.
+- **Every exit goes through one exit path, and an evicted instance exits (#2126).** Each way the process exits, good or
+  bad, now takes `IWhizbangInstanceExit`: a host shutdown, the killswitch's stop, a stand-down whose newer version
+  committed, a hosted worker that faulted, a blocking schema initialization that failed, a required capability that is
+  not ready, and an eviction by the fleet. An exit halts through the one run-control path (`HaltAsync` with
+  `RunHaltReason.Stop`, bounded by the host's stop token), writes one entry (EventId 1, `InstanceExit`; Error for a
+  failure, Information for an intended stop) that says why, with every fact as a structured field (`ExitCause`,
+  `ExitCode`, the instance, service and host, the stage and phase, uptime, time since the last accepted heartbeat, what it
+  held, and for an eviction when, by which peer and why), records the same facts in the new `wh_instance_exits` table
+  (migration 363, one row per exit; best effort, and the entry says when the row could not be written), sets the exit
+  code and stops the host. `ExitCause` is closed: `HostShutdown`, `OperatorStop` and `UpgradeStandDown` exit 0, `Crash`
+  1, `Unknown` 2, `ClusterEviction` 3, `StartupFailure` 4 and `SchemaIncompatible` 5. An instance whose heartbeat (or
+  startup beat, or claim registration) is refused because a peer reaped and tombstoned it no longer stops beating and
+  stays sidelined: it exits with code 3 so its host restarts it under a new instance id. The tombstone now records the
+  evicting peer for a reap too, and the last heartbeat and liveness window the rule judged the instance by. Library code
+  can no longer stop the host or set the exit code anywhere else: `BannedSymbols.Exit.txt` bans
+  `IHostApplicationLifetime.StopApplication`, `Environment.Exit`, `Environment.ExitCode` and `Environment.FailFast` in
+  every library project, and a source guard fails on any call the analyzer cannot see. Two changes in behavior follow: a
+  capability that is not ready now exits with code 4 (it was 1), and a blocking schema initialization
+  (`NonBlockingSchemaInit = false`) that fails now exits with code 4 (5 for a schema newer than the binary) instead of
+  throwing out of host start, which ended the process as an unhandled crash. The killswitch's `StopAsync` now ends the
+  process (exit code 0) once held work and roles are released. The heartbeat also no longer holds its first full beat
+  back by a cadence when the schema-ready gate opens between its plan and its wait.
+- **The migrator keeps its role through a startup phase longer than its lease (#2127).** The migrator duty is a role
+  assignment with a lease (30 seconds by default), and it was renewed only between phases, so a long one (the
+  declared-key spelling scan, a wait for the schema lock, the stored-form rewrite, the index rebuild, the settle scan, a
+  long migration step) let the lease lapse; the renewal then refused the lapsed lease even when nobody had taken it, the
+  migrator said it lost the role, and a waiting instance concluded the migrator was gone and did the same work. Schema
+  initialization now holds the grant in a `MigratorDuty` from the election until it returns, and holding it starts a
+  `DutyGrantKeepalive`, which verifies the grant at half its role's renew interval (`IDutyGrant.RenewInterval`, a new
+  default member; a role-assignment grant reports `RoleAssignmentOptions.RenewInterval`), so the database sees one
+  renewal per interval through every phase; it stops before the grant is released, so a released role is never renewed.
+  A test fails if any phase from Elect to the end of Migrate runs outside it. The phases before the schema lock run only
+  on the instance holding the role (`MigratorPreLockPhase`): a waiter whose migrator is gone votes for the role and does
+  the work only once it holds it (losing the vote makes it a waiter for the winner, with the votes paced), and a migrator
+  that finds it no longer holds the role votes again rather than working without it; an instance that could not be
+  staged still does the work, as before. The phases are announced to the registered observers
+  (`ISchemaInitializationObserver.OnPreLockPhasesStartingAsync`, a default member), not as a stage, since they run on a
+  restart too. The wait between two steps of another instance's pass has its own outcome,
+  `SchemaDeferralOutcome.FreeBetweenSteps` (`SchemaMigrationDeferral.WaitBetweenStepsAsync`), said at Debug, instead of
+  "the migrator is gone, taking the work over" at Warning and "another instance is migrating" at Information for every
+  step.
+- **Long startup work says how far along it is, and unrepairable rows no longer make a table rescan every start
+  (#2128).** The declared-key spelling scan and the required-member check that follows it said nothing above Debug, so a
+  migrating instance could show minutes with no output, and a batched migration step (for example 087's backfill) logged
+  its batches only at Debug, so an operator could not tell working from stuck. Each now reports at Information on a steady
+  cadence (`StartupProgress.Cadence`, 15 seconds, on the clock it is given): the scans say when they start, which table
+  of how many they are on with the rows read in it and in all, and their totals when they finish; a batched step says the
+  batch it is on, the rows moved and the time elapsed (`MigrationBatchProgress`, on both drivers), then its totals. A start
+  on which every table is settled says nothing. A table with rows missing a required member, which nothing at startup can
+  repair, used to stay unsettled and be scanned again, and reported again, on every start: it is now settled after the
+  check, which reports the rows once at Error with their count and the table, and is not checked again until what its
+  readers declare changes. A table whose keys were rewritten on a start stays open and is checked on the next one, which
+  reports what is missing then, once. New overloads of `DeclaredKeySpellingPass.ApplyAsync`, `RewriteAsync` and
+  `SettleAsync` take the clock.
+- **The query-translator seam tests pass in a full, unsharded run of the EF Core Postgres tests (#2157).** Their
+  probe context was the one fixture in the project that did not ignore Entity Framework's warning about building more
+  than twenty internal service providers, which the project builds on purpose (one per test's data source); with its
+  own plugin set it always needs one more, and threw once the rest of the run had built twenty. Test-only change.
+- **The ledger block-count benchmark no longer fails when its vacuum leaves pages unmarked (#2158).** The shared test
+  container runs with `synchronous_commit` off, and a vacuum marks a page all-visible only when every row's commit hint
+  bit is set, which waits for the commit's WAL to be flushed; a vacuum within the WAL writer's delay of the last commits
+  left the pages as they were. The test now flushes the WAL with one synchronous commit before it vacuums and checks
+  the all-visible state with `pg_visibility` as a precondition. Test-only change.
+- **A framework index build no longer stands aside for a build in another database (#2167).** The concurrent build of
+  the framework's event-store indexes stepped aside whenever any database on the server was building an index on a
+  table with the same relation id, which databases created from one template share, so the index could go unbuilt
+  for as long as a sibling database kept building. Only builds in the service's own database count now.
+- **A host disposed while background schema initialization is retrying ends the retry loop quietly (#2167).** An
+  attempt that failed after the host was disposed read the disposed stop token and faulted a task nothing awaited,
+  which the unobserved-task diagnostic then reported as an error. Disposing the initializer now cancels the loop
+  first.
+- **Raw receptors and pinned identities declared in every assembly are now registered (#2198).** Each assembly's
+  generated startup callback for raw receptors and for the pinned-identity registry was stored in a single slot
+  that the next assembly's overwrote, so raw receptors declared in every assembly but the last were never
+  registered, and only one assembly's pinned types were known (Whizbang.Core pins types of its own, so every host
+  has at least two). Both slots now keep every assembly's callback, and each assembly's pinned-identity registry is
+  contributed through `AddPinnedIdRegistryContribution<T>()` to one `CompositePinnedIdRegistry` the host serves.
+- **Lenses and perspective services declared in every assembly are now auto-registered (#2199).** Each assembly's
+  generated registration stored its lens and perspective-service callback in a single slot that the next assembly's
+  overwrote, so `AddWhizbang()` registered the lenses and perspective services of only one assembly. Both slots now
+  keep every assembly's callback and run them all, in the order the assemblies loaded.
+- **Generated code compiles in a project whose namespaces have a `System` child (#2400).** The source generators wrote
+  framework types as `System.X`, which binds to the nearest namespace named `System`: in a project such as
+  `Company.Orders.Tests` beside a namespace `Company.Orders.System`, or any consumer with a `System` segment in its
+  namespaces, the generated code did not build. Every type the generators write is now `global::`-qualified, in the
+  core, EF Core and transport generators, and a test compiles the generated code inside such a namespace. Rebuild to
+  pick it up; no code change.
+
+#### Rebuilds
+- **The Dapper driver handles `RebuildPerspectiveCommand` (#1959).** Only the EF Core driver registered a handler for
+  the rebuild command, so a Dapper host that sent it rebuilt nothing and could rebuild only by calling
+  `IPerspectiveRebuilder` itself. Both drivers now register the same handling: the command's receptor, at the same
+  three lifecycle stages, and the background worker a whole-perspective blue-green rebuild is queued to. The receptor
+  moved from `Whizbang.Data.EFCore.Postgres` to `Whizbang.Data.Postgres`, which both drivers reference.
+  **Upgrade:** code that constructs `RebuildPerspectiveCommandReceptor` directly imports `Whizbang.Data.Postgres`
+  instead of `Whizbang.Data.EFCore.Postgres`; hosts that only send the command change nothing.
+- **A rebuild of named streams whose fold equals the stored row counts it as rebuilt and verified, not failed
+  (#2252).** A correction rebuild (re-deriving rows after duplicate events were removed) used to report such a stream
+  as "folded but left the row unchanged", and a multi-stream run retried it three times and counted it failed. When
+  the row's ordering guard refuses the write, the generated runner now compares the fold with the stored row: equal is
+  already correct and succeeds; different is a refused write. A fold where no event produced a model is reported
+  apart from a refusal. `RebuildResult` adds `StreamsAlreadyCorrect`, `StreamsWriteRefused`, `StreamsWithoutModel` and
+  `StreamsWithoutEvents`, `PerspectiveCursorCompletion.UnchangedReason` says why a fold left its row untouched, and the
+  completion log line splits the run into rewritten, already correct, refused, without a model and without events.
+- **A blue-green rebuild keeps the table's fillfactor and autovacuum settings (#2299).** The shadow table was created
+  with `CREATE TABLE … (LIKE live INCLUDING ALL)`, which copies no storage parameters, so the rebuilt table came out
+  with no `fillfactor`, no `autovacuum_*` and no `toast.autovacuum_*` settings, and the replay packed every page full.
+  A table that declared `[PerspectiveTableStorage(FillFactor = 90)]` then had no free page space for HOT updates until
+  each row moved, although the next start set the values again. The shadow table now takes the live table's own
+  storage parameters, and its TOAST relation's, before the replay writes a page, so the rebuilt table is filled at the
+  declared fillfactor. What is live is copied, not what the model declares, so a table managed by hand
+  (`perspective_storage_manual_tables`) keeps the values its operator set. Both PostgreSQL drivers. Nothing to configure.
+- **A rebuild with streams that failed to replay is no longer reported as a success (#2376).** A stream whose replay
+  threw was logged and passed over so the rest of the rebuild could carry on, but nothing counted it: whenever any
+  stream rebuilt, the result read `Success = true` and `PerspectiveRebuildCompleted` was emitted, and no caller could
+  tell that some rows were left as they were. `RebuildResult.StreamsFailed` now counts the streams (and rows folded from
+  re-keyed events) whose replay failed, and a rebuild with any is reported with `Success = false`, an `Error` naming how
+  many failed and the first five ids, and `PerspectiveRebuildFailed` instead of `PerspectiveRebuildCompleted`. The
+  streams that did rebuild are kept, as before, in every mode. The completed log line counts failed streams beside the
+  other outcomes. A caller that treated `Success` as "something rebuilt" should read `StreamsProcessed` for that.
+
+#### Storage
+- **The completed-inbox purge deletes at most a batch per maintenance cycle, so a large backlog can no longer stop
+  maintenance for good (#2171, migration 366).** The purge was one unbounded statement inside the single maintenance call,
+  which runs under a fixed command budget. A consumer that stores many arrivals settled (every message discarded on
+  receive, such as one addressed to another service, is stored processed with its body, and only this purge removes
+  it) could accumulate more completed rows than one statement finishes inside that budget. The call then timed out,
+  the cycle rolled back, and the backlog only grew; every sweep the worker runs after the call in the same cycle (the
+  perspective row retention sweeps, lifecycle-completion cleanup, the offload sweep, bloat detection, the stuck-row
+  sentinel and registered maintenance steps) was skipped with it. The purge now takes at most
+  `completed_inbox_purge_batch_size` rows per call (default 50000, never below 1), settable as
+  `Whizbang:Workers:Maintenance:Retention:CompletedInboxPurgeBatchSize`; a value below 1 is rejected at startup.
+- **Every maintenance purge deletes at most a batch per cycle, so a large backlog can no longer time the cycle out
+  (#2173).** The completed-outbox, stuck-inbox, completed perspective-event and deduplication purges were each one
+  unbounded delete inside the single maintenance call, as the completed-inbox purge was before #2171. A backlog larger
+  than one delete finishes inside the call's command budget timed the call out, the cycle rolled back, and the backlog
+  only grew. Each now deletes at most its own batch per cycle and leaves the rest to later cycles: new options
+  `Whizbang:Workers:Maintenance:Retention:CompletedOutboxPurgeBatchSize`, `StuckInboxPurgeBatchSize`,
+  `CompletedPerspectiveEventPurgeBatchSize` and `DeduplicationPurgeBatchSize` (default 50000 each, 1 or greater) publish
+  `completed_outbox_purge_batch_size`, `stuck_inbox_purge_batch_size`, `completed_perspective_event_purge_batch_size`
+  and `deduplication_purge_batch_size`. A service whose rows arrive faster than a batch per cycle drains should raise
+  the batch or shorten the interval. Migration 421 redefines `wh_perform_maintenance`.
+- **One failed maintenance task no longer skips the rest of the cycle (#2174).** A task that threw used to end the
+  cycle: when the maintenance call timed out or raised, the perspective row retention sweeps, the lifecycle-completion
+  cleanup, the offload sweep, bloat detection, the stuck-row sentinel and every registered maintenance step were
+  skipped, cycle after cycle, although none depended on it. Each task of the cycle now runs on its own: a failure is
+  logged as a warning naming the task, with its exception, and the next task runs. Inside the database, each task of
+  `wh_perform_maintenance` runs in its own block, so one that raises is rolled back alone and reported as its own row
+  (status `failed: <error>`, logged as a warning) while the others commit. When reading the batch for the destruction
+  hooks fails, nothing is reaped that cycle. Migration 422 redefines `wh_perform_maintenance`.
+- **A message discarded on receive is stored without its body (#2176).** A message the consumer skips on receive (no local
+  consumer, directed at another service, an echo of this service's own event or command, an event of an unknown
+  type) is still stored settled with its reason, so a redelivery of the same id is recognized as a duplicate, but
+  its envelope and metadata are now stored empty (`'{}'`) instead of in full. Nothing read them, and on a
+  subscriber that receives many types it does not consume they were most of the inbox's size until the
+  completed-inbox purge removed them. The row keeps its id, handler, type, stream, scope, flags, priority, source
+  and timestamps, and the reason in `wh_inbox_state.error`. Rows stored before the upgrade keep their bodies until
+  the purge removes them. Migration 368; no schema change.
+- **The superseding history reconcile reads a type's own events, not the whole event store (#2205).** Bringing the
+  events a type stored before it was declared `[Superseding]` under the rule used to walk every event of the store by
+  event id, once per type, so its cost was the store's size times the number of types (and every group change paid it
+  again). Migration 380 moves it onto a per-type history walker: the type's stamped events in commit order, read through
+  `idx_event_store_type_commit_sequence`, so a type with N events completes in about N / 5,000 batches whatever the
+  size of the store. A walk completes only once it has read past the type's newest event and none of the type's events
+  is still waiting for the commit-order stamper. The cursor rows of the earlier walk are cleared, so every superseding
+  type is walked once more from its first event; that re-reads the type and changes nothing already stamped.
+- **Reclassifying the history of a type made ephemeral now finds its events (#2254).** With
+  `Whizbang:Ephemeral:ReconcileHistoricalOnStartup` on, the maintenance cycle walked each type under its bare CLR
+  name (`Ns.Type`), but the event store keeps `event_type` in the stored form (`Ns.Type, Assembly`), so every walk read
+  nothing and was marked complete at 0: the setting has never reclassified history. The walk now names each type, and
+  each former name from the pinned-type ledger, in the stored form. Walks left complete under the bare name stay as
+  they are and change nothing; the stored-name walks start on the next maintenance pass. Per-type rewind grace
+  (`[Ephemeral(RewindGraceSeconds = ...)]`) had the same mismatch and never applied; it is now keyed by the stored
+  form too. Nothing to change.
+- **A pinned type that moves to another assembly keeps its history reachable (#2264).** The event store names an
+  event's type with its assembly (`Ns.Type, Assembly`), but the pinned-type ledger recorded former names without one,
+  and a bare former name is read in the type's current assembly. A type moved between assemblies therefore had its old
+  events walked, graced and aliased under a name they were never stored under. Each ledger entry now records the
+  `assembly` its type is compiled in; when an entry moves to another project's ledger with its type, the next build
+  records every name it was stored under there with the old assembly (`Ns.Type, OldAssembly`). The ephemeral reclassify
+  walk, the per-type rewind grace and the former-name JSON alias use that name; the registry reconcile and the type
+  lookups keyed by the bare name read its name part. Existing bare former names keep their meaning (same assembly).
+  On upgrade, the next build adds `"assembly"` to every entry of each committed ledger: commit that change. When you
+  move a pinned type to another assembly, move its ledger entry with it.
+- **The obsolete event-type rename tool writes `event_type` in the stored form (#2265).**
+  `DapperEventTypeRenameTool.ExecuteAsync` rewrote `wh_event_store.event_type` with the bare CLR name (`Ns.Type`) and
+  matched only rows stored under that bare name, while the append path stores `Ns.Type, Assembly`. Events the append
+  path stored were not renamed, and renamed events no longer matched their type in history walks, the reaper's rewind
+  grace or perspective event matching. The tool now matches the old name under any assembly and writes the target
+  type's stored form, the same name the append path writes. The tool remains obsolete; prefer the pinned-type ledger.
+- **A superseding type's history stored under a former name is superseded (#2269).** The superseding history reconcile
+  walked only a type's current name, so events stored under a former name (a rename, or a move from another assembly,
+  recorded in the pinned-type ledger) were never reconciled, and a newer event of the same key under the current name
+  did not supersede them. An event under a type's current name now supersedes one with the same key stored under any
+  of the type's former names: the reconcile walks each former name in its stored form, reads the key with the type's
+  own accessor, and judges supersession across all of the type's names; a superseding group spans former names the same
+  way. Separately, an ephemeral type's release list now resolves a released type's bare former name to its stored
+  form with the type's assembly; it matched no stored event before.
+- **Event types that share a stream and are declared ephemeral together now have their history converted (#2278).**
+  The ephemeral history walk converted one type at a time and refused any stream holding a durable event of another
+  type, so when several types sharing streams were all declared ephemeral after their history was written durable,
+  each type's walk was refused by the others' unconverted events and none was ever converted. The walk now converts
+  stream by stream: when every durable event in a stream is of a declared-ephemeral type, or released or allowed for
+  one, every declared type's events in it are converted in one statement, with the same digest and integrity
+  accounting, so a stream becomes ephemeral as a unit. A stream holding a type meant to stay durable is refused whole,
+  and the blocker report names only that type. The other declared types and their release and allow lists are part of
+  each walk's variant, so declaring another type walks the types again. `EphemeralHistoryReclassifyResult` gains
+  `EventsReclassifiedWithStream`. New migration 397.
+- **The ephemeral history of a read-model row its perspective purged is reclaimed (#2294).** A perspective that purges
+  its row (`ApplyResult.Purge()`) can never take the snapshot the ephemeral body reaper waited for, so every body of
+  the stream was kept indefinitely with the row's cursor and snapshots, and the maintenance cycle tried, and logged as
+  taken, the same snapshot on every cycle. The perspective's purge marker now covers its stream's bodies at or before the
+  purge event (bodies after it stay gated, since a crash can leave the marker on a resurrected row; a marker with no
+  purge event, and an operator purge of every perspective, `'*'`, cover nothing), the reap-driven snapshot pass no longer selects the pair, and a new
+  maintenance step, `remove_purged_row_companions`, removes the purged row's cursor and every snapshot once no work is
+  pending for it and its table holds no row for the stream (at most 5,000 streams per cycle). An eviction still keeps
+  its latest snapshot. `IPerspectiveRunner.TryBootstrapSnapshotAsync` returns a `SnapshotBootstrapOutcome` (`Written`,
+  `RowMissing`, `Deferred`, `SnapshotsOff`, `NotReported`); generated runners implement it and log a missing row, and
+  the cycle logs a snapshot only when one was written. Both Postgres drivers. New migration 403.
+- **The table-rewrite bloat estimate measures the TOAST relation, and the online rewrite says when it has nothing to
+  do (#2319).** The estimate read the heap alone, so a table whose large values left mostly dead TOAST chunks was never
+  offered, and a wide column present on few rows made a bloated heap read dense. It is now the worse of the heap
+  ratio (each column's width weighed by how often it is present) and the TOAST ratio (bytes over live chunks times a
+  quarter page), from catalog reads only; `pgstattuple_approx` measures the TOAST relation too. The online byte budget
+  counts the TOAST relation (`pg_table_size`). A cycle with nothing to rewrite logs once at Information how many tables
+  are queued, the threshold, and how many the post-rewrite floor held back.
+- **A rewritten table is not rewritten again until it regrows (#2319).** A table whose last rewrite left it at a ratio
+  F is offered only once it reads F times `Whizbang:Workers:Maintenance:TableRewriteRegrowthFactor` (default 1.5), or
+  the threshold if that is higher, so a table whose healthy estimate sits above the threshold is no longer rewritten
+  every cycle. A lowered fillfactor is still owed its one rewrite.
+- **The rewrite threshold, row floor and regrowth factor are configuration (#2319).**
+  `Whizbang:Workers:Maintenance:TableRewriteBloatThreshold`, `TableRewriteMinRows` and `TableRewriteRegrowthFactor`
+  are validated and written to `wh_settings` on every start, so a value edited there by hand is put back. Unset, the
+  threshold is 2.0 when the start rewrites with an online tool and 3.0 for `VACUUM FULL` or detection only; the row
+  floor is 1,000 and the factor 1.5. **Upgrade:** a threshold or row floor set by hand in `wh_settings` is overwritten
+  on the next start; set it in configuration instead.
+- **`TableRewriteStrategy.Auto` rewrites online where the server allows it (#2319).** Each maintenance cycle it uses
+  pg_squeeze when it is Ready, else pg_repack run in process when the extension and its client are Ready, within
+  `OnlineRewriteMaxBytesPerCycle`; with neither it keeps `VACUUM FULL` at boot (when `AllowTableRewrite` permits) or
+  detection only. It never starts a blue-green rebuild and never stops start. Under Auto the pg_repack client is
+  probed (`pg_repack --version`) when its mode is `InProcess`, the default.
+- **Table rewrites are metered (#2319).** New instruments on the `Whizbang.TableStatistics` meter:
+  `whizbang.table.rewrites`, `whizbang.table.rewrite.reclaimed_bytes`, `whizbang.table.rewrite.duration`,
+  `whizbang.table.rewrite.queue`, `whizbang.table.rewrite.floor` and `whizbang.table.reclaimable_bytes`;
+  `whizbang.table.bloat_ratio` reports the TOAST relation as its own series under a new `part` tag.
+- **Ledger sweeps are bounded per cycle, and a drained default partition gives its space back (#2321).** Each row
+  sweep of `reap_unbounded_ledgers` (log, schedule runs, collective apply progress, staged metadata, traces, routes)
+  now deletes at most `ledger_sweep_max_batches` batches per call (a `wh_settings` key, default 20) and reports
+  `capped` in its status when rows past its window remain, so a default partition holding weeks of traces drains over
+  several cycles instead of in one. Once a sweep has drained a default partition (the statistics say it is empty), the
+  partition is truncated under a lock taken without waiting, returning its heap and index space, which deleting rows
+  never did.
+- **The ephemeral pointer prune drains its backlog instead of waiting a whole interval (#2327).** With
+  `ephemeral_deep_maintenance_enabled` on, the prune ran once per `ephemeral_pointer_prune_interval_days` as one
+  unbounded delete, so pointers that came to qualify after a run (their body reaped later, or their type reclassified
+  later) waited a full interval, and a large backlog was one transaction that a timeout rolled back whole. A call now
+  prunes at most `ephemeral_pointer_prune_batch_size` pointers (a `wh_settings` key, default 50,000), oldest first; a
+  full batch leaves the next cycle due, so the backlog drains a batch a cycle and the interval resumes once it is
+  empty. What the prune would remove is reported as `whizbang.maintenance.pending_rows{task=prune_ancient_ephemeral_pointers}`.
+- **The stream lifecycle ledger lets go of ephemeral streams (#2328).** A stream written while its type was Sourced kept
+  its `wh_stream_lifecycle` row after the history walk reclassified it ephemeral, and its `approx_bytes` kept counting
+  bodies the reaper deleted, which skewed size rankings and byte-cap policies. The walk now removes the row of a stream
+  it makes ephemeral whole and recounts a stream that still holds Sourced events, and a one-time release, driven by
+  the lifecycle backfill step once the backfill is done, settles the rows the ledger already holds in bounded batches
+  (`stream_lifecycle_ephemeral_release_version` records it as done).
+- **The stream digest id-lane backfill no longer stalls on a batch it cannot finish in time (#2337).** Healing a batch
+  of stream digests compared the stored and recomputed buckets with joins the planner ran as nested loops, which were
+  quadratic for a few thousand buckets because the planner believes the recomputed set is a single row. A batch could
+  then run past the 30 second command timeout on every attempt, and because a failed batch is repeated, the backfill
+  never moved past it. The heal now compares the two sets with one full join (about 25 times faster on such a batch),
+  and a stalled backfill resumes on its next maintenance cycle after the upgrade. Nothing to configure.
+- **Storage cleanup and stream integrity never work against each other (#2342).** A tested matrix runs every cleanup
+  path (ephemeral reaps, superseded reaps, reclassification, truncate, close the books, archive, restore, purge,
+  at-most-once and audit records) on one service or both against every integrity mechanism (windowed, table and
+  stream manifests, the full sweep, the stored-digest heal, epoch sealing and operator redelivery), over two real
+  stores. Each combination converges with no resend and no surplus alarm, and a genuine loss beside it is still
+  found and repaired.
+- **The operational records nothing removed now roll off once nothing relies on them (#2359).** The retention sweep
+  (`Whizbang:OperationalRetention`, Reports category, 14 days by default) now also removes advisory findings no scan
+  touched, dead letter summary clusters with no dead letter left, finished DLQ probe campaigns whose cohort is gone,
+  and stacks no dead letter or daily history row names (with their links, then unused frames). Request/response records
+  past their own expiry are removed every maintenance cycle on the Dapper driver, whose store's expiry nothing called.
+- **The signal cursor of an instance that is gone is removed (#2360).** Every pod start added a row to
+  `wh_signal_cursors` and nothing removed one, and a dead cursor also held the signal log's retention back. The
+  retention sweep now removes a cursor whose instance is no longer registered and that has not moved for the
+  Deliveries retention (14 days by default); a live pod's cursor is never removed. The operator purge audit is
+  classified as kept (evidence of deliberate destruction), and finished subscription backfills stay, since each is the
+  marker that its backfill is done.
+
+#### Audit
+- **A repair bundle that carried a stream only in part no longer marks the stream as one repair cannot change
+  (#2149).** Every bundle of a redelivery answer claimed the whole requested window, but an answer is split across
+  bundles by the origin's count and byte bounds, across the pages of its selection, and at its `MaxEventsPerRequest`
+  cap. A bundle that carried only part of a stream, all of it already stored, marked the stream's bucket unhealable
+  although its missing events were in another bundle or beyond the cap, and repair stopped on a real gap. Each bundle
+  now names the streams it carries only in part (`RedeliveryComposite.AnsweredPartialStreamIds`,
+  `RedeliveryAnswerWindow.PartialStreamIds`); their buckets are recorded as answered and stay repairable, and a bundle
+  with such a stream of a type does not mark that type's whole-type request either. A stream carried whole is judged by
+  the window as before. Migration 410 adds the partial streams to `wh_integrity_record_bundle_answer`. A bundle from an
+  origin on an older version names none and is judged as before.
+- **Stream-integrity ledger rows recorded under an origin that does not own the event type are forgotten
+  (#2182).** Before comparisons ignored a non-owner's digests, a service that held events it had only received
+  reported them as its own, and consumers recorded deficit rows under that service for another service's types and
+  for their own. Those rows were never compared again, because an origin's answer leaves out every type it does not
+  own, so they could neither heal nor clear; with automatic repair on they were marked unhealable, and they held
+  `whizbang.stream_integrity.unhealed_buckets` up although the consumer held exactly the events the owner reports.
+  The integrity audit now forgets them each cycle by the same ownership rule the comparison uses, and that rule now
+  also treats a type in one of the service's own owned domains as no other origin's to report. Rows already on a
+  ledger go on the first audit cycle after upgrade; nothing to configure.
+- **A stream-integrity deficit recorded for a whole event type clears once the type compares equal (#2207).** The
+  ledger row a bulk backfill or a checkpoint gap records for a (tenant, type) was deleted only by a later checkpoint
+  window heal for the same type, so a type with no new traffic kept a stale deficit, written under an older comparison
+  rule, in `whizbang.stream_integrity.unhealed_buckets` for good. A type-level comparison that proves the type complete
+  now heals that row and records the heal on `whizbang.stream_integrity.bucket_heal_seconds`. The proof is a
+  full-history match (the daily sweep), or a match over a window that starts at or below the seal and reaches the
+  origin's settled head; a window above the seal, a window the origin capped, or an undecided type heals nothing.
+- **Stream-integrity ledger rows compared over the whole history are re-checked, and the repair drain stops asking for
+  events the consumer already holds (#2208).** A per-stream row with no window was never claimed by the idle ledger
+  re-check, so a row an older release wrote while the consumer held nothing of the stream stayed forever, and the
+  paced repair drain kept requesting redelivery of events already held. The idle re-check now claims such rows too and
+  asks the origin for a whole-history answer (unwindowed, from its recompute), which clears every bucket the consumer
+  holds completely. Rows of this kind already in the ledger when the service upgrades wait, counted as answered, until
+  a comparison sights them again before the drain repairs them; rows reported after the upgrade are repaired as
+  before. No configuration changes.
+- **Stream-integrity repair reaches every stream of a window wider than the audit's page budget (#2211).** The
+  stream-level walk of a window that disagrees pages through the origin's streams in stream-id order and stops after
+  `Whizbang:StreamIntegrity:MaxManifestPagesPerAudit` follow-ups. It used to drop its place there, so every audit
+  compared and repaired the same leading streams and a type with more streams than the budget covers (a collective
+  event type, where every event is its own stream) never had the rest repaired. The walk now keeps where it stopped,
+  per origin and window, and the next audit's drill-down resumes there; once a walk reaches the window's last stream
+  the next one starts from the beginning again. A drill-down also starts a fresh page budget for its window.
+- **A whole-type repair request whose answer brings nothing new is not asked again (#2211).** A bulk backfill or a
+  checkpoint gap request for a whole (tenant, type) was recorded as answered but never marked, so it was granted again
+  on the repair ladder and the origin re-shipped events this service already held, every time. When a committed
+  answer covering the request's window stored nothing, the type's ledger row is now marked as one repair cannot
+  change, as a per-stream bucket is, and reported once; a change on this service's side of the type lifts the mark.
+  Streams of the type that are genuinely missing are still repaired one by one through the drill-down.
+- **A type proven complete forgets the per-stream ledger rows of it too (#2224).** A type-level comparison that proves
+  a (tenant, type) complete over its whole history (the same proof that heals the type's own row since #2207) now also
+  deletes every per-stream integrity ledger row of that origin, tenant and type, which equal roll-ups prove are
+  phantoms, and records each on `whizbang.stream_integrity.bucket_heal_seconds`. Such rows kept
+  `whizbang.stream_integrity.unhealed_buckets` up and kept the paced drain asking origins for events already held. A
+  type with a stream genuinely missing has a roll-up that disagrees, so none of its rows is removed.
+- **A stream-level audit walk keeps asking for every type it started with (#2225).** Each follow-up page of a
+  manifest walk used to ask only for the types that appeared on the page before it, so a type with no streams on one
+  page dropped out of the rest of the walk, even when later pages held its streams. A stream-level manifest answer now
+  echoes the types its request named (`IntegrityManifest.RequestedEventTypes`), and each follow-up asks for all of
+  them; a page whose every digest was left out of the comparison still follows its cursor. An answer from an origin
+  on an older version carries no echo, and its follow-ups ask for the page's own types as before.
+- **A ledger bucket whose repair was answered closes on the next idle re-check pass, not hours later (#2259).** Two
+  things held a healed bucket open. The re-check walked rows oldest report first, and only once their report and last
+  re-check were older than its threshold, so an answered row waited behind every unrelated stale row; it now claims
+  rows answered and not re-checked since their answer first, oldest answer first and whatever their report's age, then
+  fills the rest of its bound as before (migration 398 redefines `wh_integrity_claim_ledger_recheck` and adds a
+  partial index over exactly those rows; reversible). And the comparison folded only events stored before the settle
+  window (`AuditSettleWindowMinutes`, an hour by default) by their local arrival time, which left out exactly the
+  events the answer had just stored; a re-check now also folds its divergent buckets with the window's events counted
+  and closes each one that then equals its origin's digest. The audit's own comparisons keep the settle window.
+- **A history rewrite lowers a consumer's integrity seal only as far as it reached, and routine maintenance no longer
+  moves the origin generation (#2262).** A consumer's verified watermark for an origin
+  (`whizbang.stream_integrity.sealed_through`) fell to 0 on every change of the origin's generation, and an origin
+  moved its generation after every maintenance batch that rewrote any lane, lanes of received events included, and on
+  every archive and restore. Busy origins reached tens of thousands of generations a day, and consumers re-verified the
+  same history over and over. The generation now moves only after a rewrite of the origin's own lane, and records the
+  lowest position the rewrite touched. Each integrity ask names the generation the consumer recorded, the answer
+  carries how far history was rewritten since, and the consumer keeps a seal the rewrite did not reach and lowers one
+  it did to the rewrite point. An origin that cannot say (an older version, or a consumer further behind than the
+  origin's rewrite log, `integrity_origin_rewrite_log_rows`, default 10,000) gets the old reset. Migration 402.
+- **A whole-type repair answer spread over several bundles is judged as a whole (#2311).** A whole-type redelivery
+  answer (a bulk backfill or a checkpoint gap) is split into bundles by the origin's count and byte bounds and across
+  the pages of its selection, and every bundle echoes the whole requested window. The first bundle that changed nothing
+  marked the type lane as one repair cannot change, even when every stream in it was carried whole and later bundles
+  of the same answer still had events to store, so the type stopped being repaired on a real gap. Each bundle now says
+  whether more of its answer follows (`RedeliveryComposite.AnswerContinues`, `RedeliveryAnswerWindow.Continues`): the
+  origin holds back each selection's last bundle until it knows whether the answer goes on
+  (`RedeliveryPump.BeginAnswer`, `RedeliveryAnswerPublication`), so only the answer's very last bundle says it ends. A
+  bundle that continues the answer and changed nothing leaves the type lane waiting for the rest; a bundle that brought
+  something answers the type lane as before, so no later bundle of that answer can mark it; and the last bundle marks
+  it only when the answer as a whole brought nothing. Migration 431 adds `p_answer_continues` to
+  `wh_integrity_record_bundle_answer`. A bundle from an origin on an older version says nothing follows and is judged
+  as before.
+- **An answer to a request for named streams no longer marks a waiting whole-type lane (#2341).** Marking a type lane
+  checked only that the lane was waiting for an answer, so when a whole-type request for a type was still waiting and an
+  answer arrived for a separate request that named some streams of the same type, that answer, if it changed nothing,
+  marked the type lane as one repair cannot change, and stopped the type being repaired on a gap in its other streams.
+  Each bundle now says whether its answer is to a whole-type request (`RedeliveryComposite.AnswersWholeType`,
+  `RedeliveryAnswerPart.WholeType`), and a bundle of an answer to named streams or named events neither answers nor
+  marks a type lane (migration 530). Per-stream buckets are judged as before.
+- **A redelivered copy of a superseding event older than the one held is no longer stored (#2350).** Integrity repair
+  could restore an older copy at the end of a consumer's stream, where it read as the newest and queued the real newest
+  for removal. A redelivered copy keeps its superseding key and its place in the origin's order. A copy older than
+  one already held is settled as satisfied without being stored or applied, whichever path brings it (a live receive
+  out of order, an integrity or an operator redelivery, or a repair of a copy the store lost), and the reconciles count
+  it present. New metric:
+  `whizbang.stream_integrity.redelivered_copies_superseded`. The counts come from two new functions,
+  `wh_reconcile_redelivered_bundle_counting_satisfied` and `wh_reconcile_redelivered_bundles_counting_satisfied`; the
+  two existing reconciles keep their result, so a service on the previous release keeps working during a rolling
+  deploy, and every earlier migration can still be re-run over the new schema.
+- **The type-level integrity answer for events held without an origin sequence costs new work, not history
+  (#2351).** The by-type fold of those events re-read every one of them on each answer. Row triggers now keep an
+  insert-only change log that each answer folds into per-type totals, so an answer reads the rows that changed since
+  the last one. A one-time rebuild seeds the totals on upgrade.
+- **Every integrity digest path counts events by one shared rule (#2352).** Five digest paths had their own idea of which
+  events count, so two of them could disagree about the same stream. They now share one eligibility rule, a guard test
+  fails on any path that does not use it, and digests left behind for streams that hold no countable event are removed
+  once on upgrade.
+
+#### Startup
+- **A database one schema pass has built reads as current on the next start (#2194).** The stored-form conversions
+  run before the pass creates the perspective tables, so on a new database they recorded nothing about them, and the
+  currency check counted every unrecorded conversion as pending: the second start ran a pass it did not need, and the
+  database read as current only from its third start. A conversion with no record on a table that holds no row now has
+  nothing to convert, so the next start's Assess reads Current and takes no schema lock. Rows written into such a table
+  later still make the schema not current, and the next start converts them. Nothing to change.
+- **Reclassifying an ephemeral type's history no longer runs as one statement at startup (#2206).** With
+  `Whizbang:Ephemeral:ReconcileHistoricalOnStartup` on, the startup reconciler used to stamp every stored event of each
+  `[Ephemeral]` event type in one transaction, which startup waited on and which could run into the command timeout and
+  leave everything as it was. The reclassification now runs in the maintenance cycle (the
+  `ephemeral-history-reclassify` step, migration 381) on the same per-type history walker as the superseding
+  reconcile: the type's own events in commit order, about 5,000 per short transaction, resumable after a crash. The
+  mixed-stream guard and the digest subtraction are unchanged, and the setting keeps its meaning as the opt-in.
+  `TypeDefinitionReconcileSummary.TypesReclassified` is now always 0, since startup reclassifies nothing.
+- **A host gets its own service's generated registrations, not those of every service loaded in the process
+  (#2243).** A process that builds a host per service (an integration-test process, a modular monolith) gave every
+  host every loaded service's perspective runners, event types, receptors, raw receptors, lenses, pinned identities,
+  message catalog and EF Core models, so a host failed on another service's perspective runners, and a test helper
+  that removed them failed with "No service for type '...PerspectiveRunnerRegistry'" since #2190. Each generated
+  assembly now records at build time whether it is a service root (an executable, or an assembly that declares a
+  `[WhizbangDbContext]`) and which generated assemblies it was compiled against, and a host excludes another
+  service's root and what only that root is built on. `WithEFCore<TDbContext>()` names the host's service, so a host
+  that registers a DbContext needs nothing more; a process that holds one service excludes nothing, so a service split
+  over several assemblies keeps all of them. A host with no DbContext in a multi-service process names its service
+  with `ForServiceOf<TMarker>()` (or `AddWhizbangServiceAnchor<TMarker>()`); one that names none keeps every assembly,
+  as before. The scope is logged at Debug at startup, naming the included and excluded assemblies. A contribution whose
+  implementation was removed from the collection now contributes nothing instead of failing the host.
+  **Upgrade:** delete any test helper that removes other services' generated registrations; it is no longer needed.
+  A second `AddWhizbang()` call on one collection no longer registers every generated callback a second time.
+- **A service whose code loads after a host is anchored is no longer counted as the host's own (#2283).** A host
+  computed its service scope once, from the service assemblies already loaded when it was anchored, so an assembly
+  that loaded later belonged to neither the included nor the excluded set, and its generated receptors and consumed
+  types counted as the host's. In a process that loads several services' code (a test host, a gateway that references
+  other services), the host could run another service's receptor in place of routing the message. A late assembly is
+  now classified when its facts register, by the same rule as at anchor time: another service's root, and what only it
+  is built on, are excluded. Hosts that load one service's code are unaffected.
+
+#### Messaging & delivery
+- **The shared LISTEN connection's self-test probe can no longer wait forever for its own notification (#2138).** The
+  probe bounded its wait by canceling it after `SelfTestTimeout`, and Npgsql can discard a cancel that lands as the
+  wait enters its read (the race #2155 fixed in the dispatch loop). A probe whose notification had not arrived then sat
+  on the idle socket for good: the connection never retried, the instance never declared LISTEN/NOTIFY available, and
+  it stayed on polling with nothing logged. Each wait now carries what is left of `SelfTestTimeout` as a timeout
+  Npgsql arms on the read, so a probe that misses its notification fails within the window and the connection retries
+  as configured.
+- **A late subscription or a keepalive on the shared LISTEN connection is no longer lost to a missed cancellation
+  (#2155).** The dispatch loop woke its parked wait for a new subscription and for the keepalive by canceling the wait's
+  token, and Npgsql can discard a cancel that lands as the wait enters its read; the wait then sat on the idle socket
+  until the server sent something. A subscription made after the connection came up could stay unlistened, so every
+  notification on its channel was lost, and a dead connection went unnoticed. The wait now carries
+  `ListenKeepaliveInterval` (default 30 s) as its timeout, which Npgsql arms afresh on every read and cannot lose: a
+  wait that times out runs the keepalive (`SELECT 1`, and the deferred alive-lock claim), and the next pass syncs any
+  subscription whose wake was lost. A subscription still wakes the wait at once in the usual case; when that wake is
+  lost, it is listened on within one keepalive interval. `Whizbang:Database:ListenKeepaliveInterval` of zero or less
+  is now refused when the notification options are read, by name, since Npgsql would read it as no timeout.
+- **Absorbing stream-integrity repair answers no longer costs the database far more than the answers themselves (#2179).**
+  Recording a redelivery bundle's answer created a temporary working table again on almost every call, because a
+  pooled connection is reset each time it is handed out: system catalog writes, a cache invalidation for every other
+  session, fresh plans, and new statement-statistics entries per bundle. It now gathers the bundle in arrays and writes
+  nothing to the catalog. A handler commit that stores inbox children (a redelivery bundle's, among others) no longer
+  rings their owners a second time after the store already rang the streams that needed it, so duplicates and busy
+  streams wake no one. A doorbell reads instance liveness once per call instead of once per owner. Delivery,
+  deduplication and ordering are unchanged; nothing to configure.
+- **Reconciling redelivered history no longer creates a temporary table on almost every call (#2181).** The three
+  functions that reconcile redelivery bundles with the event store gathered their rows in a temporary table. A pooled
+  connection is reset each time the pool hands it out, which drops every temporary table, so the table was created
+  again per bundle or per batch: system catalog rows written and deleted, a cache invalidation for every other session
+  of the database, fresh plans and new statement-statistics entries. They now hold their rows in arrays, with results
+  and writes unchanged (checked side by side against the earlier definitions). Migration 420 redefines
+  `wh_reconcile_redelivered_bundles`, `wh_reconcile_redelivered_bundle_by_first_hop` and `wh_adopt_redelivered_origin`.
+- **A host with receptors in several assemblies now fires every assembly's lifecycle receptors (#2197).** Each
+  assembly's generated dispatcher registration used to register its receptor registry as the `IReceptorRegistry`, so
+  the last one registered displaced the others, and no lifecycle receptor (`[FireAt]`) declared in any other assembly
+  ever fired at a worker stage. Each assembly now contributes its registry through
+  `AddReceptorRegistryContribution<T>()`, and the container serves one `CompositeReceptorRegistry` over every
+  contribution. A receptor two assemblies declare under the same class name runs once, from the latest registration,
+  and startup reports the collision (#2201). Receptors registered at run time all go to the latest contribution, so a
+  receptor registered once is found once and unregistered from where it was registered.
+- **A paced backfill no longer drops a window's answer that arrives before the request is recorded (#2222).** The
+  worker published a window request and only then recorded it as requested, so an owner that answered first had its
+  answer dropped as late. The window then waited the full answer timeout and cost an attempt, and on the last window
+  the backfill could end with every event delivered but never marked Complete. The window is now recorded before it is
+  sent, and a send that fails withdraws it (`IWorkCoordinator.WithdrawSubscriptionBackfillWindowRequestAsync`), so a
+  failed send still costs no attempt.
+- **The paced repair drain no longer overwrites a repair answer that arrives before the request is recorded (#2223).**
+  The drain sent each repair request and only then recorded its buckets as awaiting the answer, so an origin that
+  answered first had its answer overwritten by the late record: the bucket lost its answered state and counted against
+  `Whizbang:StreamIntegrity:MaxOutstandingRepairAnswers` until the answer timeout. Each request is now recorded before it
+  is sent, and a send that fails withdraws the record and returns the attempt the claim spent
+  (`IWorkCoordinator.IntegrityWithdrawAnswerPendingAsync`, migration 395), so a broker failure no longer uses up a
+  bucket's repair budget. The bucket is still offered again only after its backoff.
+- **A composite's constituents carry one event id everywhere (#2235).** When a service published a composite in its
+  own domain, the copy of each constituent it stored locally got a different id from the one every receiver stores
+  (`CompositeChildIdentity.Derive`). Stream digests XOR event ids, so every stream written that way read as divergent
+  with nothing missing, and repair could never settle it. The publisher now stores each constituent under the id a
+  receiver stores: the carried id for an `IIdentityPreservingComposite`, otherwise the derived child id. A composite
+  whose carried id count does not match its child count is refused at publish. Rows already stored under two ids are
+  not changed.
+- **A host whose collective apply handlers live in several assemblies applies every assembly's collective events
+  (#2238).** The collective dispatcher was given one assembly's handler table, passed by hand as
+  `CollectiveApplyRegistry.Entries`, so a collective event handled only in another assembly matched no handler and
+  was never applied. Each assembly's generated table is now registered as that assembly's contribution to one
+  `ICollectiveApplyRegistry`, through the same module-initializer path as the other generated registrations, so
+  `AddWhizbang()` registers it for the host's own service only (#2243). The EF Core and Dapper collective
+  registrations read every contribution from the container. Two assemblies that list the same handler are reported
+  at startup with the other registration collisions.
+  **Upgrade:** call `AddCollectiveEventsEFCore<TDbContext>()` or `AddCollectiveEventsDapper()` with no argument.
+  The overloads that take `CollectiveApplyRegistry.Entries` are obsolete; they still work, and a table passed to them
+  joins the registered handlers instead of replacing them, but under `TreatWarningsAsErrors` the obsolete call stops
+  the build until the argument is dropped. Any `#pragma warning disable CS0436` added to pick one assembly's
+  `CollectiveApplyRegistry` can go with it.
+- **A composite's child gets one id on every path, whichever build of the contract assembly each service runs
+  (#2266).** The raw expansion derived a child's id from the type name on the wire (the publisher's versioned
+  assembly-qualified name), while the typed expansion and the publisher's local fan-out derived it from the local CLR
+  type. A receiver on another version of the contract assembly derived a third id, so its stream digests disagreed
+  with nothing missing and repair could not settle them. Every path now derives through
+  `CompositeChildIdentity.ForChild`, which hashes the type name without its version decoration
+  (`Namespace.Type, Assembly`). **Upgrade:** a child named on the wire with a version (the common case) derives a new
+  id once this release runs. A composite expanded before the upgrade and expanded again after it stores its children
+  a second time under the new ids, and until every service runs this release a publisher and a receiver on opposite
+  sides of it derive different ids. Roll the release out to publishers and receivers together where composites are
+  in flight.
+- **A subscription whose wake-up is lost on the shared LISTEN connection is listened on within a second, not a
+  keepalive interval (#2291).** When Npgsql lost the cancel that wakes the connection's wait for a new subscription
+  (#2155), the wait sat until its timeout, which was `ListenKeepaliveInterval` (default 30 s), and every channel
+  subscribed behind it waited as long; a notification sent on those channels in that window was not delivered. The
+  wait now also times out at a 1-second resync recheck, which costs no round trip, and the pass after it listens on
+  every subscription still waiting. The keepalive `SELECT 1` keeps its own cadence: it runs once
+  `ListenKeepaliveInterval` has passed with nothing from the server, not on every recheck. Nothing to configure.
+- **A receptor declared `[SuppressReceptorRegistration]` no longer throws at its stages when nothing registers it in
+  dependency injection (#2309).** The attribute means "I own this receptor's lifetime", not "ignore this type", so the
+  receptor is still routed, but its compiled route resolved it with `GetRequiredService` and threw
+  `No service for type 'IReceptor<T>'` on every message of the type at its stages, in every host that loaded the
+  assembly, unless its owner had also registered it by hand. Its route now resolves through the new
+  `SuppressedReceptorRoute`: the instance registered under its class name as a key, as its class, or as the message's
+  receptor interface when that instance is its class; when there is none, the receptor is skipped and the skip is
+  logged once per receptor type at Debug under `Whizbang.Core.Messaging.SuppressedReceptorRoute`. A receptor registered
+  only at runtime through `IReceptorRegistry` runs from that registration. A receptor without the attribute is
+  registered by discovery, and its route still throws when the registration is missing.
+- **One receptor that throws at a Distribute stage no longer skips that stage for the rest of the flush (#2310).** A
+  flush holds messages from many streams since the default outbox batch strategy began coalescing them (#2220), and one
+  throwing receptor stopped `PreDistributeInline`, `DistributeDetached` or `PostDistributeInline` for every message
+  after it, logged as one error that named none of them. Every receptor of every message now runs, and each failure is
+  logged at Error naming the receptor, the message type and the message id (`Lifecycle receptor {ReceptorId} failed at
+  {Stage} for {MessageType} message {MessageId}`), or naming the message when the failure came before any receptor ran.
+  What a failure does to its own message is unchanged: the outbox batch flush still stores and publishes it; a strategy
+  flush's `PreDistributeInline` still stops at the first failure and stores nothing; its `PostDistributeInline` runs
+  every message and then throws the first failure to the flush's caller, as before. `IReceptorInvoker` gains
+  `InvokeEveryReceptorAsync` (by default, `InvokeAsync`), which reports each failing receptor to a new
+  `IReceptorFailureSink`; every other stage keeps stopping at the first failure.
+- **A paused Service Bus subscription stops receiving (#2406).** Pausing a subscription (the run-control path does it
+  when an instance stands down for a newer version during a rolling upgrade, and on a pause or a stop) left its
+  processor running, and every delivery it took was abandoned. Each abandon counted a delivery, and a session whose
+  messages keep arriving (all of an origin's integrity checkpoints share one) stayed on the standing-down instance
+  while every message in it burned to the dead-letter queue with `MaxDeliveryCountExceeded`. Pausing now stops the
+  processor, so nothing is taken or counted and another instance takes the session at once; resuming starts it
+  again, and a namespace-throttle pause that ends while the subscription is paused leaves it stopped. The
+  receive-liveness watchdog no longer treats a paused subscription's silence as a stall: it neither counts it nor
+  re-subscribes it, and watches it again from a fresh silence window once it is resumed. RabbitMQ had the same defect
+  (a paused consumer stayed on the queue and nacked every delivery with requeue, raising its delivery count): pausing
+  now cancels the consumer and resuming starts one again.
+
+#### Work coordination, perspectives & sagas
+- **An event held back behind its stream's earlier events is claimed with them, and waiting is not charged an attempt
+  (#2120).** A received event waits to be stored while an earlier pending event of its stream is not held by the same
+  instance. The claim reads each priority band through a window of its oldest rows, so on a busy service an
+  interactive event whose earlier events were background priority was claimed on every lease while its predecessors
+  were never claimed, and each claim charged it an attempt until it was dead-lettered. The claim now takes a picked
+  stream's earlier pending events with it, whatever their priority, ahead of the picked rows and within the same batch
+  bound, and a row the claim acquired but the store pass held back keeps its attempt count. Migration 411 redefines
+  `claim_orphaned_inbox` and `_emit_event_store_chain_for_inbox`.
+- **A collective event gets perspective work only on a service whose handlers apply it (#2145).** The event store
+  created a `__collective__` perspective row for every collective event a service stored, though a service stores the
+  collective events of every namespace it subscribes to; each row for a type no `[CollectiveApplyFor]` handler applies
+  was claimed and then completed without applying (#2142). The consumer registry now answers which collective event
+  types this service's handlers apply, counting every assembly, and the startup associations step writes that set with
+  a marker saying the service gates; the store then skips the other types. Until every service registered in the
+  schema has written its marker (an older instance in a rolling deploy, or a service that cannot tell what it handles),
+  every row is created as before. The step re-runs when the handler set changes. A row already created for a type no
+  handler applies is still completed as in #2142. Nothing to change; a perspective rebuild applies past events of a
+  type once a handler for it is added.
+- **A host with several perspective assemblies now knows every assembly's event types (#2146).** Each assembly's
+  generated registration used to register its event-type provider as the provider, so the last one registered
+  displaced the others, and the perspective worker, the inbox pre-filter and the polymorphic event reader were blind
+  to every event (collective ones included) only the other assemblies knew. Each assembly now contributes its types
+  through `AddEventTypeProviderContribution<T>()`, and the container serves their union. A provider a host registers
+  itself before the perspective registrations is still the one served.
+- **The claim runs only the statements that can find work (#2187, migration 367).** `claim_work` and everything it calls run
+  under `plan_cache_mode = force_custom_plan`, and a pooled connection reset between calls drops every cached plan, so
+  each statement a claim executes is planned on every call and planning was about half of the claim. The inbox re-offer
+  walk ran once per lane (eight per claim) and the perspective walk once per bucket though most lanes held nothing; one
+  statement now asks every lane whether the instance holds a pending row there, and a walk runs only for a lane that
+  does. The inbox store pass stops after its lock pass when that finds no candidate (it still stamps rows whose event is
+  already stored), and its collective routing insert runs only when it stored a collective event. What a claim offers,
+  stores, stamps and refuses is unchanged. On a copy of a busy service's inbox, a claim taking three new events goes
+  from 9.8 ms to 7.9 ms (planning 5.8 ms to 3.9 ms), and a claim whose instance holds a row in every lane is unchanged.
+- **A host with several perspective assemblies now finds every assembly's perspective runners (#2191).** Each
+  assembly's generated registration used to register its runner registry as the `IPerspectiveRunnerRegistry`, so the
+  last one registered displaced the others, and the perspective worker, the rebuilder, the maintenance worker and the
+  stream disposition step found no runner for any perspective another assembly declared. Each assembly now
+  contributes its registry through `AddPerspectiveRunnerRegistryContribution<T>()`, which also contributes its event
+  types (#2146), and the container serves one registry over every contribution. When two assemblies declare a
+  perspective with the same CLR type name, the latest contribution registered answers for it, and startup reports the
+  collision (#2201). A registry a host registers itself before the perspective registrations is still the one served.
+- **The Dapper event store now invokes the perspectives of every assembly (#2200).** Each assembly's generated
+  perspective invoker was registered as the `IPerspectiveInvoker`, so the last one registered displaced the others,
+  and an event store that invokes perspectives inline ran only that assembly's perspectives. Each assembly now
+  contributes its invoker through `AddPerspectiveInvokerContribution<T>()`, and each scope gets one
+  `CompositePerspectiveInvoker` that queues every event with, and invokes, every assembly's invoker.
+- **A perspective cursor no longer stays flagged for a rewind after its work is done (#2210, migration 374).** The
+  worker reports a cursor's completion and retires the group's work rows through queues that every consumer loop
+  flushes, so the cursor could reach the database in an earlier flush than its rows. The cursor update then saw the
+  rows pending and kept RewindRequired, and the later flush that retired them carried no cursor, so the flag was never
+  cleared: every later event on the stream took a full rewind instead of an incremental apply, and a blocking startup
+  rewind scan found the cursor on every restart and waited for it. Retiring a pair's last pending row now settles a
+  flagged cursor exactly as a completion in the same flush would, and the migration settles once the cursors an older
+  build left flagged with no pending work. A cursor whose straggler is still pending keeps its flag.
+- **A Blocking startup rewind scan no longer holds lens reads for its full wait on every start (#2214).** The scan
+  waited for flagged cursors to be rewound before the perspective worker's consumer loops had started, and only those
+  loops rewind, so any flagged cursor held every lens read for about 100 polling intervals with nothing rewound. The
+  consumer loops now start at once, and the read-model barrier waits only for the cursors flagged at scan time: it
+  opens as soon as each has been rewound or found no longer flagged, and a cursor flagged later does not extend the
+  wait. If they have not all cleared within 100 polling intervals, reads open with a Warning naming the streams and
+  perspectives still rewinding. The completion log now says how many of the flagged cursors cleared and how long that
+  took. No configuration changes.
+- **A perspective apply lock is released once nothing holds or waits on it (#2227).** The apply coordinator kept one
+  lock for every (stream, perspective) pair the process had ever applied and never removed one, so memory grew with
+  the number of distinct streams a long-lived process had seen: a bulk load of many short streams could hold hundreds
+  of megabytes of idle locks until the pod was killed. Each key's lock is now reference counted by its holder and its
+  waiters and removed with the last of them, so the coordinator's memory follows the applies in flight. Applies to one
+  stream and perspective still run one at a time.
+- **Three in-process trackers no longer grow without limit when their one removal path is not taken (#2228).**
+  - Event-audit records of direct event-store appends are stored under every work coordinator strategy. Only the
+    Immediate strategy drained the deferred outbox channel, so under the default Scoped strategy (and Interval and
+    Batch) the audit record of every audited direct append was never stored and stayed in memory with the event's
+    body. Every strategy now drains the channel at the start of its flush.
+  - Perspective sync entries for events this instance never applies (the perspective runs on another instance, or the
+    event fails or is dead-lettered) are swept after five minutes, and the remaining-perspectives check is a lookup by
+    event id instead of a scan of every tracked entry.
+  - Lifecycle tracking is ended in `finally` by the local dispatch, inbox and outbox paths, so a stage or publish that
+    throws or is canceled no longer leaves the message's envelope and payload in the coordinator.
+  - A new hosted worker, `InProcessTrackerSweepWorker`, runs in every host and sweeps both trackers once a minute. The
+    lifecycle sweep used to run only from the perspective worker's batch loop, so a host that processed no perspective
+    batches never swept. Its `Swept` event reports what each pass ended.
+- **Maintenance runs on an idle service again while stream integrity is on (#2253).** Every peer's integrity
+  checkpoint, and the redelivery requests and answers it sets off, arrive as background-band rows, and the housekeeping
+  idle gate counted each one as work, so its settled cooldown (`Whizbang:Housekeeping:SettledCooldown`) never completed
+  and maintenance ran only as the forced pass at the deferral ceiling (about once an hour). The gate's reading now leaves
+  the framework's steady-state integrity traffic out; application work still resets the cooldown, and the integrity
+  receptors still count those rows as in flight. The deferral and forced-pass log lines now also print the idle-band
+  rows and the work besides integrity traffic. The workaround (`SettledCooldown = 00:00:00`) can be removed.
+- **A rebuild or rewind replays each origin's received events in that origin's commit order, also in a stream that
+  holds events of several origins or local events too (#2257).** A receiver stores events in arrival order, which
+  delivery across topics and partitions, and integrity redelivery, do not keep: an update the origin committed before
+  a delete could replay after it. Replay already followed origin order when every event of a stream came from one
+  origin; a mixed stream fell back to local order. Now the places each origin's events hold in the local order are
+  kept and that origin's events are dealt into them in origin order; local and origin-less events keep their places,
+  and the interleaving of different origins stays the arrival order. The purge backstop is unchanged: once a row is
+  purged, a later event whose Apply does not return `Resurrect` is skipped, logged and counted (#1027).
+- **The idle band is drained on an idle service again while stream integrity is on (#2263).** The housekeeping gate
+  admitted the idle drain only on a reading that counted the framework's steady-state integrity traffic (checkpoints,
+  redelivery requests and their answers) as work, so a service that exchanged only that traffic rarely read settled
+  and its idle-band work waited. The reading that admits the idle drain now leaves that traffic out, as the maintenance
+  dwell does since #2253 (`ServiceBacklog.IsSettledApartFromIntegrity`); application work still holds the drain back,
+  and a backend that does not measure the figure counts every row, as before.
+- **The housekeeping forced-pass ceiling now bounds a wait behind integrity work and survives a restart (#2287,
+  #2288).** A maintenance sweep (or an integrity requester) refused because a higher-ranked activity held the
+  housekeeping slot never advanced `Whizbang:Housekeeping:MaxDeferral`, so a long integrity audit could hold cleanup
+  back without limit. That refusal now spends the refused activity's deferral budget: the rank is unchanged and the
+  higher activity is never interrupted, but once the ceiling has passed, the first ask that finds the slot free runs
+  as `ProceedDeferralLimit` without also waiting out `SettledCooldown`. The ceiling was also measured from a moment
+  held only in process memory, so a service redeployed more often than `MaxDeferral` never reached its forced pass.
+  The first deferral of each budget (maintenance, dead-letter recovery, and each integrity requester) is now held in
+  the service's store, read with the service backlog, recorded by the first deferral, and cleared when a pass of that
+  activity ends, on any instance; both Postgres drivers hold it, and the earlier of the stored and the in-memory
+  moment governs. `ServiceBacklog` gains `HousekeepingDeferrals`, `HousekeepingCoordinator.Decision` gains
+  `DeferralToRecord` and `DeferralToClear`, and `IWorkCoordinator` gains `RecordHousekeepingDeferralAsync` and
+  `ClearHousekeepingDeferralAsync` (no-ops by default). New migration 399.
+- **A Split model's promoted fields are no longer empty when a query projects its document (#2304).** A query ending
+  in `Select(r => r.Data)`, the shape an `IQueryable` composer such as a GraphQL list field returns, materialized only
+  the document, which in `Split` mode no longer holds the promoted fields, so they came back empty or default. The
+  registration generator now emits, for each model with a `Split` field, a projection that reads the promoted columns
+  beside the document and copies them in by the same rules the hydrators follow, and the query interceptor
+  (`UseWhizbangPhysicalFields`) substitutes it when the document projection is the query's last and only paging or an
+  element operator follows it. A filter, sort or other operator written over the model after the projection keeps
+  today's behavior until it is moved beneath the projection (#2302). `Extracted` and `JsonOnly` models are unchanged.
+- **A failed outbox row releases the rest of its run without risking a deadlock against a completion.** When an
+  outbox row failed and was retried, the later rows of its stream that its holder still leased were released by one
+  multi-row update, which locked them in whatever order its plan read them. Under a plan that reads the heap, it could
+  hold a later row while waiting on an earlier one that a concurrent completion of the same rows already held, and one
+  of the two was rolled back as a deadlock. The run is now locked in stream order before it is released, as every other
+  waiting writer of the outbox takes its rows. Migration 412 redefines `process_outbox_failures`.
+- **The claim's re-offer of held inbox work is index-only again (#2345).** The walk over the inbox rows an instance
+  holds was written to read only its index, but a later test on whether a row's event chain had run needed a column the
+  index did not hold, so every entry the walk read, including held rows it skips (leases that ran out while the working
+  set was full), sent it to the table. The framework now builds `idx_inbox_state_held_lanes_covering` (the same key, covering that column) concurrently
+  after the migrations, and drops `idx_inbox_state_held_lanes` once it is valid; until then the walk works as before.
+  `ConcurrentIndexDefinition` gains `Replaces` for an index rebuilt under a new name.
+- **An instance renews the inbox leases it let run out on streams it still owns (#2345).** While an instance's inbox
+  working set was full, leases on rows waiting in memory ran out, and every claim's re-offer walk read each such row and
+  passed over it until acquisition re-leased it, a batch at a time and not at all while the working set stayed full. The
+  claim now renews them, oldest lease first and a claim window at a time, while the instance still owns the stream
+  under acquisition's rule (its own live ledger lease, or its rank's partition with no live peer holding the stream);
+  it never steals. A renewed row is not charged an attempt and records no failure, its stream is leased to the instance
+  in the ledger, and the walk offers it again. When ownership moved (the instance count changed, or a peer holds the
+  stream) the row goes to acquisition as before. The framework builds `idx_inbox_state_lease_order`, keyed on the
+  lease's expiry, concurrently after the migrations and drops `idx_inbox_state_expired` once it is valid, so every read
+  of expired inbox leases reaches only those leases.
+- **A perspective no longer rewinds the same stream from the same trigger forever (#2366).** A rewind asked for again
+  with the same trigger, on a stream with nothing stored since the last completed one, can only reach the same state;
+  it is now settled with the last rewind's completion instead of replaying, counted on
+  `whizbang.perspective.rewind_repeats`, and reported once with a warning naming the perspective and the stream when it
+  repeats `PerspectiveRewindOptions.RepeatWarningThreshold` times (10 by default). Streams already holding older
+  superseding copies above their newest are repaired on upgrade: every completed superseding history walk is
+  restarted, so the walk re-queues those copies under the origin's order and the reaper removes them. No manual step.
+- **A stream whose ids disagree with its versions converges after one rewind, and a copy queued again is not rewound
+  for (#2366).** Older copies of an event stored after a newer one gave the newest event the highest id and the lowest
+  version, and different steps used different orders: a rewind reported the highest id with the highest commit
+  sequence, the cursor completion put the cursor back on that id and flagged stragglers by id, and the worker rewound
+  again for every copy queued under a new work row. Now one order holds, the version, with the commit sequence as a
+  replay's frontier: a rewind reports the replayed event last by version; the cursor never moves back on either
+  completion path and detects stragglers by version; a replay from the stream's start stores the frontier it read
+  through on the cursor (`replayed_through_commit_sequence`), so a copy at or below it is completed without a rewind,
+  after a restart too; and the drain path resolves a cursor flagged RewindRequired by a rewind instead of applying its
+  events live. Cursors already in the stuck shape are repaired on upgrade by `wh_settle_id_ordered_rewind_flags()`: each
+  is placed at its stream's last version before pending work and keeps its rewind flag (a flag of that shape can be a
+  rewind still owed), so the fixed code resolves it with exactly one rewind; a pair with no pending work gets its
+  trigger queued so the rewind runs at once (once per pair: a re-run queues nothing, and a trigger whose processed row
+  was not purged yet has that row made pending again instead of failing the upgrade). No manual step.
+- **The immediate perspective completion path creates a stream's missing cursor (#2366).** With
+  `InstantCompletionStrategy`, a stream's first completion only updated a cursor that did not exist yet, so the stream
+  never had one. It is now created at the reported event, as the batched path already did.
+- **A stream whose first event has the highest id no longer rewinds forever (#2379).** A rewind restores the snapshot
+  before its trigger and replays "the events after it", and every store read those after the snapshot's event id. When
+  that event carried the stream's highest id (an event minted later but stored first), the read returned nothing, so
+  nothing was applied, the cursor stayed where it was, and the next pass rewound again, hundreds of times a minute. Every
+  read of "the events after an event" (the per-stream read, the batched read of a set-based batch, the read through an
+  archive, and both drivers' and the in-memory store's) now reads after the event's position in the stream, its
+  version, and a rewind's catch-up passes resume after the event last in stream order. An anchor the stream does not
+  hold has no position and keeps the id order it always had. A stream already looping settles at its next claim after
+  the upgrade, with one rewind; one whose work was retired while it looped (flagged, below its stream's last version,
+  nothing to claim) has its trigger queued on upgrade by `wh_queue_unreachable_rewinds()`, so its rewind runs at once
+  instead of waiting for the stream's next event. No manual step.
+- **A rewind ends with the row the producer's order gives (#2379).** Converging was not enough: a stream whose events
+  arrived out of the producer's order (three Started events dead-lettered by the broker and recovered after the Completed
+  one) restored a snapshot placed by version alone and folded the Started events after Completed. A snapshot is now the
+  rewind's floor only when the events it holds come first in the order the replay folds the stream (origin order for a
+  single-origin stream), and the rewind replays in full otherwise; a snapshot is taken at the event with the highest
+  version it holds, so its version names what it holds; and an origin's events published with no origin position (sent
+  before the producer stamped them) replay among that origin's events by their ids instead of in their arrival places.
+  No manual step. A snapshot written before this release that cannot be placed is not restored; the first rewind of its
+  stream replays in full and writes one that can be.
+- **Lifecycle receptors are handed exactly the events a perspective's batch processed (#2381).**
+  `IEventStore.GetEventsBetweenAsync` and `GetEventsBetweenPolymorphicAsync`, which load "the events a perspective just
+  processed" for lifecycle receptors, selected them after the lower checkpoint's event id, through the upper one's,
+  ordered by id. A perspective's cursor moves by the event's position in its stream (#2379), so for a stream whose ids
+  disagree with its versions (an event minted later but stored first, or an older event redelivered after newer ones)
+  the receptors were handed events outside the batch, missed events inside it, or got them in another order. Every store
+  (EF Core, Dapper, in-memory) and the archive read-through now select after the lower checkpoint's version, through the
+  upper one's, in stream order. A checkpoint the stream does not hold keeps the id comparison it always had. No change
+  for streams whose ids follow their versions, and no manual step.
+- **Perspective work with no work id is no longer dropped after the first one is applied.** The perspective worker
+  recorded an applied item's work id in its processed-event cache even when the item carried none (`Guid.Empty`), so
+  every later item without a work id, on any stream, was skipped as already processed until the cache entry lapsed.
+  Items without a work id are now neither recorded nor reported as completed rows. No action needed.
+- **A stopped worker no longer leaves its signal handler attached (#2409).** The perspective worker and the
+  dead-letter recovery worker each hook a signal source that outlives them: the work notification listener, and for
+  the perspective worker also the work channel's new-perspective-work signal. A worker stopped while it was still
+  starting up could skip removing its notification handler, and the perspective worker never removed its channel
+  handler at all, so later signals still reached the stopped worker and kept it reachable. Each worker now removes
+  every handler it added when its run ends, however the stop and the start interleave. Nothing to change.
+
+#### Context, identity & serialization
+- **A generic base message with a strong-id stream id compiles (#2072).** A base such as
+  `BaseCommand<TStreamId>` whose `[StreamId]` is a type parameter made the stream-id generator emit extractors that
+  name the open type and `TStreamId`, and the JSON-context generator emit a polymorphic factory for the constructed
+  base (`BaseCommand<OrderId>`) whose name was not an identifier. An open generic type now gets no extractor of its
+  own; each message that closes it is discovered on its own and routes by the inherited property, typed with its type
+  argument. An abstract constructed generic base is left out of polymorphic serialization, as an abstract base already
+  was, and a concrete one's factory is named with identifier characters only.
+- **Strong ids in more than one namespace of an assembly compile (#2072).** The provider registration is emitted once
+  per assembly, under the first id's namespace, and named every other id's provider relative to it, so an id declared
+  in a second namespace failed with CS0246. The registration now names every id and provider from `global::`.
+- **Type names used as keys are the version-free wire form everywhere, and the versioned forms are banned for
+  library code (#2267).** `TypeNameFormatter.Format` is now version-free at every depth: a generic type's name no
+  longer carries its type arguments' assembly versions, so it equals what `EventTypeMatchingHelper.NormalizeTypeName`
+  (and the SQL normalizer) make of any rendering of it, and `TypeNameFormatter.Parse` delegates to that normalizer
+  (it no longer splits a generic name at the commas inside its brackets). The versioned `TypeNameFormatter` members
+  and `CompositeChildIdentity.Derive` are in `BannedSymbols.txt`; the remaining uses are the envelope and message types
+  a receiver resolves a type from, each suppressed with its reason. Priority type rules (`ClassifyType`), idle-band
+  trickle rules (`TrickleType`), auto-populate lookups by name and the orphan-inbox sweep now match a name from
+  another build of the contract assembly; before, a publisher on another build made a type rule miss silently.
+  **Upgrade:** a generic event type stored before this release under a name carrying type-argument versions is
+  stored under the version-free name from now on; comparisons that normalize both sides (the framework's) match both.
+- **Every type name the library reads comes from the shared naming code, enforced at build time (#2267).** The new
+  repository rule WHIZ607 fails a library build that reads a type, namespace or assembly name, or resolves a type from
+  a string, outside `TypeNameFormatter`, `EventTypeMatchingHelper`, `TypeFormatter`, `MultiPassMessageTypeBinder` and
+  `TypeNameUtilities` (marked `[TypeNameAuthority]`); WHIZ608 fails a suppression of it that does not say why. The
+  537 existing reads now go through `TypeNameFormatter.ForLog` (log, exception, trace and metric text), `SimpleName`,
+  `NamespaceOf`, `AssemblySimpleName` and `AssemblyVersion`, or their `TypeNameUtilities` counterparts in the
+  generators; every rendering is the one printed before. `Type.Namespace`, `Assembly.GetName`, `AssemblyName.Name`
+  and `Type.GetType`/`Assembly.GetType` by name are banned for library code as a backstop.
+- **A member a stored document has no key for keeps its initializer (#2374).** The generated JSON context passed
+  every writable member through the constructor delegate, so a missing key overwrote the member's initializer with
+  the type's default: an `IReadOnlyList<Guid> ExcludedIds { get; init; } = [];` added after events were stored read
+  back as `null`, and `= true` as `false`, in every replay, rewind and rebuild. Only the members a construction must
+  set (positional constructor parameters, `required` members, `[JsonRequired]` members, and init-only members declared
+  by a generic type or a struct) are still passed to it. Every other member is set after construction through its setter,
+  an init-only one through a generated `[UnsafeAccessor]`, and only when the document holds its key. A type with no
+  such members is built by its parameterless constructor.
+
+#### Observability & tooling
+- **The activity source documentation gives a collection command that works (#1864).** The remarks on
+  `WhizbangActivitySource` suggested `dotnet-trace collect --providers Whizbang.Execution`, which collects nothing,
+  since an activity source is not an EventPipe provider. They now point to OpenTelemetry's `AddSource("Whizbang.*")`,
+  or to dotnet-trace through `Microsoft-Diagnostics-DiagnosticSource` with an `[AS]` activity filter. The metrics
+  reference documents the `Whizbang.TrafficClasses` meter, which its code already linked to.
+- **A test process that crashes partway through its suite fails the test run (#2231).** `scripts/Run-Tests.ps1`
+  treated a non-zero exit with no failed test and one infrastructure error as test-host cleanup noise, and passed
+  the run when any test had passed. A test process that died mid-suite (a stack overflow, "Test application process
+  didn't exit gracefully", exit code 7) has exactly that shape, so the CI job stayed green while the rest of the
+  suite never ran, and the only symptom was a coverage gate reporting the untested lines later. The run now fails,
+  naming the crash and how many tests ran before it; a broken pipe after every test passed still only warns. In a
+  local `-Coverage` run, a project whose test process crashed (exit code 7, or a crash line in its output) counts as
+  failed and has its truncated coverage report left out of the merge, as a project the script stopped already did,
+  so the tests it never ran no longer read as uncovered lines.
+- **`scripts/Run-Tests.ps1` builds the configuration it runs (#2244).** With no build output, the script built the
+  solution without a configuration (Debug), then looked for the requested configuration's test assemblies, found
+  none and stopped with a bare "ScriptHalted" having run nothing; a `-Configuration Release` run on a fresh checkout
+  needed a manual `dotnet build -c Release` and `-NoBuild`. It now builds the requested configuration. A run that
+  finds no test assembly fails with one named error, "No test assemblies found", saying which selection (mode,
+  project filter or tag) found nothing and in which build output. `-Coverage` reads the coverage reports of the
+  configuration it ran rather than always Debug's, and no longer stops when exactly one report was written.
+- **An assembly with several Whizbang DbContexts compiles one copy of the migration set, not one per context
+  (#2388).** Each context's generated schema extensions embedded the library's whole migration set, several
+  megabytes of SQL that is the same for every context, so the compiler's memory and the generated source grew with
+  the number of contexts times the number of migrations. A 13-context assembly peaked at 18.9 GB and now peaks at
+  7.9 GB. The set is generated once into an internal `WhizbangMigrationScripts` class that every context reads; the
+  migration texts, and so every recorded migration hash, are unchanged. Nothing to do on upgrade.
+
+### Security
+
+- **The Aspire hosting packages move to 13.6.5, which fixes GHSA-f7vh-h5g3-7jrh (#2271).**
+  `Whizbang.Hosting.Azure.ServiceBus` and `Whizbang.Hosting.RabbitMQ` now depend on Aspire 13.6.5 or later. If your
+  AppHost pins Aspire itself, move the AppHost SDK and every `Aspire.Hosting.*` package to 13.6.5 or later too; with
+  NuGet Audit on, an older version reports NU1903.
 
 ## [0.1.0-alpha] - 2026-01-19
 
