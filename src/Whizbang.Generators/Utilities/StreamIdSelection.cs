@@ -108,11 +108,11 @@ internal static class StreamIdSelection {
   }
 
   /// <summary>
-  /// The stream id found by searching the levels only, without the type's own plain constructor parameter: from the
-  /// type itself when <paramref name="includeSelf"/>, else from its base type (what the type inherits).
+  /// The stream id the type inherits: found by searching its base types only, from the nearest up, without the type's
+  /// own declarations.
   /// </summary>
-  internal static Choice? SelectInherited(INamedTypeSymbol type, bool includeSelf) {
-    for (var level = includeSelf ? type : type.BaseType;
+  internal static Choice? SelectInherited(INamedTypeSymbol type) {
+    for (var level = type.BaseType;
         level is not null && level.SpecialType != SpecialType.System_Object;
         level = level.BaseType) {
       var declared = Declared(level);

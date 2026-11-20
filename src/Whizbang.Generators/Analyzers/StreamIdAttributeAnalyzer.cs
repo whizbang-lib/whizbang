@@ -49,7 +49,7 @@ public sealed class StreamIdAttributeAnalyzer : DiagnosticAnalyzer {
 
     // The one the generators use, and the one the type would inherit without its own
     var used = StreamIdSelection.Select(type)?.Property.Name ?? declared[0].Name;
-    var inherited = StreamIdSelection.SelectInherited(type, includeSelf: false)?.Property.Name;
+    var inherited = StreamIdSelection.SelectInherited(type)?.Property.Name;
     var anyInherited = StreamIdSelection.AnyInherited(type);
 
     foreach (var declaration in declared) {

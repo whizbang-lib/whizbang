@@ -956,9 +956,9 @@ public class StreamIdGenerator : IIncrementalGenerator {
       ImmutableArray<CommandStreamIdInfo> commandsWithStreamId,
       ImmutableArray<StreamIdInfo> compositesWithStreamId) {
     var rows = eventsWithStreamId.Select(e => new TableRow(e.EventType, "TryExtractAsGuid", e.StrongIdType, e.EffectivePolicy,
-          _setterCase(e.EventType, e.PropertyName, e.PropertyType, e.IsPropertyInitOnly, e.StrongIdSettable, e.StrongIdType, e.InheritFromClauses, "SET_STREAM_ID_EVENT_CASE", PLACEHOLDER_EVENT_TYPE)))
+          _setterCase(new SetterSource(e.EventType, e.PropertyName, e.PropertyType, e.IsPropertyInitOnly, e.StrongIdSettable, e.StrongIdType, e.InheritFromClauses), "SET_STREAM_ID_EVENT_CASE", PLACEHOLDER_EVENT_TYPE)))
       .Concat(commandsWithStreamId.Select(c => new TableRow(c.CommandType, "TryExtractAsGuidFromCommand", c.StrongIdType, c.EffectivePolicy,
-          _setterCase(c.CommandType, c.PropertyName, c.PropertyType, c.IsPropertyInitOnly, c.StrongIdSettable, c.StrongIdType, c.InheritFromClauses, "SET_STREAM_ID_COMMAND_CASE", PLACEHOLDER_COMMAND_TYPE))))
+          _setterCase(new SetterSource(c.CommandType, c.PropertyName, c.PropertyType, c.IsPropertyInitOnly, c.StrongIdSettable, c.StrongIdType, c.InheritFromClauses), "SET_STREAM_ID_COMMAND_CASE", PLACEHOLDER_COMMAND_TYPE))))
       .Concat(compositesWithStreamId.Select(c => new TableRow(c.EventType, "TryExtractAsGuid", c.StrongIdType, c.EffectivePolicy, null)))
       .GroupBy(r => r.MessageType, StringComparer.Ordinal)
       .Select(g => g.First())
@@ -1000,22 +1000,25 @@ public class StreamIdGenerator : IIncrementalGenerator {
   /// The setter case for one type, the same one the type-ordered <c>SetStreamId</c> uses (a strong id through its
   /// <c>From</c>, a Guid directly), or null when the stream id cannot be written.
   /// </summary>
-  private static string? _setterCase(
-      string messageType, string propertyName, string propertyType, bool initOnly, bool strongIdSettable,
-      string? strongIdType, string inheritFromClauses, string guidSnippet, string typePlaceholder) {
-    if (initOnly) {
+  private static string? _setterCase(SetterSource source, string guidSnippet, string typePlaceholder) {
+    if (source.InitOnly) {
       return null;
     }
-    if (strongIdSettable) {
-      return _strongIdSetterCase(messageType, propertyName, strongIdType!, inheritFromClauses, 0);
+    if (source.StrongIdSettable) {
+      return _strongIdSetterCase(source.MessageType, source.PropertyName, source.StrongIdType!, source.InheritFromClauses, 0);
     }
-    return _isGuidProperty(propertyType)
+    return _isGuidProperty(source.PropertyType)
       ? TemplateUtilities.ExtractSnippet(typeof(StreamIdGenerator).Assembly, SNIPPET_FILE, guidSnippet)
-          .Replace(typePlaceholder, messageType)
-          .Replace(PLACEHOLDER_PROPERTY_NAME, propertyName)
+          .Replace(typePlaceholder, source.MessageType)
+          .Replace(PLACEHOLDER_PROPERTY_NAME, source.PropertyName)
           .Replace(PLACEHOLDER_INDEX, "0")
       : null;
   }
+
+  /// <summary>The stream id property of one message type, as the setter case for its table row needs it.</summary>
+  private sealed record SetterSource(
+      string MessageType, string PropertyName, string PropertyType, bool InitOnly, bool StrongIdSettable,
+      string? StrongIdType, string InheritFromClauses);
 
   /// <summary>
   /// Generates MODULE_INITIALIZER_REGISTRATION region.
