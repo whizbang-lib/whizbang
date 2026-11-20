@@ -52,7 +52,7 @@ public class StreamIntegrityOptionsValidatorTests {
   [Test]
   [Arguments(0)]
   [Arguments(-1)]
-  public async Task Validate_ARepairProgressWindowBelowOneMinute_FailsNamingTheKeyAsync(int minutes) {
+  public async Task Validate_ACompletionWindowBelowOneMinute_FailsNamingTheKeyAsync(int minutes) {
     var result = new StreamIntegrityOptionsValidator().Validate(null, new StreamIntegrityOptions { CompletionWindowMinutes = minutes });
 
     await Assert.That(result.Failed).IsTrue()

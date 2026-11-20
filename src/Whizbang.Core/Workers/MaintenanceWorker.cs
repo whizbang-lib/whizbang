@@ -154,7 +154,7 @@ public sealed partial class MaintenanceWorker(
       var coordinator = sp.GetRequiredService<IWorkCoordinator>();
       var backlog = await coordinator.GetIntegrityLedgerBacklogAsync(integrity.MaxRepairAttemptsPerBucket, ct).ConfigureAwait(false);
       integrityMetrics.UpdateLedgerBacklog(backlog);
-      integrityMetrics.UpdateRepairProgress(await _readRepairProgressAsync(sp, coordinator, integrity, backlog, ct).ConfigureAwait(false));
+      integrityMetrics.UpdateRepairRates(await _readRepairRatesAsync(sp, coordinator, integrity, backlog, ct).ConfigureAwait(false));
       // #2365: each lane's seal and the re-check's coverage, read by the holder as the backlog is.
       var clock = sp.GetService<TimeProvider>() ?? TimeProvider.System;
       integrityMetrics.UpdateSealReading(await coordinator.GetIntegritySealReadingAsync(
@@ -166,31 +166,31 @@ public sealed partial class MaintenanceWorker(
       throw;
     } catch (Exception ex) {
       integrityMetrics.UpdateLedgerBacklog(null);
-      integrityMetrics.UpdateRepairProgress(null);
+      integrityMetrics.UpdateRepairRates(null);
       integrityMetrics.UpdateSealReading(null);
       sp.GetService<Whizbang.Core.Observability.MaintenanceMetrics>()?.UpdateCutsAwaitingSeal(null);
       LogLedgerBacklogRefreshFailed(_logger, ex);
     }
   }
 
-  // #2261: progress and ETA over the rolling window, from the service's shared tally; null (no reading) when both are
+  // #2261, #2317: the close ratio and ETA over the rolling window, from the service's shared tally; null (no reading) when both are
   // switched off or the tally cannot be read.
-  private static async Task<Whizbang.Core.Observability.RepairProgressReading?> _readRepairProgressAsync(
+  private static async Task<Whizbang.Core.Observability.RepairRatesReading?> _readRepairRatesAsync(
       IServiceProvider sp, IWorkCoordinator coordinator, Whizbang.Core.Messaging.StreamIntegrityOptions integrity,
       Whizbang.Core.Observability.LedgerBacklogSnapshot backlog, CancellationToken ct) {
     if (!_tallies(integrity)) {
       return null;
     }
-    var window = TimeSpan.FromMinutes(integrity.RepairProgressWindowMinutes);
+    var window = TimeSpan.FromMinutes(integrity.CompletionWindowMinutes);
     var now = (sp.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow();
     if (await coordinator.GetIntegrityLedgerTallyAsync(now - window, ct).ConfigureAwait(false) is not { } tally) {
       return null;
     }
     var open = Whizbang.Core.Observability.IntegrityCompletion.RepairableOpenBuckets(backlog);
-    return new Whizbang.Core.Observability.RepairProgressReading {
+    return new Whizbang.Core.Observability.RepairRatesReading {
       Reported = true,
-      ProgressPercent = integrity.RepairProgressGaugeEnabled
-        ? Whizbang.Core.Observability.IntegrityCompletion.RepairProgressPercent(tally.Opened, tally.Closed)
+      CloseRatioPercent = integrity.RepairCloseRatioGaugeEnabled
+        ? Whizbang.Core.Observability.IntegrityCompletion.RepairCloseRatioPercent(tally.Opened, tally.Closed)
         : null,
       EtaSeconds = integrity.BacklogEtaGaugeEnabled && open is { } buckets
         ? Whizbang.Core.Observability.IntegrityCompletion.BacklogEtaSeconds(buckets, tally.Opened, tally.Closed, window)
@@ -202,7 +202,7 @@ public sealed partial class MaintenanceWorker(
   private const int CUTS_AWAITING_SEAL_COUNT_CAP = 100_000;
 
   private static bool _tallies(Whizbang.Core.Messaging.StreamIntegrityOptions integrity) =>
-    integrity.RepairProgressGaugeEnabled || integrity.BacklogEtaGaugeEnabled;
+    integrity.RepairCloseRatioGaugeEnabled || integrity.BacklogEtaGaugeEnabled;
 
   /// <summary>
   /// Adds the ledger buckets this instance's counters opened and closed since its last write to the service's shared
@@ -228,7 +228,7 @@ public sealed partial class MaintenanceWorker(
       return;
     }
     var now = (sp.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow();
-    var keepSince = now - (2 * TimeSpan.FromMinutes(integrity.RepairProgressWindowMinutes));
+    var keepSince = now - (2 * TimeSpan.FromMinutes(integrity.CompletionWindowMinutes));
     try {
       if (await sp.GetRequiredService<IWorkCoordinator>()
             .IntegrityAddLedgerTallyAsync(now, opened, closed, keepSince, ct).ConfigureAwait(false)) {
@@ -254,7 +254,7 @@ public sealed partial class MaintenanceWorker(
       // #2256: the backlog is the holder's to report; a reading left from when this instance had the turn is withdrawn.
       var withdrawn = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
       withdrawn?.UpdateLedgerBacklog(null);
-      withdrawn?.UpdateRepairProgress(null);
+      withdrawn?.UpdateRepairRates(null);
       withdrawn?.UpdateSealReading(null);
       sp.GetService<Whizbang.Core.Observability.MaintenanceMetrics>()?.UpdateCutsAwaitingSeal(null);
       LogSkippedNotMaintainer(_logger);

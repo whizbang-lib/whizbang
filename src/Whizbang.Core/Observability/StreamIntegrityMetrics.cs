@@ -641,13 +641,19 @@ public sealed class StreamIntegrityMetrics {
       unit: "%",
       description: "Derived (#2261): verified_percent over all origins, weighted by the commit sequences each announced");
     _ = meter.CreateObservableGauge(
-      "whizbang.stream_integrity.repair_progress_percent",
-      () => _optional(_progress.ProgressPercent),
+      "whizbang.stream_integrity.repair_close_ratio_percent",
+      () => _optional(_rates.CloseRatioPercent),
       unit: "%",
-      description: "Derived (#2261): ledger buckets closed as a percentage of buckets opened over the rolling window, per service; reported by the maintainer duty's holder only");
+      description: "Derived (#2261, #2317): ledger buckets closed as a percentage of buckets opened over the rolling window, per service. A direction signal, not progress: above 100 the backlog shrinks, below 100 it grows; ledger_open_buckets and backlog_eta_seconds say how much is left. Reported by the maintainer duty's holder only");
+    // #2317: the same reading under the name it had before; kept for one release so dashboards do not go blank.
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.repair_progress_percent",
+      () => _optional(_rates.CloseRatioPercent),
+      unit: "%",
+      description: "Deprecated (#2317): renamed repair_close_ratio_percent, which reports the same value; this name is removed in the next release");
     _ = meter.CreateObservableGauge(
       "whizbang.stream_integrity.backlog_eta_seconds",
-      () => _optional(_progress.EtaSeconds),
+      () => _optional(_rates.EtaSeconds),
       unit: "s",
       description: "Derived (#2261): repairable open buckets over the window's net close rate; no measurement while the backlog is flat or growing; reported by the maintainer duty's holder only");
 
@@ -842,20 +848,20 @@ public sealed class StreamIntegrityMetrics {
   /// <summary>The verified reading the gauges would currently report.</summary>
   internal IntegrityVerifiedReading CurrentVerifiedPercentForTest => _verified;
 
-  private volatile RepairProgressReading _progress = RepairProgressReading.NotReported;
+  private volatile RepairRatesReading _rates = RepairRatesReading.NotReported;
 
   /// <summary>
-  /// Publishes the <c>repair_progress_percent</c> and <c>backlog_eta_seconds</c> reading (#2261), or withdraws it (null):
-  /// both gauges then report no series, which is what an instance that does not report the backlog reports.
+  /// Publishes the <c>repair_close_ratio_percent</c> and <c>backlog_eta_seconds</c> reading (#2261, #2317), or withdraws
+  /// it (null): the gauges then report no series, which is what an instance that does not report the backlog reports.
   /// </summary>
   /// <param name="reading">The reading; null withdraws it.</param>
   /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
   /// <tests>tests/Whizbang.Core.Tests/Observability/StreamIntegrityCompletionMetricsTests.cs</tests>
-  public void UpdateRepairProgress(RepairProgressReading? reading) =>
-    _progress = reading ?? RepairProgressReading.NotReported;
+  public void UpdateRepairRates(RepairRatesReading? reading) =>
+    _rates = reading ?? RepairRatesReading.NotReported;
 
-  /// <summary>The repair progress reading the gauges would currently report.</summary>
-  internal RepairProgressReading CurrentRepairProgressForTest => _progress;
+  /// <summary>The repair rates reading the gauges would currently report.</summary>
+  internal RepairRatesReading CurrentRepairRatesForTest => _rates;
 
   private long _talliedOpened;
   private long _talliedClosed;
@@ -1178,20 +1184,20 @@ public sealed record IntegrityVerifiedReading {
 public sealed record OriginVerifiedPercent(Guid OriginServiceId, double Percent);
 
 /// <summary>
-/// The <c>repair_progress_percent</c> and <c>backlog_eta_seconds</c> gauges' reading (#2261), computed over the rolling
-/// window by the instance that reports the backlog.
+/// The <c>repair_close_ratio_percent</c> and <c>backlog_eta_seconds</c> gauges' reading (#2261, #2317), computed over the
+/// rolling window by the instance that reports the backlog.
 /// </summary>
 /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
-public sealed record RepairProgressReading {
+public sealed record RepairRatesReading {
   /// <summary>No reading: another instance reports it, it is switched off, or the tally could not be read.</summary>
-  public static RepairProgressReading NotReported { get; } = new();
+  public static RepairRatesReading NotReported { get; } = new();
 
   /// <summary>Whether this reading is reported at all.</summary>
   public bool Reported { get; init; }
 
-  /// <summary>Buckets closed as a percentage of buckets opened over the window; null when none opened, or switched
-  /// off.</summary>
-  public double? ProgressPercent { get; init; }
+  /// <summary>Buckets closed as a percentage of buckets opened over the window, a direction signal rather than progress;
+  /// null when none opened, or switched off.</summary>
+  public double? CloseRatioPercent { get; init; }
 
   /// <summary>Seconds until the repairable backlog empties at the window's net close rate; null while the backlog is
   /// flat or growing, when the backlog was not read, or switched off.</summary>

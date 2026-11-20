@@ -2990,7 +2990,7 @@ public interface IWorkCoordinator {
 
   /// <summary>
   /// Reads the service's ledger buckets opened and closed since <paramref name="since"/> from the shared tally (#2261),
-  /// for <c>repair_progress_percent</c> and <c>backlog_eta_seconds</c>. Defaults to null (no reading) for engines with no
+  /// for <c>repair_close_ratio_percent</c> and <c>backlog_eta_seconds</c>. Defaults to null (no reading) for engines with no
   /// ledger: the gauges then report no series, never a zero.
   /// </summary>
   /// <param name="since">The window's start.</param>

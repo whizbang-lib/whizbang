@@ -66,7 +66,7 @@ public class IntegrityCompletionTests {
     await Assert.That(empty.AllOrigins).IsEqualTo(100.0);
   }
 
-  // ── repair_progress_percent ──────────────────────────────────────────────────────────────────
+  // ── repair_close_ratio_percent ──────────────────────────────────────────────────────────────────
 
   [Test]
   [Arguments(200L, 150L, 75.0)]

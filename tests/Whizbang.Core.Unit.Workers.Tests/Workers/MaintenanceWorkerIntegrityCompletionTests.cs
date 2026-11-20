@@ -20,7 +20,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// #2261: the maintenance tick keeps the derived completion gauges. Every instance writes the buckets its own counters
 /// opened and closed into the service's shared tally, so the figures are per service and survive a restart; the instance
 /// whose turn it is to do the maintainer's work reads the tally over the rolling window and reports
-/// <c>repair_progress_percent</c> and <c>backlog_eta_seconds</c>, as it reports the backlog; every instance reports
+/// <c>repair_close_ratio_percent</c> and <c>backlog_eta_seconds</c>, as it reports the backlog; every instance reports
 /// <c>verified_percent</c> from the seals it already reads. Each is switched off by configuration.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/MaintenanceWorker.cs</code-under-test>
@@ -191,7 +191,7 @@ public class MaintenanceWorkerIntegrityCompletionTests {
       .Throws<OperationCanceledException>();
   }
 
-  // ── repair_progress_percent and backlog_eta_seconds ──────────────────────────────────────────
+  // ── repair_close_ratio_percent and backlog_eta_seconds ──────────────────────────────────────────
 
   [Test]
   public async Task TheMaintainer_ReportsProgressAndEta_OverTheWindowAsync() {
