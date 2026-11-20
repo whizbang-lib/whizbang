@@ -203,6 +203,85 @@ public class SupersedingEventReaperSqlTests : EFCoreTestBase {
     await Assert.That(await _reapAsync(conn)).IsEqualTo(1L).Because("the control: the cursor moved on, so the event goes");
   }
 
+  /// <summary>
+  /// #2433: a cursor that still names the older copy of a key whose newer copy its perspective has applied moves on to
+  /// the newer copy, as the key's slot is handed on, so a lagging pointer no longer holds the older copy forever.
+  /// </summary>
+  [Test]
+  public async Task Reap_ACursorOnTheOlderCopy_WhoseNewerCopyItsPerspectiveApplied_MovesOnToIt_AndTheOlderIsReapedAsync() {
+    await using var conn = await _openAsync();
+    var stream = (Guid)TrackedGuid.New();
+    await _associateAsync(conn, TYPE, "EmbeddingView");
+    var older = await _emitAsync(conn, _t0, (stream, TYPE, SUPERSEDING, "k"));
+    var newer = await _emitAsync(conn, _t0.AddMinutes(1), (stream, TYPE, SUPERSEDING, "k"));
+    await _stampAsync(conn);
+    await _executeAsync(conn, "UPDATE wh_perspective_events SET processed_at = NOW() WHERE stream_id = @s", ("s", stream));
+    await _cursorOnAsync(conn, stream, "EmbeddingView", older[0]);
+
+    await Assert.That(await _reapAsync(conn)).IsEqualTo(1L)
+      .Because("the perspective applied the newer copy, so the cursor on the older one no longer holds it");
+    await Assert.That(await _cursorEventAsync(conn, stream, "EmbeddingView")).IsEqualTo(newer[0])
+      .Because("the cursor moves on to the copy that took the key's place");
+    await Assert.That(await _storedAsync(conn, stream)).IsEquivalentTo([newer[0]]);
+  }
+
+  [Test]
+  public async Task Reap_ACursorOnTheOlderCopy_WhoseNewerCopyIsStillPending_StaysAndKeepsItAsync() {
+    await using var conn = await _openAsync();
+    var stream = (Guid)TrackedGuid.New();
+    await _associateAsync(conn, TYPE, "EmbeddingView");
+    var older = await _emitAsync(conn, _t0, (stream, TYPE, SUPERSEDING, "k"));
+    await _emitAsync(conn, _t0.AddMinutes(1), (stream, TYPE, SUPERSEDING, "k"));
+    await _stampAsync(conn);
+    await _executeAsync(conn, "UPDATE wh_perspective_events SET processed_at = NOW() WHERE event_id = @e", ("e", older[0]));
+    await _cursorOnAsync(conn, stream, "EmbeddingView", older[0]);
+
+    await Assert.That(await _reapAsync(conn)).IsEqualTo(0L)
+      .Because("the perspective has not applied the newer copy yet, so its cursor still rests on the older one");
+    await Assert.That(await _cursorEventAsync(conn, stream, "EmbeddingView")).IsEqualTo(older[0]);
+  }
+
+  [Test]
+  public async Task Reap_ACursorFlaggedForARewind_IsLeftToTheRewindAsync() {
+    await using var conn = await _openAsync();
+    var stream = (Guid)TrackedGuid.New();
+    await _associateAsync(conn, TYPE, "EmbeddingView");
+    var older = await _emitAsync(conn, _t0, (stream, TYPE, SUPERSEDING, "k"));
+    await _emitAsync(conn, _t0.AddMinutes(1), (stream, TYPE, SUPERSEDING, "k"));
+    await _stampAsync(conn);
+    await _executeAsync(conn, "UPDATE wh_perspective_events SET processed_at = NOW() WHERE stream_id = @s", ("s", stream));
+    await _cursorOnAsync(conn, stream, "EmbeddingView", older[0], status: 2 | 32);
+
+    await Assert.That(await _reapAsync(conn)).IsEqualTo(0L)
+      .Because("a rewind owns a flagged cursor's position, so the reaper does not move it");
+    await Assert.That(await _cursorEventAsync(conn, stream, "EmbeddingView")).IsEqualTo(older[0]);
+  }
+
+  [Test]
+  public async Task Reap_ACursorOnAnOlderCopyStoredAboveTheNewest_MovesBackToTheNewest_AndTheOlderIsReapedAsync() {
+    // A copy older in its origin's order, stored above the newest by version (#2350): the cursor ends on it because it
+    // is last by version. Once the newest is applied the cursor moves to the newest, the event before it in the stream.
+    await using var conn = await _openAsync();
+    var stream = (Guid)TrackedGuid.New();
+    await _associateAsync(conn, TYPE, "EmbeddingView");
+    var newest = await _emitAsync(conn, _t0, (stream, TYPE, SUPERSEDING, "k"));
+    var restored = await _emitAsync(conn, _t0.AddMinutes(1), (stream, TYPE, SUPERSEDING, "k"));
+    await _stampAsync(conn);
+    var origin = (Guid)TrackedGuid.New();
+    await _executeAsync(conn,
+      "UPDATE wh_event_store SET origin_service_id = @o, origin_commit_sequence = CASE WHEN event_id = @n THEN 20 ELSE 10 END "
+      + "WHERE stream_id = @s", ("o", origin), ("n", newest[0]), ("s", stream));
+    await _executeAsync(conn, "DELETE FROM wh_superseded_events WHERE stream_id = @s", ("s", stream));
+    await _executeAsync(conn, "INSERT INTO wh_superseded_events (event_id, stream_id, queued_at) VALUES (@e, @s, NOW())",
+      ("e", restored[0]), ("s", stream));
+    await _executeAsync(conn, "UPDATE wh_perspective_events SET processed_at = NOW() WHERE stream_id = @s", ("s", stream));
+    await _cursorOnAsync(conn, stream, "EmbeddingView", restored[0]);
+
+    await Assert.That(await _reapAsync(conn)).IsEqualTo(1L);
+    await Assert.That(await _cursorEventAsync(conn, stream, "EmbeddingView")).IsEqualTo(newest[0])
+      .Because("the newest copy is the last event of the stream once the restored older copy is gone");
+  }
+
   [Test]
   public async Task Reap_ASnapshotOnIt_KeepsIt_UntilTheSnapshotIsGoneAsync() {
     await using var conn = await _openAsync();
@@ -466,6 +545,19 @@ public class SupersedingEventReaperSqlTests : EFCoreTestBase {
       VALUES (gen_random_uuid(), @t, 'perspective', @p, 'test-service', @t, NOW(), NOW())
       ON CONFLICT DO NOTHING
       """, ("t", eventType), ("p", perspective));
+
+  private static Task _cursorOnAsync(NpgsqlConnection conn, Guid stream, string perspective, Guid eventId, int status = 2) =>
+    _executeAsync(conn,
+      "INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status, processed_at) VALUES (@s, @p, @e, @st, NOW())",
+      ("s", stream), ("p", perspective), ("e", eventId), ("st", (short)status));
+
+  private static async Task<Guid> _cursorEventAsync(NpgsqlConnection conn, Guid stream, string perspective) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT last_event_id FROM wh_perspective_cursors WHERE stream_id = @s AND perspective_name = @p";
+    cmd.Parameters.AddWithValue("s", stream);
+    cmd.Parameters.AddWithValue("p", perspective);
+    return (Guid)(await cmd.ExecuteScalarAsync())!;
+  }
 
   private static Task _stampAsync(NpgsqlConnection conn) => _executeAsync(conn, "SELECT stamp_pending_commit_sequences(1000)");
 
