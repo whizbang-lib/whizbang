@@ -157,7 +157,7 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
-      actions: read   # this repository's queued jobs, counted against the pool
+      actions: read   # this repository's queued jobs, counted against the pool, and the runner self-checks (caches)
     env:
       HAS_POOL_APP: ${{ secrets.RUNNER_POOL_APP_ID != '' && secrets.RUNNER_POOL_APP_PRIVATE_KEY != '' }}
     outputs:
@@ -171,6 +171,8 @@ jobs:
       # every consumer takes the plan only when this matches github.run_attempt, and ubuntu-latest otherwise.
       # "Re-run all jobs" re-runs this job too, so its plan is fresh again (#1880).
       attempt: ${{ github.run_attempt }}
+      # Whether any class went to the pool; the watcher (runner-watch) runs only then.
+      pool: ${{ steps.pick.outputs.pool || 'false' }}
     steps:
       - name: Checkout the pipeline scripts
         continue-on-error: true
@@ -212,11 +214,16 @@ jobs:
           GROUP: ${{ vars.RUNNER_POOL_GROUP || 'Default' }}
           DISABLED: ${{ vars.RUNNER_POOL_DISABLED }}
           RUN_ID: ${{ github.run_id }}
+          # A machine takes jobs only with a passing self-check at most this many hours old, and the compile
+          # only when that check measured at least this upload speed (#1880; .github/WORKFLOWS.md).
+          MIN_UPLOAD_MBPS: ${{ vars.RUNNER_POOL_MIN_UPLOAD_MBPS || '10' }}
+          CHECK_MAX_AGE_HOURS: ${{ vars.RUNNER_POOL_CHECK_MAX_AGE_HOURS || '24' }}
         run: >-
           ./.github/scripts/Select-CiRunner.ps1 -EventName "$env:EVENT" -Repository "$env:REPOSITORY"
           -HeadRepository "$env:HEAD_REPOSITORY" -Actor "$env:ACTOR" -PrAuthor "$env:PR_AUTHOR"
           -RepositoryPrivate "$env:PRIVATE" -Organization "$env:ORGANIZATION" -GroupName "$env:GROUP"
           -RunId "$env:RUN_ID" -Disabled "$env:DISABLED"
+          -MinUploadMBps "$env:MIN_UPLOAD_MBPS" -CheckMaxAgeHours "$env:CHECK_MAX_AGE_HOURS"
 
   # ============================================================================
   # Queue-validated push optimization

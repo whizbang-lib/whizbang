@@ -1107,7 +1107,7 @@ Describe 'Runner self-check records (#1880)' {
     }
 
     It 'keeps the compile off a runner too slow to upload the build, while the other classes use it' {
-      $d = Invoke-Select -Checks (New-CheckTable @(New-Check -Up 5)) -MinUploadMBps 10
+      $d = Invoke-Select -Context (New-Context -EventName 'merge_group') -Checks (New-CheckTable @(New-Check -Up 5)) -MinUploadMBps 10
       $d['compile'].RunsOn | Should -Be $Hosted
       $d['compile'].Reason | Should -BeLike '*r1: uploads at 5 MB/s (needs 10)*'
       $d['linux'].RunsOn | Should -Be $Linux
@@ -1115,7 +1115,7 @@ Describe 'Runner self-check records (#1880)' {
     }
 
     It 'keeps the container suites off a runner whose Docker failed its check' {
-      $d = Invoke-Select -Checks (New-CheckTable @(New-Check -Docker $false))
+      $d = Invoke-Select -Context (New-Context -EventName 'merge_group') -Checks (New-CheckTable @(New-Check -Docker $false))
       $d['linux-docker'].RunsOn | Should -Be $Hosted
       $d['linux-docker'].Reason | Should -BeLike '*r1: Docker not working*'
       $d['compile'].RunsOn | Should -Be $Linux

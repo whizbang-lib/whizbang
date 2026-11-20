@@ -21,7 +21,7 @@
       1. Self-hosted pool. The run is trusted (a push, a merge-queue run, a dispatch, a schedule, or a pull
          request from a branch of this repository that Dependabot did not open); the RUNNER_POOL_TOKEN can
          read the runner group; the group is open to this repository; an online, idle runner carries every
-         label of the class; and the jobs of other runs already queued for those runners leave more than
+         label of the class and has a recent passing self-check showing what the class needs; and the jobs of other runs already queued for those runners leave more than
          -QueueThreshold of them spare.
       2. ubuntu-latest.
 
@@ -67,6 +67,14 @@
 .PARAMETER Disabled
     'true' turns the self-hosted tier off (the RUNNER_POOL_DISABLED repository variable).
 
+.PARAMETER MinUploadMBps
+    The upload speed, in MB/s, a machine's self-check must have measured for it to take the compile (the
+    RUNNER_POOL_MIN_UPLOAD_MBPS repository variable). Default 10.
+
+.PARAMETER CheckMaxAgeHours
+    How old a machine's latest passing self-check may be (the RUNNER_POOL_CHECK_MAX_AGE_HOURS repository variable).
+    Default 24.
+
 .PARAMETER OutputFile
     Where outputs are written. Default: $GITHUB_OUTPUT.
 
@@ -92,6 +100,8 @@ param(
     [string]$RunId = '',
     [int]$QueueThreshold = 0,
     [string]$Disabled = '',
+    [int]$MinUploadMBps = 10,
+    [int]$CheckMaxAgeHours = 24,
     [string]$OutputFile = $env:GITHUB_OUTPUT,
     [string]$SummaryFile = $env:GITHUB_STEP_SUMMARY
 )
@@ -111,16 +121,18 @@ $script:SetupHint = 'See .github/WORKFLOWS.md, "Runner selection".'
     jobs of the class skip the pool. Pool is false for analyze: its second half (Analyze · Quality) still
     waits up to hours for another run's coverage on a release PR, which on a pool machine would hold a
     machine the suites need, and both halves must check out at the same path (the scan's state names files absolutely),
-    which GitHub-hosted runners guarantee and pool machines do not.
+    which GitHub-hosted runners guarantee and pool machines do not. Requires names what a machine's self-check
+    must show beyond passing (#1880): 'upload' a measured upload speed of at least -MinUploadMBps (compile uploads
+    the build, about 1 GB), 'docker' a working Docker (the container suites).
 #>
 function Get-CiRunnerClass {
   $linux = @('self-hosted', 'whizbang', 'Linux', 'X64')
   $classes = [ordered]@{}
-  $classes['any-os'] = [pscustomobject]@{ Labels = @('self-hosted', 'whizbang'); HostedOn = @(); Pool = $true }
-  $classes['linux'] = [pscustomobject]@{ Labels = $linux; HostedOn = @(); Pool = $true }
-  $classes['compile'] = [pscustomobject]@{ Labels = $linux; HostedOn = @('push'); Pool = $true }
-  $classes['analyze'] = [pscustomobject]@{ Labels = $linux; HostedOn = @(); Pool = $false }
-  $classes['linux-docker'] = [pscustomobject]@{ Labels = @($linux + 'docker'); HostedOn = @(); Pool = $true }
+  $classes['any-os'] = [pscustomobject]@{ Labels = @('self-hosted', 'whizbang'); HostedOn = @(); Pool = $true; Requires = @() }
+  $classes['linux'] = [pscustomobject]@{ Labels = $linux; HostedOn = @(); Pool = $true; Requires = @() }
+  $classes['compile'] = [pscustomobject]@{ Labels = $linux; HostedOn = @('push'); Pool = $true; Requires = @('upload') }
+  $classes['analyze'] = [pscustomobject]@{ Labels = $linux; HostedOn = @(); Pool = $false; Requires = @() }
+  $classes['linux-docker'] = [pscustomobject]@{ Labels = @($linux + 'docker'); HostedOn = @(); Pool = $true; Requires = @('docker') }
   return $classes
 }
 
@@ -181,6 +193,66 @@ function Get-IdleRunner {
   }
 }
 
+<#
+    Runner self-checks (#1880). .github/workflows/runner-self-check.yml runs .github/scripts/Test-CiRunnerCapability.ps1
+    on each pool machine and records the result as an Actions cache entry: the key carries the runner's name, whether it
+    passed, its measured upload speed and whether Docker works, and the entry's creation time says when. The key is
+    the record so the picker reads it with one list call and no download. A machine with no recent passing record
+    gets no job, so a machine that cannot do the work, or has not been checked lately, is skipped with no label
+    changes by anyone.
+#>
+$script:CheckKeyPrefix = 'ci-runner-check/v1/'
+
+function ConvertTo-RunnerCheckKey {
+  param([Parameter(Mandatory)][AllowEmptyString()][string]$RunnerName, [bool]$Ok, [AllowNull()][object]$UploadMBps,
+    [bool]$Docker, [Parameter(Mandatory)][string]$Nonce)
+  if ($RunnerName -notmatch '^[A-Za-z0-9._-]+$') { throw "runner name '$RunnerName' cannot go in a self-check key" }
+  $up = if ($null -eq $UploadMBps) { 'na' } else { [string][int]$UploadMBps }
+  return "$script:CheckKeyPrefix$RunnerName/$(if ($Ok) { 'ok' } else { 'fail' })/up-$up/docker-$(if ($Docker) { 'yes' } else { 'no' })/$Nonce"
+}
+
+# The record a key holds, with CheckedAt from the entry's creation time (UTC); $null for a key of another shape.
+function ConvertFrom-RunnerCheckKey {
+  param([string]$Key, [string]$CreatedAt)
+  $pattern = '^' + [regex]::Escape($script:CheckKeyPrefix) + '(?<name>[^/]+)/(?<result>ok|fail)/up-(?<up>\d+|na)/docker-(?<docker>yes|no)/'
+  if ($Key -notmatch $pattern) { return $null }
+  [pscustomobject]@{
+    Runner     = $Matches['name']
+    Ok         = $Matches['result'] -eq 'ok'
+    UploadMBps = if ($Matches['up'] -eq 'na') { $null } else { [int]$Matches['up'] }
+    Docker     = $Matches['docker'] -eq 'yes'
+    CheckedAt  = [datetime]::Parse($CreatedAt, [cultureinfo]::InvariantCulture, [System.Globalization.DateTimeStyles]'AdjustToUniversal, AssumeUniversal')
+  }
+}
+
+# Each runner's latest self-check (runner names compare without case), from the most recent 100 records.
+function Get-RunnerCheck {
+  param([Parameter(Mandatory)][scriptblock]$InvokeApi, [string]$Repository, [string]$RepoToken)
+  $list = & $InvokeApi "/repos/$Repository/actions/caches?key=$script:CheckKeyPrefix&sort=created_at&direction=desc&per_page=100" $RepoToken
+  $table = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  foreach ($entry in @($list.actions_caches)) {
+    $record = ConvertFrom-RunnerCheckKey -Key ([string]$entry.key) -CreatedAt ([string]$entry.created_at)
+    if ($null -eq $record) { continue }
+    if (-not $table.ContainsKey($record.Runner) -or $table[$record.Runner].CheckedAt -lt $record.CheckedAt) { $table[$record.Runner] = $record }
+  }
+  , $table
+}
+
+# Why a runner's latest self-check does not let it take a job of a class requiring -Requires; '' when it does.
+function Test-RunnerCheck {
+  param([AllowNull()]$Check, [string[]]$Requires = @(), [datetime]$Now, [int]$MaxAgeHours, [int]$MinUploadMBps)
+  if ($null -eq $Check) { return 'no self-check recorded' }
+  $age = ($Now - $Check.CheckedAt).TotalHours
+  if ($age -gt $MaxAgeHours) { return "last self-check $([math]::Floor($age)) hours ago (limit $MaxAgeHours)" }
+  if (-not $Check.Ok) { return 'failed its last self-check' }
+  if ($Requires -contains 'upload') {
+    if ($null -eq $Check.UploadMBps) { return 'upload speed not measured' }
+    if ($Check.UploadMBps -lt $MinUploadMBps) { return "uploads at $($Check.UploadMBps) MB/s (needs $MinUploadMBps)" }
+  }
+  if ($Requires -contains 'docker' -and -not $Check.Docker) { return 'Docker not working' }
+  return ''
+}
+
 # The queued self-hosted jobs that one of the idle runners could take, and so will take before this run.
 function Get-CompetingJobCount {
   param([object[]]$QueuedJobs, [object[]]$IdleRunners)
@@ -209,6 +281,8 @@ function ConvertTo-RunsOnJson {
 
     PoolState: Group, SelectedRepositories, Runners; $null when it could not be read ($PoolUnavailable says
     why). QueuedJobs: the queued jobs of other runs; $null when they could not be read ($QueueUnavailable).
+    Checks: runner name -> latest self-check (Get-RunnerCheck); $null when they could not be read
+    ($ChecksUnavailable). Now is the time the checks' age is measured from.
 #>
 function Select-CiRunner {
   param(
@@ -217,7 +291,12 @@ function Select-CiRunner {
       [string]$PoolUnavailable = '',
       [AllowNull()][object[]]$QueuedJobs,
       [string]$QueueUnavailable = '',
-      [int]$QueueThreshold = 0
+      [int]$QueueThreshold = 0,
+      [AllowNull()]$Checks,
+      [string]$ChecksUnavailable = '',
+      [datetime]$Now = [datetime]::UtcNow,
+      [int]$CheckMaxAgeHours = 24,
+      [int]$MinUploadMBps = 10
   )
   $trust = Get-CiRunTrust -EventName $Context.EventName -Repository $Context.Repository -HeadRepository $Context.HeadRepository `
     -Actor $Context.Actor -PrAuthor $Context.PrAuthor
@@ -227,6 +306,7 @@ function Select-CiRunner {
   if ($trust.Kind -ne 'trusted') { $poolSkip = $trust.Reason }
   elseif ($null -eq $PoolState) { $poolSkip = $PoolUnavailable }
   elseif ($null -eq $QueuedJobs) { $poolSkip = "the queue could not be read: $QueueUnavailable" }
+  elseif ($null -eq $Checks) { $poolSkip = "the runner self-checks could not be read: $ChecksUnavailable" }
   else {
     $access = Get-RunnerGroupAccess -Group $PoolState.Group -Repository $Context.Repository `
       -RepositoryPrivate ([bool]$Context.RepositoryPrivate) -SelectedRepositories @($PoolState.SelectedRepositories)
@@ -249,10 +329,18 @@ function Select-CiRunner {
     $why = $poolSkip
     if (-not $why -and -not $class.Pool) { $why = 'this job waits on other jobs of the run, and would hold a pool machine they need' }
     if (-not $why) {
-      $idle = @(Get-IdleRunner -Runners @($PoolState.Runners) -Labels $class.Labels)
+      $labelled = @(Get-IdleRunner -Runners @($PoolState.Runners) -Labels $class.Labels)
+      # Only a runner whose self-check shows it can do this class's job counts as idle (#1880).
+      $idle = @(); $unfit = @()
+      foreach ($runner in $labelled) {
+        $check = if ($Checks.ContainsKey($runner.name)) { $Checks[$runner.name] } else { $null }
+        $unfitWhy = Test-RunnerCheck -Check $check -Requires @($class.Requires) -Now $Now -MaxAgeHours $CheckMaxAgeHours -MinUploadMBps $MinUploadMBps
+        if ($unfitWhy) { $unfit += "$($runner.name): $unfitWhy" } else { $idle += $runner }
+      }
       $competing = Get-CompetingJobCount -QueuedJobs @($QueuedJobs) -IdleRunners $idle
       $counts = "$($idle.Count) idle, $competing queued ahead, threshold $QueueThreshold"
-      if ($idle.Count -eq 0) { $why = "no idle runner with labels $($class.Labels -join ', ')" }
+      if ($labelled.Count -eq 0) { $why = "no idle runner with labels $($class.Labels -join ', ')" }
+      elseif ($idle.Count -eq 0) { $why = "no idle runner with labels $($class.Labels -join ', ') passed its self-check ($($unfit -join '; '))" }
       elseif ($idle.Count - $competing -le $QueueThreshold) { $why = "no spare runner ($counts)" }
       else {
         $decisions[$name] = [pscustomobject]@{
@@ -341,7 +429,7 @@ function Invoke-SelectCiRunner {
       [string]$RepositoryPrivate = 'false', [string]$Organization = '', [string]$GroupName = 'Default', [string]$RunId = '',
       [string]$PoolToken = '', [string]$RepoToken = '', [string]$Disabled = '', [int]$QueueThreshold = 0,
       [int]$BudgetSeconds = 60, [string]$OutputFile = '', [string]$SummaryFile = '',
-      [scriptblock]$InvokeApi
+      [scriptblock]$InvokeApi, [datetime]$Now = [datetime]::UtcNow, [int]$CheckMaxAgeHours = 24, [int]$MinUploadMBps = 10
   )
   try {
     if (-not $InvokeApi) { $InvokeApi = New-GitHubApiInvoker -BudgetSeconds $BudgetSeconds }
@@ -363,15 +451,19 @@ function Invoke-SelectCiRunner {
       if ($poolState -and $null -eq $poolState.Group) { $poolState = $null; $poolUnavailable = "runner group '$GroupName' not found" }
     }
 
-    # The queue matters only when the pool could serve (its token checks above ensure $RepoToken is set).
+    # The self-checks and the queue matter only when the pool could serve (its token checks above ensure $RepoToken is set).
+    $checks = $null; $checksUnavailable = 'not read'
     $queuedJobs = $null; $queueUnavailable = 'not read'
     if ($poolState) {
+      try { $checks = Get-RunnerCheck -InvokeApi $InvokeApi -Repository $Repository -RepoToken $RepoToken }
+      catch { $checksUnavailable = $_.Exception.Message }
       try { $queuedJobs = @(Get-QueuedJob -InvokeApi $InvokeApi -Repository $Repository -RunId $RunId -RepoToken $RepoToken) }
       catch { $queueUnavailable = $_.Exception.Message }
     }
 
     $decisions = Select-CiRunner -Context $context -PoolState $poolState -PoolUnavailable $poolUnavailable -QueuedJobs $queuedJobs `
-      -QueueUnavailable $queueUnavailable -QueueThreshold $QueueThreshold
+      -QueueUnavailable $queueUnavailable -QueueThreshold $QueueThreshold -Checks $checks -ChecksUnavailable $checksUnavailable `
+      -Now $Now -CheckMaxAgeHours $CheckMaxAgeHours -MinUploadMBps $MinUploadMBps
   }
   catch {
     $message = $_.Exception.Message
@@ -384,7 +476,9 @@ function Invoke-SelectCiRunner {
     }
   }
 
-  Write-RunnerFile -Path $OutputFile -Lines @($decisions.Keys | ForEach-Object { "$_=$($decisions[$_].RunsOn)" })
+  # pool: whether any class went to the pool, so the watcher (Watch-CiRunnerJob.ps1) runs only when there is a pool job to watch.
+  $pool = @($decisions.Values | Where-Object { $_.Tier -eq 'self-hosted' }).Count -gt 0
+  Write-RunnerFile -Path $OutputFile -Lines (@($decisions.Keys | ForEach-Object { "$_=$($decisions[$_].RunsOn)" }) + "pool=$($pool.ToString().ToLowerInvariant())")
   $summary = @('### Runner selection', '', '| Job class | runs-on | Why |', '|---|---|---|')
   $summary += @($decisions.Keys | ForEach-Object { "| $_ | ``$($decisions[$_].RunsOn)`` | $($decisions[$_].Reason -replace '\|', '/') |" })
   Write-RunnerFile -Path $SummaryFile -Lines $summary
@@ -398,5 +492,5 @@ if ($MyInvocation.InvocationName -eq '.') { return }
 $null = Invoke-SelectCiRunner -EventName $EventName -Repository $Repository -HeadRepository $HeadRepository -Actor $Actor `
   -PrAuthor $PrAuthor -RepositoryPrivate $RepositoryPrivate -Organization $Organization -GroupName $GroupName -RunId $RunId `
   -PoolToken $env:RUNNER_POOL_TOKEN -RepoToken $env:GH_TOKEN -Disabled $Disabled -QueueThreshold $QueueThreshold `
-  -OutputFile $OutputFile -SummaryFile $SummaryFile
+  -MinUploadMBps $MinUploadMBps -CheckMaxAgeHours $CheckMaxAgeHours -OutputFile $OutputFile -SummaryFile $SummaryFile
 exit 0
