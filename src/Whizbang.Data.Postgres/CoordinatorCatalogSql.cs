@@ -100,6 +100,7 @@ internal static class CoordinatorCatalogSql {
   /// which the snapshot is taken through (#2296).
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:PairsNeedingSnapshot_NameTheReapBoundary_TheLastBodyAboutToBeReaped_NotTheCursorAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReapBoundaryFloorSqlTests.cs:PairsNeedingSnapshot_APairCoveredOnlyByASnapshotStillInItsGrace_IsATarget_AtTheReapBoundaryAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PurgedRowEphemeralHistorySqlTests.cs:PairsNeedingSnapshot_APurgedPair_IsNotATarget_AndItsBodyIsOfferedForDestructionAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperLifecycleAndCatalogTests.cs:EphemeralPairsNeedingSnapshot_APairWhoseRowThePerspectivePurged_IsNotATargetAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralOnlyReadModelReapSqlTests.cs:PairsNeedingSnapshot_AReadModelThatKeepsNoFloor_IsNotATarget_AndItsBodyIsOfferedForDestructionAsync</tests>
@@ -126,7 +127,10 @@ internal static class CoordinatorCatalogSql {
       $"AND NOT EXISTS (SELECT 1 FROM {prefix}wh_perspective_events pe WHERE pe.event_id = eb.event_id AND pe.processed_at IS NULL) " +
       // 209: coverage is read by version, the stream's own counter, never by commit sequence.
       $"AND NOT EXISTS (SELECT 1 FROM {prefix}wh_perspective_snapshots s WHERE s.stream_id = es.stream_id " +
-      "  AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version) " +
+      "  AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version " +
+      // 534 (#2456): as in the reap, a snapshot whose own event is still inside its grace window covers nothing, so the
+      // bodies below a tip snapshot are a target and the bootstrap writes the floor at the reap boundary.
+      $"  AND {EphemeralSnapshotFloorSql.SnapshotEventPastGrace(prefix)}) " +
       // 403 (#2294): a body at or before the perspective's purge event is covered by the purge (a purged row has nothing
       // to snapshot, and selecting it again every cycle only repeated a bootstrap that found no row). A body after it
       // stays a target: a stale marker can stand on a resurrected, live row. As in the reap.

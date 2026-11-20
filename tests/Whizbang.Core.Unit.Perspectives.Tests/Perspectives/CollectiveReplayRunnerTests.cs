@@ -440,6 +440,112 @@ public class CollectiveReplayRunnerTests {
       .Because("a commit sequence cannot say the snapshot holds a collective that had none, so it records no mark");
   }
 
+  // ===== #2456: the reap-boundary snapshot of a row with collectives =====
+
+  // A reap-driven snapshot is taken through the reap boundary (#2296). A row with collectives was still snapshotted at the
+  // cursor, a floor only for a late event after it. The fold to the boundary now folds the row's collectives too: those
+  // the placement puts before the boundary's last event, and none it puts after every event through the boundary.
+  [Test]
+  public async Task ABootstrapThroughTheBoundary_OfARowWithCollectives_HoldsTheCollectivesBeforeTheBoundary_AndRecordsItsMarkAsync() {
+    var applier = new FakeCollectiveApplier { MergeByCommitSequence = true };
+    var snapshots = new RecordingSnapshots();
+    var harness = new Harness(applier, snapshots: snapshots, snapshotOptions: new PerspectiveSnapshotOptions { Enabled = true });
+    var userId = TrackedGuid.New().Value;
+    var first = await harness.AppendAsync(userId, new PermissionsSet { UserId = userId, Revision = 1, Permissions = "read" });
+    var boundary = await harness.AppendAsync(userId, new PermissionsNoted { UserId = userId });
+    var cursor = await harness.AppendAsync(userId, new PermissionsSet { UserId = userId, Revision = 2, Permissions = "write" });
+    harness.Sequences[first.MessageId.Value] = 10;
+    harness.Sequences[boundary.MessageId.Value] = 20;
+    harness.Sequences[cursor.MessageId.Value] = 30;
+    applier.Add(commitSequence: 15);
+    applier.Add(commitSequence: 25);
+    harness.Rows.Seed(userId, new PermissionSetModel { UserId = userId, Revision = 2, Permissions = "write+c" });
+
+    var outcome = await harness.Runner.TryBootstrapSnapshotThroughAsync(
+      userId, harness.PerspectiveName, cursor.MessageId.Value, boundary.MessageId.Value, CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(SnapshotBootstrapOutcome.Written);
+    await Assert.That(snapshots.Taken.Single().EventId).IsEqualTo(boundary.MessageId.Value)
+      .Because("the snapshot is taken at the reap boundary, not at the cursor, so a late event below the cursor finds it");
+    await Assert.That(snapshots.Taken.Single().Model.Permissions).IsEqualTo("read+c")
+      .Because("the collective committed between the first event and the boundary is folded, the one committed after the boundary is not");
+    await Assert.That(snapshots.Taken.Single().CollectivesThrough).IsEqualTo(20L)
+      .Because("the row holds every collective committed up to the boundary, so a replay from it folds only those past that");
+    await Assert.That(applier.Starts.Single().AfterEventId).IsNull()
+      .Because("with no snapshot below the boundary, the fold starts at the stream's start and takes every collective from there");
+  }
+
+  [Test]
+  public async Task ABootstrapThroughTheBoundary_ThatMeetsACollectiveInFlight_IsDeferred_AndWritesNothingAsync() {
+    var applier = new FakeCollectiveApplier { MergeByCommitSequence = true, InFlight = true };
+    var snapshots = new RecordingSnapshots();
+    var harness = new Harness(applier, snapshots: snapshots, snapshotOptions: new PerspectiveSnapshotOptions { Enabled = true });
+    var userId = TrackedGuid.New().Value;
+    var first = await harness.AppendAsync(userId, new PermissionsSet { UserId = userId, Revision = 1, Permissions = "read" });
+    var boundary = await harness.AppendAsync(userId, new PermissionsNoted { UserId = userId });
+    var cursor = await harness.AppendAsync(userId, new PermissionsSet { UserId = userId, Revision = 2, Permissions = "write" });
+    harness.Sequences[first.MessageId.Value] = 10;
+    harness.Sequences[boundary.MessageId.Value] = 20;
+    harness.Sequences[cursor.MessageId.Value] = 30;
+    applier.Add(commitSequence: 15);
+
+    var outcome = await harness.Runner.TryBootstrapSnapshotThroughAsync(
+      userId, harness.PerspectiveName, cursor.MessageId.Value, boundary.MessageId.Value, CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(SnapshotBootstrapOutcome.Deferred)
+      .Because("a collective still in flight may yet reach the row live, so the snapshot could not say what it holds");
+    await Assert.That(snapshots.Taken).IsEmpty();
+  }
+
+  [Test]
+  public async Task ABootstrapThroughTheBoundary_FoldsNoCollectiveCommittedBeforeTheStreamsFirstEvent_WhenThereWasNoRowAsync() {
+    var applier = new FakeCollectiveApplier { MergeByCommitSequence = true };
+    var snapshots = new RecordingSnapshots();
+    var harness = new Harness(applier, snapshots: snapshots, snapshotOptions: new PerspectiveSnapshotOptions { Enabled = true });
+    var userId = TrackedGuid.New().Value;
+    var boundary = await harness.AppendAsync(userId, new PermissionsNoted { UserId = userId });
+    var cursor = await harness.AppendAsync(userId, new PermissionsSet { UserId = userId, Revision = 2, Permissions = "write" });
+    harness.Sequences[boundary.MessageId.Value] = 20;
+    harness.Sequences[cursor.MessageId.Value] = 30;
+    applier.Add(commitSequence: 5);
+
+    var outcome = await harness.Runner.TryBootstrapSnapshotThroughAsync(
+      userId, harness.PerspectiveName, cursor.MessageId.Value, boundary.MessageId.Value, CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(SnapshotBootstrapOutcome.RowMissing)
+      .Because("live, a collective committed before the stream had a row reached no row, and the boundary event made none");
+    await Assert.That(snapshots.Taken).IsEmpty();
+  }
+
+  [Test]
+  public async Task ABootstrapThroughTheBoundary_FromASnapshotBelowIt_StartsTheCollectivesFromThatSnapshotsMarkAsync() {
+    var applier = new FakeCollectiveApplier { MergeByCommitSequence = true };
+    var snapshots = new FloorAt(new PermissionSetModel { Revision = 1, Permissions = "read+c" }, collectivesThrough: 12);
+    var harness = new Harness(applier, snapshots: snapshots, snapshotOptions: new PerspectiveSnapshotOptions { Enabled = true });
+    var userId = TrackedGuid.New().Value;
+    var floorEvent = await harness.AppendAsync(userId, new PermissionsSet { UserId = userId, Revision = 1, Permissions = "read" });
+    var boundary = await harness.AppendAsync(userId, new PermissionsNoted { UserId = userId });
+    var cursor = await harness.AppendAsync(userId, new PermissionsSet { UserId = userId, Revision = 2, Permissions = "write" });
+    harness.Sequences[floorEvent.MessageId.Value] = 10;
+    harness.Sequences[boundary.MessageId.Value] = 20;
+    harness.Sequences[cursor.MessageId.Value] = 30;
+    snapshots.FloorEventId = floorEvent.MessageId.Value;
+    applier.Add(commitSequence: 11);
+    applier.Add(commitSequence: 15);
+
+    var outcome = await harness.Runner.TryBootstrapSnapshotThroughAsync(
+      userId, harness.PerspectiveName, cursor.MessageId.Value, boundary.MessageId.Value, CancellationToken.None);
+
+    await Assert.That(outcome).IsEqualTo(SnapshotBootstrapOutcome.Written);
+    await Assert.That(applier.Starts.Single().AfterEventId).IsEqualTo(floorEvent.MessageId.Value);
+    await Assert.That(applier.Starts.Single().AfterCommitSequence).IsEqualTo(10L);
+    await Assert.That(applier.Starts.Single().CollectivesThroughSequence).IsEqualTo(12L)
+      .Because("the snapshot below holds the collectives through its mark, so only those past it are folded again");
+    await Assert.That(snapshots.Taken.Single().Model.Permissions).IsEqualTo("read+c+c")
+      .Because("the snapshot's row, and the one collective committed past its mark and before the boundary");
+    await Assert.That(snapshots.Taken.Single().CollectivesThrough).IsEqualTo(20L);
+  }
+
   // ===== CollectiveReplayStart =====  // ===== CollectiveReplayStart =====
 
   [Test]
@@ -532,6 +638,11 @@ public class CollectiveReplayRunnerTests {
     /// <summary>Puts the collectives before the stream's events, for a collective with no commit sequence to merge by.</summary>
     public bool PutFirst { get; set; }
 
+    /// <summary>Says every collective is still in flight (#1970).</summary>
+    public bool InFlight { get; init; }
+
+    public bool IsInFlight(IEvent collectiveEvent) => InFlight;
+
     public MessageEnvelope<IEvent> Add(long? commitSequence = null) {
       var envelope = GeneratedRunners.Envelope(new PermissionsBulkGranted());
       envelope.LocalCommitSequence = commitSequence;
@@ -613,6 +724,21 @@ public class CollectiveReplayRunnerTests {
 
     public Task<PerspectiveSnapshotFloor?> GetLatestSnapshotFloorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>
       Task.FromResult<PerspectiveSnapshotFloor?>(_floor());
+  }
+
+  /// <summary>
+  /// Holds one snapshot at the stream's first event, recording its collectives mark, and records each one a run takes:
+  /// the floor below a reap boundary (#2456).
+  /// </summary>
+  private sealed class FloorAt(PermissionSetModel model, long collectivesThrough) : SnapshotsBase, IPerspectiveSnapshotStore {
+    public Guid FloorEventId { get; set; }
+
+    public Task<PerspectiveSnapshotFloor?> GetSnapshotFloorAsync(Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) {
+      using var doc = JsonSerializer.SerializeToDocument(model, _modelInfo);
+      var data = SnapshotEnvelope.Wrap(doc.RootElement, Whizbang.Core.Serialization.SerializationVersion.CURRENT);
+      return Task.FromResult<PerspectiveSnapshotFloor?>(
+        new PerspectiveSnapshotFloor(FloorEventId, 1, data, ArchivedThroughVersion: null) { CollectivesThroughSequence = collectivesThrough });
+    }
   }
 
   private abstract class SnapshotsBase : IPerspectiveSnapshotStore {
