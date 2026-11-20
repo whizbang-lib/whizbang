@@ -19,12 +19,15 @@ namespace Whizbang.Data.Postgres;
 /// <param name="StreamsRetired">Streams it removed them from.</param>
 /// <param name="StreamsWaiting">Streams its last batch left waiting: a gate or a cursor holds one of their retired events.</param>
 /// <param name="UnknownNames">Retired names nothing is stored under, reported this cycle (the first of the process).</param>
+/// <param name="StillDeclaredNames">Retired names this service still declares as an event type: skipped, since its
+/// readers here still apply them, and warned about every cycle (owner decision, 2026-11-20).</param>
 /// <param name="Status">The last batch's status: <c>ok</c>, <c>ok (n streams waiting)</c>, <c>waiting (...)</c> or
 /// <c>skipped (...)</c>.</param>
 /// <docs>fundamentals/events/retired-event-types#what-the-purge-does</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RetiredEventTypePurgeStepTests.cs</tests>
 public readonly record struct RetiredEventTypePurgeResult(
-  int Batches, long EventsRetired, int StreamsRetired, int StreamsWaiting, IReadOnlyList<string> UnknownNames, string Status);
+  int Batches, long EventsRetired, int StreamsRetired, int StreamsWaiting, IReadOnlyList<string> UnknownNames,
+  IReadOnlyList<string> StillDeclaredNames, string Status);
 
 /// <summary>
 /// The maintenance step that purges the stored events of the retired event types (<see cref="RetiredEventTypesOptions"/>,
@@ -34,8 +37,14 @@ public readonly record struct RetiredEventTypePurgeResult(
 /// startup never waits on it, and it does nothing while no type is retired.
 /// </summary>
 /// <remarks>
+/// <para>
 /// On the first cycle of a process it reports each retired name nothing is stored under, once: the name is misspelled,
 /// or the type's history is already purged here.
+/// </para>
+/// <para>
+/// A retired name this service still declares as an event type is skipped and warned about on every cycle, the first
+/// one after the host starts included: a running service never purges events its own readers still apply.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/events/retired-event-types</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RetiredEventTypePurgeStepTests.cs</tests>
@@ -82,9 +91,14 @@ public sealed partial class RetiredEventTypePurgeStep : IMaintenanceStep {
   public async Task<RetiredEventTypePurgeResult> PurgeAsync(IServiceProvider services, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(services);
     var options = services.GetService<IOptions<RetiredEventTypesOptions>>()?.Value ?? new RetiredEventTypesOptions();
-    string[] names = [.. options.RetiredNames()];
+    var catalog = services.GetService<Whizbang.Core.IMessageTypeCatalog>();
+    var stillDeclared = options.StillDeclared(catalog);
+    foreach (var name in stillDeclared) {
+      LogStillDeclared(_logger, name, RetiredEventTypesOptions.SECTION);
+    }
+    string[] names = [.. options.EffectiveNames(catalog)];
     if (names.Length == 0) {
-      return new RetiredEventTypePurgeResult(0, 0, 0, 0, [], "skipped (nothing retired)");
+      return new RetiredEventTypePurgeResult(0, 0, 0, 0, [], stillDeclared, "skipped (nothing retired)");
     }
     var types = string.Join(", ", names);
     var database = services.GetRequiredService<PostgresArchiveConnection>();
@@ -110,7 +124,7 @@ public sealed partial class RetiredEventTypePurgeStep : IMaintenanceStep {
     if (events > 0 || waiting > 0) {
       LogProgress(_logger, events, streams, waiting, types);
     }
-    return new RetiredEventTypePurgeResult(batches, events, streams, waiting, unknown, status);
+    return new RetiredEventTypePurgeResult(batches, events, streams, waiting, unknown, stillDeclared, status);
   }
 
   // The names nothing is stored under, reported once per process and schema.
@@ -160,4 +174,9 @@ public sealed partial class RetiredEventTypePurgeStep : IMaintenanceStep {
     Message = "Retired event type '{Name}' ({Section}) has no stored events here: the name is misspelled, or the type's "
             + "history is already purged. Names are matched without their assembly")]
   private static partial void LogUnknownName(ILogger logger, string name, string section);
+
+  [LoggerMessage(EventId = 3, Level = LogLevel.Warning,
+    Message = "Retired event type '{Name}' ({Section}) is skipped: this service still declares it as an event type, so its "
+            + "readers here still apply its events. Delete the type here, or remove the name, to stop this warning")]
+  private static partial void LogStillDeclared(ILogger logger, string name, string section);
 }

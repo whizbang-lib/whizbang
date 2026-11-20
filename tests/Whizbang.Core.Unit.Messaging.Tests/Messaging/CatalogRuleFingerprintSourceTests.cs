@@ -109,4 +109,17 @@ public class CatalogRuleFingerprintSourceTests {
       .RulesFor(["Contracts.CouponIssued"]).TypeHashes).IsEmpty()
       .Because("without the retired setting the type is unknown here, so it is not shared");
   }
+
+  /// <summary>
+  /// Owner decision (2026-11-20): a retired name this service still declares keeps its declared rules here, since the
+  /// service does not retire it; a peer that retired the type then halts the pair for it, which is the visible outcome.
+  /// </summary>
+  [Test]
+  public async Task RulesOf_ARetiredNameTheCatalogStillDeclares_KeepsItsDeclaredRulesAsync() {
+    var retired = new RetiredEventTypesOptions { Names = { _placed } };
+
+    var rules = CatalogRuleFingerprintSource.RulesOf(new Catalog(_event(typeof(Placed))), null, retired);
+
+    await Assert.That(rules[_placed]).IsEqualTo(new TypeRules(_placed));
+  }
 }

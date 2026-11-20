@@ -97,8 +97,9 @@ public sealed class CatalogRuleFingerprintSource : IRuleFingerprintSource {
         DigestExempt = exempt.Contains(name),
       };
     }
-    // #2329: a retired type's class is deleted, so the catalog no longer has it; startup refuses a name it still declares.
-    foreach (var name in retired?.RetiredNames() ?? []) {
+    // #2329: a retired type's class is deleted, so the catalog no longer has it. A name the catalog still declares is not
+    // retired here and keeps its declared rules (owner decision, 2026-11-20).
+    foreach (var name in retired?.EffectiveNames(catalog) ?? []) {
       rules[name] = new TypeRules(name) { Retired = true };
     }
     return rules;

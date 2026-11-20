@@ -102,6 +102,7 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   private readonly IReadOnlySet<string> _absorbedNamespaces;
   private readonly IEventMarkerResolver _markerResolver;
   private readonly Messaging.RetiredEventTypesOptions? _retired;
+  private readonly IMessageTypeCatalog? _catalog;
   // The tag attributes this host has a hook for. A tagged event is work for this host only where
   // one of these is the tag it carries.
   private readonly HashSet<Type> _hookedTagAttributes;
@@ -140,6 +141,8 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   /// when null, a tag is no reason to keep anything, which is the behavior that shipped.</param>
   /// <param name="retired">The retired event types (#2329): discarded at receive whatever else would keep them.
   /// Optional; when null, nothing is retired. The turnkey registration always passes it.</param>
+  /// <param name="catalog">This service's message types (#2329): a retired name it still declares is not turned away.
+  /// Optional; when null, no retired name is still declared.</param>
   public MessageDiscardPolicy(
       IConsumerRegistry registry,
       ILogger<MessageDiscardPolicy> logger,
@@ -147,7 +150,8 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
       IOptions<RoutingOptions> routingOptions,
       IEventMarkerResolver markerResolver,
       Configuration.WhizbangCoreOptions? coreOptions = null,
-      IOptions<Messaging.RetiredEventTypesOptions>? retired = null) {
+      IOptions<Messaging.RetiredEventTypesOptions>? retired = null,
+      IMessageTypeCatalog? catalog = null) {
     ArgumentNullException.ThrowIfNull(registry);
     _registry = registry;
     ArgumentNullException.ThrowIfNull(logger);
@@ -155,6 +159,7 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
     ArgumentNullException.ThrowIfNull(meter);
     _markerResolver = markerResolver;
     _retired = retired?.Value;
+    _catalog = catalog;
     _absorbedNamespaces = routingOptions.Value.AbsorbedNamespaces;
     _hookedTagAttributes = coreOptions?.Tags.HookRegistrations.Select(h => h.AttributeType).ToHashSet() ?? [];
     _skippedCounter = meter.CreatePassiveCounter<long>(
@@ -198,7 +203,8 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   }
 
   /// <inheritdoc />
-  public bool IsRetired(string payloadClrType) => _retired is { Names.Count: > 0 } retired && retired.IsRetired(payloadClrType);
+  public bool IsRetired(string payloadClrType) =>
+    _retired is { Names.Count: > 0 } retired && retired.IsRetired(payloadClrType, _catalog);
 
   /// <summary>
   /// True when the payload's event namespace is in <see cref="RoutingOptions.AbsorbedNamespaces"/>. The

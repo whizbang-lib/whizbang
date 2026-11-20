@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
@@ -11,8 +10,8 @@ namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
 /// #2329: a deleted event type is retired by naming it under <c>Whizbang:EventStore:RetiredTypes</c>. The names are
-/// read without their assembly, and a name this service still declares as an event type, a blank name or a batch limit
-/// below one stops the host at startup.
+/// read without their assembly; a blank name or a batch limit below one stops the host at startup, and a name this
+/// service still declares as an event type is left out of what it retires.
 /// </summary>
 [Category("Messaging")]
 public class RetiredEventTypesOptionsTests {
@@ -46,31 +45,38 @@ public class RetiredEventTypesOptionsTests {
   }
 
   [Test]
-  public async Task Validate_TheDefaults_AndRetiredNamesTheCatalogNoLongerDeclares_PassAsync() {
-    var options = new RetiredEventTypesOptions { Names = { "Contracts.Deleted" } };
-
-    await Assert.That(RetiredEventTypesOptions.Validate(new RetiredEventTypesOptions(), null)).IsEmpty();
-    await Assert.That(RetiredEventTypesOptions.Validate(options, new Catalog(_event(typeof(StillHere))))).IsEmpty();
+  public async Task Validate_TheDefaults_AndAnyRetiredName_PassAsync() {
+    await Assert.That(RetiredEventTypesOptions.Validate(new RetiredEventTypesOptions())).IsEmpty();
+    await Assert.That(RetiredEventTypesOptions.Validate(new RetiredEventTypesOptions {
+      Names = { "Contracts.Deleted", TypeNameFormatter.Format(typeof(StillHere)) },
+    })).IsEmpty().Because("owner decision (2026-11-20): a name this service still declares warns, it never stops the host");
   }
 
+  /// <summary>
+  /// Owner decision (2026-11-20): a retired name this service still declares as an event type is not retired here. It is
+  /// left out of the effective names every consumer of the setting reads (the purge, the receive gate, the fingerprint),
+  /// so a running service never purges, or turns away, events its own readers still apply; it is reported instead.
+  /// </summary>
   [Test]
-  public async Task Validate_ANameThisServiceStillDeclares_FailsAndNamesItAsync() {
+  public async Task EffectiveNames_LeaveOutANameThisServiceStillDeclares_AndStillDeclaredNamesItAsync() {
     var declared = TypeNameFormatter.FormatClrTypeName(typeof(StillHere));
-    var options = new RetiredEventTypesOptions { Names = { TypeNameFormatter.Format(typeof(StillHere)) } };
+    var options = new RetiredEventTypesOptions { Names = { TypeNameFormatter.Format(typeof(StillHere)), "Contracts.Deleted" } };
+    var catalog = new Catalog(_event(typeof(StillHere)));
 
-    var failures = RetiredEventTypesOptions.Validate(options, new Catalog(_event(typeof(StillHere))));
-
-    await Assert.That(failures.Count).IsEqualTo(1);
-    await Assert.That(failures[0]).Contains(declared)
-      .Because("retiring a type the service still declares would purge events it still reads");
-    await Assert.That(failures[0]).Contains(RetiredEventTypesOptions.SECTION);
+    await Assert.That(options.EffectiveNames(catalog)).IsEquivalentTo(["Contracts.Deleted"]);
+    await Assert.That(options.StillDeclared(catalog)).IsEquivalentTo([declared]);
+    await Assert.That(options.IsRetired(declared, catalog)).IsFalse();
+    await Assert.That(options.IsRetired("Contracts.Deleted, Contracts", catalog)).IsTrue();
+    await Assert.That(options.EffectiveNames(null)).IsEquivalentTo([declared, "Contracts.Deleted"])
+      .Because("a host without a catalog declares no type a name could collide with");
+    await Assert.That(options.StillDeclared(null)).IsEmpty();
   }
 
   [Test]
   public async Task Validate_ABlankName_OrABatchLimitBelowOne_FailsAsync() {
     var options = new RetiredEventTypesOptions { Names = { "  " }, BatchStreams = 0, MaxBatchesPerCycle = -1 };
 
-    var failures = RetiredEventTypesOptions.Validate(options, null);
+    var failures = RetiredEventTypesOptions.Validate(options);
 
     await Assert.That(failures.Count).IsEqualTo(3);
     await Assert.That(failures.Any(f => f.Contains("Names", StringComparison.Ordinal))).IsTrue();
@@ -79,20 +85,13 @@ public class RetiredEventTypesOptionsTests {
   }
 
   [Test]
-  public async Task Validator_ReadsTheRegisteredCatalog_AndFailsTheHostOnAStillDeclaredNameAsync() {
-    var services = new ServiceCollection();
-    services.AddSingleton<IMessageTypeCatalog>(new Catalog(_event(typeof(StillHere))));
-    await using var provider = services.BuildServiceProvider();
-    var validator = new RetiredEventTypesOptionsValidator(provider);
+  public async Task Validator_StopsTheHostOnlyOnAValueItCannotApplyAsync() {
+    var validator = new RetiredEventTypesOptionsValidator();
 
-    var bad = validator.Validate(null, new RetiredEventTypesOptions { Names = { TypeNameFormatter.FormatClrTypeName(typeof(StillHere)) } });
-    var good = validator.Validate(null, new RetiredEventTypesOptions { Names = { "Contracts.Deleted" } });
-
-    await Assert.That(bad.Failed).IsTrue();
-    await Assert.That(good.Succeeded).IsTrue();
-    await Assert.That(new RetiredEventTypesOptionsValidator(new ServiceCollection().BuildServiceProvider())
-      .Validate(null, new RetiredEventTypesOptions { Names = { "Contracts.Deleted" } }).Succeeded).IsTrue()
-      .Because("a host without a catalog has no declared type a name could collide with");
+    await Assert.That(validator.Validate(null, new RetiredEventTypesOptions { BatchStreams = 0 }).Failed).IsTrue();
+    await Assert.That(validator.Validate(null, new RetiredEventTypesOptions {
+      Names = { TypeNameFormatter.FormatClrTypeName(typeof(StillHere)) },
+    }).Succeeded).IsTrue();
     await Assert.That(() => validator.Validate(null, null!)).Throws<ArgumentNullException>();
   }
 

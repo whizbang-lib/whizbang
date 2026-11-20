@@ -61,6 +61,34 @@ public class RetiredEventTypePurgeStepTests : EFCoreTestBase {
     await Assert.That(logger.Entries.Count(e => e.Contains("removed", StringComparison.Ordinal))).IsEqualTo(2);
   }
 
+  /// <summary>
+  /// Owner decision (2026-11-20): a retired name this service still declares as an event type does not stop the host. The
+  /// purge skips it, counts it and warns about it every cycle, so a running service never purges events its own readers
+  /// still apply; the other retired names are purged as usual.
+  /// </summary>
+  [Test]
+  public async Task Purge_SkipsANameThisServiceStillDeclares_CountsIt_AndWarnsEveryCycleAsync() {
+    await using var conn = await _openAsync();
+    var stream = (Guid)TrackedGuid.New();
+    await RetiredEventTypePurgeSqlTests.EmitAsync(conn, _t0, (stream, KEEP, 0, null, null), (stream, RETIRED, 0, null, null));
+    await RetiredEventTypePurgeSqlTests.StampAsync(conn);
+    var logger = new ListLogger();
+    await using var services = _services(new RetiredEventTypesOptions { Names = { KEEP, RETIRED } },
+      new DeclaringCatalog("Probe.Contracts.OrderPlaced"));
+
+    var first = await new RetiredEventTypePurgeStep(logger).PurgeAsync(services, CancellationToken.None);
+    var second = await new RetiredEventTypePurgeStep(logger).PurgeAsync(services, CancellationToken.None);
+
+    await Assert.That(first.StillDeclaredNames).IsEquivalentTo(["Probe.Contracts.OrderPlaced"]);
+    await Assert.That(second.StillDeclaredNames).IsEquivalentTo(["Probe.Contracts.OrderPlaced"]);
+    await Assert.That(first.EventsRetired).IsEqualTo(1L).Because("the name this service no longer declares is purged");
+    await Assert.That(await _countAsync(conn, KEEP)).IsEqualTo(1L)
+      .Because("the declared type's events stay: its readers here still apply them");
+    await Assert.That(logger.Entries.Count(e => e.Contains("Probe.Contracts.OrderPlaced", StringComparison.Ordinal)
+      && e.Contains("still declares", StringComparison.Ordinal))).IsEqualTo(2)
+      .Because("the warning repeats every cycle until the name or the type is removed");
+  }
+
   [Test]
   public async Task Purge_NothingRetired_TouchesNoDatabaseAsync() {
     // No connection is registered: a step that read the database would fail to resolve it.
@@ -133,8 +161,20 @@ public class RetiredEventTypePurgeStepTests : EFCoreTestBase {
       Entries.Add(formatter(state, exception));
   }
 
-  private ServiceProvider _services(RetiredEventTypesOptions options) =>
-    new ServiceCollection()
+  private sealed class DeclaringCatalog(string clrTypeName) : IMessageTypeCatalog {
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => [new(typeof(object), clrTypeName, "event", null)];
+  }
+
+  private ServiceProvider _services(RetiredEventTypesOptions options, IMessageTypeCatalog? catalog = null) {
+    var services = new ServiceCollection();
+    if (catalog is not null) {
+      services.AddSingleton(catalog);
+    }
+    return _services(options, services);
+  }
+
+  private ServiceProvider _services(RetiredEventTypesOptions options, ServiceCollection services) =>
+    services
       .AddSingleton(new PostgresArchiveConnection(async ct => {
         var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync(ct);

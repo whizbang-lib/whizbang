@@ -100,6 +100,26 @@ public class MessageDiscardPolicyTests {
       .Because("a policy built without the retired setting retires nothing");
   }
 
+  /// <summary>
+  /// Owner decision (2026-11-20): a retired name this service still declares is not retired here, so its events still
+  /// reach the readers that apply them.
+  /// </summary>
+  [Test]
+  public async Task EvaluateReceive_ARetiredNameThisServiceStillDeclares_IsNotTurnedAwayAsync() {
+    using var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests.RetiredButDeclared");
+    var catalog = new DeclaringCatalog(CONSUMED_TYPE);
+    var policy = new MessageDiscardPolicy(registry: new TestRegistry { Consumed = { CONSUMED_TYPE } }, logger: new RecordingLogger<MessageDiscardPolicy>(),
+      meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      retired: Options.Create(new RetiredEventTypesOptions { Names = { CONSUMED_TYPE } }), catalog: catalog);
+
+    await Assert.That(policy.IsRetired(CONSUMED_TYPE)).IsFalse();
+    await Assert.That(policy.EvaluateReceive(CONSUMED_TYPE, "t", "s").ShouldDiscard).IsFalse();
+  }
+
+  private sealed class DeclaringCatalog(string clrTypeName) : IMessageTypeCatalog {
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => [new(typeof(object), clrTypeName, "event", null)];
+  }
+
   private static MessageDiscardPolicy _newPolicyWithAbsorb(Meter meter, params string[] absorb) {
     var routing = new RoutingOptions();
     routing.AbsorbNamespaces(absorb);

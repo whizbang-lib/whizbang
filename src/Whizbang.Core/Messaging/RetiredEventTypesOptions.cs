@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace Whizbang.Core.Messaging;
@@ -18,9 +17,10 @@ namespace Whizbang.Core.Messaging;
 /// pair through the pair guard until both declare it: declare a retirement in every service that stores the type.
 /// </para>
 /// <para>
-/// A name is matched without its assembly. A name this service still declares as an event type stops the host at
-/// startup (<see cref="RetiredEventTypesOptionsValidator"/>): a retirement purges events, and a type that is still
-/// declared still has readers here. A name nothing is stored under is reported by the purge, once per process.
+/// A name is matched without its assembly. A name this service still declares as an event type is not retired here
+/// (<see cref="EffectiveNames"/>): its events are neither purged nor turned away, since its readers here still apply
+/// them, and the purge warns about it every maintenance cycle. A name nothing is stored under is reported by the
+/// purge, once per process.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/retired-event-types</docs>
@@ -66,16 +66,47 @@ public sealed class RetiredEventTypesOptions {
     return Names.Exists(n => !string.IsNullOrWhiteSpace(n) && string.Equals(RuleTypeName.Of(n), name, StringComparison.Ordinal));
   }
 
+  /// <summary>Whether <paramref name="eventType"/> is retired here: named, and not still declared by <paramref name="catalog"/>.</summary>
+  /// <param name="eventType">A stored, wire or bare type name.</param>
+  /// <param name="catalog">This service's message types, or null when it has none.</param>
+  /// <returns>True when the type is retired on this service.</returns>
+  public bool IsRetired(string eventType, IMessageTypeCatalog? catalog) =>
+    IsRetired(eventType) && !_declared(catalog).Contains(RuleTypeName.Of(eventType));
+
   /// <summary>
-  /// Why <paramref name="options"/> cannot be applied: a blank name, a batch limit below one, or a name
-  /// <paramref name="catalog"/> still declares as an event type.
+  /// The retired names this service retires: <see cref="RetiredNames"/> without those <paramref name="catalog"/> still
+  /// declares as an event type. The purge, the receive gate and the rule fingerprint all read this, so a name the
+  /// service still declares is retired by none of them (owner decision, 2026-11-20).
+  /// </summary>
+  /// <param name="catalog">This service's message types, or null when it has none.</param>
+  /// <returns>The names, without their assembly, in ordinal order.</returns>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RetiredEventTypesOptionsTests.cs:EffectiveNames_LeaveOutANameThisServiceStillDeclares_AndStillDeclaredNamesItAsync</tests>
+  public IReadOnlyList<string> EffectiveNames(IMessageTypeCatalog? catalog) {
+    var declared = _declared(catalog);
+    return [.. RetiredNames().Where(n => !declared.Contains(n))];
+  }
+
+  /// <summary>
+  /// The retired names <paramref name="catalog"/> still declares as an event type: configured, but not retired here, and
+  /// reported every maintenance cycle until the name or the type is removed.
+  /// </summary>
+  /// <param name="catalog">This service's message types, or null when it has none.</param>
+  /// <returns>The names, without their assembly, in ordinal order.</returns>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RetiredEventTypesOptionsTests.cs:EffectiveNames_LeaveOutANameThisServiceStillDeclares_AndStillDeclaredNamesItAsync</tests>
+  public IReadOnlyList<string> StillDeclared(IMessageTypeCatalog? catalog) {
+    var declared = _declared(catalog);
+    return [.. RetiredNames().Where(declared.Contains)];
+  }
+
+  /// <summary>
+  /// Why <paramref name="options"/> cannot be applied: a blank name or a batch limit below one. A name this service still
+  /// declares is not a failure: it is left out of what is retired (<see cref="EffectiveNames"/>) and reported.
   /// </summary>
   /// <param name="options">The options.</param>
-  /// <param name="catalog">This service's message types, or null when it has none.</param>
   /// <returns>The failures; empty when the options are valid.</returns>
-  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RetiredEventTypesOptionsTests.cs:Validate_ANameThisServiceStillDeclares_FailsAndNamesItAsync</tests>
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RetiredEventTypesOptionsTests.cs:Validate_ABlankName_OrABatchLimitBelowOne_FailsAsync</tests>
-  public static IReadOnlyList<string> Validate(RetiredEventTypesOptions options, IMessageTypeCatalog? catalog) {
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RetiredEventTypesOptionsTests.cs:Validate_TheDefaults_AndAnyRetiredName_PassAsync</tests>
+  public static IReadOnlyList<string> Validate(RetiredEventTypesOptions options) {
     ArgumentNullException.ThrowIfNull(options);
     var failures = new List<string>();
     if (options.Names.Exists(string.IsNullOrWhiteSpace)) {
@@ -87,28 +118,24 @@ public sealed class RetiredEventTypesOptions {
     if (options.MaxBatchesPerCycle < 1) {
       failures.Add($"{SECTION}:MaxBatchesPerCycle must be at least 1, was {options.MaxBatchesPerCycle}.");
     }
-    var declared = new HashSet<string>(
-      (catalog?.GetAll() ?? []).Where(e => e.Kind == "event").Select(e => RuleTypeName.Of(e.ClrTypeName)), StringComparer.Ordinal);
-    foreach (var name in options.RetiredNames().Where(declared.Contains)) {
-      failures.Add($"{SECTION}:Names retires '{name}', which this service still declares as an event type. A retirement "
-        + "purges the type's stored events, so it is declared only once the type is deleted; remove the name or delete the type.");
-    }
     return failures;
   }
+
+  private static HashSet<string> _declared(IMessageTypeCatalog? catalog) =>
+    new((catalog?.GetAll() ?? []).Where(e => e.Kind == "event").Select(e => RuleTypeName.Of(e.ClrTypeName)), StringComparer.Ordinal);
 }
 
 /// <summary>
-/// Stops the host at startup on <see cref="RetiredEventTypesOptions"/> that cannot be applied (#2329), reading this
-/// service's message types from the registered <see cref="IMessageTypeCatalog"/>.
+/// Stops the host at startup on <see cref="RetiredEventTypesOptions"/> that cannot be applied (#2329): a blank name or a
+/// batch limit below one.
 /// </summary>
-/// <param name="services">The host's services.</param>
 /// <docs>fundamentals/events/retired-event-types#declaring-a-retired-type</docs>
-/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RetiredEventTypesOptionsTests.cs:Validator_ReadsTheRegisteredCatalog_AndFailsTheHostOnAStillDeclaredNameAsync</tests>
-public sealed class RetiredEventTypesOptionsValidator(IServiceProvider services) : IValidateOptions<RetiredEventTypesOptions> {
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RetiredEventTypesOptionsTests.cs:Validator_StopsTheHostOnlyOnAValueItCannotApplyAsync</tests>
+public sealed class RetiredEventTypesOptionsValidator : IValidateOptions<RetiredEventTypesOptions> {
   /// <inheritdoc />
   public ValidateOptionsResult Validate(string? name, RetiredEventTypesOptions options) {
     ArgumentNullException.ThrowIfNull(options);
-    var failures = RetiredEventTypesOptions.Validate(options, services.GetService<IMessageTypeCatalog>());
+    var failures = RetiredEventTypesOptions.Validate(options);
     return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
   }
 }

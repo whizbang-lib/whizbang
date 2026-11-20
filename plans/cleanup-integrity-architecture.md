@@ -432,3 +432,8 @@ A cut happens only below this service's own seal (C). It moves the removed diges
   reaper, which now calls it too.
 - **Matrix.** Rows `RetiredType` (origin, consumer, both) and `RetiredTypeHeld` (both sides, a different stream held on
   each) were added RED before the code.
+- **Owner decisions (2026-11-20).** Rules version 3 with pairs halting until both sides upgrade: accepted. A retired
+  name the service still declares as an event type warns instead of stopping the host: it is left out of the effective
+  names the purge, the receive gate and the fingerprint read, counted (`StillDeclaredNames`) and warned about every
+  maintenance cycle. Streams a cursor or snapshot holds for good are counted in the cycle's log line and left. Batch
+  defaults (500 streams, 10 batches a cycle): accepted.
