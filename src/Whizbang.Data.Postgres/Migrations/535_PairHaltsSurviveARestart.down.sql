@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 531_PairHaltsSurviveARestart.sql (#2377): the pair guard's halt functions and table go, and the
+-- The reverse of 535_PairHaltsSurviveARestart.sql (#2377): the pair guard's halt functions and table go, and the
 -- operational retention sweep goes back to 457's word. Kept halts do not come back.
 
 DROP FUNCTION IF EXISTS __SCHEMA__.wh_integrity_pair_halt_record(TEXT, SMALLINT, SMALLINT, TEXT[], INTEGER, INTEGER, TEXT, INTEGER, INTEGER, TEXT, TIMESTAMPTZ);

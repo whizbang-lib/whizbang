@@ -16,7 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// second instance that halts the same pair, or the same pair halting for another reason, updates it and keeps the
 /// earliest halted-at; the alert and the resumption are stamped on it; the open halts are what a new process loads.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/531_PairHaltsSurviveARestart.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/535_PairHaltsSurviveARestart.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <docs>resilience/stream-integrity#the-pair-guard</docs>
 [Category("Integration")]

@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 531_PairHaltsSurviveARestart.sql
+-- Migration: 535_PairHaltsSurviveARestart.sql
 -- Date: 2026-11-20
 -- Description: The pair guard's halts are kept, so a halt survives a restart (#2377).
 --
@@ -22,7 +22,7 @@
 --              Cost: a write when a pair's state changes (halt, alert, resume), never per message; a read of the open
 --              halts once per process start. Bounded by peers and sides, plus the history the retention keeps.
 --
---              Number 531: after 530 in this branch.
+--              Number 535: after 531-533 (#2457) and 534 (#2456), which merge first.
 --
 -- Reversal: reversible (the table and its functions go; the sweep goes back to 457's word)
 -- Dependencies: 457 (wh_sweep_operational_retention)
@@ -380,7 +380,7 @@ BEGIN
            EXTRACT(EPOCH FROM (p_now - MIN(c.updated_at)))::double precision
     FROM __SCHEMA__.wh_signal_cursors c
     WHERE NOT EXISTS (SELECT 1 FROM __SCHEMA__.wh_service_instances i WHERE i.instance_id = c.instance_id);
-  -- ── 531 (#2377): the pair guard's resumed halts (PairHistory) ────────────────────────────
+  -- ── 535 (#2377): the pair guard's resumed halts (PairHistory) ────────────────────────────
   -- A resumed halt is history: how long a pair was halted and how often. An open halt is state (the alert clock of a
   -- pair still halted) and is never removed, however old.
   v_removed := 0;
@@ -408,4 +408,4 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_sweep_operational_retention(TIMESTAMPTZ, JSONB, INTEGER) IS
-'Issue #2354: one batch of the operational retention sweep over the Rolling tables it covers; removes closed rows past their category''s resting period and reports what is left per table. 456 (#2359): also advisory findings, dead letter clusters, probe campaigns and stacks that nothing relies on any more. 457 (#2360): signal cursors of instances that are gone. 531 (#2377): resumed pair guard halts (PairHistory).';
+'Issue #2354: one batch of the operational retention sweep over the Rolling tables it covers; removes closed rows past their category''s resting period and reports what is left per table. 456 (#2359): also advisory findings, dead letter clusters, probe campaigns and stacks that nothing relies on any more. 457 (#2360): signal cursors of instances that are gone. 535 (#2377): resumed pair guard halts (PairHistory).';
