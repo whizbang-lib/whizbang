@@ -21,14 +21,14 @@
              cancel throws away no work in progress. It ends once every other job has finished (two polls in a
              row, so the gap between one job finishing and the next starting is not mistaken for the end).
       Rerun  ci-runner-fallback.yml, on the CI run finishing (Trigger workflow_run) or asked by the watcher
-             (Trigger watcher). It re-runs the run's failed jobs when the watcher cancelled it, or when every job
+             (Trigger watcher). It re-runs the run's failed jobs when the watcher canceled it, or when every job
              that failed was a pool job whose machine was lost (its annotations say it lost communication, was
              shut down, exceeded its time or was never acquired) or the gate that fails after it. A job that
              failed for any other reason means a re-run would not change the result, so nothing is re-run and no
              flaky test gets a second try. A re-run job takes ubuntu-latest, not the pool: every routed job
              takes the picker's plan only in the attempt it was made for. At most -MaxAttempts attempts.
 
-    A merge-queue run is never re-run: the queue removes the pull request when its run fails or is cancelled, and a
+    A merge-queue run is never re-run: the queue removes the pull request when its run fails or is canceled, and a
     re-run of that run cannot put it back.
 
     Setup: .github/WORKFLOWS.md, "Runner selection".
@@ -168,7 +168,7 @@ function Get-FallbackDecision {
   if ([int]$Run.run_attempt -ge $MaxAttempts) { return No "attempt $($Run.run_attempt): re-run $MaxAttempts times at most" }
   if ($Trigger -eq 'watcher') {
     if ([string]$Run.conclusion -eq 'cancelled') {
-      return [pscustomobject]@{ Rerun = $true; Reason = 'the watcher cancelled it because a pool job could not start' }
+      return [pscustomobject]@{ Rerun = $true; Reason = 'the watcher canceled it because a pool job could not start' }
     }
     return No "the run concluded $($Run.conclusion), so the watcher's cancel did not end it"
   }
@@ -182,7 +182,7 @@ function Get-FallbackDecision {
     if ($conclusion -notin @('failure', 'cancelled', 'timed_out')) { continue }
     $said = if ($byId.ContainsKey([string]$job.id)) { @($byId[[string]$job.id]) } else { @() }
     if ((Test-PoolJob -Job $job) -and (Test-RunnerLost -Messages $said)) { $lost += [string]$job.name; continue }
-    # A cancelled job never failed a test: it was stopped because another job failed.
+    # A canceled job never failed a test: it was stopped because another job failed.
     if ($conclusion -eq 'cancelled' -or $Aggregators -contains [string]$job.name) { continue }
     $blocking += [string]$job.name
   }

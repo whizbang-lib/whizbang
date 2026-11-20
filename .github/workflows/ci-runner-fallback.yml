@@ -31,7 +31,7 @@ permissions: {}
 jobs:
   rerun:
     name: Plan · Re-run on GitHub-hosted runners
-    # On workflow_run, only a failed run can need it; the watcher's dispatch is for a cancelled one.
+    # On workflow_run, only a failed run can need it; the watcher's dispatch is for a canceled one.
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'failure'
     runs-on: ubuntu-latest
     timeout-minutes: 30

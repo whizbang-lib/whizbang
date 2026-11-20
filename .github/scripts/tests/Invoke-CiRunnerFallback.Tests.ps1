@@ -247,19 +247,19 @@ Describe 'Get-FallbackDecision' {
     $d.Reason | Should -BeLike $Why
   }
 
-  It 're-runs a run the watcher cancelled, whatever its jobs say' {
+  It 're-runs a run the watcher canceled, whatever its jobs say' {
     $d = Get-Decision -Run (New-Run -Conclusion 'cancelled') -Jobs @(New-Job -Status 'completed' -Conclusion 'cancelled') -Trigger 'watcher'
     $d.Rerun | Should -BeTrue
     $d.Reason | Should -BeLike '*watcher*'
   }
 
-  It 'leaves a cancelled run alone when the watcher did not ask (someone cancelled it by hand)' {
+  It 'leaves a canceled run alone when the watcher did not ask (someone canceled it by hand)' {
     $d = Get-Decision -Run (New-Run -Conclusion 'cancelled') -Jobs @(New-Job -Status 'completed' -Conclusion 'cancelled')
     $d.Rerun | Should -BeFalse
     $d.Reason | Should -BeLike '*concluded cancelled*'
   }
 
-  It 'leaves a run the watcher asked about alone when it did not end cancelled' {
+  It 'leaves a run the watcher asked about alone when it did not end canceled' {
     $d = Get-Decision -Run (New-Run -Conclusion 'failure') -Jobs @() -Trigger 'watcher'
     $d.Rerun | Should -BeFalse
   }
@@ -293,7 +293,7 @@ Describe 'Invoke-RunnerRerun' {
     Get-Content -Raw $Summary | Should -BeLike '*Re-ran the failed jobs on GitHub-hosted runners*'
   }
 
-  It 'waits for a run the watcher cancelled to finish, then re-runs it' {
+  It 'waits for a run the watcher canceled to finish, then re-runs it' {
     $api = New-FakeApi @{
       "GET $RunPath"  = (New-Queue @((New-Run -Status 'in_progress' -Conclusion ''), (New-Run -Conclusion 'cancelled')))
       "GET $JobsPath" = [pscustomobject]@{ jobs = @(New-Job -Status 'completed' -Conclusion 'cancelled') }
