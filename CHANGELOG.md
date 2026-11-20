@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4521.0] - 2026-11-20
+
+### Changed
+
+- **Runtime async on .NET 11 (#2241).** The `net11.0` build of every package is compiled for .NET 11's runtime
+  async: the runtime suspends and resumes W!'s async methods itself instead of a compiler-generated state machine
+  per method. Dispatch, execution and throughput benchmarks show no measurable difference in time or allocations.
+  Live stack traces (profilers, debuggers, `new StackTrace()`) now show W!'s real call chain; exception stack traces
+  look the same as before. The `net10.0` build is unchanged.
+  **Upgrade:** nothing to change.
+
+### Fixed
+
+#### Observability & tooling
+- **A stable release attaches its packages and opens the merge-back again (#2443).** A release published from the
+  release branch's tested packages skipped the job that attaches the packages, SBOMs, hashes and provenance to the
+  GitHub release and the job that brings main's changes back to develop, because a job they depend on skipped one of
+  its own inputs on that path. The release stayed a draft and no sync pull request was opened. Both now run whenever
+  the NuGet push succeeded, as do the older-line hotfix merge-back and the CI failure notice, which had the same
+  cause. A test fails on any workflow job that would skip this way. The public API baseline moves to 0.4457.0. Nothing
+  to change.
+
 ## [0.4457.0] - 2026-11-19
 
 ### Added
