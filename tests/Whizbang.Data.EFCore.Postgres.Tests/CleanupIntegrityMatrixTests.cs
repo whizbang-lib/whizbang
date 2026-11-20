@@ -72,6 +72,11 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
   internal const string FILLER = "Matrix.Contracts.LedgerNoted, Matrix.Contracts";
   /// <summary>A schedule occurrence type delivered at most once.</summary>
   internal const string AT_MOST_ONCE = "Matrix.Contracts.ReminderFired, Matrix.Contracts";
+  /// <summary>
+  /// A durable type the application deleted and then declared retired (#2329): its stored events sit between events of
+  /// a type that stays, on long-lived streams.
+  /// </summary>
+  internal const string RETIRED = "Matrix.Contracts.CouponIssued, Matrix.Contracts";
 
   private const int FLAG_EPHEMERAL = 8;
   private const int FLAG_AT_MOST_ONCE = 32;
@@ -204,7 +209,7 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     var origin = h.OriginGuard.Pairs.Single(p => p.Peer == CONSUMER_NAME);
     await Assert.That(origin.Verdict.Reason).IsEqualTo(RulePairHaltReason.TypeRules)
       .Because($"[{pair}] the origin halts the pair for the type whose rules differ");
-    await Assert.That(origin.Verdict.DifferingTypes).IsEquivalentTo([RuleTypeName.Of(LATER_EPHEMERAL)]);
+    await Assert.That(origin.Verdict.DifferingTypes).IsEquivalentTo([RuleTypeName.Of(scenario.RuleChangedType)]);
     await Assert.That(h.ConsumerGuard.Pairs.Single(p => p.Peer == ORIGIN_NAME).HaltedSince.HasValue).IsTrue()
       .Because($"[{pair}] the origin answers a halted pair with its own rules, so the consumer halts too");
 
@@ -289,6 +294,11 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     /// </summary>
     public bool IsMeaningful {
       get {
+        if (Cleanup == CleanupPath.RetiredTypeHeld) {
+          // A one-sided retirement halts the pair, which RetiredType covers on each side; this row is the two sides
+          // agreeing while one of them cannot purge yet.
+          return Side == CleanupSide.Both;
+        }
         if (Cleanup == CleanupPath.RewindBookkeeping) {
           // Local records on the local lane, never on the wire: only the per-store mechanisms of the store that has them.
           return Side == CleanupSide.Origin && Mechanism is IntegrityMechanism.StoredDigestHeal or IntegrityMechanism.EpochSeal;
@@ -338,6 +348,17 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     AtMostOnce,
     /// <summary>Audit records, digest-exempt on every side.</summary>
     AuditRecords,
+    /// <summary>
+    /// A deleted event type is declared retired (#2329) and its stored events are purged from long-lived mixed streams
+    /// (wh_retire_event_types): the side's rule changes, so one side alone halts the pair until the other declares it too.
+    /// </summary>
+    RetiredType,
+    /// <summary>
+    /// Both sides declare the type retired, but a destruction hold keeps one stream waiting on each side, a different one
+    /// (#2329): each side then holds history of the type the other has purged, and integrity must neither report the
+    /// difference nor send the purged events back, in either direction.
+    /// </summary>
+    RetiredTypeHeld,
   }
 
   /// <summary>Where a cleanup runs.</summary>
@@ -389,6 +410,8 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     /// then proves only that the kind never reads as divergent).
     /// </summary>
     public virtual bool ChangesTheStore => true;
+    /// <summary>The type whose rule the cleanup changes on its side, so a one-sided cleanup halts the pair for it.</summary>
+    public virtual string RuleChangedType => LATER_EPHEMERAL;
     private readonly Dictionary<Guid, Guid> _controlStreams = [];
 
     public static Scenario For(CleanupPath path) => path switch {
@@ -405,6 +428,8 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
       CleanupPath.StreamPurge => new PrefixScenario(PrefixKind.Purge),
       CleanupPath.AtMostOnce => new FlaggedScenario(AT_MOST_ONCE, FLAG_AT_MOST_ONCE),
       CleanupPath.AuditRecords => new FlaggedScenario(Whizbang.Core.SystemEvents.DigestExemptTypes.TypeNames[0] + ", Whizbang.Core", 0),
+      CleanupPath.RetiredType => new RetiredScenario(held: false),
+      CleanupPath.RetiredTypeHeld => new RetiredScenario(held: true),
       _ => throw new ArgumentOutOfRangeException(nameof(path), path, "no scenario"),
     };
 
@@ -602,6 +627,34 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     protected override Task CleanOnAsync(Harness h, Store store) => Harness.ExecuteAsync(store, "SELECT * FROM perform_maintenance()");
   }
 
+  private sealed class RetiredScenario(bool held) : Scenario {
+    public override string[] Types => [RETIRED, DURABLE];
+    public override string ControlType => DURABLE;
+    public override string RuleChangedType => RETIRED;
+
+    public override async Task SeedAsync(Harness h) {
+      // Long-lived mixed streams: the retired type sits between events of a type that stays. With a hold, two streams,
+      // each held on one side.
+      for (var i = 0; i < (held ? 2 : 1); i++) {
+        var stream = (Guid)TrackedGuid.New();
+        Streams.Add(stream);
+        var ids = await h.EmitAsync(
+          new Emit(stream, DURABLE, 0, null), new Emit(stream, RETIRED, 0, null), new Emit(stream, DURABLE, 0, null),
+          new Emit(stream, RETIRED, 0, null), new Emit(stream, DURABLE, 0, null));
+        await h.DeliverAsync(ids);
+      }
+    }
+
+    protected override async Task CleanOnAsync(Harness h, Store store) {
+      // A retirement is a rule change: the side declares the type retired, and maintenance purges its stored events.
+      h.RulesOf(store).DeclareRetired(RETIRED);
+      if (held) {
+        await Harness.HoldEveryEventOfAsync(store, store == h.Origin ? Streams[1] : Streams[0], RETIRED);
+      }
+      await Harness.ExecuteAsync(store, "SELECT * FROM wh_retire_event_types(@n, 500)", ("n", new[] { RuleTypeName.Of(RETIRED) }));
+    }
+  }
+
   // ===== The harness =====
 
   /// <summary>An event to emit on the origin.</summary>
@@ -633,6 +686,7 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     private readonly MatrixRules _originRules = new();
     private readonly MatrixRules _consumerRules = new();
     private readonly List<Guid> _restored = [];
+    private readonly System.Diagnostics.Metrics.Meter _discardMeter = new("Whizbang.Tests.CleanupIntegrityMatrix.Discard");
     private readonly List<Guid> _redelivered = [];
     private readonly Dictionary<Guid, (Guid Stream, string Type, int Flags, string? Key, long Seq)> _emitted = [];
     private string _consumerDbName = "";
@@ -705,6 +759,7 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     }
 
     public async ValueTask DisposeAsync() {
+      _discardMeter.Dispose();
       if (_originProvider is not null) {
         await _originProvider.DisposeAsync();
       }
@@ -836,7 +891,7 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
     // ----- the audit -----
 
     /// <summary>Every type the consumer's audit asks about.</summary>
-    private static readonly string[] _auditedTypes = [DURABLE, SUPERSEDING, EPHEMERAL, LATER_EPHEMERAL, AT_MOST_ONCE,
+    private static readonly string[] _auditedTypes = [DURABLE, SUPERSEDING, EPHEMERAL, LATER_EPHEMERAL, AT_MOST_ONCE, RETIRED,
       Whizbang.Core.SystemEvents.DigestExemptTypes.TypeNames[0] + ", Whizbang.Core"];
 
     /// <summary>One audit cycle of the given kind, pumped until both sides are quiet.</summary>
@@ -938,7 +993,10 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
       var bundle = _payload<RedeliveryComposite>(envelope);
       _redelivered.AddRange(bundle.InnerEventIds);
       using var scope = _consumerProvider!.CreateScope();
-      var result = CompositeInboxFanout.TryExpand(bundle, envelope, scope.ServiceProvider);
+      // As the inbox worker does (#736): a child the receive gate would turn away is dropped at expansion.
+      var policy = scope.ServiceProvider.GetRequiredService<Whizbang.Core.Routing.IMessageDiscardPolicy>();
+      var result = CompositeInboxFanout.TryExpand(bundle, envelope, scope.ServiceProvider,
+        hasConsumer: type => !policy.EvaluateReceive(type, string.Empty, string.Empty).ShouldDiscard);
       if (result.Outcome != CompositeInboxFanout.FanoutOutcome.Expanded) {
         throw new InvalidOperationException($"the redelivery bundle did not expand: {result.Outcome} {result.Detail}");
       }
@@ -1035,6 +1093,14 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
         throw new InvalidOperationException("the positive control found no sealed epoch to damage: the setup is wrong");
       }
     }
+
+    /// <summary>A PreDestruction hook's Defer on every event of the type in the stream, for a century.</summary>
+    public static Task HoldEveryEventOfAsync(Store store, Guid stream, string eventType) =>
+      ExecuteAsync(store, """
+        INSERT INTO wh_event_destruction_hold (event_id, hold_until)
+        SELECT event_id, NOW() + INTERVAL '100 years' FROM wh_event_store WHERE stream_id = @s AND event_type = @t
+        ON CONFLICT (event_id) DO NOTHING
+        """, ("s", stream), ("t", eventType));
 
     /// <summary>Removes one stored event of the type from the store without touching its digest: an unaccounted loss.</summary>
     public static async Task LoseOneEventUnaccountedAsync(Store store, string eventType) {
@@ -1233,6 +1299,12 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
       services.AddSingleton<IIntegrityRepairLedger>(sp =>
         new CoordinatorIntegrityRepairLedger(sp.GetRequiredService<IServiceScopeFactory>()));
       services.AddSingleton<IConsumerRegistry>(new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery());
+      // The shared discard policy, as the turnkey registration wires it, over this side's retired types (#2329): the receive
+      // boundary and stream integrity's comparisons both ask it.
+      services.AddSingleton<Whizbang.Core.Routing.IMessageDiscardPolicy>(new Whizbang.Core.Routing.MessageDiscardPolicy(
+        new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery(), NullLogger<Whizbang.Core.Routing.MessageDiscardPolicy>.Instance,
+        _discardMeter, Options.Create(new Whizbang.Core.Routing.RoutingOptions()), new MatrixMarkers(),
+        retired: Options.Create(rules.RetiredOptions)));
       // The consumer's catalog: what the fan-out derives a redelivered child's flags from, by its type name.
       services.AddSingleton<IEventMarkerResolver>(new MatrixMarkers());
       if (tracker is not null) {
@@ -1298,19 +1370,33 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
   /// <summary>The flags the matrix's types declare, by CLR name, as a generated catalog would answer.</summary>
   /// <summary>
   /// One side's declared eligibility rules (#2362): every matrix type with its default rules, except a type the side has
-  /// declared ephemeral since (a reclassification).
+  /// declared ephemeral since (a reclassification) or retired (#2329).
   /// </summary>
   internal sealed class MatrixRules : IRuleFingerprintSource {
     private const string EPHEMERAL_MODE = "WhenConsumed;PersistedRow";
     private readonly HashSet<string> _declaredEphemeral = new(StringComparer.Ordinal) { RuleTypeName.Of(EPHEMERAL) };
 
+
     /// <summary>Declares <paramref name="eventType"/> ephemeral on this side.</summary>
     public void DeclareEphemeral(string eventType) => _declaredEphemeral.Add(RuleTypeName.Of(eventType));
 
+    /// <summary>The types this side has declared retired (#2329), as its configuration would bind them.</summary>
+    public RetiredEventTypesOptions RetiredOptions { get; } = new();
+
+    /// <summary>Declares <paramref name="eventType"/> retired on this side (#2329).</summary>
+    public void DeclareRetired(string eventType) {
+      if (!RetiredOptions.IsRetired(eventType)) {
+        RetiredOptions.Names.Add(RuleTypeName.Of(eventType));
+      }
+    }
+
     public RuleSet RulesFor(IEnumerable<string>? eventTypes) {
       var covered = new Dictionary<string, string>(StringComparer.Ordinal);
-      foreach (var name in (eventTypes ?? [DURABLE, SUPERSEDING, EPHEMERAL, LATER_EPHEMERAL, FILLER, AT_MOST_ONCE]).Select(RuleTypeName.Of)) {
-        covered[name] = new TypeRules(name) { Ephemeral = _declaredEphemeral.Contains(name) ? EPHEMERAL_MODE : null }.Hash();
+      foreach (var name in (eventTypes ?? [DURABLE, SUPERSEDING, EPHEMERAL, LATER_EPHEMERAL, FILLER, AT_MOST_ONCE, RETIRED]).Select(RuleTypeName.Of)) {
+        covered[name] = new TypeRules(name) {
+          Ephemeral = _declaredEphemeral.Contains(name) ? EPHEMERAL_MODE : null,
+          Retired = RetiredOptions.IsRetired(name),
+        }.Hash();
       }
       return new RuleSet(RuleSemantics.VERSION, RuleSemantics.ELIGIBILITY_SQL_VERSION, covered);
     }

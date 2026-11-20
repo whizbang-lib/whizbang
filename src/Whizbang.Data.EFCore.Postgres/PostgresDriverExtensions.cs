@@ -398,6 +398,11 @@ public static class PostgresDriverExtensions {
         // <docs>fundamentals/events/ephemeral-events#making-an-existing-type-ephemeral</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, EphemeralHistoryReclassifyStep>(
           EphemeralHistoryReclassifyStep.FromServices));
+        // TURNKEY: the maintenance step that purges the stored events of the retired event types (#2329), in bounded
+        // batches under the maintainer duty. Naming a type under Whizbang:EventStore:RetiredTypes is all it takes.
+        // <docs>fundamentals/events/retired-event-types</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, RetiredEventTypePurgeStep>(
+          RetiredEventTypePurgeStep.FromServices));
         // TURNKEY: the maintenance step that re-attributes stored events recorded under an origin that does not own their
         // type to their owner (#2116), under the maintainer duty, idle-gated.
         // <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>

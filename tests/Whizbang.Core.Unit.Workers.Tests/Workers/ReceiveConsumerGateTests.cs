@@ -88,6 +88,24 @@ public class ReceiveConsumerGateTests {
       .Because("absorbing is namespace-scoped");
   }
 
+  /// <summary>
+  /// #2329: a retired type is unconsumed at the receive boundary even when a registry still names a consumer for it, so
+  /// neither a live delivery nor a redelivery stores it again, and stream integrity, which compares only what the
+  /// boundary keeps, never compares it.
+  /// </summary>
+  [Test]
+  public async Task ARetiredType_IsUnconsumed_EvenWhenARegistryStillNamesAConsumerAsync() {
+    using var meter = new Meter("Whizbang.Tests.ReceiveConsumerGateTests.Retired");
+    var policy = new MessageDiscardPolicy(new Registry(consumes: true), NullLogger<MessageDiscardPolicy>.Instance, meter,
+      Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      retired: Options.Create(new RetiredEventTypesOptions { Names = { "Upstream.Contracts.Billing.InvoiceNoted" } }));
+
+    await Assert.That(_gate(_otherEnvelope, registry: new Registry(consumes: true), runtime: new RuntimeRegistry(has: true),
+      policy: policy)).IsEqualTo(OTHER_TYPE);
+    await Assert.That(_gate(_absorbedEnvelope, registry: new Registry(consumes: true), policy: policy)).IsNull()
+      .Because("only the retired type is turned away");
+  }
+
   // ===== Helpers =====
 
   private static string? _gate(

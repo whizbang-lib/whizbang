@@ -141,6 +141,7 @@ internal static class ProcessWideOptionsBinding {
     AddDeadLetterLogging(services);
     AddDatabaseFailureEscalation(services);
     AddEventStoreMetadata(services);
+    AddRetiredEventTypes(services);
 
     services.AddOptions<SupersedingOptions>();
     services.AddSingleton<IConfigureOptions<SupersedingOptions>>(sp =>
@@ -186,6 +187,29 @@ internal static class ProcessWideOptionsBinding {
     services.AddOptions<EventStoreMetadataOptions>().ValidateOnStart();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<EventStoreMetadataOptions>, EventStoreMetadataOptionsValidator>());
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<EventStoreMetadataOptions>, EventStoreMetadataBinding>());
+  }
+
+  /// <summary>
+  /// Registers <see cref="RetiredEventTypesOptions"/>, bound from <c>Whizbang:EventStore:RetiredTypes</c> and validated
+  /// when the host starts (#2329). Idempotent: the binding and the validator are each registered once however often this
+  /// runs, so <see cref="RetiredEventTypesOptions.Names"/>, a list the binder appends to, is bound once.
+  /// </summary>
+  /// <docs>fundamentals/events/retired-event-types#declaring-a-retired-type</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Configuration/ProcessWideOptionsBindingTests.cs:RetiredEventTypes_BindFromTheirSection_AndValidateAtStartupAsync</tests>
+  internal static void AddRetiredEventTypes(IServiceCollection services) {
+    services.AddOptions<RetiredEventTypesOptions>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<RetiredEventTypesOptions>, RetiredEventTypesOptionsValidator>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<RetiredEventTypesOptions>, RetiredEventTypesBinding>());
+  }
+
+  /// <summary>Applies <c>Whizbang:EventStore:RetiredTypes</c> to <see cref="RetiredEventTypesOptions"/>.</summary>
+  /// <param name="services">The provider the host's configuration is read from.</param>
+  private sealed class RetiredEventTypesBinding(IServiceProvider services) : IConfigureOptions<RetiredEventTypesOptions> {
+    public void Configure(RetiredEventTypesOptions options) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+      Section(services, RetiredEventTypesOptions.SECTION).Bind(options);
+#pragma warning restore IL2026
+    }
   }
 
   /// <summary>Applies <c>Whizbang:EventStore:Metadata</c> to <see cref="EventStoreMetadataOptions"/>.</summary>

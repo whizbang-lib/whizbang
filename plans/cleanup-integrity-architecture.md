@@ -417,3 +417,23 @@ A cut happens only below this service's own seal (C). It moves the removed diges
 - **Q5.** The recommended defaults, all configurable: halted-pair alert after 2 hours; `SealRecheck` Lookback 30 days and RecheckEvery 7 days when turned on.
 - **Q6.** Operational data rests 14 days by default, configurable per category.
 - **Phase 1b input (2026-11-15):** pausing the development database's logical-replication consumer for 20 minutes made no measurable difference to server CPU or IOPS, so logical replication is not a cause of the idle CPU floor; #2351 goes first in phase 1b.
+
+## 10. Retired event types (#2329, migrations 538 and 539, option A)
+
+- **The rule.** `TypeRules.Retired` joins every type's rule hash; `RuleSemantics.VERSION` 3, rules library 3.0.0. A
+  retired type's rule comes from `Whizbang:EventStore:RetiredTypes:Names` (its class is deleted), so the fingerprint
+  source covers it as retired and a one-sided retirement halts the pair for that type.
+- **Integrity.** The discard policy turns a retired type away at receive ahead of every registry; the receive gate that
+  stream integrity filters through, and the redelivery fan-out's child filter, both ask it, so the type is never
+  compared, requested or stored again on either side.
+- **Purge.** `wh_retire_event_types` (539), driven by `RetiredEventTypePurgeStep` in the maintenance cycle: streams whole
+  or not at all, unfold through the one fold, retired buckets and removed-epoch rows dropped, covering epochs refolded,
+  one floored generation bump. Cursors hand on through `_wh_hand_on_cursors` (538), extracted from the superseding
+  reaper, which now calls it too.
+- **Matrix.** Rows `RetiredType` (origin, consumer, both) and `RetiredTypeHeld` (both sides, a different stream held on
+  each) were added RED before the code.
+- **Owner decisions (2026-11-20).** Rules version 3 with pairs halting until both sides upgrade: accepted. A retired
+  name the service still declares as an event type warns instead of stopping the host: it is left out of the effective
+  names the purge, the receive gate and the fingerprint read, counted (`StillDeclaredNames`) and warned about every
+  maintenance cycle. Streams a cursor or snapshot holds for good are counted in the cycle's log line and left. Batch
+  defaults (500 streams, 10 batches a cycle): accepted.
