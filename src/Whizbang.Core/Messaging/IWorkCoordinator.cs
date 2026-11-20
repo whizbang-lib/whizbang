@@ -4220,7 +4220,7 @@ public sealed record PerspectiveTableName(string ClrTypeName, string TableName);
 
 /// <summary>
 /// A <c>(stream, perspective)</c> pair that must be snapshotted before the reaper deletes its consumed,
-/// aged ephemeral bodies — carrying the perspective cursor's last processed event id and the reap boundary, the last
+/// aged ephemeral bodies, carrying the perspective cursor's last processed event id and the reap boundary, the last
 /// body (by version) the cycle is about to reap (#2296). The snapshot is taken through the boundary, so a late event
 /// below the cursor but above the boundary still finds a rewind floor.
 /// </summary>
