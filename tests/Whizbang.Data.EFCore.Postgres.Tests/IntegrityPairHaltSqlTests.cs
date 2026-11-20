@@ -57,6 +57,20 @@ public class IntegrityPairHaltSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task AHaltWithNoPeerFingerprint_IsLoadedWithThePeerFieldsEmptyAsync() {
+    _ = await _coordinator().IntegrityRecordPairHaltAsync(
+      _halt("orders-svc", IntegrityPairSide.Origin, _t0, RulePairHaltReason.NoFingerprint));
+
+    var open = (await _coordinator().IntegrityLoadPairHaltsAsync())!.Single();
+
+    await Assert.That(open.Reason).IsEqualTo(RulePairHaltReason.NoFingerprint);
+    await Assert.That(open.PeerSemanticsVersion).IsNull().Because("a peer that sent no fingerprint has no versions to keep");
+    await Assert.That(open.PeerEligibilitySqlVersion).IsNull();
+    await Assert.That(open.PeerFingerprint).IsNull();
+    await Assert.That(open.AlertedAt).IsNull();
+  }
+
+  [Test]
   public async Task AHalt_IsKeptWithEverythingItSays_AndLoadedAsAnOpenHaltAsync() {
     var coordinator = _coordinator();
 

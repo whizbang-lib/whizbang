@@ -1388,6 +1388,33 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static bool _isNullableTypeName(string typeName) => typeName.EndsWith("?", StringComparison.Ordinal);
 
   /// <summary>
+  /// Whether every model type of a multi-model lens query is a perspective of this DbContext. Reports WHIZ401 for the
+  /// first model type that is not, and returns false.
+  /// </summary>
+  private static bool _allModelsKnown(
+      SourceProductionContext context,
+      MultiLensQueryInfo query,
+      Dictionary<string, string> modelTableLookup) {
+    // S3267: the loop reports a diagnostic and returns at the first unknown model; LINQ would hide that side effect.
+#pragma warning disable S3267
+    foreach (var modelType in query.ModelTypeNames) {
+      if (modelTableLookup.ContainsKey(modelType)) {
+        continue;
+      }
+      var typeArgDisplay = string.Join(", ", query.ModelTypeNames.Select(t => t.Replace(PLACEHOLDER_GLOBAL, "")));
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.MultiLensQueryUnknownModel,
+          Location.None,
+          typeArgDisplay,
+          query.ConsumerClassName.Replace(PLACEHOLDER_GLOBAL, ""),
+          modelType.Replace(PLACEHOLDER_GLOBAL, "")));
+      return false;
+    }
+#pragma warning restore S3267
+    return true;
+  }
+
+  /// <summary>
   /// Generates multi-model ILensQuery registrations for perspective lens queries.
   /// Cross-references model types against known perspectives to get table names.
   /// Reports WHIZ401 for unknown models, WHIZ402 for successful auto-detection.
@@ -1422,26 +1449,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // S3267: Loop has side effects (reporting diagnostics) and early break — LINQ not appropriate
 #pragma warning disable S3267
     foreach (var query in uniqueCombinations) {
-      // Check if ALL model types are known perspectives for this DbContext
-      var allModelsKnown = true;
-      foreach (var modelType in query.ModelTypeNames) {
-        if (!modelTableLookup.ContainsKey(modelType)) {
-          allModelsKnown = false;
-
-          // Report WHIZ401 - unknown model type
-          var typeArgDisplay = string.Join(", ", query.ModelTypeNames.Select(t => t.Replace(PLACEHOLDER_GLOBAL, "")));
-          var unknownType = modelType.Replace(PLACEHOLDER_GLOBAL, "");
-          context.ReportDiagnostic(Diagnostic.Create(
-              DiagnosticDescriptors.MultiLensQueryUnknownModel,
-              Location.None,
-              typeArgDisplay,
-              query.ConsumerClassName.Replace(PLACEHOLDER_GLOBAL, ""),
-              unknownType));
-          break;
-        }
-      }
-
-      if (!allModelsKnown) {
+      if (!_allModelsKnown(context, query, modelTableLookup)) {
         continue;
       }
 
