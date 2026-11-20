@@ -217,4 +217,39 @@ public class StreamIdPrimaryKeyIntegrationTests : IAsyncDisposable {
     await Assert.That(byRowId).IsEmpty();
     await Assert.That(byDocumentId).IsEmpty();
   }
+
+  /// <summary>
+  /// A read of the stream id reads the row's id (#2423): a row whose document names a different id is read back with
+  /// its row id, the value the runner keys it by.
+  /// </summary>
+  [Test]
+  public async Task ProjectedStreamIdRead_ReadsTheRowIdAsync() {
+    var read = await _models().Select(x => new { x.OrderId, x.Title }).ToListAsync();
+
+    await Assert.That(read.Single(r => r.Title == "matching").OrderId).IsEqualTo(_matchingId);
+    await Assert.That(read.Single(r => r.Title == "mismatched").OrderId).IsEqualTo(_otherRowId);
+  }
+
+  /// <summary>
+  /// A query that reads and sorts only the stream id plans no read of the document (#2423): the plan's output and sort
+  /// key name the row's id alone.
+  /// </summary>
+  [Test]
+  public async Task ProjectedStreamIdOnly_PlanReadsNoDocumentAsync() {
+    var sql = _models().Select(x => x.OrderId).ToQueryString();
+
+    await using var connection = _dataSource!.CreateConnection();
+    await connection.OpenAsync();
+    await using var explain = new NpgsqlCommand($"EXPLAIN VERBOSE {sql}", connection);
+    var lines = new List<string>();
+    await using (var reader = await explain.ExecuteReaderAsync()) {
+      while (await reader.ReadAsync()) {
+        lines.Add(reader.GetString(0));
+      }
+    }
+    var plan = string.Join('\n', lines);
+
+    await Assert.That(plan).Contains("Output: ");
+    await Assert.That(plan).DoesNotContain("data");
+  }
 }
