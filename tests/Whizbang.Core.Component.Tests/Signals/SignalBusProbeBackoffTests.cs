@@ -261,15 +261,15 @@ public class SignalBusProbeBackoffTests {
     state.MarkProbeResult(success: false, at: probedAt, failedTransport: "PostgresSignalTransport");
 
     state.MarkWireSignalReceived(probedAt - TimeSpan.FromSeconds(1));
-    await Assert.That(state.WireRouteVerified).IsEqualTo(false)
+    await Assert.That(state.WireRouteVerified).IsFalse()
       .Because("a signal from before the failed probe says nothing about the route since");
 
     state.MarkWireSignalReceived(probedAt);
-    await Assert.That(state.WireRouteVerified).IsEqualTo(false)
+    await Assert.That(state.WireRouteVerified).IsFalse()
       .Because("only a signal strictly after the probe is evidence the route works now");
 
     state.MarkWireSignalReceived(probedAt + TimeSpan.FromSeconds(1));
-    await Assert.That(state.WireRouteVerified).IsEqualTo(true)
+    await Assert.That(state.WireRouteVerified).IsTrue()
       .Because("a real wire signal arriving after the failed probe proves the route delivers");
     var report = state.Report();
     await Assert.That(report.State).IsEqualTo(ComponentState.Operational);

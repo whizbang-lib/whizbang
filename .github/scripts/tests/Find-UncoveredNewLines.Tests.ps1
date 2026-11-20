@@ -74,6 +74,22 @@ BeforeAll {
   $script:ShapesBlocks = Join-Path $script:Generated 'ShapesRunner.blocks.xml'
   $script:ShapesRead = { param($p) if ($p -eq $script:ShapesPath) { $script:ShapesSource } else { $null } }
 
+  # AsyncShapes.cs, compiled with runtime async (.NET 11) as the library is. A and B take every loop both
+  # ways, A completes GuardedAsync and B fails it; every `skip` is false, so each function holding one has
+  # a block no test ran. The shapes, by line:
+  #   15 await foreach: the loop both ways, the compiler's dispose and rethrow epilogue on the same line
+  #   28 while (await ...) ending an await using's scope: the same epilogue
+  #   39 the same loop, never left through its condition (every run throws out of it)
+  #   51 } catch {: the end of a try that returns, the only code on a line whose catch awaits
+  #   61 } catch (OperationCanceledException) {: a catch no run enters
+  #   63 } catch (Exception) {: the end of that empty catch, the only code on its line
+  $script:Async = Join-Path $script:Generated 'AsyncShapesRunner'
+  $script:AsyncPath = 'src/Whizbang.AsyncShapes/AsyncShapes.cs'
+  $script:AsyncSource = [string[]]@(Get-Content (Join-Path $script:ShapesDir $script:AsyncPath))
+  $script:AsyncReports = @((Get-ProcessReport $script:Async 'A'), (Get-ProcessReport $script:Async 'B'))
+  $script:AsyncBlocks = Join-Path $script:Generated 'AsyncShapesRunner.blocks.xml'
+  $script:AsyncRead = { param($p) if ($p -eq $script:AsyncPath) { $script:AsyncSource } else { $null } }
+
   function New-Added([string]$file, [int[]]$lineNumbers) {
     $set = [System.Collections.Generic.HashSet[int]]::new()
     foreach ($n in $lineNumbers) { [void]$set.Add($n) }
@@ -552,6 +568,170 @@ Describe 'Merge-BlockCoverage, a line proven by its own blocks' {
     $coverage['src/P/A.cs'].Conditions[2] | Should -Be @(1, 2)
     $coverage['src/P/A.cs'].Conditions[3] | Should -Be @(2, 2)
     $coverage['src/P/A.cs'].Conditions[4] | Should -Be @(1, 2)
+  }
+}
+
+# Runtime async (.NET 11, runtime-async=on) compiles an await into the method itself rather than an async
+# state machine, and the collector, which reported no condition at all on a line holding an await inside a
+# state machine, reports that line's IL as written. Two pieces of it are the compiler's: the dispose and
+# rethrow code it writes after an `await foreach` or after a loop that ends an `await using`'s scope (its
+# jumps land on the loop's line), and the unreachable end of a try that returns, left alone on its line
+# once a catch that awaits loses its own sequence point. Each case is real collector output.
+Describe 'Runtime async: the compiler''s code around awaits' {
+  BeforeAll {
+    function Get-AsyncMerged([scriptblock]$Read = $script:AsyncRead) {
+      $coverage = Read-CoberturaCoverage $script:AsyncReports -ReadSource $Read
+      Merge-BlockCoverage -Coverage $coverage -Blocks (Read-BlockCoverage $script:AsyncBlocks) -ReadSource $Read | Out-Null
+      return $coverage
+    }
+  }
+
+  It 'counts only the loop''s own outcomes on <name> (AsyncShapes.cs:<line>)' -ForEach @(
+      @{ name = 'an await foreach'; line = 15 },
+      @{ name = 'a while (await ...) that ends an await using''s scope'; line = 28 }) {
+    $raw = Read-CoberturaCoverage $script:AsyncReports
+    $raw[$script:AsyncPath].Conditions[$line][1] | Should -BeGreaterThan 2
+
+    (Get-AsyncMerged)[$script:AsyncPath].Conditions[$line] | Should -Be @(2, 2)
+  }
+
+  It 'keeps the loop''s own untaken exit (AsyncShapes.cs:39)' {
+    (Get-AsyncMerged)[$script:AsyncPath].Conditions[39] | Should -Be @(1, 2)
+  }
+
+  It 'removes a line that never ran and holds only the unreachable end of a try that returns (AsyncShapes.cs:51)' {
+    $raw = Read-CoberturaCoverage $script:AsyncReports
+    $raw[$script:AsyncPath].Hits[51] | Should -Be 0
+
+    (Get-AsyncMerged)[$script:AsyncPath].Hits.ContainsKey(51) | Should -BeFalse
+  }
+
+  It 'keeps <name> as never run (AsyncShapes.cs:<line>)' -ForEach @(
+      @{ name = 'a catch no test entered'; line = 61 },
+      @{ name = 'the end of an empty catch, which is reachable'; line = 63 }) {
+    (Get-AsyncMerged)[$script:AsyncPath].Hits[$line] | Should -Be 0
+  }
+
+  It 'claims nothing without the source' {
+    $coverage = Get-AsyncMerged -Read $null
+
+    $coverage[$script:AsyncPath].Conditions[15][1] | Should -BeGreaterThan 2
+    $coverage[$script:AsyncPath].Hits[51] | Should -Be 0
+  }
+
+  It 'leaves exactly the real gaps in the whole-library list' {
+    $gap = (Get-WholeLibraryCoverage -Coverage (Get-AsyncMerged) -ReadSource $script:AsyncRead).Gap |
+      Where-Object { $_.StartsWith("${script:AsyncPath}:") } | ForEach-Object { $_ -replace '^[^:]+:(\d+): \(([^)]*)\).*$', '$1 $2' }
+
+    # The skips (11, 12, 23, 24), the loop never left through its condition (39) and the return after it
+    # (43), and the catch no run entered (61, 63).
+    $gap | Should -Be @('11 1/2 conditions', '12 never ran', '23 1/2 conditions', '24 never ran', '39 1/2 conditions', '43 never ran', '61 never ran', '63 never ran')
+  }
+}
+
+Describe 'Test-AsyncLoopHeader' {
+  It 'is <expected> for <code>' -ForEach @(
+      @{ code = 'while (await reader.ReadAsync(ct).ConfigureAwait(false)) {'; expected = $true },
+      @{ code = 'await foreach (var (a, b) in queue.Reader.ReadAllAsync(ct).ConfigureAwait(false)) {'; expected = $true },
+      @{ code = '} while (await timer.WaitForNextTickAsync(ct));'; expected = $true },
+      @{ code = 'while (await reader.ReadAsync(ct) && more) {'; expected = $false },
+      @{ code = 'await foreach (var x in source ?? fallback) {'; expected = $false },
+      @{ code = 'while (await gate.TryAsync() is true) {'; expected = $false },
+      @{ code = 'while (!ct.IsCancellationRequested) {'; expected = $false },
+      @{ code = 'foreach (var x in items) {'; expected = $false },
+      @{ code = 'var more = await reader.ReadAsync(ct);'; expected = $false }) {
+    Test-AsyncLoopHeader @($code) 1 | Should -Be $expected
+  }
+
+  It 'reads the whole statement, so a decision on a continuation line disqualifies it' {
+    Test-AsyncLoopHeader @('await foreach (var x in Source(', '    a ?? b)) {') 1 | Should -BeFalse
+  }
+
+  It 'is false past the end of the source' {
+    Test-AsyncLoopHeader @('while (await x.ReadAsync()) {') 2 | Should -BeFalse
+  }
+}
+
+Describe 'Read-CoberturaCoverage, the loop epilogue under runtime async' {
+  It 'keeps the first jump''s outcomes and drops the rest on a loop header' {
+    $report = New-Report $TestDrive 'loop.cobertura.xml' 'src/P/A.cs' @(
+      @{ n = 1; hits = 1; cov = '5/8'; conds = @(@{ type = 'jump'; pct = 100 }, @{ type = 'jump'; pct = 100 }, @{ type = 'jump'; pct = 50 }, @{ type = 'jump'; pct = 0 }) },
+      @{ n = 2; hits = 1; cov = '3/6'; conds = @(@{ type = 'jump'; pct = 50 }, @{ type = 'jump'; pct = 100 }, @{ type = 'jump'; pct = 0 }) },
+      @{ n = 3; hits = 1; cov = '1/2'; conds = @(@{ type = 'jump'; pct = 50 }) },
+      @{ n = 4; hits = 1; cov = '5/8'; conds = @(@{ type = 'jump'; pct = 100 }, @{ type = 'jump'; pct = 100 }, @{ type = 'jump'; pct = 50 }, @{ type = 'jump'; pct = 0 }) },
+      @{ n = 5; hits = 1; cov = '2/6' })
+    $source = @(
+      'while (await r.ReadAsync()) {',
+      'await foreach (var x in q.ReadAllAsync()) {',
+      'while (await t.WaitForNextTickAsync()) {',
+      'var y = await a() ? b : c;',
+      'while (await r.ReadAsync()) {')
+
+    $coverage = Read-CoberturaCoverage @($report) -ReadSource { param($p) $source }
+
+    $coverage['src/P/A.cs'].Conditions[1] | Should -Be @(2, 2)
+    $coverage['src/P/A.cs'].Conditions[2] | Should -Be @(1, 2)
+    $coverage['src/P/A.cs'].Conditions[3] | Should -Be @(1, 2)
+    $coverage['src/P/A.cs'].Conditions[4] | Should -Be @(5, 8)
+    $coverage['src/P/A.cs'].Conditions[5] | Should -Be @(2, 6)
+  }
+
+  It 'unions the loop''s jump across reports before dropping the rest' {
+    $one = New-Report $TestDrive 'l1.cobertura.xml' 'src/P/A.cs' @(@{ n = 1; hits = 1; cov = '3/8'; conds = @(@{ type = 'jump'; pct = 50 }, @{ type = 'jump'; pct = 100 }, @{ type = 'jump'; pct = 0 }, @{ type = 'jump'; pct = 0 }) })
+    $two = New-Report $TestDrive 'l2.cobertura.xml' 'src/P/A.cs' @(@{ n = 1; hits = 1; cov = '1/8'; conds = @(@{ type = 'jump'; pct = 50 }, @{ type = 'jump'; pct = 0 }, @{ type = 'jump'; pct = 0 }, @{ type = 'jump'; pct = 0 }) })
+
+    $coverage = Read-CoberturaCoverage @($one, $two) -ReadSource { param($p) @('while (await r.ReadAsync()) {') }
+
+    $coverage['src/P/A.cs'].Conditions[1] | Should -Be @(1, 2)
+  }
+
+  It 'keeps every condition when the source cannot be read' {
+    $report = New-Report $TestDrive 'nosrc.cobertura.xml' 'src/P/A.cs' @(@{ n = 1; hits = 1; cov = '5/8'; conds = @(@{ type = 'jump'; pct = 100 }, @{ type = 'jump'; pct = 100 }, @{ type = 'jump'; pct = 50 }, @{ type = 'jump'; pct = 0 }) })
+
+    (Read-CoberturaCoverage @($report) -ReadSource { param($p) $null })['src/P/A.cs'].Conditions[1] | Should -Be @(5, 8)
+  }
+}
+
+Describe 'Test-EndsInJump' {
+  It 'is <expected> for a block ending <name>' -ForEach @(
+      @{ name = 'in a return'; src = @('try {', '  Do();', '  return 1;', '} catch {'); expected = $true },
+      @{ name = 'in a return over several lines'; src = @('try {', '  return Make(new R {', '    A = 1,', '  }, run);', '} catch (Exception ex) {'); expected = $true },
+      @{ name = 'in a throw'; src = @('} catch {', '  Log();', '  throw;', '} finally {'); expected = $true },
+      @{ name = 'in a break, after a comment'; src = @('{', '  break; // done', '', '}'); expected = $true },
+      @{ name = 'in a call'; src = @('try {', '  Do();', '} catch {'); expected = $false },
+      @{ name = 'empty, with a comment'; src = @('} catch (OperationCanceledException) {', '  // shutdown', '} catch (Exception) {'); expected = $false },
+      @{ name = 'in an if without braces'; src = @('{', '  if (x)', '    return;', '}'); expected = $false },
+      @{ name = 'in an else without braces'; src = @('{', '  else', '    return;', '}'); expected = $false },
+      @{ name = 'in a loop'; src = @('try {', '  while (x) {', '    Do();', '  }', '} finally {'); expected = $false },
+      @{ name = 'in a statement after a jump'; src = @('{', '  return;', '  Do();', '}'); expected = $false },
+      @{ name = 'in a raw string'; src = @('{', '  return """', '    x;', '    """;', '}'); expected = $false },
+      @{ name = 'at the start of the file'; src = @('}'); expected = $false }) {
+    Test-EndsInJump $src $src.Count | Should -Be $expected
+  }
+}
+
+Describe 'Test-UnreachableBraceLine' {
+  BeforeAll {
+    $script:JumpSource = @('try {', '  return 1;', '} catch {', '  return 2;', '}  } catch {')
+    function New-BraceProof([hashtable]$Braces, [int[]]$Wide = @()) {
+      $map = [System.Collections.Generic.Dictionary[int, System.Collections.Generic.List[int]]]::new()
+      foreach ($k in $Braces.Keys) { $map[$k] = [System.Collections.Generic.List[int]]::new([int[]]$Braces[$k]) }
+      return @{ Braces = $map; Wide = [System.Collections.Generic.HashSet[int]]::new([int[]]$Wide) }
+    }
+  }
+
+  It 'is true for a line whose only range is a } ending a block that returns' {
+    Test-UnreachableBraceLine (New-BraceProof @{ 3 = @(1) }) $script:JumpSource 3 | Should -BeTrue
+  }
+
+  It 'is false when <name>' -ForEach @(
+      @{ name = 'another range touches the line'; braces = @{ 3 = @(1) }; wide = @(3); line = 3 },
+      @{ name = 'the line has no one-character range'; braces = @{}; wide = @(); line = 3 },
+      @{ name = 'the range is not a }'; braces = @{ 3 = @(3) }; wide = @(); line = 3 },
+      @{ name = 'code comes before the }'; braces = @{ 5 = @(4) }; wide = @(); line = 5 },
+      @{ name = 'the column is past the line'; braces = @{ 3 = @(40) }; wide = @(); line = 3 },
+      @{ name = 'the line is past the source'; braces = @{ 9 = @(1) }; wide = @(); line = 9 }) {
+    Test-UnreachableBraceLine (New-BraceProof $braces $wide) $script:JumpSource $line | Should -BeFalse
   }
 }
 

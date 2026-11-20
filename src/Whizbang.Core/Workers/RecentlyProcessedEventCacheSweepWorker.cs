@@ -49,17 +49,16 @@ public sealed partial class RecentlyProcessedEventCacheSweepWorker(
     var interval = TimeSpan.FromSeconds(Math.Max(1, _options.SweepIntervalSeconds));
     LogStarted(_logger, interval.TotalSeconds);
 
+    // Stopping disposes the timer, which ends the wait with false: the loop's own exit is the way out on shutdown, so
+    // the wait itself takes no token.
     using var timer = new PeriodicTimer(interval);
-    try {
-      while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false)) {
-        try {
-          _cache.SweepExpired();
-        } catch (Exception ex) when (ex is not OperationCanceledException) {
-          LogSweepFailed(_logger, ex);
-        }
+    await using var stopping = stoppingToken.Register(timer.Dispose);
+    while (await timer.WaitForNextTickAsync(CancellationToken.None).ConfigureAwait(false)) {
+      try {
+        _cache.SweepExpired();
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogSweepFailed(_logger, ex);
       }
-    } catch (OperationCanceledException) {
-      // shutdown
     }
 
     LogStopped(_logger);

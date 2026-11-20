@@ -55,7 +55,7 @@ public class AsbControlClassProvisioningTests {
     await provisioner.ProvisionManifestAsync(_manifest(_durableBroadcastSubscription()));
 
     var (_, _, RequiresSession, _) = admin.CreatedSubscriptions.Single(s => s.Topic == CommandInboxNaming.SystemBroadcastTopic);
-    await Assert.That(RequiresSession).IsEqualTo(true);
+    await Assert.That(RequiresSession).IsTrue();
   }
 
   [Test]

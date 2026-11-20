@@ -100,16 +100,18 @@ jobs:
       - name: Run Component Tests (pre-built)
         if: inputs.artifact-name != ''
         shell: pwsh
-        run: pwsh scripts/Run-Tests.ps1 -Mode Component -Configuration Release -NoBuild -ModuleCoverage -ReportTrx -HangDumpTimeout 10m -Framework '${{ matrix.framework }}'
+        run: pwsh scripts/Run-Tests.ps1 -Mode Component -Configuration Release -NoBuild -ModuleCoverage -ReportTrx -HangDumpTimeout 10m -CrashDumpType Heap -Framework '${{ matrix.framework }}'
 
       - name: Run Component Tests (built here)
         if: inputs.artifact-name == ''
         shell: pwsh
-        run: pwsh scripts/Run-Tests.ps1 -Mode Component -ModuleCoverage -Configuration Release -ReportTrx -HangDumpTimeout 10m -Framework '${{ matrix.framework }}'
+        run: pwsh scripts/Run-Tests.ps1 -Mode Component -ModuleCoverage -Configuration Release -ReportTrx -HangDumpTimeout 10m -CrashDumpType Heap -Framework '${{ matrix.framework }}'
 
       # A module with no test activity for the hang dump timeout above prints the tests still running, writes
-      # <process>_<pid>_hang.dmp and the test list <process>_<pid>_hang.log to its TestResults (the process is
-      # `dotnet` under `dotnet test`) and is killed, so the run fails with time left to upload them (#2402).
+      # <process>_<pid>_hang.dmp and the test list <process>_<pid>_hang.log (the process is `dotnet` under
+      # `dotnet test`) and is killed, so the run fails with time left to upload them (#2402).
+      # Since Testing Platform 2.5 they land in TestResults under `dotnet test`'s working directory, which
+      # Run-Tests.ps1 sets to the repository root; the module globs cover a module run on its own.
       # Canceled too: a dump taken just before the job limit is still kept.
       - name: Upload hang dumps
         if: failure() || cancelled()
@@ -117,10 +119,30 @@ jobs:
         with:
           name: hangdump-component${{ env.FRAMEWORK_SUFFIX }}-${{ github.run_attempt }}
           path: |
+            TestResults/*_hang.dmp
+            TestResults/*_hang.log
             tests/**/TestResults/*_hang.dmp
             tests/**/TestResults/*_hang.log
             samples/**/TestResults/*_hang.dmp
             samples/**/TestResults/*_hang.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # A module whose process the runtime kills (an internal CLR error, an access violation, a FailFast) writes
+      # <module>_<pid>_crash.dmp and the tests still running, <module>_<id>_crash.sequence.log, beside the hang
+      # dumps (Run-Tests.ps1 -CrashDumpType above), so a crash leaves a dump to analyze, not only an exit code (#2446).
+      - name: Upload crash dumps
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: crashdump-component${{ env.FRAMEWORK_SUFFIX }}-${{ github.run_attempt }}
+          path: |
+            TestResults/*_crash.dmp
+            TestResults/*_crash.sequence.log
+            tests/**/TestResults/*_crash.dmp
+            tests/**/TestResults/*_crash.sequence.log
+            samples/**/TestResults/*_crash.dmp
+            samples/**/TestResults/*_crash.sequence.log
           if-no-files-found: ignore
           retention-days: 7
 

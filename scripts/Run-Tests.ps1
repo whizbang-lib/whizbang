@@ -74,11 +74,24 @@
 .PARAMETER HangDumpTimeout
     Gives every test module the testing platform's hang dump (--hangdump --hangdump-timeout): after this long
     with no test activity a module writes a dump (dotnet_<pid>_hang.dmp, with the test list in
-    dotnet_<pid>_hang.log, in its TestResults), names the tests still running, and is killed, so a hang fails
+    dotnet_<pid>_hang.log, in the module's own TestResults beside its DLL, like its other results; one the run
+    cannot place goes to TestResults under the repository root), names the tests still running, and is killed, so a hang fails
     the run instead of holding it until a job limit cancels it (#2402). A whole number with s, m or h, e.g. 10m.
     Empty (the default) takes no dump. Every test project references Microsoft.Testing.Extensions.HangDump
-    through Directory.Build.props; at 2.0.2 it never fired under `dotnet test`, 2.2.3 does
+    through Directory.Build.props; at 2.0.2 it never fired under `dotnet test`, 2.2.3 and later do
     (.github/scripts/tests/TestSuiteHangDump.Tests.ps1 proves it). Not with -Coverage.
+
+.PARAMETER CrashDumpType
+    Gives every test module the testing platform's crash dump (--crashdump --crashdump-type): a module whose process
+    the runtime kills (an internal CLR error, an access violation, an Environment.FailFast) writes a dump of this
+    type, <module>_<pid>_crash.dmp, with the tests still running in <module>_<id>_crash.sequence.log, to
+    TestResults under the repository root (the working directory of `dotnet test`), so a crash leaves something to
+    analyze instead of only an exit code (#2446). The hang dump never fires
+    on a process that dies. One of Mini, Heap, Triage or Full; CI takes Heap, the managed heap and every thread's
+    stack without a full dump's size. Empty (the default) takes no dump. Every test project references
+    Microsoft.Testing.Extensions.CrashDump through Directory.Build.props
+    (.github/scripts/tests/TestSuiteCrashDump.Tests.ps1 proves the dump is written beside coverage and the hang
+    dump). Not with -Coverage.
 
 .PARAMETER Framework
     Runs only the test modules built for this target framework, one of those the build targets (a release build
@@ -289,6 +302,8 @@ param(
     [int]$HangTimeout = 180,  # Seconds of no output before hang warning (0 to disable)
     [ValidatePattern('^[1-9][0-9]*[smh]$', ErrorMessage = '-HangDumpTimeout "{0}" is not a whole number of seconds, minutes or hours, such as 10m.')]
     [string]$HangDumpTimeout = "",  # CI: hang dump after this long with no test activity (e.g. 10m); empty for none
+    [ValidateSet("Mini", "Heap", "Triage", "Full")]
+    [string]$CrashDumpType = "",  # CI: crash dump of this type when a test process crashes (e.g. Heap); empty for none
     [string]$Framework = "",  # Run only this target framework's modules (e.g. net10.0); empty for every framework the build targets
     [switch]$Coverage,  # Collect code coverage (outputs Cobertura XML to TestResults/)
     [switch]$ModuleCoverage,  # CI: each test module collects its own line AND branch coverage
@@ -362,6 +377,8 @@ Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
 # The run's pass/fail verdict, including a crashed test process (#2231)
 $testRunVerdictModule = Join-Path $PSScriptRoot "lib" "TestRunVerdict.psm1"
 Import-Module $testRunVerdictModule -Force
+# Each test module's results back beside its DLL (Testing Platform 2.5 writes them under the working directory)
+Import-Module (Join-Path $PSScriptRoot "lib" "ModuleTestResults.psm1") -Force
 # How many test modules run at once: one at a time for an integration run on several frameworks
 Import-Module (Join-Path $PSScriptRoot "lib" "TestModuleParallelism.psm1") -Force
 
@@ -458,6 +475,9 @@ if ($Coverage -and $ModuleCoverage) {
 # -Coverage runs each project through its own `dotnet run`, which the hang dump options below never reach.
 if ($Coverage -and $HangDumpTimeout) {
     Exit-RefusedParameters "-HangDumpTimeout and -Coverage cannot be combined: -Coverage runs each project on its own, without the hang dump."
+}
+if ($Coverage -and $CrashDumpType) {
+    Exit-RefusedParameters "-CrashDumpType and -Coverage cannot be combined: -Coverage runs each project on its own, without the crash dump."
 }
 
 # Initialize tee logging if -LogFile is specified
@@ -995,6 +1015,8 @@ function Invoke-CoverageReport {
 # Read by the finally block below, so set before anything in the try can exit: a run that exits early
 # (no test assemblies found) otherwise halts there under strict mode, and the halt hides its own error.
 $failFastTriggered = $false
+$script:moduleResultsRoot = $null
+$script:testModulePaths = @()
 try {
     # Determine parallel level
     $MaxParallel = Get-TestModuleParallelism -Mode $Mode -Frameworks $script:TestFrameworks -Requested $MaxParallel -ProcessorCount ([Environment]::ProcessorCount)
@@ -1123,6 +1145,15 @@ try {
         $testArgs += "--hangdump"
         $testArgs += "--hangdump-timeout"
         $testArgs += $HangDumpTimeout
+    }
+
+    # The platform's crash dump for every test module (#2446). A module whose process the runtime kills writes
+    # <module>_<pid>_crash.dmp to TestResults, where the suites upload it from; without it a crash leaves only an exit
+    # code. It works beside --coverage and --hangdump (TestSuiteCrashDump.Tests.ps1).
+    if ($CrashDumpType) {
+        $testArgs += "--crashdump"
+        $testArgs += "--crashdump-type"
+        $testArgs += $CrashDumpType
     }
 
     # Coverage mode: Run projects in parallel with unique output paths per project
@@ -1908,6 +1939,7 @@ try {
             $dllPaths = $tagFilteredDlls | ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) }
             $testArgs += "--test-modules"
             $testArgs += ($dllPaths -join ";")
+            $script:testModulePaths = @($dllPaths | ForEach-Object { Join-Path $repoRoot $_ })
 
             if (-not $useAiOutput) {
                 Write-Host "Discovered $($tagFilteredDlls.Count) test projects with tag '$Tag'" -ForegroundColor Gray
@@ -1932,6 +1964,7 @@ try {
         if ($filteredDlls.Count -gt 0) {
             $testArgs += "--test-modules"
             $testArgs += ($filteredDlls -join ";")
+            $script:testModulePaths = @($filteredDlls | ForEach-Object { Join-Path $repoRoot $_ })
 
             if (-not $useAiOutput) {
                 Write-Host "Discovered $($filteredDlls.Count) test projects matching '$ProjectFilter'" -ForegroundColor Gray
@@ -1953,6 +1986,7 @@ try {
         if ($selectedDlls.Count -gt 0) {
             $testArgs += "--test-modules"
             $testArgs += ($selectedDlls -join ";")
+            $script:testModulePaths = @($selectedDlls | ForEach-Object { Join-Path $repoRoot $_ })
 
             if (-not $useAiOutput) {
                 Write-Host "Discovered $($selectedDlls.Count) test projects (WhizbangTestType: $typeList)" -ForegroundColor Gray
@@ -1963,6 +1997,16 @@ try {
                 "correct. Check for build failures first, then the property.")
         }
     }
+
+    # Each module's results (TRX, Cobertura, binary coverage, a hang dump) beside its own DLL, in
+    # bin/<config>/<framework>/TestResults, where the CI uploads, Test-CoverageCollected.ps1 and the coverage report
+    # below look. Since Testing Platform 2.5 `dotnet test` writes every module's results to TestResults under its
+    # working directory (the repository root here), and no option puts them back beside the module: a module's
+    # testconfig resultDirectory resolves against the working directory as well. So the run writes one directory per
+    # module under a scratch directory and Move-ModuleTestResult moves each one back after the run, and again in the
+    # finally block below so a run that ends any other way still leaves its results where they are uploaded from.
+    $script:moduleResultsRoot = Join-Path $repoRoot "TestResults" "by-module"
+    $testArgs += Get-ModuleResultsArgument -ResultsRoot $script:moduleResultsRoot
 
     # Use --treenode-filter for test name filtering (MTP native filtering)
     # Pattern: /*/*/*/*{Filter}* matches any assembly/namespace/class/method containing the filter
@@ -2894,6 +2938,8 @@ try {
         $script:_normalModeOutput = $_testOutput -join "`n"
     }
 
+    Move-ModuleTestResult -ResultsRoot $script:moduleResultsRoot -ModulePath $script:testModulePaths | Out-Null
+
     # Check exit code (also consider projectErrors in AI mode since they may not affect LASTEXITCODE)
     if ($useAiOutput -or $useVerboseLogging) {
         # In AI/Verbose mode, check captured errors AND process exit code as safety net
@@ -3038,6 +3084,13 @@ try {
     }
 
 } finally {
+    # A run that ended before the move above (an interrupt, a failure inside the run) still leaves each module's
+    # results beside its DLL. Set only once the test command was built; the move does nothing a second time.
+    if ($script:moduleResultsRoot) {
+        try { Move-ModuleTestResult -ResultsRoot $script:moduleResultsRoot -ModulePath $script:testModulePaths | Out-Null }
+        catch { Write-Warning "Could not move the test modules' results beside their DLLs: $_" }
+    }
+
     # Clean up test containers after test run completes (especially important after fail-fast)
     # This ensures containers don't hang around after abrupt test termination. Skipped where there is no
     # docker at all (a runner that runs only the unit and component suites): nothing to clean, and calling

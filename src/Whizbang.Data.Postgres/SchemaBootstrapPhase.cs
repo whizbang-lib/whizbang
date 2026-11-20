@@ -404,7 +404,7 @@ public static class SchemaBootstrapPhase {
         NpgsqlConnection connection, long lockId, CancellationToken cancellationToken) {
       await using var command = new NpgsqlCommand("SELECT pg_try_advisory_xact_lock($1)", connection);
       command.Parameters.AddWithValue(lockId);
-      return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+      return BooleanScalar.Read(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), "schema bootstrap lock");
     }
   }
 
@@ -479,7 +479,7 @@ public static class SchemaBootstrapPhase {
                         || 'timestamp with time zone, timestamp with time zone'))) = 3
       """, connection);
     command.Parameters.AddWithValue(target);
-    return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+    return BooleanScalar.Read(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), "heartbeat surface");
   }
 
   /// <summary>

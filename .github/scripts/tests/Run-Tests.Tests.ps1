@@ -49,6 +49,28 @@ case "$1" in
     fi
     exit 0;;
   test)
+    # As the platform does with --results-directory-layout per-module: each module's results under
+    # <results directory>/<assembly>/<framework>_<runtime>. Without it they would land in ./TestResults.
+    rd=""; mods=""; layout=""; prev=""
+    for a in "$@"; do
+      case "$prev" in
+        --results-directory) rd="$a";;
+        --test-modules) mods="$a";;
+        --results-directory-layout) layout="$a";;
+      esac
+      prev="$a"
+    done
+    if [ -n "$rd" ] && [ "$layout" = "per-module" ]; then
+      echo "$mods" | tr ';' '\n' | while read -r m; do
+        [ -n "$m" ] || continue
+        name=$(basename "$m" .dll); fw=$(basename "$(dirname "$m")")
+        mkdir -p "$rd/$name/${fw}_x64"
+        echo '<TestRun />' > "$rd/$name/${fw}_x64/${name}_${fw}_x64.trx"
+        echo '<coverage line-rate="1" />' > "$rd/$name/${fw}_x64/run.cobertura.xml"
+      done
+    else
+      mkdir -p TestResults && echo '<TestRun />' > TestResults/cwd.trx
+    fi
     if [ -n "$FAKE_TEST_OUTPUT" ]; then cat "$FAKE_TEST_OUTPUT"; fi
     exit "${FAKE_TEST_EXIT:-0}";;
   run)
@@ -286,6 +308,65 @@ Test run summary: Passed! - A.Tests.dll (net10.0|arm64)
   }
 }
 
+# A test module whose process the runtime kills (an internal CLR error, an access violation, a FailFast) used to leave
+# only an exit code: nothing to say what the process was doing (#2446). -CrashDumpType hands every module the testing
+# platform's crash dump, so the process that dies writes a dump of that type for the suite to upload.
+Describe 'Run-Tests.ps1 -CrashDumpType (#2446)' -Skip:$NoPosixShell {
+  BeforeAll {
+    $script:Passing = @'
+Test run summary: Passed! - A.Tests.dll (net10.0|arm64)
+  total: 3
+  failed: 0
+  succeeded: 3
+  skipped: 0
+'@
+  }
+
+  It 'gives every test module a <Type> crash dump in a <Mode> run, beside coverage and the hang dump' -ForEach @(
+    @{ Mode = 'Unit'; TestType = 'Unit'; Type = 'Heap' }
+    @{ Mode = 'AiUnit'; TestType = 'Unit'; Type = 'Mini' }
+    @{ Mode = 'Component'; TestType = 'Component'; Type = 'Triage' }
+    @{ Mode = 'Integration'; TestType = 'Integration'; Type = 'Full' }) {
+    $repo = New-FakeRepo -TestType $TestType
+    Set-Built $repo 'Release'
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', $Mode, '-Configuration', 'Release', '-NoBuild', '-ModuleCoverage', '-HangDumpTimeout', '10m', '-CrashDumpType', $Type) -TestOutput $Passing
+    $calls = $r.Calls -join "`n"
+    $calls | Should -Match "(?m)^dotnet test .*--crashdump --crashdump-type $Type( |$)"
+    $calls | Should -Match '(?m)^dotnet test .*--coverage '
+    $calls | Should -Match '(?m)^dotnet test .*--hangdump '
+    $r.ExitCode | Should -Be 0
+  }
+
+  It 'takes no crash dump unless asked' {
+    $repo = New-FakeRepo
+    Set-Built $repo 'Release'
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', 'Unit', '-Configuration', 'Release', '-NoBuild') -TestOutput $Passing
+    ($r.Calls -join "`n") | Should -Match '(?m)^dotnet test ' -Because 'the test step must have run, or the absence below would prove nothing'
+    ($r.Calls -join "`n") | Should -Not -Match '--crashdump'
+    $r.ExitCode | Should -Be 0
+  }
+
+  It 'refuses the type <Type>, which the platform does not know' -ForEach @(@{ Type = 'Huge' }, @{ Type = 'heapdump' }) {
+    $repo = New-FakeRepo
+    Set-Built $repo 'Release'
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', 'Unit', '-Configuration', 'Release', '-NoBuild', '-CrashDumpType', $Type) -TestOutput $Passing
+    ($r.Calls -join "`n") | Should -Not -Match '(?m)^dotnet test '
+    $r.ExitCode | Should -Not -Be 0
+    $r.Output | Should -Match 'CrashDumpType'
+    $r.Output | Should -Not -Match 'cannot be found that matches parameter name' -Because 'the script must know the parameter and refuse the value'
+  }
+
+  It 'refuses it with -Coverage, whose per-project runs would silently not take it' {
+    $repo = New-FakeRepo
+    Set-Built $repo 'Release'
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', 'AiUnit', '-Coverage', '-Configuration', 'Release', '-NoBuild', '-CrashDumpType', 'Heap') -TestOutput $Passing
+    ($r.Calls -join "`n") | Should -Not -Match '(?m)^dotnet (test|run) '
+    $r.ExitCode | Should -Not -Be 0
+    $r.Output | Should -Match '-CrashDumpType and -Coverage'
+    $r.Output | Should -Not -Match 'ScriptHalted'
+  }
+}
+
 # A release build tests net10.0 and net11.0. An integration test module of each framework shares one broker and one
 # database server with the other's, so two run at once read each other's dead letters and contend for the server.
 Describe 'Get-TestModuleParallelism' {
@@ -428,6 +509,47 @@ Test run summary: Passed! - A.Tests.dll (net10.0|arm64)
     $calls | Should -Match "(?m)^reportgenerator -reports:\S*tests/A\.Tests/bin/$Configuration/net10\.0/TestResults/run\.cobertura\.xml"
     $r.Output | Should -Not -Match 'No cobertura XML files found'
     $r.ExitCode | Should -Be 0
+  }
+}
+
+# Since Testing Platform 2.5 `dotnet test` writes every module's results to TestResults under its working directory,
+# the repository root for every suite, where no upload or coverage gate looks. The run asks for one directory per module
+# and moves each back beside its DLL (scripts/lib/ModuleTestResults.psm1), on a failed run too: a failed suite still
+# uploads its TRX and coverage. The fake `dotnet test` writes the platform's per-module layout when asked for it.
+Describe 'Run-Tests.ps1 leaves each module''s results beside its DLL' -Skip:$NoPosixShell {
+  BeforeAll {
+    $script:Passing = @'
+Test run summary: Passed! - A.Tests.dll (net10.0|arm64)
+  total: 3
+  failed: 0
+  succeeded: 3
+  skipped: 0
+'@
+    $script:Failing = @'
+failed A.Tests.SomeTest (12ms)
+Test run summary: Failed! - A.Tests.dll (net10.0|arm64)
+  total: 3
+  failed: 1
+  succeeded: 2
+  skipped: 0
+'@
+  }
+
+  It 'puts the TRX and coverage of a <Case> <Mode> run in tests/A.Tests/bin/Release/net10.0/TestResults' -ForEach @(
+    @{ Mode = 'Unit'; Case = 'passing'; Exit = 0 }
+    @{ Mode = 'AiUnit'; Case = 'passing'; Exit = 0 }
+    @{ Mode = 'Unit'; Case = 'failing'; Exit = 1 }
+    @{ Mode = 'AiUnit'; Case = 'failing'; Exit = 1 }) {
+    $repo = New-FakeRepo
+    Set-Built $repo 'Release'
+    $output = if ($Exit -eq 0) { $Passing } else { $Failing }
+    $r = Invoke-RunTests -Repo $repo -Arguments @('-Mode', $Mode, '-Configuration', 'Release', '-NoBuild', '-ModuleCoverage', '-ReportTrx', '-NoFailFast') -TestOutput $output -TestExitCode $Exit
+    ($r.Calls -join "`n") | Should -Match '(?m)^dotnet test .*--results-directory \S+ --results-directory-layout per-module'
+    $results = Join-Path $repo 'tests' 'A.Tests' 'bin' 'Release' 'net10.0' 'TestResults'
+    Join-Path $results 'A.Tests_net10.0_x64.trx' | Should -Exist
+    Join-Path $results 'run.cobertura.xml' | Should -Exist
+    @(Get-ChildItem -Path (Join-Path $repo 'TestResults') -Recurse -File -ErrorAction SilentlyContinue).Count | Should -Be 0 -Because 'nothing is left at the repository root'
+    $r.ExitCode | Should -Be $Exit
   }
 }
 

@@ -47,6 +47,6 @@ public static class StartupHeartbeatSql {
       NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Integer,
       Value = (object?)request.StaleThresholdSeconds ?? DBNull.Value,
     });
-    return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+    return BooleanScalar.Read(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), "startup heartbeat");
   }
 }

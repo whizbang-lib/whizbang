@@ -12,6 +12,7 @@ using Whizbang.Core.Events.System;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Perspectives;
@@ -167,7 +168,7 @@ public class PerspectiveRebuilderCoverageTests {
                  "for table names — proceeding further would attempt to reconcile against announcers that don't exist");
       await Assert.That(coordinator.Reconciled).IsEmpty();
     } finally {
-      PerspectiveStreamGroupRegistry.Clear();
+      GeneratedRegistrations.RestoreStreamGroups();
     }
   }
 

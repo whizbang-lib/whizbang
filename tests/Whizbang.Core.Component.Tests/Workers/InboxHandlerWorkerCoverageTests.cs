@@ -47,7 +47,12 @@ public sealed class InboxHandlerWorkerCoverageTests {
     // cycle until it dead-letters having never actually failed -- indistinguishable from a stuck
     // handler on a dashboard that shows nothing wrong.
     var opts = _enabledOptions();
-    opts.Flusher.CoalesceWindowMs = 300; // real window the test uses to flip Enabled before the flush fires
+    // Hold the batch open so the flip lands while the commit is queued, by construction: a threshold above one opens a
+    // coalesce window, and that window runs on a clock nothing advances, so only the stop's drain flushes the batch,
+    // after Enabled has flipped. With a threshold of one the first item flushed at once on the flusher's thread and
+    // raced the flip, which a starved runner lost.
+    opts.Flusher.ImmediateFlushThreshold = 10;
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
     var coordinator = new CountingCoordinator();
     var log = new DisabledFlushCapturingLogger();
     var worker = new InboxHandlerWorker(
@@ -56,19 +61,20 @@ public sealed class InboxHandlerWorkerCoverageTests {
       options: Options.Create(opts),
       logger: log,
       pinnedPool: NoOpPinnedConnectionPool.Instance,
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(),
+      timeProvider: clock);
 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
     await worker.StartAsync(cts.Token);
     await worker.EnqueueAsync(_request(Guid.NewGuid(), Guid.NewGuid()), cts.Token);
     opts.Enabled = false;
 
+    // Stopping completes the channel, and the drain flushes the queued commit through the killswitch check.
+    await worker.StopAsync(cts.Token);
     await log.DisabledFlushLogged.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
 
     await Assert.That(coordinator.CallCount).IsEqualTo(0)
       .Because("a commit refused by the killswitch must never reach the coordinator -- it stays unprocessed rather than silently committing after being told not to");
-
-    await worker.StopAsync(cts.Token);
   }
 
   [Test]

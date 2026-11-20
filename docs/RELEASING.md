@@ -951,6 +951,13 @@ success. CI always starts clean.
   `release-publish`) therefore **name every result they depend on**. Never collapse those back into
   an implicit gate: adding a status-check function to a plain `if` silently deletes the whole test
   gate.
+- **A job below one that has a status function needs one too.** GitHub skips a job when any job
+  upstream of it, however far back, was skipped, unless its own `if` has a status function. A job
+  carries one because something above it can be skipped, so every job below it inherits that skip:
+  v0.4457.0 published from the tested packages (which skips `repack-tested-build`) and its attach and
+  merge-back jobs skipped with it, leaving a draft release and no sync PR (#2443). Give such a job
+  `!cancelled()` and the result it depends on. `.github/scripts/tests/WorkflowSkippedNeeds.Tests.ps1`
+  fails on any workflow job that misses it.
 - **Address workflow runs by path, never by `.name`.** `ci.yml` sets a `run-name` (a `release/v*`
   push is a "release cut", a develop push "post-merge"), so no run is named plain "CI". Look runs up
   with `repos/$REPO/actions/workflows/ci.yml/runs?...`; filtering on `.name` silently matches
@@ -1003,8 +1010,8 @@ build locally. Restore always covers both frameworks, so the committed `packages
 the same on every branch and locked-mode restore passes everywhere. `Build · Compile` builds every targeted
 framework in one job and names them (its `test-frameworks` output), and each test suite runs one job per framework
 (#2427): on a release build every suite leg, shards included, runs twice in parallel, as `Run suite (net10.0)` and
-`Run suite (net11.0)`, each with `scripts/Run-Tests.ps1 -Framework` and its artifacts (TRX, coverage, hang dumps)
-suffixed `-net10.0` or `-net11.0`. A development build has one leg per suite, named `Run suite` as it always was.
+`Run suite (net11.0)`, each with `scripts/Run-Tests.ps1 -Framework` and its artifacts (TRX, coverage, hang and crash
+dumps) suffixed `-net10.0` or `-net11.0`. A development build has one leg per suite, named `Run suite` as it always was.
 The samples target `net11.0` alone on every branch (`samples/ECommerce/Directory.Build.props`): a `-Framework` leg skips
 a test project that does not target its framework, and a leg that selects only sample tests (InMemory, the Service
 Bus `ecommerce` shard) gets the samples' frameworks (`sample-test-frameworks`), so it runs `net11.0` alone.

@@ -163,6 +163,6 @@ public class WhizbangIdFilterHandlerTests {
     var any = WhizbangIdFilterHandler.AnyOf(_documentField(nameof(OrderDocument.Id)), Array.Empty<GraphQLOrderId>());
 
     await Assert.That(any).IsTypeOf<ConstantExpression>();
-    await Assert.That(((ConstantExpression)any).Value).IsEqualTo(false);
+    await Assert.That(((ConstantExpression)any).Value as bool?).IsFalse();
   }
 }

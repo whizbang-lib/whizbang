@@ -61,9 +61,11 @@ internal sealed partial class RebuildBackgroundWorker : BackgroundService {
 
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     try {
-      await foreach (var (perspectiveName, origin) in _queue.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false)) {
-        // ReadAllAsync hands back an item already queued without looking at the token, so a stopped host could otherwise
-        // start a rebuild it will not finish.
+      // The queue's channel is never completed by design, so the loop ends only when stopping cancels the read.
+      while (true) {
+        var (perspectiveName, origin) = await _queue.Reader.ReadAsync(stoppingToken).ConfigureAwait(false);
+        // Stopping can land between the read and the rebuild, so a stopped host could otherwise start a rebuild it will
+        // not finish.
         stoppingToken.ThrowIfCancellationRequested();
         await _runAsync(perspectiveName, origin, stoppingToken).ConfigureAwait(false);
       }

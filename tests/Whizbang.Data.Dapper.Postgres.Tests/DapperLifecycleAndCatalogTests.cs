@@ -232,6 +232,22 @@ public class DapperLifecycleAndCatalogTests : PostgresTestBase {
     await Assert.That(orphaned[0].Envelope.Hops).IsEmpty();
   }
 
+  [Test]
+  public async Task OrphanedLifecycles_AnEventWithNoScope_ReplaysUnscopedAsync() {
+    var coordinator = _coordinator();
+    var stream = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    await _commitAsync(eventId, stream, EVENT_TYPE, flags: 0);
+    await _cursorAsync(stream, eventId, status: 0);
+    await _executeAsync("UPDATE wh_event_store SET scope = NULL WHERE event_id = @eventId", new { eventId });
+
+    var orphaned = await coordinator.GetOrphanedLifecycleEventsAsync(
+      new Dictionary<string, IReadOnlyList<string>> { [EVENT_TYPE] = [PERSPECTIVE] }, TimeSpan.FromHours(1));
+
+    await Assert.That(orphaned.Select(o => o.EventId)).IsEquivalentTo([eventId])
+      .Because("an event stored without a scope is still an orphaned lifecycle, replayed without one");
+  }
+
   private Task _commitAsync(Guid eventId, Guid streamId, string eventType, int flags) =>
     _executeAsync("SELECT commit_handler_result(@Req::jsonb)", new {
       Req = DapperStreamPrefixTruncateTests.Commit(eventId, streamId, eventType).Replace("\"Flags\": 0", $"\"Flags\": {flags}", StringComparison.Ordinal)

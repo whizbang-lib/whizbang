@@ -3,6 +3,7 @@
 
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using Whizbang.Core.Messaging;
 
@@ -87,7 +88,7 @@ internal sealed class PostgresDeadLetterRecoveryService : IDeadLetterRecoverySer
   public async Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) {
     using var __ = await _acquireAsync(ct).ConfigureAwait(false);
     await using var call = await _callAsync($"SELECT {_fn("purge_undeliverable_held_dead_letters")}()", ct).ConfigureAwait(false);
-    return (int)(await call.Command.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
+    return Convert.ToInt32(await call.Command.ExecuteScalarAsync(ct).ConfigureAwait(false), CultureInfo.InvariantCulture);
   }
 
   /// <inheritdoc />
@@ -111,7 +112,7 @@ internal sealed class PostgresDeadLetterRecoveryService : IDeadLetterRecoverySer
     call.Command.Parameters.Add(new Npgsql.NpgsqlParameter("gen", NpgsqlTypes.NpgsqlDbType.Text) { Value = generation });
     call.Command.Parameters.Add(new Npgsql.NpgsqlParameter("size", NpgsqlTypes.NpgsqlDbType.Integer) { Value = probeSize });
     call.Command.Parameters.Add(new Npgsql.NpgsqlParameter("budget", NpgsqlTypes.NpgsqlDbType.Integer) { Value = generationBudget });
-    return (int)(await call.Command.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
+    return Convert.ToInt32(await call.Command.ExecuteScalarAsync(ct).ConfigureAwait(false), CultureInfo.InvariantCulture);
   }
 
   /// <inheritdoc />
@@ -136,7 +137,7 @@ internal sealed class PostgresDeadLetterRecoveryService : IDeadLetterRecoverySer
     await using var call = await _callAsync($"SELECT {_fn("release_held_dead_letter_cohort")}(@fp, @stagger)", ct).ConfigureAwait(false);
     call.Command.Parameters.Add(new Npgsql.NpgsqlParameter("fp", NpgsqlTypes.NpgsqlDbType.Varchar) { Value = fingerprint });
     call.Command.Parameters.Add(new Npgsql.NpgsqlParameter(nameof(stagger), NpgsqlTypes.NpgsqlDbType.Integer) { Value = (int)stagger.TotalSeconds });
-    return (int)(await call.Command.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
+    return Convert.ToInt32(await call.Command.ExecuteScalarAsync(ct).ConfigureAwait(false), CultureInfo.InvariantCulture);
   }
 
   /// <inheritdoc />
@@ -194,7 +195,7 @@ internal sealed class PostgresDeadLetterRecoveryService : IDeadLetterRecoverySer
     sb.Append(']');
     await using var call = await _callAsync($"SELECT {_fn("record_dead_letter_stacks")}(@entries::jsonb)", ct).ConfigureAwait(false);
     call.Command.Parameters.Add(new Npgsql.NpgsqlParameter(nameof(entries), NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = sb.ToString() });
-    return (int)(await call.Command.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
+    return Convert.ToInt32(await call.Command.ExecuteScalarAsync(ct).ConfigureAwait(false), CultureInfo.InvariantCulture);
   }
 
   /// <inheritdoc />
@@ -202,7 +203,7 @@ internal sealed class PostgresDeadLetterRecoveryService : IDeadLetterRecoverySer
     using var __ = await _acquireAsync(ct).ConfigureAwait(false);
     await using var call = await _callAsync($"SELECT {_fn("prune_stack_history")}(@days)", ct).ConfigureAwait(false);
     call.Command.Parameters.Add(new Npgsql.NpgsqlParameter("days", NpgsqlTypes.NpgsqlDbType.Integer) { Value = retentionDays });
-    return (int)(await call.Command.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
+    return Convert.ToInt32(await call.Command.ExecuteScalarAsync(ct).ConfigureAwait(false), CultureInfo.InvariantCulture);
   }
 
   /// <inheritdoc />
@@ -224,7 +225,7 @@ internal sealed class PostgresDeadLetterRecoveryService : IDeadLetterRecoverySer
     call.Command.Parameters.Add(new Npgsql.NpgsqlParameter("fp", NpgsqlTypes.NpgsqlDbType.Varchar) { Value = fingerprint });
     call.Command.Parameters.Add(new Npgsql.NpgsqlParameter("gen", NpgsqlTypes.NpgsqlDbType.Text) { Value = generation });
     call.Command.Parameters.Add(new Npgsql.NpgsqlParameter("size", NpgsqlTypes.NpgsqlDbType.Integer) { Value = waveSize });
-    return (int)(await call.Command.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
+    return Convert.ToInt32(await call.Command.ExecuteScalarAsync(ct).ConfigureAwait(false), CultureInfo.InvariantCulture);
   }
 
   /// <inheritdoc />
@@ -233,7 +234,7 @@ internal sealed class PostgresDeadLetterRecoveryService : IDeadLetterRecoverySer
     await using var call = await _callAsync($"SELECT {_fn("count_wave_requarantines")}(@fp, @gen)", ct).ConfigureAwait(false);
     call.Command.Parameters.Add(new Npgsql.NpgsqlParameter("fp", NpgsqlTypes.NpgsqlDbType.Varchar) { Value = fingerprint });
     call.Command.Parameters.Add(new Npgsql.NpgsqlParameter("gen", NpgsqlTypes.NpgsqlDbType.Text) { Value = generation });
-    return (int)(await call.Command.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
+    return Convert.ToInt32(await call.Command.ExecuteScalarAsync(ct).ConfigureAwait(false), CultureInfo.InvariantCulture);
   }
 
   /// <inheritdoc />

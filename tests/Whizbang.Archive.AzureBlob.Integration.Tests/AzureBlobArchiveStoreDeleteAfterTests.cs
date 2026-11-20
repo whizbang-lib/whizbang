@@ -144,6 +144,24 @@ public partial class AzureBlobArchiveStoreTests {
   }
 
   [Test]
+  public async Task Sweep_APageWithNoObjectOldEnough_DeletesNothingAsync() {
+    var (stream, _) = await _seedAsync(3);
+    var clock = new ManualClock(_farFuture);
+    var store = _delayedStore(clock);
+    _ = await store.WriteAsync(ArchiveBatch.WholeStream(stream));
+    // Not an object this store writes, so it never counts, however old.
+    _ = await _container().GetBlobClient("notes/readme.txt").UploadAsync(BinaryData.FromString("operator notes"));
+    var created = await _createdAsync();
+
+    clock.Now = created.Values.Min() + _delay - _microsecond;
+    var swept = await store.SweepOrphanedObjectsAsync();
+
+    await Assert.That(swept).IsEqualTo(0)
+      .Because("a page whose objects are all younger than the delay, or not this store's, has nothing to check or delete");
+    await Assert.That(await _objectsAsync()).IsEquivalentTo(created.Keys.ToList());
+  }
+
+  [Test]
   public async Task Sweep_InADatabaseThatNeverWroteToTheLocation_DeletesNothingAsync() {
     var (stream, _) = await _seedAsync(3);
     _ = await _store().WriteAsync(ArchiveBatch.WholeStream(stream));

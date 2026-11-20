@@ -100,7 +100,7 @@ public class RetentionSettingsBindingTests {
     }, p => p.GetRequiredService<IOptions<EphemeralOptions>>().Value);
 
     await Assert.That(ephemeral.RewindGraceSeconds).IsEqualTo(31);
-    await Assert.That(ephemeral.PointerPrune.Enabled).IsEqualTo(true);
+    await Assert.That(ephemeral.PointerPrune.Enabled).IsTrue();
     await Assert.That(ephemeral.PointerPrune.RetentionDays).IsEqualTo(32);
     await Assert.That(ephemeral.PointerPrune.IntervalDays).IsEqualTo(33);
   }

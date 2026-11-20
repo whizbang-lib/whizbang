@@ -138,7 +138,7 @@ public class StreamIntegrityObservabilityMetricsTests {
     await Assert.That(ProbeMeterReader.ReadSeries(_meterOf(metrics), GENERATION).Single().Value).IsEqualTo(7L);
     var carried = ProbeMeterReader.ReadSeries(_meterOf(metrics), CARRIED).Single();
     await Assert.That(carried.Value).IsEqualTo(1500L);
-    await Assert.That(carried.Tags["capped"]).IsEqualTo(false);
+    await Assert.That(carried.Tags["capped"] as bool?).IsFalse();
   }
 
   [Test]

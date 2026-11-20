@@ -11,6 +11,8 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 
+using Whizbang.Core.Tests.Helpers;
+
 namespace Whizbang.Core.Tests.Perspectives;
 
 /// <summary>
@@ -59,7 +61,7 @@ public class PerspectiveRebuilderBranchCoverageTests {
       await Assert.That(coordinator.Reconciled[0].Follower).IsEqualTo("wh_per_follower");
       await Assert.That(coordinator.Reconciled[0].Announcers).Contains("wh_per_announcer");
     } finally {
-      PerspectiveStreamGroupRegistry.Clear();
+      GeneratedRegistrations.RestoreStreamGroups();
     }
   }
 

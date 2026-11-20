@@ -41,7 +41,7 @@ public class TracerPatternMatchingTests {
 
     // Assert - explicit flag should be true due to TracedHandlers match
     var span = collector.Spans[0];
-    await Assert.That(span.Tags["whizbang.trace.explicit"]).IsEqualTo(true);
+    await Assert.That(span.Tags["whizbang.trace.explicit"] as bool?).IsTrue();
   }
 
   [Test]
@@ -65,7 +65,7 @@ public class TracerPatternMatchingTests {
 
     // Assert - should match because handler name ends with "OrderReceptor"
     var span = collector.Spans[0];
-    await Assert.That(span.Tags["whizbang.trace.explicit"]).IsEqualTo(true);
+    await Assert.That(span.Tags["whizbang.trace.explicit"] as bool?).IsTrue();
   }
 
   [Test]
@@ -88,7 +88,7 @@ public class TracerPatternMatchingTests {
 
     // Assert
     var span = collector.Spans[0];
-    await Assert.That(span.Tags["whizbang.trace.explicit"]).IsEqualTo(true);
+    await Assert.That(span.Tags["whizbang.trace.explicit"] as bool?).IsTrue();
   }
 
   [Test]
@@ -111,7 +111,7 @@ public class TracerPatternMatchingTests {
 
     // Assert
     var span = collector.Spans[0];
-    await Assert.That(span.Tags["whizbang.trace.explicit"]).IsEqualTo(true);
+    await Assert.That(span.Tags["whizbang.trace.explicit"] as bool?).IsTrue();
   }
 
   [Test]
@@ -134,7 +134,7 @@ public class TracerPatternMatchingTests {
 
     // Assert
     var span = collector.Spans[0];
-    await Assert.That(span.Tags["whizbang.trace.explicit"]).IsEqualTo(true);
+    await Assert.That(span.Tags["whizbang.trace.explicit"] as bool?).IsTrue();
   }
 
   [Test]
@@ -157,7 +157,7 @@ public class TracerPatternMatchingTests {
 
     // Assert
     var span = collector.Spans[0];
-    await Assert.That(span.Tags["whizbang.trace.explicit"]).IsEqualTo(false);
+    await Assert.That(span.Tags["whizbang.trace.explicit"] as bool?).IsFalse();
   }
 
   [Test]
@@ -180,7 +180,7 @@ public class TracerPatternMatchingTests {
 
     // Assert - should match case-insensitively
     var span = collector.Spans[0];
-    await Assert.That(span.Tags["whizbang.trace.explicit"]).IsEqualTo(true);
+    await Assert.That(span.Tags["whizbang.trace.explicit"] as bool?).IsTrue();
   }
 
   // ==========================================================================
@@ -207,7 +207,7 @@ public class TracerPatternMatchingTests {
 
     // Assert
     var span = collector.Spans[0];
-    await Assert.That(span.Tags["whizbang.trace.explicit"]).IsEqualTo(true);
+    await Assert.That(span.Tags["whizbang.trace.explicit"] as bool?).IsTrue();
   }
 
   [Test]
@@ -230,7 +230,7 @@ public class TracerPatternMatchingTests {
 
     // Assert
     var span = collector.Spans[0];
-    await Assert.That(span.Tags["whizbang.trace.explicit"]).IsEqualTo(true);
+    await Assert.That(span.Tags["whizbang.trace.explicit"] as bool?).IsTrue();
   }
 
   [Test]
@@ -253,7 +253,7 @@ public class TracerPatternMatchingTests {
 
     // Assert
     var span = collector.Spans[0];
-    await Assert.That(span.Tags["whizbang.trace.explicit"]).IsEqualTo(true);
+    await Assert.That(span.Tags["whizbang.trace.explicit"] as bool?).IsTrue();
   }
 
   [Test]
@@ -277,7 +277,7 @@ public class TracerPatternMatchingTests {
 
     // Assert
     var span = collector.Spans[0];
-    await Assert.That(span.Tags["whizbang.trace.explicit"]).IsEqualTo(true);
+    await Assert.That(span.Tags["whizbang.trace.explicit"] as bool?).IsTrue();
   }
 
   // ==========================================================================
@@ -305,7 +305,7 @@ public class TracerPatternMatchingTests {
 
     // Assert - Should be elevated due to message match
     var span = collector.Spans[0];
-    await Assert.That(span.Tags["whizbang.trace.explicit"]).IsEqualTo(true);
+    await Assert.That(span.Tags["whizbang.trace.explicit"] as bool?).IsTrue();
   }
 
   [Test]
@@ -328,7 +328,7 @@ public class TracerPatternMatchingTests {
 
     // Assert
     var span = collector.Spans[0];
-    await Assert.That(span.Tags["whizbang.trace.explicit"]).IsEqualTo(true);
+    await Assert.That(span.Tags["whizbang.trace.explicit"] as bool?).IsTrue();
   }
 
   [Test]

@@ -28,7 +28,7 @@ public class EnvelopeContextExtractorTests {
     var result = EnvelopeContextExtractor.ExtractFromHops(null);
 
     // Assert
-    await Assert.That(result.TraceContext).IsEqualTo(default(ActivityContext));
+    await Assert.That(result.TraceContext).IsEqualTo(default);
     await Assert.That(result.Scope).IsNull();
   }
 
@@ -41,7 +41,7 @@ public class EnvelopeContextExtractorTests {
     var result = EnvelopeContextExtractor.ExtractFromHops(hops);
 
     // Assert
-    await Assert.That(result.TraceContext).IsEqualTo(default(ActivityContext));
+    await Assert.That(result.TraceContext).IsEqualTo(default);
     await Assert.That(result.Scope).IsNull();
   }
 
@@ -81,7 +81,7 @@ public class EnvelopeContextExtractorTests {
     var result = EnvelopeContextExtractor.ExtractTraceContext(hops);
 
     // Assert
-    await Assert.That(result).IsEqualTo(default(ActivityContext));
+    await Assert.That(result).IsEqualTo(default);
   }
 
   [Test]

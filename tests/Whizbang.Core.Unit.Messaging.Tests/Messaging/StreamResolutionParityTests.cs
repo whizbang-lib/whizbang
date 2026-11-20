@@ -48,7 +48,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <code-under-test>src/Whizbang.Core/Workers/ReceivedInboxMessageBuilder.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Perspectives/RebuildRowRouting.cs</code-under-test>
 [Category("Messaging")]
-[NotInParallel("StreamResolutionParity")]
+[NotInParallel(["StreamResolutionParity", "StreamIdExtractorRegistry"])]
 public class StreamResolutionParityTests {
   /// <summary>An event naming its stream, as a domain event's <c>[StreamId]</c> does.</summary>
   public sealed record ParityEvent([property: StreamId] Guid Target, string Note) : IEvent;

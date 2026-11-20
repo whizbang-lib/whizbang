@@ -276,4 +276,36 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
     await Assert.That(rows[0].EventWorkId).IsEqualTo(Guid.Empty)
       .Because("body fetch does not carry work-id; drainer pairs it from the prefetch tuples");
   }
+
+  [Test]
+  public async Task FetchEventsByIdsAsync_AnEventWithNoScope_ReadsItsScopeAsNullAsync() {
+    await using var dbContext = CreateDbContext();
+    var coord = Coord(dbContext);
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync();
+    }
+
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = """
+        INSERT INTO wh_event_store
+          (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, created_at)
+        VALUES (@evt, @stream, @stream, 'agg', 'My.Type', NULL, 1, NOW());
+        INSERT INTO wh_event_body (event_id, event_data, metadata)
+        VALUES (@evt, '{"payload":42}'::jsonb, '{"hop":1}'::jsonb)
+        """;
+      ins.Parameters.AddWithValue("evt", eventId);
+      ins.Parameters.AddWithValue("stream", streamId);
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    var rows = await coord.FetchEventsByIdsAsync([eventId]);
+
+    await Assert.That(rows.Count).IsEqualTo(1);
+    await Assert.That(rows[0].Scope).IsNull();
+    await Assert.That(rows[0].Metadata).Contains("\"hop\"");
+  }
 }

@@ -22,6 +22,10 @@ namespace Whizbang.Core.Tests.Tags;
 [NotInParallel("TagRegistry")]
 public class MessageTagProcessorBranchCoverageTests {
 
+  // Clearing the process-global tag registries removes the generated ones too; put them back for the tests after this.
+  [After(Test)]
+  public void RestoreGeneratedTagRegistries() => GeneratedRegistrations.RestoreTags();
+
   private const string TAG = "branch-custom-tag";
   private static readonly JsonElement _modifiedPayload = JsonElement.Parse("""{"modified":true}""");
 

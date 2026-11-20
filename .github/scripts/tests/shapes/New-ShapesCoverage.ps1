@@ -16,13 +16,17 @@
     - CalcRunner exercises src/Whizbang.Exp/Calc.cs: each process takes one outcome of the same if.
     - ShapesRunner exercises src/Whizbang.Shapes/Shapes.cs: the statement shapes listed in that file's
       runner (ShapeRuns.cs) and in the tests.
+    - AsyncShapesRunner exercises src/Whizbang.AsyncShapes/AsyncShapes.cs, compiled with runtime async:
+      the loops, catches and returns whose lowering adds code no test can reach.
 
     Output under -OutDir:
         build/                          the projects' build output
         CalcRunner/A, CalcRunner/B      one Cobertura and one binary report per process
         ShapesRunner/A, ShapesRunner/B
+        AsyncShapesRunner/A, AsyncShapesRunner/B
         CalcRunner.blocks.xml           `dotnet-coverage merge <both binaries> -f xml`
         ShapesRunner.blocks.xml
+        AsyncShapesRunner.blocks.xml
 
     Anything missing fails loudly: no dotnet, a failed build or run, no dotnet-coverage, or a report that
     measured nothing. The last is what the collector writes where it cannot instrument (its dynamic
@@ -58,7 +62,7 @@ $build = Join-Path $OutDir 'build'
 $log = & dotnet build (Join-Path $shapes 'shapes.slnx') --configuration Release --nologo --verbosity quiet "-p:ShapesOut=$build/" 2>&1
 if ($LASTEXITCODE -ne 0) { throw "Building the coverage shapes failed (exit $LASTEXITCODE):`n$($log -join "`n")" }
 
-foreach ($runner in @('CalcRunner', 'ShapesRunner')) {
+foreach ($runner in @('CalcRunner', 'ShapesRunner', 'AsyncShapesRunner')) {
   $dll = Join-Path $build "bin/$runner/Release/net11.0/$runner.dll"
   $binaries = @()
   foreach ($process in @('A', 'B')) {

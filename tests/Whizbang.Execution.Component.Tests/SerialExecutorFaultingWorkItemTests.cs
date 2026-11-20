@@ -94,7 +94,7 @@ public class SerialExecutorFaultingWorkItemTests {
     await Assert.That(activity.Status).IsEqualTo(ActivityStatusCode.Error)
       .Because("the exception is swallowed for the caller but must stay visible to an operator, or a "
         + "safety net that fires often looks exactly like one that never fires");
-    await Assert.That(activity.GetTagItem("defensive.code")).IsEqualTo(true)
+    await Assert.That(activity.GetTagItem("defensive.code") as bool?).IsTrue()
       .Because("the tag is what separates a defensive path from an ordinary error in a trace");
     await Assert.That(activity.GetTagItem("exception.message")).IsEqualTo("pooled source teardown blew up")
       .Because("the recorded exception has to be the one that escaped, or the trace names the wrong fault");

@@ -23,7 +23,7 @@ namespace Whizbang.Core.Tests.ServiceScope;
 /// <code-under-test>src/Whizbang.Core/ServiceRegistrationCallbacks.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/WhizbangServiceScopeExtensions.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Perspectives/PerspectiveRunnerCallbackRegistry.cs</code-under-test>
-[NotInParallel("WhizbangBackgroundServiceTests")]
+[NotInParallel] // sets the process-wide registration callback slots, which any test calling AddWhizbang runs
 public class ServiceScopedRegistrationTests {
   private const string THIS_ASSEMBLY = "Whizbang.Core.Tests";
 

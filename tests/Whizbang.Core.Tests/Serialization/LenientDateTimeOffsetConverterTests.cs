@@ -92,7 +92,7 @@ public class LenientDateTimeOffsetConverterTests {
     var result = JsonSerializer.Deserialize<DateTimeOffset>(json, _options);
 
     // Assert
-    await Assert.That(result).IsEqualTo(default(DateTimeOffset));
+    await Assert.That(result).IsEqualTo(default);
   }
 
   [Test]

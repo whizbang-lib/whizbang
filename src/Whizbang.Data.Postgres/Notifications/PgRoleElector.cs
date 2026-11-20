@@ -251,7 +251,7 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     cmd.Parameters.AddWithValue("id", tenure.InstanceId);
     cmd.Parameters.AddWithValue("epoch", tenure.Epoch);
     cmd.Parameters.AddWithValue(nameof(mark), mark);
-    return await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+    return BooleanScalar.Read(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), "role duty mark");
   }
 
   private sealed class NoMark : IAsyncDisposable {

@@ -65,7 +65,7 @@
     <!-- Use SoftwareExtravaganza prefix to avoid NuGet naming conflicts -->
     <PackageId>SoftwareExtravaganza.$(MSBuildProjectName)</PackageId>
     <!-- Local-only version — CI/CD build server overrides this. Do NOT commit non-local versions. -->
-    <Version>0.4457.0</Version>
+    <Version>0.4521.0</Version>
     <Authors>Phil Carbone</Authors>
     <Company>whizbang-lib</Company>
     <Product>Whizbang</Product>
@@ -213,12 +213,13 @@
     <GlobalAnalyzerConfigFiles Include="$(MSBuildThisFileDirectory)TypeNaming.OutsideLibrary.globalconfig" />
   </ItemGroup>
 
-  <!-- Hang dumps (#2402). Every test module a suite runs can take a hang dump: Run-Tests.ps1 -HangDumpTimeout
-       passes `dotnet test` the platform's hang dump options, and a module without this extension would reject
-       them as unknown. Keyed on WhizbangTestType, which every suite selects projects by, so a new test project
+  <!-- Hang dumps (#2402) and crash dumps (#2446). Every test module a suite runs can take a hang dump and a crash
+       dump: Run-Tests.ps1 -HangDumpTimeout and -CrashDumpType pass `dotnet test` the platform's options for them,
+       and a module without these extensions would reject them as unknown. Keyed on WhizbangTestType, which every suite selects projects by, so a new test project
        gets it without anyone remembering to add it (MSBuild evaluates item conditions after every property,
        the project's own included). Benchmarks run under BenchmarkDotNet, not the testing platform. -->
   <ItemGroup Condition="'$(WhizbangTestType)' != '' and '$(WhizbangTestType)' != 'Benchmark'">
+    <PackageReference Include="Microsoft.Testing.Extensions.CrashDump" />
     <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />
   </ItemGroup>
 

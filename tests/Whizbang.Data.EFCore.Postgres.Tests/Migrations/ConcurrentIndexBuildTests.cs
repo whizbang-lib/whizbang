@@ -49,7 +49,7 @@ public partial class ConcurrentIndexBuildTests : EFCoreTestBase {
     await _runStepAsync();
 
     await Assert.That(before).IsNull().Because("the migrations leave the build to the step");
-    await Assert.That(await _validityAsync(conn, INDEX)).IsEqualTo(true);
+    await Assert.That(await _validityAsync(conn, INDEX)).IsTrue();
     await Assert.That(ConcurrentIndexBuild.FrameworkIndexes.Select(i => i.Name)).Contains(INDEX);
   }
 
@@ -63,7 +63,7 @@ public partial class ConcurrentIndexBuildTests : EFCoreTestBase {
 
     await Assert.That(first).IsEqualTo(ConcurrentIndexOutcome.Built);
     await Assert.That(second).IsEqualTo(ConcurrentIndexOutcome.AlreadyValid).Because("a restart finds the index and builds nothing");
-    await Assert.That(await _validityAsync(conn, INDEX)).IsEqualTo(true);
+    await Assert.That(await _validityAsync(conn, INDEX)).IsTrue();
     await Assert.That(await _scalarAsync(conn, $"SELECT obj_description('public.{INDEX}'::regclass, 'pg_class')"))
       .IsEqualTo(index.Comment);
   }
@@ -79,7 +79,7 @@ public partial class ConcurrentIndexBuildTests : EFCoreTestBase {
 
     await Assert.That(outcome).IsEqualTo(ConcurrentIndexOutcome.Built)
       .Because("an invalid index under the name would pass for the index forever and serve no read");
-    await Assert.That(await _validityAsync(conn, INDEX)).IsEqualTo(true);
+    await Assert.That(await _validityAsync(conn, INDEX)).IsTrue();
     await Assert.That(await _scalarAsync(conn, $"SELECT pg_get_indexdef('public.{INDEX}'::regclass)") as string)
       .Contains("WHERE ((commit_sequence IS NOT NULL) AND (event_type IS NOT NULL))");
   }
@@ -112,9 +112,9 @@ public partial class ConcurrentIndexBuildTests : EFCoreTestBase {
     await building;
 
     await Assert.That(outcome).IsEqualTo(ConcurrentIndexOutcome.Busy);
-    await Assert.That(during).IsEqualTo(false)
+    await Assert.That(during).IsFalse()
       .Because("an invalid index during another build is its work in progress, never a leftover to drop");
-    await Assert.That(await _validityAsync(conn, INDEX)).IsEqualTo(true).Because("the other build finished undisturbed");
+    await Assert.That(await _validityAsync(conn, INDEX)).IsTrue().Because("the other build finished undisturbed");
   }
 
   /// <summary>
@@ -163,7 +163,7 @@ public partial class ConcurrentIndexBuildTests : EFCoreTestBase {
 
       await Assert.That(outcome).IsEqualTo(ConcurrentIndexOutcome.Built)
         .Because("a build in another database is not work in progress on this database's table");
-      await Assert.That(await _validityAsync(conn, INDEX)).IsEqualTo(true);
+      await Assert.That(await _validityAsync(conn, INDEX)).IsTrue();
     } finally {
       await PerTestDatabaseFactory.DropAsync(sibling.Name, cancellationToken: CancellationToken.None);
     }

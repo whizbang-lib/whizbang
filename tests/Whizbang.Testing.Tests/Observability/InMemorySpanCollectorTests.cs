@@ -18,6 +18,8 @@ public class InMemorySpanCollectorTests {
 
   [Test]
   public async Task Collector_CapturesStoppedActivities_FromListenedSourceAsync() {
+    // The test runner may run each test inside its own Activity; this test is about spans with no ambient parent.
+    Activity.Current = null;
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
@@ -107,6 +109,8 @@ public class InMemorySpanCollectorTests {
 
   [Test]
   public async Task Collector_GetRoots_And_GetChildren_ReflectHierarchyAsync() {
+    // The test runner may run each test inside its own Activity; this test is about spans with no ambient parent.
+    Activity.Current = null;
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);
@@ -160,6 +164,8 @@ public class InMemorySpanCollectorTests {
 
   [Test]
   public async Task Collector_HasOrphanedSpans_FalseForCompleteTraceAsync() {
+    // The test runner may run each test inside its own Activity; this test is about spans with no ambient parent.
+    Activity.Current = null;
     var sourceName = _uniqueSourceName();
     using var source = new ActivitySource(sourceName);
     using var collector = new InMemorySpanCollector(sourceName);

@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Diagnostics;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -56,6 +57,8 @@ public class WhizbangCorrelationPipelineTests {
 
   [Test]
   public async Task Correlation_WithNoHeader_DownstreamGetsAFreshIdAsync() {
+    // The test runner may run each test inside its own Activity; this test is about spans with no ambient parent.
+    Activity.Current = null;
     InboundCorrelationAccessor.Current = null;
     CorrelationId? downstream = null;
 

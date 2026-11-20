@@ -653,6 +653,9 @@ jobs:
     # After publish: the packages' signed provenance is produced by the push itself (nuget-push.yml
     # attests before it pushes), and the release carries that same attestation.
     needs: [check-release, publish]
+    # !cancelled(): a skipped job anywhere upstream (repack-tested-build on the tested-packages path) skips every
+    # job below it that has no status function, which left v0.4457.0 a draft with no merge-back (#2443).
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -725,6 +728,9 @@ jobs:
     # passes it, which is how the merge-back read an empty client id on every stable release until #1796.
     environment: release-app
     needs: [check-release, publish]
+    # !cancelled(): a skipped job anywhere upstream (repack-tested-build on the tested-packages path) skips every
+    # job below it that has no status function, which left v0.4457.0 a draft with no merge-back (#2443).
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read          # everything that writes goes through the release app's token

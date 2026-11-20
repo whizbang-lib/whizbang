@@ -222,3 +222,21 @@ not pass the timeout, passes one outside those bounds, or does not upload the du
 test never completes (`shapes/HangRunner`) under `dotnet test` to prove the dump fires. That proof matters: at
 2.0.2 the extension accepted the options under `dotnet test` and never dumped; 2.2.3 does. 2.3.2 and later
 abort the TUnit version in use (exit 134), so a bump of the extension or the platform has to pass that test.
+
+## Crash dumps
+
+A test host process the runtime kills (an internal CLR error, an access violation, an `Environment.FailFast`)
+never stops moving, so the hang dump never fires on it; before #2446 the suite was left with an exit code and
+nothing else. Every test project except the benchmarks also references `Microsoft.Testing.Extensions.CrashDump`,
+the same way as the hang dump, and each CI suite runs with `Run-Tests.ps1 -CrashDumpType Heap`: a module whose
+process crashes writes `<module>_<pid>_crash.dmp` (named for the test module's own process, not `dotnet`) and the
+tests that were still running, `<module>_<id>_crash.sequence.log`, to `TestResults` under the repository root,
+and the run prints the tests that were running. The suite uploads them as `crashdump-<suite>-<attempt>` when it
+fails or is canceled; open the dump with `dotnet-dump analyze` (`clrstack -all`, `pe`, `clrthreads`).
+
+A heap dump holds the managed heap and every thread's stack, which is what a runtime crash needs, without a
+full dump's copy of every mapped image; it is still about 200 MB for a one-test module, so it is uploaded only
+for a failed or canceled job and kept 7 days. `.github/scripts/tests/TestSuiteCrashDump.Tests.ps1` fails a
+suite that does not pass the type or does not upload the dump, and runs a module whose test calls
+`Environment.FailFast` (`shapes/CrashRunner`) under `dotnet test`, with coverage and the hang dump on as every
+suite runs, to prove the dump is written where the suites upload it from.

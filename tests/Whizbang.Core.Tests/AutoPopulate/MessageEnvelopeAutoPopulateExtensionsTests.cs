@@ -67,7 +67,7 @@ public class MessageEnvelopeAutoPopulateExtensionsTests {
     var result = envelope.GetAutoPopulated<DateTimeOffset>("NonExistent");
 
     // Assert
-    await Assert.That(result).IsEqualTo(default(DateTimeOffset));
+    await Assert.That(result).IsEqualTo(default);
   }
 
   [Test]
@@ -145,7 +145,7 @@ public class MessageEnvelopeAutoPopulateExtensionsTests {
     var result = envelope.GetAutoPopulated<DateTimeOffset>("SentAt");
 
     // Assert - should return default since it looks for "auto:SentAt"
-    await Assert.That(result).IsEqualTo(default(DateTimeOffset));
+    await Assert.That(result).IsEqualTo(default);
   }
 
   #endregion

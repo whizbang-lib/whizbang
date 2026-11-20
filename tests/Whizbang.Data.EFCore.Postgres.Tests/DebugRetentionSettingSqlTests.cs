@@ -58,7 +58,7 @@ public class DebugRetentionSettingSqlTests : EFCoreTestBase {
     await Assert.That(await _readSettingAsync()).IsEqualTo("true")
       .Because("the sweep looks up this exact key; a value written anywhere else leaves the purge "
              + "running while the operator believes retention is on");
-    await Assert.That(await _readSettingAsBoolAsync()).IsEqualTo(true)
+    await Assert.That(await _readSettingAsBoolAsync()).IsTrue()
       .Because("the sweep casts the text to BOOLEAN — the written form has to survive that cast, "
              + "which is the one thing a string-level unit test cannot prove");
   }
@@ -71,7 +71,7 @@ public class DebugRetentionSettingSqlTests : EFCoreTestBase {
     await coord.SyncDebugRetentionSettingAsync(debugMode: true);
     await coord.SyncDebugRetentionSettingAsync(debugMode: false);
 
-    await Assert.That(await _readSettingAsBoolAsync()).IsEqualTo(false)
+    await Assert.That(await _readSettingAsBoolAsync()).IsFalse()
       .Because("a stale true would disable the purge permanently and grow the inbox without bound "
              + "— strictly worse than the problem debug retention was enabled to diagnose");
   }

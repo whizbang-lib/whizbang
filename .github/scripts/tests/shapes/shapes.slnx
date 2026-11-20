@@ -1,6 +1,8 @@
 <Solution>
+  <Project Path="AsyncShapesRunner/AsyncShapesRunner.csproj" />
   <Project Path="CalcRunner/CalcRunner.csproj" />
   <Project Path="ShapesRunner/ShapesRunner.csproj" />
+  <Project Path="src/Whizbang.AsyncShapes/Whizbang.AsyncShapes.csproj" />
   <Project Path="src/Whizbang.Exp/Whizbang.Exp.csproj" />
   <Project Path="src/Whizbang.Shapes/Whizbang.Shapes.csproj" />
 </Solution>
