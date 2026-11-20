@@ -1012,6 +1012,14 @@ framework in one job and names them (its `test-frameworks` output), and each tes
 (#2427): on a release build every suite leg, shards included, runs twice in parallel, as `Run suite (net10.0)` and
 `Run suite (net11.0)`, each with `scripts/Run-Tests.ps1 -Framework` and its artifacts (TRX, coverage, hang and crash
 dumps) suffixed `-net10.0` or `-net11.0`. A development build has one leg per suite, named `Run suite` as it always was.
+Coverage is measured on `net11.0` alone, on every branch: `Build · Compile` names that framework (its `coverage-framework`
+output, `WhizbangDevelopmentTargetFramework` in `Directory.Build.props`), and only the leg on it collects and uploads
+coverage (`Run-Tests.ps1 -CoverageFramework`). A release build's `net10.0` legs run every test and upload their TRX, and
+gate on their tests passing; their coverage is not collected, so Quality, Sonar, Codecov and the whole-library gate read
+the one compilation develop reads. Merging both was wrong: `net10.0` compiles the library's async methods to state
+machines and `net11.0` to runtime async, and the merged reports made the whole-library gate report a `net11.0` line as
+never run on a release pull request (#2135). Quality expects one coverage artifact per suite (per shard), whatever its legs
+(`.github/scripts/expected-coverage.jq`).
 The samples target `net11.0` alone on every branch (`samples/ECommerce/Directory.Build.props`): a `-Framework` leg skips
 a test project that does not target its framework, and a leg that selects only sample tests (InMemory, the Service
 Bus `ecommerce` shard) gets the samples' frameworks (`sample-test-frameworks`), so it runs `net11.0` alone.

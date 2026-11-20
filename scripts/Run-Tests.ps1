@@ -98,6 +98,11 @@
     targets net10.0 and net11.0). CI runs each framework of a release build as its own job (#2427). Empty (the
     default) runs every framework the build targets.
 
+.PARAMETER CoverageFramework
+    The one target framework coverage is measured on (#2135): with -ModuleCoverage and a -Framework other than this
+    one, the run collects no coverage, so a release build's net10.0 legs run their tests without it and only the
+    net11.0 reports reach the quality gate. Empty (the default), or without -Framework, coverage is collected as asked.
+
 .PARAMETER Cleanup
     Clean up ALL test containers after tests complete, including shared containers
     (postgres, rabbitmq, servicebus, mssql containers). Default: $true.
@@ -309,6 +314,7 @@ param(
     [switch]$ModuleCoverage,  # CI: each test module collects its own line AND branch coverage
                               # (MTP --coverage, cobertura) inside the normal `dotnet test` run.
                               # No report is generated; the CI quality job merges the files.
+    [string]$CoverageFramework = "",  # CI: -ModuleCoverage applies only when -Framework is empty or this framework (#2135)
 
     [switch]$ReportTrx,  # Emit TRX result files (TestResults/*.trx) for CI test-status publishing
 
@@ -453,6 +459,15 @@ if ($useAiOutput) {
 # latency assertion that failed at 10.5 s; the twelve further "failures" in that project were
 # fail-fast collateral, every one cancelled at 0 ms. Measuring coverage with fail-fast on is
 # self-defeating: the flakier the suite, the less of it the number describes.
+#
+# Coverage is measured on one framework (#2135). Each framework compiles the library's async methods differently
+# (state machines on net10.0, runtime async on net11.0), so a merge of both builds' reports describes neither and the
+# whole-library gate misreads lines; a leg on another framework runs its tests without collecting.
+if ($ModuleCoverage -and $CoverageFramework -and $Framework -and $Framework -ne $CoverageFramework) {
+    Write-Host "Coverage is measured on $CoverageFramework only; this $Framework leg runs its tests without collecting it."
+    $ModuleCoverage = $false
+}
+
 if ($NoFailFast) {
     $FailFast = $false
 } elseif ($useAiOutput -and -not $PSBoundParameters.ContainsKey('FailFast')) {

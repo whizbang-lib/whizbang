@@ -10,8 +10,15 @@
 # carry its framework, so the legs never collide and Quality counts each one. A development build has one leg, with
 # the name and artifact names it always had. The suites are derived from the files, so a new reusable-test-*.yml is
 # checked as well.
+#
+# Coverage is measured on one framework only, the development one (#2135): Build · Compile names it
+# (coverage-framework, WhizbangDevelopmentTargetFramework in Directory.Build.props), and only that framework's leg of
+# each suite collects and uploads coverage. The other legs still run every test and upload their TRX. Merging the
+# net10.0 legs' reports into the net11.0 ones mixed two compilations of every library method (state machines and
+# runtime async), and the whole-library gate read a line of the net11.0 build as never run (release PR #2450).
 
 BeforeDiscovery {
+  $script:NoJq = -not (Get-Command -Name jq -ErrorAction SilentlyContinue)
   $root = (Resolve-Path (Join-Path $PSScriptRoot '..' '..' '..')).Path
   $script:Suites = @(Get-ChildItem -Path (Join-Path $root '.github' 'workflows') -Filter 'reusable-test-*.yml' |
       Where-Object { (Get-Content -LiteralPath $_.FullName -Raw) -match 'Run-Tests\.ps1' } |
@@ -33,6 +40,25 @@ Describe 'Each test suite runs one leg per target framework (#2427)' {
     $build | Should -Match "Name = 'test-frameworks'; Props = 'Directory\.Build\.props'"
     $build | Should -Match "Name = 'sample-test-frameworks'; Props = 'samples/ECommerce/Directory\.Build\.props'"
     $build | Should -Match '-getProperty:TargetFramework -getProperty:TargetFrameworks'
+  }
+
+  It 'has Build · Compile name the one framework coverage is measured on, from Directory.Build.props' {
+    $build = Get-Content -LiteralPath (Join-Path $Workflows 'reusable-build.yml') -Raw
+    $build | Should -Match 'value: \$\{\{ jobs\.build\.outputs\.coverage-framework \}\}'
+    $build | Should -Match 'coverage-framework: \$\{\{ steps\.frameworks\.outputs\.coverage-framework \}\}'
+    $build | Should -Match '-getProperty:WhizbangDevelopmentTargetFramework'
+    Get-Content -LiteralPath (Join-Path $Root 'Directory.Build.props') -Raw |
+      Should -Match '<WhizbangDevelopmentTargetFramework>net\d+\.\d+</WhizbangDevelopmentTargetFramework>'
+  }
+
+  It 'passes every suite the framework coverage is measured on' {
+    $ci = Get-Content -LiteralPath (Join-Path $Workflows 'ci.yml') -Raw
+    $jobs = @([regex]::Matches($ci, '(?ms)^  ([\w-]+):\r?\n(.*?)(?=^  [\w-]+:\r?\n|\z)') |
+        Where-Object { $_.Groups[2].Value -match '(?m)^    uses: \./\.github/workflows/reusable-test-[a-z]+\.yml' })
+    $jobs.Count | Should -BeGreaterOrEqual 8
+    foreach ($job in $jobs) {
+      $job.Groups[2].Value | Should -Match '(?m)^      coverage-framework: \$\{\{ needs\.build\.outputs\.coverage-framework \}\}' -Because "$($job.Groups[1].Value) must collect coverage on one framework only"
+    }
   }
 
   # sample-test-frameworks reads the samples' props, so it holds only while no sample test project names its own.
@@ -132,6 +158,18 @@ Describe 'Each test suite runs one leg per target framework (#2427)' {
       }
     }
 
+    It 'collects and uploads coverage on the coverage framework''s leg only' {
+      $Text | Should -Match '(?m)^      coverage-framework:\r?\n'
+      $Text | Should -Match '(?m)^      COVERAGE_LEG: \$\{\{ inputs\.coverage-framework == '''' \|\| matrix\.framework == '''' \|\| matrix\.framework == inputs\.coverage-framework \}\}'
+      $runs = @([regex]::Matches($Text, '(?m)^\s+run: pwsh scripts/Run-Tests\.ps1 .*$') | ForEach-Object Value)
+      foreach ($run in $runs) {
+        $run | Should -Match ([regex]::Escape("-CoverageFramework '`${{ inputs.coverage-framework }}'")) -Because "a leg on another framework must not collect coverage: $run"
+      }
+      foreach ($step in 'Verify coverage was collected', 'Upload Coverage') {
+        $Text | Should -Match "(?m)^      - name: $step\r?\n        if: success\(\) && env\.COVERAGE_LEG == 'true'\r?\n" -Because "$step must skip a leg that collected no coverage"
+      }
+    }
+
     It 'names every artifact it uploads for its leg''s framework' {
       $names = @([regex]::Matches($Text, '(?ms)uses: actions/upload-artifact@\S+.*?\r?\n\s+with:\r?\n\s+name: ([^\r\n]+)') | ForEach-Object { $_.Groups[1].Value })
       $names.Count | Should -BeGreaterOrEqual 3 -Because 'each suite uploads its TRX, its coverage and its hang dumps'
@@ -139,5 +177,40 @@ Describe 'Each test suite runs one leg per target framework (#2427)' {
         $name | Should -Match ([regex]::Escape('${{ env.FRAMEWORK_SUFFIX }}')) -Because "the legs of one suite must not upload under one name: $name"
       }
     }
+  }
+}
+
+# Quality waits for one coverage-* artifact per suite (per shard), not per leg: a release build runs two legs of most
+# suites and only the coverage framework's uploads coverage. The count is read from the run's jobs list by
+# expected-coverage.jq, as the build's conclusion is by build-conclusion.jq. The step runs in bash on Linux runners,
+# which carry jq; the pipeline tests also run on the Windows pool, which does not, so the filter's cases skip there
+# (NoJq, set in BeforeDiscovery above).
+Describe 'Quality expects one coverage artifact per suite, whatever its legs (#2135)' {
+  BeforeAll {
+    $script:Filter = Join-Path $PSScriptRoot '..' 'expected-coverage.jq'
+    function Get-ExpectedCoverage([string[]]$Names) {
+      $json = @{ jobs = @($Names | ForEach-Object { @{ name = $_; conclusion = 'success' } }) } | ConvertTo-Json -Depth 5 -Compress
+      $out = $json | jq -r -f $script:Filter
+      if ($LASTEXITCODE -ne 0) { throw "jq exited $LASTEXITCODE" }
+      [int]$out
+    }
+  }
+
+  It 'reads the count with expected-coverage.jq' {
+    $quality = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..' '..' 'workflows' 'reusable-quality.yml') -Raw
+    $quality | Should -Match 'EXPECTED=\$\(jq -r -f \.github/scripts/expected-coverage\.jq <<< "\$JOBS"\)'
+  }
+
+  It 'expects one artifact for each suite of a release build, which runs it on <Count> framework(s)' -Skip:$NoJq -ForEach @(
+    @{ Count = 1; Names = @('Test · Unit / Run suite', 'Test · InMemory / Run suite', 'Test · PostgreSQL (efcore-1, EFCore\.Postgres, [Category=Shard1]) / Run suite') },
+    @{ Count = 2; Names = @(
+        'Test · Unit / Run suite (net10.0)', 'Test · Unit / Run suite (net11.0)', 'Test · InMemory / Run suite',
+        'Test · PostgreSQL (efcore-1, EFCore\.Postgres, [Category=Shard1]) / Run suite (net10.0)',
+        'Test · PostgreSQL (efcore-1, EFCore\.Postgres, [Category=Shard1]) / Run suite (net11.0)') }) {
+    Get-ExpectedCoverage ($Names + @('Build · Compile / Compile and hash', 'Analyze · Quality / Sonar and coverage', 'Test · RabbitMQ')) | Should -Be 3
+  }
+
+  It 'expects nothing before a suite leg is listed' -Skip:$NoJq {
+    Get-ExpectedCoverage @('Build · Compile / Compile and hash') | Should -Be 0
   }
 }

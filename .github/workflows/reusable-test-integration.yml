@@ -25,6 +25,14 @@ on:
         type: string
         required: false
         default: ''
+      coverage-framework:
+        description: >-
+          The one target framework coverage is measured on (Build · Compile's coverage-framework, net11.0). Only that
+          framework's leg collects and uploads coverage; the other legs run their tests without it (#2135). Empty: every
+          leg collects.
+        type: string
+        required: false
+        default: ''
 
 # Integration-type projects whose only suite tag is the plain "Integration": in-process hosts and
 # pipelines (Core, Migrate, FastEndpoints, HotChocolate) plus the ECommerce Aspire end-to-end test,
@@ -48,6 +56,8 @@ jobs:
         framework: ${{ fromJSON(inputs.frameworks || '[""]') }}
     env:
       FRAMEWORK_SUFFIX: ${{ strategy.job-total > 1 && format('-{0}', matrix.framework) || '' }}
+      # Whether this leg measures coverage: the coverage framework's leg, or every leg when none is named (#2135).
+      COVERAGE_LEG: ${{ inputs.coverage-framework == '' || matrix.framework == '' || matrix.framework == inputs.coverage-framework }}
     runs-on: ${{ fromJSON(inputs.runs-on || '"ubuntu-latest"') }}
     timeout-minutes: 20
 
@@ -97,13 +107,13 @@ jobs:
 
       - name: Run General Integration Tests (pre-built)
         if: inputs.artifact-name != ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag Integration -NoBuild -ModuleCoverage -ReportTrx -HangDumpTimeout 10m -CrashDumpType Heap -Framework '${{ matrix.framework }}'
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag Integration -NoBuild -ModuleCoverage -ReportTrx -HangDumpTimeout 10m -CrashDumpType Heap -Framework '${{ matrix.framework }}' -CoverageFramework '${{ inputs.coverage-framework }}'
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
       - name: Run General Integration Tests (built here)
         if: inputs.artifact-name == ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -ModuleCoverage -Configuration Release -Tag Integration -ReportTrx -HangDumpTimeout 10m -CrashDumpType Heap -Framework '${{ matrix.framework }}'
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -ModuleCoverage -Configuration Release -Tag Integration -ReportTrx -HangDumpTimeout 10m -CrashDumpType Heap -Framework '${{ matrix.framework }}' -CoverageFramework '${{ inputs.coverage-framework }}'
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
@@ -168,7 +178,7 @@ jobs:
       # empty report (a project may legitimately load no library assembly) and fail when the whole
       # leg measured nothing.
       - name: Verify coverage was collected
-        if: success()
+        if: success() && env.COVERAGE_LEG == 'true'
         run: |
           set -euo pipefail
           mapfile -t REPORTS < <(find tests samples -path "*/TestResults/*.cobertura.xml" -not -path "*/TestResults/*/*" 2>/dev/null)
@@ -191,7 +201,7 @@ jobs:
       # The direct child of TestResults is the report; the copy TRX attaches below it is not
       # matched, so nothing is counted twice.
       - name: Upload Coverage
-        if: success()
+        if: success() && env.COVERAGE_LEG == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-integration${{ env.FRAMEWORK_SUFFIX }}
