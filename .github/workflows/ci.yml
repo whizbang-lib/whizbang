@@ -144,8 +144,10 @@ jobs:
   # This job can never hold CI up or turn it red. Every step continues on error, the job does too, it is not
   # in ci-result's needs, and every output defaults to "ubuntu-latest" when the step wrote nothing. Each
   # consumer repeats that default (`|| '"ubuntu-latest"'`), so a picker that did not run at all still
-  # leaves every job on a GitHub-hosted runner. Without the app secrets and the variables, every class is
-  # GitHub-hosted, exactly as before the picker existed.
+  # leaves every job on a GitHub-hosted runner. Each consumer also takes the plan only in the attempt it
+  # was made for (the attempt output), so a job re-run without the picker runs on ubuntu-latest (#1880).
+  # Without the app secrets and the variables, every class is GitHub-hosted, exactly as before the picker
+  # existed.
   # ============================================================================
 
   pick-runner:
@@ -164,6 +166,11 @@ jobs:
       compile: ${{ steps.pick.outputs.compile || '"ubuntu-latest"' }}
       analyze: ${{ steps.pick.outputs.analyze || '"ubuntu-latest"' }}
       linux-docker: ${{ steps.pick.outputs.linux-docker || '"ubuntu-latest"' }}
+      # The attempt this plan is for. "Re-run failed jobs" does not re-run this job, so a re-run job would
+      # otherwise take labels picked for the first attempt, which may name machines that have left the pool;
+      # every consumer takes the plan only when this matches github.run_attempt, and ubuntu-latest otherwise.
+      # "Re-run all jobs" re-runs this job too, so its plan is fresh again (#1880).
+      attempt: ${{ github.run_attempt }}
     steps:
       - name: Checkout the pipeline scripts
         continue-on-error: true
@@ -764,7 +771,7 @@ jobs:
     if: >-
       ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
       needs.release-pr.outputs.skip != 'true' }}
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.attempt == github.run_attempt && needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
     permissions:
       contents: read
     steps:
@@ -819,7 +826,7 @@ jobs:
       ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
       needs.release-pr.outputs.skip != 'true' &&
       (github.event_name != 'pull_request' || github.base_ref != 'develop' || vars.PR_RUN_FULL_MATRIX == 'true') }}
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.attempt == github.run_attempt && needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -875,6 +882,7 @@ jobs:
     uses: ./.github/workflows/reusable-build.yml
     with:
       runs-on: ${{ needs.pick-runner.outputs.compile }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
       version: ${{ needs.version.outputs.semver || (github.event_name == 'merge_group' && format('0.0.0-queue.{0}', github.run_number) || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number)) }}
       # The suites skip when this push reuses an already-tested run, so their slices would be read by nothing.
       upload-slices: ${{ needs.queue-validated.outputs.validated != 'true' }}
@@ -897,7 +905,7 @@ jobs:
       ${{ !failure() && !cancelled() && needs.release-pr.outputs.skip != 'true' &&
       needs.ff-validated.outputs.skip != 'true' && needs.queue-validated.outputs.validated != 'true' &&
       (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group') }}
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.compile || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.attempt == github.run_attempt && needs.pick-runner.outputs.compile || '"ubuntu-latest"') }}
     timeout-minutes: 45
     permissions:
       contents: read
@@ -951,7 +959,7 @@ jobs:
       ${{ !failure() && !cancelled() &&
       ((github.event_name == 'pull_request' && github.base_ref == 'develop') || github.event_name == 'merge_group') &&
       needs.changes.outputs.code == 'true' }}
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.compile || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.attempt == github.run_attempt && needs.pick-runner.outputs.compile || '"ubuntu-latest"') }}
     timeout-minutes: 45
     permissions:
       contents: read
@@ -1017,6 +1025,7 @@ jobs:
       frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       coverage-framework: ${{ needs.build.outputs.coverage-framework }}  # coverage on one framework only (#2135)
       runs-on: ${{ needs.pick-runner.outputs.any-os }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
 
   postgres-integration:
     name: Test · PostgreSQL
@@ -1064,6 +1073,7 @@ jobs:
       frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       coverage-framework: ${{ needs.build.outputs.coverage-framework }}  # coverage on one framework only (#2135)
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
       project-filter: ${{ matrix.projectFilter }}
       test-filter: ${{ matrix.testFilter }}
       shard-name: ${{ matrix.shard }}
@@ -1083,6 +1093,7 @@ jobs:
       frameworks: ${{ needs.build.outputs.sample-test-frameworks }}
       coverage-framework: ${{ needs.build.outputs.coverage-framework }}  # coverage on one framework only (#2135)
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
 
   rabbitmq-integration:
     name: Test · RabbitMQ
@@ -1098,6 +1109,7 @@ jobs:
       frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       coverage-framework: ${{ needs.build.outputs.coverage-framework }}  # coverage on one framework only (#2135)
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
 
   servicebus-integration:
     # Single-dimension matrix so GitHub renders the leg names itself ("Service Bus
@@ -1123,6 +1135,7 @@ jobs:
       frameworks: ${{ matrix.shard == 'ecommerce' && needs.build.outputs.sample-test-frameworks || needs.build.outputs.test-frameworks }}
       coverage-framework: ${{ needs.build.outputs.coverage-framework }}  # coverage on one framework only (#2135)
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
       project-filter: ${{ matrix.shard == 'whizbang' && 'Whizbang\.Transports\.AzureServiceBus' || 'ECommerce\.AzureServiceBus' }}
       shard-name: ${{ matrix.shard }}
 
@@ -1140,6 +1153,7 @@ jobs:
       frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       coverage-framework: ${{ needs.build.outputs.coverage-framework }}  # coverage on one framework only (#2135)
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
   general-integration:
     name: Test · Integration (general)
     needs: [build, queue-validated, ff-validated, release-pr, pick-runner]
@@ -1154,6 +1168,7 @@ jobs:
       frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       coverage-framework: ${{ needs.build.outputs.coverage-framework }}  # coverage on one framework only (#2135)
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
 
   component-tests:
     name: Test · Component
@@ -1171,6 +1186,7 @@ jobs:
       frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       coverage-framework: ${{ needs.build.outputs.coverage-framework }}  # coverage on one framework only (#2135)
       runs-on: ${{ needs.pick-runner.outputs.any-os }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
 
   quality-build:
     name: Analyze · Quality build
@@ -1195,6 +1211,7 @@ jobs:
     uses: ./.github/workflows/reusable-quality-build.yml
     with:
       runs-on: ${{ needs.pick-runner.outputs.analyze }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
       # Empty on main: the main-line analysis. The merge queue runs only for develop (its ruleset).
       pull-request: ${{ github.event.pull_request.number || needs.queue-prs.outputs.first }}
       pull-request-head: ${{ github.head_ref || needs.queue-prs.outputs.first-head }}
@@ -1254,6 +1271,7 @@ jobs:
     with:
       # The same runner class as quality-build, so the scan ends at the checkout path it began at.
       runs-on: ${{ needs.pick-runner.outputs.analyze }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
       # Set when the suites yielded to another run over the same tree (a release PR's push run, or
       # the release-branch run behind a main push): the coverage to analyze lives there.
       coverage-run-id: ${{ needs.release-pr.outputs.coverage-run-id }}
@@ -1292,6 +1310,7 @@ jobs:
     uses: ./.github/workflows/reusable-quality.yml
     with:
       runs-on: ${{ needs.pick-runner.outputs.analyze }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
       sonar: true
       queue-group: true
       pull-request: ${{ format('{0}', matrix.pr) }}
@@ -1410,7 +1429,7 @@ jobs:
     # !cancelled(): the picker never decides whether this runs, only where. any-os: every step is pwsh
     # or an action; the few tests that drive a POSIX shell skip themselves on Windows.
     if: ${{ !cancelled() }}
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.attempt == github.run_attempt && needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
     timeout-minutes: 10
     permissions:
       contents: read

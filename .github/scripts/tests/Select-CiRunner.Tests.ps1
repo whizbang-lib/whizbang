@@ -733,7 +733,9 @@ Describe 'Which class each ci.yml job takes' {
   ) {
     $text = $CiJobs[$Job]
     $text | Should -Not -BeNullOrEmpty
-    $used = @([regex]::Matches($text, 'needs\.pick-runner\.outputs\.([a-z-]+)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+    # attempt is not a class: every routed job reads it to take the plan only in its own attempt (#1880).
+    $used = @([regex]::Matches($text, 'needs\.pick-runner\.outputs\.([a-z-]+)') | ForEach-Object { $_.Groups[1].Value } |
+        Where-Object { $_ -ne 'attempt' } | Select-Object -Unique)
     $used | Should -Be @($Class)
     $text | Should -Match '(?m)^    needs: \[[^\]]*\bpick-runner\b'
   }
