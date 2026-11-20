@@ -3376,15 +3376,15 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // boundary is folded from the floor below it (the latest snapshot, or the stream's start) through the boundary, from
   // bodies the coverage gate has kept, since every body above the latest snapshot is still stored. Nothing is written to
   // the row. At the cursor the row already is that model, so the bootstrap at the cursor is taken as before. A model with
-  // collectives is snapshotted at the cursor as before: a fold to the boundary would have to fold the row's collectives
-  // committed before it, which this does not.
+  // collectives folds the row's collectives too (#2456), as a rewind from the same floor would: those placed before the
+  // last of the stream's events through the boundary, and none placed after all of them.
   public async Task<global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome> TryBootstrapSnapshotThroughAsync(
       Guid streamId,
       string perspectiveName,
       Guid lastProcessedEventId,
       Guid boundaryEventId,
       CancellationToken cancellationToken = default) {
-    if (boundaryEventId == lastProcessedEventId || _modelHasCollectives()) {
+    if (boundaryEventId == lastProcessedEventId) {
       return await TryBootstrapSnapshotAsync(streamId, perspectiveName, lastProcessedEventId, cancellationToken);
     }
     if (_snapshotStore is null || _snapshotOptions?.Value.Enabled != true) {
@@ -3426,6 +3426,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // Every event up to the boundary, in the order a replay folds them (#2379).
     var through = global::Whizbang.Core.Perspectives.ReplayEventOrder.Order(
         [.. read.Where(e => e.LocalStreamVersion is long version && version <= boundaryVersion)]);
+    // #2456: the row's collectives through the boundary, and the mark that says which ones the snapshot holds.
+    var (folded, collectivesMark) = await _collectivesThroughBoundaryAsync(floor, model is not null, through, cancellationToken);
     // The live apply's own fold (#2246), so the boundary model is folded exactly as the row was: a purge stays purged
     // unless an Apply resurrects it, an Apply that throws is skipped, and a scaffold no Apply returned is no model.
     var fold = new ApplyState {
@@ -3436,7 +3438,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       HasWrittenUpdate = model is not null,
       PendingPurge = model is null && await _isPurgedAsync(streamId, perspectiveName, cancellationToken),
     };
-    _foldEvents(fold, through, enableEventSpans: false, new List<string>(), cancellationToken);
+    _foldEvents(fold, folded, enableEventSpans: false, new List<string>(), cancellationToken);
     var purged = fold.PendingPurge;
     var producedByApply = fold.HasWrittenUpdate && fold.UpdatedModel is not null;
     model = fold.UpdatedModel;
@@ -3446,15 +3448,62 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           perspectiveName, streamId, boundaryEventId);
       return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.RowMissing;
     }
+    if (fold.CollectiveInFlight) {
+      // #1970: a collective still in flight may yet reach the row live, so the snapshot could not say what it holds.
+      _deferSnapshot(perspectiveName, streamId);
+      return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Deferred;
+    }
 
     var boundaryCommitSequence = await _eventStore.GetCommitSequenceAsync(boundaryEventId, cancellationToken);
     var snapshotData = ToSnapshotJson(model!);
     await _snapshotStore.CreateSnapshotAsync(
-        streamId, perspectiveName, boundaryEventId, boundaryCommitSequence, snapshotData, null, cancellationToken);
+        streamId, perspectiveName, boundaryEventId, boundaryCommitSequence, snapshotData, collectivesMark, cancellationToken);
     _logger.LogDebug(
         "Bootstrap snapshot created for {PerspectiveName} stream {StreamId} through its reap boundary at event {EventId}",
         perspectiveName, streamId, boundaryEventId);
     return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Written;
+  }
+
+  /// <summary>
+  /// The events the reap-boundary bootstrap folds, with the row's collectives among them, and the collectives mark its
+  /// snapshot records (#2456). A model with no collectives folds the stream's events alone and records no mark. One with
+  /// collectives takes them from the applier as a rewind from the same floor does: those committed past the floor's mark
+  /// (or every one, from the stream's start), each placed after every stream event it was committed after (#2449). The
+  /// fold ends at the last stream event: a collective placed after all of them was committed after every event through
+  /// the boundary, so the snapshot at the boundary does not hold it, and a replay from the snapshot folds it. A collective
+  /// placed before the stream's first event with no floor below had no row to reach live, so it is not folded either.
+  /// </summary>
+  private async Task<(global::System.Collections.Generic.IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> Folded, long? Mark)> _collectivesThroughBoundaryAsync(
+      global::Whizbang.Core.Perspectives.PerspectiveSnapshotFloor? floor,
+      bool fromARow,
+      global::System.Collections.Generic.IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> through,
+      CancellationToken cancellationToken) {
+    if (!_modelHasCollectives()) {
+      return (through, null);
+    }
+    long? startSequence = floor is null ? null : await _eventStore.GetCommitSequenceAsync(floor.SnapshotEventId, cancellationToken);
+    // The tenant of the stream's events, as a replay pass that read some takes it (_collectiveTenant).
+    var merged = await _collectiveReplayApplier!.InterleaveAfterAsync(
+        typeof(__MODEL_TYPE_NAME__), through,
+        new global::Whizbang.Core.Perspectives.CollectiveReplayStart(through[0].GetCurrentScope()?.Scope.TenantId, floor?.SnapshotEventId, startSequence) {
+          CollectivesThroughSequence = floor?.CollectivesThroughSequence,
+        },
+        cancellationToken);
+    var list = merged.ToList();
+    var first = fromARow ? 0 : list.FindIndex(static e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent);
+    var last = list.FindLastIndex(static e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent);
+    var folded = list.GetRange(first, last - first + 1);
+    // How far the row holds its collectives at the boundary, by the rule a replay's own snapshot follows (#1963).
+    var heldStart = floor?.CollectivesThroughSequence ?? startSequence;
+    var held = new CollectiveHold(foldsCollectives: true, heldStart, startDescribed: floor is null || heldStart is not null);
+    foreach (var envelope in folded) {
+      if (envelope.Payload is global::Whizbang.Core.Messaging.ICollectiveEvent) {
+        held.Fold(envelope.LocalCommitSequence);
+      } else {
+        held.ReachEvent(envelope.LocalCommitSequence);
+      }
+    }
+    return (folded, held.Mark);
   }
 
   // The snapshot cadence: every how many applied events a run snapshots, and how many snapshots a stream keeps.
