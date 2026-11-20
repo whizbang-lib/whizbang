@@ -16,7 +16,7 @@ namespace Whizbang.Generators.Tests;
 /// after the write is the model it applied.
 /// </summary>
 /// <tests>src/Whizbang.Generators/PerspectiveRunnerGenerator.cs</tests>
-/// <tests>src/Whizbang.Generators/Templates/PerspectiveRunnerTemplate.cs</tests>
+/// <tests>src/Whizbang.Generators/Templates/PerspectiveRunnerBaseTemplate.cs</tests>
 [Category("SourceGenerators")]
 public class PerspectiveRunnerSplitSnapshotTests {
   private const string SOURCE = """
@@ -81,11 +81,11 @@ public class PerspectiveRunnerSplitSnapshotTests {
     }
     """;
 
-  private const string SNAPSHOTS_BEFORE_WRITE = "SnapshotBeforeWrite(global::TestNamespace.SplitClassModel model) => ToSnapshotJson(model);";
+  private const string SNAPSHOTS_BEFORE_WRITE = "SnapshotsBeforeWrite = true,";
 
   private static string _runner(string perspective) {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(SOURCE);
-    return GeneratorTestHelper.GetGeneratedSource(result, $"{perspective}Runner.g.cs") ?? "";
+    return GeneratorTestHelper.GetRunnerSource(result, $"{perspective}Runner.g.cs") ?? "";
   }
 
   private static string _compact(string source) => string.Concat(source.Where(c => !char.IsWhiteSpace(c)));
@@ -109,7 +109,7 @@ public class PerspectiveRunnerSplitSnapshotTests {
       await Assert.That(runner).IsNotEmpty();
       await Assert.That(runner).DoesNotContain("=> ToSnapshotJson(model);")
         .Because($"{perspective} is not stripped in place, so its snapshot after the write is the model it applied");
-      await Assert.That(_compact(runner)).Contains("privatestaticJsonDocument?SnapshotBeforeWrite(")
+      await Assert.That(_compact(runner)).Contains("privateJsonDocument?SnapshotBeforeWrite(")
         .Because("the call sites are the same for every model; this one never has a snapshot to hand them");
     }
   }

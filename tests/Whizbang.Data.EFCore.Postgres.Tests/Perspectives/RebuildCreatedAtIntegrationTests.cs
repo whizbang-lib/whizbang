@@ -28,7 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <docs>fundamentals/events/superseding-events#what-a-rebuild-keeps</docs>
 /// <code-under-test>src/Whizbang.Core/Perspectives/PerspectiveRowStart.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/BaseUpsertStrategy.cs</code-under-test>
-/// <code-under-test>src/Whizbang.Generators/Templates/PerspectiveRunnerTemplate.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Generators/Templates/PerspectiveRunnerBaseTemplate.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard2")]
 public class RebuildCreatedAtIntegrationTests : EFCoreTestBase {

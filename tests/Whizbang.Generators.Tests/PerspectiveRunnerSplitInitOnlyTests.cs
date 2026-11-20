@@ -150,7 +150,7 @@ public class PerspectiveRunnerSplitInitOnlyTests {
   public async Task ASplitClassStrippedIntoACopy_IsSnapshottedAfterTheWriteAsync() {
     var runner = _runner("InitClassPerspective");
 
-    await Assert.That(runner).Contains("private static JsonDocument? SnapshotBeforeWrite(global::TestNamespace.InitClassModel model) => null;")
+    await Assert.That(runner).DoesNotContain("SnapshotsBeforeWrite = true,")
       .Because("the write strips a copy, so the instance the runner applied keeps its fields for the snapshot after the write");
   }
 
@@ -182,12 +182,12 @@ public class PerspectiveRunnerSplitInitOnlyTests {
     await Assert.That(messages).Contains(m => m.Contains("TestNamespace.AbstractModel", StringComparison.Ordinal)
       && m.Contains("it is abstract", StringComparison.Ordinal));
 
-    var runner = GeneratorTestHelper.GetGeneratedSource(result, "AbstractModelPerspectiveRunner.g.cs") ?? "";
+    var runner = GeneratorTestHelper.GetRunnerSource(result, "AbstractModelPerspectiveRunner.g.cs") ?? "";
     await Assert.That(runner).Contains("model.Priority = default!;");
     await Assert.That(runner).DoesNotContain("model.Status = default!")
       .Because("the field the build cannot strip is reported, not assigned into code that would not compile");
     await Assert.That(runner).Contains("static (model, read) => { model.Priority = read.Read<int>(\"priority\"); return model; }");
-    await Assert.That(runner).Contains("SnapshotBeforeWrite(global::TestNamespace.AbstractModel model) => ToSnapshotJson(model);")
+    await Assert.That(runner).Contains("SnapshotsBeforeWrite = true,")
       .Because("a class the build could not copy is still stripped in place, so it is snapshotted before the write");
   }
 }

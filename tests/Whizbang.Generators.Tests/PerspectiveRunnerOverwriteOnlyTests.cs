@@ -58,7 +58,7 @@ namespace TestNamespace {
   public async Task AMarkedPerspective_IsOverwriteOnly_AndItsModelReturningAppliesDecideTheRowAloneAsync() {
     var runner = _runnerFor("[OverwriteOnly]");
 
-    await Assert.That(runner).Contains("private static readonly bool _isOverwriteOnly = true;");
+    await Assert.That(runner).Contains("IsOverwriteOnly = true,");
     await Assert.That(runner).Contains(
       "DecidesTheRowAlone(global::Whizbang.Core.IEvent @event) => @event is global::TestNamespace.GrantedEvent or global::TestNamespace.NotedEvent;")
       .Because("an Apply that returns the model (or null for no change) builds the row from its event; one returning an ApplyResult can purge");
@@ -69,7 +69,7 @@ namespace TestNamespace {
   public async Task AnUnmarkedPerspective_IsNotOverwriteOnly_EvenWhenNoApplyReadsItsModelAsync() {
     var runner = _runnerFor("");
 
-    await Assert.That(runner).Contains("private static readonly bool _isOverwriteOnly = false;")
+    await Assert.That(runner).DoesNotContain("IsOverwriteOnly = true,")
       .Because("the marker is explicit; the generator never infers it (owner decision, 2026-10-29)");
     await Assert.That(runner).Contains("DecidesTheRowAlone(global::Whizbang.Core.IEvent @event) => false;");
   }
@@ -85,15 +85,15 @@ namespace TestNamespace {
       .Replace("public GrantsModel? Apply(GrantsModel currentData, NotedEvent @event) => null;",
         "public ApplyResult<GrantsModel> Apply(GrantsModel currentData, NotedEvent @event) => ModelAction.None;");
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    var runner = GeneratorTestHelper.GetGeneratedSource(result, "GrantsPerspectiveRunner.g.cs")!;
+    var runner = GeneratorTestHelper.GetRunnerSource(result, "GrantsPerspectiveRunner.g.cs")!;
 
-    await Assert.That(runner).Contains("private static readonly bool _isOverwriteOnly = true;");
+    await Assert.That(runner).Contains("IsOverwriteOnly = true,");
     await Assert.That(runner).Contains("DecidesTheRowAlone(global::Whizbang.Core.IEvent @event) => false;")
       .Because("with every event under IPerspectiveWithActionsFor, any Apply can purge, so every rewind folds the stream in full");
   }
 
   private static string _runnerFor(string marker) {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(TEMPLATE.Replace("__MARKER__", marker));
-    return GeneratorTestHelper.GetGeneratedSource(result, "GrantsPerspectiveRunner.g.cs")!;
+    return GeneratorTestHelper.GetRunnerSource(result, "GrantsPerspectiveRunner.g.cs")!;
   }
 }

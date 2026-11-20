@@ -266,6 +266,20 @@ public static class GeneratorTestHelper {
   }
 
   /// <summary>
+  /// The code a generated perspective runner runs: the runner file and the runner base it derives from, which holds the
+  /// runner logic every perspective of the assembly shares and is generated once per assembly (#2401). Null when the
+  /// run wrote no such runner.
+  /// </summary>
+  /// <remarks>
+  /// For an assertion about that shared logic, which a runner used to repeat in full. An assertion about what one
+  /// perspective varies reads the runner file alone, through <see cref="GetGeneratedSource"/>.
+  /// </remarks>
+  public static string? GetRunnerSource(GeneratorDriverRunResult result, string runnerFileName) {
+    var runner = GetGeneratedSource(result, runnerFileName);
+    return runner is null ? null : runner + "\n" + GetRequiredGeneratedSource(result, "PerspectiveRunnerBase.g.cs");
+  }
+
+  /// <summary>
   /// Gets a generated source the test needs, failing with a message that names it when the run did not write it.
   /// </summary>
   /// <remarks>

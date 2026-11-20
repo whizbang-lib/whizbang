@@ -15,10 +15,10 @@ namespace Whizbang.Generators.Tests;
 /// </summary>
 /// <docs>fundamentals/events/archive-store#perspective-rows</docs>
 /// <code-under-test>src/Whizbang.Generators/PerspectiveRunnerGenerator.cs</code-under-test>
-/// <code-under-test>src/Whizbang.Generators/Templates/PerspectiveRunnerTemplate.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Generators/Templates/PerspectiveRunnerBaseTemplate.cs</code-under-test>
 public class PerspectiveRunnerGeneratorArchivedStreamRowsTests {
   private const string REGISTER = "global::Whizbang.Core.Archival.ArchivedStreamRowPolicies.Register(";
-  private const string PROBE = "global::Whizbang.Core.Archival.ArchivedStreamRowPolicies.RemovesRows(_archivedStreamRowsName)";
+  private const string PROBE = "global::Whizbang.Core.Archival.ArchivedStreamRowPolicies.RemovesRows(_traits.ArchivedStreamRowsName)";
 
   private static string _source(string attribute, string className = "OrderPerspective", string? outer = null) {
     var perspective = $$"""
@@ -57,7 +57,7 @@ namespace TestNamespace {
 
   private static string _runner(string source, string runnerName = "OrderPerspectiveRunner.g.cs") {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    return GeneratorTestHelper.GetGeneratedSource(result, runnerName)!;
+    return GeneratorTestHelper.GetRunnerSource(result, runnerName)!;
   }
 
   [Test]
@@ -93,7 +93,7 @@ namespace TestNamespace {
   public async Task TheProbe_AsksTheRegistryBesideTheRowRetentionCheckAsync() {
     var runner = _runner(_source("[ArchivedStreamRows(ArchivedStreamRowPolicy.Drop)]"));
 
-    const string canEvict = "(global::Whizbang.Core.Perspectives.PerspectiveRowEviction.CanEvict(typeof(global::TestNamespace.OrderModel))";
+    const string canEvict = "(global::Whizbang.Core.Perspectives.PerspectiveRowEviction.CanEvict(typeof(TModel))";
     var evictionCheck = runner.IndexOf(canEvict, StringComparison.Ordinal);
     var between = runner[(evictionCheck + canEvict.Length)..runner.IndexOf(PROBE, StringComparison.Ordinal)];
 

@@ -16,7 +16,7 @@ namespace Whizbang.Generators.Tests;
 /// </summary>
 /// <docs>fundamentals/perspectives/write-modes#selection</docs>
 /// <code-under-test>src/Whizbang.Generators/PerspectiveRunnerGenerator.cs</code-under-test>
-/// <code-under-test>src/Whizbang.Generators/Templates/PerspectiveRunnerTemplate.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Generators/Templates/PerspectiveRunnerBaseTemplate.cs</code-under-test>
 public class PerspectiveWriteModeGeneratorTests {
   private const string REGISTER = "global::Whizbang.Core.Perspectives.PerspectiveWriteModes.Register(_archivedStreamRowsName, ";
 
@@ -44,7 +44,7 @@ namespace TestNamespace {
 }
 """;
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    return GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs")!;
+    return GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs")!;
   }
 
   [Test]

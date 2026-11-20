@@ -12,7 +12,7 @@ using TemplateUtilities = shared::Whizbang.Generators.Shared.Utilities.TemplateU
 namespace Whizbang.Generators.Tests;
 
 /// <summary>
-/// Phase H step 7 slice 6 — invariant locks for PerspectiveRunnerTemplate.cs log levels.
+/// Phase H step 7 slice 6: invariant locks for PerspectiveRunnerBaseTemplate.cs log levels.
 /// The template controls every generated runner's idempotency-guard logging. Bumping a level
 /// here changes log volume on every Whizbang consumer, so we lock the rules in tests.
 /// </summary>
@@ -22,7 +22,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
   private static string _loadTemplate() {
     return TemplateUtilities.GetEmbeddedTemplate(
         _generatorsAssembly,
-        "PerspectiveRunnerTemplate.cs"
+        "PerspectiveRunnerBaseTemplate.cs"
     );
   }
 
@@ -111,19 +111,19 @@ public class PerspectiveRunnerTemplateInvariantTests {
     // deleted, pointer-only). If RewindAndRunAsync finds no qualifying snapshot floor, it MUST NOT
     // fall through to the full replay-from-zero (RunFromModelAsync with a null model / null anchor) —
     // that would read reaped/absent bodies and silently corrupt the authoritative model. The template
-    // guards the fallback with `_isEphemeralPerspective && !hasSnapshot`; the guard must remain, and it
+    // guards the fallback with `_traits.IsEphemeral && !hasSnapshot`; the guard must remain, and it
     // must sit between the snapshot lookup and the replay call (_replayCheckedAsync, which runs RunFromModelAsync) so it can short-circuit it.
     var template = _loadTemplate();
 
-    await Assert.That(template).Contains("_isEphemeralPerspective && !hasSnapshot")
+    await Assert.That(template).Contains("_traits.IsEphemeral && !hasSnapshot")
       .Because("the ephemeral rewind fallback guard is the anchor we're pinning");
-    await Assert.That(template).Contains("#region IS_EPHEMERAL")
-      .Because("the generator injects the per-perspective ephemeral flag into this region");
+    await Assert.That(template).Contains("public bool IsEphemeral { get; init; }")
+      .Because("each generated runner sets the per-perspective ephemeral flag in its traits");
 
     // The guard must appear inside RewindAndRunAsync and BEFORE the RunFromModelAsync call it protects.
     var rewindIdx = template.IndexOf("async Task<PerspectiveCursorCompletion> RewindAndRunAsync", StringComparison.Ordinal);
     await Assert.That(rewindIdx).IsGreaterThan(0);
-    var guardIdx = template.IndexOf("_isEphemeralPerspective && !hasSnapshot", rewindIdx, StringComparison.Ordinal);
+    var guardIdx = template.IndexOf("_traits.IsEphemeral && !hasSnapshot", rewindIdx, StringComparison.Ordinal);
     var replayCallIdx = template.IndexOf("result = await _replayCheckedAsync(", rewindIdx, StringComparison.Ordinal);
     await Assert.That(guardIdx).IsGreaterThan(rewindIdx)
       .Because("the guard must live inside RewindAndRunAsync");
@@ -140,7 +140,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
     var template = _loadTemplate();
 
     var rewindIdx = template.IndexOf("async Task<PerspectiveCursorCompletion> RewindAndRunAsync", StringComparison.Ordinal);
-    var guardIdx = template.IndexOf("_isEphemeralPerspective && !hasSnapshot", rewindIdx, StringComparison.Ordinal);
+    var guardIdx = template.IndexOf("_traits.IsEphemeral && !hasSnapshot", rewindIdx, StringComparison.Ordinal);
     var replayCallIdx = template.IndexOf("result = await _replayCheckedAsync(", guardIdx, StringComparison.Ordinal);
     // The skip branch builds its completion with the shared dropped-straggler helper (#1964 refuses the same way).
     var namedIdx = template.IndexOf("result = _droppedStraggler(streamId, perspectiveName, triggeringEventId)", guardIdx, StringComparison.Ordinal);
@@ -213,9 +213,9 @@ public class PerspectiveRunnerTemplateInvariantTests {
 
     await Assert.That(template).Contains("HasStreamEventsBeforeAsync")
       .Because("the row-null branch probes the event store for pre-batch history");
-    await Assert.That(template).Contains("!_isEphemeralPerspective")
+    await Assert.That(template).Contains("!_traits.IsEphemeral")
       .Because("an ephemeral perspective rebuilds only from a snapshot floor; its history before the floor is reaped");
-    await Assert.That(template).Contains("PerspectiveRowEviction.CanEvict(typeof(__MODEL_TYPE_NAME__))")
+    await Assert.That(template).Contains("PerspectiveRowEviction.CanEvict(typeof(TModel))")
       .Because("the probe runs for every perspective whose rows can be evicted (TTL, cap, stream group), and only those (#1483)");
     await Assert.That(template).Contains("_rewindAndRunCoreAsync")
       .Because("resurrection delegates to the lock-free rewind core");
@@ -243,8 +243,6 @@ public class PerspectiveRunnerTemplateInvariantTests {
     // perspective folds, which the generator emits as a static array.
     var template = _loadTemplate();
 
-    await Assert.That(template).Contains("#region HANDLED_EVENT_TYPES")
-      .Because("the generator fills the perspective's handled event types into a static array");
     await Assert.That(template).Contains("HasStreamEventsBeforeAsync(streamId, beforeEventId, _handledEventTypes, cancellationToken)")
       .Because("the resurrection probe asks about the handled event types only");
     await Assert.That(template).DoesNotContain("HasStreamEventsBeforeAsync(streamId, beforeEventId, cancellationToken)")
@@ -330,7 +328,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
     var template = _loadTemplate();
     var method = template.IndexOf("private async Task<bool> SaveModelAndCheckpointAsync(", StringComparison.Ordinal);
     var guard = template.IndexOf("PerspectiveRowWriteGuard.AllowsWrite(producedByApply", StringComparison.Ordinal);
-    var upsert = template.IndexOf("#region UPSERT_CALL", StringComparison.Ordinal);
+    var upsert = template.IndexOf("var physicalFieldValues = PhysicalFieldValues(model);", method, StringComparison.Ordinal);
 
     await Assert.That(method).IsGreaterThan(0);
     await Assert.That(guard).IsGreaterThan(method).Because("the guard is inside the write method");
@@ -355,7 +353,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
     var method = template.IndexOf("private async Task<bool> SaveModelAndCheckpointAsync(", StringComparison.Ordinal);
     var start = template.IndexOf("await _rowWriteStartAsync(", method, StringComparison.Ordinal);
     var begin = template.IndexOf("PerspectiveRowStart.Begin(streamId, rowStartedAt)", method, StringComparison.Ordinal);
-    var upsert = template.IndexOf("#region UPSERT_CALL", method, StringComparison.Ordinal);
+    var upsert = template.IndexOf("var physicalFieldValues = PhysicalFieldValues(model);", method, StringComparison.Ordinal);
     var helper = template.IndexOf("_rowWriteStartAsync(\n      Guid streamId,", StringComparison.Ordinal);
     var resolve = template.IndexOf("PerspectiveRowStart.ResolveAsync(", helper, StringComparison.Ordinal);
     var helperEnd = template.IndexOf("\n  }\n", helper, StringComparison.Ordinal);

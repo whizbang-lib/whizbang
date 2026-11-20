@@ -26,9 +26,13 @@ namespace Whizbang.Core.Generated;
 #endregion
 
 /// <summary>
-/// Generated perspective runner for __PERSPECTIVE_SIMPLE_NAME__.
-/// Implements unit-of-work pattern with UUID7 event ordering and pure function event application.
+/// The runner logic every perspective of this assembly shares (#2401): reads, folds, writes, rewinds, rebuilds and
+/// snapshots a perspective's rows. Generated once per assembly; each perspective's generated runner derives from it and
+/// supplies only what differs between perspectives (<see cref="RunnerTraits"/>, <see cref="ApplyEventCore"/>,
+/// <see cref="CreateEmptyModel"/> and the optional overrides), so a runner no longer repeats this code.
 /// </summary>
+/// <typeparam name="TPerspective">The perspective class.</typeparam>
+/// <typeparam name="TModel">The perspective's model (read model) type.</typeparam>
 /// <remarks>
 /// Unit of Work Pattern with Pure Functions:
 /// - Reads events in UUID7 order (time-ordered)
@@ -44,110 +48,135 @@ namespace Whizbang.Core.Generated;
 /// - No inline saves during event processing
 /// - Compile-time purity enforcement via Roslyn analyzer
 /// </remarks>
-internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
+internal abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspectiveRunner
+    where TPerspective : class
+    where TModel : class {
+  /// <summary>
+  /// What a perspective's runner fixes at generation time: the facts the shared logic branches on. Each generated
+  /// runner holds one, built from its perspective's declarations.
+  /// </summary>
+  protected sealed class RunnerTraits {
+    /// <summary>The event types the perspective folds, the list every read of its streams asks for.</summary>
+    public required global::System.Type[] EventTypes { get; init; }
+
+    /// <summary>
+    /// The perspective's CLR type name, which the missing-row probe asks the archived-row policy registry under (#1739).
+    /// </summary>
+    public required string ArchivedStreamRowsName { get; init; }
+
+    /// <summary>
+    /// The model's [InheritScope] OnCreate fields. Defaults to every field (63), so creation records ownership.
+    /// </summary>
+    public global::Whizbang.Core.Lenses.ScopeFields InheritScopeOnCreate { get; init; } = (global::Whizbang.Core.Lenses.ScopeFields)63;
+
+    /// <summary>The model's [InheritScope] Always fields. Defaults to none (0), so scope is set once, at creation.</summary>
+    public global::Whizbang.Core.Lenses.ScopeFields InheritScopeAlways { get; init; }
+
+    /// <summary>
+    /// True when the perspective applies at least one [Ephemeral] event (its streams are ephemeral). Gates the rewind
+    /// fallback: an ephemeral stream's consumed bodies are reaped, so a full replay-from-zero would read reaped/absent
+    /// bodies and silently corrupt the model. Also selects the ephemeral snapshot cadence.
+    /// </summary>
+    public bool IsEphemeral { get; init; }
+
+    /// <summary>
+    /// False for a perspective that applies only ephemeral events and does not opt in with [KeepEphemeralRewindFloor]
+    /// (#2295). It keeps no rewind floor: the runner is given no snapshot store, so it writes no snapshot, live or
+    /// bootstrapped, and a late event that would need a floor is dropped as an ephemeral one is.
+    /// </summary>
+    public bool KeepsRewindFloor { get; init; } = true;
+
+    /// <summary>
+    /// True for a perspective marked [OverwriteOnly] (#1869), whose every Apply builds the row from its event alone, so a
+    /// rewind applies only the stream's last event (_replayLastEventOnlyAsync).
+    /// </summary>
+    public bool IsOverwriteOnly { get; init; }
+
+    /// <summary>True when the perspective implements IPerspectiveScopeFor and decides the scope an IScopeEvent sets.</summary>
+    public bool HasScopeInterface { get; init; }
+
+    /// <summary>
+    /// True when the write strips the model's promoted fields in place (a Split class model that cannot be copied), so
+    /// its snapshot is serialized before the write (issue #983).
+    /// </summary>
+    public bool SnapshotsBeforeWrite { get; init; }
+  }
+
   /// <inheritdoc/>
-  public Type PerspectiveType => typeof(__PERSPECTIVE_CLASS_NAME__);
+  public Type PerspectiveType => typeof(TPerspective);
 
-  #region INHERIT_SCOPE_ON_CREATE
-  // Generated: the model's [InheritScope] flags. OnCreate defaults to every field (63), so creation
-  // records ownership; Always defaults to none (0), so scope is set once, at creation.
-  private const global::Whizbang.Core.Lenses.ScopeFields _inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields)63;
-  private const global::Whizbang.Core.Lenses.ScopeFields _inheritScopeAlways = (global::Whizbang.Core.Lenses.ScopeFields)0;
-  #endregion
-
-  #region IS_EPHEMERAL
-  // Generated: true when this perspective applies at least one [Ephemeral] event (its streams
-  // are ephemeral). Gates the rewind fallback — an ephemeral stream's consumed bodies are reaped,
-  // so a full replay-from-zero would read reaped/absent bodies and silently corrupt the model.
-  private const bool _isEphemeralPerspective = false;
-  // Generated (#2295): false for a perspective that applies only ephemeral events and does not opt in with
-  // [KeepEphemeralRewindFloor]. It keeps no rewind floor: the runner is given no snapshot store, so it writes no
-  // snapshot, live or bootstrapped, and a late event that would need a floor is dropped as an ephemeral one is.
-  private const bool _keepsRewindFloor = true;
-  #endregion
-
-  #region UNCONDITIONAL_PURGE
-  // Generated: true for an event whose Apply can do nothing but purge the row (#1151).
-  private static bool IsUnconditionalPurge(global::Whizbang.Core.IEvent @event) => false;
-  #endregion
-
-  #region OVERWRITE_ONLY
-  // Generated (#1869): true for a perspective marked [OverwriteOnly], whose every Apply builds the row from its event
-  // alone, so a rewind applies only the stream's last event (_replayLastEventOnlyAsync). False for every other one.
-  private static readonly bool _isOverwriteOnly = false;
-  // Generated: the events whose Apply returns the model, the only kind that can decide the row alone. An Apply that
-  // returns an action or an ApplyResult can purge, and a stream holding such an event is replayed in full.
-  private static bool DecidesTheRowAlone(global::Whizbang.Core.IEvent @event) => false;
-  #endregion
+  private readonly RunnerTraits _traits;
 
   /// <summary>
   /// The event types this perspective folds. The resurrection-on-wake probe asks the event store
   /// about these only (issue #696): history of other contracts on a shared stream is not a reaped
   /// row. Same list the polymorphic reads use.
   /// </summary>
-  private static readonly global::System.Type[] _handledEventTypes = new global::System.Type[] {
-      #region HANDLED_EVENT_TYPES
-      // Generated event type list goes here (same as EVENT_TYPES)
-      #endregion
-  };
+  private readonly global::System.Type[] _handledEventTypes;
 
-  #region TTL_REGISTRATION
-  // Generated: for a TransientStorage.TtlRow perspective, a [ModuleInitializer] registers the row TTL so the
-  // EF Core upsert stamps expires_at = now + ttl. Empty for non-TtlRow perspectives (their rows never expire).
-  #endregion
+  /// <summary>
+  /// Applies <paramref name="event"/> to <paramref name="currentModel"/> through the interface that lists the event:
+  /// the perspective's generated, AOT-compatible switch (no reflection). Returns the model and the action the Apply
+  /// asked for.
+  /// </summary>
+  protected abstract (TModel?, global::Whizbang.Core.Perspectives.ModelAction) ApplyEventCore(
+      TPerspective perspective,
+      TModel? currentModel,
+      IEvent @event);
 
-  #region ROW_CAP_REGISTRATION
-  // Generated: a [RowCap] perspective registers its per-scope cap via a [ModuleInitializer], the same
-  // turnkey path as the row TTL above, so the startup reconciler can sync it into
-  // wh_perspective_registry and the cap sweep can see the declaration. Empty when no cap is declared —
-  // absent must stay distinct from a cap of zero, which would evict everything.
-  #endregion
+  /// <summary>
+  /// Creates an empty model for a new stream.
+  /// Initializes the model with the stream ID set to the stream key property.
+  /// Direct construction (no Activator, no reflection): the initializer is
+  /// computed at generation time from the model's shape, so strongly-typed
+  /// stream ids construct through their From(Guid) factory and required
+  /// members are explicitly initialized. AOT-safe.
+  /// </summary>
+  protected abstract TModel CreateEmptyModel(Guid streamId);
 
-  #region FULL_HISTORY_REGISTRATION
-  // Generated: a [FullHistory] perspective registers its name via a [ModuleInitializer] so the A1 close guard
-  // refuses a discard-close of any stream it consumes. Empty for resumable (unmarked) perspectives.
-  #endregion
+  /// <summary>True for an event whose Apply can do nothing but purge the row (#1151). None by default.</summary>
+  protected virtual bool IsUnconditionalPurge(global::Whizbang.Core.IEvent @event) => false;
 
-  #region ARCHIVED_STREAM_ROWS
-  // Generated (#1739): the perspective's CLR type name, which the missing-row probe asks the policy registry under, and
-  // for an [ArchivedStreamRows] perspective a [ModuleInitializer] registering its declared policy.
-  private const string _archivedStreamRowsName = "";
-  #endregion
+  /// <summary>
+  /// True for an event whose Apply returns the model, the only kind that can decide the row alone (#1869). An Apply that
+  /// returns an action or an ApplyResult can purge, and a stream holding such an event is replayed in full. None by
+  /// default.
+  /// </summary>
+  protected virtual bool DecidesTheRowAlone(global::Whizbang.Core.IEvent @event) => false;
 
-  #region WRITE_MODE_REGISTRATION
-  // Generated (#2246): a [ModuleInitializer] registering the perspective's write mode (the one it declares with
-  // [PerspectiveWriteMode], or null for the service's), so the worker knows which pairs it can write set-based.
-  #endregion
+  /// <summary>
+  /// The physical column values of <paramref name="model"/>, keyed by column name, for a model with [PhysicalField] or
+  /// [VectorField] properties; null for a model with none, which is written without them. Vector fields are converted
+  /// from float[] to Pgvector.Vector at generation time (no reflection).
+  /// </summary>
+  protected virtual global::System.Collections.Generic.Dictionary<string, object?>? PhysicalFieldValues(TModel model) => null;
 
-  #region PHYSICAL_FIELD_REGISTRATION
-  // Generated: a model with [PhysicalField]/[VectorField] properties registers each column and the model's
-  // storage mode via a [ModuleInitializer], so a collective apply can write and filter the column without
-  // reflection. Empty when the model has no physical fields.
-  #endregion
+  /// <summary>
+  /// The model as its document is written: for a Split model, with its promoted fields stripped (their values live only
+  /// in their columns); the model itself for every other one. Called only when <see cref="PhysicalFieldValues"/> is not
+  /// null, after the values are taken.
+  /// </summary>
+  protected virtual TModel StripPhysicalFields(TModel model) => model;
 
-  #region MEMBER_DEFAULT_REGISTRATION
-  // Generated: a model whose declaration states what a member reads as — a literal initializer, or the CLR
-  // default of a non-nullable value type — registers each one via a [ModuleInitializer], so a collective
-  // predicate filters a document with no key for that member as the value a rebuild would see (#1044).
-  // Empty when every member is nullable, which already agrees in both paths.
-  #endregion
 
-  #region STREAM_GROUP_REGISTRATION
-  // Generated: each [StreamGroup] membership registers via a [ModuleInitializer] (key + the
-  // Announce/Follow/Bridge dials) so the maintenance cascade computes the eviction closure without
-  // reflection. Empty for perspectives that joined no group — untouchable by cascades.
-  #endregion
 
-  #region SPLIT_PHYSICAL_FIELD_REGISTRATION
-  // Generated: a Split model registers its promoted columns via a [ModuleInitializer], with the code that
-  // copies them into a model loaded from its document, so the store can read back the fields the document
-  // never holds (issue #977). Empty for every other storage mode.
-  #endregion
+
+
+
+
+
+
+
+
+
+
+
+
 
   private readonly IServiceProvider _serviceProvider;
-  private readonly ILogger<__RUNNER_CLASS_NAME__> _logger;
+  private readonly ILogger _logger;
   private readonly IEventStore _eventStore;
-  private readonly IPerspectiveStore<__MODEL_TYPE_NAME__> _perspectiveStore;
+  private readonly IPerspectiveStore<TModel> _perspectiveStore;
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
   private readonly IPerspectiveSnapshotStore? _snapshotStore;
@@ -166,17 +195,22 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
   private int _eventsSinceSnapshot(Guid streamId) => _eventsSinceLastSnapshot.GetValueOrDefault(streamId);
 
-  public __RUNNER_CLASS_NAME__(
+  /// <summary>Creates the runner of one perspective, with that perspective's <paramref name="traits"/>.</summary>
+  protected PerspectiveRunnerBase(
+      RunnerTraits traits,
       IServiceProvider serviceProvider,
-      ILogger<__RUNNER_CLASS_NAME__> logger,
+      ILogger logger,
       IEventStore eventStore,
-      IPerspectiveStore<__MODEL_TYPE_NAME__> perspectiveStore,
+      IPerspectiveStore<TModel> perspectiveStore,
       IServiceScopeFactory scopeFactory,
       IOptionsMonitor<TracingOptions>? tracingOptions = null,
       IPerspectiveSnapshotStore? snapshotStore = null,
       IOptions<PerspectiveSnapshotOptions>? snapshotOptions = null,
       global::Whizbang.Core.Perspectives.IPerspectiveApplyCoordinator? applyCoordinator = null,
       global::Whizbang.Core.Perspectives.ICollectiveReplayApplier? collectiveReplayApplier = null) {
+    ArgumentNullException.ThrowIfNull(traits);
+    _traits = traits;
+    _handledEventTypes = traits.EventTypes;
     ArgumentNullException.ThrowIfNull(serviceProvider);
     _serviceProvider = serviceProvider;
     ArgumentNullException.ThrowIfNull(logger);
@@ -191,7 +225,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // #2295: a perspective that keeps no rewind floor takes no snapshots and restores from none.
     // The framework's null default (IsConfigured false) is no store: a rewind asking it for a floor threw, so a service
     // with no snapshot store failed every rewind its drain path ran (#2366).
-    _snapshotStore = _keepsRewindFloor && snapshotStore is { IsConfigured: true } ? snapshotStore : null;
+    _snapshotStore = traits.KeepsRewindFloor && snapshotStore is { IsConfigured: true } ? snapshotStore : null;
     _snapshotOptions = snapshotOptions;
     _applyCoordinator = applyCoordinator;
     _collectiveReplayApplier = collectiveReplayApplier;
@@ -219,11 +253,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       CancellationToken cancellationToken = default) {
 
     // Build event types list for polymorphic deserialization
-    var eventTypes = new[] {
-      #region EVENT_TYPES
-      // Generated event type list goes here
-      #endregion
-    };
+    var eventTypes = _handledEventTypes;
 
     // Read events from event store
     var events = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
@@ -267,11 +297,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       string perspectiveName,
       CancellationToken cancellationToken = default) {
 
-    var eventTypes = new[] {
-      #region REBUILD_EVENT_TYPES
-      // Generated event type list goes here
-      #endregion
-    };
+    var eventTypes = _handledEventTypes;
 
     // Read + upcast the physical stream's events (the decorator applies upcasters on this seam).
     var events = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
@@ -307,7 +333,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         new PerspectiveCursorCompletion {
           StreamId = physicalStreamId,
           PerspectiveName = perspectiveName,
-          PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
+          PerspectiveType = typeof(TPerspective),
           LastEventId = Guid.Empty,
           Status = PerspectiveProcessingStatus.None,
           RowChanged = false,  // no events folded onto a row here, so no row was touched
@@ -363,11 +389,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       IReadOnlyList<IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>> rekeyedSources,
       CancellationToken cancellationToken = default) {
 
-    var eventTypes = new[] {
-      #region REKEYED_ROW_EVENT_TYPES
-      // Generated event type list goes here
-      #endregion
-    };
+    var eventTypes = _handledEventTypes;
 
     var own = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
     await foreach (var envelope in _eventStore.ReadPolymorphicAsync(rowStreamId, null, eventTypes, cancellationToken)) {
@@ -653,7 +675,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// </summary>
   private sealed class Prepared : PreparedPerspectiveApply {
     public Prepared(
-        __RUNNER_CLASS_NAME__ runner,
+        PerspectiveRunnerBase<TPerspective, TModel> runner,
         Guid streamId,
         string perspectiveName,
         Guid? lastProcessedEventId,
@@ -668,7 +690,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Decided = decided;
     }
 
-    public __RUNNER_CLASS_NAME__ Runner { get; }
+    public PerspectiveRunnerBase<TPerspective, TModel> Runner { get; }
     public ApplyState? State { get; }
     public PerspectiveCursorCompletion? Decided { get; }
   }
@@ -693,7 +715,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     public Guid? LastProcessedEventId;
     public IReadOnlyList<MessageEnvelope<IEvent>> Events = Array.Empty<MessageEnvelope<IEvent>>();
     public List<Task> BackgroundTasks = new();
-    public __PERSPECTIVE_CLASS_NAME__ Perspective = null!;
+    public TPerspective Perspective = null!;
     // The batch a prepare reads from (#2246), or null on the per-pair path.
     public global::Whizbang.Core.Perspectives.IPerspectiveBatchState? BatchState;
 
@@ -706,7 +728,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     public bool Rebuilding;
     public global::Whizbang.Core.Lenses.PerspectiveMetadata? ExistingMetadata;
     // The row as stored, kept so a rebuild whose write is refused can tell an already-correct row from a stale one (#2252).
-    public __MODEL_TYPE_NAME__? StoredModel;
+    public TModel? StoredModel;
 
     // The fold.
     public int EventsProcessed;
@@ -714,7 +736,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     public string? LastSuccessfulEventType;
     public DateTime? LastSuccessfulEventAt;
     public List<MessageEnvelope<IEvent>> ProcessedEvents = new();
-    public __MODEL_TYPE_NAME__? UpdatedModel;
+    public TModel? UpdatedModel;
     public bool HasWrittenUpdate;
     public bool CollectiveInFlight;
     public bool PendingPurge;
@@ -767,7 +789,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// <summary>The row as an apply reads it: its version, scope and metadata, and the model.</summary>
   private readonly record struct RowLoad(
       global::Whizbang.Core.Perspectives.PerspectiveApplyRead ApplyRead,
-      __MODEL_TYPE_NAME__? Model,
+      TModel? Model,
       global::Whizbang.Core.Lenses.PerspectiveMetadata? Metadata);
 
   /// <summary>
@@ -879,13 +901,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // format is the same case (issue #1506): the rewind could not restore it, would find no floor, and
       // would drop this batch as a late straggler, leaving the row missing until the next event.
       if (events.Count > 0
-          && (global::Whizbang.Core.Perspectives.PerspectiveRowEviction.CanEvict(typeof(__MODEL_TYPE_NAME__))
-              || global::Whizbang.Core.Archival.ArchivedStreamRowPolicies.RemovesRows(_archivedStreamRowsName))
+          && (global::Whizbang.Core.Perspectives.PerspectiveRowEviction.CanEvict(typeof(TModel))
+              || global::Whizbang.Core.Archival.ArchivedStreamRowPolicies.RemovesRows(_traits.ArchivedStreamRowsName))
           && await _hasHistoryBeforeAsync(streamId, perspectiveName, events[0].MessageId.Value, batchState, cancellationToken)) {
         if (preparing) {
           return global::Whizbang.Core.Perspectives.PerspectivePerPairReason.MissingRowWithHistory;
         }
-        var floor = !_isEphemeralPerspective
+        var floor = !_traits.IsEphemeral
             ? (State: EvictedRowFloor.Readable, SnapshotEventId: Guid.Empty)
             : await _evictedRowFloorAsync(streamId, perspectiveName, events[0].MessageId.Value, cancellationToken);
         if (floor.State == EvictedRowFloor.Readable) {
@@ -1024,7 +1046,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           return new PerspectiveCursorCompletion {
             StreamId = streamId,
             PerspectiveName = perspectiveName,
-            PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
+            PerspectiveType = typeof(TPerspective),
             LastEventId = alreadyAppliedAsGuid != Guid.Empty ? alreadyAppliedAsGuid : (lastProcessedEventId ?? Guid.Empty),
             Status = PerspectiveProcessingStatus.Completed,
             EventsProcessed = 0,
@@ -1062,7 +1084,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Events = events,
       BackgroundTasks = backgroundTasks,
       BatchState = batchState,
-      Perspective = _serviceProvider.GetRequiredService<__PERSPECTIVE_CLASS_NAME__>(),
+      Perspective = _serviceProvider.GetRequiredService<TPerspective>(),
       CollectiveFence = collectiveFence,
       ApplyRead = applyRead,
       RowVersion = rowVersion,
@@ -1113,7 +1135,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         var context = new LifecycleExecutionContext {
           CurrentStage = LifecycleStage.PrePerspectiveDetached,
           StreamId = streamId,
-          PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
+          PerspectiveType = typeof(TPerspective),
           EventId = null,  // No specific event ID yet (haven't processed)
           LastProcessedEventId = lastProcessedEventId,
           ProcessingMode = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
@@ -1169,7 +1191,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // handler / no applier is registered (the call returns the same list unchanged).
       if (_collectiveReplayApplier is not null && events.Count > 0) {
         events = await _collectiveReplayApplier.InterleaveForReplayAsync(
-            typeof(__MODEL_TYPE_NAME__), events, cancellationToken);
+            typeof(TModel), events, cancellationToken);
         state.Events = events;
       }
 
@@ -1282,8 +1304,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             if (modelAtLastEvent is null && _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true) {
               modelAtLastEvent = ToSnapshotJson(updatedModel);
             }
-            updatedModel = (__MODEL_TYPE_NAME__?)_collectiveReplayApplier.ApplyInMemory(
-                typeof(__MODEL_TYPE_NAME__), updatedModel, streamId, @event);
+            updatedModel = (TModel?)_collectiveReplayApplier.ApplyInMemory(
+                typeof(TModel), updatedModel, streamId, @event);
             hasWrittenUpdate = true;
             // #1970: a collective still in flight may yet reach the row live, so this run's snapshot would not say what it holds.
             collectiveInFlight |= _collectiveReplayApplier.IsInFlight(@event);
@@ -1317,7 +1339,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         }
 
         // Apply event to model using perspective's pure Apply method
-        __MODEL_TYPE_NAME__? appliedModel;
+        TModel? appliedModel;
         global::Whizbang.Core.Perspectives.ModelAction action;
         try {
           (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event, envelope.IsFirstInLocalStream);
@@ -1371,9 +1393,19 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         }
 
         // IScopeEvent handling: if the event carries a scope change, apply it
-        #region SCOPE_EVENT_HANDLING
-        // Default: no scope event handling (IScopeEvent not used by this perspective)
-        #endregion
+        if (@event is global::Whizbang.Core.IScopeEvent scopeEvent) {
+          var proposedScope = scopeEvent.Scope;
+          // A perspective that implements IPerspectiveScopeFor decides the final scope. The current scope is the one an
+          // earlier scope event in this batch set, else the row's stored scope, never the last message's envelope scope
+          // (#1432).
+          if (_traits.HasScopeInterface
+              && perspective is global::Whizbang.Core.Perspectives.IPerspectiveScopeFor<TModel> scopePerspective) {
+            var currentScope = scopeEventScope ?? applyRead.Scope ?? new global::Whizbang.Core.Lenses.PerspectiveScope();
+            scopeEventScope = scopePerspective.ApplyScope(currentScope, proposedScope);
+          } else {
+            scopeEventScope = proposedScope;
+          }
+        }
 
         // Track envelope for PostPerspective lifecycle hooks (fire AFTER save completes)
         // Envelope preserved for security context propagation
@@ -1670,7 +1702,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           var context = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PostPerspectiveDetached,
             StreamId = streamId,
-            PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
+            PerspectiveType = typeof(TPerspective),
             EventId = envelope.MessageId.Value,
             LastProcessedEventId = lastSuccessfulEventId,
             ProcessingMode = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
@@ -1705,7 +1737,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       return new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
-        PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
+        PerspectiveType = typeof(TPerspective),
         LastEventId = lastSuccessfulEventId ?? lastProcessedEventId ?? Guid.Empty,
         Status = resultStatus,
         EventsProcessed = eventsProcessed,
@@ -1798,18 +1830,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   }
 
   /// <summary>
-  /// Creates an empty model for a new stream.
-  /// Initializes the model with the stream ID set to the stream key property.
-  /// Direct construction (no Activator, no reflection): the initializer is
-  /// computed at generation time from the model's shape, so strongly-typed
-  /// stream ids construct through their From(Guid) factory and required
-  /// members are explicitly initialized. AOT-safe.
-  /// </summary>
-  private __MODEL_TYPE_NAME__ CreateEmptyModel(Guid streamId) {
-    return new __MODEL_TYPE_NAME__ __EMPTY_MODEL_INITIALIZER__;
-  }
-
-  /// <summary>
   /// Applies an event to the model using the perspective's synchronous Apply method.
   /// AOT-compatible: uses switch statement instead of reflection.
   /// Apply methods are pure functions that return new model state and optional action.
@@ -1817,27 +1837,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// restored when it returns or throws (#1878).
   /// </summary>
   /// <returns>Tuple of (model, action) where action indicates Delete/Purge/None.</returns>
-  private (__MODEL_TYPE_NAME__?, global::Whizbang.Core.Perspectives.ModelAction) ApplyEvent(
-      __PERSPECTIVE_CLASS_NAME__ perspective,
-      __MODEL_TYPE_NAME__? currentModel,
+  private (TModel?, global::Whizbang.Core.Perspectives.ModelAction) ApplyEvent(
+      TPerspective perspective,
+      TModel? currentModel,
       IEvent @event,
       bool isFirstEventInStream) {
 
     using var applyContext = global::Whizbang.Core.Perspectives.ApplyContext.Enter(isFirstEventInStream);
-
-    // AOT-compatible switch on event type (no reflection)
-    // Generator produces one case per event type the perspective handles
-    // Each case normalizes to (model?, action) tuple based on Apply return type
-    switch (@event) {
-      #region EVENT_APPLY_CASES
-      // Generated switch cases go here
-      #endregion
-
-      default:
-        throw new InvalidOperationException(
-            $"Perspective {perspective.GetType().Name} does not handle event type {@event.GetType().Name}"
-        );
-    }
+    return ApplyEventCore(perspective, currentModel, @event);
   }
 
   /// <summary>
@@ -1847,8 +1854,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// unless it resurrects. An Apply that throws on a purged stream is a skip, not a failure: the row it would
   /// have changed is gone.
   /// </summary>
-  private __MODEL_TYPE_NAME__? TryResurrect(
-      __PERSPECTIVE_CLASS_NAME__ perspective,
+  private TModel? TryResurrect(
+      TPerspective perspective,
       Guid streamId,
       IEvent @event,
       bool isFirstEventInStream) {
@@ -1961,7 +1968,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// document taken before the write stripped its promoted fields.
   /// </summary>
   private static global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason _readRefusedRebuildWrite(
-      JsonDocument? foldBeforeWrite, __MODEL_TYPE_NAME__ folded, __MODEL_TYPE_NAME__? stored) {
+      JsonDocument? foldBeforeWrite, TModel folded, TModel? stored) {
     if (stored is null) {
       return global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason.WriteRefused;
     }
@@ -2011,21 +2018,17 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     return (frontierEventId, frontierCommitSequence);
   }
 
-  #region EXTRACT_STREAM_ID_METHODS
-  // Generated ExtractStreamId methods go here (one per event type)
-  // These methods extract the stream ID from each event's [StreamId] property
-  #endregion
 
   /// <summary>
   /// The scope this apply writes, decided by the model's [InheritScope] over the row the apply read.
   /// </summary>
-  private static global::Whizbang.Core.Lenses.ScopeWrite _resolveScopeWrite(
+  private global::Whizbang.Core.Lenses.ScopeWrite _resolveScopeWrite(
       PerspectiveScope? lastScope,
       global::Whizbang.Core.Perspectives.PerspectiveApplyRead applyRead,
       bool rowExists,
       PerspectiveScope? scopeEventScope)
     => global::Whizbang.Core.Lenses.ScopeInheritance.Resolve(
-        lastScope, applyRead.Scope, rowExists, _inheritScopeOnCreate, _inheritScopeAlways, scopeEventScope);
+        lastScope, applyRead.Scope, rowExists, _traits.InheritScopeOnCreate, _traits.InheritScopeAlways, scopeEventScope);
 
   /// <summary>
   /// Saves the model atomically.
@@ -2042,7 +2045,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private async Task<bool> SaveModelAndCheckpointAsync(
       Guid streamId,
       string perspectiveName,
-      __MODEL_TYPE_NAME__ model,
+      TModel model,
       bool producedByApply,
       Guid checkpointEventId,
       string checkpointEventType,
@@ -2066,9 +2069,25 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         cancellationToken);
     using var rowStart = global::Whizbang.Core.Perspectives.PerspectiveRowStart.Begin(streamId, rowStartedAt);
 
-    #region UPSERT_CALL
-    // Upsert model (insert or update) onto the row version the apply read (Unchecked writes unconditionally)
-    // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> PerspectiveCompletionFlushWorker
+    // Upsert model (insert or update): metadata.EventId records the last applied event so the next run can skip
+    // already-applied events (see RunWithEventsAsync idempotency guard), and expectedVersion lands the write only on the
+    // row version the apply read (issue #928). The result says whether the row was written: the store's ordering guard
+    // can refuse it quietly (#1342).
+    var physicalFieldValues = PhysicalFieldValues(model);
+    if (physicalFieldValues is not null) {
+      // A model with physical fields writes their values to their columns; a Split model's document omits them.
+      model = StripPhysicalFields(model);
+      return await _perspectiveStore.TryUpsertWithPhysicalFieldsAsync(
+          streamId,
+          model,
+          physicalFieldValues,
+          scope,
+          forceUpdateScope,
+          metadata,
+          expectedVersion,
+          cancellationToken
+      );
+    }
     if (scope != null) {
       return await _perspectiveStore.TryUpsertAsync(
           streamId,
@@ -2079,18 +2098,16 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           expectedVersion,
           cancellationToken
       );
-    } else {
-      return await _perspectiveStore.TryUpsertAsync(
-          streamId,
-          model,
-          new global::Whizbang.Core.Lenses.PerspectiveScope(),
-          false,
-          metadata,
-          expectedVersion,
-          cancellationToken
-      );
     }
-    #endregion
+    return await _perspectiveStore.TryUpsertAsync(
+        streamId,
+        model,
+        new global::Whizbang.Core.Lenses.PerspectiveScope(),
+        false,
+        metadata,
+        expectedVersion,
+        cancellationToken
+    );
   }
 
   /// <summary>
@@ -2138,13 +2155,27 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// </summary>
   private global::Whizbang.Core.Perspectives.PendingPerspectiveWrite? PrepareRowWrite(
       Guid streamId,
-      __MODEL_TYPE_NAME__ model,
+      TModel model,
       global::Whizbang.Core.Lenses.PerspectiveMetadata metadata,
       PerspectiveScope? scope,
       bool forceUpdateScope,
       global::Whizbang.Core.Perspectives.PerspectiveRowVersion expectedVersion) {
-    #region PREPARE_WRITE_CALL
-    // Prepare the row write the upsert would make; a null scope is written as an empty one that forces no update.
+    // Prepare the row write the upsert would make, with the same document, physical values and scope; the batch's write
+    // sink writes it with the rest of the batch.
+    var physicalFieldValues = PhysicalFieldValues(model);
+    if (physicalFieldValues is not null) {
+      model = StripPhysicalFields(model);
+      return _perspectiveStore.PrepareWrite(
+          streamId,
+          model,
+          scope ?? new global::Whizbang.Core.Lenses.PerspectiveScope(),
+          forceUpdateScope,
+          metadata,
+          expectedVersion,
+          physicalFieldValues
+      );
+    }
+    // The upsert without physical fields writes a null scope as an empty one that forces no update.
     return _perspectiveStore.PrepareWrite(
         streamId,
         model,
@@ -2154,7 +2185,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         expectedVersion,
         null
     );
-    #endregion
   }
 
   /// <summary>What an evicted ephemeral row can be rebuilt from (issues #1483, #1506).</summary>
@@ -2225,7 +2255,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       CancellationToken cancellationToken = default) {
 
     Guid? replayFromEventId = null;
-    __MODEL_TYPE_NAME__? snapshotModel = null;
+    TModel? snapshotModel = null;
     JsonDocument? snapshotData = null;
     var hasSnapshot = false;
     // #1738: the snapshot's version when an archive covers the snapshot, so the replay reads the archived events after it.
@@ -2235,7 +2265,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var startedAt = DateTimeOffset.UtcNow;
     // Without a snapshot floor an ephemeral perspective does not replay at all (the drop below), so the "performing full
     // replay" warnings would describe a replay that never runs. The drop's own warning is the one line it logs (#1862).
-    var replaysWithoutAFloor = !_isEphemeralPerspective;
+    var replaysWithoutAFloor = !_traits.IsEphemeral;
     // The lines that announce the replay, logged once the rewind knows it replays: a rewind that needs archived history
     // whose archive was deleted (#1964) refuses instead, and its refusal is the one line it logs.
     Action? announceReplay = null;
@@ -2339,7 +2369,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // In-memory replay: apply all events without intermediate DB writes
     // Lenses see pre-replay data until the single atomic write at the end
     PerspectiveCursorCompletion result;
-    if (_isEphemeralPerspective && !hasSnapshot) {
+    if (_traits.IsEphemeral && !hasSnapshot) {
       // Ephemeral out-of-grace straggler. No snapshot floor survives before this late event, and
       // this stream's consumed bodies have been reaped (wh_event_body rows deleted, pointer-only).
       // RunFromModelAsync(null model, null anchor) would replay from event zero over reaped/absent
@@ -2416,7 +2446,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       new() {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
-        PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
+        PerspectiveType = typeof(TPerspective),
         LastEventId = Guid.Empty,
         Status = PerspectiveProcessingStatus.None,
         EventsProcessed = 0,
@@ -2457,7 +2487,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private async Task<PerspectiveCursorCompletion> _replayCheckedAsync(
       Guid streamId,
       string perspectiveName,
-      __MODEL_TYPE_NAME__? snapshotModel,
+      TModel? snapshotModel,
       JsonDocument? snapshotData,
       ReplayFrom from,
       CancellationToken cancellationToken) {
@@ -2499,7 +2529,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private async Task<PerspectiveCursorCompletion> RunFromModelAsync(
       Guid streamId,
       string perspectiveName,
-      __MODEL_TYPE_NAME__? initialModel,
+      TModel? initialModel,
       ReplayFrom from,
       CancellationToken cancellationToken) {
     var replayFromEventId = from.EventId;
@@ -2524,14 +2554,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var startedPurged = initialModel is null && await _isPurgedAsync(streamId, perspectiveName, cancellationToken);
 
     // Get perspective instance from DI
-    var perspective = _serviceProvider.GetRequiredService<__PERSPECTIVE_CLASS_NAME__>();
+    var perspective = _serviceProvider.GetRequiredService<TPerspective>();
 
     // Track progress
     var eventsProcessed = 0;
     Guid? lastSuccessfulEventId = replayFromEventId;
     string? lastSuccessfulEventType = null;
     DateTime? lastSuccessfulEventAt = null;
-    __MODEL_TYPE_NAME__? updatedModel = currentModel;
+    TModel? updatedModel = currentModel;
     var pendingPurge = startedPurged;
     Guid? purgeEventId = null;
     var resurrected = false;
@@ -2560,11 +2590,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>? firstStreamEvent = null;
 
     // Build list of event types this perspective handles
-    var eventTypes = new[] {
-      #region REPLAY_EVENT_TYPES
-      // Generated event type list goes here (same as EVENT_TYPES)
-      #endregion
-    };
+    var eventTypes = _handledEventTypes;
 
     // An overwrite-only perspective (#1869): every Apply builds the row from its event alone, so the last event decides
     // the row and the rewind applies only it. It answers null when the last event cannot decide alone (a purge-capable
@@ -2574,7 +2600,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // A model with collectives is folded in full (#1956): a collective committed after the last event changes the row the
     // last event alone would write.
     var foldsCollectives = _modelHasCollectives();
-    if (_isOverwriteOnly && !startedPurged && !foldsCollectives
+    if (_traits.IsOverwriteOnly && !startedPurged && !foldsCollectives
         && await _replayLastEventOnlyAsync(streamId, perspectiveName, perspective, rowVersion, replayFromEventId, eventTypes, cancellationToken)
           is { } lastEventOnly) {
       return lastEventOnly;
@@ -2655,7 +2681,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           && _collectiveTenant(events, applyRead, firstPassFromASnapshot: rewindCatchUpIterations == 1 && initialModel is not null)
             is { Known: true } tenant) {
         var merged = await _collectiveReplayApplier!.InterleaveAfterAsync(
-            typeof(__MODEL_TYPE_NAME__), events,
+            typeof(TModel), events,
             new global::Whizbang.Core.Perspectives.CollectiveReplayStart(tenant.TenantId, replayFromEventId, collectiveStartSequence) {
               CollectivesThroughSequence = from.CollectivesThroughSequence,
             },
@@ -2696,8 +2722,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           if (snapshotsOn && modelAtLastEvent is null) {
             modelAtLastEvent = ToSnapshotJson(updatedModel);
           }
-          updatedModel = (__MODEL_TYPE_NAME__?)_collectiveReplayApplier!.ApplyInMemory(
-              typeof(__MODEL_TYPE_NAME__), updatedModel, streamId, @event);
+          updatedModel = (TModel?)_collectiveReplayApplier!.ApplyInMemory(
+              typeof(TModel), updatedModel, streamId, @event);
           producedByApply = true;
           heldThrough.Fold(envelope.LocalCommitSequence);
           // #1970: a collective still in flight may yet reach the row live, so no snapshot of this replay says what it holds.
@@ -2740,7 +2766,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       }
 
       // Apply event to model using perspective's pure Apply method
-      __MODEL_TYPE_NAME__? appliedModel;
+      TModel? appliedModel;
       global::Whizbang.Core.Perspectives.ModelAction action;
       try {
         (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event, envelope.IsFirstInLocalStream);
@@ -2923,7 +2949,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             // A rewind reads no stored scope, so it writes scope only if it recreates the row; an existing row keeps
             // its scope (Always fields catch up on the next live apply).
             global::Whizbang.Core.Lenses.ScopeInheritance.Resolve(
-                lastScope, rowScope: null, rowExists: false, _inheritScopeOnCreate, _inheritScopeAlways, scopeEventScope: null).Scope,
+                lastScope, rowScope: null, rowExists: false, _traits.InheritScopeOnCreate, _traits.InheritScopeAlways, scopeEventScope: null).Scope,
             forceUpdateScope: false,
             expectedVersion: rowVersion);
         if (rowChanged && resurrected && startedPurged) {
@@ -2988,7 +3014,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     return new PerspectiveCursorCompletion {
       StreamId = streamId,
       PerspectiveName = perspectiveName,
-      PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
+      PerspectiveType = typeof(TPerspective),
       // #2366: the cursor reports one position, in the stream's one order: the replayed event last by version. It used
       // to report the largest id applied together with the largest commit sequence applied, a position no event has
       // when ids and versions disagree (copies stored after a newer event), and the cursor was put back on that id.
@@ -3023,7 +3049,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private async Task<PerspectiveCursorCompletion?> _replayLastEventOnlyAsync(
       Guid streamId,
       string perspectiveName,
-      __PERSPECTIVE_CLASS_NAME__ perspective,
+      TPerspective perspective,
       global::Whizbang.Core.Perspectives.PerspectiveRowVersion rowVersion,
       Guid? replayFromEventId,
       Type[] eventTypes,
@@ -3082,7 +3108,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// Applies an overwrite-only stream's last event to an empty model (#1869). Null when the Apply returns no model or
   /// throws: the row is then the events before it, which only the full fold applies (and logs, for a throw).
   /// </summary>
-  private __MODEL_TYPE_NAME__? _applyAlone(__PERSPECTIVE_CLASS_NAME__ perspective, Guid streamId, MessageEnvelope<IEvent> envelope) {
+  private TModel? _applyAlone(TPerspective perspective, Guid streamId, MessageEnvelope<IEvent> envelope) {
     try {
       return ApplyEvent(perspective, CreateEmptyModel(streamId), envelope.Payload, envelope.IsFirstInLocalStream).Item1;
     } catch (Exception applyEx) when (applyEx is not OperationCanceledException) {
@@ -3128,7 +3154,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     public int EventsProcessed { get; set; }
     public bool PendingPurge { get; set; }
     public Guid? PurgeEventId { get; set; }
-    public __MODEL_TYPE_NAME__? UpdatedModel { get; set; }
+    public TModel? UpdatedModel { get; set; }
     public bool ProducedByApply { get; set; }
     public Guid? LastSuccessfulEventId { get; set; }
     public string? LastSuccessfulEventType { get; set; }
@@ -3216,7 +3242,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// <summary>The stored event-type names of the model's collectives; none without a collective replay applier.</summary>
   private global::System.Collections.Generic.IReadOnlyList<string> _collectiveEventTypeNames() =>
       _collectiveReplayApplier?.CollectiveEventTypeNamesFor(
-          global::Whizbang.Core.TypeNameFormatter.FormatClrTypeName(typeof(__MODEL_TYPE_NAME__)).Replace('+', '.')) ?? [];
+          global::Whizbang.Core.TypeNameFormatter.FormatClrTypeName(typeof(TModel)).Replace('+', '.')) ?? [];
 
   /// <summary>The collective snapshot fence, when a driver registered one (#1963).</summary>
   private global::Whizbang.Core.Perspectives.ICollectiveSnapshotFence? _CollectiveSnapshotFence =>
@@ -3412,7 +3438,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     }
 
     var floor = await _snapshotStore.GetSnapshotFloorAsync(streamId, perspectiveName, boundaryEventId, cancellationToken);
-    __MODEL_TYPE_NAME__? model = null;
+    TModel? model = null;
     if (floor is not null) {
       model = FromSnapshotJson(floor.SnapshotData);
       if (model is null) {
@@ -3453,7 +3479,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var fold = new ApplyState {
       StreamId = streamId,
       PerspectiveName = perspectiveName,
-      Perspective = _serviceProvider.GetRequiredService<__PERSPECTIVE_CLASS_NAME__>(),
+      Perspective = _serviceProvider.GetRequiredService<TPerspective>(),
       UpdatedModel = model ?? CreateEmptyModel(streamId),
       HasWrittenUpdate = model is not null,
       PendingPurge = model is null && await _isPurgedAsync(streamId, perspectiveName, cancellationToken),
@@ -3504,7 +3530,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     long? startSequence = floor is null ? null : await _eventStore.GetCommitSequenceAsync(floor.SnapshotEventId, cancellationToken);
     // The tenant of the stream's events, as a replay pass that read some takes it (_collectiveTenant).
     var merged = await _collectiveReplayApplier!.InterleaveAfterAsync(
-        typeof(__MODEL_TYPE_NAME__), through,
+        typeof(TModel), through,
         new global::Whizbang.Core.Perspectives.CollectiveReplayStart(through[0].GetCurrentScope()?.Scope.TenantId, floor?.SnapshotEventId, startSequence) {
           CollectivesThroughSequence = floor?.CollectivesThroughSequence,
         },
@@ -3535,7 +3561,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// unchanged.
   /// </summary>
   private async Task<bool> _cadenceSnapshotSlotTakenAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken) =>
-      _isEphemeralPerspective && await _snapshotStore!.HasAnySnapshotAsync(streamId, perspectiveName, cancellationToken);
+      _traits.IsEphemeral && await _snapshotStore!.HasAnySnapshotAsync(streamId, perspectiveName, cancellationToken);
 
   // The snapshot cadence: every how many applied events a run snapshots, and how many snapshots a stream keeps.
   // Ephemeral perspectives snapshot on their own aggressive, single-slot cadence so a fresh rewind floor exists
@@ -3545,20 +3571,20 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     if (_snapshotOptions is null) {
       return (int.MaxValue, 0);
     }
-    #region SNAPSHOT_SETTINGS
-    var snapshotThreshold = _snapshotOptions.Value.SnapshotEveryNEvents;
-    var snapshotRetention = _snapshotOptions.Value.MaxSnapshotsPerStream;
-    #endregion
+    var snapshotThreshold = _traits.IsEphemeral
+        ? _snapshotOptions.Value.EphemeralSnapshotEveryNEvents
+        : _snapshotOptions.Value.SnapshotEveryNEvents;
+    var snapshotRetention = _traits.IsEphemeral
+        ? _snapshotOptions.Value.EphemeralMaxSnapshotsPerStream
+        : _snapshotOptions.Value.MaxSnapshotsPerStream;
     return (snapshotThreshold, snapshotRetention);
   }
 
-  #region SNAPSHOT_BEFORE_WRITE
-  // Generated (issue #983): the snapshot of a model the write strips in place, serialized before the write
-  // when snapshots are on. A Split class model's promoted fields are stripped from the instance itself, so a
-  // snapshot taken after the write would lack them and a rewind from it would write their defaults back.
-  // Null for every other model, whose snapshot after the write is the model it applied.
-  private static JsonDocument? SnapshotBeforeWrite(__MODEL_TYPE_NAME__ model) => null;
-  #endregion
+  // The snapshot of a model the write strips in place (issue #983), serialized before the write when snapshots are on. A
+  // Split class model's promoted fields are stripped from the instance itself, so a snapshot taken after the write would
+  // lack them and a rewind from it would write their defaults back. Null for every other model, whose snapshot after the
+  // write is the model it applied.
+  private JsonDocument? SnapshotBeforeWrite(TModel model) => _traits.SnapshotsBeforeWrite ? ToSnapshotJson(model) : null;
 
   #region SNAPSHOT_SERIALIZATION
   // Snapshot (de)serialization routes through the source-generated JSON type registry
@@ -3566,14 +3592,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // MessageJsonContext, and the registry's combined options also carry the WhizbangId
   // converters — so id-bearing models round-trip faithfully instead of collapsing to {}.
   // Lazily resolved so the registry is fully populated (via [ModuleInitializer]) on first use.
-  private static global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<__MODEL_TYPE_NAME__>? _snapshotModelTypeInfo;
-  private static global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<__MODEL_TYPE_NAME__> _SnapshotModelTypeInfo =>
-      _snapshotModelTypeInfo ??= (global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<__MODEL_TYPE_NAME__>)
-          global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(__MODEL_TYPE_NAME__));
+  private static global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<TModel>? _snapshotModelTypeInfo;
+  private static global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<TModel> _SnapshotModelTypeInfo =>
+      _snapshotModelTypeInfo ??= (global::System.Text.Json.Serialization.Metadata.JsonTypeInfo<TModel>)
+          global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(TModel));
 
   // Write: serialize the model with the current serialization logic, then stamp it with the
   // current serialization version so a future reader knows which implementation wrote it.
-  private static JsonDocument ToSnapshotJson(__MODEL_TYPE_NAME__ model) {
+  private static JsonDocument ToSnapshotJson(TModel model) {
     using var modelDoc = JsonSerializer.SerializeToDocument(model, _SnapshotModelTypeInfo);
     return global::Whizbang.Core.Perspectives.SnapshotEnvelope.Wrap(
         modelDoc.RootElement, global::Whizbang.Core.Serialization.SerializationVersion.CURRENT);
@@ -3582,7 +3608,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   // Read: if the stored serialization version matches, deserialize the model; otherwise apply the
   // configured SnapshotUpgradePolicy. Returns null to signal "rebuild from events" (the caller
   // then falls back to a full replay, exactly as if no snapshot existed).
-  private __MODEL_TYPE_NAME__? FromSnapshotJson(JsonDocument doc) {
+  private TModel? FromSnapshotJson(JsonDocument doc) {
     var policy = _snapshotOptions?.Value.UpgradePolicy
         ?? global::Whizbang.Core.Perspectives.SnapshotUpgradePolicy.RebuildFromEvents;
     var result = global::Whizbang.Core.Perspectives.SnapshotEnvelope.Read(

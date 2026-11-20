@@ -74,7 +74,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.PerspectiveStageSends;
 /// <code-under-test>src/Whizbang.Core/Dispatcher.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/PerspectiveWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Lifecycle/LifecycleTrackingState.cs</code-under-test>
-/// <code-under-test>src/Whizbang.Generators/Templates/PerspectiveRunnerTemplate.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Generators/Templates/PerspectiveRunnerBaseTemplate.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard5")]
 public class PerspectiveStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
