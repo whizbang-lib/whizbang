@@ -171,6 +171,30 @@ public class PurgedRowEphemeralHistorySqlTests : EFCoreTestBase {
       .Because("the destruction hook is offered exactly what the reap deletes");
   }
 
+  /// <summary>
+  /// #2296: the target names the reap boundary, the last body (by version) the cycle is about to reap, so the bootstrap
+  /// is taken through it rather than at the cursor. A body still inside its grace window is not about to be reaped.
+  /// </summary>
+  [Test]
+  public async Task PairsNeedingSnapshot_NameTheReapBoundary_TheLastBodyAboutToBeReaped_NotTheCursorAsync() {
+    await using var conn = await _openAsync();
+    await using var dbContext = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      dbContext, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+    var (stream, _, _, cursorEvent) = await _resurrectedStreamWithAStaleMarkerAsync(conn);
+    await _executeAsync(conn, "DELETE FROM wh_stream_purge_markers WHERE stream_id = @s", ("s", stream));
+    var ids = await _idsByVersionAsync(conn, stream);
+    // The cursor's event is still inside its grace window (stamped in the future on the database's clock).
+    await _executeAsync(conn, "UPDATE wh_event_store SET created_at = NOW() + INTERVAL '1 hour' WHERE event_id = @id", ("id", cursorEvent));
+
+    var target = (await coordinator.GetEphemeralPairsNeedingSnapshotAsync())
+      .Single(t => t.StreamId == stream && t.PerspectiveName == PERSPECTIVE);
+
+    await Assert.That(target.LastEventId).IsEqualTo(cursorEvent);
+    await Assert.That(target.BoundaryEventId).IsEqualTo(ids[1])
+      .Because("the boundary is the last body past its grace, not the cursor's event");
+  }
+
   // ---------------------------------------------------------------------------------------------
   // The purge removes the row's cursor and snapshots
 
@@ -383,6 +407,17 @@ public class PurgedRowEphemeralHistorySqlTests : EFCoreTestBase {
       ("s", stream), ("p", PERSPECTIVE), ("e", ids[2]));
     await _markPurgedAsync(conn, stream, PERSPECTIVE, ids[1]);
     return (stream, ids[0], ids[1], ids[2]);
+  }
+
+  private static async Task<List<Guid>> _idsByVersionAsync(NpgsqlConnection conn, Guid stream) {
+    await using var cmd = new NpgsqlCommand("SELECT event_id FROM wh_event_store WHERE stream_id = @s ORDER BY version", conn);
+    cmd.Parameters.AddWithValue("s", stream);
+    var ids = new List<Guid>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      ids.Add(reader.GetGuid(0));
+    }
+    return ids;
   }
 
   private static async Task _markPurgedAsync(NpgsqlConnection conn, Guid stream, string perspective, Guid? purgeEventId) {

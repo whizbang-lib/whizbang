@@ -4220,11 +4220,17 @@ public sealed record PerspectiveTableName(string ClrTypeName, string TableName);
 
 /// <summary>
 /// A <c>(stream, perspective)</c> pair that must be snapshotted before the reaper deletes its consumed,
-/// aged ephemeral bodies — carrying the perspective cursor's last processed event id to snapshot at (the
-/// current authoritative model through that point becomes the rewind floor).
+/// aged ephemeral bodies — carrying the perspective cursor's last processed event id and the reap boundary, the last
+/// body (by version) the cycle is about to reap (#2296). The snapshot is taken through the boundary, so a late event
+/// below the cursor but above the boundary still finds a rewind floor.
 /// </summary>
-/// <docs>fundamentals/events/ephemeral-events</docs>
-public sealed record EphemeralSnapshotTarget(Guid StreamId, string PerspectiveName, Guid LastEventId);
+/// <param name="StreamId">The stream.</param>
+/// <param name="PerspectiveName">The perspective whose rewind floor the snapshot is.</param>
+/// <param name="LastEventId">The cursor's last processed event.</param>
+/// <param name="BoundaryEventId">The last body the cycle is about to reap, or null when the reader does not say; the
+/// bootstrap is then taken at the cursor.</param>
+/// <docs>fundamentals/events/ephemeral-events#the-reap-boundary-snapshot</docs>
+public sealed record EphemeralSnapshotTarget(Guid StreamId, string PerspectiveName, Guid LastEventId, Guid? BoundaryEventId = null);
 
 /// <summary>
 /// Result of the tier-2 ancient-ephemeral-pointer prune
