@@ -3426,40 +3426,20 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // Every event up to the boundary, in the order a replay folds them (#2379).
     var through = global::Whizbang.Core.Perspectives.ReplayEventOrder.Order(
         [.. read.Where(e => e.LocalStreamVersion is long version && version <= boundaryVersion)]);
-    var perspective = _serviceProvider.GetRequiredService<__PERSPECTIVE_CLASS_NAME__>();
-    var producedByApply = model is not null;
-    var purged = model is null && await _isPurgedAsync(streamId, perspectiveName, cancellationToken);
-    model ??= CreateEmptyModel(streamId);
-    foreach (var envelope in through) {
-      if (purged) {
-        if (TryResurrect(perspective, streamId, envelope.Payload, envelope.IsFirstInLocalStream) is { } resurrected) {
-          purged = false;
-          model = resurrected;
-          producedByApply = true;
-        }
-        continue;
-      }
-      __MODEL_TYPE_NAME__? applied;
-      global::Whizbang.Core.Perspectives.ModelAction action;
-      try {
-        (applied, action) = ApplyEvent(perspective, model, envelope.Payload, envelope.IsFirstInLocalStream);
-      } catch (Exception applyEx) when (applyEx is not OperationCanceledException) {
-        // The live apply skips an event whose Apply throws, so the row never held it; neither does the snapshot.
-        _logger.LogDebug(applyEx, "Apply of {EventType} threw while folding {PerspectiveName} stream {StreamId} to its reap boundary; the event is skipped, as the live apply skipped it",
-            envelope.Payload.GetType().Name, perspectiveName, streamId);
-        continue;
-      }
-      if (action == global::Whizbang.Core.Perspectives.ModelAction.Purge) {
-        purged = true;
-        producedByApply = false;
-        model = CreateEmptyModel(streamId);
-        continue;
-      }
-      if (applied is not null) {
-        model = applied;
-        producedByApply = true;
-      }
-    }
+    // The live apply's own fold (#2246), so the boundary model is folded exactly as the row was: a purge stays purged
+    // unless an Apply resurrects it, an Apply that throws is skipped, and a scaffold no Apply returned is no model.
+    var fold = new ApplyState {
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      Perspective = _serviceProvider.GetRequiredService<__PERSPECTIVE_CLASS_NAME__>(),
+      UpdatedModel = model ?? CreateEmptyModel(streamId),
+      HasWrittenUpdate = model is not null,
+      PendingPurge = model is null && await _isPurgedAsync(streamId, perspectiveName, cancellationToken),
+    };
+    _foldEvents(fold, through, enableEventSpans: false, new List<string>(), cancellationToken);
+    var purged = fold.PendingPurge;
+    var producedByApply = fold.HasWrittenUpdate && fold.UpdatedModel is not null;
+    model = fold.UpdatedModel;
     if (purged || !producedByApply) {
       _logger.LogInformation(
           "Bootstrap snapshot of {PerspectiveName} stream {StreamId} through event {BoundaryEventId} not taken: the stream has no row as of that event",
@@ -3468,7 +3448,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     }
 
     var boundaryCommitSequence = await _eventStore.GetCommitSequenceAsync(boundaryEventId, cancellationToken);
-    var snapshotData = ToSnapshotJson(model);
+    var snapshotData = ToSnapshotJson(model!);
     await _snapshotStore.CreateSnapshotAsync(
         streamId, perspectiveName, boundaryEventId, boundaryCommitSequence, snapshotData, null, cancellationToken);
     _logger.LogDebug(
