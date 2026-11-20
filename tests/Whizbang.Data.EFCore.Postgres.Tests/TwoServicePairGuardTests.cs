@@ -99,6 +99,50 @@ public class TwoServicePairGuardTests : EFCoreTestBase {
     await Assert.That(h.ConsumerGuard.Pairs.Single(p => p.Peer == TwoServiceHarness.ORIGIN_NAME).HaltedSince).IsNull();
   }
 
+  /// <summary>
+  /// #2377: a restart during a halt keeps the halted-at time, so the alert after <c>PairGuard:HaltedAlertAfter</c> (two
+  /// hours) fires two hours after the halt began, not two hours after the restart; resuming closes the kept halt.
+  /// </summary>
+  [Test]
+  public async Task ARestartDuringAHalt_KeepsTheHaltedAt_TheAlertFiresOnSchedule_AndTheResumptionIsKeptAsync() {
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 11, 20, 9, 0, 0, TimeSpan.Zero));
+    var consumerRules = new Rules(new TypeRules(SHARED_NAME) { Ephemeral = "WhenConsumed;PersistedRow" });
+    await using var h = await TwoServiceHarness.CreateAsync(ConnectionString, DbContextOptions, [],
+      consumerClock: clock, originRules: _sourced(), consumerRules: consumerRules);
+    var lost = await _loseOneAsync(h);
+    await h.AuditAsync(TwoServiceAudit.TypesWindowed, SHARED);
+    var haltedAt = h.ConsumerGuard.Pairs.Single(p => p.Peer == TwoServiceHarness.ORIGIN_NAME).HaltedSince;
+    await Assert.That(haltedAt).IsEqualTo(clock.GetUtcNow()).Because("positive control: the pair halted");
+
+    clock.Advance(TimeSpan.FromMinutes(90));
+    await h.RestartConsumerAsync();
+    await h.AuditAsync(TwoServiceAudit.TypesWindowed, SHARED);
+
+    var afterRestart = h.ConsumerGuard.Pairs.Single(p => p.Peer == TwoServiceHarness.ORIGIN_NAME);
+    await Assert.That(afterRestart.HaltedSince).IsEqualTo(haltedAt)
+      .Because("the halt began before the restart, and the store kept when");
+    await Assert.That(afterRestart.Alerted).IsFalse().Because("90 minutes is under the two-hour threshold");
+
+    clock.Advance(TimeSpan.FromMinutes(31));
+    await h.AuditAsync(TwoServiceAudit.TypesWindowed, SHARED);
+
+    await Assert.That(h.ConsumerGuard.Pairs.Single(p => p.Peer == TwoServiceHarness.ORIGIN_NAME).Alerted).IsTrue()
+      .Because("two hours after the halt began, although only 61 minutes after the restart");
+    await Assert.That(await TwoServiceHarness.CountAsync(h.Consumer,
+        "SELECT COUNT(*) FROM wh_integrity_pair_halts WHERE peer = @peer AND alerted_at IS NOT NULL AND resumed_at IS NULL",
+        ("peer", TwoServiceHarness.ORIGIN_NAME)))
+      .IsEqualTo(1L);
+
+    consumerRules.Types[SHARED_NAME] = new TypeRules(SHARED_NAME);
+    await h.AuditAsync(TwoServiceAudit.TypesWindowed, SHARED);
+
+    await Assert.That(await h.ConsumerHoldsAsync(lost)).IsTrue().Because("the pair resumed and repaired the loss");
+    await Assert.That(await TwoServiceHarness.CountAsync(h.Consumer,
+        "SELECT COUNT(*) FROM wh_integrity_pair_halts WHERE peer = @peer AND resumed_at = @at",
+        ("peer", TwoServiceHarness.ORIGIN_NAME), ("at", clock.GetUtcNow())))
+      .IsEqualTo(1L).Because("the history keeps when the pair resumed");
+  }
+
   [Test]
   public async Task AConsumerWithNoFingerprint_IsNotAnswered_AndThePairIsHaltedAsync() {
     await using var h = await TwoServiceHarness.CreateAsync(ConnectionString, DbContextOptions, [],

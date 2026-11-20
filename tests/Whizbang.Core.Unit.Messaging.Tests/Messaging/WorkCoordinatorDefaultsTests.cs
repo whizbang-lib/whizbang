@@ -843,6 +843,21 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task IntegrityPairHalts_WithoutProviderSupport_KeepNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+    var halt = new IntegrityPairHaltRecord("peer-svc", IntegrityPairSide.Origin, Whizbang.Rules.RulePairHaltReason.NoFingerprint,
+      [], 1, 1, "local", null, null, null, DateTimeOffset.UnixEpoch, null);
+
+    var loaded = await coordinator.IntegrityLoadPairHaltsAsync();
+    var kept = await coordinator.IntegrityRecordPairHaltAsync(halt);
+    await coordinator.IntegrityRecordPairHaltAlertAsync("peer-svc", IntegrityPairSide.Origin, DateTimeOffset.UnixEpoch);
+    await coordinator.IntegrityRecordPairResumedAsync("peer-svc", IntegrityPairSide.Origin, DateTimeOffset.UnixEpoch);
+
+    await Assert.That(loaded).IsNull().Because("#2377: an engine without the table keeps no halts, so the guard keeps them in memory");
+    await Assert.That(kept).IsNull();
+  }
+
+  [Test]
   public async Task GetIntegritySettledMaxAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
