@@ -124,6 +124,51 @@ public class PerspectiveCursorAdvanceSqlTests : EFCoreTestBase {
       .Because("the cursor never passes an event still pending for the perspective");
   }
 
+  /// <summary>
+  /// #2432: the worker reports a run's cursor and retires its work rows through one channel that the flusher cuts by
+  /// size and time, so the cursor can reach <c>complete_perspective</c> in an earlier flush than the rows. The rows of
+  /// the very events the run applied were then still pending, the gap gate held the cursor before them, and the later
+  /// flush that retired them carried no cursor: a stream with no further event kept a cursor naming an event its
+  /// perspective had passed. Measured on a deployment: 104 cursors parked on the older copy of a superseded key.
+  /// </summary>
+  [Test]
+  public async Task CompletePerspective_TheCursorFlushedBeforeItsWork_MovesToTheReportedEventAsync() {
+    await using var conn = await _openAsync();
+    var stream = TrackedGuid.New();
+    var events = await _appendAsync(conn, stream, 3);
+    await _completeAsync(_completion(stream, events[0]));
+    var work = new[] { await _pendingAsync(conn, stream, events[1]), await _pendingAsync(conn, stream, events[2]) };
+
+    await _completeAsync(_completion(stream, events[2]) with { ProcessedEventIds = [events[1], events[2]] });
+
+    await Assert.That(await _cursorAsync(conn, stream)).IsEqualTo(events[2])
+      .Because("the rows still pending are those of the events this run reports it applied; they are not a gap");
+
+    await using (var dbContext = CreateDbContext()) {
+      var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
+      await coordinator.CompletePerspectiveAsync(cursors: [], eventWorkIds: work, debugMode: false);
+    }
+    await Assert.That(await _cursorAsync(conn, stream)).IsEqualTo(events[2])
+      .Because("the later flush retires the rows and leaves the cursor where the run put it");
+  }
+
+  [Test]
+  public async Task CompletePerspective_APendingEventTheRunDidNotReport_StillHoldsTheCursorBeforeItAsync() {
+    // The control for #2432: only the run's own events are exempt from the gap gate. Event 2 is pending and the run
+    // reports only event 3, so the cursor stays before event 2.
+    await using var conn = await _openAsync();
+    var stream = TrackedGuid.New();
+    var events = await _appendAsync(conn, stream, 3);
+    await _completeAsync(_completion(stream, events[0]));
+    _ = await _pendingAsync(conn, stream, events[1]);
+    _ = await _pendingAsync(conn, stream, events[2]);
+
+    await _completeAsync(_completion(stream, events[2]) with { ProcessedEventIds = [events[2]] });
+
+    await Assert.That(await _cursorAsync(conn, stream)).IsEqualTo(events[0])
+      .Because("an event still pending that the run never reported is a gap, and the cursor never passes one");
+  }
+
   [Test]
   public async Task CompletePerspective_ADroppedStragglersWork_RetiresItClearsTheRewindFlagAndLeavesTheCursorAsync() {
     // #1862: what the worker sends once an ephemeral perspective drops a late event it cannot rewind for: the event's
@@ -203,6 +248,19 @@ public class PerspectiveCursorAdvanceSqlTests : EFCoreTestBase {
       await cmd.ExecuteNonQueryAsync();
     }
     return ids;
+  }
+
+  private static async Task<Guid> _pendingAsync(NpgsqlConnection conn, Guid stream, Guid eventId) {
+    var work = (Guid)TrackedGuid.New();
+    await using var cmd = new NpgsqlCommand(
+      "INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at) "
+      + "VALUES (@w, @s, @p, @e, 0, 0, NOW())", conn);
+    cmd.Parameters.AddWithValue("w", work);
+    cmd.Parameters.AddWithValue("s", stream);
+    cmd.Parameters.AddWithValue("p", PERSPECTIVE);
+    cmd.Parameters.AddWithValue("e", eventId);
+    await cmd.ExecuteNonQueryAsync();
+    return work;
   }
 
   private static async Task<Guid?> _cursorAsync(NpgsqlConnection conn, Guid stream) {
