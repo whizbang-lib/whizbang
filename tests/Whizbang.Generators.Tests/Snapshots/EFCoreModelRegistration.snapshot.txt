@@ -444,7 +444,7 @@ public static class GeneratedModelRegistration {
         Whizbang.Data.EFCore.Postgres.QueryTranslation.StreamIdRegistry.Register<global::TestApp.CaseModel>("Id");
         Whizbang.Data.EFCore.Postgres.QueryTranslation.StreamIdRegistry.Register<global::TestApp.OrderModel>("Id");
         // WORKAROUND(dotnet/efcore#38625): EF Core 10 ComplexProperty().ToJson() materializes JSON-absent
-        // complex collections as null (old-shape rows after schema evolution) — coalesce to empty on
+        // complex collections as null (old-shape rows after schema evolution); coalesce to empty on
         // materialization so reads don't NRE and tracked saves pass PrepareToSave. Remove when fixed upstream (dotnet/efcore#39014).
         Whizbang.Data.EFCore.Postgres.PerspectiveDataCoalescer.Register(typeof(global::Whizbang.Core.Lenses.PerspectiveRow<global::TestApp.ItemModel>), entity => {
           var row = (global::Whizbang.Core.Lenses.PerspectiveRow<global::TestApp.ItemModel>)entity;
@@ -452,7 +452,7 @@ public static class GeneratedModelRegistration {
         });
 
         // WORKAROUND(dotnet/efcore#38625): EF Core 10 ComplexProperty().ToJson() materializes JSON-absent
-        // complex collections as null (old-shape rows after schema evolution) — coalesce to empty on
+        // complex collections as null (old-shape rows after schema evolution); coalesce to empty on
         // materialization so reads don't NRE and tracked saves pass PrepareToSave. Remove when fixed upstream (dotnet/efcore#39014).
         Whizbang.Data.EFCore.Postgres.PerspectiveDataCoalescer.Register(typeof(global::Whizbang.Core.Lenses.PerspectiveRow<global::TestApp.TicketModel>), entity => {
           var row = (global::Whizbang.Core.Lenses.PerspectiveRow<global::TestApp.TicketModel>)entity;
@@ -460,7 +460,7 @@ public static class GeneratedModelRegistration {
         });
 
         // WORKAROUND(dotnet/efcore#38625): EF Core 10 ComplexProperty().ToJson() materializes JSON-absent
-        // complex collections as null (old-shape rows after schema evolution) — coalesce to empty on
+        // complex collections as null (old-shape rows after schema evolution); coalesce to empty on
         // materialization so reads don't NRE and tracked saves pass PrepareToSave. Remove when fixed upstream (dotnet/efcore#39014).
         Whizbang.Data.EFCore.Postgres.PerspectiveDataCoalescer.Register(typeof(global::Whizbang.Core.Lenses.PerspectiveRow<global::TestApp.CaseModel>), entity => {
           var row = (global::Whizbang.Core.Lenses.PerspectiveRow<global::TestApp.CaseModel>)entity;
@@ -468,7 +468,7 @@ public static class GeneratedModelRegistration {
         });
 
         // WORKAROUND(dotnet/efcore#38625): EF Core 10 ComplexProperty().ToJson() materializes JSON-absent
-        // complex collections as null (old-shape rows after schema evolution) — coalesce to empty on
+        // complex collections as null (old-shape rows after schema evolution); coalesce to empty on
         // materialization so reads don't NRE and tracked saves pass PrepareToSave. Remove when fixed upstream (dotnet/efcore#39014).
         Whizbang.Data.EFCore.Postgres.PerspectiveDataCoalescer.Register(typeof(global::Whizbang.Core.Lenses.PerspectiveRow<global::TestApp.OrderModel>), entity => {
           var row = (global::Whizbang.Core.Lenses.PerspectiveRow<global::TestApp.OrderModel>)entity;
@@ -527,7 +527,7 @@ public static class GeneratedModelRegistration {
       services.RemoveAll<Npgsql.NpgsqlDataSource>();
 
       // Register NpgsqlDataSource via a singleton factory. IConfiguration is
-      // resolved from the REAL provider's `sp` when the factory runs — no temp
+      // resolved from the REAL provider's `sp` when the factory runs: no temp
       // container, no host ConfigurationManager disposal, IOptionsMonitor /
       // IFeatureManager / appsettings reloadOnChange / AAC refresh all stay alive.
       services.AddSingleton<Npgsql.NpgsqlDataSource>(sp => {
@@ -583,11 +583,11 @@ public static class GeneratedModelRegistration {
 
       // DbContext registration resolves the NpgsqlDataSource via `sp` at build time
       // ((sp, options) AddDbContext overload). Defers all dependency resolution to
-      // the real provider — no temp container, no CM disposal.
+      // the real provider: no temp container, no CM disposal.
       services.AddDbContext<global::TestApp.TestDbContext>((sp, options) => {
         options.UseNpgsql(sp.GetRequiredService<Npgsql.NpgsqlDataSource>(), npgsqlOptions => {
           npgsqlOptions.UseVector();
-          // Whizbang custom function translators (JsonbSet, etc.) — required for collective-apply ExecuteUpdate.
+          // Whizbang custom function translators (JsonbSet, etc.), required for collective-apply ExecuteUpdate.
           npgsqlOptions.UseWhizbangFunctions();
           npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);
         });
@@ -643,7 +643,7 @@ public static class GeneratedModelRegistration {
         var initOptionsBuilder = new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<global::TestApp.TestDbContext>();
         initOptionsBuilder.UseNpgsql(initDataSource, npgsqlOptions => {
           npgsqlOptions.UseVector();
-          // Whizbang custom function translators (JsonbSet, etc.) — required for collective-apply ExecuteUpdate.
+          // Whizbang custom function translators (JsonbSet, etc.), required for collective-apply ExecuteUpdate.
           npgsqlOptions.UseWhizbangFunctions();
           npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);
         });

@@ -362,4 +362,104 @@ __PHYSICAL_FIELD_CONFIGS__
     });
     #endregion
   }
+
+  /// <summary>
+  /// The registration block of one DbContext group (#2382), one snippet per registration kind. A line that is only a
+  /// comment naming a marker (<c>// __GROUP_BODY__</c>, <c>// __COLUMN_COPY__</c>, <c>// __COALESCE_BODY__</c>,
+  /// <c>// __TABLE_NAME_ENTRIES__</c>) is replaced by the lines the generator builds for it.
+  /// Placeholders: __DBCONTEXT_CLASS__, __KEYS__, __DBCONTEXT_FQN__, __MODEL_TYPE__, __PROPERTY_NAME__, __COLUMN_NAME__,
+  /// __IS_VECTOR__, __INDEX_KINDS__, __TABLE_NAME__, __COLUMNS__, __STREAM_ID_PROPERTY__, __MODEL_NAMES__,
+  /// __CONSUMER_CLASS__, __TYPE_ARGS__, __COMMA__, __SCHEMA_REQUIREMENTS__, __SCHEMA_LITERAL__, __SCHEMA_EXTENSIONS__
+  /// </summary>
+  public void RegisterDbContextGroup(IServiceCollection services, Type dbContextType) {
+    #region REGISTER_DBCONTEXT_GROUP_SNIPPET
+    // __DBCONTEXT_CLASS__ (keys: [__KEYS__])
+    if (dbContextType == typeof(__DBCONTEXT_FQN__)) {
+      // __GROUP_BODY__
+    }
+    #endregion
+
+    #region REGISTER_PHYSICAL_FIELD_SNIPPET
+    Whizbang.Data.EFCore.Postgres.QueryTranslation.PhysicalFieldRegistry.Register<__MODEL_TYPE__>("__PROPERTY_NAME__", "__COLUMN_NAME__", isVector: __IS_VECTOR__);
+    #endregion
+
+    #region REGISTER_SEARCH_FIELD_SNIPPET
+    Whizbang.Data.EFCore.Postgres.QueryTranslation.JsonIndexRegistry.Register<__MODEL_TYPE__>("__PROPERTY_NAME__", Whizbang.Core.Perspectives.IndexKinds.Search);
+    #endregion
+
+    #region REGISTER_JSON_INDEX_SNIPPET
+    Whizbang.Data.EFCore.Postgres.QueryTranslation.JsonIndexRegistry.Register<__MODEL_TYPE__>("__PROPERTY_NAME__", __INDEX_KINDS__);
+    Whizbang.Data.EFCore.Postgres.QueryTranslation.JsonIndexRegistry.RegisterForTable("__TABLE_NAME__", "__PROPERTY_NAME__", __INDEX_KINDS__);
+    #endregion
+
+    #region REGISTER_MATERIALIZATION_HYDRATOR_SNIPPET
+    // Register physical field hydrator for __MODEL_TYPE__
+    Whizbang.Data.EFCore.Postgres.PhysicalFieldHydratorRegistry.Register<__MODEL_TYPE__>((materializationData, entity) => {
+      var row = (global::Whizbang.Core.Lenses.PerspectiveRow<__MODEL_TYPE__>)entity;
+      if (row.Data is null) return; // ComplexProperty().ToJson() materializes Data after InitializedInstance
+      // __COLUMN_COPY__
+    });
+    #endregion
+
+    #region REGISTER_CHANGE_TRACKER_HYDRATOR_SNIPPET
+    // Register ChangeTracker-based hydrator for __MODEL_TYPE__ (zero reflection, AOT-safe)
+    Whizbang.Data.EFCore.Postgres.SplitModeChangeTrackerHydrator.Register(typeof(global::Whizbang.Core.Lenses.PerspectiveRow<__MODEL_TYPE__>), entry => {
+      var row = (global::Whizbang.Core.Lenses.PerspectiveRow<__MODEL_TYPE__>)entry.Entity;
+      if (row.Data is null) { return; }
+      // __COLUMN_COPY__
+      entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;
+    });
+    #endregion
+
+    #region REGISTER_SPLIT_DOCUMENT_SNIPPET
+    // Register the Split document projection for __MODEL_TYPE__ (zero reflection, AOT-safe)
+    Whizbang.Data.EFCore.Postgres.SplitDocumentRegistry.Register<__MODEL_TYPE__>(
+      r => Whizbang.Data.EFCore.Postgres.SplitDocumentRegistry.WithColumns(r.Data, new object?[] { __COLUMNS__ }),
+      (data, columns) => {
+      var row = new Whizbang.Data.EFCore.Postgres.SplitDocumentRegistry.Document<__MODEL_TYPE__>(data);
+      // __COLUMN_COPY__
+      return row.Data;
+    });
+    #endregion
+
+    #region REGISTER_STREAM_ID_SNIPPET
+    Whizbang.Data.EFCore.Postgres.QueryTranslation.StreamIdRegistry.Register<__MODEL_TYPE__>("__STREAM_ID_PROPERTY__");
+    #endregion
+
+    #region REGISTER_DATA_COALESCER_SNIPPET
+    // WORKAROUND(dotnet/efcore#38625): EF Core 10 ComplexProperty().ToJson() materializes JSON-absent
+    // complex collections as null (old-shape rows after schema evolution); coalesce to empty on
+    // materialization so reads don't NRE and tracked saves pass PrepareToSave. Remove when fixed upstream (dotnet/efcore#39014).
+    Whizbang.Data.EFCore.Postgres.PerspectiveDataCoalescer.Register(typeof(global::Whizbang.Core.Lenses.PerspectiveRow<__MODEL_TYPE__>), entity => {
+      var row = (global::Whizbang.Core.Lenses.PerspectiveRow<__MODEL_TYPE__>)entity;
+      if (row.Scope is not null) { row.Scope.Extensions ??= new global::System.Collections.Generic.List<global::Whizbang.Core.Lenses.ScopeExtension>(); }
+      // __COALESCE_BODY__
+    });
+    #endregion
+
+    #region REGISTER_MULTI_LENS_QUERY_SNIPPET
+    // Auto-detected: ILensQuery<__MODEL_NAMES__> (from __CONSUMER_CLASS__)
+    services.AddTransient<Whizbang.Core.Lenses.ILensQuery<__TYPE_ARGS__>>(sp => {
+      global::Whizbang.Core.Workers.ReadModelsGuard.ThrowIfNotReady(sp);
+      var factory = sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<__DBCONTEXT_FQN__>>();
+      var context = factory.CreateDbContext();
+      var tableNames = new global::System.Collections.Generic.Dictionary<global::System.Type, string> {
+        // __TABLE_NAME_ENTRIES__
+      };
+      var scopeContextAccessor = sp.GetRequiredService<global::Whizbang.Core.Security.IScopeContextAccessor>();
+      var whizbangOptions = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<global::Whizbang.Core.Configuration.WhizbangCoreOptions>>();
+      return new Whizbang.Data.EFCore.Postgres.EFCorePostgresLensQuery<__TYPE_ARGS__>(context, tableNames, scopeContextAccessor, whizbangOptions);
+    });
+    #endregion
+
+    #region REGISTER_MULTI_LENS_TABLE_NAME_SNIPPET
+    [typeof(__MODEL_TYPE__)] = "__TABLE_NAME__"__COMMA__
+    #endregion
+
+    #region REGISTER_MANAGED_OBJECT_MANIFEST_SNIPPET
+    services.TryAddKeyedSingleton<global::Whizbang.Core.Capabilities.ICapabilityRequirementSource>(typeof(__DBCONTEXT_FQN__), new global::Whizbang.Core.Capabilities.FixedCapabilityRequirementSource(__SCHEMA_REQUIREMENTS__));
+    services.TryAddKeyedSingleton<global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest>(typeof(__DBCONTEXT_FQN__), new global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest(
+      typeof(__DBCONTEXT_FQN__), __SCHEMA_LITERAL__, global::__SCHEMA_EXTENSIONS__.GetManagedSchemaObjects));
+    #endregion
+  }
 }

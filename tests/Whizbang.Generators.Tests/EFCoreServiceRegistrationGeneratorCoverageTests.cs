@@ -32,6 +32,7 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
       reported.Add,
       out var infrastructureSnippet,
       out var perspectiveSnippet,
+      out _,
       typeof(object).Assembly);
 
     await Assert.That(loaded).IsFalse()
@@ -76,12 +77,15 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
     var loaded = Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator.TryLoadRegistrationSnippets(
       reported.Add,
       out var infrastructureSnippet,
-      out var perspectiveSnippet);
+      out var perspectiveSnippet,
+      out var blockSnippets);
 
     await Assert.That(loaded).IsTrue();
     await Assert.That(reported).IsEmpty();
     await Assert.That(infrastructureSnippet).IsNotEmpty();
     await Assert.That(perspectiveSnippet).IsNotEmpty();
+    await Assert.That(blockSnippets.All.Where(string.IsNullOrEmpty)).IsEmpty()
+      .Because("#2382: every registration kind of the block comes from a snippet of its own");
   }
 
   // Minimal perspective boilerplate (class model per coverage-test conventions - records
