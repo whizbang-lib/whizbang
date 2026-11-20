@@ -80,4 +80,14 @@ public sealed record PerspectiveRegistrationInfo(
   /// <docs>fundamentals/events/ephemeral-events#allowing-mixed-streams</docs>
   /// <tests>tests/Whizbang.Generators.Tests/MixedStreamAllowanceGeneratorTests.cs:Registry_AReadModelWithoutTheOptIn_CarriesItsPairs_SoTheyStayRefusedAsync</tests>
   public IReadOnlyList<MixedStreamPair> MixedStreamPairs { get; init; } = [];
+
+  /// <summary>
+  /// The event types (runtime form, as the event store names them) whose Apply on this perspective can only purge the
+  /// row, computed by the generator from the Apply bodies, as the runner's terminal-purge rule reads them (#1151). Empty
+  /// when no Apply can only purge. The purge-marker backfill marks a row it finds missing only when its cursor's last
+  /// event is one of these, because only then is the missing row known to be a purge (#2314).
+  /// </summary>
+  /// <docs>fundamentals/perspectives/perspectives-with-actions#purge-stays-purged</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRegistryUnconditionalPurgeTests.cs</tests>
+  public IReadOnlyList<string> UnconditionalPurgeEventTypes { get; init; } = [];
 }
