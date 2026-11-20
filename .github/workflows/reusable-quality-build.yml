@@ -206,7 +206,7 @@ jobs:
         run: dotnet build Whizbang.Analysis.slnx --no-restore --configuration Release -maxcpucount:1 -nodeReuse:false -mt:false -p:WhizbangReleaseTargetFrameworks=net11.0
 
       # The scanner's state for the End step: .sonarqube (its configuration, the per-project file lists and
-      # the analyzers' reports), the scanner version, and this checkout's path, which the state's files name
+      # the analyzers' reports), the scanner version, the cache entries begin downloaded, and this checkout's path, which the state's files name
       # absolutely (some inside binary reports, so they cannot be rewritten). Tarred because upload-artifact
       # silently drops a dot-prefixed directory. The scanner never writes the token to disk; the check below
       # makes sure of it before anything is uploaded.
@@ -222,6 +222,10 @@ jobs:
           fi
           mkdir -p sonar-state
           cp "$RUNNER_TEMP/sonarscanner-version.txt" sonar-state/
+          # The JRE and scanner engine begin downloaded, which the end step runs from the paths the configuration
+          # names: a re-run of only the failed jobs ends the scan on a runner that never had them (#2422).
+          pwsh -NoProfile -File .github/scripts/Copy-SonarScannerCache.ps1 -Action Save \
+            -ConfigPath .sonarqube/conf/SonarQubeAnalysisConfig.xml -CacheRoot "$HOME/.sonar/cache" -StateDir sonar-state
           printf '%s' "$GITHUB_WORKSPACE" > sonar-state/workspace.txt
           tar -czf sonar-state/sonarqube.tgz .sonarqube
           echo "analysis state: $(du -h sonar-state/sonarqube.tgz | cut -f1), checkout $GITHUB_WORKSPACE, scanner $(cat sonar-state/sonarscanner-version.txt)"

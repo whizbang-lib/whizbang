@@ -162,6 +162,15 @@ jobs:
           echo "SONARSCANNER_VERSION=$(cat "$STATE/sonarscanner-version.txt")" >> "$GITHUB_ENV"
           echo "Restored the analysis state begun in $BEGAN with dotnet-sonarscanner $(cat "$STATE/sonarscanner-version.txt")."
 
+      # The JRE and scanner engine begin downloaded, at the paths the configuration names. The shared cache above
+      # may not hold them, and a re-run of only the failed jobs ends the scan without re-running the job that began
+      # it; this restores them from the state, or fails saying a full re-run is needed (#2422).
+      - name: Restore the scanner's downloads
+        if: inputs.sonar
+        env:
+          STATE: ${{ runner.temp }}/sonar-state
+        run: pwsh -NoProfile -File .github/scripts/Copy-SonarScannerCache.ps1 -Action Restore -ConfigPath .sonarqube/conf/SonarQubeAnalysisConfig.xml -StateDir "$STATE"
+
       # One build of a merge-queue group serves every pull request in it: the scan began as the group's
       # first pull request's analysis, and this leg reports it as its own (Set-SonarPullRequest.ps1).
       - name: Point the analysis at this pull request
