@@ -162,6 +162,7 @@ WHIZ605 | active | Whizbang.TestAnalyzers | A test class in a sharded project mu
 WHIZ606 | active | Whizbang.RepoAnalyzers | A credential-named settings property is a plain string
 WHIZ607 | active | Whizbang.RepoAnalyzers | A type name is read outside the shared naming code
 WHIZ608 | active | Whizbang.RepoAnalyzers | A type-naming exception does not say why
+WHIZ609 | active | Whizbang.TestAnalyzers | A fixture with an [After(Test)] hook must not also be disposable
 WHIZ701 | active | Whizbang.Data.EFCore.Postgres.Generators | EF Core Perspective Discovery
 WHIZ702 | active | Whizbang.Data.EFCore.Postgres.Generators | EF Core Migration Files Discovery
 WHIZ703 | active | Whizbang.Data.EFCore.Postgres.Generators | No DbContext Found
