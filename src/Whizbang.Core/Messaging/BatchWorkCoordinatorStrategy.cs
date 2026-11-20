@@ -351,7 +351,9 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
           _logger, _tracingOptions, _lifecycleMetrics,
           WorkChannelWriter: _workChannelWriter, PendingAuditMessages: null,
           SkipLifecycle: skipLifecycle,
-          Metrics: _metrics, Strategy: STRATEGY_NAME, DetachedWork: _detachedWork),
+          Metrics: _metrics, Strategy: STRATEGY_NAME, DetachedWork: _detachedWork,
+          // #2313: this flush carries many callers' queued messages, so a pre-store refusal costs only its own message
+          IsolatePreStoreFailures: true),
         ct
       );
 
