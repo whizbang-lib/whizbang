@@ -2027,7 +2027,9 @@ jobs:
     # passes it, which is how the merge-back read an empty client id on every stable release until #1796.
     environment: release-app
     needs: [version, release-guard, release-publish]
-    if: needs.release-publish.result == 'success' && needs.release-guard.outputs.line == 'older'
+    # !cancelled(): release-publish runs past skipped suites on a proven path, and without a status function this
+    # job would skip with them (#2443).
+    if: ${{ !cancelled() && needs.release-publish.result == 'success' && needs.release-guard.outputs.line == 'older' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read          # everything that writes goes through the release app's token
@@ -2105,7 +2107,9 @@ jobs:
       contents: read
     # merge_group is deliberately NOT excluded. A failure on the queue's run dequeues the pull
     # request, and nothing else tells you the merge you were waiting on is not going to happen.
-    if: needs.ci-result.result == 'failure' && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/v') && vars.PUSHOVER_ENABLED == 'true'
+    # !cancelled(): without a status function the implicit success() is false exactly when ci-result failed, so this
+    # job never ran (#2443).
+    if: ${{ !cancelled() && needs.ci-result.result == 'failure' && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/v') && vars.PUSHOVER_ENABLED == 'true' }}
     uses: ./.github/workflows/notify-build-status.yml
     with:
       status: failure
