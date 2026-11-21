@@ -29,6 +29,8 @@ public class CatalogRuleFingerprintSourceTests {
     public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => entries;
   }
 
+  private static readonly IOptions<RetiredEventTypesOptions> _noneRetired = Options.Create(new RetiredEventTypesOptions());
+
   private static MessageTypeCatalogEntry _event(Type type) =>
     new(type, TypeNameFormatter.FormatClrTypeName(type), "event", null);
 
@@ -36,7 +38,7 @@ public class CatalogRuleFingerprintSourceTests {
   public async Task For_CoversTheNamedTypesItKnows_InAnyForm_AndLeavesOutTheRestAsync() {
     var source = new CatalogRuleFingerprintSource(new Catalog(_event(typeof(Placed)), _event(typeof(Pinged)),
       new MessageTypeCatalogEntry(typeof(Ship), TypeNameFormatter.FormatClrTypeName(typeof(Ship)), "command", null)),
-      Options.Create(new StreamLifecycleOptions()));
+      Options.Create(new StreamLifecycleOptions()), _noneRetired);
 
     var rules = source.RulesFor([TypeNameFormatter.Format(typeof(Placed)), "Contracts.Unknown, Contracts"]);
 
@@ -58,7 +60,7 @@ public class CatalogRuleFingerprintSourceTests {
     var lifecycle = new StreamLifecycleOptions();
     lifecycle.Types[_placed] = new StreamTypeLifecycleOptions { Action = StreamLifecycleAction.Purge };
 
-    var rules = CatalogRuleFingerprintSource.RulesOf(catalog, lifecycle);
+    var rules = CatalogRuleFingerprintSource.RulesOf(catalog, lifecycle, new RetiredEventTypesOptions());
 
     await Assert.That(rules[_placed]).IsEqualTo(new TypeRules(_placed) {
       Ephemeral = $"{Destruction.WhenConsumed};{TransientStorage.PersistedRow}",
@@ -68,7 +70,7 @@ public class CatalogRuleFingerprintSourceTests {
     });
     await Assert.That(rules[_pinged]).IsEqualTo(new TypeRules(_pinged));
     await Assert.That(rules[TypeNameFormatter.FormatClrTypeName(typeof(EventAudited))].DigestExempt).IsTrue();
-    await Assert.That(CatalogRuleFingerprintSource.RulesOf(catalog, null)[_placed].EndOfLife).IsNull()
+    await Assert.That(CatalogRuleFingerprintSource.RulesOf(catalog, null, new RetiredEventTypesOptions())[_placed].EndOfLife).IsNull()
       .Because("with no lifecycle settings a type has no end-of-life action");
   }
 
@@ -76,15 +78,54 @@ public class CatalogRuleFingerprintSourceTests {
   public async Task For_ReflectsTheLifecycleSettings_AndTheEmptySourceKnowsNoTypeAsync() {
     var lifecycle = new StreamLifecycleOptions();
     lifecycle.Types[_placed] = new StreamTypeLifecycleOptions { Action = StreamLifecycleAction.Purge };
-    var withPolicy = new CatalogRuleFingerprintSource(new Catalog(_event(typeof(Placed))), Options.Create(lifecycle));
-    var without = new CatalogRuleFingerprintSource(new Catalog(_event(typeof(Placed))), Options.Create(new StreamLifecycleOptions()));
+    var withPolicy = new CatalogRuleFingerprintSource(new Catalog(_event(typeof(Placed))), Options.Create(lifecycle), _noneRetired);
+    var without = new CatalogRuleFingerprintSource(new Catalog(_event(typeof(Placed))), Options.Create(new StreamLifecycleOptions()), _noneRetired);
 
     await Assert.That(withPolicy.RulesFor([_placed]).TypeHashes[_placed]).IsNotEqualTo(without.RulesFor([_placed]).TypeHashes[_placed]);
     await Assert.That(CatalogRuleFingerprintSource.Empty.RulesFor([_placed]).TypeHashes).IsEmpty();
-    await Assert.That(() => new CatalogRuleFingerprintSource(null!, Options.Create(lifecycle))).Throws<ArgumentNullException>();
-    await Assert.That(() => new CatalogRuleFingerprintSource(new Catalog(_event(typeof(Placed))), null!)).Throws<ArgumentNullException>()
+    await Assert.That(() => new CatalogRuleFingerprintSource(null!, Options.Create(lifecycle), _noneRetired)).Throws<ArgumentNullException>();
+    await Assert.That(() => new CatalogRuleFingerprintSource(new Catalog(_event(typeof(Placed))), null!, _noneRetired)).Throws<ArgumentNullException>()
       .Because("the lifecycle settings are a required dependency: a construction site that drops them fails loudly");
-    await Assert.That(() => CatalogRuleFingerprintSource.RulesOf(null!, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => CatalogRuleFingerprintSource.RulesOf(null!, null, new RetiredEventTypesOptions())).Throws<ArgumentNullException>();
+    // #2329: the retired setting is required too, so a construction site that drops it fails loudly.
+    await Assert.That(() => new CatalogRuleFingerprintSource(new Catalog(_event(typeof(Placed))), Options.Create(lifecycle), null!))
+      .Throws<ArgumentNullException>();
+    await Assert.That(() => CatalogRuleFingerprintSource.RulesOf(new Catalog(), null, null!)).Throws<ArgumentNullException>();
     await Assert.That(RuleTypeName.Of("global::Contracts.Placed, Contracts ")).IsEqualTo("Contracts.Placed");
+  }
+
+  /// <summary>
+  /// #2329: a retired type is no longer in the catalog (the application deleted it), so its rule comes from configuration:
+  /// the source covers it, as retired, and a peer that has not retired it holds a different hash for it.
+  /// </summary>
+  [Test]
+  public async Task For_CoversEachRetiredName_AsRetired_ThoughTheCatalogNoLongerDeclaresItAsync() {
+    var retired = new RetiredEventTypesOptions { Names = { "Contracts.CouponIssued, Contracts" } };
+    var source = new CatalogRuleFingerprintSource(new Catalog(_event(typeof(Placed))), Options.Create(new StreamLifecycleOptions()),
+      Options.Create(retired));
+
+    var rules = source.RulesFor(["Contracts.CouponIssued, Contracts", TypeNameFormatter.Format(typeof(Placed))]);
+
+    await Assert.That(rules.TypeHashes.Keys).IsEquivalentTo(["Contracts.CouponIssued", _placed]);
+    await Assert.That(rules.TypeHashes["Contracts.CouponIssued"]).IsEqualTo(new TypeRules("Contracts.CouponIssued") { Retired = true }.Hash());
+    await Assert.That(source.RulesFor(null).TypeHashes.Keys).Contains("Contracts.CouponIssued")
+      .Because("every type this service has a rule for is in its service fingerprint");
+    await Assert.That(CatalogRuleFingerprintSource.RulesOf(new Catalog(), null, retired)["Contracts.CouponIssued"].Retired).IsTrue();
+    await Assert.That(new CatalogRuleFingerprintSource(new Catalog(), Options.Create(new StreamLifecycleOptions()), _noneRetired)
+      .RulesFor(["Contracts.CouponIssued"]).TypeHashes).IsEmpty()
+      .Because("without the retired setting the type is unknown here, so it is not shared");
+  }
+
+  /// <summary>
+  /// Owner decision (2026-11-20): a retired name this service still declares keeps its declared rules here, since the
+  /// service does not retire it; a peer that retired the type then halts the pair for it, which is the visible outcome.
+  /// </summary>
+  [Test]
+  public async Task RulesOf_ARetiredNameTheCatalogStillDeclares_KeepsItsDeclaredRulesAsync() {
+    var retired = new RetiredEventTypesOptions { Names = { _placed } };
+
+    var rules = CatalogRuleFingerprintSource.RulesOf(new Catalog(_event(typeof(Placed))), null, retired);
+
+    await Assert.That(rules[_placed]).IsEqualTo(new TypeRules(_placed));
   }
 }

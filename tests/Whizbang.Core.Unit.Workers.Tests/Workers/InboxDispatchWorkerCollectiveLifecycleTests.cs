@@ -142,7 +142,7 @@ public class InboxDispatchWorkerCollectiveLifecycleTests {
         leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
         // No receptor at the gated inbox stages, so only the post-perspective stages can reach the invoker.
         receptorRegistry: new NoInboxReceptors(),
-        discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+        discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance), global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), global::Whizbang.Core.NullMessageTypeCatalog.Instance),
         runtimeReceptorRegistry: NullReceptorRegistry.Instance,
         deadLetterStore: NullDeadLetterStore.Instance,
         generationProvider: new DefaultGenerationProvider());

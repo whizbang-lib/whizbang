@@ -566,6 +566,9 @@ public static class ServiceCollectionExtensions {
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataDistillationStep>(
       MetadataDistillationStep.FromServices));
     // The maintenance step that converts rows written with full metadata before slim stored metadata (#1727).
+    // #2323: the trim gate, ahead of the history conversion, so the cycle that opens it starts trimming history.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataTrimGateStep>(
+      MetadataTrimGateStep.FromServices));
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
       MetadataHistoryConversionStep.FromServices));
     // #2326: the maintenance step that converts audit records written before the pointer default to the pointer form.
@@ -577,6 +580,9 @@ public static class ServiceCollectionExtensions {
     // #2206: the maintenance step that reclassifies the history an [Ephemeral] type stored before its declaration, opt-in.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, EphemeralHistoryReclassifyStep>(
       EphemeralHistoryReclassifyStep.FromServices));
+    // #2329: the maintenance step that purges the stored events of the retired event types, in bounded batches.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, RetiredEventTypePurgeStep>(
+      RetiredEventTypePurgeStep.FromServices));
     // #2116: the maintenance step that re-attributes stored events recorded under an origin that does not own their type.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MisattributedOriginCorrectionStep>(
       MisattributedOriginCorrectionStep.FromServices));

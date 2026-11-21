@@ -41,4 +41,11 @@ public enum MessageDiscardReason {
   /// configuration mistake somewhere upstream.
   /// </summary>
   DomainNotOwned,
+
+  /// <summary>
+  /// Transport-receive: the payload type is retired (<c>Whizbang:EventStore:RetiredTypes</c>, #2329). Its events are not
+  /// stored again, whatever would otherwise keep them; the maintenance cycle purges those already stored. A sender still
+  /// emitting it has not retired it yet. Information on the first sighting of each type.
+  /// </summary>
+  RetiredType,
 }

@@ -113,7 +113,7 @@ public class PassiveCounterDriftLockTests {
     var recorder = new CounterRecorder(meterName: meter.Name);
     recorder.Start();
 
-    _ = new MessageDiscardPolicy(registry: new NoReceptors(), logger: NullLogger<MessageDiscardPolicy>.Instance, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    _ = new MessageDiscardPolicy(registry: new NoReceptors(), logger: NullLogger<MessageDiscardPolicy>.Instance, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance), retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
     recorder.Collect();
 
     var gates = recorder.Measurements

@@ -40,12 +40,18 @@ public sealed record TypeRules(string TypeName) {
   /// <summary>Whether no integrity digest ever counts the type (the audit system events).</summary>
   public bool DigestExempt { get; init; }
 
+  /// <summary>
+  /// Whether the application deleted the type and declared it retired (#2329): no digest counts it, the receive boundary
+  /// discards it, and maintenance purges its stored events.
+  /// </summary>
+  public bool Retired { get; init; }
+
   /// <summary>The rules as one canonical line: every field, in a fixed order, so equal rules write equal text.</summary>
   /// <returns>The canonical text.</returns>
   public string Canonical() =>
     string.Create(CultureInfo.InvariantCulture,
       $"type={TypeName};ephemeral={Ephemeral};superseding={Superseding};group={SupersedingGroup};key={SupersedingKey};"
-      + $"terminal={Terminal};end_of_life={EndOfLife};digest_exempt={DigestExempt}");
+      + $"terminal={Terminal};end_of_life={EndOfLife};digest_exempt={DigestExempt};retired={Retired}");
 
   /// <summary>The rules' hash: the first 16 lowercase hex digits of the SHA-256 of <see cref="Canonical"/>.</summary>
   /// <returns>The hash.</returns>

@@ -14,9 +14,10 @@ public static class RuleSemantics {
   /// <summary>
   /// The rule-semantics version: what an integrity digest counts and how. Bump it with any change to what a digest
   /// means (a cut that carries its removed part, a superseding key counted once), so a mixed pair during the rollout
-  /// halts instead of repairing losses that are not real.
+  /// halts instead of repairing losses that are not real. Version 3 (#2329): a type declared retired is counted by no
+  /// digest on either side of a pair.
   /// </summary>
-  public const int VERSION = 2;
+  public const int VERSION = 3;
 
   /// <summary>
   /// The version of the SQL eligibility rule (<c>__DIGEST_ELIGIBLE__</c>, <c>__INTEGRITY_COUNTED__</c> and

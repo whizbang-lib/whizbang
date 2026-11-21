@@ -83,6 +83,23 @@ public sealed class ProcessWideOptionsBindingTests {
   }
 
   [Test]
+  public async Task RetiredEventTypes_BindFromTheirSection_AndValidateAtStartupAsync() {
+    await using var provider = _workers(new() {
+      ["Whizbang:EventStore:RetiredTypes:Names:0"] = "MyApp.Orders.CouponIssued",
+      ["Whizbang:EventStore:RetiredTypes:BatchStreams"] = "50",
+      ["Whizbang:EventStore:RetiredTypes:MaxBatchesPerCycle"] = "3",
+    });
+
+    var options = provider.GetRequiredService<IOptions<RetiredEventTypesOptions>>().Value;
+
+    await Assert.That(options.Names).IsEquivalentTo(["MyApp.Orders.CouponIssued"]);
+    await Assert.That(options.BatchStreams).IsEqualTo(50);
+    await Assert.That(options.MaxBatchesPerCycle).IsEqualTo(3);
+    await Assert.That(provider.GetServices<IValidateOptions<RetiredEventTypesOptions>>().Count()).IsEqualTo(1)
+      .Because("#2329: a name this service still declares stops the host at startup");
+  }
+
+  [Test]
   public async Task EventStoreMetadata_Unconfigured_IsLinkedWithNothingKeptFullAsync() {
     await using var provider = _workers([]);
 

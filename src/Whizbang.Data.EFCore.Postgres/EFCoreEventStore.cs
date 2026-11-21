@@ -481,6 +481,7 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// Reads events from a stream polymorphically, deserializing each event to its concrete type.
   /// Uses the EventType column to determine which concrete type to deserialize to.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataRowValuesReadTests.cs:EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync</tests>
   public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
       Guid streamId,
       Guid? fromEventId,
@@ -524,6 +525,7 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreReadAfterVersionTests.cs:ReadPolymorphicManyAsync_CutsEachStreamAtItsAnchorsVersion_FromTheEarliestByVersionAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreReadAfterVersionTests.cs:ReadPolymorphicManyAsync_AnAnchorItsStreamDoesNotHold_LeavesEachPairToItsOwnReadAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:ReadPolymorphicManyAsync_ReadsEveryStreamAsThePerStreamReadDoesAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataRowValuesReadTests.cs:EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync</tests>
   public async Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
       IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
       CancellationToken cancellationToken = default) {
@@ -654,7 +656,7 @@ public sealed class EFCoreEventStore<TDbContext>(
     // metadata.CommitSequence, required to keep UUIDv7 generation-time inversions
     // from silently dropping late events (production forensic G5).
     var envelope = new MessageEnvelope<IEvent> {
-      MessageId = record.Metadata.MessageId,
+      MessageId = EnvelopeMetadata.MessageIdOf(record.Metadata, record.Id),
       Payload = (IEvent)eventData,
       Hops = hops,
       DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
@@ -683,6 +685,7 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_NoEventsInRange_ReturnsEmptyListAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_MultipleEvents_ReturnsInUuidV7OrderAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataRowValuesReadTests.cs:EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync</tests>
   public async Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(
       Guid streamId,
       Guid? afterEventId,
@@ -704,7 +707,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       var hops = _restoreScopeInHops(record.Metadata, record.Scope);
 
       envelopes.Add(new MessageEnvelope<TMessage> {
-        MessageId = record.Metadata.MessageId,
+        MessageId = EnvelopeMetadata.MessageIdOf(record.Metadata, record.Id),
         Payload = eventData,
         Hops = hops,
         DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
@@ -727,6 +730,7 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NoEventsInRange_ReturnsEmptyListAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_UnknownEventType_SkipsUnknownEventsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataRowValuesReadTests.cs:EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync</tests>
   public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
       Guid streamId,
       Guid? afterEventId,
@@ -767,7 +771,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       var hops = _restoreScopeInHops(record.Metadata, record.Scope);
 
       envelopes.Add(new MessageEnvelope<IEvent> {
-        MessageId = record.Metadata.MessageId,
+        MessageId = EnvelopeMetadata.MessageIdOf(record.Metadata, record.Id),
         Payload = (IEvent)eventData,
         Hops = hops,
         DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
@@ -865,6 +869,7 @@ public sealed class EFCoreEventStore<TDbContext>(
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DeserializeStreamEventsTests.cs:DeserializeStreamEvents_WhenEventDataIsCorrupt_LogsWarningAndKeepsGoodEventsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataRowValuesReadTests.cs:EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync</tests>
   public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
       IReadOnlyList<StreamEventData> streamEvents,
       IReadOnlyList<Type> eventTypes) {
@@ -936,7 +941,7 @@ public sealed class EFCoreEventStore<TDbContext>(
     // fixed while the shared one kept dropping scope for events with no hops.
     var hops = _restoreScopeInHops(metadata, scope);
     return new MessageEnvelope<IEvent> {
-      MessageId = metadata?.MessageId ?? new Whizbang.Core.ValueObjects.MessageId(raw.EventId),
+      MessageId = EnvelopeMetadata.MessageIdOf(metadata, raw.EventId),
       Payload = (IEvent)eventData,
       Hops = hops,
       DispatchContext = metadata?.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },

@@ -463,7 +463,9 @@ public static class WorkerPipelineExtensions {
     // guard every integrity receptor asks before comparing, repairing or redelivering.
     services.TryAddSingleton<Whizbang.Core.Messaging.IRuleFingerprintSource>(sp => new Whizbang.Core.Messaging.CatalogRuleFingerprintSource(
       sp.GetService<Whizbang.Core.IMessageTypeCatalog>() ?? Whizbang.Core.NullMessageTypeCatalog.Instance,
-      sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Archival.StreamLifecycleOptions>>()));
+      sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Archival.StreamLifecycleOptions>>(),
+      // #2329: a retired type's rule comes from configuration, since the application deleted its class.
+      sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.RetiredEventTypesOptions>>()));
     services.TryAddSingleton(sp => new Whizbang.Core.Messaging.IntegrityPairGuard(
       sp.GetRequiredService<Whizbang.Core.Messaging.IRuleFingerprintSource>(),
       sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>(),
@@ -598,7 +600,10 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<ILogger<MessageDiscardPolicy>>(),
       new System.Diagnostics.Metrics.Meter(MessageDiscardPolicy.METER_NAME),
       sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>(),
-      sp.GetRequiredService<IEventMarkerResolver>()));
+      sp.GetRequiredService<IEventMarkerResolver>(),
+      // #2329: a retired type is turned away at receive, so it is never stored again and integrity never compares it.
+      retired: sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.RetiredEventTypesOptions>>(),
+      catalog: sp.GetRequiredService<IMessageTypeCatalog>()));
 
     // Poison detector (topology arc phase 8.5). Turnkey by construction: the valve it replaces —
     // the broker's MaxDeliveryCount, and every transport branch reading the same counter — cannot

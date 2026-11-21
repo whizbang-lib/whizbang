@@ -147,6 +147,9 @@ Whizbang:EventStore:Metadata:ConvertHistory
 Whizbang:EventStore:Metadata:FullFor:*
 Whizbang:EventStore:Metadata:StagingDays
 Whizbang:EventStore:Metadata:WriteForm
+Whizbang:EventStore:RetiredTypes:BatchStreams
+Whizbang:EventStore:RetiredTypes:MaxBatchesPerCycle
+Whizbang:EventStore:RetiredTypes:Names:*
 Whizbang:Guardrails:EnableChaosHooks
 Whizbang:Guardrails:OnDoubleFire
 Whizbang:Guardrails:PersistInvocations

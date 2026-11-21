@@ -1004,7 +1004,8 @@ public partial class DapperWorkCoordinator(
   public async Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var metadataJson = request.Metadata is { } meta ? meta.GetRawText() : "{}";
+    // #2323: the metadata with this build's stored form level, which the trim gate counts.
+    var metadataJson = request.MetadataJson();
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);

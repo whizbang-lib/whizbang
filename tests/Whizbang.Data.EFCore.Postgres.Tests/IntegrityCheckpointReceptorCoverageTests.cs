@@ -294,7 +294,7 @@ public class IntegrityCheckpointReceptorCoverageTests {
         registry, NullLogger<Whizbang.Core.Routing.MessageDiscardPolicy>.Instance,
         new System.Diagnostics.Metrics.Meter("integrity-checkpoint-absorbed-test"),
         Options.Create(new Whizbang.Core.Routing.RoutingOptions().AbsorbNamespaces(absorbedNamespaces)),
-        new EventMarkerResolver(NullMessageTypeCatalog.Instance)));
+        new EventMarkerResolver(NullMessageTypeCatalog.Instance), global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), global::Whizbang.Core.NullMessageTypeCatalog.Instance));
     }
     services.AddSingleton(Options.Create(new StreamIntegrityOptions { PublishReportEvents = true }));
     var sp = services.BuildServiceProvider();
