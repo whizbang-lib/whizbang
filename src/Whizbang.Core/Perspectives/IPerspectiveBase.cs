@@ -14,10 +14,10 @@ namespace Whizbang.Core.Perspectives;
 /// <see cref="IPerspectiveWithActionsFor{TModel}"/>.
 /// </summary>
 /// <remarks>
-/// An event listed only through this marker, or through a custom interface that extends it without declaring an
-/// <c>Apply</c>, has no interface-declared <c>Apply</c> to handle it, and the build reports it (WHIZ117, #1936). List
+/// An event listed only through this marker, or through a custom interface that extends it (even one that declares its
+/// own <c>Apply</c>), has no <c>Apply</c> the runner calls, and the build reports it (WHIZ117, #1936, #1943). List
 /// every event under <c>IPerspectiveFor</c>, <c>IPerspectiveWithActionsFor</c> or <c>IGlobalPerspectiveFor</c>. Custom
-/// marker interfaces may be supported in a future release.
+/// perspective interfaces may be supported in a future release.
 /// </remarks>
 /// <typeparam name="TModel">The read model type</typeparam>
 /// <docs>fundamentals/perspectives/perspectives</docs>
@@ -25,6 +25,7 @@ namespace Whizbang.Core.Perspectives;
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerRegistryGeneratorTests.cs:LockIn_AllThreeInterfaceTypes_DiscoveredInSameCompilationAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveAssociationGeneratorTests.cs:Generator_CustomInterfaceExtendingIPerspectiveBase_IncludesAssociationAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveMarkerOnlyEventTests.cs:AnEventListedOnlyByAMarkerWithNoApply_IsAnErrorAtThePerspectiveAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveMarkerOnlyEventTests.cs:AnEventListedOnlyByACustomInterfaceThatDeclaresItsOwnApply_IsAnErrorAsync</tests>
 [EditorBrowsable(EditorBrowsableState.Never)]
 public interface IPerspectiveBase<TModel> where TModel : class;
 

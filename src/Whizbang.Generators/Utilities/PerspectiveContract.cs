@@ -42,7 +42,11 @@ internal sealed class PerspectiveContract {
       // TypeArguments: [0] the model, [1] the partition key, [2..] the events.
       _route(routed, global.TypeArguments[0], global.TypeArguments.Skip(2));
     }
-    List<IMethodSymbol> declared = [.. perspective.AllInterfaces.SelectMany(static i => i.GetMembers(APPLY)).OfType<IMethodSymbol>()];
+    // Only the families the runner dispatches through declare an Apply that runs: a custom interface's own Apply is
+    // never called (#1943), so it declares nothing here and its events are reported like a marker's (WHIZ117).
+    List<IMethodSymbol> declared = [.. perspective.AllInterfaces
+      .Where(PerspectiveDiscoveryHelper.IsRunnerDispatchedFamily)
+      .SelectMany(static i => i.GetMembers(APPLY)).OfType<IMethodSymbol>()];
     return new PerspectiveContract(routed, declared);
   }
 
@@ -71,7 +75,8 @@ internal sealed class PerspectiveContract {
   /// The returns the perspective's interfaces declare for an <c>Apply</c> taking <paramref name="model"/> and
   /// <paramref name="eventType"/>: the model for <c>IPerspectiveFor</c>, <c>ApplyResult&lt;TModel&gt;</c> for
   /// <c>IPerspectiveWithActionsFor</c>. Empty when only a marker such as <c>IPerspectiveBase</c> lists the event, which
-  /// declares no <c>Apply</c> to judge by.
+  /// declares no <c>Apply</c> to judge by, or a custom interface extending it, whose own <c>Apply</c> the runner never
+  /// calls (#1943).
   /// </summary>
   internal List<ITypeSymbol> DeclaredReturns(ITypeSymbol model, ITypeSymbol eventType) =>
     [.. _declaredApplies
