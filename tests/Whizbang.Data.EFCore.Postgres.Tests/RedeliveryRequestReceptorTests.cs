@@ -164,39 +164,43 @@ public partial class RedeliveryRequestReceptorTests {
   public async Task Receptor_ConcurrentRequests_BuildOneAtATimeAsync() {
     var coordinator = new SelectingCoordinator();
     var transport = new CaptureTransport();
-    var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    coordinator.BlockFirstSelect = gate;
-    await using var sp = _buildProvider(coordinator, transport);
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    coordinator.BlockFirstSelect = release;
+    // The service's own gate, so no other build in the process can hold it.
+    var buildGate = new RedeliveryBuildGate();
+    await using var sp = _buildProvider(coordinator, transport, buildGate: buildGate);
     var receptor = new RedeliveryRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
-    // A enters its select synchronously and parks on the gate INSIDE the build.
-    var taskA = receptor.HandleAsync(new RequestRedeliveryCommand {
+    // A builds: it holds the gate and parks inside its select.
+    var taskA = _handleAsync(receptor, new RequestRedeliveryCommand {
       RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       EventTypes = ["A"],
       RequesterService = "svc-a",
       Topic = "t"
     });
-    await Assert.That(coordinator.SelectLog).IsEquivalentTo(["A"]);
+    await coordinator.FirstSelectEntered.Task;
+    await Assert.That(buildGate.Building).IsTrue();
 
-    // B starts while A holds the build gate: without the gate it would enter its select
-    // synchronously right here and the log would already show "B".
-    var taskB = receptor.HandleAsync(new RequestRedeliveryCommand {
+    // B arrives while A builds: it waits at the gate, and its select has not begun.
+    var taskB = _handleAsync(receptor, new RequestRedeliveryCommand {
       RuleFingerprint = IntegrityPairGuard.Fallback.Stamp(null),
       EventTypes = ["B"],
       RequesterService = "svc-b",
       Topic = "t"
     });
+    await buildGate.WhenQueuedAsync(1);
     await Assert.That(coordinator.SelectLog).IsEquivalentTo(["A"])
-      .Because("one repair build at a time per process — concurrent request bursts multiplying " +
+      .Because("one repair build at a time per service: concurrent request bursts multiplying " +
                "page+serialization footprints is exactly what OOM-killed origins.");
 
-    gate.SetResult();
+    release.SetResult();
     await taskA;
     await taskB;
     await Assert.That(coordinator.SelectLog[0]).IsEqualTo("A");
     await Assert.That(coordinator.SelectLog).Contains("B")
       .Because("the queued request still runs to completion once the gate frees.");
+    await Assert.That(buildGate.Building).IsFalse();
   }
 
   [Test]
@@ -396,11 +400,18 @@ public partial class RedeliveryRequestReceptorTests {
       .Because("with no options registered the answer takes the default integrity time to live");
   }
 
+  // A request handled as a task the test can hold while it watches the gate.
+  private static async Task _handleAsync(RedeliveryRequestReceptor receptor, RequestRedeliveryCommand command) =>
+    await receptor.HandleAsync(command);
+
   private static ServiceProvider _buildProvider(
       SelectingCoordinator coordinator, CaptureTransport transport,
       CaptureSerializer? serializer = null, RedeliveryPumpOptions? options = null,
-      IntegrityRepairMode? repairMode = IntegrityRepairMode.AutoRepairCapped) {
+      IntegrityRepairMode? repairMode = IntegrityRepairMode.AutoRepairCapped, RedeliveryBuildGate? buildGate = null) {
     var services = new ServiceCollection();
+    if (buildGate is not null) {
+      services.AddSingleton(buildGate);
+    }
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IEnvelopeSerializer>(serializer ?? new CaptureSerializer());
@@ -438,6 +449,8 @@ public partial class RedeliveryRequestReceptorTests {
     public List<RedeliveryRequest> Requests { get; } = [];
     public List<string> SelectLog { get; } = [];
     public TaskCompletionSource? BlockFirstSelect { get; set; }
+    /// <summary>Completes when the first select begins: the request making it holds the build gate.</summary>
+    public TaskCompletionSource FirstSelectEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public IReadOnlyList<RedeliveryEvent> Selection { get; set; } = [];
     /// <summary>Filter by the request's streams, as the real selection does (off for the tests that predate it).</summary>
     public bool HonorStreams { get; set; }
@@ -450,8 +463,11 @@ public partial class RedeliveryRequestReceptorTests {
         Requests.Add(request);
         SelectLog.Add(request.EventTypes is { Count: > 0 } t ? t[0] : "-");
       }
-      if (Interlocked.Increment(ref _selectCalls) == 1 && BlockFirstSelect is { } gate) {
-        await gate.Task;
+      if (Interlocked.Increment(ref _selectCalls) == 1) {
+        FirstSelectEntered.TrySetResult();
+        if (BlockFirstSelect is { } gate) {
+          await gate.Task;
+        }
       }
       IEnumerable<RedeliveryEvent> query = Selection;
       // #2103: the event and stream filters the real selection applies.

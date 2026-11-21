@@ -267,6 +267,8 @@ public static class PostgresDriverExtensions {
         // TURNKEY: stream-integrity R1b — runtime-register RedeliveryRequestReceptor so a received
         // RequestRedeliveryCommand drives the selection + targeted re-delivery pump. Same rationale as above.
         selector.Services.AddHostedService<RedeliveryRequestReceptorRegistrar>();
+        // One repair build at a time per service: the gate its redelivery builds pass, and report through.
+        selector.Services.TryAddSingleton<RedeliveryBuildGate>();
 
         // TURNKEY: #80-D scheduled integrity sweep — the receptor reacts to the idle-time cron's
         // occurrences, and the scheduler registers that cron on the temporal engine (standing the
