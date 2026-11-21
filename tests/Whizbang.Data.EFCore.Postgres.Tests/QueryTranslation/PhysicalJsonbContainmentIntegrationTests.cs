@@ -307,7 +307,7 @@ public class PhysicalJsonbContainmentIntegrationTests {
       INSERT INTO {EXTRACTED_TABLE} (id, data, metadata, scope, created_at, updated_at, sys_created_at, sys_updated_at, version,
                                      grid_filter, labels, tags, place, stamp)
       SELECT gen_random_uuid(), jsonb_build_object('Title', 'bulk-' || g), jsonb_build_object(), jsonb_build_object(), now(), now(), now(), now(), 1,
-             jsonb_build_object('region', jsonb_build_array('r-' || g)),
+             jsonb_build_array(jsonb_build_object('Key', 'region', 'Value', jsonb_build_array('r-' || g))),
              jsonb_build_array(jsonb_build_object('Key', 'team', 'Value', 't-' || g)),
              jsonb_build_array('tag-' || g), NULL, now()
       FROM generate_series(1, 5000) g;

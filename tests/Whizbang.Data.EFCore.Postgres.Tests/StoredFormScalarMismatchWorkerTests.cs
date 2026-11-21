@@ -203,9 +203,12 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
       .IsEqualTo("\"123\"").Because("the number the earlier release stored is now the string the model reads");
     await Assert.That(await _scalarAsync(conn, $"SELECT data::text FROM wh_per_order WHERE id = '{healthy}'", cancellationToken))
       .IsEqualTo(healthyBefore).Because("a row already in the new form is left alone");
+    // The journal is shared: once it exists, the dictionary-pairs rewrite (#1911) records its own rows in it too, so
+    // this migration's row is read by its name rather than assumed to be the only one.
     var status = await StoredFormMigrationJournal.ReadAsync(conn, schema, [migration], cancellationToken);
-    await Assert.That(status.Single().State).IsEqualTo(StoredFormMigrationState.Applied);
-    await Assert.That(status.Single().RowsConverted).IsEqualTo(1L);
+    var converted = status.Single(s => s.Name == migration.Name);
+    await Assert.That(converted.State).IsEqualTo(StoredFormMigrationState.Applied);
+    await Assert.That(converted.RowsConverted).IsEqualTo(1L);
     pipeline.ResumeHandOffs();
 
     // No clock is moved: the migration brought the parked stream's retry forward, so the claim loop picks it up,
