@@ -31,7 +31,7 @@
 
     <ILRepack
       Parallel="true"
-      DebugInfo="true"
+      DebugInfo="$(WhizbangILRepackDebugInfo)"
       Internalize="true"
       InputAssemblies="@(InputAssemblies)"
       TargetKind="SameAsPrimaryAssembly"
