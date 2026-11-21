@@ -49,8 +49,10 @@ namespace Whizbang.Archive.AzureBlob;
 /// <see cref="ConfiguredLocation"/> first and throw <see cref="ArchiveLocationMismatchException"/> on any difference,
 /// before a request reaches storage, and a write of a stream whose objects are recorded elsewhere is refused the same
 /// way, so a stream never spans two locations; the deletion queue is drained only for the configured location. A record
-/// never redirects an operation, and nothing is deleted outside the configured location. A service can turn the check off
-/// (<see cref="AzureBlobArchiveOptions.VerifyLocation"/>); the configured location is then used without comparison.
+/// never redirects an operation, and nothing is deleted outside the configured location. Locations are compared in
+/// normalized form (#2141). Where infrastructure controls the location, a service sets
+/// <see cref="AzureBlobArchiveOptions.LocationMismatch"/> to Warning or Info (the operation goes ahead in the configured
+/// location and the mismatch is logged at that level) or Ignore (no comparison, no log).
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#the-azure-blob-store</docs>
@@ -96,7 +98,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   private readonly PostgresTableArchiveStore _table;
   private readonly string _prefix;
   private readonly ILogger _logger;
-  private readonly bool _verifyLocation;
+  private readonly ArchiveLocationMismatchHandling _onMismatch;
   private readonly TimeSpan? _deleteAfter;
   private readonly TimeProvider _clock;
   private int _containerReady;
@@ -114,8 +116,8 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   /// <param name="timeProvider">The clock a deletion delay and the orphan sweep measure age on; the system clock when
   /// <see langword="null"/>.</param>
   /// <exception cref="ArgumentOutOfRangeException">The quality is outside 0 to 11, the chunk size is below 1, the access
-  /// tier is not Hot, Cool or Cold, or the deletion delay is not above zero.</exception>
-  /// <exception cref="ArgumentException">The connection name is empty or contains <c>;</c> or <c>=</c>.</exception>
+  /// tier is not Hot, Cool or Cold, the deletion delay is not above zero, or the location-mismatch handling is not defined.</exception>
+  /// <exception cref="ArgumentException">The connection name is empty or whitespace, or contains <c>;</c> or <c>=</c>.</exception>
   public AzureBlobArchiveStore(
       PostgresArchiveConnection database,
       BlobContainerClient container,
@@ -139,6 +141,9 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     if (AzureBlobArchiveOptions.RefusalForDeleteAfter(options.DeleteAfter) is { } delayRefusal) {
       throw new ArgumentOutOfRangeException(nameof(options), options.DeleteAfter, delayRefusal);
     }
+    if (AzureBlobArchiveOptions.RefusalForLocationMismatch(options.LocationMismatch) is { } mismatchRefusal) {
+      throw new ArgumentOutOfRangeException(nameof(options), options.LocationMismatch, mismatchRefusal);
+    }
     if (!AzureBlobArchiveOptions.IsLogicalName(options.ConnectionName)) {
       // Never echoed: a value that looks like a connection string may be one.
       throw new ArgumentException("ConnectionName is a logical name: not empty, and without ';' or '='.", nameof(options));
@@ -151,11 +156,12 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     _table = new PostgresTableArchiveStore(database.Open, database.Schema);
     _prefix = database.Schema is null ? string.Empty : "\"" + database.Schema.Replace("\"", "\"\"", StringComparison.Ordinal) + "\".";
     _logger = logger ?? (ILogger)NullLogger.Instance;
-    _verifyLocation = options.VerifyLocation;
+    _onMismatch = options.LocationMismatch;
     _deleteAfter = options.DeleteAfter;
     _clock = timeProvider ?? TimeProvider.System;
     Metrics = metrics;
-    ConfiguredLocation = new ArchiveLocation(STORE_NAME, EndpointOf(container), options.ConnectionName, container.Name);
+    // #2141: the pin is stored and compared normalized, so the same location written another way is not a mismatch.
+    ConfiguredLocation = new ArchiveLocation(STORE_NAME, EndpointOf(container), options.ConnectionName, container.Name).Normalize();
   }
 
   /// <summary>
@@ -514,20 +520,32 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     command.Parameters.AddWithValue(location.Container);
   }
 
-  // Every row in the configured location, or the refusal naming the first that is not, before any request to storage.
-  // With VerifyLocation off, nothing is compared: the configured location is used as it is.
+  // Every row in the configured location, before any request to storage; a row that is not is handled as configured
+  // (#2141): Error refuses, naming the first; Warning and Info log once for the operation and go on in the configured
+  // location. With Ignore, nothing is compared: the configured location is used as it is.
   private async Task _checkLocationAsync(
       NpgsqlConnection connection, NpgsqlTransaction? transaction, Guid streamId, string operation, List<ManifestRow> objects,
       CancellationToken cancellationToken) {
-    if (!_verifyLocation || objects.Count == 0) {
+    if (_onMismatch == ArchiveLocationMismatchHandling.Ignore || objects.Count == 0) {
       return;
     }
     var configured = await _locationIdAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
-    var mismatch = objects.Find(o => o.LocationId is null || o.LocationId != configured);
-    if (mismatch is not null) {
-      throw new ArchiveLocationMismatchException(streamId, operation, mismatch.LocationId, mismatch.Recorded, ConfiguredLocation);
+    var mismatched = objects.FindAll(o => o.LocationId is null || o.LocationId != configured);
+    if (mismatched.Count == 0) {
+      return;
     }
+    var first = mismatched[0];
+    if (_onMismatch == ArchiveLocationMismatchHandling.Error) {
+      throw new ArchiveLocationMismatchException(streamId, operation, first.LocationId, first.Recorded, ConfiguredLocation);
+    }
+    LogMismatchAllowed(_logger, _mismatchLevel, operation, streamId, ConfiguredLocation, mismatched.Count,
+      first.Recorded ?? (object)NO_LOCATION, _onMismatch);
   }
+
+  // The level a mismatch that does not stop the archive is logged at.
+  private LogLevel _mismatchLevel => _onMismatch == ArchiveLocationMismatchHandling.Warning ? LogLevel.Warning : LogLevel.Information;
+
+  private const string NO_LOCATION = "no location";
 
   // ── Reading ──────────────────────────────────────────────────────────────────────────────────────────
 
@@ -740,16 +758,20 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
 
   private async Task<int> _drainAsync(Guid? streamId, int maxObjects, CancellationToken cancellationToken) {
     var due = new List<(string RelativePath, Guid StreamId, long Location)>();
+    long? configured = null;
     await using (var connection = await _database.Open(cancellationToken).ConfigureAwait(false)) {
-      // With the check on, only rows of the configured location are deleted: a database that never knew it (a copy, or
-      // one not yet repointed) has nothing to delete here, and every other row stays queued, untouched. With it off, every
-      // queued object is deleted from the configured container.
+      // With Error, only rows of the configured location are deleted: a database that never knew it (a copy, or one not
+      // yet repointed) has nothing to delete here, and every other row stays queued, untouched. With any other handling,
+      // every queued object is deleted from the configured container; Warning and Info log how many were queued elsewhere.
       long? only = null;
-      if (_verifyLocation) {
-        if (await _locationIdAsync(connection, transaction: null, cancellationToken).ConfigureAwait(false) is not { } configured) {
-          return 0;
+      if (_onMismatch != ArchiveLocationMismatchHandling.Ignore) {
+        configured = await _locationIdAsync(connection, transaction: null, cancellationToken).ConfigureAwait(false);
+        if (_onMismatch == ArchiveLocationMismatchHandling.Error) {
+          if (configured is null) {
+            return 0;
+          }
+          only = configured;
         }
-        only = configured;
       }
       await using var command = new NpgsqlCommand(
         $"SELECT relative_path, stream_id, location_id FROM {_prefix}wh_archive_object_deletions " +
@@ -767,6 +789,10 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
       while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
         due.Add((reader.GetString(0), reader.GetGuid(1), reader.GetInt64(2)));
       }
+    }
+    if (_onMismatch is ArchiveLocationMismatchHandling.Warning or ArchiveLocationMismatchHandling.Info
+        && due.Count(d => d.Location != configured) is var elsewhere and > 0) {
+      LogQueuedElsewhere(_logger, _mismatchLevel, elsewhere, ConfiguredLocation, _onMismatch);
     }
     var deleted = 0;
     foreach (var (relativePath, stream, location) in due) {
@@ -943,6 +969,16 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "The owner marker of archive container {Container} could not be written or read")]
   static partial void LogMarkerUnavailable(ILogger logger, Exception exception, string container);
+
+  [LoggerMessage(
+    Message = "Archive {Operation} of stream {StreamId} goes ahead in the configured location ({Configured}) although {Count} of its record(s) name another ({Recorded}): Whizbang:Archive:AzureBlob:LocationMismatch is {Handling}. Repoint the location to record where the objects are now")]
+  static partial void LogMismatchAllowed(
+    ILogger logger, LogLevel level, string operation, Guid streamId, ArchiveLocation configured, int count, object recorded,
+    ArchiveLocationMismatchHandling handling);
+
+  [LoggerMessage(
+    Message = "Deleting {Count} queued archive object(s) recorded at another location from the configured location ({Configured}): Whizbang:Archive:AzureBlob:LocationMismatch is {Handling}")]
+  static partial void LogQueuedElsewhere(ILogger logger, LogLevel level, int count, ArchiveLocation configured, ArchiveLocationMismatchHandling handling);
 
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Archive location {FromLocationId} repointed by an operator to {Configured}; its records now name location {LocationId}")]

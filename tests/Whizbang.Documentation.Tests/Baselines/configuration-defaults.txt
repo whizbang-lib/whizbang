@@ -4,8 +4,8 @@
 Whizbang:Archive:AzureBlob:CompressionLevel=4
 Whizbang:Archive:AzureBlob:ConnectionName=default
 Whizbang:Archive:AzureBlob:ContainerName=whizbang-archive
+Whizbang:Archive:AzureBlob:LocationMismatch=Error
 Whizbang:Archive:AzureBlob:MaxEventsPerChunk=10000
-Whizbang:Archive:AzureBlob:VerifyLocation=true
 Whizbang:Archive:ReadThrough=true
 Whizbang:AspNet:Availability:Enabled=true
 Whizbang:AspNet:Availability:Mode=MutationsOnly
