@@ -1195,7 +1195,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     // on every pass. Extracting the declaration must not take the bookkeeping with it —
     // otherwise queues declared at subscribe time never get their broker DLQ drained.
     if (_options.AutoDeclareDeadLetterExchange) {
-      _declaredDeadLetterQueues.TryAdd($"{queueName}.dlq", 0);
+      _declaredDeadLetterQueues.TryAdd(RabbitMQEntityProvisioning.DeadLetterQueueName(queueName), 0);
     }
 
     return channel;

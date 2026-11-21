@@ -52,7 +52,11 @@ internal static class RabbitMQEntityProvisioning {
 
     var queueArgs = new Dictionary<string, object?>();
     if (options.AutoDeclareDeadLetterExchange) {
-      queueArgs["x-dead-letter-exchange"] = $"{exchangeName}.dlx";
+      // #2421: the queue dead-letters through the exchange's DIRECT dead-letter exchange with its own DLQ name as the
+      // routing key, and the DLQ is bound only on that key, so a poison message reaches this queue's DLQ and no other
+      // subscriber's.
+      queueArgs["x-dead-letter-exchange"] = DeadLetterExchangeName(exchangeName);
+      queueArgs["x-dead-letter-routing-key"] = DeadLetterQueueName(queueName);
     }
     // Control class (topology arc phase 9): the plain-queue analogue of a sessionless Service Bus
     // subscription. RabbitMQ's ordering primitive pins a queue to ONE consumer at a time; control
@@ -112,7 +116,19 @@ internal static class RabbitMQEntityProvisioning {
   private const string MATCH_ALL_PATTERN = "#";
 
   /// <summary>
-  /// Declares dead letter exchange and queue for a given exchange/queue pair.
+  /// The dead-letter exchange every subscription queue on <paramref name="exchangeName"/> dead-letters through: one
+  /// DIRECT exchange per exchange (#2421). The name differs from the fanout <c>{exchange}.dlx</c> earlier versions
+  /// declared, because RabbitMQ cannot change an exchange's type in place and services still on an earlier version
+  /// keep dead-lettering into the fanout until they are upgraded.
+  /// </summary>
+  internal static string DeadLetterExchangeName(string exchangeName) => $"{exchangeName}.dlx.direct";
+
+  /// <summary>The dead-letter queue of <paramref name="queueName"/>, and its routing key on the dead-letter exchange.</summary>
+  internal static string DeadLetterQueueName(string queueName) => $"{queueName}.dlq";
+
+  /// <summary>
+  /// Declares the direct dead-letter exchange of <paramref name="exchangeName"/> and the dead-letter queue of
+  /// <paramref name="queueName"/>, bound to it only on the DLQ's own name: the routing key the queue dead-letters with.
   /// </summary>
   internal static async Task DeclareDeadLetterExchangeAsync(
     IChannel channel,
@@ -120,12 +136,12 @@ internal static class RabbitMQEntityProvisioning {
     string queueName,
     CancellationToken cancellationToken
   ) {
-    var dlxName = $"{exchangeName}.dlx";
-    var dlqName = $"{queueName}.dlq";
+    var dlxName = DeadLetterExchangeName(exchangeName);
+    var dlqName = DeadLetterQueueName(queueName);
 
     await channel.ExchangeDeclareAsync(
       exchange: dlxName,
-      type: "fanout",
+      type: "direct",
       durable: true,
       autoDelete: false,
       arguments: null,
@@ -148,7 +164,7 @@ internal static class RabbitMQEntityProvisioning {
     await channel.QueueBindAsync(
       queue: dlqName,
       exchange: dlxName,
-      routingKey: "",
+      routingKey: dlqName,
       arguments: null,
       noWait: false,
       cancellationToken: cancellationToken
