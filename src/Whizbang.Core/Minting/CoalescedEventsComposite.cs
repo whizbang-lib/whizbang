@@ -56,6 +56,15 @@ public sealed class CoalescedEventsComposite
   /// <summary>Each folded single's ORIGINAL stream id, parallel to <see cref="InnerPayloads"/> (#596). Empty on composites minted by older builds — children then inherit the composite's stream.</summary>
   public List<Guid> InnerStreamIds { get; init; } = [];
 
+  /// <summary>
+  /// Each folded single's position in the producer's commit lane, parallel to <see cref="InnerPayloads"/> (#1628): the
+  /// <c>SourceCommitSequence</c> a direct delivery of the single carries. A null entry is a single with no position
+  /// (not stored as an event, not yet stamped, or forwarded from another origin). Null on a composite minted by an older
+  /// build: its children then carry the composite's own sequence, as before.
+  /// </summary>
+  /// <docs>fundamentals/messages/message-tags#coalescing</docs>
+  public List<long?>? InnerCommitSequences { get; init; }
+
   IReadOnlyList<JsonElement> IRawInnerComposite.InnerPayloads => InnerPayloads;
 
   IReadOnlyList<string> IRawInnerComposite.InnerTypeNames => InnerTypeNames;

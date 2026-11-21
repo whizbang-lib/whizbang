@@ -4714,6 +4714,21 @@ public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
   public string? CoalesceGroup { get; init; }
 
   /// <summary>
+  /// The position this message's stored event holds in this service's commit lane, the
+  /// <c>SourceCommitSequence</c> a direct delivery of it carries under this service's id (#1628). Read
+  /// by <see cref="IWorkCoordinator.FetchPendingCoalesceAsync"/> so a fold can hand each child of its
+  /// composite the sequence the child would have carried on its own. Null when the message is not
+  /// stored as an event here, when the commit stamper has not reached it yet, when it was forwarded
+  /// from another origin (its direct delivery carries that origin's identity, which one composite
+  /// cannot carry per child), and on every message not read back by that fetch.
+  /// </summary>
+  /// <remarks>Never written: storing a message ignores it, and the store stamps the sequence itself.</remarks>
+  /// <docs>fundamentals/messages/message-tags#coalescing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoalesceFoldCoordinatorSqlTests.cs:FetchPendingCoalesce_ReadsEachSinglesPositionInThisServicesCommitLaneAsync</tests>
+  [JsonIgnore]
+  public long? SourceCommitSequence { get; init; }
+
+  /// <summary>
   /// Set on a collective with an ordering key (#1003): the type it is named by when it becomes a predecessor
   /// (<see cref="CollectivePredecessorLink.TypeFor"/>). The store links it to the collective stored before it on its
   /// key, writing that one's id and type into its payload, and makes it the key's head, in the storing transaction.
