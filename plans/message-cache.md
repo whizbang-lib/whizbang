@@ -3,7 +3,9 @@
 Issue: #1526. Status: phase 1 (measurement and design) done; no cache implemented. Step 2 in part
 (2026-10-24, #1759 from #1712): a drain session skips the rows already in the cooldown cache before parsing them, so a
 second session on a stream still being applied parses nothing for them; deduplicating rows by event id is still to
-do. Scope: 1.0 (decided 2026-10-20).
+do. Step 1 done (2026-11-21): a flush's five Distribute stages share one parse of each payload (`FlushPayloads`), so
+the local flow reads 7 parses instead of 11; no cache is retained past the flush. The store (steps 3 and later) waits
+on decisions D1 to D6 (section 8). Scope: 1.0 (decided 2026-10-20).
 
 This file is the design proposal. It records what was measured, where every parse happens today,
 the shape of the cache, the order the existing ad hoc caches move onto it, and the decisions the
@@ -28,7 +30,7 @@ owner has to make before phase 2 starts.
   | TransportReceive / Envelope | `AsbReceiveDecisionMaker.Decide`; `RabbitMQTransport` (batch and single); `InMemoryWireTransport` (testing wire) |
   | OffloadRehydration / Envelope | `BodyClaimRehydrator.MaybeRehydrateAsync` |
   | EventStoreRead / Payload, Metadata, Scope | `EFCoreEventStore._deserializePayload` (every typed read) and `DeserializeStreamEvents` (perspective drain); orphaned-lifecycle event read in `EFCoreWorkCoordinator` |
-  | LifecycleStage / Payload | `LifecycleInvocationHelper` (distribute stages, outbox and inbox); `OutboxDrainWorker._tryResolveTypedEnvelope`; `OutboxPublishWorker`; `ServiceBusConsumerWorker` (two sites) |
+  | LifecycleStage / Payload | `FlushPayloads.GetOrRead` (distribute stages, outbox and inbox; once per flush since step 1); `OutboxDrainWorker._tryResolveTypedEnvelope`; `OutboxPublishWorker`; `ServiceBusConsumerWorker` (two sites) |
   | ReceptorDispatch / Payload | `InboxDispatchWorker._resolveTypedEnvelope` (cache miss only) |
   | MultiStreamRun / Payload, Scope | `MultiStreamCommandBinding` read-back (miss only); `MultiStreamCommandWorker` scope restore |
   | Redelivery / Payload | `RedeliveryPump._buildComposite` |
@@ -51,7 +53,8 @@ Counts are per message, from the pins above. The Postgres flow is pinned to one 
 
 ### 2.1 One event, published locally, applied by two perspectives (N = 2)
 
-11 parses of one event, in one drain session.
+11 parses of one event, in one drain session, as measured in phase 1; 7 since step 1 (the five stages share one
+parse).
 
 | Parses | Kind | Source | Site | Why |
 |---|---|---|---|---|
@@ -60,8 +63,8 @@ Counts are per message, from the pins above. The Postgres flow is pinned to one 
 | 2 | Metadata | EventStoreRead | same | as above, the stored metadata (hops) for every row |
 | 2 | Scope | EventStoreRead | same | as above, the stored scope for every row |
 
-The multiplier is `5 + 3N` per drain session for a local event (N perspectives), so 11 at N = 2 and
-17 at N = 4.
+The multiplier was `5 + 3N` per drain session for a local event (N perspectives), so 11 at N = 2 and
+17 at N = 4. Since step 1 it is `1 + 3N`: 7 at N = 2, 13 at N = 4.
 
 Each further session that fetches the stream before the completion flush deletes its rows adds
 `3N`. The claim re-emits every stream it still leases on every poll (deliberately: an in-flight
@@ -138,6 +141,12 @@ by the inbox drain (inbound flow).
 message per stage, gated only on an invoker being registered. This is the largest single
 multiplier measured (5 of 11) and the cheapest to remove: parse once per flush and hand the typed
 envelope to every stage, as `OutboxDrainWorker` already does for Pre and PostOutbox.
+
+Done (step 1): `DistributeLifecycleContext` carries a `FlushPayloads` that every stage started from the flush's
+context shares (a `with` copy keeps it). It is keyed by the envelope instance, not the message id; a failed read is not
+kept; each stage still builds its own envelope around the shared payload. `DistributeFlushParseBenchmarks`, one flush
+of 64 messages with a 1 KB payload, same build server before and after: 448 us and 1,413 KB allocated before, 244 us
+and 479 KB after (one message: 26.1 KB before, 12.2 KB after, time unchanged).
 
 ### 3.2 Drain rows per perspective, and the refetch
 `get_stream_events` joins perspective work rows to the event store, so the same event body crosses
@@ -256,7 +265,7 @@ Each step lowers one pinned count and changes the pin in the same pull request.
 
 | Step | Change | Pin | Today | Target |
 |---|---|---|---|---|
-| 1 | Parse once per flush for the distribute stages (no cache needed, but uses the record's lazy payload) | flow 2.1 LifecycleStage | 5 | 1 |
+| 1 | Parse once per flush for the distribute stages (no cache needed). Done 2026-11-21 with a per-flush memo, not the record: the record does not exist yet | flow 2.1 LifecycleStage | 5 | 1 (done) |
 | 2 | Deduplicate drain rows by event id before parsing; refetch and re-emitted sessions skip rows in the cooldown cache before parsing (the cooldown half done, #1759: a second session parses 0, pinned by `LocalPublish_ASecondDrainSession_ParsesNothingForRowsInCooldownAsync`) | flow 2.1 EventStoreRead x3 kinds | 6 (= 3N per session) | 3 (once per event) |
 | 3 | `MessageRecord` store with the byte budget, idle cooldown and hooks; event store drain and typed reads use it | standard-path pin (to add) | up to 6N | 1 |
 | 4 | Multi-stream binding onto the store, keyed by run id and payload hash; scope parsed once per run | multi-stream pins | 4 per run interleaved, K scope | 1 per run, 1 scope |
