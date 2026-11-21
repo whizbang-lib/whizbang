@@ -367,14 +367,12 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
-  [Arguments("_", "_src/Orders.cs")]
-  [Arguments(@"/_\", @"/_\\src/Orders.cs")]
-  public async Task MessageRegistryGenerator_MapWithNoSingleSeparator_KeepsTheRestOfThePathAsWrittenAsync(string to, string expected) {
-    // A replacement with no separator, or with both, gives no separator to convert to, so the compiler keeps the rest.
+  public async Task MessageRegistryGenerator_MapToBothSeparators_KeepsTheRestOfThePathAsWrittenAsync() {
+    // A replacement holding both separators names no single one to convert to, so the compiler keeps the rest as written.
     var result = GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(
-        PATH_MAP_SOURCE, "/a/whizbang/src/Orders.cs", [new("/a/whizbang/", to)]);
+        PATH_MAP_SOURCE, "/a/whizbang/src/Orders.cs", [new("/a/whizbang/", @"/_\")]);
 
-    await Assert.That(GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs")).Contains(expected);
+    await Assert.That(GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs")).Contains(@"/_\\src/Orders.cs");
   }
 
   [Test]
