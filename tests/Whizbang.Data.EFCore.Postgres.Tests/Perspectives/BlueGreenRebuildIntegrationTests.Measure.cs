@@ -23,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 public partial class BlueGreenRebuildIntegrationTests {
   [Test]
   [Explicit]
-  [NotInParallel("rebuild-measurement")]
+  [NotInParallel("rebuild-measurement")] // the database: a mode measured beside the other measures its load too
   [Timeout(4 * 60 * 60 * 1000)]
   [Arguments(true)]
   [Arguments(false)]
