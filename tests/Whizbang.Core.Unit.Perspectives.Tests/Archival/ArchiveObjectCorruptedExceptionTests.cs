@@ -4,8 +4,9 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Archival;
 
-namespace Whizbang.Archive.AzureBlob.Tests;
+namespace Whizbang.Core.Tests.Archival;
 
 /// <summary>The corruption report names the stream, the object and both hashes, so an operator can find the object.</summary>
 /// <docs>fundamentals/events/archive-store#azure-blob-integrity</docs>
@@ -21,7 +22,7 @@ public class ArchiveObjectCorruptedExceptionTests {
     await Assert.That(ex.ExpectedSha256).IsEqualTo("aa");
     await Assert.That(ex.ActualSha256).IsEqualTo("bb");
     await Assert.That(ex.Message).Contains("recorded 10 bytes with SHA-256 aa").And.Contains("returned 9 bytes with SHA-256 bb");
-    await Assert.That(ex).IsNotAssignableTo<Azure.RequestFailedException>()
+    await Assert.That(ex).IsNotAssignableTo<ArchiveObjectStoreException>()
       .Because("a corrupted object is a data fault, not a storage error a retry policy would retry");
   }
 

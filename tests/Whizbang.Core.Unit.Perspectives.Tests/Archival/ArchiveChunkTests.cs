@@ -8,7 +8,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Archival;
 
-namespace Whizbang.Archive.AzureBlob.Tests;
+namespace Whizbang.Core.Tests.Archival;
 
 /// <summary>
 /// The archive object format (format 1): JSON lines in version order, compressed by the codec the locator records, named

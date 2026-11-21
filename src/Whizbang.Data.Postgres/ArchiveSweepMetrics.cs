@@ -4,20 +4,21 @@
 using System.Diagnostics.Metrics;
 using Whizbang.Core.Observability;
 
-namespace Whizbang.Archive.AzureBlob;
+namespace Whizbang.Data.Postgres;
 
 /// <summary>
-/// Metrics of the Azure Blob archive store's orphan sweep (#2367). Meter name: <c>Whizbang.Archive.AzureBlob</c>.
+/// Metrics of the archive coordinator's orphan sweep (#2367). Meter name: <c>Whizbang.Archive.AzureBlob</c>, kept when the
+/// coordinator moved into the Postgres driver (#2503) so dashboards and meter subscriptions keep working.
 /// </summary>
 /// <remarks>
 /// <b>SweepsRefused</b> counts every sweep that ran with a deletion delay set and deleted nothing because it could not
 /// prove the container is this database's alone, tagged <c>reason</c>: <c>unknown_location</c>, <c>foreign_marker</c>
-/// or <c>marker_unclaimable</c> (<see cref="AzureBlobArchiveStore.SweepRefusal"/>). Every reason exists at zero from
+/// or <c>marker_unclaimable</c> (<see cref="PostgresObjectArchiveStore.SweepRefusal"/>). Every reason exists at zero from
 /// construction.
 /// </remarks>
 /// <docs>operations/deployment/restoring-an-environment-with-an-archive#one-database-per-container</docs>
-/// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreOwnerMarkerTests.cs</tests>
-/// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveRegistrationTests.cs:ArchiveSweepMetrics_MeterIsListedInWhizbangMetersAsync</tests>
+/// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreOwnerMarkerTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ObjectArchiveCoordinatorTests.cs:ArchiveSweepMetrics_KeepsItsMeterName_AndIsListedInWhizbangMetersAsync</tests>
 public sealed class ArchiveSweepMetrics {
 #pragma warning disable CA1707
   /// <summary>The OpenTelemetry meter name for this metrics group.</summary>
@@ -39,8 +40,8 @@ public sealed class ArchiveSweepMetrics {
   }
 
   private static readonly string[] _reasons = [
-    AzureBlobArchiveStore.SweepRefusal.UNKNOWN_LOCATION,
-    AzureBlobArchiveStore.SweepRefusal.FOREIGN_MARKER,
-    AzureBlobArchiveStore.SweepRefusal.MARKER_UNCLAIMABLE,
+    PostgresObjectArchiveStore.SweepRefusal.UNKNOWN_LOCATION,
+    PostgresObjectArchiveStore.SweepRefusal.FOREIGN_MARKER,
+    PostgresObjectArchiveStore.SweepRefusal.MARKER_UNCLAIMABLE,
   ];
 }

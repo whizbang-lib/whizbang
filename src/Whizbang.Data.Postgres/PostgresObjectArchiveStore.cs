@@ -2,39 +2,36 @@
 // SPDX-License-Identifier: MIT
 
 using System.Runtime.CompilerServices;
-using Azure;
-using Azure.Storage;
-using Azure.Storage.Blobs;
-using Azure.Storage.Blobs.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using NpgsqlTypes;
 using Whizbang.Core.Archival;
 using Whizbang.Core.Messaging;
-using Whizbang.Data.Postgres;
 using ArchiveStatus = Whizbang.Core.Archival.ArchiveStatus;
 
-namespace Whizbang.Archive.AzureBlob;
+namespace Whizbang.Data.Postgres;
 
 /// <summary>
-/// The production <see cref="IArchiveStore"/> (WS-3 S8): archived events leave the database as Brotli-compressed JSON
-/// lines in Azure Blob Storage, one object per chunk of at most <see cref="AzureBlobArchiveOptions.MaxEventsPerChunk"/>
-/// events, listed in the service database's <c>wh_archive_manifest</c> (migration 268).
+/// The Postgres drivers' archive coordinator (#2503, first shipped as the Azure Blob store in WS-3 S8): archived events
+/// leave the database as Brotli-compressed JSON lines in an <see cref="IArchiveObjectStore"/>, one object per chunk of at
+/// most <see cref="ArchiveObjectStoreSettings.MaxEventsPerChunk"/> events, listed in the service database's
+/// <c>wh_archive_manifest</c> (migration 268). The storage provider only moves objects; the database transaction is this
+/// coordinator's.
 /// </summary>
 /// <remarks>
 /// <para>
 /// A write runs in one database transaction. <c>wh_archive_stream</c> (the table store's SQL, with every guard it has)
-/// moves the batch into <c>wh_event_archive</c> and leaves the tombstone; the store uploads the staged rows as objects,
+/// moves the batch into <c>wh_event_archive</c> and leaves the tombstone; the coordinator puts the staged rows as objects,
 /// writes one manifest row per object, removes the staged rows and only then commits. A failure anywhere before the
-/// commit rolls the whole archive back, so the stream stays fully hot; an object already uploaded is named by no
-/// manifest row, and a retry finds the same bytes under the same name (the name carries the content hash).
+/// commit rolls the whole archive back, so the stream stays fully hot; an object already put is named by no manifest row,
+/// and a retry finds the same bytes under the same name (the name carries the content hash).
 /// </para>
 /// <para>
-/// #2367: an object is written once and never updated, and the store never purges, so a database and its storage can be
-/// restored to the same point in time. Every object write is create-only; the one delete is the plain blob delete, so
-/// with soft delete on a deleted object stays recoverable for the account's retention period. For storage without soft
-/// delete, <see cref="AzureBlobArchiveOptions.DeleteAfter"/> delays every queued deletion and turns on the orphan sweep.
+/// #2367: an object is written once and never updated, and the coordinator never purges, so a database and its storage can
+/// be restored to the same point in time. Every object write is create-only; the one delete is the provider's plain
+/// delete, so with soft delete on a deleted object stays recoverable for the retention period. For storage without soft
+/// delete, <see cref="ArchiveObjectStoreSettings.DeleteAfter"/> delays every queued deletion and turns on the orphan sweep.
 /// </para>
 /// <para>
 /// A read, a restore and a delete go through the manifest only, never a listing of the container, and every object is
@@ -50,18 +47,21 @@ namespace Whizbang.Archive.AzureBlob;
 /// before a request reaches storage, and a write of a stream whose objects are recorded elsewhere is refused the same
 /// way, so a stream never spans two locations; the deletion queue is drained only for the configured location. A record
 /// never redirects an operation, and nothing is deleted outside the configured location. A service can turn the check off
-/// (<see cref="AzureBlobArchiveOptions.VerifyLocation"/>); the configured location is then used without comparison.
+/// (<see cref="ArchiveObjectStoreSettings.VerifyLocation"/>); the configured location is then used without comparison.
+/// </para>
+/// <para>
+/// Nothing stored changed when the coordinator moved out of the storage package (#2503): the locator, the object names,
+/// the manifest and location rows and every SQL function are the ones the Azure Blob store wrote, so archives written
+/// before stay readable and an instance of the previous release keeps working beside this one during a rolling deploy.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/events/archive-store#the-azure-blob-store</docs>
+/// <docs>fundamentals/events/archive-store#object-stores-and-the-coordinator</docs>
 /// <docs>operations/deployment/restoring-an-environment-with-an-archive#why-it-is-consistent</docs>
-/// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs</tests>
-/// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreImmutabilityTests.cs</tests>
-/// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs</tests>
-public sealed partial class AzureBlobArchiveStore : IArchiveStore {
-  /// <summary>The store name written in this store's locators.</summary>
-  public const string STORE_NAME = "azure-blob";
-
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ObjectArchiveCoordinatorTests.cs</tests>
+/// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreImmutabilityTests.cs</tests>
+/// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs</tests>
+public sealed partial class PostgresObjectArchiveStore : IArchiveObjectCoordinator {
   /// <summary>
   /// The name of the object that claims a container for one database (#2367): written create-only by the first write,
   /// holding the database's <c>archive_database_id</c>, and never updated. Only the orphan sweep depends on it.
@@ -89,10 +89,9 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     "created_at, flags, commit_sequence, origin_service_id, origin_commit_sequence, insert_order";
 
   private readonly PostgresArchiveConnection _database;
-  private readonly BlobContainerClient _container;
+  private readonly IArchiveObjectStore _objects;
   private readonly int _quality;
   private readonly int _maxEventsPerChunk;
-  private readonly AccessTier? _accessTier;
   private readonly PostgresTableArchiveStore _table;
   private readonly string _prefix;
   private readonly ILogger _logger;
@@ -106,66 +105,64 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   private const bool CREATE = true;
   private const bool LOOK_UP = false;
 
-  /// <summary>Creates the store.</summary>
+  /// <summary>Creates the coordinator.</summary>
   /// <param name="database">The service's database, where the manifest and the staged rows live.</param>
-  /// <param name="container">The container the objects are written to.</param>
-  /// <param name="options">The compression quality, the chunk size and the access tier.</param>
+  /// <param name="objects">The object store the archive is written through; its settings set the quality, the chunk size,
+  /// the location check and the deletion delay.</param>
   /// <param name="logger">Logs each outcome, and each object a restore or delete could not remove.</param>
   /// <param name="timeProvider">The clock a deletion delay and the orphan sweep measure age on; the system clock when
   /// <see langword="null"/>.</param>
-  /// <exception cref="ArgumentOutOfRangeException">The quality is outside 0 to 11, the chunk size is below 1, the access
-  /// tier is not Hot, Cool or Cold, or the deletion delay is not above zero.</exception>
-  /// <exception cref="ArgumentException">The connection name is empty or contains <c>;</c> or <c>=</c>.</exception>
-  public AzureBlobArchiveStore(
+  /// <param name="metrics">Where the orphan sweep counts its refusals, or <see langword="null"/>.</param>
+  /// <exception cref="ArgumentOutOfRangeException">The store's settings are ones the coordinator cannot run with
+  /// (<see cref="ArchiveObjectStoreSettings.Refusal"/>).</exception>
+  /// <exception cref="ArgumentException">The store's location names no endpoint, or a connection name that is empty or
+  /// contains <c>;</c> or <c>=</c>.</exception>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ObjectArchiveCoordinatorTests.cs:Coordinator_RefusesSettingsAndLocationsItCannotRunWithAsync</tests>
+  public PostgresObjectArchiveStore(
       PostgresArchiveConnection database,
-      BlobContainerClient container,
-      AzureBlobArchiveOptions options,
-      ILogger<AzureBlobArchiveStore>? logger = null,
+      IArchiveObjectStore objects,
+      ILogger<PostgresObjectArchiveStore>? logger = null,
       TimeProvider? timeProvider = null,
       ArchiveSweepMetrics? metrics = null) {
     ArgumentNullException.ThrowIfNull(database);
-    ArgumentNullException.ThrowIfNull(container);
-    ArgumentNullException.ThrowIfNull(options);
-    if (options.CompressionLevel is < AzureBlobArchiveOptions.MIN_COMPRESSION_LEVEL or > AzureBlobArchiveOptions.MAX_COMPRESSION_LEVEL) {
-      throw new ArgumentOutOfRangeException(nameof(options), options.CompressionLevel,
-        $"CompressionLevel is a Brotli quality, {AzureBlobArchiveOptions.MIN_COMPRESSION_LEVEL} to {AzureBlobArchiveOptions.MAX_COMPRESSION_LEVEL}.");
+    ArgumentNullException.ThrowIfNull(objects);
+    var settings = objects.Settings;
+    if (settings.Refusal() is { } refusal) {
+      throw new ArgumentOutOfRangeException(nameof(objects), refusal);
     }
-    if (options.MaxEventsPerChunk < 1) {
-      throw new ArgumentOutOfRangeException(nameof(options), options.MaxEventsPerChunk, "MaxEventsPerChunk is 1 or more.");
+    var location = objects.Location;
+    if (string.IsNullOrWhiteSpace(location.Endpoint)) {
+      throw new ArgumentException("The archive object store's location names no endpoint, so its records could not be checked.", nameof(objects));
     }
-    if (AzureBlobArchiveOptions.RefusalFor(options.AccessTier) is { } refusal) {
-      throw new ArgumentOutOfRangeException(nameof(options), options.AccessTier, refusal);
-    }
-    if (AzureBlobArchiveOptions.RefusalForDeleteAfter(options.DeleteAfter) is { } delayRefusal) {
-      throw new ArgumentOutOfRangeException(nameof(options), options.DeleteAfter, delayRefusal);
-    }
-    if (!AzureBlobArchiveOptions.IsLogicalName(options.ConnectionName)) {
+    if (!_isLogicalName(location.ConnectionName)) {
       // Never echoed: a value that looks like a connection string may be one.
-      throw new ArgumentException("ConnectionName is a logical name: not empty, and without ';' or '='.", nameof(options));
+      throw new ArgumentException("ConnectionName is a logical name: not empty, and without ';' or '='.", nameof(objects));
     }
     _database = database;
-    _container = container;
-    _quality = options.CompressionLevel;
-    _maxEventsPerChunk = options.MaxEventsPerChunk;
-    _accessTier = options.AccessTier;
+    _objects = objects;
+    _quality = settings.CompressionLevel;
+    _maxEventsPerChunk = settings.MaxEventsPerChunk;
     _table = new PostgresTableArchiveStore(database.Open, database.Schema);
     _prefix = database.Schema is null ? string.Empty : "\"" + database.Schema.Replace("\"", "\"\"", StringComparison.Ordinal) + "\".";
     _logger = logger ?? (ILogger)NullLogger.Instance;
-    _verifyLocation = options.VerifyLocation;
-    _deleteAfter = options.DeleteAfter;
+    _verifyLocation = settings.VerifyLocation;
+    _deleteAfter = settings.DeleteAfter;
     _clock = timeProvider ?? TimeProvider.System;
     Metrics = metrics;
-    ConfiguredLocation = new ArchiveLocation(STORE_NAME, EndpointOf(container), options.ConnectionName, container.Name);
+    ConfiguredLocation = location;
   }
 
   /// <summary>
-  /// The location this store reads, restores, deletes and writes in, from its configuration: the account endpoint of
-  /// its container client (never a key, a signature or a connection string), the logical connection name and the
-  /// container. Every archive record is checked against it.
+  /// The location this coordinator reads, restores, deletes and writes in: its object store's
+  /// (<see cref="IArchiveObjectStore.Location"/>), named by the store's configuration and never a key, a signature or a
+  /// connection string. Every archive record is checked against it.
   /// </summary>
   /// <docs>fundamentals/events/archive-store#archive-locations</docs>
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveLocationTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ObjectArchiveCoordinatorTests.cs</tests>
   public ArchiveLocation ConfiguredLocation { get; }
+
+  /// <inheritdoc />
+  public IArchiveObjectStore Objects => _objects;
 
   /// <summary>The clock a deletion delay and the orphan sweep measure age on.</summary>
   internal TimeProvider Clock => _clock;
@@ -186,9 +183,9 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   /// <exception cref="ArgumentOutOfRangeException"><paramref name="fromLocationId"/> is below 1.</exception>
   /// <exception cref="ArgumentException">No location has the id <paramref name="fromLocationId"/>.</exception>
   /// <docs>fundamentals/events/archive-store#repointing-an-environment</docs>
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:RepointLocation_MakesAMismatchedDatabaseConsistent_ForAnotherContainerAsync</tests>
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:RepointLocation_AfterTheCopyArchivedItsOwnStreams_MergesTheSourceLocationAsync</tests>
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveLocationTests.cs:RepointLocation_RefusesAnIdThatCannotNameARowAsync</tests>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:RepointLocation_MakesAMismatchedDatabaseConsistent_ForAnotherContainerAsync</tests>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:RepointLocation_AfterTheCopyArchivedItsOwnStreams_MergesTheSourceLocationAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ObjectArchiveCoordinatorTests.cs:RepointLocation_RefusesAnIdThatCannotNameARow_AndOneNoRowHasAsync</tests>
   public async Task<long> RepointLocationAsync(long fromLocationId, CancellationToken cancellationToken = default) {
     ArgumentOutOfRangeException.ThrowIfLessThan(fromLocationId, 1);
     await using var connection = await _database.Open(cancellationToken).ConfigureAwait(false);
@@ -202,31 +199,24 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   }
 
   /// <summary>
-  /// The storage account endpoint a container client reaches: scheme, host, port and any account path segment (an
-  /// emulator's), without the container, the query (where a signature sits) or user information.
-  /// </summary>
-  internal static string EndpointOf(BlobContainerClient container) {
-    var uri = container.Uri;
-    var path = uri.AbsolutePath.TrimEnd('/');
-    return uri.GetComponents(UriComponents.SchemeAndServer, UriFormat.UriEscaped) + path[..path.LastIndexOf('/')];
-  }
-
-  /// <summary>
-  /// The locator a stream's tombstone records: <c>azure-blob://{stream}?codec=brotli&amp;format=1</c>. It says which
-  /// store archived the stream and names no container or account, so it never goes stale when a location is repointed:
-  /// each object is found by its manifest row's location and path from the stream (#2137), in
-  /// <see cref="ConfiguredLocation"/> only.
+  /// The locator a stream's tombstone records: <c>{provider}://{stream}?codec=brotli&amp;format=1</c>, with the object
+  /// store's provider name (<c>azure-blob</c> for Azure Blob Storage, as before #2503). It says which store archived the
+  /// stream and names no container or account, so it never goes stale when a location is repointed: each object is found
+  /// by its manifest row's location and path from the stream (#2137), in <see cref="ConfiguredLocation"/> only.
   /// </summary>
   /// <param name="streamId">The stream.</param>
   /// <returns>The locator.</returns>
-  public static ArchiveLocator LocatorFor(Guid streamId) =>
-    new(STORE_NAME, streamId.ToString("D"), ArchiveCompression.Brotli);
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ObjectArchiveCoordinatorTests.cs</tests>
+  public ArchiveLocator LocatorFor(Guid streamId) =>
+    new(ConfiguredLocation.Provider, streamId.ToString("D"), ArchiveCompression.Brotli);
+
+  private static bool _isLogicalName(string? name) => !string.IsNullOrEmpty(name) && name.IndexOfAny([';', '=']) < 0;
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_WholeStream_ThenRead_ReturnsTheEventsByteIdenticalInVersionOrderAsync</tests>
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_TheUploadFails_TheStreamStaysFullyHot_AndNothingIsListedAsync</tests>
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_ACrashAfterTheUploadBeforeTheCommit_IsRetriedWithoutADuplicateAsync</tests>
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_OfAStreamWhoseObjectsAreElsewhere_ThrowsTheMismatch_AndWritesNothing_UntilRepointedAsync</tests>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_WholeStream_ThenRead_ReturnsTheEventsByteIdenticalInVersionOrderAsync</tests>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_TheUploadFails_TheStreamStaysFullyHot_AndNothingIsListedAsync</tests>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_ACrashAfterTheUploadBeforeTheCommit_IsRetriedWithoutADuplicateAsync</tests>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_OfAStreamWhoseObjectsAreElsewhere_ThrowsTheMismatch_AndWritesNothing_UntilRepointedAsync</tests>
   /// <exception cref="ArchiveLocationMismatchException">The stream's earlier objects are recorded in a location other
   /// than <see cref="ConfiguredLocation"/>; nothing is written.</exception>
   public async Task<ArchiveWriteResult> WriteAsync(ArchiveBatch batch, CancellationToken cancellationToken = default) {
@@ -239,7 +229,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     await _lockStreamAsync(connection, transaction, batch.StreamId, cancellationToken).ConfigureAwait(false);
     var recorded = await _manifestAsync(connection, transaction, batch.StreamId, fromVersion: 0, cancellationToken).ConfigureAwait(false);
     await _checkLocationAsync(connection, transaction, batch.StreamId, "write", recorded, cancellationToken).ConfigureAwait(false);
-    await _ensureContainerAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
+    await _ensureLocationAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
 
     var moved = await _moveIntoStagingAsync(connection, transaction, batch, cancellationToken).ConfigureAwait(false);
     if (!moved.Archived) {
@@ -259,8 +249,8 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_WholeStream_ThenRead_ReturnsTheEventsByteIdenticalInVersionOrderAsync</tests>
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Read_EventsTheTableStoreArchived_ComeBackInVersionOrderWithTheObjectsAsync</tests>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_WholeStream_ThenRead_ReturnsTheEventsByteIdenticalInVersionOrderAsync</tests>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Read_EventsTheTableStoreArchived_ComeBackInVersionOrderWithTheObjectsAsync</tests>
   public async IAsyncEnumerable<ArchivedEvent> ReadAsync(
       Guid streamId, long fromVersion = 0, [EnumeratorCancellation] CancellationToken cancellationToken = default) {
     // Objects first, then rows the table store holds. Every archive takes a stream's lowest hot versions, and every
@@ -276,8 +266,8 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Restore_PutsTheStreamBackExactly_AndRemovesItsObjectsAsync</tests>
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Restore_AVersionConflict_KeepsTheArchiveAndItsObjectsAsync</tests>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Restore_PutsTheStreamBackExactly_AndRemovesItsObjectsAsync</tests>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Restore_AVersionConflict_KeepsTheArchiveAndItsObjectsAsync</tests>
   public async Task<ArchiveRestoreResult> RestoreAsync(Guid streamId, CancellationToken cancellationToken = default) {
     List<ManifestRow> objects;
     ArchiveRestoreResult result;
@@ -308,7 +298,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Delete_RemovesTheObjectsAndTheManifest_TheTombstoneStaysAsync</tests>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Delete_RemovesTheObjectsAndTheManifest_TheTombstoneStaysAsync</tests>
   public async Task<long> DeleteAsync(Guid streamId, CancellationToken cancellationToken = default) {
     List<ManifestRow> objects;
     long tableEvents;
@@ -333,12 +323,12 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
 
   // ── Writing ──────────────────────────────────────────────────────────────────────────────────────────
 
-  // The container, created when it does not exist, and claimed for this database by its owner marker (#2367). A write
-  // never depends on the marker: a container another database claimed, or one that cannot be claimed, is logged and the
+  // The location, prepared when it does not exist, and claimed for this database by its owner marker (#2367). A write
+  // never depends on the marker: a location another database claimed, or one that cannot be claimed, is logged and the
   // write goes on; only the orphan sweep is refused.
-  private async Task _ensureContainerAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken) {
+  private async Task _ensureLocationAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken) {
     if (Volatile.Read(ref _containerReady) == 0) {
-      _ = await _container.CreateIfNotExistsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+      await _objects.PrepareAsync(cancellationToken).ConfigureAwait(false);
       var databaseId = await _databaseIdAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
       if (await _claimAsync(databaseId, cancellationToken).ConfigureAwait(false) is { } refusal) {
         LogContainerNotClaimed(_logger, ConfiguredLocation.Container, refusal);
@@ -360,21 +350,19 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   // Claims the container for the database (a create-only marker holding its id), or reads the marker already there and
   // compares. Null when the container is this database's; otherwise why it cannot be shown to be. Never updates a marker.
   private async Task<string?> _claimAsync(string databaseId, CancellationToken cancellationToken) {
-    var marker = _container.GetBlobClient(OWNER_MARKER_NAME);
     try {
-      _ = await marker.UploadAsync(BinaryData.FromString(databaseId),
-        new BlobUploadOptions { Conditions = new BlobRequestConditions { IfNoneMatch = ETag.All } }, cancellationToken).ConfigureAwait(false);
-      return null;
-    } catch (RequestFailedException ex) when (ex.Status == (int)System.Net.HttpStatusCode.Conflict) {
+      if (await _objects.PutAsync(OWNER_MARKER_NAME, System.Text.Encoding.UTF8.GetBytes(databaseId), cancellationToken).ConfigureAwait(false)) {
+        return null;
+      }
       // Claimed already: by this database (an earlier write or process), or by another.
-    } catch (RequestFailedException ex) {
+    } catch (ArchiveObjectStoreException ex) {
       LogMarkerUnavailable(_logger, ex, ConfiguredLocation.Container);
       return SweepRefusal.MARKER_UNCLAIMABLE;
     }
     try {
-      var owner = (await marker.DownloadContentAsync(cancellationToken).ConfigureAwait(false)).Value.Content.ToString();
+      var owner = System.Text.Encoding.UTF8.GetString(await _objects.GetAsync(OWNER_MARKER_NAME, cancellationToken).ConfigureAwait(false));
       return string.Equals(owner, databaseId, StringComparison.Ordinal) ? null : SweepRefusal.FOREIGN_MARKER;
-    } catch (RequestFailedException ex) {
+    } catch (ArchiveObjectStoreException ex) {
       LogMarkerUnavailable(_logger, ex, ConfiguredLocation.Container);
       return SweepRefusal.MARKER_UNCLAIMABLE;
     }
@@ -434,23 +422,13 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     var name = ArchiveChunk.ObjectName(streamId, chunk[0].Version, chunk[^1].Version, sha256, ArchiveCompression.Brotli);
     var row = new ManifestRow(chunk[0].Version, chunk[^1].Version, chunk.Count, name, bytes.LongLength, sha256, LocationId: null, Recorded: null);
     // #2367: create only. An archived object is written once and never updated, so a database and its storage can be
-    // restored to the same point in time: the write is refused by storage when any object already holds the name.
-    var upload = new BlobUploadOptions {
-      // The service checks the request's bytes against this hash, so an object is stored exactly as it was sent.
-      TransferValidation = new UploadTransferValidationOptions { ChecksumAlgorithm = StorageChecksumAlgorithm.MD5 },
-      // #1897: the configured tier, or none (the account's default). Set here, at creation, and never changed after.
-      AccessTier = _accessTier,
-      Conditions = new BlobRequestConditions { IfNoneMatch = ETag.All },
-    };
-    var blob = _container.GetBlobClient(name);
-    try {
-      _ = await blob.UploadAsync(BinaryData.FromBytes(bytes), upload, cancellationToken).ConfigureAwait(false);
-    } catch (RequestFailedException ex) when (ex.Status == (int)System.Net.HttpStatusCode.Conflict) {
+    // restored to the same point in time: the object store refuses the put when any object already holds the name.
+    if (!await _objects.PutAsync(name, bytes, cancellationToken).ConfigureAwait(false)) {
       // The name carries the content hash, so the object already there is these bytes, left by an earlier attempt whose
       // transaction never committed, or by the same events archived before a restore whose delete has not run. It is
       // kept as it is and checked against the bytes this write encoded (the hash covers the length): anything else under
       // the name refuses the write.
-      var existing = (await blob.DownloadContentAsync(cancellationToken).ConfigureAwait(false)).Value.Content.ToArray();
+      var existing = await _objects.GetAsync(name, cancellationToken).ConfigureAwait(false);
       var existingSha256 = ArchiveChunk.Sha256(existing);
       if (!string.Equals(existingSha256, sha256, StringComparison.Ordinal)) {
         throw ArchiveObjectCorruptedException.ForExistingObject(streamId, name, bytes.LongLength, existing.LongLength, sha256, existingSha256);
@@ -575,11 +553,10 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     if (!ArchiveChunk.TryReadCompression(row.RelativePath, out var compression)) {
       throw new InvalidDataException($"The archive manifest names '{row.RelativePath}', which is not an object this store wrote.");
     }
-    var bytes = (await _container.GetBlobClient(row.RelativePath).DownloadContentAsync(cancellationToken).ConfigureAwait(false))
-      .Value.Content.ToArray();
+    var bytes = await _objects.GetAsync(row.RelativePath, cancellationToken).ConfigureAwait(false);
     var sha256 = ArchiveChunk.Sha256(bytes);
     if (bytes.LongLength != row.ByteLength || !string.Equals(sha256, row.Sha256, StringComparison.Ordinal)) {
-      throw new ArchiveObjectCorruptedException(streamId, row.RelativePath!, row.ByteLength, bytes.LongLength, row.Sha256, sha256);
+      throw new ArchiveObjectCorruptedException(streamId, row.RelativePath, row.ByteLength, bytes.LongLength, row.Sha256, sha256);
     }
     return ArchiveChunk.Decode(bytes, compression);
   }
@@ -598,18 +575,19 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>How many objects were confirmed deleted.</returns>
   /// <docs>fundamentals/events/archive-store#purging-a-stream-archived-to-blob</docs>
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Purge_QueuesTheObjects_AndTheStepDeletesThemAsync</tests>
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Step_AFailingDelete_StaysQueued_AndIsRetriedAfterItsBackoffAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ObjectArchiveCoordinatorTests.cs</tests>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Purge_QueuesTheObjects_AndTheStepDeletesThemAsync</tests>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Step_AFailingDelete_StaysQueued_AndIsRetriedAfterItsBackoffAsync</tests>
   public Task<int> DeleteQueuedObjectsAsync(int maxObjects, CancellationToken cancellationToken = default) {
     ArgumentOutOfRangeException.ThrowIfLessThan(maxObjects, 1);
     return _drainAsync(streamId: null, maxObjects, cancellationToken);
   }
 
-  /// <summary>How often the maintenance step sweeps the container for orphaned objects, when a deletion delay is set.</summary>
+  /// <summary>How often the maintenance step sweeps the location for orphaned objects, when a deletion delay is set.</summary>
   public static readonly TimeSpan OrphanSweepInterval = TimeSpan.FromDays(1);
 
   /// <summary>
-  /// Deletes, when <see cref="AzureBlobArchiveOptions.DeleteAfter"/> is set, every object in the configured container
+  /// Deletes, when <see cref="ArchiveObjectStoreSettings.DeleteAfter"/> is set, every object in the configured location
   /// that no manifest row and no queued deletion names and that storage created at least that long ago: an object
   /// written after the point a database was restored to, or one whose write never committed. Off (no delay), it does
   /// nothing and never reaches storage.
@@ -617,7 +595,7 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>How many objects were confirmed deleted.</returns>
   /// <docs>operations/deployment/restoring-an-environment-with-an-archive#the-orphan-sweep</docs>
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs</tests>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs</tests>
   public async Task<int> SweepOrphanedObjectsAsync(CancellationToken cancellationToken = default) {
     if (_deleteAfter is not { } delay) {
       return 0;
@@ -640,25 +618,37 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     }
     var cutoff = _clock.GetUtcNow() - delay;
     var deleted = 0;
-    await foreach (var page in _container.GetBlobsAsync(cancellationToken: cancellationToken).AsPages().ConfigureAwait(false)) {
-      var old = new List<(string Name, Guid Stream)>();
-      foreach (var item in page.Values) {
-        if (IsPastDelay(item.Properties.CreatedOn, cutoff) && StreamOf(item.Name) is { } stream) {
-          old.Add((item.Name, stream));
-        }
+    var old = new List<(string Name, Guid Stream)>();
+    await foreach (var item in _objects.ListAsync(cancellationToken).ConfigureAwait(false)) {
+      if (IsPastDelay(item.CreatedOn, cutoff) && StreamOf(item.Path) is { } stream) {
+        old.Add((item.Path, stream));
       }
-      foreach (var (name, stream) in await _unnamedAsync(old, cancellationToken).ConfigureAwait(false)) {
-        if (await _deleteOrphanAsync(name, stream, cancellationToken).ConfigureAwait(false)) {
-          deleted++;
-        }
+      if (old.Count == SweepBatchSize) {
+        deleted += await _deleteOrphansAsync(old, cancellationToken).ConfigureAwait(false);
+        old.Clear();
       }
     }
+    deleted += await _deleteOrphansAsync(old, cancellationToken).ConfigureAwait(false);
     LogSweep(_logger, deleted, delay);
     return deleted;
   }
 
-  // The maintenance step's sweep: at most once per OrphanSweepInterval in this process, and only with a delay set.
-  internal Task<int> SweepOrphanedObjectsIfDueAsync(CancellationToken cancellationToken) {
+  // The most listed objects the sweep checks against the database in one query: a page of a blob listing.
+  internal int SweepBatchSize { get; init; } = 5000;
+
+  private async Task<int> _deleteOrphansAsync(List<(string Name, Guid Stream)> old, CancellationToken cancellationToken) {
+    var deleted = 0;
+    foreach (var (name, stream) in await _unnamedAsync(old, cancellationToken).ConfigureAwait(false)) {
+      if (await _deleteOrphanAsync(name, stream, cancellationToken).ConfigureAwait(false)) {
+        deleted++;
+      }
+    }
+    return deleted;
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs:Step_SweepsAtMostOncePerInterval_AndOnlyWithADelayAsync</tests>
+  public Task<int> SweepOrphanedObjectsIfDueAsync(CancellationToken cancellationToken = default) {
     if (_deleteAfter is null) {
       return Task.FromResult(0);
     }
@@ -724,19 +714,14 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
       }
     }
     try {
-      _ = await _deleteObjectAsync(name, cancellationToken).ConfigureAwait(false);
-    } catch (RequestFailedException ex) {
+      _ = await _objects.DeleteAsync(name, cancellationToken).ConfigureAwait(false);
+    } catch (ArchiveObjectStoreException ex) {
       LogOrphanNotDeleted(_logger, ex, name, streamId);
       return false;
     }
     await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     return true;
   }
-
-  // #2367: the store's one delete. The ordinary blob delete: never a permanent delete, never snapshots or versions, so with
-  // soft delete on the object stays recoverable for the account's retention period. An object already gone counts.
-  private Task<Response<bool>> _deleteObjectAsync(string relativePath, CancellationToken cancellationToken) =>
-    _container.GetBlobClient(relativePath).DeleteIfExistsAsync(cancellationToken: cancellationToken);
 
   private async Task<int> _drainAsync(Guid? streamId, int maxObjects, CancellationToken cancellationToken) {
     var due = new List<(string RelativePath, Guid StreamId, long Location)>();
@@ -798,10 +783,11 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     var confirmed = false;
     string? error = null;
     try {
-      _ = await _deleteObjectAsync(relativePath, cancellationToken).ConfigureAwait(false);
+      // #2367: the provider's one delete, the ordinary one its soft delete covers. An object already gone counts.
+      _ = await _objects.DeleteAsync(relativePath, cancellationToken).ConfigureAwait(false);
       confirmed = true;
       sql = $"DELETE FROM {_prefix}wh_archive_object_deletions WHERE relative_path = $1 AND location_id = $2";
-    } catch (RequestFailedException ex) {
+    } catch (ArchiveObjectStoreException ex) {
       error = ex.Message;
       LogObjectNotDeleted(_logger, ex, relativePath, streamId);
       sql = $"UPDATE {_prefix}wh_archive_object_deletions SET attempts = attempts + 1, last_error = $3, " +
@@ -909,15 +895,15 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     ArchiveLocation? Recorded);
 
   [LoggerMessage(Level = LogLevel.Information,
-    Message = "Archive of stream {StreamId} to Azure Blob (through version {ThroughVersion}; none = the whole stream): {Status}, {EventsArchived} event(s) moved in {Objects} object(s)")]
+    Message = "Archive of stream {StreamId} to object storage (through version {ThroughVersion}; none = the whole stream): {Status}, {EventsArchived} event(s) moved in {Objects} object(s)")]
   static partial void LogWrite(ILogger logger, Guid streamId, long? throughVersion, string status, long eventsArchived, int objects);
 
   [LoggerMessage(Level = LogLevel.Information,
-    Message = "Restore of stream {StreamId} from Azure Blob: {Status}, {EventsRestored} event(s) back in the hot store, {Objects} object(s) queued for deletion")]
+    Message = "Restore of stream {StreamId} from object storage: {Status}, {EventsRestored} event(s) back in the hot store, {Objects} object(s) queued for deletion")]
   static partial void LogRestore(ILogger logger, Guid streamId, string status, long eventsRestored, int objects);
 
   [LoggerMessage(Level = LogLevel.Information,
-    Message = "Azure Blob archive of stream {StreamId} deleted: {EventsDeleted} event(s), {Objects} object(s) queued for deletion; its tombstone stays")]
+    Message = "Object archive of stream {StreamId} deleted: {EventsDeleted} event(s), {Objects} object(s) queued for deletion; its tombstone stays")]
   static partial void LogDelete(ILogger logger, Guid streamId, long eventsDeleted, int objects);
 
   [LoggerMessage(Level = LogLevel.Warning,

@@ -6,10 +6,9 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Whizbang.Core.Archival;
 using Whizbang.Core.Messaging;
 
-namespace Whizbang.Archive.AzureBlob;
+namespace Whizbang.Core.Archival;
 
 /// <summary>
 /// One archived event as an archive object holds it (format 1): every column of <c>wh_event_archive</c> a restore needs,
@@ -57,7 +56,7 @@ internal sealed partial class ArchiveChunkJsonContext : JsonSerializerContext;
 /// order), compressed by the codec its locator records, named by its stream, version range and content hash.
 /// </summary>
 /// <docs>fundamentals/events/archive-store#azure-blob-object-format</docs>
-/// <tests>tests/Whizbang.Archive.AzureBlob.Tests/ArchiveChunkTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveChunkTests.cs</tests>
 internal static class ArchiveChunk {
   private const byte NEW_LINE = (byte)'\n';
 
@@ -115,9 +114,9 @@ internal static class ArchiveChunk {
   /// <param name="relativePath">The object's path from its stream, as its record holds it.</param>
   /// <param name="compression">The codec, when the name is one this store wrote.</param>
   /// <returns>False for a name this store did not write.</returns>
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/ArchiveChunkTests.cs:TryReadCompression_ReadsTheCodecFromTheObjectNamesExtensionAsync</tests>
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/ArchiveChunkTests.cs:TryReadCompression_RefusesANameThisStoreDidNotWrite_RatherThanGuessingAsync</tests>
-  public static bool TryReadCompression(string? relativePath, out ArchiveCompression compression) {
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveChunkTests.cs:TryReadCompression_ReadsTheCodecFromTheObjectNamesExtensionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveChunkTests.cs:TryReadCompression_RefusesANameThisStoreDidNotWrite_RatherThanGuessingAsync</tests>
+  public static bool TryReadCompression([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] string? relativePath, out ArchiveCompression compression) {
     foreach (var candidate in _codecs) {
       if (relativePath?.EndsWith(_extension(candidate), StringComparison.Ordinal) == true) {
         compression = candidate;

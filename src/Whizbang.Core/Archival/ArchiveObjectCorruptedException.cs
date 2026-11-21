@@ -1,7 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-namespace Whizbang.Archive.AzureBlob;
+namespace Whizbang.Core.Archival;
 
 /// <summary>
 /// Thrown when an archive object's bytes do not match what the manifest recorded when it was written: a different length
@@ -10,7 +10,7 @@ namespace Whizbang.Archive.AzureBlob;
 /// </summary>
 /// <docs>fundamentals/events/archive-store#azure-blob-integrity</docs>
 /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Read_ACorruptedObject_IsDetectedByItsHash_AndNothingIsDecodedAsync</tests>
-/// <tests>tests/Whizbang.Archive.AzureBlob.Tests/ArchiveObjectCorruptedExceptionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveObjectCorruptedExceptionTests.cs</tests>
 public sealed class ArchiveObjectCorruptedException : Exception {
   /// <summary>Creates the exception with no message.</summary>
   public ArchiveObjectCorruptedException() { }
@@ -53,7 +53,7 @@ public sealed class ArchiveObjectCorruptedException : Exception {
   /// <param name="expectedSha256">The SHA-256 of the bytes the write encoded.</param>
   /// <param name="actualSha256">The SHA-256 of the bytes storage holds.</param>
   /// <returns>The exception.</returns>
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/ArchiveObjectCorruptedExceptionTests.cs:ForExistingObject_SaysTheExpectedBytesAreTheWritesOwn_NotTheManifestsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveObjectCorruptedExceptionTests.cs:ForExistingObject_SaysTheExpectedBytesAreTheWritesOwn_NotTheManifestsAsync</tests>
   public static ArchiveObjectCorruptedException ForExistingObject(
       Guid streamId, string locator, long expectedLength, long actualLength, string expectedSha256, string actualSha256) =>
     new($"The archive object {locator} of stream {streamId} was not written: storage already holds {locator}, and an " +

@@ -545,8 +545,7 @@ public static class ServiceCollectionExtensions {
         ct => OpenConnectionAsync(connectionString, ct),
         logger: sp.GetService<ILogger<PostgresStreamPurger>>(),
         integrityMetrics: sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()));
-    // The built-in archive store (WS-3 S7): the prefix truncate's archive path writes through it; a blob store
-    // registered first wins.
+    // The built-in archive store (WS-3 S7): the prefix truncate's archive path writes through it.
     services.TryAddSingleton(_ => new PostgresArchiveConnection(ct => OpenConnectionAsync(connectionString, ct), Schema: null));
     // What a rebuild knows of each stream's archive (#1931), read from the lifecycle ledger.
     services.TryAddSingleton<global::Whizbang.Core.Archival.IArchivedStreamExtents>(sp =>
@@ -554,10 +553,9 @@ public static class ServiceCollectionExtensions {
     // What a snapshot of a row with collectives reads to record how far they are complete (#1963).
     services.TryAddSingleton<global::Whizbang.Core.Perspectives.ICollectiveSnapshotFence>(sp =>
       new PostgresCollectiveSnapshotFence(sp.GetRequiredService<PostgresArchiveConnection>()));
-    services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(sp => {
-      var database = sp.GetRequiredService<PostgresArchiveConnection>();
-      return new PostgresTableArchiveStore(database.Open, database.Schema, sp.GetService<ILogger<PostgresTableArchiveStore>>());
-    });
+    // #2503: the archive coordinator when a storage provider selected an object store (it moves objects only; the
+    // transaction is the driver's), otherwise the table store.
+    services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(PostgresArchiveStores.Create);
     // The maintenance step that performs the restores an AutoRestore append queued (#1738), through whichever archive store
     // is registered.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, ArchiveRestoreRequestStep>(
