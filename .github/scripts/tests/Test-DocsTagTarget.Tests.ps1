@@ -44,6 +44,8 @@ title: Workers
 
 ~~~
 ## Not A Heading Either
+```
+## Still Inside The Tilde Fence
 ~~~
 
 ## Retry & Backoff
@@ -70,6 +72,19 @@ Describe 'Get-DocsTagInText' {
     @($tags | ForEach-Object { "$($_.Source):$($_.Line):$($_.Text):$($_.Closed)" }) | Should -Be @('src/X.cs:2:a/b#c:True', 'src/X.cs:3:d/e:True', 'src/X.cs:3:f:True')
   }
 
+  It 'counts only tags after a comment marker on their line: in a comment, or in a string that emits one' {
+    $text = @(
+      '/// <docs>doc/comment</docs>',
+      '    // <docs>line/comment</docs>',
+      '    sb.AppendLine("/// <docs>generated/comment</docs>");',
+      '-- <docs>sql/comment</docs>',
+      '  [GeneratedRegex("<docs>([^<]+)</docs>")]',
+      '  dangling.Add($"{name}: <docs>{tag}</docs>");'
+    ) -join "`n"
+    @(Get-DocsTagInText -Text $text -Source 'src/X.cs' | ForEach-Object { "$($_.Line):$($_.Text)" }) |
+      Should -Be @('1:doc/comment', '2:line/comment', '3:generated/comment', '4:sql/comment')
+  }
+
   It 'reports a tag that does not close on its own line as unterminated' {
     $tags = @(Get-DocsTagInText -Text "/// <docs>a/b`n/// </docs>" -Source 'src/X.cs')
     $tags.Count | Should -Be 1
@@ -83,9 +98,16 @@ Describe 'Get-DocsPageAnchor' {
     foreach ($id in 'perspective-worker', 'claim', 'retry-backoff', 'retry-backoff-1', 'iworkerrunasync-method') {
       $anchors.Contains($id) | Should -BeTrue -Because "the site renders a heading with id '$id'"
     }
-    foreach ($id in 'claiming-work', 'not-a-heading-in-code', 'not-a-heading-either', 'Retry-Backoff') {
+    foreach ($id in 'claiming-work', 'not-a-heading-in-code', 'not-a-heading-either', 'still-inside-the-tilde-fence', 'Retry-Backoff') {
       $anchors.Contains($id) | Should -BeFalse -Because "the site renders no heading with id '$id'"
     }
+  }
+
+  It 'takes the id or name of an HTML element in the page, outside code blocks' {
+    $anchors = Get-DocsPageAnchor -Markdown "<a id=""audit""></a>`n<span class=""x"" name='stream'></span>`n``````html`n<a id=""in-code""></a>`n``````"
+    $anchors.Contains('audit') | Should -BeTrue
+    $anchors.Contains('stream') | Should -BeTrue
+    $anchors.Contains('in-code') | Should -BeFalse
   }
 
   It 'names a heading whose text has no word characters "header"' {
@@ -229,7 +251,7 @@ Describe 'running the guard' {
   }
 
   It 'fails on a new missing page or anchor, naming file and line, and tolerates baselined ones' {
-    $repo = New-FakeTree @{ 'src/P/A.cs' = "/// <docs>a/gone</docs>`n/// <docs>a/page#nope</docs>`n/// <docs>a/known</docs>" }
+    $repo = New-FakeTree @{ 'src/P/A.cs' = "/// <docs>a/gone</docs>`n/// <docs>a/page#nope</docs>`n/// <docs>a/known</docs>`n/// <docs>a/gone</docs>`n/// <docs>a/open" }
     $baseline = Join-Path -Path $repo -ChildPath 'baseline.txt'
     Set-Content -Path $baseline -Value 'a/known | missing page'
     $output = & $script:ScriptPath -Root $repo -DocsRoot $script:GuardDocs -BaselinePath $baseline
@@ -237,8 +259,10 @@ Describe 'running the guard' {
     $text = $output -join "`n"
     $text | Should -Match 'src/P/A\.cs:1: <docs>a/gone</docs>: missing page'
     $text | Should -Match 'src/P/A\.cs:2: <docs>a/page#nope</docs>: missing anchor'
+    $text | Should -Match 'src/P/A\.cs:4: <docs>a/gone</docs>: missing page'
+    $text | Should -Match 'src/P/A\.cs:5: <docs>a/open</docs>: unterminated'
     $text | Should -Not -Match 'a/known</docs>:'
-    $text | Should -Match '3 dangling, 1 baselined, 0 stale'
+    $text | Should -Match 'Checked 5 <docs> tags \(4 distinct targets\): 4 dangling, 1 baselined, 0 stale'
   }
 
   It 'fails on a stale baseline entry even when nothing is dangling' {
@@ -265,6 +289,13 @@ Describe 'running the guard' {
     $repo = New-FakeTree @{ 'src/P/A.cs' = '/// <docs>a/page#section</docs>' }
     $output = & $script:ScriptPath -Root $repo -DocsRepository "file://$($origin.Replace('\', '/'))" -DocsRef develop -BaselinePath (Join-Path -Path $repo -ChildPath 'none.txt')
     $LASTEXITCODE | Should -Be 0 -Because ($output -join "`n")
+  }
+
+  It 'fails loudly, not green, when the docs checkout it is given holds no pages' {
+    $repo = New-FakeTree @{ 'src/P/A.cs' = '/// <docs>a/page</docs>' }
+    $output = & $script:ScriptPath -Root $repo -DocsRoot (New-FakeTree @{ 'README.md' = 'x' }) -BaselinePath (Join-Path -Path $repo -ChildPath 'none.txt')
+    $LASTEXITCODE | Should -Be 2
+    ($output -join "`n") | Should -Match 'could not read the docs repository at .*no pages'
   }
 
   It 'fails loudly, not green, when the docs repository cannot be fetched' {
