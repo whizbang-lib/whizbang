@@ -37,10 +37,32 @@ public static class DictionaryMemberDiscovery {
   /// <summary>The closed dictionary types the model holds, as fully qualified key and value type names, once each.</summary>
   /// <param name="modelType">The perspective's model type, or null.</param>
   /// <returns>The key and value type of each, in the order the walk meets them.</returns>
-  public static IReadOnlyList<(string KeyType, string ValueType)> From(INamedTypeSymbol? modelType) {
-    var found = new List<(string KeyType, string ValueType)>();
+  public static IReadOnlyList<(string KeyType, string ValueType)> From(INamedTypeSymbol? modelType) => _walk(modelType).Forms;
+
+  /// <summary>
+  /// Every property, on every type the model stores, whose declared type is a dictionary: the type that holds it (as
+  /// a <c>typeof</c> names it), the property's name and its declared type.
+  /// </summary>
+  /// <param name="modelType">The perspective's model type, or null.</param>
+  /// <returns>The members, once each, in the order the walk meets them.</returns>
+  /// <remarks>
+  /// What lets a context built without the Whizbang options extension map a dictionary inside a document: Entity
+  /// Framework's model holds the type, and this names the member, so the generated configuration can add it as a value
+  /// with its stored form, with no reflection over the type.
+  /// </remarks>
+  public static IReadOnlyList<(string OwnerType, string PropertyName, string MemberType)> MembersFrom(INamedTypeSymbol? modelType) =>
+    _walk(modelType).Members;
+
+  private sealed class Found {
+    public List<(string KeyType, string ValueType)> Forms { get; } = [];
+    public List<(string OwnerType, string PropertyName, string MemberType)> Members { get; } = [];
+    public HashSet<ITypeSymbol> Visited { get; } = new(SymbolEqualityComparer.Default);
+  }
+
+  private static Found _walk(INamedTypeSymbol? modelType) {
+    var found = new Found();
     if (modelType is not null) {
-      _walkType(modelType, new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default), found);
+      _walkType(modelType, found);
     }
     return found;
   }
@@ -52,13 +74,13 @@ public static class DictionaryMemberDiscovery {
     type is INamedTypeSymbol { IsGenericType: true, TypeArguments.Length: 2 } named
     && System.Array.IndexOf(_dictionaryDefinitions, TypeNameUtilities.Display(named.ConstructedFrom)) >= 0;
 
-  private static void _walkType(ITypeSymbol type, HashSet<ITypeSymbol> visited, List<(string KeyType, string ValueType)> found) {
-    if (!visited.Add(type)) {
+  private static void _walkType(ITypeSymbol type, Found found) {
+    if (!found.Visited.Add(type)) {
       return;
     }
 
     if (type is IArrayTypeSymbol array) {
-      _walkType(array.ElementType, visited, found);
+      _walkType(array.ElementType, found);
       return;
     }
 
@@ -68,10 +90,10 @@ public static class DictionaryMemberDiscovery {
 
     if (IsDictionary(named)) {
       var pair = (TypeNameUtilities.FullyQualified(named.TypeArguments[0]), TypeNameUtilities.FullyQualified(named.TypeArguments[1]));
-      if (!found.Contains(pair)) {
-        found.Add(pair);
+      if (!found.Forms.Contains(pair)) {
+        found.Forms.Add(pair);
       }
-      _walkType(named.TypeArguments[1], visited, found);
+      _walkType(named.TypeArguments[1], found);
       return;
     }
 
@@ -79,15 +101,19 @@ public static class DictionaryMemberDiscovery {
     var ns = TypeNameUtilities.DisplayOrEmpty(TypeNameUtilities.NamespaceOf(named));
     if (ns.StartsWith("System", System.StringComparison.Ordinal)) {
       foreach (var argument in named.TypeArguments) {
-        _walkType(argument, visited, found);
+        _walkType(argument, found);
       }
       return;
     }
 
     foreach (var property in named.GetAllProperties()) {
-      if (PolymorphicModelDiscovery.IsAnalyzableProperty(property)) {
-        _walkType(property.Type, visited, found);
+      if (!PolymorphicModelDiscovery.IsAnalyzableProperty(property)) {
+        continue;
       }
+      if (IsDictionary(property.Type)) {
+        found.Members.Add((TypeNameUtilities.FullyQualified(named), property.Name, TypeNameUtilities.FullyQualified(property.Type)));
+      }
+      _walkType(property.Type, found);
     }
   }
 }

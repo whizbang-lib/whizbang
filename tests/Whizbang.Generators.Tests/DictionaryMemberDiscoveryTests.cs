@@ -35,7 +35,7 @@ public class DictionaryMemberDiscoveryTests {
       public Line[] Rows { get; set; } = Array.Empty<Line>();
       public Node Tree { get; set; } = new();
       public Dictionary<string, Dictionary<string, int>> Nested { get; set; } = new();
-      public Dictionary<string, int> CountsAgain { get; set; } = new();
+      public IDictionary<string, int> CountsAgain { get; set; } = new Dictionary<string, int>();
       [System.Text.Json.Serialization.JsonIgnore] public Dictionary<string, Guid> Ignored { get; set; } = new();
       public static Dictionary<string, long> Shared { get; set; } = new();
     }
@@ -56,12 +56,13 @@ public class DictionaryMemberDiscoveryTests {
     "string -> string",
   ];
 
-  private static IReadOnlyList<(string KeyType, string ValueType)> _found(string metadataName) {
-    // The serializer's assembly too, so [JsonIgnore] resolves to the real attribute the walk recognizes.
-    var compilation = GeneratorTestHelper.CreateCompilation(SOURCE).AddReferences(
+  // The serializer's assembly too, so [JsonIgnore] resolves to the real attribute the walk recognizes.
+  private static Microsoft.CodeAnalysis.CSharp.CSharpCompilation _compilation() =>
+    GeneratorTestHelper.CreateCompilation(SOURCE).AddReferences(
       SharedMetadataReferences.FromFile(typeof(System.Text.Json.Serialization.JsonIgnoreAttribute).Assembly.Location));
-    return DictionaryMemberDiscovery.From(compilation.GetTypeByMetadataName(metadataName));
-  }
+
+  private static IReadOnlyList<(string KeyType, string ValueType)> _found(string metadataName) =>
+    DictionaryMemberDiscovery.From(_compilation().GetTypeByMetadataName(metadataName));
 
   [Test]
   public async Task EveryStoredDictionary_AtAnyDepth_IsFoundOnceAsync() {
@@ -137,5 +138,31 @@ public class DictionaryMemberDiscoveryTests {
     await Assert.That(code).Contains("GetEnumConverter<global::TestApp.Tone>");
     await Assert.That(code).Contains("_registered<global::System.Collections.Generic.Dictionary<global::TestApp.Shade, global::TestApp.Tone>>(options)")
       .Because("a converter registered on the options (the persistence profile's pairs) answers before the built-in dictionary form");
+  }
+
+  [Test]
+  public async Task EachDictionaryMember_IsNamedByTheTypeThatHoldsItAsync() {
+    var members = DictionaryMemberDiscovery.MembersFrom(_compilation().GetTypeByMetadataName("TestApp.Model"))
+      .Select(m => $"{m.OwnerType}.{m.PropertyName}: {m.MemberType}")
+      .ToList();
+
+    await Assert.That(members).Contains("global::TestApp.Model.Counts: global::System.Collections.Generic.Dictionary<string, int>");
+    await Assert.That(members).Contains("global::TestApp.Model.Notes: global::System.Collections.Generic.IReadOnlyDictionary<string, string>")
+      .Because("an inherited member is named on the type a document stores");
+    await Assert.That(members).Contains("global::TestApp.Line.Totals: global::System.Collections.Generic.Dictionary<string, decimal>");
+    await Assert.That(members).Contains("global::TestApp.Node.Flags: global::System.Collections.Generic.IDictionary<int, bool>");
+    await Assert.That(members.Any(m => m.Contains(".Ignored:", StringComparison.Ordinal))).IsFalse();
+    await Assert.That(DictionaryMemberDiscovery.MembersFrom(null)).IsEmpty();
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task TheSchemaGenerator_RegistersEachMemberOnceAsync() {
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(SOURCE);
+
+    var generated = GeneratorTestHelper.GetRequiredGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+
+    await Assert.That(generated).Contains(
+      "global::Whizbang.Core.Perspectives.DictionaryMemberForms.RegisterMember(typeof(global::TestApp.Line), \"Totals\", typeof(global::System.Collections.Generic.Dictionary<string, decimal>));");
   }
 }

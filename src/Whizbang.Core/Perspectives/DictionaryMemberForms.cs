@@ -60,6 +60,38 @@ public static class DictionaryMemberForms {
     }
   }
 
+  /// <summary>
+  /// Records that <paramref name="ownerType"/> holds a dictionary member named <paramref name="propertyName"/> of
+  /// <paramref name="memberType"/>, a type registered with <see cref="Register{TKey, TValue}"/>.
+  /// </summary>
+  /// <param name="ownerType">The type that declares or inherits the member, as a document stores it.</param>
+  /// <param name="propertyName">The member's name.</param>
+  /// <param name="memberType">The member's declared type.</param>
+  /// <remarks>
+  /// What lets a context built without the Whizbang options extension map the member: Entity Framework's model holds
+  /// <paramref name="ownerType"/>, and this names the member it holds, so the generated configuration adds it as a
+  /// value with its stored form, with no reflection over the type. Idempotent.
+  /// </remarks>
+  public static void RegisterMember(Type ownerType, string propertyName, Type memberType) {
+    ArgumentNullException.ThrowIfNull(ownerType);
+    ArgumentException.ThrowIfNullOrEmpty(propertyName);
+    ArgumentNullException.ThrowIfNull(memberType);
+    _membersByOwner.AddOrUpdate(
+      ownerType,
+      _ => [(propertyName, memberType)],
+      (_, existing) => existing.Contains((propertyName, memberType)) ? existing : existing.Add((propertyName, memberType)));
+  }
+
+  /// <summary>The dictionary members registered for a type, by name and declared type.</summary>
+  /// <param name="ownerType">A type a document stores.</param>
+  /// <returns>Its members, empty when none are registered.</returns>
+  public static IReadOnlyList<(string PropertyName, Type MemberType)> MembersOf(Type ownerType) {
+    ArgumentNullException.ThrowIfNull(ownerType);
+    return _membersByOwner.TryGetValue(ownerType, out var members) ? members : [];
+  }
+
+  private static readonly ConcurrentDictionary<Type, global::System.Collections.Immutable.ImmutableList<(string PropertyName, Type MemberType)>> _membersByOwner = new();
+
   /// <summary>The form registered for a member type, if any.</summary>
   /// <param name="memberType">A dictionary member's declared type.</param>
   /// <param name="form">The form, when registered.</param>
