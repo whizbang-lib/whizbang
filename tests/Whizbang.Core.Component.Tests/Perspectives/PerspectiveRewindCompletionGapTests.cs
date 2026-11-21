@@ -28,7 +28,7 @@ namespace Whizbang.Core.Tests.Perspectives;
 ///
 /// <para><strong>Root cause:</strong> the generated
 /// <c>IPerspectiveRunner.RewindAndRunAsync</c> (template at
-/// <c>src/Whizbang.Generators/Templates/PerspectiveRunnerBaseTemplate.cs</c>,
+/// <c>src/Whizbang.Core/Perspectives/PerspectiveRunnerBase.cs</c>,
 /// lines 918-926) reads events from the event store ONCE at rewind-start
 /// into a materialised list, then applies that fixed list in memory. Events
 /// appended to the stream <em>after</em> the materialisation but
@@ -54,7 +54,7 @@ public class PerspectiveRewindCompletionGapTests {
   /// Stand-in for the event store. The producer can <see cref="Append"/>
   /// events any time; a consumer snapshots the current event list via
   /// <see cref="ReadAll"/>, which mirrors the materialising
-  /// <c>await foreach</c> on line 920 of <c>PerspectiveRunnerBaseTemplate.cs</c>:
+  /// <c>await foreach</c> in the catch-up loop of <c>PerspectiveRunnerBase.cs</c>:
   /// the snapshot fixes the set of events the rewind will apply.
   /// </summary>
   private sealed class GatedEventStore {
@@ -78,7 +78,7 @@ public class PerspectiveRewindCompletionGapTests {
 
     /// <summary>Returns a defensive copy of the current event list. Mirrors the
     /// materialised list created by <c>await foreach (ReadPolymorphicAsync)</c>
-    /// at line 920 of <c>PerspectiveRunnerBaseTemplate.cs</c>.</summary>
+    /// in the catch-up loop of <c>PerspectiveRunnerBase.cs</c>.</summary>
     public List<Guid> ReadAll() {
       lock (_gate) {
         return [.. _events];
@@ -96,7 +96,7 @@ public class PerspectiveRewindCompletionGapTests {
   /// at rewind-start, apply them all in memory, persist. New appends during
   /// the in-memory apply are dropped on the floor.
   /// </para>
-  /// <para>This mirrors lines 918-1017 of <c>PerspectiveRunnerBaseTemplate.cs</c>.</para>
+  /// <para>This mirrors the catch-up loop of <c>PerspectiveRunnerBase.cs</c>.</para>
   /// </summary>
   private static async Task<int> SimulateBrokenRewindAsync(
       GatedEventStore store,

@@ -16,7 +16,7 @@ namespace Whizbang.Generators.Tests;
 /// after the write is the model it applied.
 /// </summary>
 /// <tests>src/Whizbang.Generators/PerspectiveRunnerGenerator.cs</tests>
-/// <tests>src/Whizbang.Generators/Templates/PerspectiveRunnerBaseTemplate.cs</tests>
+/// <tests>src/Whizbang.Core/Perspectives/PerspectiveRunnerBase.cs</tests>
 [Category("SourceGenerators")]
 public class PerspectiveRunnerSplitSnapshotTests {
   private const string SOURCE = """
@@ -107,9 +107,9 @@ public class PerspectiveRunnerSplitSnapshotTests {
       var runner = _runner(perspective);
 
       await Assert.That(runner).IsNotEmpty();
-      await Assert.That(runner).DoesNotContain("=> ToSnapshotJson(model);")
+      await Assert.That(runner).DoesNotContain("=> _toSnapshotJson(model);")
         .Because($"{perspective} is not stripped in place, so its snapshot after the write is the model it applied");
-      await Assert.That(_compact(runner)).Contains("privateJsonDocument?SnapshotBeforeWrite(")
+      await Assert.That(_compact(runner)).Contains("privateJsonDocument?_snapshotBeforeWrite(")
         .Because("the call sites are the same for every model; this one never has a snapshot to hand them");
     }
   }
@@ -122,9 +122,9 @@ public class PerspectiveRunnerSplitSnapshotTests {
     // The end of a run, and the end of a rewind: each captures the snapshot before it writes and hands
     // it to the store in place of one taken afterwards. Each prefers the row at its last event when collectives
     // folded after that event (#1956), which is serialized before the write too.
-    await Assert.That(runner.Split("snapshotBeforeWrite=snapshotDue?modelAtLastEvent??SnapshotBeforeWrite(updatedModel):null;").Length - 1).IsEqualTo(1);
-    await Assert.That(runner.Split("snapshotBeforeWrite=snapshotDue?_takeModelAtLastEvent(outcome)??SnapshotBeforeWrite(updatedModel):null;").Length - 1).IsEqualTo(1);
-    await Assert.That(runner.Split("snapshotBeforeWrite??ToSnapshotJson(updatedModel)").Length - 1).IsEqualTo(2);
+    await Assert.That(runner.Split("snapshotBeforeWrite=snapshotDue?modelAtLastEvent??_snapshotBeforeWrite(updatedModel):null;").Length - 1).IsEqualTo(1);
+    await Assert.That(runner.Split("snapshotBeforeWrite=snapshotDue?_takeModelAtLastEvent(outcome)??_snapshotBeforeWrite(updatedModel):null;").Length - 1).IsEqualTo(1);
+    await Assert.That(runner.Split("snapshotBeforeWrite??_toSnapshotJson(updatedModel)").Length - 1).IsEqualTo(2);
   }
 
   // #1956: the row at its last event is serialized only for a snapshot, so with snapshots off the fold of a collective
@@ -135,13 +135,13 @@ public class PerspectiveRunnerSplitSnapshotTests {
   public async Task Runner_CopiesTheRowAtItsLastEvent_OnlyWhenSnapshotsAreOnAsync() {
     var runner = _compact(_runner("SplitClassPerspective"));
 
-    await Assert.That(runner.Split("modelAtLastEvent=ToSnapshotJson(updatedModel);").Length - 1).IsEqualTo(2)
+    await Assert.That(runner.Split("modelAtLastEvent=_toSnapshotJson(updatedModel);").Length - 1).IsEqualTo(2)
       .Because("the rewind's replay and the run each take the copy at one place");
     await Assert.That(runner).Contains("varsnapshotsOn=_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true;")
       .Because("the rewind's replay decides once whether snapshots are on");
-    await Assert.That(runner).Contains("if(snapshotsOn&&modelAtLastEventisnull){modelAtLastEvent=ToSnapshotJson(updatedModel);}");
+    await Assert.That(runner).Contains("if(snapshotsOn&&modelAtLastEventisnull){modelAtLastEvent=_toSnapshotJson(updatedModel);}");
     await Assert.That(runner).Contains(
-      "if(modelAtLastEventisnull&&_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true){modelAtLastEvent=ToSnapshotJson(updatedModel);}");
+      "if(modelAtLastEventisnull&&_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true){modelAtLastEvent=_toSnapshotJson(updatedModel);}");
   }
 
   [Test]
@@ -156,7 +156,7 @@ public class PerspectiveRunnerSplitSnapshotTests {
       + "&&!collectiveInFlight;";
     await Assert.That(runner).Contains(RUN_DUE);
     await Assert.That(runner.IndexOf(RUN_DUE, StringComparison.Ordinal))
-      .IsLessThan(runner.IndexOf("awaitSaveModelAndCheckpointAsync(", StringComparison.Ordinal));
+      .IsLessThan(runner.IndexOf("await_saveModelAndCheckpointAsync(", StringComparison.Ordinal));
     await Assert.That(runner).Contains("_eventsSinceLastSnapshot.AddOrUpdate(streamId,eventsProcessed,(_,count)=>count+eventsProcessed);if(snapshotDue){")
       .Because("the snapshot after the write is taken on the same decision, so the two cannot disagree");
     // The end of a rewind snapshots whenever snapshots are on, unless it folded a collective still in flight (#1981).

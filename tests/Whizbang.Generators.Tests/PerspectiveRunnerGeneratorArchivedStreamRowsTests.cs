@@ -15,7 +15,7 @@ namespace Whizbang.Generators.Tests;
 /// </summary>
 /// <docs>fundamentals/events/archive-store#perspective-rows</docs>
 /// <code-under-test>src/Whizbang.Generators/PerspectiveRunnerGenerator.cs</code-under-test>
-/// <code-under-test>src/Whizbang.Generators/Templates/PerspectiveRunnerBaseTemplate.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Core/Perspectives/PerspectiveRunnerBase.cs</code-under-test>
 public class PerspectiveRunnerGeneratorArchivedStreamRowsTests {
   private const string REGISTER = "global::Whizbang.Core.Archival.ArchivedStreamRowPolicies.Register(";
   private const string PROBE = "global::Whizbang.Core.Archival.ArchivedStreamRowPolicies.RemovesRows(_traits.ArchivedStreamRowsName)";
