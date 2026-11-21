@@ -147,8 +147,7 @@ namespace TestNamespace {
 }
 """;
 
-  private const string KEEPS_NO_FLOOR = "private const bool _keepsRewindFloor = false;";
-  private const string KEEPS_A_FLOOR = "private const bool _keepsRewindFloor = true;";
+  private const string KEEPS_NO_FLOOR = "KeepsRewindFloor = false,";
   private const string MARKER_CALL = "EphemeralRewindFloor.NoFloorAssociationEntryJson(\"TestNamespace.PresencePerspective\", serviceName)";
 
   private static string _runner(string source) =>
@@ -166,7 +165,7 @@ namespace TestNamespace {
 
     await Assert.That(runner).Contains(KEEPS_NO_FLOOR)
       .Because("a perspective that applies only ephemeral events takes no snapshots by default");
-    await Assert.That(runner).Contains("private const bool _isEphemeralPerspective = true;")
+    await Assert.That(runner).Contains("IsEphemeral = true,")
       .Because("it stays an ephemeral perspective: a late event with no floor is dropped, never replayed from zero");
   }
 
@@ -178,7 +177,7 @@ namespace TestNamespace {
   public async Task Runner_OfAPerspectiveThatNeedsAFloor_KeepsItAsync(string source, string why) {
     var runner = _runner(source);
 
-    await Assert.That(runner).Contains(KEEPS_A_FLOOR).Because($"the perspective {why}");
+    await Assert.That(runner).DoesNotContain(KEEPS_NO_FLOOR).Because($"the perspective {why}");
     await Assert.That(runner).DoesNotContain(KEEPS_NO_FLOOR);
   }
 

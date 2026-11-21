@@ -101,9 +101,9 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate OrderPerspectiveRunner
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("class OrderPerspectiveRunner");
     await Assert.That(runnerSource).Contains("IPerspectiveRunner");
@@ -141,8 +141,10 @@ namespace TestNamespace {
 """;
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "PresencePerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "PresencePerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("IsEphemeral = true,")
+      .Because("the trait the shared cadence reads, which selects the ephemeral settings below");
     await Assert.That(runnerSource).Contains("EphemeralSnapshotEveryNEvents")
       .Because("An ephemeral perspective snapshots on the aggressive ephemeral cadence.");
     await Assert.That(runnerSource).Contains("EphemeralMaxSnapshotsPerStream")
@@ -179,11 +181,11 @@ namespace TestNamespace {
 """;
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "PresencePerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "PresencePerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource).Contains("private const bool _isEphemeralPerspective = true;")
+    await Assert.That(runnerSource).Contains("IsEphemeral = true,")
       .Because("An ephemeral perspective marks itself ephemeral so the rewind fallback guard fires.");
-    await Assert.That(runnerSource).Contains("_isEphemeralPerspective && !hasSnapshot")
+    await Assert.That(runnerSource).Contains("_traits.IsEphemeral && !hasSnapshot")
       .Because("The rewind fallback is guarded so an ephemeral stream never replays from zero over reaped bodies.");
   }
 
@@ -216,7 +218,7 @@ namespace TestNamespace {
 """;
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ThreadPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "ThreadPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("[global::System.Runtime.CompilerServices.ModuleInitializer]")
       .Because("A TtlRow perspective registers its row TTL via a module initializer.");
@@ -252,7 +254,7 @@ namespace TestNamespace {
 """;
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "PresencePerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "PresencePerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).DoesNotContain("PerspectiveTtlRegistry.Register")
       .Because("A non-TtlRow perspective's rows never expire, so no TTL is registered.");
@@ -290,7 +292,7 @@ namespace TestNamespace {
 """;
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "SourcedThreadPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "SourcedThreadPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("PerspectiveTtlRegistry.Register(typeof(global::TestNamespace.SourcedThreadModel), 5184000)")
       .Because("[RowTtl(Days = 60)] registers 60 days in seconds with no ephemeral involvement.");
@@ -330,12 +332,12 @@ namespace TestNamespace {
 """;
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProbedThreadPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "ProbedThreadPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
-    var arrayStart = runnerSource!.IndexOf("_handledEventTypes = new global::System.Type[]", StringComparison.Ordinal);
+    var arrayStart = runnerSource!.IndexOf("EventTypes = new global::System.Type[]", StringComparison.Ordinal);
     await Assert.That(arrayStart).IsGreaterThanOrEqualTo(0)
-      .Because("the runner declares the handled event types once, as a static array");
+      .Because("the runner declares the handled event types once, as a static array in its traits");
     var arrayEnd = runnerSource.IndexOf("};", arrayStart, StringComparison.Ordinal);
     var array = runnerSource[arrayStart..arrayEnd];
     await Assert.That(array).Contains("typeof(global::TestNamespace.ThreadArchived)");
@@ -375,7 +377,7 @@ namespace TestNamespace {
 """;
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "GroupedThreadPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "GroupedThreadPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource)
       .Contains("PerspectiveStreamGroupRegistry.Register(typeof(global::TestNamespace.GroupedThreadModel), \"chat\", true, true, false)")
@@ -409,7 +411,7 @@ namespace TestNamespace {
 """;
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "LonePerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "LonePerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).DoesNotContain("PerspectiveStreamGroupRegistry")
       .Because("an ungrouped perspective registers nothing — it must stay untouchable by cascades");
@@ -446,7 +448,7 @@ namespace TestNamespace {
 """;
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "CappedChatPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "CappedChatPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource)
       .Contains("PerspectiveRowCapRegistry.Register(typeof(global::TestNamespace.CappedChatModel), 200, \"u\")")
@@ -482,7 +484,7 @@ namespace TestNamespace {
 """;
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "TenantRunPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "TenantRunPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource)
       .Contains("PerspectiveRowCapRegistry.Register(typeof(global::TestNamespace.TenantRunModel), 50, \"t\")");
@@ -514,7 +516,7 @@ namespace TestNamespace {
 """;
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "PlainPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "PlainPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).DoesNotContain("PerspectiveRowCapRegistry.Register")
       .Because("an undeclared cap must emit nothing at all — registering 0 or -1 would be a cap "
@@ -550,7 +552,7 @@ namespace TestNamespace {
 """;
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "BarePerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "BarePerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).DoesNotContain("PerspectiveRowCapRegistry.Register")
       .Because("a [RowCap] naming neither PerScope nor PerTenant declares no cap");
@@ -589,7 +591,7 @@ namespace TestNamespace {
 """;
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OverriddenThreadPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OverriddenThreadPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("PerspectiveTtlRegistry.Register(typeof(global::TestNamespace.OverriddenThreadModel), 42)")
       .Because("the explicit [RowTtl] outranks the ephemeral-derived TTL on the override ladder.");
@@ -626,7 +628,7 @@ namespace TestNamespace {
 """;
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "LedgerListPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "LedgerListPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("FullHistoryPerspectiveRegistry.Register(")
       .Because("A [FullHistory] perspective registers its name via a module initializer for the A1 close guard.");
@@ -661,7 +663,7 @@ namespace TestNamespace {
 """;
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "BalancePerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "BalancePerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).DoesNotContain("FullHistoryPerspectiveRegistry.Register")
       .Because("A resumable (unmarked) perspective needs no full-history guard registration.");
@@ -692,13 +694,13 @@ namespace TestNamespace {
 """;
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("_snapshotOptions.Value.SnapshotEveryNEvents")
       .Because("A Sourced perspective uses the standard snapshot cadence.");
-    await Assert.That(runnerSource).DoesNotContain("EphemeralSnapshotEveryNEvents")
+    await Assert.That(runnerSource).DoesNotContain("IsEphemeral = true,")
       .Because("A Sourced perspective does not use the ephemeral cadence.");
-    await Assert.That(runnerSource).Contains("private const bool _isEphemeralPerspective = false;")
+    await Assert.That(runnerSource).DoesNotContain("IsEphemeral = true,")
       .Because("A Sourced perspective is not ephemeral, so the rewind fallback guard stays inert and it always replays.");
   }
 
@@ -778,9 +780,9 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should only generate runner for concrete class
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ConcretePerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "ConcretePerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("ConcretePerspectiveRunner");
     await Assert.That(runnerSource).DoesNotContain("BasePerspectiveRunner");
@@ -862,7 +864,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should use global:: qualified names
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("global::TestNamespace.OrderPerspective");
     await Assert.That(runnerSource).Contains("global::TestNamespace.OrderReadModel");
@@ -903,7 +905,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Runner name should be InventoryPerspectiveRunner
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "InventoryPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "InventoryPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("class InventoryPerspectiveRunner");
   }
@@ -942,7 +944,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should implement IPerspectiveRunner interface
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("IPerspectiveRunner");
     await Assert.That(runnerSource).Contains("RunAsync");
@@ -997,10 +999,10 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate two runners
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(3);
 
-    var orderRunner = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
-    var inventoryRunner = GeneratorTestHelper.GetGeneratedSource(result, "InventoryPerspectiveRunner.g.cs");
+    var orderRunner = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
+    var inventoryRunner = GeneratorTestHelper.GetRunnerSource(result, "InventoryPerspectiveRunner.g.cs");
 
     await Assert.That(orderRunner).IsNotNull();
     await Assert.That(inventoryRunner).IsNotNull();
@@ -1041,7 +1043,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should use TestAssembly.Generated namespace
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("namespace TestAssembly.Generated");
     await Assert.That(runnerSource).Contains("using System");
@@ -1081,7 +1083,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should include stream key property name in generated code
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("CustomOrderIdentifier");
   }
@@ -1123,7 +1125,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate ExtractStreamId method
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "ProductPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // DEBUG: Print generated source
@@ -1191,7 +1193,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should have multiple ExtractStreamId overloads (one per event type)
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // Should have ExtractStreamId for OrderCreatedEvent
@@ -1269,7 +1271,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate null check for [MustExist] method
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // Should have null check before calling Apply for OrderShippedEvent
@@ -1326,7 +1328,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // Should only have ONE MustExist null check (for OrderShippedEvent only)
@@ -1380,7 +1382,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Both cases should have MustExist null checks
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // Count MustExist-specific pattern (template has its own null check for model initialization)
@@ -1423,7 +1425,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - No MustExist null check generated (template has separate null check for model initialization)
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     // Check for absence of MustExist-specific error message (the template has its own null check for initialization)
     await Assert.That(runnerSource).DoesNotContain("must exist when applying");
@@ -1465,7 +1467,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Error message should include all context
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "CustomerPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "CustomerPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // Should include model type name
@@ -1519,7 +1521,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate code handling ModelAction return
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // Should have handling for ModelAction return type
@@ -1562,7 +1564,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate runner that handles null return (no change)
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // For now just verify a runner is generated (the return type handling will be added)
@@ -1605,7 +1607,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate runner
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("OrderPerspectiveRunner");
   }
@@ -1651,7 +1653,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate runner
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("OrderPerspectiveRunner");
   }
@@ -1705,7 +1707,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate runner with both event types handled
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("OrderPerspectiveRunner");
     await Assert.That(runnerSource).Contains("OrderCreatedEvent");
@@ -1773,11 +1775,11 @@ namespace TestNamespace {
         .ToList();
     await Assert.That(duplicateHintErrors).Count().IsEqualTo(0);
 
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(3);
 
     // The hintNames should include parent type names for uniqueness
-    var draftRunner = GeneratorTestHelper.GetGeneratedSource(result, "OrderStatusProjectionRunner.g.cs");
-    var embeddingRunner = GeneratorTestHelper.GetGeneratedSource(result, "EmbeddingProjectionRunner.g.cs");
+    var draftRunner = GeneratorTestHelper.GetRunnerSource(result, "OrderStatusProjectionRunner.g.cs");
+    var embeddingRunner = GeneratorTestHelper.GetRunnerSource(result, "EmbeddingProjectionRunner.g.cs");
 
     await Assert.That(draftRunner).IsNotNull();
     await Assert.That(embeddingRunner).IsNotNull();
@@ -1834,9 +1836,9 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate runner for perspective with 10 events
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "MultiEventPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "MultiEventPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("class MultiEventPerspectiveRunner");
     await Assert.That(runnerSource).Contains("IPerspectiveRunner");
@@ -1884,9 +1886,9 @@ namespace TestNamespace {{
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate runner for perspective with 25 events
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "BigPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "BigPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("class BigPerspectiveRunner");
     await Assert.That(runnerSource).Contains("IPerspectiveRunner");
@@ -1974,7 +1976,7 @@ namespace TestNamespace {
     await Assert.That(warning).IsNull();
 
     // Runner SHOULD be generated
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
   }
 
   // ========================================
@@ -2016,9 +2018,9 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate runner with UpsertWithPhysicalFieldsAsync
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "EmbeddingPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "EmbeddingPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // Should use UpsertWithPhysicalFieldsAsync instead of UpsertAsync
@@ -2065,9 +2067,9 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate runner with UpsertWithPhysicalFieldsAsync
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // Should use UpsertWithPhysicalFieldsAsync instead of UpsertAsync
@@ -2112,17 +2114,18 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate runner with simple UpsertAsync (no physical fields)
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "SimplePerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "SimplePerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // Should use UpsertAsync, NOT UpsertWithPhysicalFieldsAsync
     await Assert.That(runnerSource).Contains("UpsertAsync(");
-    await Assert.That(runnerSource).DoesNotContain("UpsertWithPhysicalFieldsAsync");
-    await Assert.That(runnerSource).DoesNotContain("physicalFieldValues");
-    // Issue #928: both scope branches write onto the row version the apply read.
-    await Assert.That(string.Concat(runnerSource!.Where(c => !char.IsWhiteSpace(c))).Split("metadata,expectedVersion,cancellationToken").Length - 1).IsEqualTo(2);
+    await Assert.That(runnerSource).DoesNotContain("PhysicalFieldValues(global::");
+    await Assert.That(runnerSource).DoesNotContain("var physicalFieldValues = new");
+    // Issue #928: every upsert the shared base makes (both scope branches, and the physical-fields one a model with
+    // physical fields takes) writes onto the row version the apply read.
+    await Assert.That(string.Concat(runnerSource!.Where(c => !char.IsWhiteSpace(c))).Split("metadata,expectedVersion,cancellationToken").Length - 1).IsEqualTo(3);
     await Assert.That(runnerSource).Contains("ReadForApplyAsync(streamId, cancellationToken)");
   }
 
@@ -2169,9 +2172,9 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate all physical fields in dictionary
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "ProductPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // Should have all three physical fields
@@ -2219,7 +2222,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should use custom column name
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "EmbeddingPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "EmbeddingPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // Should use custom column name instead of snake_case default
@@ -2265,11 +2268,11 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Static vector field should NOT be in physical fields
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "TestPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "TestPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // Should use simple UpsertAsync (no physical fields after excluding static)
-    await Assert.That(runnerSource).DoesNotContain("UpsertWithPhysicalFieldsAsync");
+    await Assert.That(runnerSource).DoesNotContain("PhysicalFieldValues(global::");
     await Assert.That(runnerSource).DoesNotContain("StaticVector");
     await Assert.That(runnerSource).Contains("UpsertAsync(");
   }
@@ -2315,9 +2318,9 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate runner
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // The generated template now uses scoped IReceptorInvoker for lifecycle invocation.
@@ -2377,9 +2380,9 @@ namespace TestNamespace {
 
     // Assert - Should generate runner
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("OrderPerspectiveRunner");
     await Assert.That(runnerSource).Contains("OrderDeletedEvent");
@@ -2458,9 +2461,9 @@ namespace TestNamespace {
 
     // Assert - Should generate runner handling all 4 event types
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // All event types should be handled
@@ -2522,9 +2525,9 @@ namespace TestNamespace {
 
     // Assert - Should generate runner handling both events
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("OrderCanceledEvent");
     await Assert.That(runnerSource).Contains("OrderArchivedEvent");
@@ -2566,7 +2569,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // Should have Delete case handling
@@ -2608,7 +2611,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
     // Should have Purge case handling with pendingPurge flag
@@ -2682,9 +2685,9 @@ namespace TestNamespace {
 
     // Assert - Should generate runner for IPerspectiveWithActionsFor-only class
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("OrderCreatedEvent");
     await Assert.That(runnerSource).Contains("OrderUpdatedEvent");
@@ -2728,7 +2731,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - scope handling code generated
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("IScopeEvent scopeEvent");
     await Assert.That(runnerSource).Contains("scopeEventScope = ");
@@ -2775,9 +2778,11 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - ApplyScope call generated
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("IPerspectiveScopeFor");
+    await Assert.That(runnerSource).Contains("HasScopeInterface = true,")
+      .Because("the perspective decides the scope an IScopeEvent sets, through ApplyScope");
     await Assert.That(runnerSource).Contains("ApplyScope");
     await Assert.That(runnerSource).Contains("scopeEventScope = ");
   }
@@ -2815,11 +2820,12 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Direct scope assignment, no ApplyScope call
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("IScopeEvent scopeEvent");
     await Assert.That(runnerSource).Contains("scopeEventScope = proposedScope");
-    await Assert.That(runnerSource).DoesNotContain("ApplyScope");
+    await Assert.That(runnerSource).DoesNotContain("HasScopeInterface = true,")
+      .Because("a perspective without IPerspectiveScopeFor takes the proposed scope as it is, never through ApplyScope");
   }
 
   [Test]
@@ -2870,7 +2876,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Both Apply cases and scope handling generated
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     // Apply cases for both events
     await Assert.That(runnerSource).Contains("OrderCreatedEvent");
@@ -2927,9 +2933,9 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - split mode with a record uses a 'with' expression to strip physical fields
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "ProductPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("model = model with {");
     await Assert.That(runnerSource).Contains("Status = default!");
@@ -2980,9 +2986,9 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - split mode with a class mutates properties directly
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "ProductPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("model.Status = default!;");
     await Assert.That(runnerSource).Contains("model.Embedding = global::System.Array.Empty<float>();");
@@ -3030,7 +3036,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "ProductPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("internal static void _registerSplitPhysicalFields() =>");
     await Assert.That(runnerSource).Contains(
@@ -3081,7 +3087,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "ProductPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains(
         "static (model, read) => { model.Status = read.Read<string>(\"status\"); " +
@@ -3132,8 +3138,8 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert
-    var extracted = GeneratorTestHelper.GetGeneratedSource(result, "ExtractedPerspectiveRunner.g.cs");
-    var bareSplit = GeneratorTestHelper.GetGeneratedSource(result, "BareSplitPerspectiveRunner.g.cs");
+    var extracted = GeneratorTestHelper.GetRunnerSource(result, "ExtractedPerspectiveRunner.g.cs");
+    var bareSplit = GeneratorTestHelper.GetRunnerSource(result, "BareSplitPerspectiveRunner.g.cs");
     await Assert.That(extracted).IsNotNull();
     await Assert.That(bareSplit).IsNotNull();
     await Assert.That(extracted).DoesNotContain("SplitPhysicalFieldRegistry");
@@ -3178,7 +3184,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - physical field dictionary is still built, but no stripping happens
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "ProductPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("UpsertWithPhysicalFieldsAsync");
     await Assert.That(runnerSource).DoesNotContain("model.Status = default!;");
@@ -3223,9 +3229,9 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Tenant (1) | User (2) == 3
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource).Contains("_inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields)3;");
+    await Assert.That(runnerSource).Contains("InheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields)3,");
   }
 
   [Test]
@@ -3263,10 +3269,10 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - attribute present without OnCreate override -> every field (63); Always = User (2)
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource).Contains("_inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields)63;");
-    await Assert.That(runnerSource).Contains("_inheritScopeAlways = (global::Whizbang.Core.Lenses.ScopeFields)2;");
+    await Assert.That(runnerSource).DoesNotContain("InheritScopeOnCreate = (");
+    await Assert.That(runnerSource).Contains("InheritScopeAlways = (global::Whizbang.Core.Lenses.ScopeFields)2,");
   }
 
   [Test]
@@ -3301,10 +3307,10 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - ScopeFields.All == 63
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource).Contains("_inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields)63;");
-    await Assert.That(runnerSource).Contains("_inheritScopeAlways = (global::Whizbang.Core.Lenses.ScopeFields)0;")
+    await Assert.That(runnerSource).DoesNotContain("InheritScopeOnCreate = (");
+    await Assert.That(runnerSource).DoesNotContain("InheritScopeAlways = (")
       .Because("with no attribute, scope is set once, at creation");
   }
 
@@ -3341,7 +3347,7 @@ namespace TestNamespace {
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("global::Whizbang.Core.Lenses.ScopeInheritance.Resolve(");
     await Assert.That(runnerSource).Contains("applyRead.Scope");
@@ -3394,9 +3400,9 @@ namespace TestNamespace {
 
     // Assert - global perspective produces a runner; events come from type args after
     // TModel and TPartitionKey
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "RegionSummaryPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "RegionSummaryPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("class RegionSummaryPerspectiveRunner");
     await Assert.That(runnerSource).Contains("RegionSaleEvent");
@@ -3447,9 +3453,9 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - ExtractStreamId is generated using the inherited SagaId property
-    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "SagaPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "SagaPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("ExtractStreamId");
     await Assert.That(runnerSource).Contains("@event.SagaId");
@@ -3496,7 +3502,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "WidgetPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "WidgetPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).DoesNotContain("Activator.CreateInstance")
       .Because("CreateEmptyModel must not use runtime activation; reflection breaks AOT.");
@@ -3549,7 +3555,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "WidgetPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "WidgetPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("global::TestNamespace.WidgetId.From(streamId)")
       .Because("strongly-typed stream ids must be constructed through their From(Guid) factory.");
@@ -3592,7 +3598,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert
-    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "WidgetPerspectiveRunner.g.cs");
+    var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "WidgetPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("WidgetId = streamId");
     await Assert.That(runnerSource).Contains("Name = default!")

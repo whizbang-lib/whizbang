@@ -41,9 +41,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
   /// <summary>The marker of an overwrite-only perspective (#1869).</summary>
   private const string OVERWRITE_ONLY_ATTRIBUTE = "Whizbang.Core.Attributes.OverwriteOnlyAttribute";
+  private const string INHERITDOC_LINE = "/// <inheritdoc/>";
 
-  /// <summary>The generated predicate's head; its body names the events whose Apply decides the row alone (#1869).</summary>
-  private const string DECIDES_THE_ROW_ALONE = "private static bool DecidesTheRowAlone(global::Whizbang.Core.IEvent @event) => ";
   private const string MUST_EXIST_ATTRIBUTE_NAME = "Whizbang.Core.Perspectives.MustExistAttribute";
 
   /// <summary>
@@ -64,6 +63,18 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
     // Combine with compilation to get assembly name
     var compilationAndResults = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(perspectiveResults.Collect());
+
+    // The runner base every runner derives from, emitted once per assembly that has a perspective (#2401). Its input is
+    // the assembly name and whether any perspective exists, so adding or editing a perspective leaves it cached.
+    var runnerBaseNeeded = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName)
+        .Combine(perspectiveResults.Collect().Select(static (results, _) => results.Any(static r => r!.Info is not null)));
+    context.RegisterSourceOutput(
+        runnerBaseNeeded,
+        static (ctx, data) => {
+          if (data.Right) {
+            _generateRunnerBase(ctx, data.Left);
+          }
+        });
 
     context.RegisterSourceOutput(
         compilationAndResults,
@@ -527,6 +538,27 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     return eventTypeSymbol is INamedTypeSymbol namedType ? StreamIdSelection.Select(namedType)?.Property.Name : null;
   }
 
+  /// <summary>The hint name of the runner base, emitted once per assembly that has a perspective (#2401).</summary>
+  private const string RUNNER_BASE_FILE = "PerspectiveRunnerBase.g.cs";
+
+  /// <summary>The namespace the runners and their base are generated into, named by the assembly.</summary>
+  private static string _generatedNamespace(string? compilationAssemblyName) =>
+      $"{compilationAssemblyName ?? "Whizbang.Core"}.Generated";
+
+  /// <summary>
+  /// Emits the generic runner base every runner of the assembly derives from: the runner logic every perspective
+  /// shares, generated once per assembly rather than repeated in each runner (#2401), so the large template is
+  /// processed once per run (#1689).
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerGeneratedSizeTests.cs:ASecondPerspective_AddsOnlyItsOwnRunner_TheSharedBaseIsEmittedOnceAsync</tests>
+  private static void _generateRunnerBase(SourceProductionContext context, string? compilationAssemblyName) {
+    var assembly = typeof(PerspectiveRunnerGenerator).Assembly;
+    var result = TemplateUtilities.GetEmbeddedTemplate(assembly, "PerspectiveRunnerBaseTemplate.cs");
+    result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {_generatedNamespace(compilationAssemblyName)};");
+    result = TemplateUtilities.ReplaceHeaderRegion(assembly, result);
+    context.AddSource(RUNNER_BASE_FILE, result);
+  }
+
   /// <summary>
   /// Generates IPerspectiveRunner implementations for all discovered perspectives with models.
   /// </summary>
@@ -539,9 +571,15 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       return;
     }
 
+    // The runner template, its namespace and its header are the same for every perspective: read them once (#1689).
+    var assembly = typeof(PerspectiveRunnerGenerator).Assembly;
+    var template = TemplateUtilities.GetEmbeddedTemplate(assembly, "PerspectiveRunnerClassTemplate.cs");
+    template = TemplateUtilities.ReplaceRegion(template, "NAMESPACE", $"namespace {_generatedNamespace(compilationAssemblyName)};");
+    template = TemplateUtilities.ReplaceHeaderRegion(assembly, template);
+
     // Generate a runner for each perspective
     foreach (var perspective in perspectives) {
-      var runnerSource = _generateRunnerSource(compilationAssemblyName, perspective);
+      var runnerSource = _generateRunnerSource(template, perspective);
       var runnerName = _getRunnerName(perspective.SimpleName);
       context.AddSource($"{runnerName}.g.cs", runnerSource);
 
@@ -556,19 +594,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Generates the C# source code for a perspective runner.
-  /// Uses template-based generation with unit-of-work pattern and AOT-compatible switch statements.
+  /// Generates the C# source code for a perspective runner: only what its perspective varies (its event list, traits,
+  /// Apply dispatch, empty model, optional overrides and registrations). The runner logic every perspective shares is in
+  /// the generic base it derives from (#2401).
   /// </summary>
-  private static string _generateRunnerSource(string? compilationAssemblyName, PerspectiveInfo perspective) {
-    var assemblyName = compilationAssemblyName ?? "Whizbang.Core";
-    var namespaceName = $"{assemblyName}.Generated";
-
-    // Load template from embedded resource
-    var template = TemplateUtilities.GetEmbeddedTemplate(
-        typeof(PerspectiveRunnerGenerator).Assembly,
-        "PerspectiveRunnerTemplate.cs"
-    );
-
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerGeneratedSizeTests.cs:ARunner_EmitsOnlyWhatItsPerspectiveVaries_NotTheSharedRunnerLogicAsync</tests>
+  private static string _generateRunnerSource(string template, PerspectiveInfo perspective) {
     var runnerName = _getRunnerName(perspective.SimpleName);
     var perspectiveSimpleName = perspective.SimpleName;
 
@@ -576,65 +607,19 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var modelTypeName = perspective.InterfaceTypeArguments[0];
     var modelSimpleName = TypeNameUtilities.GetSimpleName(modelTypeName);
 
-    // Generate AOT-compatible switch cases for event application
-    var applyCases = _buildApplyCases(perspective, modelSimpleName, perspectiveSimpleName);
-
-    // Generate event types array for polymorphic deserialization
-    var eventTypesArray = _buildEventTypesArray(perspective);
-
-    // Generate ExtractStreamId methods (one per event type with StreamId)
-    var extractStreamIdMethods = _buildExtractStreamIdMethods(perspective);
-
-    // Generate upsert call - either simple UpsertAsync or UpsertWithPhysicalFieldsAsync
-    var upsertCode = _generateUpsertCode(perspective);
-    var prepareWriteCode = _generatePrepareWriteCode(perspective);
-
-    // Generate scope event handling code
-    var scopeEventCode = _generateScopeEventHandlingCode(perspective);
-
-    // Replace template markers
     var result = template;
-    result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
-    result = TemplateUtilities.ReplaceHeaderRegion(typeof(PerspectiveRunnerGenerator).Assembly, result);
-    result = TemplateUtilities.ReplaceRegion(result, "EVENT_TYPES", eventTypesArray.ToString());
-    result = TemplateUtilities.ReplaceRegion(result, "REPLAY_EVENT_TYPES", eventTypesArray.ToString());
-    result = TemplateUtilities.ReplaceRegion(result, "REBUILD_EVENT_TYPES", eventTypesArray.ToString());
-    result = TemplateUtilities.ReplaceRegion(result, "REKEYED_ROW_EVENT_TYPES", eventTypesArray.ToString());
-    // Issue #696: the resurrection-on-wake probe carries the handled event types (static array).
-    result = TemplateUtilities.ReplaceRegion(result, "HANDLED_EVENT_TYPES", eventTypesArray.ToString());
-    result = TemplateUtilities.ReplaceRegion(result, "EVENT_APPLY_CASES", applyCases.ToString());
-    result = TemplateUtilities.ReplaceRegion(result, "EXTRACT_STREAM_ID_METHODS", extractStreamIdMethods.ToString());
-    result = TemplateUtilities.ReplaceRegion(result, "UPSERT_CALL", upsertCode);
-    result = TemplateUtilities.ReplaceRegion(result, "PREPARE_WRITE_CALL", prepareWriteCode);
-    result = TemplateUtilities.ReplaceRegion(result, "SCOPE_EVENT_HANDLING", scopeEventCode);
-    result = TemplateUtilities.ReplaceRegion(
-        result,
-        "INHERIT_SCOPE_ON_CREATE",
-        $"private const global::Whizbang.Core.Lenses.ScopeFields _inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields){perspective.InheritScopeOnCreate};\n"
-        + $"  private const global::Whizbang.Core.Lenses.ScopeFields _inheritScopeAlways = (global::Whizbang.Core.Lenses.ScopeFields){perspective.InheritScopeAlways};");
-
-    result = TemplateUtilities.ReplaceRegion(result, "SNAPSHOT_SETTINGS", perspective.IsEphemeral
-        ? "var snapshotThreshold = _snapshotOptions.Value.EphemeralSnapshotEveryNEvents;\nvar snapshotRetention = _snapshotOptions.Value.EphemeralMaxSnapshotsPerStream;"
-        : "var snapshotThreshold = _snapshotOptions.Value.SnapshotEveryNEvents;\nvar snapshotRetention = _snapshotOptions.Value.MaxSnapshotsPerStream;");
-    result = TemplateUtilities.ReplaceRegion(result, "UNCONDITIONAL_PURGE",
-        perspective.UnconditionalPurgeEventTypes is { Length: > 0 } purgeTypes
-          ? $"private static bool IsUnconditionalPurge(global::Whizbang.Core.IEvent @event) => @event is {string.Join(" or ", purgeTypes)};"
-          : "private static bool IsUnconditionalPurge(global::Whizbang.Core.IEvent @event) => false;");
-    result = TemplateUtilities.ReplaceRegion(result, "OVERWRITE_ONLY",
-        $"private static readonly bool _isOverwriteOnly = {_csharpBool(perspective.IsOverwriteOnly)};\n"
-        + DECIDES_THE_ROW_ALONE
-        + (perspective.OverwriteDecisiveEventTypes is { Length: > 0 } decisive
-          ? $"@event is {string.Join(" or ", decisive)};"
-          : "false;"));
-    result = TemplateUtilities.ReplaceRegion(result, "IS_EPHEMERAL",
-        $"private const bool _isEphemeralPerspective = {_csharpBool(perspective.IsEphemeral)};\n"
-        + $"  private const bool _keepsRewindFloor = {_csharpBool(perspective.KeepsRewindFloor)};");
+    result = TemplateUtilities.ReplaceRegion(result, "EVENT_TYPES", string.Join(",\n", perspective.EventTypes.Select(static t => $"typeof({t})")));
+    result = TemplateUtilities.ReplaceRegion(result, "TRAITS", _buildTraits(perspective));
+    // AOT-compatible switch cases for event application
+    result = TemplateUtilities.ReplaceRegion(result, "EVENT_APPLY_CASES", _buildApplyCases(perspective, modelSimpleName, perspectiveSimpleName).ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "EXTRACT_STREAM_ID_METHODS", _buildExtractStreamIdMethods(perspective).ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "OVERRIDES", _buildOverrides(perspective, modelTypeName));
     // E2-4d: a TtlRow perspective registers its row TTL via a [ModuleInitializer] so the upsert stamps
     // expires_at. Non-TtlRow perspectives emit nothing (their rows never expire).
     result = TemplateUtilities.ReplaceRegion(result, "TTL_REGISTRATION", perspective.TtlRowSeconds >= 0
         ? $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerRowTtl() =>\n      global::Whizbang.Core.Perspectives.PerspectiveTtlRegistry.Register(typeof({modelTypeName}), {perspective.TtlRowSeconds});"
         : "");
-    // The cap registers itself the same turnkey way the TTL does — a [ModuleInitializer], no consumer
+    // The cap registers itself the same turnkey way the TTL does, a [ModuleInitializer], no consumer
     // code, no reflection. Emitting nothing when undeclared keeps "absent" distinct from a cap of zero.
     result = TemplateUtilities.ReplaceRegion(result, "ROW_CAP_REGISTRATION", perspective.RowCapPerScope >= 0
         ? $"[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerRowCap() =>\n      global::Whizbang.Core.Perspectives.PerspectiveRowCapRegistry.Register(typeof({modelTypeName}), {perspective.RowCapPerScope}, \"{perspective.RowCapScopeKey}\");"
@@ -660,7 +645,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         "[global::System.Runtime.CompilerServices.ModuleInitializer]\n  internal static void _registerWriteMode() =>\n"
         + "      global::Whizbang.Core.Perspectives.PerspectiveWriteModes.Register(_archivedStreamRowsName, "
         + (perspective.WriteMode >= 0 ? $"(global::Whizbang.Core.Perspectives.PerspectiveWriteMode){perspective.WriteMode});" : "null);"));
-    // Stream groups register turnkey like the TTL and the cap — one [ModuleInitializer] per
+    // Stream groups register turnkey like the TTL and the cap: one [ModuleInitializer] per
     // membership, decoded from the compact spec, so the maintenance cascade can compute the
     // eviction closure without reflection.
     result = TemplateUtilities.ReplaceRegion(result, "STREAM_GROUP_REGISTRATION",
@@ -678,9 +663,6 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // back into the model the next event is applied to. The copy is generated here, where the fields are known.
     result = TemplateUtilities.ReplaceRegion(result, "SPLIT_PHYSICAL_FIELD_REGISTRATION",
         _buildSplitPhysicalFieldRegistration(perspective, modelTypeName));
-    // Issue #983: a model the write strips in place has to be snapshotted before the write.
-    result = TemplateUtilities.ReplaceRegion(result, "SNAPSHOT_BEFORE_WRITE",
-        _buildSnapshotBeforeWrite(perspective, modelTypeName));
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
     result = result.Replace("__MODEL_TYPE_NAME__", modelTypeName);
@@ -688,6 +670,72 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = result.Replace("__PERSPECTIVE_SIMPLE_NAME__", perspectiveSimpleName);
 
     return result;
+  }
+
+  /// <summary>
+  /// The runner traits that differ from their defaults, as object-initializer lines: the model's [InheritScope] fields,
+  /// whether its streams are ephemeral and keep a rewind floor, whether it is overwrite-only, whether it decides the
+  /// scope an IScopeEvent sets, and whether its snapshot is taken before the write.
+  /// </summary>
+  private static string _buildTraits(PerspectiveInfo perspective) {
+    var lines = new List<string>();
+    if (perspective.InheritScopeOnCreate != 63) {
+      lines.Add($"InheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields){perspective.InheritScopeOnCreate},");
+    }
+    if (perspective.InheritScopeAlways != 0) {
+      lines.Add($"InheritScopeAlways = (global::Whizbang.Core.Lenses.ScopeFields){perspective.InheritScopeAlways},");
+    }
+    if (perspective.IsEphemeral) {
+      lines.Add("IsEphemeral = true,");
+    }
+    if (!perspective.KeepsRewindFloor) {
+      lines.Add("KeepsRewindFloor = false,");
+    }
+    if (perspective.IsOverwriteOnly) {
+      lines.Add("IsOverwriteOnly = true,");
+    }
+    if (perspective.HasScopeInterface) {
+      lines.Add("HasScopeInterface = true,");
+    }
+    if (_snapshotsBeforeWrite(perspective)) {
+      // The write strips this model's promoted fields in place, so its snapshot is taken first (issue #983).
+      lines.Add("SnapshotsBeforeWrite = true,");
+    }
+    return string.Join("\n", lines);
+  }
+
+  /// <summary>
+  /// The overrides a perspective needs beyond the base's defaults: the events whose Apply can only purge (#1151), the
+  /// events that decide an overwrite-only row alone (#1869), and the physical field values with their Split stripping.
+  /// </summary>
+  private static string _buildOverrides(PerspectiveInfo perspective, string modelTypeName) {
+    var sb = new StringBuilder();
+    if (perspective.UnconditionalPurgeEventTypes is { Length: > 0 } purgeTypes) {
+      sb.AppendLine(INHERITDOC_LINE);
+      sb.AppendLine($"protected override bool IsUnconditionalPurge(global::Whizbang.Core.IEvent @event) => @event is {string.Join(" or ", purgeTypes)};");
+      sb.AppendLine();
+    }
+    if (perspective.OverwriteDecisiveEventTypes is { Length: > 0 } decisive) {
+      sb.AppendLine(INHERITDOC_LINE);
+      sb.AppendLine($"protected override bool DecidesTheRowAlone(global::Whizbang.Core.IEvent @event) => @event is {string.Join(" or ", decisive)};");
+      sb.AppendLine();
+    }
+    if (perspective.PhysicalFields is { Length: > 0 }) {
+      sb.AppendLine(INHERITDOC_LINE);
+      sb.AppendLine($"protected override global::System.Collections.Generic.Dictionary<string, object?>? PhysicalFieldValues({modelTypeName} model) {{");
+      _appendPhysicalFieldValuesDictionary(sb, perspective);
+      sb.AppendLine("  return physicalFieldValues;");
+      sb.AppendLine("}");
+      sb.AppendLine();
+      if (perspective.StorageMode == 2) {
+        sb.AppendLine(INHERITDOC_LINE);
+        sb.AppendLine($"protected override {modelTypeName} StripPhysicalFields({modelTypeName} model) {{");
+        _appendSplitModePhysicalFieldStripping(sb, perspective);
+        sb.AppendLine("  return model;");
+        sb.AppendLine("}");
+      }
+    }
+    return sb.ToString();
   }
 
   /// <summary>
@@ -726,41 +774,6 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       applyCases.AppendLine();
     }
     return applyCases;
-  }
-
-  /// <summary>
-  /// Builds the typeof(...) list of handled event types used for polymorphic deserialization.
-  /// </summary>
-  private static StringBuilder _buildEventTypesArray(PerspectiveInfo perspective) {
-    var eventTypesArray = new StringBuilder();
-    for (int i = 0; i < perspective.EventTypes.Length; i++) {
-      eventTypesArray.Append($"      typeof({perspective.EventTypes[i]})");
-      if (i < perspective.EventTypes.Length - 1) {
-        eventTypesArray.AppendLine(",");
-      } else {
-        eventTypesArray.AppendLine();
-      }
-    }
-    return eventTypesArray;
-  }
-
-  /// <summary>
-  /// Builds one ExtractStreamId overload per event type that carries a [StreamId] property.
-  /// </summary>
-  private static StringBuilder _buildExtractStreamIdMethods(PerspectiveInfo perspective) {
-    var extractStreamIdMethods = new StringBuilder();
-    if (perspective.EventStreamIds != null) {
-      foreach (var eventStreamId in perspective.EventStreamIds) {
-        extractStreamIdMethods.AppendLine("  /// <summary>");
-        extractStreamIdMethods.AppendLine($"  /// Extracts the stream ID from {TypeNameUtilities.GetSimpleName(eventStreamId.EventTypeName)} event.");
-        extractStreamIdMethods.AppendLine("  /// </summary>");
-        extractStreamIdMethods.AppendLine($"  private static string ExtractStreamId({eventStreamId.EventTypeName} @event) {{");
-        extractStreamIdMethods.AppendLine($"    return @event.{eventStreamId.StreamIdPropertyName}.ToString();");
-        extractStreamIdMethods.AppendLine("  }");
-        extractStreamIdMethods.AppendLine();
-      }
-    }
-    return extractStreamIdMethods;
   }
 
   /// <summary>
@@ -807,28 +820,39 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Emits <c>SnapshotBeforeWrite</c>, which the runner calls just before each write that a snapshot follows.
+  /// Builds one ExtractStreamId overload per event type that carries a [StreamId] property.
+  /// </summary>
+  private static StringBuilder _buildExtractStreamIdMethods(PerspectiveInfo perspective) {
+    var extractStreamIdMethods = new StringBuilder();
+    if (perspective.EventStreamIds != null) {
+      foreach (var eventStreamId in perspective.EventStreamIds) {
+        extractStreamIdMethods.AppendLine("/// <summary>");
+        extractStreamIdMethods.AppendLine($"/// Extracts the stream ID from {TypeNameUtilities.GetSimpleName(eventStreamId.EventTypeName)} event.");
+        extractStreamIdMethods.AppendLine("/// </summary>");
+        extractStreamIdMethods.AppendLine($"private static string ExtractStreamId({eventStreamId.EventTypeName} @event) {{");
+        extractStreamIdMethods.AppendLine($"  return @event.{eventStreamId.StreamIdPropertyName}.ToString();");
+        extractStreamIdMethods.AppendLine("}");
+        extractStreamIdMethods.AppendLine();
+      }
+    }
+    return extractStreamIdMethods;
+  }
+
+  /// <summary>
+  /// Whether the runner snapshots this model before the write rather than after it (issue #983).
   /// </summary>
   /// <remarks>
   /// The write of a Split model strips its promoted fields so the document never holds them. A record is
   /// stripped as a copy, but a class is stripped in place (it has no <c>with</c>), so the instance the runner
   /// snapshots after the write has lost them, and a rewind that starts from that snapshot writes their
-  /// defaults over the columns (issue #983). For that model this serializes the snapshot before the write,
-  /// when snapshots are on; for every other model it returns null and the snapshot is taken after the write
-  /// as before.
+  /// defaults over the columns. For that model the snapshot is serialized before the write, when snapshots are on
+  /// and only on a run whose snapshot is due (issue #1002); every other model is snapshotted after the write.
   /// </remarks>
-  private static string _buildSnapshotBeforeWrite(PerspectiveInfo perspective, string modelTypeName) {
-    var strippedInPlace = perspective.StorageMode == 2
-        && perspective.PhysicalFields is { Length: > 0 }
-        && !perspective.IsModelRecord
-        && perspective.ModelCopy is not { Problem: null };
-    return strippedInPlace
-        ? "// The write strips this model's promoted fields in place, so its snapshot is taken first (issue #983),\n" +
-          "// and only on a run whose snapshot is due (issue #1002).\n" +
-          $"private static JsonDocument? SnapshotBeforeWrite({modelTypeName} model) => ToSnapshotJson(model);"
-        : "// The write does not strip this model in place, so its snapshot is taken after the write.\n" +
-          $"private static JsonDocument? SnapshotBeforeWrite({modelTypeName} model) => null;";
-  }
+  private static bool _snapshotsBeforeWrite(PerspectiveInfo perspective) =>
+      perspective.StorageMode == 2
+      && perspective.PhysicalFields is { Length: > 0 }
+      && !perspective.IsModelRecord
+      && perspective.ModelCopy is not { Problem: null };
 
   /// <summary>The expression that reads one promoted column as its property's type.</summary>
   private static string _splitColumnRead(PhysicalFieldInfoCompact field) {
@@ -891,133 +915,27 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Generates the upsert code for the SaveModelAndCheckpointAsync method.
-  /// Uses UpsertWithPhysicalFieldsAsync when physical fields exist, UpsertAsync otherwise.
-  /// </summary>
-  private static string _generateUpsertCode(PerspectiveInfo perspective) {
-    var sb = new StringBuilder();
-
-    if (perspective.PhysicalFields == null || perspective.PhysicalFields.Length == 0) {
-      _appendSimpleUpsertCode(sb);
-    } else {
-      _appendPhysicalFieldsUpsertCode(sb, perspective);
-    }
-
-    return sb.ToString().TrimEnd('\r', '\n');
-  }
-
-  /// <summary>
-  /// Generates the body of the runner's PrepareRowWrite, the set-based twin of the upsert (#2246): the same physical
-  /// values and Split stripping the upsert code emits, from the same helpers, handed to the store's PrepareWrite.
-  /// </summary>
-  private static string _generatePrepareWriteCode(PerspectiveInfo perspective) {
-    var sb = new StringBuilder();
-    var hasPhysicalFields = perspective.PhysicalFields is { Length: > 0 };
-
-    if (hasPhysicalFields) {
-      _appendPhysicalFieldValuesDictionary(sb, perspective);
-      if (perspective.StorageMode == 2) {
-        _appendSplitModePhysicalFieldStripping(sb, perspective);
-      }
-    }
-
-    sb.AppendLine("    // Prepare the row write the upsert would make, with the same document, physical values and scope;");
-    sb.AppendLine("    // the batch's write sink writes it with the rest of the batch.");
-    sb.AppendLine("    return _perspectiveStore.PrepareWrite(");
-    sb.AppendLine("        streamId,");
-    sb.AppendLine("        model,");
-    sb.AppendLine("        scope ?? new global::Whizbang.Core.Lenses.PerspectiveScope(),");
-    // The upsert without physical fields writes a null scope as an empty one that forces no update; the one with
-    // physical fields passes the flag through. Each prepared write does what its upsert does.
-    sb.AppendLine(hasPhysicalFields ? "        forceUpdateScope," : "        scope != null && forceUpdateScope,");
-    sb.AppendLine("        metadata,");
-    sb.AppendLine("        expectedVersion,");
-    sb.AppendLine(hasPhysicalFields ? "        physicalFieldValues" : "        null");
-    sb.AppendLine("    );");
-
-    return sb.ToString().TrimEnd('\r', '\n');
-  }
-
-  /// <summary>
-  /// Emits the no-physical-fields branch: a simple UpsertAsync call with a scope-aware if/else
-  /// so zero-scope perspectives can use the scope-less overload.
-  /// </summary>
-  private static void _appendSimpleUpsertCode(StringBuilder sb) {
-    sb.AppendLine("    // Upsert model (insert or update) — metadata.EventId records the last applied event so the");
-    sb.AppendLine("    // next run can skip already-applied events (see RunWithEventsAsync idempotency guard), and");
-    sb.AppendLine("    // expectedVersion lands the write only on the row version the apply read (issue #928). The result says");
-    sb.AppendLine("    // whether the row was written: the store's ordering guard can refuse it quietly (#1342).");
-    sb.AppendLine("    if (scope != null) {");
-    sb.AppendLine("      return await _perspectiveStore.TryUpsertAsync(");
-    sb.AppendLine("          streamId,");
-    sb.AppendLine("          model,");
-    sb.AppendLine("          scope,");
-    sb.AppendLine("          forceUpdateScope,");
-    sb.AppendLine("          metadata,");
-    sb.AppendLine("          expectedVersion,");
-    sb.AppendLine("          cancellationToken");
-    sb.AppendLine("      );");
-    sb.AppendLine("    } else {");
-    sb.AppendLine("      return await _perspectiveStore.TryUpsertAsync(");
-    sb.AppendLine("          streamId,");
-    sb.AppendLine("          model,");
-    sb.AppendLine("          new global::Whizbang.Core.Lenses.PerspectiveScope(),");
-    sb.AppendLine("          false,");
-    sb.AppendLine("          metadata,");
-    sb.AppendLine("          expectedVersion,");
-    sb.AppendLine("          cancellationToken");
-    sb.AppendLine("      );");
-    sb.AppendLine("    }");
-  }
-
-  /// <summary>
-  /// Emits the physical-fields branch: builds the column-value dictionary, optionally strips
-  /// physical fields from the model for split mode, and calls UpsertWithPhysicalFieldsAsync.
-  /// </summary>
-  private static void _appendPhysicalFieldsUpsertCode(StringBuilder sb, PerspectiveInfo perspective) {
-    _appendPhysicalFieldValuesDictionary(sb, perspective);
-
-    if (perspective.StorageMode == 2 && perspective.PhysicalFields!.Length > 0) {
-      _appendSplitModePhysicalFieldStripping(sb, perspective);
-    }
-
-    sb.AppendLine("    // Upsert model with physical field values — metadata.EventId records the last applied event");
-    sb.AppendLine("    // so the next run can skip already-applied events (see RunWithEventsAsync idempotency guard), and");
-    sb.AppendLine("    // expectedVersion lands the write only on the row version the apply read (issue #928).");
-    sb.AppendLine("    return await _perspectiveStore.TryUpsertWithPhysicalFieldsAsync(");
-    sb.AppendLine("        streamId,");
-    sb.AppendLine("        model,");
-    sb.AppendLine("        physicalFieldValues,");
-    sb.AppendLine("        scope,");
-    sb.AppendLine("        forceUpdateScope,");
-    sb.AppendLine("        metadata,");
-    sb.AppendLine("        expectedVersion,");
-    sb.AppendLine("        cancellationToken");
-    sb.AppendLine("    );");
-  }
-
-  /// <summary>
   /// Emits the <c>physicalFieldValues</c> dictionary initialiser. Vector fields are converted
   /// from <c>float[]</c> to <c>Pgvector.Vector</c> at compile time so AOT compatibility is
   /// preserved (no reflection).
   /// </summary>
   private static void _appendPhysicalFieldValuesDictionary(StringBuilder sb, PerspectiveInfo perspective) {
-    sb.AppendLine("    // Extract physical field values from model (including vector fields)");
-    sb.AppendLine("    // Vector fields are converted from float[] to Pgvector.Vector for EF Core compatibility");
-    sb.AppendLine("    var physicalFieldValues = new global::System.Collections.Generic.Dictionary<string, object?>");
-    sb.AppendLine("    {");
+    sb.AppendLine("  // Extract physical field values from model (including vector fields)");
+    sb.AppendLine("  // Vector fields are converted from float[] to Pgvector.Vector for EF Core compatibility");
+    sb.AppendLine("  var physicalFieldValues = new global::System.Collections.Generic.Dictionary<string, object?>");
+    sb.AppendLine("  {");
 
     for (int i = 0; i < perspective.PhysicalFields!.Length; i++) {
       var field = perspective.PhysicalFields[i];
       var comma = i < perspective.PhysicalFields.Length - 1 ? "," : "";
       if (field.IsVectorField) {
-        sb.AppendLine($"      {{ \"{field.ColumnName}\", model.{field.PropertyName} != null ? new Pgvector.Vector(model.{field.PropertyName}) : null }}{comma}");
+        sb.AppendLine($"    {{ \"{field.ColumnName}\", model.{field.PropertyName} != null ? new Pgvector.Vector(model.{field.PropertyName}) : null }}{comma}");
       } else {
-        sb.AppendLine($"      {{ \"{field.ColumnName}\", model.{field.PropertyName} }}{comma}");
+        sb.AppendLine($"    {{ \"{field.ColumnName}\", model.{field.PropertyName} }}{comma}");
       }
     }
 
-    sb.AppendLine("    };");
+    sb.AppendLine("  };");
     sb.AppendLine();
   }
 
@@ -1031,60 +949,28 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// JsonCollectionOfStructsReaderWriter crashes on a null JSON token.
   /// </summary>
   private static void _appendSplitModePhysicalFieldStripping(StringBuilder sb, PerspectiveInfo perspective) {
-    sb.AppendLine("    // Split mode: exclude physical fields from JSONB — values stored in physical columns only");
+    sb.AppendLine("  // Split mode: exclude physical fields from JSONB: values stored in physical columns only");
     if (perspective.IsModelRecord) {
       var withProps = string.Join(", ", perspective.PhysicalFields!.Select(f =>
         f.IsVectorField ? $"{f.PropertyName} = global::System.Array.Empty<float>()" : $"{f.PropertyName} = default!"));
-      sb.AppendLine($"    model = model with {{ {withProps} }};");
+      sb.AppendLine($"  model = model with {{ {withProps} }};");
     } else if (perspective.ModelCopy is { Problem: null } copy) {
       // An init-only field cannot be assigned once the instance exists, so the document is written from a copy, and
       // the instance the runner applied keeps its fields for the snapshot taken after the write (issue #1002).
       var stripped = perspective.PhysicalFields!.ToDictionary(
           f => f.PropertyName, f => f.IsVectorField ? "global::System.Array.Empty<float>()" : "default!", StringComparer.Ordinal);
-      sb.AppendLine($"    model = {ModelCopy.Render(perspective.InterfaceTypeArguments[0], copy, "model", stripped)};");
+      sb.AppendLine($"  model = {ModelCopy.Render(perspective.InterfaceTypeArguments[0], copy, "model", stripped)};");
     } else {
       // An init-only field of a class that cannot be copied is reported (WHIZ808) rather than assigned.
       foreach (var field in perspective.PhysicalFields!.Where(f => !f.IsInitOnly)) {
         if (field.IsVectorField) {
-          sb.AppendLine($"    model.{field.PropertyName} = global::System.Array.Empty<float>();");
+          sb.AppendLine($"  model.{field.PropertyName} = global::System.Array.Empty<float>();");
         } else {
-          sb.AppendLine($"    model.{field.PropertyName} = default!;");
+          sb.AppendLine($"  model.{field.PropertyName} = default!;");
         }
       }
     }
     sb.AppendLine();
-  }
-
-  /// <summary>
-  /// Generates scope event handling code for the event loop.
-  /// When HasScopeInterface is true, generates IScopeEvent detection and ApplyScope call.
-  /// When false, generates a simple IScopeEvent check that uses the proposed scope directly.
-  /// </summary>
-  private static string _generateScopeEventHandlingCode(PerspectiveInfo perspective) {
-    var sb = new StringBuilder();
-
-    // Always generate IScopeEvent detection — perspectives that handle IScopeEvent-implementing
-    // events will get scope changes even without IPerspectiveScopeFor
-    sb.AppendLine("        if (@event is global::Whizbang.Core.IScopeEvent scopeEvent) {");
-    sb.AppendLine("          var proposedScope = scopeEvent.Scope;");
-
-    if (perspective.HasScopeInterface) {
-      // Perspective implements IPerspectiveScopeFor — let it decide the final scope
-      sb.AppendLine($"          if (perspective is global::Whizbang.Core.Perspectives.IPerspectiveScopeFor<{perspective.InterfaceTypeArguments[0]}> scopePerspective) {{");
-      // The current scope is the one an earlier scope event in this batch set, else the row's stored scope,
-      // never the last message's envelope scope (#1432).
-      sb.AppendLine("            var currentScope = scopeEventScope ?? applyRead.Scope ?? new global::Whizbang.Core.Lenses.PerspectiveScope();");
-      sb.AppendLine("            scopeEventScope = scopePerspective.ApplyScope(currentScope, proposedScope);");
-      sb.AppendLine("          } else {");
-      sb.AppendLine("            scopeEventScope = proposedScope;");
-      sb.AppendLine("          }");
-    } else {
-      // No IPerspectiveScopeFor — accept proposed scope directly
-      sb.AppendLine("          scopeEventScope = proposedScope;");
-    }
-    sb.AppendLine("        }");
-
-    return sb.ToString().TrimEnd('\r', '\n');
   }
 
   // ========================================
