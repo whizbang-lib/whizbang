@@ -603,7 +603,7 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<IEventMarkerResolver>(),
       // #2329: a retired type is turned away at receive, so it is never stored again and integrity never compares it.
       retired: sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.RetiredEventTypesOptions>>(),
-      catalog: sp.GetService<IMessageTypeCatalog>()));
+      catalog: sp.GetRequiredService<IMessageTypeCatalog>()));
 
     // Poison detector (topology arc phase 8.5). Turnkey by construction: the valve it replaces —
     // the broker's MaxDeliveryCount, and every transport branch reading the same counter — cannot

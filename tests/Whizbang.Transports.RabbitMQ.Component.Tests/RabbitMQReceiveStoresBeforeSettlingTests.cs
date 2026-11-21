@@ -105,7 +105,7 @@ public class RabbitMQReceiveStoresBeforeSettlingTests {
       logger: new CapturingLogger<MessageDiscardPolicy>(),
       meter: meter,
       routingOptions: Options.Create(new RoutingOptions()),
-      markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+      markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance), retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
     var channel = new RecordingChannel();
     var connection = new FakeConnection(() => Task.FromResult<IChannel>(channel));
     var transport = await RabbitTestWire.NewInitializedTransportAsync(connection, discardPolicy: policy);

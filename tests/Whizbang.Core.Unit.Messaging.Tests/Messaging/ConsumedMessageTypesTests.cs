@@ -108,7 +108,7 @@ public class ConsumedMessageTypesTests {
     services.AddSingleton<IMessageDiscardPolicy>(new MessageDiscardPolicy(
       registry, NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("consumed-types-test"),
       Options.Create(new RoutingOptions().AbsorbNamespaces("contracts")),
-      new EventMarkerResolver(NullMessageTypeCatalog.Instance)));
+      new EventMarkerResolver(NullMessageTypeCatalog.Instance), global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), global::Whizbang.Core.NullMessageTypeCatalog.Instance));
     await using var provider = services.BuildServiceProvider();
 
     await Assert.That(ConsumedMessageTypes.Keeps(provider)(UNCONSUMED)).IsTrue()

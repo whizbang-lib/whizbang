@@ -1304,7 +1304,7 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
       services.AddSingleton<Whizbang.Core.Routing.IMessageDiscardPolicy>(new Whizbang.Core.Routing.MessageDiscardPolicy(
         new Whizbang.Testing.Workers.PermissiveReceptorRegistryQuery(), NullLogger<Whizbang.Core.Routing.MessageDiscardPolicy>.Instance,
         _discardMeter, Options.Create(new Whizbang.Core.Routing.RoutingOptions()), new MatrixMarkers(),
-        retired: Options.Create(rules.RetiredOptions)));
+        retired: Options.Create(rules.RetiredOptions), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance));
       // The consumer's catalog: what the fan-out derives a redelivered child's flags from, by its type name.
       services.AddSingleton<IEventMarkerResolver>(new MatrixMarkers());
       if (tracker is not null) {

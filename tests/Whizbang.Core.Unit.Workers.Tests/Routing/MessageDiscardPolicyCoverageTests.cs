@@ -43,7 +43,7 @@ public class MessageDiscardPolicyCoverageTests {
   private static MessageDiscardPolicy _newPolicy(out RecordingLogger<MessageDiscardPolicy> logger) {
     logger = new RecordingLogger<MessageDiscardPolicy>();
     var meter = new Meter($"Whizbang.Tests.MessageDiscardPolicyCoverageTests.{Guid.NewGuid()}");
-    return new MessageDiscardPolicy(registry: new TestRegistry(), logger: logger, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    return new MessageDiscardPolicy(registry: new TestRegistry(), logger: logger, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance), retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -137,7 +137,7 @@ public class MessageDiscardPolicyCoverageTests {
   [Test]
   public async Task RecordDiscard_OutboxGate_TagsGateAsOutboxAsync() {
     using var meter = new Meter($"Whizbang.Tests.MessageDiscardPolicyCoverageTests.Outbox.{Guid.NewGuid()}");
-    var policy = new MessageDiscardPolicy(registry: new TestRegistry(), logger: new RecordingLogger<MessageDiscardPolicy>(), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    var policy = new MessageDiscardPolicy(registry: new TestRegistry(), logger: new RecordingLogger<MessageDiscardPolicy>(), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance), retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
     var tagSnapshots = new List<IReadOnlyDictionary<string, object?>>();
     using var listener = new MeterListener {
       InstrumentPublished = (instrument, l) => {
@@ -171,7 +171,7 @@ public class MessageDiscardPolicyCoverageTests {
   [Test]
   public async Task RecordDiscard_UnknownGateValue_FallsBackToNumericTagAsync() {
     using var meter = new Meter($"Whizbang.Tests.MessageDiscardPolicyCoverageTests.UnknownGate.{Guid.NewGuid()}");
-    var policy = new MessageDiscardPolicy(registry: new TestRegistry(), logger: new RecordingLogger<MessageDiscardPolicy>(), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    var policy = new MessageDiscardPolicy(registry: new TestRegistry(), logger: new RecordingLogger<MessageDiscardPolicy>(), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance), retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
     var tagSnapshots = new List<IReadOnlyDictionary<string, object?>>();
     using var listener = new MeterListener {
       InstrumentPublished = (instrument, l) => {

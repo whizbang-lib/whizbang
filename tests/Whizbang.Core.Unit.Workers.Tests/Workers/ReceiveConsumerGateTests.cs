@@ -98,7 +98,7 @@ public class ReceiveConsumerGateTests {
     using var meter = new Meter("Whizbang.Tests.ReceiveConsumerGateTests.Retired");
     var policy = new MessageDiscardPolicy(new Registry(consumes: true), NullLogger<MessageDiscardPolicy>.Instance, meter,
       Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      retired: Options.Create(new RetiredEventTypesOptions { Names = { "Upstream.Contracts.Billing.InvoiceNoted" } }));
+      retired: Options.Create(new RetiredEventTypesOptions { Names = { "Upstream.Contracts.Billing.InvoiceNoted" } }), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
 
     await Assert.That(_gate(_otherEnvelope, registry: new Registry(consumes: true), runtime: new RuntimeRegistry(has: true),
       policy: policy)).IsEqualTo(OTHER_TYPE);
@@ -123,7 +123,7 @@ public class ReceiveConsumerGateTests {
 
   private static MessageDiscardPolicy _policy(Meter meter, params string[] absorb) =>
     new(new Registry(consumes: false), NullLogger<MessageDiscardPolicy>.Instance, meter,
-      Options.Create(new RoutingOptions().AbsorbNamespaces(absorb)), new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+      Options.Create(new RoutingOptions().AbsorbNamespaces(absorb)), new EventMarkerResolver(NullMessageTypeCatalog.Instance), global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), global::Whizbang.Core.NullMessageTypeCatalog.Instance);
 
   private sealed class Registry(bool consumes) : IReceptorRegistryQuery {
     public bool HasReceptors(LifecycleStage stage, string messageType) => consumes;

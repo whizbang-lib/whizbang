@@ -243,7 +243,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
-      discardPolicy: discardPolicy ?? new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      discardPolicy: discardPolicy ?? new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance), global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), global::Whizbang.Core.NullMessageTypeCatalog.Instance),
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
@@ -734,7 +734,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
       // The composite row itself is typed JsonElement in this harness; consuming it keeps the row past the dispatch gate.
       new ConsumesTypesRegistry(nameof(RowAdded), nameof(JsonElement)), NullLogger<MessageDiscardPolicy>.Instance,
       new System.Diagnostics.Metrics.Meter("Whizbang.Tests.InboxDispatchWorkerCompositeCommitTests.Absorb"), Options.Create(routing),
-      new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+      new EventMarkerResolver(NullMessageTypeCatalog.Instance), global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), global::Whizbang.Core.NullMessageTypeCatalog.Instance);
     using var h = _harness(new Composite(new RowAdded("a"), new RowRemoved("b")), discardPolicy: policy);
     using var cts = new CancellationTokenSource();
     await h.Worker.StartAsync(cts.Token);

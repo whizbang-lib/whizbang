@@ -252,7 +252,7 @@ public class OrphanInboxJanitorTests {
       consumers, NullLogger<Whizbang.Core.Routing.MessageDiscardPolicy>.Instance,
       new System.Diagnostics.Metrics.Meter("orphan-inbox-absorbed-test"),
       Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.Routing.RoutingOptions().AbsorbNamespaces("contracts.jobs")),
-      new EventMarkerResolver(NullMessageTypeCatalog.Instance)));
+      new EventMarkerResolver(NullMessageTypeCatalog.Instance), global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), global::Whizbang.Core.NullMessageTypeCatalog.Instance));
     await using var sp = services.BuildServiceProvider();
     var janitor = new OrphanInboxJanitor(sp, new HandledReceptorTypeSnapshot([]), NullLogger<OrphanInboxJanitor>.Instance);
 
