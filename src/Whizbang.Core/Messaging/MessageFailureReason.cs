@@ -274,6 +274,20 @@ public enum MessageFailureReason {
   ReceptorQuarantined = 29,
 
   /// <summary>
+  /// Not a failure: a state an inbox row shows while it waits. The row is an event received after an earlier event of
+  /// its stream that is not yet in the event store and that this instance does not hold, so the step that copies events
+  /// into the event store holds it back, unstored and undispatched, until that earlier event (the stream's head) is
+  /// stored; stored events keep the producer's order. The store writes it on <c>wh_inbox_state.failure_reason</c> with
+  /// an error naming the stream and when the wait began, charges no attempt for the wait, and clears both when the row
+  /// is stored. A lease that runs out while the row waits is recorded as this wait, never as a dispatch that ended
+  /// without an outcome. A row that waits a long time points at the head: a peer that holds it, or a head that is
+  /// failing.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/claim-loop#a-row-waiting-for-its-stream-head</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AwaitingStreamHeadSqlTests.cs:Claim_ARowHeldBackBehindAnUnstoredHead_ShowsItAwaitsTheStreamHeadAsync</tests>
+  AwaitingStreamHead = 30,
+
+  /// <summary>
   /// Unclassified error - reason not determined. Numbered far above the classified reasons so a
   /// new one can be appended without moving it, and last so the members read in value order.
   /// </summary>
