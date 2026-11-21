@@ -157,7 +157,7 @@ public class DiagnosticDescriptorsTests {
       .ToHashSet();
 
     await Assert.That(DiagnosticDescriptors.RETIRED_IDS.Where(declared.Contains).ToArray()).IsEmpty();
-    await Assert.That(DiagnosticDescriptors.RETIRED_IDS.Length).IsEqualTo(10);
+    await Assert.That(DiagnosticDescriptors.RETIRED_IDS.Length).IsEqualTo(11);
   }
 
   [Test]

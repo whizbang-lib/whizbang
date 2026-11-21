@@ -275,6 +275,38 @@ public class StreamIdSnippets {
     return null;
   }
 
+  /// <summary>
+  /// Example showing one entry of the per-type stream-id table (#1905, #1908): the exact type, its effective stream id's
+  /// reader, its stream-id type, the generation policy that applies to it, and its writer or null.
+  /// </summary>
+  public object[] TypeEntryExample() {
+    return [
+    #region TYPE_ENTRY
+      new global::Whizbang.Core.Registry.StreamIdTypeEntry(typeof(__MESSAGE_TYPE__),
+        static message => __EXTRACT__((__MESSAGE_TYPE__)message),
+        typeof(__STREAM_ID_TYPE__),
+        shouldGenerate: __SHOULD_GENERATE__,
+        onlyIfEmpty: __ONLY_IF_EMPTY__,
+        set: __SET__),
+    #endregion
+    ];
+  }
+
+  /// <summary>
+  /// Example showing the writer of one table entry: the type's setter case, alone in a method of its own, so the entry
+  /// writes exactly its type's effective stream id with no dispatch on type order.
+  /// </summary>
+  public bool TypeEntrySetterExample() {
+    #region TYPE_ENTRY_SETTER
+    private static bool SetStreamIdOf__INDEX__(object message, global::System.Guid streamId, global::System.Type? sourceStreamIdType) {
+      __SETTER_CASE__
+      return false;
+    }
+    #endregion
+
+    return false;
+  }
+
   // ========================================
   // COMMAND SNIPPETS
   // ========================================

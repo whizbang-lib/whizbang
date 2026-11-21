@@ -52,7 +52,7 @@ WHIZ013 | active | Whizbang.Generators | GenerateStreamId requires a settable St
 WHIZ014 | active | Whizbang.Generators | Receptor May Not Be Constructible by Dependency Injection
 WHIZ015 | active | Whizbang.Generators | Generic message types are not supported
 WHIZ016 | active | Whizbang.Generators | Stream ID Override Has Nothing to Override
-WHIZ017 | active | Whizbang.Generators | Stream ID Generation Opt-Out Cannot Hold Across Assemblies
+WHIZ017 | retired | Whizbang.Generators | Stream ID Generation Opt-Out Cannot Hold Across Assemblies; retired in #1905 (the per-type table holds the opt-out), never reused
 WHIZ018 | active | Whizbang.Generators | Stream ID Inherits From A Type That Is Not A Strong ID
 WHIZ019 | active | Whizbang.Generators | InheritFrom On A Stream ID That Is Not A Strong ID
 WHIZ020 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
@@ -71,6 +71,7 @@ WHIZ032 | active | Whizbang.Generators | Perspective Name Collision
 WHIZ033 | active | Whizbang.Generators | Perspective Model Missing StreamId
 WHIZ034 | active | Whizbang.Generators | InheritFrom Lists The Stream ID's Own Type
 WHIZ035 | active | Whizbang.Generators | IHasStreamId Is Written Instead Of A Strong-ID Stream ID
+WHIZ036 | active | Whizbang.Generators | Stream ID Is Ambiguous
 WHIZ040 | active | Whizbang.Generators | User Service Discovered
 WHIZ041 | active | Whizbang.Generators | Abstract Class Skipped
 WHIZ042 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused

@@ -56,21 +56,26 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
     var destination = new TransportDestination("topic-fifo-01");
     var subscribeDestination = new TransportDestination("topic-fifo-01", "sub-fifo-session");
 
-    // Channel to collect received MessageIds in order
+    // Channel to collect received MessageIds in order. The topic and subscription are shared with other tests, so
+    // only this test's own messages count: a message another test left on the subscription is completed and ignored.
     var receivedChannel = Channel.CreateUnbounded<Guid>();
-    var expectedIds = new List<Guid>(50);
+    var envelopes = Enumerable.Range(0, 50).Select(i => _createTestEnvelope($"fifo-msg-{i}")).ToList();
+    var expectedIds = envelopes.ConvertAll(e => e.MessageId.Value);
+    var own = expectedIds.ToHashSet();
 
     // Subscribe with session processor
     var subscription = await transport.SubscribeAsync(
-      async (envelope, _, ct) => await receivedChannel.Writer.WriteAsync(envelope.MessageId.Value, ct),
+      async (envelope, _, ct) => {
+        if (own.Contains(envelope.MessageId.Value)) {
+          await receivedChannel.Writer.WriteAsync(envelope.MessageId.Value, ct);
+        }
+      },
       subscribeDestination
     );
 
     try {
-      // Act — publish 50 messages sequentially with same StreamId
-      for (var i = 0; i < 50; i++) {
-        var envelope = _createTestEnvelope($"fifo-msg-{i}");
-        expectedIds.Add(envelope.MessageId.Value);
+      // Act: publish 50 messages sequentially with same StreamId
+      foreach (var envelope in envelopes) {
 
         // Carry StreamId in metadata (as TransportPublishStrategy does)
         var destWithStream = new TransportDestination(
@@ -193,21 +198,26 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
     var destination = new TransportDestination("topic-fifo-01");
     var subscribeDestination = new TransportDestination("topic-fifo-01", "sub-fifo-session");
 
+    // Only this test's own messages count: the topic and subscription are shared with other tests.
     var receivedChannel = Channel.CreateUnbounded<Guid>();
+    var envelopes = Enumerable.Range(0, 50).Select(i => _createTestEnvelope($"bulk-fifo-{i}")).ToList();
+    var expectedIds = envelopes.ConvertAll(e => e.MessageId.Value);
+    var own = expectedIds.ToHashSet();
 
     var subscription = await transport.SubscribeAsync(
-      async (envelope, _, ct) => await receivedChannel.Writer.WriteAsync(envelope.MessageId.Value, ct),
+      async (envelope, _, ct) => {
+        if (own.Contains(envelope.MessageId.Value)) {
+          await receivedChannel.Writer.WriteAsync(envelope.MessageId.Value, ct);
+        }
+      },
       subscribeDestination
     );
 
     try {
       // Build batch items
       var bulkItems = new List<BulkPublishItem>(50);
-      var expectedIds = new List<Guid>(50);
 
-      for (var i = 0; i < 50; i++) {
-        var envelope = _createTestEnvelope($"bulk-fifo-{i}");
-        expectedIds.Add(envelope.MessageId.Value);
+      foreach (var envelope in envelopes) {
         bulkItems.Add(new BulkPublishItem {
           Envelope = envelope,
           EnvelopeType = typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName,
@@ -270,8 +280,16 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
     var processedCount = 0;
     const int messageCount = 10;
 
+    // Only this test's own messages count: the topic and subscription are shared with other tests, and counting a
+    // message another test left behind would end this test early and leave its own messages for the next one.
+    var envelopes = Enumerable.Range(0, messageCount).Select(i => _createTestEnvelope($"concurrent-test-{i}")).ToList();
+    var own = envelopes.Select(e => e.MessageId.Value).ToHashSet();
+
     var subscription = await transport.SubscribeAsync(
-      async (_, _, ct) => {
+      async (envelope, _, ct) => {
+        if (!own.Contains(envelope.MessageId.Value)) {
+          return;
+        }
         concurrencyTracker.Enter();
         try {
           // Simulate some work
@@ -288,8 +306,7 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
 
     try {
       // Publish 10 messages with same stream
-      for (var i = 0; i < messageCount; i++) {
-        var envelope = _createTestEnvelope($"concurrent-test-{i}");
+      foreach (var envelope in envelopes) {
         var destWithStream = new TransportDestination(
           destination.Address,
           destination.RoutingKey,

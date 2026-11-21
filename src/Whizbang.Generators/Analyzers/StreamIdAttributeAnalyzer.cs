@@ -28,7 +28,7 @@ public sealed class StreamIdAttributeAnalyzer : DiagnosticAnalyzer {
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => [
     DiagnosticDescriptors.MultipleStreamIdAttributes,
     DiagnosticDescriptors.StreamIdOverrideWithNothingToOverride,
-    DiagnosticDescriptors.GenerationOptOutAcrossAssemblies,
+    DiagnosticDescriptors.AmbiguousInheritedStreamId,
   ];
 
   /// <inheritdoc/>
@@ -43,14 +43,13 @@ public sealed class StreamIdAttributeAnalyzer : DiagnosticAnalyzer {
     // Each [StreamId] the type declares itself, on a property or on a constructor parameter, one per name
     var declared = StreamIdSelection.Declared(type);
     if (declared.Count == 0) {
+      _reportAmbiguity(context, type);
       return;
     }
 
-    _reportOptOutAcrossAssemblies(context, type, declared[0]);
-
     // The one the generators use, and the one the type would inherit without its own
     var used = StreamIdSelection.Select(type)?.Property.Name ?? declared[0].Name;
-    var inherited = StreamIdSelection.SelectInherited(type, includeSelf: false)?.Property.Name;
+    var inherited = StreamIdSelection.SelectInherited(type)?.Property.Name;
     var anyInherited = StreamIdSelection.AnyInherited(type);
 
     foreach (var declaration in declared) {
@@ -71,44 +70,18 @@ public sealed class StreamIdAttributeAnalyzer : DiagnosticAnalyzer {
   }
 
   /// <summary>
-  /// WHIZ017 (#1904): a type with its own <c>[StreamId]</c> and no <c>[GenerateStreamId]</c> opts out of its base's
-  /// generation policy (#1893), but the opt-out holds only within one assembly. When a base compiled in another
-  /// assembly declares <c>[GenerateStreamId]</c>, that assembly's extractor answers first, so the base's policy still
-  /// applies; reported on the type's own <c>[StreamId]</c>. A base in the same assembly is not reported.
+  /// WHIZ036 (#1908): a concrete type with no <c>[StreamId]</c> of its own that gets one from two or more sources naming
+  /// different properties (two interfaces, or an interface and a base class). Reported on the type. An abstract type is
+  /// never dispatched itself, so only the concrete types that carry the ambiguity are reported.
   /// </summary>
-  /// <docs>operations/diagnostics/whiz017</docs>
-  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdCrossAssemblyGenerationAnalyzerTests.cs:OwnStreamId_UnderAGeneratingBaseInAnotherAssembly_ReportsWhiz017Async</tests>
-  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdCrossAssemblyGenerationAnalyzerTests.cs:OwnStreamId_UnderAGeneratingBaseInTheSameAssembly_IsNotReportedAsync</tests>
-  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdCrossAssemblyGenerationAnalyzerTests.cs:ADerivedTypeThatDeclaresGenerateStreamId_IsNotReportedAsync</tests>
-  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdCrossAssemblyGenerationAnalyzerTests.cs:OwnStreamId_UnderABaseInAnotherAssemblyThatDoesNotGenerate_IsNotReportedAsync</tests>
-  private static void _reportOptOutAcrossAssemblies(
-      SymbolAnalysisContext context, INamedTypeSymbol type, StreamIdSelection.Declaration ownStreamId) {
-    if (_declaresGenerateStreamId(type)) {
+  /// <docs>operations/diagnostics/whiz036</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdAmbiguityAnalyzerTests.cs</tests>
+  private static void _reportAmbiguity(SymbolAnalysisContext context, INamedTypeSymbol type) {
+    if (type.IsAbstract || type.TypeKind != TypeKind.Class || StreamIdSelection.Sources(type) is not { Count: > 1 } sources) {
       return;
     }
-    for (var baseType = type.BaseType; baseType is not null; baseType = baseType.BaseType) {
-      if (!SymbolEqualityComparer.Default.Equals(TypeNameUtilities.AssemblyOf(baseType), TypeNameUtilities.AssemblyOf(type))
-          && _declaresGenerateStreamId(baseType)) {
-        var location = LocationUtilities.ApplicationOrFallback(ownStreamId.Attribute, Location.None, context.CancellationToken);
-        context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.GenerationOptOutAcrossAssemblies, location,
-          TypeNameUtilities.SimpleName(type), ownStreamId.Name, TypeNameUtilities.SimpleName(baseType), TypeNameUtilities.SimpleName(TypeNameUtilities.AssemblyOf(baseType))));
-        return;
-      }
-    }
+    var names = string.Join(", ", sources.Select(s => s.Property.Name).OrderBy(n => n, System.StringComparer.Ordinal));
+    context.ReportDiagnostic(Diagnostic.Create(
+      DiagnosticDescriptors.AmbiguousInheritedStreamId, LocationUtilities.FirstOrNone(type), TypeNameUtilities.SimpleName(type), names));
   }
-
-  /// <summary>
-  /// Whether the type itself (not a base) declares <c>[GenerateStreamId]</c>: on the type, on one of its
-  /// properties, or on a constructor parameter, the three places the generator reads it.
-  /// </summary>
-  private static bool _declaresGenerateStreamId(INamedTypeSymbol type) =>
-    _hasGenerateStreamId(type.GetAttributes())
-    || type.GetMembers().OfType<IPropertySymbol>().Any(p => _hasGenerateStreamId(p.GetAttributes()))
-    || type.InstanceConstructors.Any(c => c.Parameters.Any(p => _hasGenerateStreamId(p.GetAttributes())));
-
-  private static bool _hasGenerateStreamId(ImmutableArray<AttributeData> attributes) =>
-    attributes.Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, GENERATE_STREAM_ID));
-
-  private const string GENERATE_STREAM_ID = "Whizbang.Core.GenerateStreamIdAttribute";
 }
