@@ -172,6 +172,11 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     var whizbangPackages = context.CompilationProvider.Combine(enabled)
         .Select(static (pair, _) => pair.Right ? _referencedWhizbangPackages(pair.Left) : []);
 
+    // The build's path map, so a registry path reads as the compiler writes paths (#2484): under ContinuousIntegrationBuild
+    // the repository root is /_/, and two builds of one commit from different directories embed the same registry.
+    // Projected to an equatable value before the combine, for the same reason as the packages above.
+    var pathMap = context.CompilationProvider.Select(static (compilation, _) => SourcePaths.PathMapOf(compilation));
+
     // Combine all discoveries + referenced package versions
     var allData = messageTypes.Collect()
         .Combine(dispatchers.Collect())
@@ -179,6 +184,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
         .Combine(perspectives.Collect())
         .Combine(whizbangPackages)
         .Combine(docsLocation)
+        .Combine(pathMap)
         .Combine(enabled);
 
     context.RegisterSourceOutput(
@@ -187,10 +193,11 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
           if (!data.Right) {
             return;
           }
-          var (((((messages, dispatchers2), receptors2), perspectives2), packages), docs) = data.Left;
+          var ((((((messages, dispatchers2), receptors2), perspectives2), packages), docs), paths) = data.Left;
           _generateMessageRegistry(ctx,
             (((messages, dispatchers2), receptors2), perspectives2),
             packages,
+            paths,
             PathResolver.FindDocsRepositoryPath(docs.ConfiguredPath, docs.ProjectDirectory));
         }
     );
@@ -458,7 +465,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   private static EquatableArray<WhizbangPackageReference> _referencedWhizbangPackages(Compilation compilation) =>
     [.. compilation.ReferencedAssemblyNames
         .Where(a => a.Name.StartsWith("Whizbang.", StringComparison.Ordinal))
-        .OrderBy(a => a.Name)
+        .OrderBy(a => a.Name, StringComparer.Ordinal)
         .Select(a => new WhizbangPackageReference(
           $"SoftwareExtravaganza.{a.Name}", $"{a.Version.Major}.{a.Version.Minor}.{a.Version.Build}"))];
 
@@ -466,6 +473,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
       SourceProductionContext context,
       (((ImmutableArray<MessageTypeInfo>, ImmutableArray<DispatcherLocationInfo>), ImmutableArray<ReceptorLocationInfo>), ImmutableArray<PerspectiveLocationInfo>) data,
       EquatableArray<WhizbangPackageReference> whizbangPackages,
+      EquatableArray<PathMapEntry> pathMap,
       string? docsPath = null) {
 
     var (((messages, dispatchers), receptors), perspectives) = data;
@@ -475,10 +483,11 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     var testsMap = _loadCodeTestsMap(context, docsPath);
 
     // Enrich all data with documentation URLs and test counts
-    var enrichedMessages = messages.Select(m => _enrichMessageInfo(m, docsMap, testsMap)).ToImmutableArray();
-    var enrichedDispatchers = dispatchers.Select(d => _enrichDispatcherInfo(d, docsMap, testsMap)).ToImmutableArray();
-    var enrichedReceptors = receptors.Select(r => _enrichReceptorInfo(r, docsMap, testsMap)).ToImmutableArray();
-    var enrichedPerspectives = perspectives.Select(p => _enrichPerspectiveInfo(p, docsMap, testsMap)).ToImmutableArray();
+    // Each path as the compiler writes it (#2484), so the registry names no checkout directory under a path map
+    var enrichedMessages = messages.Select(m => _enrichMessageInfo(m, docsMap, testsMap) with { FilePath = SourcePaths.Map(m.FilePath, pathMap) }).ToImmutableArray();
+    var enrichedDispatchers = dispatchers.Select(d => _enrichDispatcherInfo(d, docsMap, testsMap) with { FilePath = SourcePaths.Map(d.FilePath, pathMap) }).ToImmutableArray();
+    var enrichedReceptors = receptors.Select(r => _enrichReceptorInfo(r, docsMap, testsMap) with { FilePath = SourcePaths.Map(r.FilePath, pathMap) }).ToImmutableArray();
+    var enrichedPerspectives = perspectives.Select(p => _enrichPerspectiveInfo(p, docsMap, testsMap) with { FilePath = SourcePaths.Map(p.FilePath, pathMap) }).ToImmutableArray();
 
     // Load snippets
     var messageHeaderSnippet = TemplateUtilities.ExtractSnippet(

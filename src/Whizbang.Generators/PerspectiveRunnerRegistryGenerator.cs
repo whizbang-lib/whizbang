@@ -374,7 +374,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("      IServiceProvider serviceProvider) {");
     source.AppendLine();
     source.AppendLine("    return perspectiveName switch {");
-    foreach (var perspective in perspectives.OrderBy(p => p.ClrTypeName)) {
+    foreach (var perspective in perspectives.OrderBy(p => p.ClrTypeName, StringComparer.Ordinal)) {
       source.AppendLine($"      \"{perspective.ClrTypeName}\" => serviceProvider.GetRequiredService<{perspective.RunnerName}>(),");
     }
     source.AppendLine("      _ => null");
@@ -384,7 +384,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
 
     // GetRegisteredPerspectives()
     source.AppendLine("  private static readonly PerspectiveRegistrationInfo[] _registeredPerspectives = [");
-    foreach (var perspective in perspectives.OrderBy(p => p.ClrTypeName)) {
+    foreach (var perspective in perspectives.OrderBy(p => p.ClrTypeName, StringComparer.Ordinal)) {
       var eventTypesArray = string.Join(", ", perspective.EventTypes.Select(e => $"\"{e}\""));
       source.AppendLine("    new PerspectiveRegistrationInfo(");
       source.AppendLine($"      \"{perspective.ClrTypeName}\",");
@@ -484,7 +484,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("    global::Whizbang.Core.Perspectives.PerspectiveRunnerRegistryServiceCollectionExtensions.AddPerspectiveRunnerRegistryContribution<PerspectiveRunnerRegistry>(services);");
     source.AppendLine();
 
-    foreach (var perspective in perspectives.OrderBy(p => p.SimpleName)) {
+    foreach (var perspective in perspectives.OrderBy(p => p.SimpleName, StringComparer.Ordinal)) {
       source.AppendLine($"    services.AddScoped<{perspective.ClassName}>();");
       source.AppendLine($"    services.AddScoped<{perspective.RunnerName}>();");
     }

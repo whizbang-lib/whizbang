@@ -1,0 +1,33 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
+name: Reproducible Build
+
+# Builds develop twice, independently, and fails unless every package is byte-identical (#2484). The work is
+# reusable-reproducible-build.yml; ci.yml runs the same check on every release-branch push, where a failure
+# blocks the beta, rc and stable publishes.
+#
+# develop gets a weekly run rather than one per merge: the check is two full builds of everything that ships,
+# about what #2068 removed from every develop push. A week catches a change that broke reproducibility well
+# before the next release branch, which would refuse to publish over it. Run it on demand to check a branch.
+
+on:
+  schedule:
+    - cron: '0 7 * * 1'   # Mondays, 07:00 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  reproducible:
+    name: Build · Reproducible build
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reusable-reproducible-build.yml
+    with:
+      # Any version works as long as both builds stamp the same one; this one names the run.
+      version: ${{ format('0.0.0-repro.{0}', github.run_number) }}

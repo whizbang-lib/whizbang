@@ -5837,6 +5837,12 @@ public partial class PerspectiveWorker(
     Message = "Drain cycle complete: drainMode={DrainModeActive} eventsProcessed={EventsProcessed} cycleDurationMs={CycleDurationMs}"
   )]
   static partial void LogDrainCycleComplete(ILogger logger, bool drainModeActive, int eventsProcessed, long cycleDurationMs);
+
+  // Declared here with every other log method of this class, not beside its caller in PerspectiveWorker.ClaimedGroups.cs:
+  // the net10.0 logging generator orders two declarations of one class differently from build to build (#2484).
+  [LoggerMessage(EventId = 82, Level = LogLevel.Warning,
+    Message = "The claimed batch's one read of its {PairCount} set-based pair(s) failed; each pair reads its own cursor and events")]
+  static partial void LogClaimedBatchReadFailed(ILogger logger, Exception exception, int pairCount);
 }
 
 /// <summary>
