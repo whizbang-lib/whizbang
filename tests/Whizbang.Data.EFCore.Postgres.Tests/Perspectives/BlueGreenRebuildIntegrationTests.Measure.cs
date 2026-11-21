@@ -39,7 +39,7 @@ public partial class BlueGreenRebuildIntegrationTests {
     await _stampCommitSequencesAsync();
     using var log = new NpgsqlStatementLog(ConnectionString);
 
-    var clock = Stopwatch.StartNew();
+    var clock = Stopwatch.StartNew(); // review-checks:allow: a measurement records elapsed time; nothing waits on it or asserts it
     var result = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildBlueGreenAsync(PERSPECTIVE, cancellationToken);
     clock.Stop();
 
