@@ -42,7 +42,7 @@ namespace Whizbang.Data.EFCore.Postgres.Functions;
 /// <docs>fundamentals/perspectives/dictionary-members</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/DictionaryMemberStorageTests.cs:AKeyLookup_IsTranslatedToSqlAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/DictionaryMemberStorageTests.cs:TheKeyLookupIsInThePlanAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/DictionaryMemberQueryRefusalTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/DictionaryMemberTypeMappingTests.cs:ALookupTheTranslatorCannotAnswer_IsRefused_NeverEvaluatedOnTheClientAsync</tests>
 public sealed class DictionaryMemberTranslator(
     NpgsqlSqlExpressionFactory sqlExpressionFactory,
     IRelationalTypeMappingSource typeMappingSource) : IMethodCallTranslator {
