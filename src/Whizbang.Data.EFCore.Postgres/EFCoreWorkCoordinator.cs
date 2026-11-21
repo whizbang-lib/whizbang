@@ -6141,7 +6141,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// Deletes processed perspective event rows via complete_perspective_events SQL function.
   /// Called after drain mode processing completes for a batch of events.
   /// </summary>
-  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  /// <docs>operations/workers/perspective-worker#completion-flush-path</docs>
   public async Task<int> CompletePerspectiveEventsAsync(
     Guid[] workItemIds,
     bool debugMode,
@@ -6175,7 +6175,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// Batch-fetches events for multiple streams in a single call via get_stream_events SQL function.
   /// Returns denormalized rows: one per (stream, event). C# groups by StreamId for processing.
   /// </summary>
-  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  /// <docs>operations/workers/perspective-worker#error-tracking-retry</docs>
   /// <inheritdoc />
   public async Task<int> ReapExhaustedOrphanedPerspectiveRowsAsync(
     Guid instanceId,

@@ -100,11 +100,13 @@ function Get-RulesetSetting {
   $byName = [ordered]@{}
   $rulesets = @(Invoke-GhJson -Path "repos/$Repository/rulesets" | ForEach-Object { Invoke-GhJson -Path "repos/$Repository/rulesets/$($_.id)" })
   foreach ($r in @($rulesets | Sort-Object name)) {
-    # GitHub returns bypass_actors only to a reader who can edit the ruleset.
-    $bypass = if ($r.PSObject.Properties['bypass_actors']) {
-      @(@($r.bypass_actors) | Where-Object { $_ } | Sort-Object actor_type, actor_id |
+    # GitHub returns bypass_actors only to a reader who can edit the ruleset. Assigned in the branch, not
+    # from the if: an if's output is enumerated, which turns one actor into an object and none into null (#2480).
+    $bypass = $NotVisible
+    if ($r.PSObject.Properties['bypass_actors']) {
+      $bypass = @(@($r.bypass_actors) | Where-Object { $_ } | Sort-Object actor_type, actor_id |
           ForEach-Object { [ordered]@{ actor_id = $_.actor_id; actor_type = $_.actor_type; bypass_mode = $_.bypass_mode } })
-    } else { $NotVisible }
+    }
     $byName[$r.name] = [ordered]@{
       bypass_actors = $bypass
       conditions    = ConvertTo-SortedValue $r.conditions

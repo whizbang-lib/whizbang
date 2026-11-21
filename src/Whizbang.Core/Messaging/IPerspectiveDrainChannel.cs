@@ -44,7 +44,7 @@ public interface IPerspectiveDrainChannel {
 }
 
 /// <summary>Default unbounded channel implementation.</summary>
-/// <docs>fundamentals/perspectives/drain-mode</docs>
+/// <docs>operations/workers/perspective-worker#the-perspective-work-pipeline</docs>
 public sealed class PerspectiveDrainChannel : IPerspectiveDrainChannel {
   private readonly Channel<Guid> _channel;
   private readonly ConcurrentDictionary<Guid, byte> _inFlight = new();
