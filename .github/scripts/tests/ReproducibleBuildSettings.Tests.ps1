@@ -30,7 +30,7 @@ BeforeAll {
 
 Describe 'a CI build' {
   BeforeAll {
-    $script:Ci = Get-BuildProperty $script:Generators @('ContinuousIntegrationBuild', 'Deterministic', 'DeterministicTimestamp', 'WhizbangILRepackDebugInfo') @('CI=true')
+    $script:Ci = Get-BuildProperty $script:Generators @('ContinuousIntegrationBuild', 'Deterministic', 'DeterministicTimestamp') @('CI=true')
   }
 
   It 'is a ContinuousIntegrationBuild, which maps the source root to /_/ in every path the compiler writes' {
@@ -47,29 +47,53 @@ Describe 'a CI build' {
     $script:Ci.DeterministicTimestamp | Should -Not -BeIn @('true', 'false')
     $script:Ci.DeterministicTimestamp | Should -Match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$'
   }
-
-  It 'merges generators without a symbol file, whose path ILRepack writes into the assembly from a per-run temp folder' {
-    $script:Ci.WhizbangILRepackDebugInfo | Should -Be 'false'
-  }
 }
 
-Describe 'a local build' {
-  It 'keeps the merged generator symbols, so a generator can still be debugged' {
-    (Get-BuildProperty $script:Generators @('WhizbangILRepackDebugInfo') @('CI=false', 'ContinuousIntegrationBuild=false')).WhizbangILRepackDebugInfo | Should -Be 'true'
-  }
-}
-
+# Every generator assembly is merged twice from the same compiler output, in the same build: once in place with symbols,
+# for the tests and for coverage of the Whizbang.Generators.Shared code merged into it (a merge without symbols left
+# that code reported as never run), and once without symbols for the package. ILRepack writes the symbol file's path,
+# under a per-run temp folder, into the assembly, so only the merge without symbols is the same in two builds. Pack
+# ships that one whether or not it rebuilds (CI packs the tested build with --no-build), so no build setting, and no
+# step that must remember a property, decides which merge ships.
 Describe 'every ILRepack merge' {
-  It 'takes its symbol setting from the one shared property' {
-    $targets = @(Get-ChildItem -Path (Join-Path $script:RepoRoot 'src') -Filter 'ILRepack.targets' -Recurse -File)
-    $targets.Count | Should -BeGreaterThan 0
-    foreach ($file in $targets) {
+  BeforeAll {
+    $script:Targets = @(Get-ChildItem -Path (Join-Path $script:RepoRoot 'src') -Filter 'ILRepack.targets' -Recurse -File)
+  }
+
+  It 'is found, so the checks below read something' {
+    $script:Targets.Count | Should -BeGreaterThan 4
+  }
+
+  It 'keeps symbols in the merge the tests run, and writes the packaged merge without them' {
+    foreach ($file in $script:Targets) {
       [xml]$xml = Get-Content -Raw -LiteralPath $file.FullName
       $tasks = @($xml.SelectNodes('//*[local-name()="ILRepack"]'))
-      $tasks.Count | Should -BeGreaterThan 0 -Because "$($file.FullName) merges with ILRepack"
-      foreach ($task in $tasks) {
-        $task.GetAttribute('DebugInfo') | Should -Be '$(WhizbangILRepackDebugInfo)' -Because "$($file.FullName) must not write a machine path into the merged assembly"
+      $tasks.Count | Should -Be 2 -Because "$($file.FullName) merges once for the tests and once for the package"
+      $tested = @($tasks | Where-Object { $_.GetAttribute('OutputFile') -eq "@(IntermediateAssembly->'%(FullPath)')" })
+      $packaged = @($tasks | Where-Object { $_.GetAttribute('OutputFile') -eq '$(WhizbangPackagedAnalyzer)' })
+      $tested.Count | Should -Be 1 -Because "$($file.FullName) merges in place for the tests"
+      $packaged.Count | Should -Be 1 -Because "$($file.FullName) merges the package's copy"
+      $tested[0].GetAttribute('DebugInfo') | Should -Be 'true' -Because 'coverage of the merged Shared code needs the symbols'
+      $packaged[0].GetAttribute('DebugInfo') | Should -Be 'false' -Because 'the symbol path is a per-run temp folder'
+      foreach ($attribute in 'InputAssemblies', 'Internalize', 'TargetKind', 'KeyFile', 'LibraryPath') {
+        $packaged[0].GetAttribute($attribute) | Should -Be $tested[0].GetAttribute($attribute) -Because "both merges in $($file.FullName) take the same inputs"
       }
+    }
+  }
+
+  It 'puts the packaged merge in the build output pack reads' {
+    (Get-BuildProperty $script:Generators @('WhizbangPackagedAnalyzer') @('CI=true', 'Configuration=Release')).WhizbangPackagedAnalyzer |
+      Should -Match '[\\/]obj[\\/]Release[\\/]netstandard2\.0[\\/]packaged[\\/]Whizbang\.Generators\.dll$'
+  }
+
+  It 'is what each generator package ships, never the merge the tests run' {
+    foreach ($file in $script:Targets) {
+      $project = Get-ChildItem -LiteralPath $file.DirectoryName -Filter '*.csproj' -File | Select-Object -First 1
+      [xml]$xml = Get-Content -Raw -LiteralPath $project.FullName
+      $analyzers = @($xml.SelectNodes('//*[@PackagePath]') | Where-Object {
+          $_.GetAttribute('PackagePath') -like 'analyzers/dotnet/cs*' -and $_.GetAttribute('Include') -notlike '*CodeFixes*' })
+      $analyzers.Count | Should -Be 1 -Because "$($project.Name) packs its generator assembly once"
+      $analyzers[0].GetAttribute('Include') | Should -Be '$(WhizbangPackagedAnalyzer)' -Because "$($project.Name) must ship the merge without symbols"
     }
   }
 }
