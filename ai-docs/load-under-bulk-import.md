@@ -260,10 +260,13 @@ Left as found, and why:
   (two passes over 10,000 cursors at the smaller depth, its key at the larger). Neither grows past the crossover.
   `update_perspective_cursors` is also redefined by another change in flight (migration 531), so it is left to that
   change rather than copied here.
-- The claim's re-offer walk (`claim_work`) reads `idx_perspective_lease_expiry` instead of `idx_perspective_held_lanes`
-  when the statistics say every lease has lapsed, which a fan-out that outlasted its leases leaves behind: right after
+- The claim's re-offer walk (`claim_work`) read `idx_perspective_lease_expiry` instead of `idx_perspective_held_lanes`
+  when the statistics said every lease had lapsed, which a fan-out that outlasted its leases leaves behind: right after
   re-acquiring 1,000 streams, one claim read 1,001,001 index entries, a scan of the instance's holdings per step of the
-  walk. It is bounded by the batch squared, not the backlog, and needs `claim_work` redefined; it is a follow-up.
+  walk, bounded by the batch squared. The inbox walk took `idx_inbox_state_lease_order` the same way (1,003,000).
+  Migration 545 (#2474) writes both walks' lease test `(lease_expiry > v_now) IS TRUE`, a filter on the held-lanes
+  entry that carries the lease: 63,011 and 1,002,011 rows read for a claim re-offering 250 and 1,000 held perspective
+  streams before, a few per stream after (`ClaimReofferWalkCostSqlTests`).
 - `commit_handler_result`, the store, slowed sharply with the backlog on one long-lived session (seeding 40,000 streams
   500 at a time took minutes on the default plan cache and 11 s with custom plans forced): another plan that outlived
   the table it was made for. Not a work-queue call; a follow-up.
