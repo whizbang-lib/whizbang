@@ -17,7 +17,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// Phase 1: Verify perspective schema parameter integration.
 /// Uses SharedPostgresContainer with per-test database isolation.
 /// </summary>
-public class ServiceCollectionExtensionsTests : IAsyncDisposable {
+public class ServiceCollectionExtensionsTests {
   private string? _testDatabaseName;
   private string? _connectionString;
 
@@ -63,11 +63,6 @@ public class ServiceCollectionExtensionsTests : IAsyncDisposable {
       _testDatabaseName = null;
       _connectionString = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   /// <summary>

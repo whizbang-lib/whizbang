@@ -39,7 +39,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// <c>ServiceCollectionExtensions_FullOverloadRegistrationTests</c>.
 /// </para>
 /// </summary>
-public class ServiceCollectionExtensionsCoverageTests : IAsyncDisposable {
+public class ServiceCollectionExtensionsCoverageTests {
   private static readonly KeyValuePair<string, string>[] _emptyEntries = [];
 
   private string? _testDatabaseName;
@@ -78,11 +78,6 @@ public class ServiceCollectionExtensionsCoverageTests : IAsyncDisposable {
       _testDatabaseName = null;
       _connectionString = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   // If the IEventStore factory inside the perspectiveEntries overload stops being able to resolve

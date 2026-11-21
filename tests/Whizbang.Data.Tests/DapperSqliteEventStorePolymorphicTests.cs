@@ -36,7 +36,7 @@ namespace Whizbang.Data.Tests;
 /// that current behavior; legacy-format rows are seeded via raw SQL to exercise the
 /// deeper skip branches.
 /// </remarks>
-public sealed class DapperSqliteEventStorePolymorphicTests : IDisposable {
+public sealed class DapperSqliteEventStorePolymorphicTests {
   private DapperTestBase _testBase = null!;
 
   [Before(Test)]
@@ -48,11 +48,6 @@ public sealed class DapperSqliteEventStorePolymorphicTests : IDisposable {
   [After(Test)]
   public void Cleanup() {
     _testBase?.Cleanup();
-  }
-
-  public void Dispose() {
-    _testBase?.DisposeAsync().AsTask().Wait();
-    GC.SuppressFinalize(this);
   }
 
   // ========================================

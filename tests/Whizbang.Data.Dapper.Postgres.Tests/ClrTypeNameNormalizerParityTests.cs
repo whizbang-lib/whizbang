@@ -21,7 +21,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// </summary>
 /// <docs>operations/infrastructure/migrations#normalizing-type-names</docs>
 [Category("Integration")]
-public class ClrTypeNameNormalizerParityTests : IAsyncDisposable {
+public class ClrTypeNameNormalizerParityTests {
   private const string ASM = "Some.Assembly";
   private const string DECORATION = ", Version=1.54.0.0, Culture=neutral, PublicKeyToken=null";
   private const string OTHER_DECORATION = ", Version=0.0.0.0, Culture=neutral, PublicKeyToken=0123456789abcdef";
@@ -56,11 +56,6 @@ public class ClrTypeNameNormalizerParityTests : IAsyncDisposable {
     await admin.OpenAsync();
     await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
     _testDatabaseName = null;
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   /// <summary>

@@ -20,7 +20,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// not overwrite.
 /// </summary>
 [Category("Integration")]
-public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
+public class DapperMessageTypeRegistryPopulatorTests {
   private string? _testDatabaseName;
   private string? _connectionString;
   private PostgresConnectionFactory? _connectionFactory;
@@ -62,11 +62,6 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
       _testDatabaseName = null;
       _connectionString = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   [Test]

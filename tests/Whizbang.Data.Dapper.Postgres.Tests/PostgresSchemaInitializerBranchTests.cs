@@ -20,7 +20,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// backup date suffixes, and custom-migration-provider shapes (empty, no bootstrap, null).
 /// Uses SharedPostgresContainer with per-test database isolation (same pattern as the sibling file).
 /// </summary>
-public class PostgresSchemaInitializerBranchTests : IAsyncDisposable {
+public class PostgresSchemaInitializerBranchTests {
   private string? _testDatabaseName;
   private string? _connectionString;
   private string _testConnectionString => _connectionString ?? throw new InvalidOperationException("Test not initialized");
@@ -62,11 +62,6 @@ public class PostgresSchemaInitializerBranchTests : IAsyncDisposable {
       _testDatabaseName = null;
       _connectionString = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   /// <summary>Minimal provider so tests can control exactly which migration scripts run.</summary>

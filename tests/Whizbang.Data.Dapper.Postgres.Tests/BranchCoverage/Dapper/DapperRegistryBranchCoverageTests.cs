@@ -25,7 +25,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.BranchCoverage.DapperDriver;
 /// tool's "nothing pending" and "applied" reports.
 /// </summary>
 [Category("Integration")]
-public class DapperRegistryBranchCoverageTests : IAsyncDisposable {
+public class DapperRegistryBranchCoverageTests {
   private const string PINNED_ID = "11111111-1111-1111-1111-111111111111";
   private const string OLD_NAME = "Old.Namespace.CoverageEvent";
   private const string NEW_NAME = "New.Namespace.CoverageEvent";
@@ -64,11 +64,6 @@ public class DapperRegistryBranchCoverageTests : IAsyncDisposable {
       // The container drops every database when it stops; a failed drop here only delays that.
     }
     _testDatabaseName = null;
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   /// <summary>

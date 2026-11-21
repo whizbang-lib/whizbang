@@ -19,7 +19,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// type change is still destructive (event replay).
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Dapper.Postgres/PostgresSchemaInitializer.cs</code-under-test>
-public class PostgresSchemaInitializerTypeCompareTests : IAsyncDisposable {
+public class PostgresSchemaInitializerTypeCompareTests {
   // The generator's perspective snapshot shape, plus physical columns in the types the generator and authors use.
   private const string BASE_COLUMNS =
     "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), " +
@@ -70,11 +70,6 @@ public class PostgresSchemaInitializerTypeCompareTests : IAsyncDisposable {
       _testDatabaseName = null;
       _connectionString = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   private static KeyValuePair<string, string>[] _perspective(string table, string columns) =>

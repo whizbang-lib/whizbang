@@ -23,7 +23,7 @@ namespace Whizbang.Data.Tests;
 /// </summary>
 /// <docs>fundamentals/messaging/message-priority#on-the-wire</docs>
 /// <code-under-test>src/Whizbang.Data.Dapper.Sqlite/DapperSqliteEventStore.cs</code-under-test>
-public sealed class DapperSqliteEventStorePriorityTests : IDisposable {
+public sealed class DapperSqliteEventStorePriorityTests {
   private DapperTestBase _testBase = null!;
 
   [Before(Test)]
@@ -35,11 +35,6 @@ public sealed class DapperSqliteEventStorePriorityTests : IDisposable {
   [After(Test)]
   public void Cleanup() {
     _testBase?.Cleanup();
-  }
-
-  public void Dispose() {
-    _testBase?.DisposeAsync().AsTask().Wait();
-    GC.SuppressFinalize(this);
   }
 
   private DapperSqliteEventStore _store() =>

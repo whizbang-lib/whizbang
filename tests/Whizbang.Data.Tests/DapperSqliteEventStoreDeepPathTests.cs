@@ -38,7 +38,7 @@ namespace Whizbang.Data.Tests;
 /// tests therefore prepend a test-only resolver that registers an object-form MessageId
 /// converter, which is the only way to drive <c>_tryDeserializeAsEventType</c> to completion.
 /// </remarks>
-public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
+public sealed class DapperSqliteEventStoreDeepPathTests {
   private DapperTestBase _testBase = null!;
 
   [Before(Test)]
@@ -50,11 +50,6 @@ public sealed class DapperSqliteEventStoreDeepPathTests : IDisposable {
   [After(Test)]
   public void Cleanup() {
     _testBase?.Cleanup();
-  }
-
-  public void Dispose() {
-    _testBase?.DisposeAsync().AsTask().Wait();
-    GC.SuppressFinalize(this);
   }
 
   // ========================================
