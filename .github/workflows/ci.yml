@@ -1854,7 +1854,7 @@ jobs:
   # pushes only; develop gets a weekly run (reproducible-build.yml), since the check costs two full builds.
   reproducible:
     name: Build · Reproducible build
-    needs: [version, changes]
+    needs: [version]
     if: ${{ !failure() && !cancelled() && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v') && needs.version.outputs.semver != '' }}
     permissions:
       contents: read
