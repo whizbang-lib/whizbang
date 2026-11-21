@@ -64,6 +64,9 @@ public sealed class CapabilitiesStartupStep : IStartupStep {
 #pragma warning disable CA1707
   /// <summary>The step's name in the startup pipeline.</summary>
   public const string STEP_NAME = "Capabilities";
+
+  /// <summary>How many times the step probes again while an explicit requirement reads Unknown.</summary>
+  public const int UNKNOWN_RETRIES = 0;
 #pragma warning restore CA1707
 
   private readonly ICapabilityRegistry _registry;
@@ -72,6 +75,7 @@ public sealed class CapabilitiesStartupStep : IStartupStep {
   private readonly IReadOnlyList<ICapabilityProvisioner> _provisioners;
   private readonly IConfiguration? _configuration;
   private readonly ILogger<CapabilitiesStartupStep> _logger;
+  private readonly TimeProvider _time;
 
   /// <summary>Creates the step.</summary>
   /// <param name="registry">The registry it refreshes and publishes the verdict on.</param>
@@ -86,18 +90,39 @@ public sealed class CapabilitiesStartupStep : IStartupStep {
       IEnumerable<ICapabilityRequirementSource> sources,
       IEnumerable<ICapabilityProvisioner> provisioners,
       IConfiguration? configuration,
-      ILogger<CapabilitiesStartupStep> logger) {
+      ILogger<CapabilitiesStartupStep> logger)
+    : this(registry, options, sources, provisioners, configuration, logger, TimeProvider.System) {
+  }
+
+  /// <summary>Creates the step with the clock its retries wait on.</summary>
+  /// <param name="registry">The registry it refreshes and publishes the verdict on.</param>
+  /// <param name="options">Whether to probe at all.</param>
+  /// <param name="sources">Every source of declared requirements.</param>
+  /// <param name="provisioners">Every provider's provisioner; a provider without one is only detected.</param>
+  /// <param name="configuration">The host's configuration, which decides which requirements are in force; null when it has none.</param>
+  /// <param name="logger">Where the verdict goes.</param>
+  /// <param name="timeProvider">The clock a retry waits on.</param>
+  public CapabilitiesStartupStep(
+      ICapabilityRegistry registry,
+      IOptions<CapabilityOptions> options,
+      IEnumerable<ICapabilityRequirementSource> sources,
+      IEnumerable<ICapabilityProvisioner> provisioners,
+      IConfiguration? configuration,
+      ILogger<CapabilitiesStartupStep> logger,
+      TimeProvider timeProvider) {
     ArgumentNullException.ThrowIfNull(registry);
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(sources);
     ArgumentNullException.ThrowIfNull(provisioners);
     ArgumentNullException.ThrowIfNull(logger);
+    ArgumentNullException.ThrowIfNull(timeProvider);
     _registry = registry;
     _options = options.Value;
     _sources = [.. sources];
     _provisioners = [.. provisioners];
     _configuration = configuration;
     _logger = logger;
+    _time = timeProvider;
   }
 
   /// <inheritdoc />
@@ -109,6 +134,7 @@ public sealed class CapabilitiesStartupStep : IStartupStep {
 
   /// <inheritdoc />
   public async ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken) {
+    _ = _time;
     var inForce = _sources.SelectMany(source => source.Resolve(_configuration)).Distinct().ToList();
     if (_options.ProbeOnStartup) {
       await _registry.RefreshAsync(cancellationToken).ConfigureAwait(false);
@@ -116,7 +142,7 @@ public sealed class CapabilitiesStartupStep : IStartupStep {
         _registry.Statuses, inForce, _provisioners, _options, _configuration, _logger, cancellationToken).ConfigureAwait(false));
     }
     var statuses = _registry.Statuses;
-    var verdict = CapabilityVerdict.Evaluate(statuses, inForce);
+    var verdict = CapabilityVerdict.Evaluate(statuses, inForce, probed: _options.ProbeOnStartup);
     _registry.PublishVerdict(verdict);
     CapabilityReport.LogVerdict(_logger, verdict);
 

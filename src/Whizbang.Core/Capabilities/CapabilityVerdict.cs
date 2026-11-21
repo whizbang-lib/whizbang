@@ -128,11 +128,13 @@ public sealed class CapabilityVerdict {
   /// <summary>Judges every required capability.</summary>
   /// <param name="statuses">The registry's statuses.</param>
   /// <param name="active">The requirements in force.</param>
+  /// <param name="probed">Whether the probe ran for these statuses.</param>
   /// <returns>The verdict.</returns>
   public static CapabilityVerdict Evaluate(
-      IReadOnlyList<CapabilityStatus> statuses, IReadOnlyList<ActiveCapabilityRequirement> active) {
+      IReadOnlyList<CapabilityStatus> statuses, IReadOnlyList<ActiveCapabilityRequirement> active, bool probed) {
     ArgumentNullException.ThrowIfNull(statuses);
     ArgumentNullException.ThrowIfNull(active);
+    _ = probed;
     var entries = new List<CapabilityVerdictEntry>();
     foreach (var group in active.GroupBy(a => _key(a.Requirement.Capability), StringComparer.Ordinal)) {
       var required = group.ToList();

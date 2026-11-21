@@ -242,7 +242,7 @@ public sealed class PgRepackTests {
     var active = new PgRepackClientRequirementSource(options)
       .Resolve(_configuration((STRATEGY_KEY, "PgRepack"), (MODE_KEY, "InProcess")));
 
-    var verdict = CapabilityVerdict.Evaluate(registry.Statuses, active);
+    var verdict = CapabilityVerdict.Evaluate(registry.Statuses, active, probed: true);
 
     var failure = verdict.Failures.Single();
     await Assert.That(failure.Outcome).IsEqualTo(CapabilityVerdictOutcome.Fail);
@@ -262,7 +262,7 @@ public sealed class PgRepackTests {
     var active = new PgRepackClientRequirementSource(options).Resolve(_configuration((STRATEGY_KEY, "PgRepack")));
     var rewriter = new PgRepackTableRewriter(options, runner, registry, NullLogger<PgRepackTableRewriter>.Instance);
 
-    var verdict = CapabilityVerdict.Evaluate(registry.Statuses, active);
+    var verdict = CapabilityVerdict.Evaluate(registry.Statuses, active, probed: true);
 
     var entry = verdict.Entries.Single();
     await Assert.That(entry.Outcome).IsEqualTo(CapabilityVerdictOutcome.Degrade)
