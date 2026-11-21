@@ -63,6 +63,8 @@ public sealed class CoalescedEventsComposite
   /// build: its children then carry the composite's own sequence, as before.
   /// </summary>
   /// <docs>fundamentals/messages/message-tags#coalescing</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CoalescedChildOriginSequenceTests.cs:TryExpand_CoalescedComposite_EachChildCarriesItsOwnSinglesSequenceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CoalescedChildOriginSequenceTests.cs:OlderProducersComposite_ReadsWithNoSequences_AndChildrenCarryTheCompositesAsync</tests>
   public List<long?>? InnerCommitSequences { get; init; }
 
   IReadOnlyList<JsonElement> IRawInnerComposite.InnerPayloads => InnerPayloads;
@@ -70,6 +72,8 @@ public sealed class CoalescedEventsComposite
   IReadOnlyList<string> IRawInnerComposite.InnerTypeNames => InnerTypeNames;
 
   IReadOnlyList<Guid> IIdentityPreservingComposite.InnerEventIds => InnerEventIds;
+
+  IReadOnlyList<long?>? IIdentityPreservingComposite.InnerCommitSequences => InnerCommitSequences;
 
   IReadOnlyList<Guid>? IRawInnerComposite.InnerStreamIds => InnerStreamIds.Count > 0 ? InnerStreamIds : null;
 }
