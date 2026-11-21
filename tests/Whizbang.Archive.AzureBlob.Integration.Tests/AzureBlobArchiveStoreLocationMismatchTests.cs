@@ -51,7 +51,7 @@ public partial class AzureBlobArchiveStoreTests {
   }
 
   private static List<(LogLevel Level, string Text)> _mismatchLogs(ListLogger logger) =>
-    logger.Messages.Where(m => m.Text.Contains("LocationMismatch", StringComparison.Ordinal)).ToList();
+    [.. logger.Messages.Where(m => m.Text.Contains("LocationMismatch", StringComparison.Ordinal))];
 
   private static LogLevel _levelOf(ArchiveLocationMismatchHandling handling) =>
     handling == ArchiveLocationMismatchHandling.Warning ? LogLevel.Warning : LogLevel.Information;
