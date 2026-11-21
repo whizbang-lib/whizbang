@@ -47,6 +47,8 @@ public static class CapabilityServiceCollectionExtensions {
       sp.GetRequiredService<ILogger<CapabilityRegistry>>(),
       sp.GetRequiredService<WhizbangMetrics>()));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ICapabilityRequirementSource, ConfigurationManifestRequirementSource>());
+    // The clock the step's bounded retry waits on.
+    services.TryAddSingleton(TimeProvider.System);
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IStartupStep, CapabilitiesStartupStep>(sp =>
       new CapabilitiesStartupStep(
         sp.GetRequiredService<ICapabilityRegistry>(),
@@ -54,7 +56,8 @@ public static class CapabilityServiceCollectionExtensions {
         sp.GetServices<ICapabilityRequirementSource>(),
         sp.GetServices<ICapabilityProvisioner>(),
         sp.GetService<IConfiguration>(),
-        sp.GetRequiredService<ILogger<CapabilitiesStartupStep>>())));
+        sp.GetRequiredService<ILogger<CapabilitiesStartupStep>>(),
+        sp.GetRequiredService<TimeProvider>())));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, CapabilityVerdictEnforcer>(sp =>
       new CapabilityVerdictEnforcer(
         sp.GetRequiredService<ICapabilityRegistry>(),

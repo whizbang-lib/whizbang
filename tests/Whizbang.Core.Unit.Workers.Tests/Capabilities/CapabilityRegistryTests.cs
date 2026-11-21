@@ -136,7 +136,7 @@ public class CapabilityRegistryTests {
   [Test]
   public async Task Verdict_IsEmptyUntilPublished_ThenTheLatestAsync() {
     var registry = new CapabilityRegistry([_broker()], NullLogger<CapabilityRegistry>.Instance);
-    var verdict = CapabilityVerdict.Evaluate(registry.Statuses, []);
+    var verdict = CapabilityVerdict.Evaluate(registry.Statuses, [], probed: true);
 
     var before = registry.Verdict;
     registry.PublishVerdict(verdict);
@@ -152,7 +152,7 @@ public class CapabilityRegistryTests {
   public async Task WaitForVerdict_CompletesWhenTheVerdictIsPublishedAsync() {
     var registry = new CapabilityRegistry([_broker()], NullLogger<CapabilityRegistry>.Instance);
     var waiting = registry.WaitForVerdictAsync(CancellationToken.None);
-    var verdict = CapabilityVerdict.Evaluate(registry.Statuses, []);
+    var verdict = CapabilityVerdict.Evaluate(registry.Statuses, [], probed: true);
 
     var pendingBefore = !waiting.IsCompleted;
     registry.PublishVerdict(verdict);

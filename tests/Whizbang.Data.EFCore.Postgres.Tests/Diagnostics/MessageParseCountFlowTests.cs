@@ -98,13 +98,13 @@ public class MessageParseCountFlowTests {
     await Assert.That(summary.Select(s => s.Source).Distinct().ToList())
       .IsEquivalentTo([MessageParseSource.LifecycleStage, MessageParseSource.EventStoreRead])
       .Because("a local event is stored and drained; it never leaves on the wire in this topology");
-    await Assert.That(_count(summary, MessageParseSource.LifecycleStage, MessageParseKind.Payload)).IsEqualTo(5)
-      .Because("each of the five distribute stages parses the payload again (plans/message-cache.md, migration step 1)");
+    await Assert.That(_count(summary, MessageParseSource.LifecycleStage, MessageParseKind.Payload)).IsEqualTo(1)
+      .Because("the five distribute stages of the flush share one parse of the payload (#1526, plans/message-cache.md step 1)");
     await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Payload)).IsEqualTo(2)
       .Because("the one drain session parses the event once per row, and there is one row per perspective (step 2)");
     await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Metadata)).IsEqualTo(2);
     await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Scope)).IsEqualTo(2);
-    await Assert.That(recorder.CountFor(messageId)).IsEqualTo(11);
+    await Assert.That(recorder.CountFor(messageId)).IsEqualTo(7);
   }
 
   /// <summary>
@@ -136,7 +136,7 @@ public class MessageParseCountFlowTests {
       await drain.AwaitNextSessionAsync(perspectives, cue: true).WaitAsync(TimeSpan.FromSeconds(60), cancellationToken);
       await host.StopAsync(cancellationToken);
 
-      await Assert.That(parsedByTheFirstSession).IsEqualTo(11);
+      await Assert.That(parsedByTheFirstSession).IsEqualTo(7);
     }
 
     _report("second drain session", messageId, recorder, wire);
@@ -145,7 +145,7 @@ public class MessageParseCountFlowTests {
       .Because("the second session finds both rows in the cooldown cache and parses neither (#1759)");
     await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Metadata)).IsEqualTo(2);
     await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Scope)).IsEqualTo(2);
-    await Assert.That(recorder.CountFor(messageId)).IsEqualTo(11);
+    await Assert.That(recorder.CountFor(messageId)).IsEqualTo(7);
   }
 
   private static int _count(IReadOnlyList<MessageParseSiteCount> summary, MessageParseSource source, MessageParseKind kind) =>

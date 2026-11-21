@@ -13,7 +13,8 @@ namespace Whizbang.Core.Tests.Capabilities;
 /// <summary>
 /// The verdict: one line per required capability and scope, naming every feature that requires it and the
 /// setting that turned each one on, with one outcome per row of the validation table. An explicit requirement
-/// on a capability that is not Ready fails start; Unknown warns, because the probe could not decide; an implicit
+/// on a capability that is not Ready fails start, including Unknown once the probe ran (#1513, decided in #1672:
+/// explicit configuration means the feature is required); Unknown warns only where nothing probed it; an implicit
 /// requirement degrades.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Capabilities/CapabilityVerdict.cs</code-under-test>
@@ -41,7 +42,7 @@ public class CapabilityVerdictTests {
     new(_squeeze, "orders", state, version, detail, reason);
 
   private static CapabilityVerdictEntry _only(CapabilityStatus status, params ActiveCapabilityRequirement[] active) =>
-    CapabilityVerdict.Evaluate([status], active).Entries.Single();
+    CapabilityVerdict.Evaluate([status], active, probed: true).Entries.Single();
 
   [Test]
   public async Task Explicit_Ready_ProceedsAsync() {
@@ -76,15 +77,39 @@ public class CapabilityVerdictTests {
   }
 
   [Test]
-  public async Task Explicit_Unknown_WarnsAsync() {
-    var entry = _only(_status(CapabilityState.Unknown, reason: "not probed yet"), _explicit(_rewrite));
+  public async Task Explicit_Unknown_WithTheProbeOff_WarnsAsync() {
+    var entry = CapabilityVerdict.Evaluate(
+      [_status(CapabilityState.Unknown, reason: "not probed yet")], [_explicit(_rewrite)], probed: false).Entries.Single();
 
     await Assert.That(entry.Outcome).IsEqualTo(CapabilityVerdictOutcome.Warn)
-      .Because("the probe could not decide; the feature fails loudly when it runs if the capability is missing");
+      .Because("nothing probed it; the feature fails loudly when it runs if the capability is missing");
     await Assert.That(entry.Line).IsEqualTo(
       "capability postgres/pg_squeeze on 'orders': Unknown: not probed yet. "
       + "Fix: the probe could not decide; check that postgres is reachable from this service. "
       + "Required by: Online table rewrite (Whizbang:Workers:Maintenance:TableRewriteStrategy = PgSqueeze, explicit)");
+  }
+
+  /// <summary>
+  /// #1513, decided in #1672: when the probe ran and still cannot tell (after its bounded retries in the startup
+  /// step), an explicitly configured feature fails start, because explicit configuration means it is required.
+  /// </summary>
+  [Test]
+  public async Task Explicit_UnknownAfterTheProbe_FailsStartWithTheReasonAsync() {
+    var entry = _only(_status(CapabilityState.Unknown, reason: "NpgsqlException: connection refused"), _explicit(_rewrite));
+
+    await Assert.That(entry.Outcome).IsEqualTo(CapabilityVerdictOutcome.Fail)
+      .Because("explicit configuration means the feature is required; a probe that cannot tell does not let it through");
+    await Assert.That(entry.Line).IsEqualTo(
+      "capability postgres/pg_squeeze on 'orders': Unknown: NpgsqlException: connection refused. "
+      + "Fix: the probe could not decide; check that postgres is reachable from this service. "
+      + "Required by: Online table rewrite (Whizbang:Workers:Maintenance:TableRewriteStrategy = PgSqueeze, explicit)");
+  }
+
+  [Test]
+  public async Task Implicit_UnknownAfterTheProbe_DegradesAsync() {
+    var entry = _only(_status(CapabilityState.Unknown, reason: "timeout"), _implicit(_advice));
+
+    await Assert.That(entry.Outcome).IsEqualTo(CapabilityVerdictOutcome.Degrade);
   }
 
   [Test]
@@ -130,9 +155,10 @@ public class CapabilityVerdictTests {
   public async Task RequirementNoProviderDescribes_IsUnknownWithTheReasonAsync() {
     var orphan = new CapabilityRequirement(new CapabilityId("broker", "delayed_exchange"), "Delayed delivery", "W:Delay", null, null);
 
-    var entry = CapabilityVerdict.Evaluate([_status(CapabilityState.Ready)], [_explicit(orphan)]).Entries.Single();
+    var entry = CapabilityVerdict.Evaluate([_status(CapabilityState.Ready)], [_explicit(orphan)], probed: true).Entries.Single();
 
-    await Assert.That(entry.Outcome).IsEqualTo(CapabilityVerdictOutcome.Warn);
+    await Assert.That(entry.Outcome).IsEqualTo(CapabilityVerdictOutcome.Warn)
+      .Because("no provider probed it, so the probe never ran for it; only a probed Unknown fails start");
     await Assert.That(entry.Line).IsEqualTo(
       "capability broker/delayed_exchange: Unknown: no registered provider describes it. "
       + "Fix: the probe could not decide; check that broker is reachable from this service. "
@@ -146,7 +172,7 @@ public class CapabilityVerdictTests {
 
     var verdict = CapabilityVerdict.Evaluate(
       [_status(CapabilityState.Ready), _status(CapabilityState.Missing) with { Scope = "billing" }, new(other, "orders", CapabilityState.Ready, null, null, null)],
-      [_explicit(requirement)]);
+      [_explicit(requirement)], probed: true);
 
     await Assert.That(verdict.Entries.Select(e => e.Status.Scope)).IsEquivalentTo(["orders", "billing"]);
     await Assert.That(verdict.Failures.Single().Status.Scope).IsEqualTo("billing");
@@ -159,8 +185,8 @@ public class CapabilityVerdictTests {
     var inOrders = _explicit(_rewrite) with { Scope = "orders" };
     var inPlain = _explicit(_rewrite) with { Scope = "plain" };
 
-    var ordersOnly = CapabilityVerdict.Evaluate([orders, plain], [inOrders]);
-    var plainOnly = CapabilityVerdict.Evaluate([orders, plain], [inPlain]);
+    var ordersOnly = CapabilityVerdict.Evaluate([orders, plain], [inOrders], probed: true);
+    var plainOnly = CapabilityVerdict.Evaluate([orders, plain], [inPlain], probed: true);
 
     await Assert.That(ordersOnly.Entries.Select(e => e.Status.Scope)).IsEquivalentTo(["orders"])
       .Because("a database that does not carry the column is not asked for the extension");
@@ -171,9 +197,11 @@ public class CapabilityVerdictTests {
 
   [Test]
   public async Task ScopedRequirement_InAScopeNoProviderProbes_IsUnknownThereAsync() {
-    var entry = CapabilityVerdict.Evaluate([_status(CapabilityState.Ready)], [_explicit(_rewrite) with { Scope = "archive" }]).Entries.Single();
+    var entry = CapabilityVerdict.Evaluate(
+      [_status(CapabilityState.Ready)], [_explicit(_rewrite) with { Scope = "archive" }], probed: true).Entries.Single();
 
-    await Assert.That(entry.Outcome).IsEqualTo(CapabilityVerdictOutcome.Warn);
+    await Assert.That(entry.Outcome).IsEqualTo(CapabilityVerdictOutcome.Warn)
+      .Because("no provider probes that scope, so nothing probed it there");
     await Assert.That(entry.Line).StartsWith("capability postgres/pg_squeeze on 'archive': Unknown: no registered provider probes this scope. ");
   }
 
@@ -181,8 +209,8 @@ public class CapabilityVerdictTests {
   public async Task RequiredTag_IsHowEachProbedCapabilityIsRequiredAsync() {
     var ready = _status(CapabilityState.Ready);
     var notRequired = new CapabilityStatus(FakeCapabilityProvider.Describe("postgres", "vector"), "orders", CapabilityState.Ready, null, null, null);
-    var explicitly = CapabilityVerdict.Evaluate([ready, notRequired], [_explicit(_rewrite)]);
-    var implicitly = CapabilityVerdict.Evaluate([ready], [_implicit(_advice)]);
+    var explicitly = CapabilityVerdict.Evaluate([ready, notRequired], [_explicit(_rewrite)], probed: true);
+    var implicitly = CapabilityVerdict.Evaluate([ready], [_implicit(_advice)], probed: true);
 
     await Assert.That(explicitly.RequiredTag(ready)).IsEqualTo("explicit");
     await Assert.That(explicitly.RequiredTag(notRequired)).IsEqualTo("none");
@@ -194,7 +222,7 @@ public class CapabilityVerdictTests {
 
   [Test]
   public async Task Arguments_AreValidatedAsync() {
-    await Assert.That(() => CapabilityVerdict.Evaluate(null!, [])).Throws<ArgumentNullException>();
-    await Assert.That(() => CapabilityVerdict.Evaluate([], null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => CapabilityVerdict.Evaluate(null!, [], probed: true)).Throws<ArgumentNullException>();
+    await Assert.That(() => CapabilityVerdict.Evaluate([], null!, probed: true)).Throws<ArgumentNullException>();
   }
 }

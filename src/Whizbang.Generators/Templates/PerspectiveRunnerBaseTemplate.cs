@@ -2618,7 +2618,7 @@ internal abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspecti
     // new events (event store quiescent w.r.t. lastSuccessfulEventId).
     // Bounded by MAX_REWIND_CATCH_UP_ITERATIONS as a safety against pathological
     // append rates; in practice 1-2 iterations cover the bulk-import case.
-    // <docs>fundamentals/perspectives/rewind-invariants</docs>
+    // <docs>fundamentals/perspectives/rewind#catch-up-loop</docs>
     // <tests>tests/Whizbang.Core.Component.Tests/Perspectives/PerspectiveRewindCompletionGapTests.cs</tests>
     // <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/ReconcileRewindScenarioTests.cs</tests>
     // <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReconcileRewindDeclarationSqlTests.cs</tests>
