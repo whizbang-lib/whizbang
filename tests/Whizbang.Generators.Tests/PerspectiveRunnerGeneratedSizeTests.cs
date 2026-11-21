@@ -8,17 +8,17 @@ using static Whizbang.Generators.Tests.PerspectiveContractTestHarness;
 namespace Whizbang.Generators.Tests;
 
 /// <summary>
-/// What a perspective adds to its assembly's generated source (#2401, #1689). The runner logic every perspective
-/// shares is emitted once per assembly as a generic base; each runner emits only what differs between perspectives
-/// (its event list, its Apply dispatch, its empty model, its registrations). A runner used to repeat about 190 KB of
-/// near-constant code, so compile time, memory and the generator's own time grew by that much per perspective.
+/// What a perspective adds to its assembly's generated source (#2401, #1689, #2469). The runner logic every perspective
+/// shares is the generic base in Whizbang.Core, which no assembly generates; each runner emits only what differs between
+/// perspectives (its event list, its Apply dispatch, its empty model, its registrations). A runner used to repeat about
+/// 190 KB of near-constant code, so compile time, memory and the generator's own time grew by that much per perspective.
 /// </summary>
 /// <remarks>
 /// Sizes stand in for timing here: tests are deterministic, so the generator's time is measured by the build-cost
 /// benchmark instead, and these pin the cause of it, the source emitted per perspective.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Generators/PerspectiveRunnerGenerator.cs</code-under-test>
-/// <code-under-test>src/Whizbang.Generators/Templates/PerspectiveRunnerBaseTemplate.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Core/Perspectives/PerspectiveRunnerBase.cs</code-under-test>
 [Category("SourceGenerators")]
 public class PerspectiveRunnerGeneratedSizeTests {
   // A simple runner is about 3 KB; the bound leaves room for the per-perspective parts to grow.
@@ -51,17 +51,19 @@ public class PerspectiveRunnerGeneratedSizeTests {
     var runner = GeneratorTestHelper.GetRequiredGeneratedSource(result, "OrderProjectionRunner.g.cs");
 
     await Assert.That(runner.Length).IsLessThan(MAX_RUNNER_BYTES)
-      .Because("the shared runner logic lives in the generic base, emitted once per assembly");
-    await Assert.That(runner).Contains(": PerspectiveRunnerBase<global::TestApp.OrderProjection, global::TestApp.Order>");
+      .Because("the shared runner logic lives in the generic base in Whizbang.Core");
+    await Assert.That(runner)
+      .Contains(": global::Whizbang.Core.Perspectives.PerspectiveRunnerBase<global::TestApp.OrderProjection, global::TestApp.Order>")
+      .Because("a runner derives from the base Whizbang.Core ships (#2469), not from one generated into its assembly");
   }
 
   /// <summary>
-  /// A second perspective adds its runner and nothing else: the shared base is emitted once, whatever the number of
-  /// perspectives, so the generator processes the large template once per run rather than once per perspective.
+  /// A second perspective adds its runner and nothing else, and no assembly is given a copy of the shared base: it is
+  /// library code in Whizbang.Core (#2469), one copy for every consumer, under the library's coverage gate.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
-  public async Task ASecondPerspective_AddsOnlyItsOwnRunner_TheSharedBaseIsEmittedOnceAsync() {
+  public async Task ASecondPerspective_AddsOnlyItsOwnRunner_NoRunnerBaseIsGeneratedAsync() {
     var one = _generatedBytes(ORDER_PROJECTION);
     var two = _generatedBytes(ORDER_PROJECTION + INVOICE_PROJECTION);
 
@@ -70,8 +72,9 @@ public class PerspectiveRunnerGeneratedSizeTests {
 
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(PREAMBLE + ORDER_PROJECTION + INVOICE_PROJECTION);
     var bases = GeneratorTestHelper.GetAllGeneratedSources(result)
-      .Count(static s => s.FileName.EndsWith("PerspectiveRunnerBase.g.cs", StringComparison.Ordinal));
-    await Assert.That(bases).IsEqualTo(1);
+      .Count(static s => s.FileName.Contains("PerspectiveRunnerBase", StringComparison.Ordinal));
+    await Assert.That(bases).IsEqualTo(0)
+      .Because("the runner base is Whizbang.Core's, so generating a copy would duplicate it in every consumer");
   }
 
   /// <summary>An assembly with no perspective gets no runner base: it would be dead code there.</summary>
@@ -83,7 +86,7 @@ public class PerspectiveRunnerGeneratedSizeTests {
     await Assert.That(GeneratorTestHelper.GetAllGeneratedSources(result)).IsEmpty();
   }
 
-  /// <summary>The runners of two perspectives and their shared base compile together.</summary>
+  /// <summary>The runners of two perspectives compile against the shared base in Whizbang.Core.</summary>
   [Test]
   [RequiresAssemblyFiles]
   public async Task TwoRunnersAndTheirSharedBase_CompileAsync() {

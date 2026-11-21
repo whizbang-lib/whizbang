@@ -19,9 +19,9 @@ namespace Whizbang.Core.Generated;
 /// <summary>
 /// Generated perspective runner for __PERSPECTIVE_SIMPLE_NAME__: what this perspective varies (its events, its Apply
 /// dispatch, its empty model and its registrations). The runner logic every perspective shares is in
-/// <see cref="PerspectiveRunnerBase{TPerspective, TModel}"/>, generated once per assembly (#2401).
+/// <see cref="global::Whizbang.Core.Perspectives.PerspectiveRunnerBase{TPerspective, TModel}"/>, in Whizbang.Core (#2469).
 /// </summary>
-internal sealed class __RUNNER_CLASS_NAME__ : PerspectiveRunnerBase<__PERSPECTIVE_CLASS_NAME__, __MODEL_TYPE_NAME__> {
+internal sealed class __RUNNER_CLASS_NAME__ : global::Whizbang.Core.Perspectives.PerspectiveRunnerBase<__PERSPECTIVE_CLASS_NAME__, __MODEL_TYPE_NAME__> {
   #region ARCHIVED_STREAM_ROWS
   // Generated (#1739): the perspective's CLR type name, which the missing-row probe asks the policy registry under, and
   // for an [ArchivedStreamRows] perspective a [ModuleInitializer] registering its declared policy.

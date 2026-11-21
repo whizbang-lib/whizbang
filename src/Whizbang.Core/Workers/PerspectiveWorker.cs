@@ -2536,7 +2536,7 @@ public partial class PerspectiveWorker(
   /// <remarks>
   /// PrePerspective receptor invocation is intentionally NOT done here. The generated
   /// IPerspectiveRunner (RunWithEventsAsync) fires PrePerspectiveDetached + PrePerspectiveInline
-  /// itself at the start of its processing loop (see PerspectiveRunnerBaseTemplate.cs). Firing them
+  /// itself at the start of its processing loop (see PerspectiveRunnerBase.cs). Firing them
   /// here too would double-invoke every registered Pre* receptor.
   /// </remarks>
   private void _registerDrainModeLifecycleTracking(
