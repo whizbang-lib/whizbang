@@ -249,7 +249,7 @@ Unmet with a justification. Assessed against the repository on 2026-10-04.
 
 **Status** (rechecked 2026-11-20 against the site's record for project 15090): every silver criterion is
 answered, at 98%. Two rows need changing on the site: `version_tags_signed` is now Met, and the
-`build_repeatable` justification no longer matches CI and should be corrected (see below).
+`build_repeatable` justification should name the reproducible-build check that #2484 added (see below).
 
 ## Silver: what is left
 
@@ -257,7 +257,7 @@ answered, at 98%. Two rows need changing on the site: `version_tags_signed` is n
 |---|---|---|---|
 | `access_continuity` | MUST | A second trusted person able to create and close issues, merge, and release within a week: owner on the GitHub organization, co-owner on the nuget.org packages, access to the docs domain, named in `GOVERNANCE.md` (section Continuity). Today the organization has one member and one admin. | owner only |
 | `bus_factor` | SHOULD | Unmet until a second regular contributor exists. | Unmet, justified |
-| `build_repeatable` | MUST | **Correction.** The site says Met because "the release path rebuilds the tested commit and fails if the binaries' hashes differ". Since #2068 (closed 2026-11-05) it does not: `docs/RELEASING.md` (verify-rebuild) records that byte-for-byte identity is not a gate, because source generators emit some assemblies nondeterministically and ILRepack writes a fresh module id per merge. This criterion requires a bit-for-bit result, so the accurate answer is Unmet until that nondeterminism is fixed (the same work closes gold's `build_reproducible`). Changing it lowers silver; keeping Met needs a justification that is true. | owner decides |
+| `build_repeatable` | MUST | **Update the justification.** The site's answer cites a hash comparison that #2068 removed. Since #2484 the claim is true again, by a different check: two builds of the same commit produce byte-identical packages, and CI proves it on every release branch and weekly on develop (`docs/RELEASING.md`, "Reproducible builds"). Keep Met with the justification below once #2484 is merged. | owner, minutes |
 | `version_tags_signed` | SUGGESTED | Done: every release tag since #1438 (PR #1550, merged 2026-10-20) is signed keylessly with gitsign; change the site's answer to Met. | enter Met |
 
 ## Basics
@@ -305,7 +305,7 @@ answered, at 98%. Two rows need changing on the site: `version_tags_signed` is n
 | `build_standard_variables` | N/A | No native binaries are built; the output is managed .NET assemblies. |
 | `build_preserve_debug` | Met | Every package ships portable symbols in a `.snupkg` with embedded sources. |
 | `build_non_recursive` | Met | MSBuild builds the solution from its project reference graph, not by recursing into directories. |
-| `build_repeatable` | **Unmet (correction, owner decides)** | Unmet for now. Builds are configured to be deterministic (ContinuousIntegrationBuild, dependencies locked by hash), but not every assembly is bit-for-bit identical between builds of the same commit: some source-generated code and the ILRepack merge step vary. CI instead verifies that a release is built from the tested commit with the same SDK and the same assembly set, and every release carries a signed SLSA provenance statement naming each package by its SHA-256 digest. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/RELEASING.md> |
+| `build_repeatable` | **Met (after #2484 merges)** | Two builds of the same commit produce bit-for-bit identical packages: compiler output is deterministic, source paths are mapped to /_/, generators emit in ordinal order and map the paths they embed, package entries carry one fixed timestamp, and dependencies are locked by hash. CI builds every release branch twice, on two runners from two checkout paths, and fails on any byte of difference; a beta, rc or stable publishes only from a green run. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/RELEASING.md#reproducible-builds> |
 | `installation_common` | Met | Installed and removed with NuGet (`dotnet add package` / `dotnet remove package`). |
 | `installation_standard_variables` | Met | NuGet decides where packages are written and honors its standard settings (`NUGET_PACKAGES`, `nuget.config`). |
 | `installation_development_quick` | Met | Clone, `dotnet build`, and `pwsh scripts/Run-Tests.ps1`; integration suites start their databases and brokers in containers. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#setting-up-your-development-environment> |
@@ -364,8 +364,8 @@ evidence URL inside it (the form's "Met URL" criteria need a URL in the justific
 | | Count | Criteria |
 |---|---|---|
 | Already answered, keep | 10 | `achieve_silver` (computed by the site), `bus_factor`, `repo_distributed`, `test_invocation`, `test_continuous_integration`, `crypto_used_network`, `crypto_tls12`, `hardening`, `dynamic_analysis`, `dynamic_analysis_enable_assertions` |
-| Unanswered, enter **Met** | 8 | `copyright_per_file`, `license_per_file`, `require_2FA`, `secure_2FA`, `code_review_standards`, `test_statement_coverage90`, `test_branch_coverage80`, `hardened_site` |
-| Unanswered, enter **Unmet** | 5 | `contributors_unassociated`, `small_tasks`, `two_person_review`, `build_reproducible`, `security_review` |
+| Unanswered, enter **Met** | 9 | `copyright_per_file`, `license_per_file`, `require_2FA`, `secure_2FA`, `code_review_standards`, `test_statement_coverage90`, `test_branch_coverage80`, `hardened_site`, `build_reproducible` (after #2484 merges) |
+| Unanswered, enter **Unmet** | 4 | `contributors_unassociated`, `small_tasks`, `two_person_review`, `security_review` |
 | Unanswered, enter **N/A** | 0 | |
 
 (`achieve_silver` is set by the site, not entered, so 22 rows are entered by hand.)
@@ -374,12 +374,12 @@ evidence URL inside it (the form's "Met URL" criteria need a URL in the justific
 
 | Criterion | Kind | What closes it | Who |
 |---|---|---|---|
-| `achieve_silver` | MUST | Silver's `access_continuity` (and `build_repeatable`, see the silver correction above). | owner |
+| `achieve_silver` | MUST | Silver's `access_continuity`. | owner |
 | `bus_factor` | MUST | A second person able to carry the project: regular contributions, merge and release rights. | needs a second maintainer |
 | `contributors_unassociated` | MUST | At least two significant contributors in the last year (the site's indicators: 50 commits, 1,000 lines of code or 20 pages of docs) who are not paid by the same organization. Today the only contributors besides the maintainer are paid by the maintainer's organization. | needs an outside contributor |
 | `two_person_review` | MUST | At least half of all changes reviewed by someone other than the author before release. Of the last 400 merged pull requests (2026-08-20 to 2026-11-20), 8 were approved by someone other than the author. | needs a second reviewer |
 | `security_review` | MUST | Complete and sign off the 2026 security review workbook (draft pull request #1155, `docs/security-review-2026.md`, prepared 2026-10-10): every Decision cell, the findings table and the sign-off are empty and need a human reviewer. Once merged, answer Met with its URL. | owner |
-| `build_reproducible` | MUST | Byte-for-byte identical packages from the same commit. `docs/RELEASING.md` (verify-rebuild) records that this does not hold: source generators emit some assemblies nondeterministically (`[LoggerMessage]` partial-class ordering) and ILRepack writes a fresh module id (MVID) per merge, so CI compares SDK and assembly set, not hashes (#2068, #691). Closing it means fixing those sources of nondeterminism, then restoring a hash comparison of two independent builds of the same commit at the same version. No issue tracks this yet. | engineering work, needs an issue |
+| `build_reproducible` | MUST | Done by #2484 once merged: every source of nondeterminism found by building one commit twice from two paths and comparing each package entry was removed (absolute paths in the embedded message registry, culture-ordered generator output, the .NET 10 logging generator's hash-set ordering, ILRepack's temp symbol path, package entry timestamps), and CI compares two independent builds byte for byte. Answer Met with the justification below. | enter Met after merge |
 | `small_tasks` | MUST | The process exists (the `good first issue` label, defined and linked from CONTRIBUTING), but no open issue carries the label: the three that did were closed on 2026-10-06. Label two or three open, self-contained issues with the steps written in them, then answer Met with the alternative text below. | owner, minutes |
 
 ## Basics
@@ -408,7 +408,7 @@ evidence URL inside it (the form's "Met URL" criteria need a URL in the justific
 |---|---|---|---|
 | `code_review_standards` | ? | Met | CONTRIBUTING documents how review is conducted, what the required checks verify, what the reviewer checks (correctness and fit, tests, security, performance, documentation, writing) and what is required to merge. <https://github.com/whizbang-lib/whizbang/blob/develop/CONTRIBUTING.md#code-review> |
 | `two_person_review` | ? | Unmet | Unmet. There is one active maintainer and a pull request author cannot approve their own pull request: of the last 400 merged pull requests (2026-08-20 to 2026-11-20), 8 were approved by someone other than the author. Every change passes the same required automated checks, which do not count as review by another person. <https://github.com/whizbang-lib/whizbang/blob/develop/GOVERNANCE.md#how-decisions-are-made> |
-| `build_reproducible` | ? | Unmet | Unmet. Builds are deterministic in configuration (ContinuousIntegrationBuild with deterministic source paths, and dependencies locked by hash in packages.lock.json), but not yet bit-for-bit: some source-generated code and the ILRepack merge step vary between builds, so CI verifies that a release is built from the tested commit with the same SDK and assembly set rather than comparing hashes. Tamper evidence for published packages is the signed SLSA provenance. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/RELEASING.md> |
+| `build_reproducible` | ? | Met (after #2484 merges) | Met. Rebuilding a release's commit with the SDK in global.json produces byte-identical packages. CI builds every release branch twice, independently (two runners, two checkout paths), and fails on any difference, and a weekly run does the same on develop; the steps to reproduce a release locally are documented. Published packages also carry a signed SLSA provenance statement naming each by its SHA-256 digest. <https://github.com/whizbang-lib/whizbang/blob/develop/docs/RELEASING.md#reproducible-builds> |
 | `test_invocation` | Met | Met (keep) | Tests run with the standard dotnet test (or dotnet run per project); scripts/Run-Tests.ps1 wraps the common modes. |
 | `test_continuous_integration` | Met | Met (keep) | (as entered) |
 | `test_statement_coverage90` | ? | Met | Line coverage of the library is 100% on SonarCloud (9 uncovered of 86,023 lines, which rounds to 100%; Codecov reports 99.8%), collected on every change by the test suites, which are FLOSS (MIT, in this repository); the merge gate fails any pull request that leaves an added line unexecuted. What is excluded and why is documented in ai-docs/coverage-exclusions.md. <https://sonarcloud.io/component_measures?id=whizbang-lib_whizbang&metric=line_coverage> |
