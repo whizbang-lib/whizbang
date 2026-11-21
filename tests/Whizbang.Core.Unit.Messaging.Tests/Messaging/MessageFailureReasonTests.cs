@@ -37,6 +37,8 @@ public class MessageFailureReasonTests {
     // Written to wh_dead_letters by the inbox worker (#1996), so the numbers are stored data.
     await Assert.That((int)MessageFailureReason.ReceptorDenied).IsEqualTo(28);
     await Assert.That((int)MessageFailureReason.ReceptorQuarantined).IsEqualTo(29);
+    // Written to wh_inbox_state by the inbox store pass (migration 551, #1630), so the number is part of the SQL contract.
+    await Assert.That((int)MessageFailureReason.AwaitingStreamHead).IsEqualTo(30);
     await Assert.That((int)MessageFailureReason.Unknown).IsEqualTo(99);
 #pragma warning restore TUnitAssertions0005
   }
