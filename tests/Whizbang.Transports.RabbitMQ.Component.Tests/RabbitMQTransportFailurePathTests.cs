@@ -459,14 +459,20 @@ public class RabbitMQTransportFailurePathTests {
   public async Task SubscribeAsync_DeadLetterEnabled_DeclaresDlxDlqAndBindingAsync() {
     var (channel, _, _, _) = await _subscribeAsync(); // AutoDeclareDeadLetterExchange defaults to true
 
-    await Assert.That(channel.DeclaredExchanges.Contains(("test-exchange.dlx", "fanout", true, false))).IsTrue()
-      .Because("The dead-letter exchange must be a durable fanout named '<exchange>.dlx'.");
+    // #2421: one DIRECT dead-letter exchange per exchange; the queue dead-letters with its own DLQ name as the routing
+    // key, and the DLQ is bound only on that key, so a poison message reaches its own service's DLQ and no other.
+    await Assert.That(channel.DeclaredExchanges.Contains(("test-exchange.dlx.direct", "direct", true, false))).IsTrue()
+      .Because("The dead-letter exchange must be a durable direct exchange named '<exchange>.dlx.direct'.");
+    await Assert.That(channel.DeclaredExchanges.Any(e => e.Type == "fanout")).IsFalse()
+      .Because("a fanout dead-letter exchange copies one queue's poison into every subscriber's DLQ (#2421)");
     await Assert.That(channel.DeclaredQueues.Any(q => q.Queue == "test-subscriber-test-exchange.dlq")).IsTrue();
-    await Assert.That(channel.QueueBindings.Contains(
-      ("test-subscriber-test-exchange.dlq", "test-exchange.dlx", ""))).IsTrue();
+    await Assert.That(channel.QueueBindings.Where(b => b.Queue == "test-subscriber-test-exchange.dlq")).IsEquivalentTo(
+      new[] { ("test-subscriber-test-exchange.dlq", "test-exchange.dlx.direct", "test-subscriber-test-exchange.dlq") });
 
     var mainQueue = channel.DeclaredQueues.Single(q => q.Queue == "test-subscriber-test-exchange");
-    await Assert.That((string)mainQueue.Arguments!["x-dead-letter-exchange"]!).IsEqualTo("test-exchange.dlx");
+    await Assert.That((string)mainQueue.Arguments!["x-dead-letter-exchange"]!).IsEqualTo("test-exchange.dlx.direct");
+    await Assert.That((string)mainQueue.Arguments!["x-dead-letter-routing-key"]!)
+      .IsEqualTo("test-subscriber-test-exchange.dlq");
   }
 
   [Test]
