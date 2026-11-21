@@ -31,12 +31,16 @@ public partial class BlueGreenRebuildIntegrationTests {
     }
     await _registerTableAsync();
     await _execAsync($"CREATE INDEX {PLAIN_INDEX} ON {TABLE} ((data->>'Balance'))");
+    await _stampCommitSequencesAsync();
     var indexesBefore = await _indexNamesAsync(TABLE);
+    var keyAndUniqueIndexes = await _scalarAsync<long>(
+      $"SELECT count(*) FROM pg_index WHERE indrelid = '{TABLE}'::regclass AND (indisprimary OR indisunique)");
     using var log = new NpgsqlStatementLog(ConnectionString);
 
     var result = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildBlueGreenAsync(PERSPECTIVE);
 
     await Assert.That(result.Success).IsTrue().Because(result.Error ?? "");
+    await Assert.That(keyAndUniqueIndexes).IsLessThan(indexesBefore.Count).Because("the control: the live table has a plain index to defer");
     await Assert.That(await _liveBalancesAsync()).IsEquivalentTo(new Dictionary<Guid, decimal> {
       [streams[0]] = 10m,
       [streams[1]] = 20m,
@@ -44,8 +48,8 @@ public partial class BlueGreenRebuildIntegrationTests {
     });
     await Assert.That(log.Matching("INSERT", TABLE + "_bg")).IsEmpty()
       .Because("every row of the first pass reached the shadow by COPY, and nothing changed after it to catch up");
-    await Assert.That(shadowIndexesDuringLoad.Distinct()).IsEquivalentTo([indexesBefore.Count - 1L])
-      .Because("the plain index is dropped for the load; the primary key stays, so a row already present is refused as before");
+    await Assert.That(shadowIndexesDuringLoad.Distinct()).IsEquivalentTo([keyAndUniqueIndexes])
+      .Because("the plain indexes are dropped for the load; the key and the unique ones stay, so the load refuses what the per-row write refuses");
     await Assert.That(await _indexNamesAsync(TABLE)).IsEquivalentTo(indexesBefore)
       .Because("the index built after the load is installed under the live index's name, so the schema pass finds it");
   }
@@ -126,6 +130,7 @@ public partial class BlueGreenRebuildIntegrationTests {
     await _appendAsync(sp, new RebuildCreditedEvent { StreamId = streams[2], Amount = 25m });
     await _registerTableAsync();
     await _execAsync($"ALTER TABLE {TABLE} ADD CONSTRAINT ck_rebuild_balance_cap CHECK ((data->>'Balance')::numeric < 400)");
+    await _stampCommitSequencesAsync();
 
     var result = await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildBlueGreenAsync(PERSPECTIVE);
 
@@ -164,15 +169,26 @@ public partial class BlueGreenRebuildIntegrationTests {
       await store.UpsertAsync(late, new RebuildBalanceModel { Id = late, Balance = 4m });
       await Assert.That((await store.GetByStreamIdAsync(late))!.Balance).IsEqualTo(4m)
         .Because("a held row is loaded before it is read, so the read finds it");
+      await store.UpsertAsync(late, new RebuildBalanceModel { Id = late, Balance = 40m });
       await Assert.That(await store.GetMetadataByStreamIdAsync(read)).IsNotNull();
       await Assert.That((await store.ReadForApplyAsync(read)).Version.State).IsEqualTo(PerspectiveRowVersionState.Present);
       await store.PurgeAsync(read);
     }
 
-    await Assert.That(await _balancesAsync(TABLE + "_bg")).IsEquivalentTo(new Dictionary<Guid, decimal> { [rewritten] = 20m, [late] = 4m })
+    await Assert.That(await _balancesAsync(TABLE + "_bg")).IsEquivalentTo(new Dictionary<Guid, decimal> { [rewritten] = 20m, [late] = 40m })
       .Because("the second write of a loaded row is the per-row upsert; the purged rows are in neither the load nor the table");
     await Assert.That(load.TakeRefused()).IsEmpty();
   }
+
+  /// <summary>
+  /// Stamps every event's commit sequence, as the stamper does once events are committed. An unstamped event always
+  /// counts as written during the rebuild, so without this every stream would be caught up again after the load.
+  /// </summary>
+  private Task _stampCommitSequencesAsync() => _execAsync("""
+    UPDATE wh_event_store es SET commit_sequence = s.seq
+    FROM (SELECT event_id, row_number() OVER (ORDER BY event_id) AS seq FROM wh_event_store) s
+    WHERE es.event_id = s.event_id
+    """);
 
   private async Task<List<string>> _indexNamesAsync(string table) {
     await using var conn = await _openAsync();

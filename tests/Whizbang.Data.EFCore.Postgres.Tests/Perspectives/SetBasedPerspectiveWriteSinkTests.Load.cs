@@ -57,6 +57,20 @@ public partial class SetBasedPerspectiveWriteSinkTests {
   }
 
   [Test]
+  public async Task Load_CopiesANullPhysicalValue_AsASqlNullAsync() {
+    var id = Guid.CreateVersion7();
+    await using var context = CreateDbContext();
+    using var log = new NpgsqlStatementLog(ConnectionString);
+
+    var outcomes = await new EFCorePostgresPerspectiveWriteSink(context).LoadAsync(
+      [_extracted(context, id, null, 5, PerspectiveRowVersion.Absent, commitSequence: 1)]);
+
+    await Assert.That(outcomes[0].Status).IsEqualTo(PerspectiveWriteStatus.Written);
+    await Assert.That(await _columnsAsync(EXTRACTED_TABLE, id)).IsEqualTo(((string?)null, 5));
+    await Assert.That(log.Matching("INSERT", EXTRACTED_TABLE)).IsEmpty();
+  }
+
+  [Test]
   public async Task Load_ARowTheTableRefuses_FailsAlone_AndTheOthersAreWrittenAsync() {
     await _executeAsync($"ALTER TABLE {ACTION_TABLE} ADD CONSTRAINT ck_load_value CHECK ((data->>'Value')::int < 100)", Guid.Empty);
     await using var context = CreateDbContext();

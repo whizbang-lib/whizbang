@@ -120,6 +120,24 @@ public partial class PerspectiveRebuilderBlueGreenTests {
   }
 
   [Test]
+  public async Task Staging_ARefusedRow_WithoutACompleter_StillFailsItsStream_Once_ForEveryRowOfItAsync() {
+    var timeline = new List<string>();
+    var sink = new StagingSink(timeline) { Refuse = [_a, _d] };
+    var fixture = new Fixture(new FakeSwapper());
+    fixture.Runner.Stage = sink;
+    fixture.Runner.ExtraRows[_a] = _d;
+    fixture.Add(_a, 1);
+    fixture.Add(_b, 2);
+
+    var result = await fixture.Rebuilder.RebuildBlueGreenAsync(PERSPECTIVE);
+
+    await Assert.That(result.Success).IsFalse();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1)
+      .Because("a stream two of whose rows were refused failed once, not twice");
+    await Assert.That(result.Error).Contains(_a.ToString());
+  }
+
+  [Test]
   public async Task Staging_SwitchedOff_WritesRowByRow_AndDefersNoIndexesAsync() {
     var swapper = new FakeSwapper { Deferred = [DEFERRED_INDEX] };
     var timeline = new List<string>();

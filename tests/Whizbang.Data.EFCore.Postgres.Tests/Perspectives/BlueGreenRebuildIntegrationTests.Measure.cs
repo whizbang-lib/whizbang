@@ -36,6 +36,7 @@ public partial class BlueGreenRebuildIntegrationTests {
     }
     await _registerTableAsync();
     await _execAsync($"CREATE INDEX {PLAIN_INDEX} ON {TABLE} ((data->>'Balance'))");
+    await _stampCommitSequencesAsync();
     using var log = new NpgsqlStatementLog(ConnectionString);
 
     var clock = Stopwatch.StartNew();
