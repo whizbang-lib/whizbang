@@ -190,4 +190,42 @@ public partial class AzureBlobArchiveStoreTests {
       }
     }
   }
+
+  [Test]
+  [Arguments(ArchiveLocationMismatchHandling.Warning)]
+  [Arguments(ArchiveLocationMismatchHandling.Info)]
+  public async Task NoMove_TheConfiguredLocation_IsNeverReportedAsAMismatchAsync(ArchiveLocationMismatchHandling handling) {
+    var (stream, _) = await _seedAsync(3);
+    var logger = new ListLogger();
+    var store = _store(maxEventsPerChunk: 2, logger: logger, locationMismatch: handling);
+    _ = await store.WriteAsync(ArchiveBatch.WholeStream(stream));
+
+    var read = await _readAllAsync(store, stream);
+    var restored = await store.RestoreAsync(stream);
+
+    await Assert.That(read).Count().IsEqualTo(3);
+    await Assert.That(restored.Status).IsEqualTo(ArchiveStatus.RESTORED);
+    await Assert.That(await _objectsAsync()).IsEmpty().Because("the restore's own queued objects were deleted in the configured location");
+    await Assert.That(_mismatchLogs(logger)).IsEmpty().Because("a record in the configured location is never a mismatch, so nothing is logged");
+  }
+
+  [Test]
+  public async Task Info_ARecordWithNoLocation_IsReadInTheConfiguredLocation_AndLoggedAsNamingNoneAsync() {
+    var (stream, _) = await _seedAsync(3);
+    var hotAsRead = await _hotAsReadAsync(stream);
+    var logger = new ListLogger();
+    var store = _store(logger: logger, locationMismatch: ArchiveLocationMismatchHandling.Info);
+    _ = await store.WriteAsync(ArchiveBatch.WholeStream(stream));
+    await using (var connection = await _openAsync()) {
+      await _executeAsync(connection, $"UPDATE wh_archive_manifest SET location_id = NULL WHERE stream_id = '{stream}'");
+    }
+
+    var read = await _readAllAsync(store, stream);
+
+    await Assert.That(read).IsEquivalentTo(hotAsRead, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    var logs = _mismatchLogs(logger);
+    await Assert.That(logs.Count).IsEqualTo(1);
+    await Assert.That(logs[0].Level).IsEqualTo(LogLevel.Information);
+    await Assert.That(logs[0].Text).Contains("(no location)").Because("a record that names no location is reported as such");
+  }
 }
