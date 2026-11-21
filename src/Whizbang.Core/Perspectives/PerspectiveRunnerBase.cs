@@ -1049,7 +1049,8 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
           // rare enough in a healthy system to afford the level - the partial case below stays at Debug.
           if (_logger.IsEnabled(LogLevel.Warning)) {
             var droppedIds = string.Join(",", events.Select(e => e.MessageId.Value.ToString("D")));
-            var droppedSeqs = string.Join(",", events.Select(e => e.LocalCommitSequence?.ToString(global::System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
+            // Only a stamped event is judged applied (PerspectiveIdempotencyFilter), so every dropped one has a commit sequence.
+            var droppedSeqs = string.Join(",", events.Select(e => Convert.ToString(e.LocalCommitSequence, global::System.Globalization.CultureInfo.InvariantCulture)));
             _logger.LogWarning(
                 "[diag.filter.all-dropped] {Skipped} events filtered as 'already applied' for {PerspectiveName} stream {StreamId}: persistedEventId={LastEventId} persistedCs={LastCs} droppedEventIds=[{DroppedIds}] droppedCs=[{DroppedSeqs}] returning Completed (events will be deleted from wh_perspective_events)",
                 events.Count - filtered.Count,
@@ -1077,7 +1078,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
           // they were already in ProcessedLineNumbers / equivalent idempotency state.
           if (_logger.IsEnabled(LogLevel.Debug)) {
             var droppedIds = string.Join(",", events.Where(e => !filtered.Contains(e)).Select(e => e.MessageId.Value.ToString("D")));
-            var droppedSeqs = string.Join(",", events.Where(e => !filtered.Contains(e)).Select(e => e.LocalCommitSequence?.ToString(global::System.Globalization.CultureInfo.InvariantCulture) ?? "null"));
+            var droppedSeqs = string.Join(",", events.Where(e => !filtered.Contains(e)).Select(e => Convert.ToString(e.LocalCommitSequence, global::System.Globalization.CultureInfo.InvariantCulture)));
             _logger.LogDebug(
                 "[diag.filter.partial-dropped] {Skipped} events filtered as 'already applied' for {PerspectiveName} stream {StreamId}: persistedEventId={LastEventId} persistedCs={LastCs} droppedEventIds=[{DroppedIds}] droppedCs=[{DroppedSeqs}] remaining={Remaining}",
                 events.Count - filtered.Count,
@@ -1344,7 +1345,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         var resurrection = _tryResurrect(perspective, streamId, @event, envelope.IsFirstInLocalStream);
         processedEvents.Add(envelope);
         lastSuccessfulEventId = envelope.MessageId.Value;
-        lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
+        lastSuccessfulEventAt = _eventTime(envelope);
         eventsProcessed++;
         if (resurrection is null) {
           purgedEventsSkipped++;
@@ -1375,7 +1376,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         // Advance checkpoint past the failed event so it isn't retried indefinitely
         processedEvents.Add(envelope);
         lastSuccessfulEventId = envelope.MessageId.Value;
-        lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
+        lastSuccessfulEventAt = _eventTime(envelope);
         eventsProcessed++;
         continue;
       }
@@ -1433,7 +1434,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
 
       // Track success
       lastSuccessfulEventId = envelope.MessageId.Value;
-      lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
+      lastSuccessfulEventAt = _eventTime(envelope);
       lastSuccessfulEventType = PerspectiveRunnerTypeNames.Recorded(@event.GetType());
       eventsProcessed++;
     }
@@ -1465,7 +1466,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     // place is serialized before it only when a snapshot is actually due.
     var snapshotDue = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
         && !pendingPurge && updatedModel is not null && hasWrittenUpdate && lastSuccessfulEventId.HasValue
-        && _eventsSinceSnapshot(state.StreamId) + eventsProcessed >= _snapshotCadence().Threshold
+        && _eventsSinceSnapshot(state.StreamId) + eventsProcessed >= _snapshotCadence(_snapshotOptions.Value).Threshold
         && !collectiveInFlight;
     state.SnapshotDue = snapshotDue;
     if (pendingPurge) {
@@ -1519,15 +1520,15 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     var processedEvents = state.ProcessedEvents;
     // The store says whether the row was written: its ordering guard can refuse a write quietly, and a row it
     // left untouched is not a changed row (#1342).
-    return await _saveModelAndCheckpointAsync(
+    return await SaveModelAndCheckpointAsync(
               streamId,
               perspectiveName,
               updatedModel,
               hasWrittenUpdate,
               state.LastSuccessfulEventId!.Value,
-              state.LastSuccessfulEventType ?? string.Empty,
+              _checkpointType(state.LastSuccessfulEventType),
               state.CheckpointCommitSequence,
-              state.LastSuccessfulEventAt ?? DateTime.UtcNow,
+              _checkpointTime(state.LastSuccessfulEventAt),
               modelLoadedFromDb,
               processedEvents,
               cancellationToken,
@@ -1548,9 +1549,9 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     var (metadata, rowStartedAt) = await _rowWriteStartAsync(
         streamId,
         state.LastSuccessfulEventId!.Value,
-        state.LastSuccessfulEventType ?? string.Empty,
+        _checkpointType(state.LastSuccessfulEventType),
         state.CheckpointCommitSequence,
-        state.LastSuccessfulEventAt ?? DateTime.UtcNow,
+        _checkpointTime(state.LastSuccessfulEventAt),
         state.ModelLoadedFromDb,
         state.ProcessedEvents,
         cancellationToken);
@@ -1568,7 +1569,6 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       ApplyState state, bool rowChanged, CancellationToken cancellationToken) {
     var streamId = state.StreamId;
     var perspectiveName = state.PerspectiveName;
-    var lastProcessedEventId = state.LastProcessedEventId;
     var events = state.Events;
     var backgroundTasks = state.BackgroundTasks;
     var collectiveFence = state.CollectiveFence;
@@ -1655,7 +1655,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       if (_snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
           && !pendingPurge && updatedModel is not null && hasWrittenUpdate && lastSuccessfulEventId.HasValue) {
         // The cadence is the perspective's own (_snapshotCadence); whether this run is due was decided before the write.
-        var snapshotRetention = _snapshotCadence().Retention;
+        var snapshotRetention = _snapshotCadence(_snapshotOptions.Value).Retention;
         _eventsSinceLastSnapshot.AddOrUpdate(streamId, eventsProcessed, (_, count) => count + eventsProcessed);
         if (snapshotDue) {
           // #1963: the collectives mark this snapshot records, or a deferral when a collective of the row moved across
@@ -1756,7 +1756,8 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       StreamId = streamId,
       PerspectiveName = perspectiveName,
       PerspectiveType = typeof(TPerspective),
-      LastEventId = lastSuccessfulEventId ?? lastProcessedEventId ?? Guid.Empty,
+      // The last successful event starts at the cursor the batch was read after, so it already falls back to it.
+      LastEventId = lastSuccessfulEventId ?? Guid.Empty,
       Status = resultStatus,
       EventsProcessed = eventsProcessed,
       RowChanged = rowChanged,
@@ -1770,6 +1771,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// The partial-success path of a failed apply: saves the row up to the last event that applied, so the checkpoint
   /// moves past what was folded. The caller rethrows the failure; a failure of this save is thrown in its place.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S2139:Exceptions should be either logged or rethrown but not both", Justification = "The worker that receives the rethrown save failure retries and dead-letters the batch; this Warning is the one line that says the partial-progress save, not the apply, failed (#1976)")]
   private async Task _savePartialProgressAsync(ApplyState state, Exception ex, CancellationToken cancellationToken) {
     var streamId = state.StreamId;
     var perspectiveName = state.PerspectiveName;
@@ -1789,7 +1791,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     var rowVersion = state.RowVersion;
 
     // Partial success: save checkpoint up to last successful event
-    if (lastSuccessfulEventId != null && lastSuccessfulEventId != lastProcessedEventId) {
+    if (lastSuccessfulEventId is { } successful && lastProcessedEventId != successful) {
       _logger.LogWarning(
           ex,
           "Error processing events for {PerspectiveName} stream {StreamId} after {EventCount} events. Saving partial progress to checkpoint {CheckpointEventId}",
@@ -1804,19 +1806,19 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         // or the only events were ApplyResult.None() on a new stream)
         if (updatedModel != null && hasWrittenUpdate) {
           var partialCheckpointCommitSequence = _recordedCommitSequence(
-              await _eventStore.GetCommitSequenceAsync(lastSuccessfulEventId.Value, cancellationToken),
+              await _eventStore.GetCommitSequenceAsync(successful, cancellationToken),
               processedEvents,
               rebuilding);
           var partialScopeWrite = _resolveScopeWrite(lastScope, applyRead, modelLoadedFromDb, scopeEventScope);
-          await _saveModelAndCheckpointAsync(
+          await SaveModelAndCheckpointAsync(
               streamId,
               perspectiveName,
               updatedModel,
               hasWrittenUpdate,
-              lastSuccessfulEventId.Value,
-              lastSuccessfulEventType ?? string.Empty,
+              successful,
+              _checkpointType(lastSuccessfulEventType),
               partialCheckpointCommitSequence,
-              lastSuccessfulEventAt ?? DateTime.UtcNow,
+              _checkpointTime(lastSuccessfulEventAt),
               modelLoadedFromDb,
               processedEvents,
               cancellationToken,
@@ -1825,8 +1827,16 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
               rowVersion
           );
         }
-      } catch (Exception saveEx) when (_declinesPartialSaveFailure(saveEx, perspectiveName, streamId)) {
-        // Never entered: the filter logs the failure and declines it, so it propagates as thrown.
+      } catch (Exception saveEx) {
+        // #1976: rethrown to the worker, which retries the batch and dead-letters it at the bound, so a Warning.
+        _logger.LogWarning(
+            saveEx,
+            "Failed to save partial progress for {PerspectiveName} stream {StreamId}",
+            perspectiveName,
+            streamId
+        );
+        // Re-throw - we couldn't save partial progress
+        throw;
       }
     } else {
       // #1976: rethrown to the worker, which retries the batch and dead-letters it at the bound, so a Warning.
@@ -1837,21 +1847,6 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
           streamId
       );
     }
-  }
-
-  /// <summary>
-  /// Logs a partial-progress save that failed and declines it, so the failure propagates as thrown: we could not save
-  /// partial progress. #1976: rethrown to the worker, which retries the batch and dead-letters it at the bound, so a
-  /// Warning.
-  /// </summary>
-  private bool _declinesPartialSaveFailure(Exception saveEx, string perspectiveName, Guid streamId) {
-    _logger.LogWarning(
-        saveEx,
-        "Failed to save partial progress for {PerspectiveName} stream {StreamId}",
-        perspectiveName,
-        streamId
-    );
-    return false;
   }
 
   /// <summary>
@@ -2045,6 +2040,19 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
 
 
   /// <summary>
+  /// When an event happened, for the checkpoint it moves: its last hop's time, or now for an event that carries no hop.
+  /// One rule for every fold (#2469).
+  /// </summary>
+  private static DateTime _eventTime(MessageEnvelope<IEvent> envelope) =>
+      envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
+
+  /// <summary>The event type a row write records: the last applied event's, or empty when no event set one.</summary>
+  private static string _checkpointType(string? lastSuccessfulEventType) => lastSuccessfulEventType ?? string.Empty;
+
+  /// <summary>The time a row write records: the last applied event's, or now when no event set one.</summary>
+  private static DateTime _checkpointTime(DateTime? lastSuccessfulEventAt) => lastSuccessfulEventAt ?? DateTime.UtcNow;
+
+  /// <summary>
   /// The scope this apply writes, decided by the model's [InheritScope] over the row the apply read.
   /// </summary>
   private global::Whizbang.Core.Lenses.ScopeWrite _resolveScopeWrite(
@@ -2067,7 +2075,13 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// Whether the row was written. False when the store's ordering guard refused the write, which leaves the row
   /// untouched and must not be reported as a changed row (#1342).
   /// </returns>
-  private async Task<bool> _saveModelAndCheckpointAsync(
+  /// <remarks>
+  /// Internal so its write guard (#1677) is tested directly (#2469): every caller passes a model an Apply produced, so
+  /// the guard's refusal cannot be reached through them, and it stays because a write of the scaffolded default would
+  /// store a row no event made.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RunnerBase/RunnerBaseWriteGuardTests.cs</tests>
+  internal async Task<bool> SaveModelAndCheckpointAsync(
       Guid streamId,
       string perspectiveName,
       TModel model,
@@ -2174,7 +2188,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   }
 
   /// <summary>
-  /// Prepares the write <see cref="_saveModelAndCheckpointAsync"/> makes, for a set-based write (#2246): the same
+  /// Prepares the write <see cref="SaveModelAndCheckpointAsync"/> makes, for a set-based write (#2246): the same
   /// physical values and Split stripping, handed to the store's preparation. Called inside the row start
   /// <see cref="_rowWriteStartAsync"/> resolved, as the upsert is.
   /// </summary>
@@ -2623,7 +2637,8 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     // (> 0) we snapshot every N events DURING the replay, not just at the end. Subsequent
     // rewinds - including "very late" events whose MessageId falls between intermediate
     // points and the end - find a qualifying snapshot rather than replaying from event zero.
-    var rewindSnapshotInterval = _snapshotOptions?.Value.RewindSnapshotIntervalEvents ?? 0;
+    var snapshotsOn = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true;
+    var rewindSnapshotInterval = snapshotsOn ? _snapshotOptions!.Value.RewindSnapshotIntervalEvents : 0;
     var eventsSinceIntermediateSnapshot = 0;
     // #2379: an intermediate snapshot is taken only where the fold so far is every event up to some version, at that
     // version's event: a fold in origin order can hold a later version before an earlier one.
@@ -2682,7 +2697,6 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     // The row at its last event, taken when collectives committed after that event fold into it: the snapshot this replay
     // ends with is taken at that event, so it must not hold them, or a rewind from it would fold them again.
     JsonDocument? modelAtLastEvent = null;
-    var snapshotsOn = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true;
 
     while (true) {
       rewindCatchUpIterations++;
@@ -2791,7 +2805,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         if (pendingPurge) {
           var resurrection = _tryResurrect(perspective, streamId, @event, envelope.IsFirstInLocalStream);
           lastSuccessfulEventId = envelope.MessageId.Value;
-          lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
+          lastSuccessfulEventAt = _eventTime(envelope);
           eventsProcessed++;
           (frontierEventId, frontierCommitSequence) = _advanceFrontier(frontierEventId, frontierCommitSequence, envelope);
           lastInStream.Offer(envelope);
@@ -2822,7 +2836,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
               envelope.MessageId.Value
           );
           lastSuccessfulEventId = envelope.MessageId.Value;
-          lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
+          lastSuccessfulEventAt = _eventTime(envelope);
           eventsProcessed++;
           _ = foldedPrefix.Folded(envelope);
           continue;
@@ -2848,7 +2862,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
 
         lastSuccessfulEventId = envelope.MessageId.Value;
 
-        lastSuccessfulEventAt = envelope.Hops is { Count: > 0 } ? envelope.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
+        lastSuccessfulEventAt = _eventTime(envelope);
         lastSuccessfulEventType = PerspectiveRunnerTypeNames.Recorded(@event.GetType());
         eventsProcessed++;
         (frontierEventId, frontierCommitSequence) = _advanceFrontier(frontierEventId, frontierCommitSequence, envelope);
@@ -2860,7 +2874,6 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         // MessageId near this point find a qualifying restore point. PruneOldSnapshotsAsync
         // caps total snapshots per stream so this can't bloat the table without bound.
         if (rewindSnapshotInterval > 0
-            && _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
             && !pendingPurge && updatedModel is not null && producedByApply && heldThrough.Settled) {
           eventsSinceIntermediateSnapshot++;
           // A due snapshot waits for the next point where the fold is a version prefix (#2379).
@@ -2872,12 +2885,12 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
               // intermediate snapshots finds the right restore point.
               var intermediateCommitSequence = await _eventStore.GetCommitSequenceAsync(
                   prefixAt.MessageId.Value, cancellationToken);
-              await _snapshotStore.CreateSnapshotAsync(
+              await _snapshotStore!.CreateSnapshotAsync(
                   streamId, perspectiveName, prefixAt.MessageId.Value,
                   intermediateCommitSequence,
                   _toSnapshotJson(updatedModel), heldThrough.Mark, cancellationToken);
               await _snapshotStore.PruneOldSnapshotsAsync(
-                  streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
+                  streamId, perspectiveName, _snapshotOptions!.Value.MaxSnapshotsPerStream, cancellationToken);
               eventsSinceIntermediateSnapshot = 0;
             } catch (Exception snapshotEx) when (snapshotEx is not OperationCanceledException) {
               // Intermediate snapshots are best-effort - failures here don't break the rewind.
@@ -2983,9 +2996,9 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         snapshotBeforeWrite = snapshotDue ? _takeModelAtLastEvent(outcome) ?? _snapshotBeforeWrite(updatedModel) : null;
         // #2252: a Split class model's fold, taken before the write strips its promoted fields; null for any other model.
         using var foldBeforeWrite = rebuilding ? _snapshotBeforeWrite(updatedModel) : null;
-        rowChanged = await _saveModelAndCheckpointAsync(
-            streamId, perspectiveName, updatedModel, producedByApply, checkpointEventId, lastSuccessfulEventType ?? string.Empty,
-            replayCheckpointCommitSequence, lastSuccessfulEventAt ?? DateTime.UtcNow,
+        rowChanged = await SaveModelAndCheckpointAsync(
+            streamId, perspectiveName, updatedModel, producedByApply, checkpointEventId, _checkpointType(lastSuccessfulEventType),
+            replayCheckpointCommitSequence, _checkpointTime(lastSuccessfulEventAt),
             rowVersion.State == global::Whizbang.Core.Perspectives.PerspectiveRowVersionState.Present,
             outcome.FirstStreamEvent is { } firstStreamEvent ? [firstStreamEvent] : [],
             cancellationToken,
@@ -3062,7 +3075,8 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       // to report the largest id applied together with the largest commit sequence applied, a position no event has
       // when ids and versions disagree (copies stored after a newer event), and the cursor was put back on that id.
       // The id frontier stays the fallback when the store gives no versions.
-      LastEventId = outcome.LastInStream.Position ?? frontierEventId ?? lastSuccessfulEventId ?? replayFromEventId ?? Guid.Empty,
+      // A replay's last successful event starts at the event it replays from, so it already falls back to that event.
+      LastEventId = outcome.LastInStream.Position ?? frontierEventId ?? lastSuccessfulEventId ?? Guid.Empty,
       // Reported rather than left for the caller to rediscover. The caller used to look the id above
       // up among the rows its batch claimed, which a replay never applied, so the commit-sequence
       // cursor stayed behind while the event-id cursor moved and the inversion detector then
@@ -3138,8 +3152,9 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       outcome.EventsProcessed += read.Count;
       outcome.LastSuccessfulEventId = last.MessageId.Value;
       outcome.LastSuccessfulEventType = PerspectiveRunnerTypeNames.Recorded(last.Payload.GetType());
-      outcome.LastSuccessfulEventAt = last.Hops is { Count: > 0 } ? last.Hops[^1].Timestamp.UtcDateTime : DateTime.UtcNow;
-      outcome.LastScope = read.LastMatching?.GetCurrentScope()?.Scope ?? outcome.LastScope;
+      outcome.LastSuccessfulEventAt = _eventTime(last);
+      // The last event read with a scope, which the read picked for having one.
+      outcome.LastScope = read.LastMatching is { } scoped ? scoped.GetCurrentScope()!.Scope : outcome.LastScope;
       // #2379: the next pass reads after the event last in stream order, as the store places the anchor.
       anchorEventId = readAnchor.Next(anchorEventId);
       _logger.LogDebug(
@@ -3326,7 +3341,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       CancellationToken cancellationToken) {
     var snapshotMayBeDue = events.Count > 0
         && _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
-        && _eventsSinceSnapshot(streamId) + events.Count >= _snapshotCadence().Threshold;
+        && _eventsSinceSnapshot(streamId) + events.Count >= _snapshotCadence(_snapshotOptions.Value).Threshold;
     if (!snapshotMayBeDue
         || global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild
         || !_collectiveFenceApplies()) {
@@ -3467,7 +3482,9 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       CancellationToken cancellationToken = default) {
     var outcome = await _bootstrapThroughAsync(streamId, perspectiveName, lastProcessedEventId, boundaryEventId, cancellationToken);
     if (outcome == global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Written) {
-      await _snapshotStore!.PruneOldSnapshotsAsync(streamId, perspectiveName, _snapshotCadence().Retention, cancellationToken);
+      // A written snapshot means a snapshot store and enabled snapshot options.
+      await _snapshotStore!.PruneOldSnapshotsAsync(
+          streamId, perspectiveName, _snapshotCadence(_snapshotOptions!.Value).Retention, cancellationToken);
     }
     return outcome;
   }
@@ -3615,16 +3632,14 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   // Ephemeral perspectives snapshot on their own aggressive, single-slot cadence so a fresh rewind floor exists
   // within the grace window before consumed bodies are reaped; Sourced perspectives use the standard
   // cadence/retention. The generator injects the mode-appropriate settings here.
-  private (int Threshold, int Retention) _snapshotCadence() {
-    if (_snapshotOptions is null) {
-      return (int.MaxValue, 0);
-    }
+  // Asked only once snapshots are known to be on (#2469), so it takes the options rather than checking for none.
+  private (int Threshold, int Retention) _snapshotCadence(PerspectiveSnapshotOptions options) {
     var snapshotThreshold = _traits.IsEphemeral
-        ? _snapshotOptions.Value.EphemeralSnapshotEveryNEvents
-        : _snapshotOptions.Value.SnapshotEveryNEvents;
+        ? options.EphemeralSnapshotEveryNEvents
+        : options.SnapshotEveryNEvents;
     var snapshotRetention = _traits.IsEphemeral
-        ? _snapshotOptions.Value.EphemeralMaxSnapshotsPerStream
-        : _snapshotOptions.Value.MaxSnapshotsPerStream;
+        ? options.EphemeralMaxSnapshotsPerStream
+        : options.MaxSnapshotsPerStream;
     return (snapshotThreshold, snapshotRetention);
   }
 
