@@ -165,7 +165,9 @@ public class AzureBlobStorageConfigurationTests {
     await Assert.That(provider.GetRequiredService<IOptions<MessageBodyOffloadOptions>>().Value.ProviderName).IsEqualTo("azure-blob")
       .Because("the new section chooses the body store over Whizbang:BodyOffload:ProviderName");
     await Assert.That(options.Notices).Count().IsEqualTo(3);
-    await Assert.That(options.Notices[0]).Contains("Whizbang:Archive:AzureBlob is read for compatibility").And.Contains("Whizbang:Storage:AzureBlob:Archive");
+    await Assert.That(options.Notices[0]).Contains("Whizbang:Archive:AzureBlob is read for compatibility; its new key is")
+      .And.Contains("Whizbang:Storage:AzureBlob:Archive").And.DoesNotContain("release")
+      .Because("the warning names the new key and promises nothing about when the earlier one stops being read");
     await Assert.That(options.Notices[1]).Contains("Whizbang:Offloads:AzureBlob:legacy-bodies").And.Contains("ProviderName set to 'legacy-bodies'");
     await Assert.That(options.Notices[2]).Contains("Whizbang:BodyOffload:ProviderName is set").And.Contains("wins");
   }

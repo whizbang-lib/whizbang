@@ -330,6 +330,14 @@ public class ConfigurationKeyManifestTests {
 
     await Assert.That(expected.Count).IsGreaterThan(100).Because("the defaults must be read, or the comparison proves nothing");
     await Assert.That(expected).Contains("Whizbang:Workers:CoalescingOutbox:Partitions=4");
+    // A default held by a nested options object a feature leaves unset (#2502), and by the earlier key that still binds it.
+    foreach (var section in new[] { "Whizbang:Storage:AzureBlob:Archive", "Whizbang:Archive:AzureBlob" }) {
+      await Assert.That(expected).Contains($"{section}:CompressionLevel=4").And.Contains($"{section}:ConnectionName=default")
+        .And.Contains($"{section}:ContainerName=whizbang-archive").And.Contains($"{section}:MaxEventsPerChunk=10000")
+        .And.Contains($"{section}:VerifyLocation=true")
+        .Because("a nested options object's defaults must reach the startup settings report");
+    }
+    await Assert.That(expected).Contains("Whizbang:Storage:AzureBlob:Offloads:ContainerName=whizbang-offload-bodies");
     await Assert.That(listed).IsEquivalentTo(expected)
       .Because("a default in code changed; regenerate Baselines/configuration-defaults.txt with WHIZBANG_UPDATE_CONFIGURATION_KEYS=1");
   }
@@ -361,6 +369,14 @@ public class ConfigurationKeyManifestTests {
             }
             break;
           }
+        }
+      }
+    }
+    foreach (var key in manifested) {
+      foreach (var (earlier, now) in _movedSections) {
+        if (key.StartsWith(earlier, StringComparison.OrdinalIgnoreCase)
+            && defaults.TryGetValue(now + key[earlier.Length..], out var moved)) {
+          defaults.TryAdd(key, moved);
         }
       }
     }
@@ -402,10 +418,27 @@ public class ConfigurationKeyManifestTests {
       if (property is null) {
         return false;
       }
-      value = property.GetValue(value);
+      // A nested options object a feature leaves unset (#2502: AzureBlobStorageOptions.Archive) holds, once set, what a
+      // new one of its type holds: its keys default to that.
+      value = property.GetValue(value) ?? _freshNested(property.PropertyType);
     }
     return true;
   }
+
+  // A new instance of a nested options type, or null for a type that is not one (no public parameterless constructor).
+  private static object? _freshNested(Type type) =>
+    type.IsClass && type != typeof(string) && type.Namespace?.StartsWith("Whizbang", StringComparison.Ordinal) == true
+      && type.GetConstructor(Type.EmptyTypes) is not null
+      ? Activator.CreateInstance(type)
+      : null;
+
+  /// <summary>
+  /// Sections a package moved, still read under their earlier name (#2502): each earlier key reports the default of the key
+  /// it moved to, since both bind the same setting.
+  /// </summary>
+  private static readonly (string Earlier, string Now)[] _movedSections = [
+    ("Whizbang:Archive:AzureBlob:", "Whizbang:Storage:AzureBlob:Archive:"),
+  ];
 
   /// <summary>A default as configuration would spell it; null for no value or one that is not a single setting.</summary>
   private static string? _format(object? value) => value switch {

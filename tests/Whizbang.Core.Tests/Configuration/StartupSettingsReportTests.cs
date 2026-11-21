@@ -110,6 +110,22 @@ public class StartupSettingsReportTests {
   }
 
   [Test]
+  public async Task TheLibraryDefaults_IncludeNestedOptions_AndTheEarlierKeysThatStillBindThemAsync() {
+    // #2502: the archive's settings live in an options object nested in AzureBlobStorageOptions, unset until configured.
+    foreach (var section in new[] { "Whizbang:Storage:AzureBlob:Archive", "Whizbang:Archive:AzureBlob" }) {
+      await Assert.That(ConfigurationKeyDefaults.Library[$"{section}:ContainerName"]).IsEqualTo("whizbang-archive");
+      await Assert.That(ConfigurationKeyDefaults.Library[$"{section}:CompressionLevel"]).IsEqualTo("4");
+      await Assert.That(ConfigurationKeyDefaults.Library[$"{section}:MaxEventsPerChunk"]).IsEqualTo("10000");
+      await Assert.That(ConfigurationKeyDefaults.Library[$"{section}:ConnectionName"]).IsEqualTo("default");
+      await Assert.That(ConfigurationKeyDefaults.Library[$"{section}:VerifyLocation"]).IsEqualTo("true");
+    }
+    var report = StartupSettingsReport.Build(null, KnownConfigurationKeys.Library, KnownConfigurationKeys.Sensitive, [],
+      ConfigurationKeyDefaults.Library);
+    await Assert.That(report.SelectMany(s => s.Settings).Single(e => e.Key == "Whizbang:Storage:AzureBlob:Archive:ContainerName").ToString())
+      .IsEqualTo("ContainerName=whizbang-archive (default)").Because("the startup settings report shows a nested option's default");
+  }
+
+  [Test]
   public async Task DefaultsText_IsOneKeyEqualsValuePerLine_ValuesMayHoldEqualsSignsAsync() {
     var parsed = ConfigurationKeyDefaults.Parse("# comment\n\nWhizbang:A:B=x=y\r\nnot a default\n=orphan\nWhizbang:A:C=\n");
 

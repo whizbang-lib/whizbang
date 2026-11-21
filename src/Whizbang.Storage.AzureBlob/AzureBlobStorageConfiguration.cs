@@ -258,7 +258,7 @@ internal static class AzureBlobStorageConfiguration {
   private static bool _hasKeys(IConfiguration section) => section.GetChildren().Any();
 
   private static string _moved(string oldSection, string newKeys) =>
-    $"{oldSection} is read for compatibility and will not be read in a later release; move it to {newKeys}. A key set in both places takes the new value.";
+    $"{oldSection} is read for compatibility; its new key is {newKeys}. A key set in both places takes the new value.";
 
   private static Uri? _uri(IConfiguration section, string sectionName, string key) {
     var text = section[key];
