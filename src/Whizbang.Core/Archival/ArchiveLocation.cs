@@ -26,6 +26,15 @@ namespace Whizbang.Core.Archival;
 public sealed record ArchiveLocation(string Provider, string? Endpoint, string? ConnectionName, string Container) {
   private const string NOT_RECORDED = "(not recorded)";
 
+  /// <summary>RED stub (#2141).</summary>
+  public ArchiveLocation Normalize() => this;
+
+  /// <summary>RED stub (#2141).</summary>
+  public static string? NormalizeEndpoint(string? endpoint) => endpoint;
+
+  /// <summary>RED stub (#2141).</summary>
+  public static string? NormalizeName(string? name) => name;
+
   /// <summary>The location as an operator reads it.</summary>
   /// <returns><c>{provider}, endpoint {endpoint}, connection '{name}', container '{container}'</c>.</returns>
   public override string ToString() =>
