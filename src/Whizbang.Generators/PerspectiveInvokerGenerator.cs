@@ -172,7 +172,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     // Group by event type for routing generation
     var perspectivesByEvent = flatPerspectives
         .GroupBy(p => p.EventType)
-        .OrderBy(g => g.Key);
+        .OrderBy(g => g.Key, StringComparer.Ordinal);
 
     // Load template
     var template = TemplateUtilities.GetEmbeddedTemplate(

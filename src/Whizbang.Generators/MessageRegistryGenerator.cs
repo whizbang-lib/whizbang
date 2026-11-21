@@ -465,7 +465,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   private static EquatableArray<WhizbangPackageReference> _referencedWhizbangPackages(Compilation compilation) =>
     [.. compilation.ReferencedAssemblyNames
         .Where(a => a.Name.StartsWith("Whizbang.", StringComparison.Ordinal))
-        .OrderBy(a => a.Name)
+        .OrderBy(a => a.Name, StringComparer.Ordinal)
         .Select(a => new WhizbangPackageReference(
           $"SoftwareExtravaganza.{a.Name}", $"{a.Version.Major}.{a.Version.Minor}.{a.Version.Build}"))];
 
