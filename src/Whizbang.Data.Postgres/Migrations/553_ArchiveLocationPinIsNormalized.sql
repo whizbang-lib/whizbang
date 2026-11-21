@@ -34,6 +34,8 @@
 -- Objects: _wh_normalize_archive_endpoint, _wh_normalize_archive_name, _wh_archive_locations_normalize,
 --          wh_archive_locations_normalize_trg, wh_normalize_archive_locations, _wh_archive_legacy_location_id,
 --          wh_archive_location_id, wh_repoint_archive_location
+-- Reversal: reversible (the normalization functions and trigger are dropped and the 353 lookups restored; rows already
+--           normalized or merged stay so, and every record keeps its location)
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
 -- <docs>fundamentals/events/archive-store#archive-locations</docs>
