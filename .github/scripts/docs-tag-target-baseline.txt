@@ -71,11 +71,6 @@ fundamentals/dispatcher/projection-sync | no page
 fundamentals/event-store/version-ordering | no page
 fundamentals/events/carry-forward-tier2 | no page
 fundamentals/events/event-store-serialization | no page
-fundamentals/events/retired-event-types | no page
-fundamentals/events/retired-event-types#cursors-and-snapshots | no page
-fundamentals/events/retired-event-types#declaring-a-retired-type | no page
-fundamentals/events/retired-event-types#the-receive-boundary | no page
-fundamentals/events/retired-event-types#what-the-purge-does | no page
 fundamentals/events/type-definition-fingerprint | no page
 fundamentals/hosting/configuration-disposal | no page
 fundamentals/lifecycle/lifecycle-reconciliation | no page
@@ -90,15 +85,10 @@ fundamentals/offloads/body-offload-receive | no page
 fundamentals/offloads/di-registration | no page
 fundamentals/offloads/post-serialize-hooks | no page
 fundamentals/perspectives/cursor-inversion | no page
-fundamentals/perspectives/drain-mode | no page
-fundamentals/perspectives/drain-mode#batch-cursor-fetch | no page
-fundamentals/perspectives/drain-mode#lifecycle-skip | no page
-fundamentals/perspectives/drain-mode#sliding-window | no page
 fundamentals/perspectives/efcore-perspectives | no page
 fundamentals/perspectives/perspective-runner | no page
 fundamentals/perspectives/perspective-worker | no page
 fundamentals/perspectives/query-translation | no page
-fundamentals/perspectives/rewind-invariants | no page
 fundamentals/perspectives/transient-storage | no page
 fundamentals/perspectives/typed-accessors | no page
 fundamentals/receptors/raw-receptors | no page
@@ -204,8 +194,6 @@ apis/graphql/scoping#claim-aggregation | no such heading on v1.0.0/apis/graphql/
 apis/graphql/scoping#middleware | no such heading on v1.0.0/apis/graphql/scoping.md
 apis/graphql/scoping#options | no such heading on v1.0.0/apis/graphql/scoping.md
 apis/graphql/setup#configuration | no such heading on v1.0.0/apis/graphql/setup.md
-data/event-store#row-values | no such heading on v1.0.0/data/event-store.md
-data/event-store#trim-gate | no such heading on v1.0.0/data/event-store.md
 data/turnkey-initialization#multi-instance | no such heading on v1.0.0/data/turnkey-initialization.md
 fundamentals/dispatcher/dispatcher#cascade-default-dispatch | no such heading on v1.0.0/fundamentals/dispatcher/dispatcher.md
 fundamentals/dispatcher/dispatcher#deferred-publishing | no such heading on v1.0.0/fundamentals/dispatcher/dispatcher.md
@@ -244,7 +232,6 @@ fundamentals/lifecycle/lifecycle-coordinator#tracking | no such heading on v1.0.
 fundamentals/lifecycle/lifecycle-coordinator#tracking-state | no such heading on v1.0.0/fundamentals/lifecycle/lifecycle-coordinator.md
 fundamentals/lifecycle/lifecycle-coordinator#whenall | no such heading on v1.0.0/fundamentals/lifecycle/lifecycle-coordinator.md
 fundamentals/lifecycle/lifecycle-stages#post-all-perspectives | no such heading on v1.0.0/fundamentals/lifecycle/lifecycle-stages.md
-fundamentals/messages/message-tags#coalescing | no such heading on v1.0.0/fundamentals/messages/message-tags.md
 fundamentals/messages/message-tags#configuration | no such heading on v1.0.0/fundamentals/messages/message-tags.md
 fundamentals/messages/message-tags#system-tags | no such heading on v1.0.0/fundamentals/messages/message-tags.md
 fundamentals/messages/message-tags#transport-namespace-routing | no such heading on v1.0.0/fundamentals/messages/message-tags.md
@@ -295,7 +282,6 @@ messaging/transports/azure-service-bus#transport-namespaces | no such heading on
 messaging/transports/rabbitmq#batch-receive | no such heading on v1.0.0/messaging/transports/rabbitmq.md
 messaging/transports/rabbitmq#batch-subscribe | no such heading on v1.0.0/messaging/transports/rabbitmq.md
 messaging/transports/rabbitmq#channels | no such heading on v1.0.0/messaging/transports/rabbitmq.md
-messaging/transports/rabbitmq#dead-lettering | no such heading on v1.0.0/messaging/transports/rabbitmq.md
 messaging/transports/rabbitmq#prefetch | no such heading on v1.0.0/messaging/transports/rabbitmq.md
 messaging/transports/rabbitmq#transport-namespaces | no such heading on v1.0.0/messaging/transports/rabbitmq.md
 messaging/transports/transport-consumer#batch-options | no such heading on v1.0.0/messaging/transports/transport-consumer.md
@@ -320,4 +306,3 @@ operations/observability/tracing#parent-context | no such heading on v1.0.0/oper
 operations/observability/tracing#perspective-sync | no such heading on v1.0.0/operations/observability/tracing.md
 operations/workers/perspective-worker#rewind-flow | no such heading on v1.0.0/operations/workers/perspective-worker.md
 operations/workers/perspective-worker#rewind-replay | no such heading on v1.0.0/operations/workers/perspective-worker.md
-resilience/stream-integrity#retired-event-types | no such heading on v1.0.0/resilience/stream-integrity.md
