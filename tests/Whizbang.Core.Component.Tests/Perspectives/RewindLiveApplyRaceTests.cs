@@ -117,7 +117,7 @@ public class RewindLiveApplyRaceTests {
   /// <summary>
   /// <para>
   /// Hand-rolled runner that mirrors the exact shape of the source-generated
-  /// runner emitted by <c>Whizbang.Generators.Templates.PerspectiveRunnerBaseTemplate</c>.
+  /// runner base <c>Whizbang.Core.Perspectives.PerspectiveRunnerBase</c>.
   /// Pattern under test (identical to lines 819-956 of the template):
   ///   1. Load model (snapshot OR <c>GetByStreamIdAsync</c> for live).
   ///   2. Apply every event in memory.

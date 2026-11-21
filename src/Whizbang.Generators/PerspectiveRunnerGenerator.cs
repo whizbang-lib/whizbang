@@ -64,18 +64,6 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Combine with compilation to get assembly name
     var compilationAndResults = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(perspectiveResults.Collect());
 
-    // The runner base every runner derives from, emitted once per assembly that has a perspective (#2401). Its input is
-    // the assembly name and whether any perspective exists, so adding or editing a perspective leaves it cached.
-    var runnerBaseNeeded = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName)
-        .Combine(perspectiveResults.Collect().Select(static (results, _) => results.Any(static r => r!.Info is not null)));
-    context.RegisterSourceOutput(
-        runnerBaseNeeded,
-        static (ctx, data) => {
-          if (data.Right) {
-            _generateRunnerBase(ctx, data.Left);
-          }
-        });
-
     context.RegisterSourceOutput(
         compilationAndResults,
         static (ctx, data) => {
@@ -538,26 +526,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     return eventTypeSymbol is INamedTypeSymbol namedType ? StreamIdSelection.Select(namedType)?.Property.Name : null;
   }
 
-  /// <summary>The hint name of the runner base, emitted once per assembly that has a perspective (#2401).</summary>
-  private const string RUNNER_BASE_FILE = "PerspectiveRunnerBase.g.cs";
-
-  /// <summary>The namespace the runners and their base are generated into, named by the assembly.</summary>
+  /// <summary>The namespace the runners are generated into, named by the assembly.</summary>
   private static string _generatedNamespace(string? compilationAssemblyName) =>
       $"{compilationAssemblyName ?? "Whizbang.Core"}.Generated";
-
-  /// <summary>
-  /// Emits the generic runner base every runner of the assembly derives from: the runner logic every perspective
-  /// shares, generated once per assembly rather than repeated in each runner (#2401), so the large template is
-  /// processed once per run (#1689).
-  /// </summary>
-  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerGeneratedSizeTests.cs:ASecondPerspective_AddsOnlyItsOwnRunner_TheSharedBaseIsEmittedOnceAsync</tests>
-  private static void _generateRunnerBase(SourceProductionContext context, string? compilationAssemblyName) {
-    var assembly = typeof(PerspectiveRunnerGenerator).Assembly;
-    var result = TemplateUtilities.GetEmbeddedTemplate(assembly, "PerspectiveRunnerBaseTemplate.cs");
-    result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {_generatedNamespace(compilationAssemblyName)};");
-    result = TemplateUtilities.ReplaceHeaderRegion(assembly, result);
-    context.AddSource(RUNNER_BASE_FILE, result);
-  }
 
   /// <summary>
   /// Generates IPerspectiveRunner implementations for all discovered perspectives with models.

@@ -17,7 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>update_perspective_cursors</c> (migration 016) so future SQL refactors
 /// cannot accidentally weaken it. The production forensic that motivated the plan
 /// concerned the rewind path's checkpoint (already addressed in Slice 2 via
-/// the catch-up loop in <c>PerspectiveRunnerBaseTemplate.cs</c>); this Slice 3
+/// the catch-up loop in <c>PerspectiveRunnerBase.cs</c>); this Slice 3
 /// test holds the normal-completion path's invariant in place independently.
 ///
 /// <para><strong>Invariant:</strong> when N events for a (stream, perspective)

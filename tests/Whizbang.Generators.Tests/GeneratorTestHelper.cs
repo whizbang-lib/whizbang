@@ -267,8 +267,8 @@ public static class GeneratorTestHelper {
 
   /// <summary>
   /// The code a generated perspective runner runs: the runner file and the runner base it derives from, which holds the
-  /// runner logic every perspective of the assembly shares and is generated once per assembly (#2401). Null when the
-  /// run wrote no such runner.
+  /// runner logic every perspective shares and is Whizbang.Core source (#2401, #2469). Null when the run wrote no such
+  /// runner.
   /// </summary>
   /// <remarks>
   /// For an assertion about that shared logic, which a runner used to repeat in full. An assertion about what one
@@ -276,7 +276,18 @@ public static class GeneratorTestHelper {
   /// </remarks>
   public static string? GetRunnerSource(GeneratorDriverRunResult result, string runnerFileName) {
     var runner = GetGeneratedSource(result, runnerFileName);
-    return runner is null ? null : runner + "\n" + GetRequiredGeneratedSource(result, "PerspectiveRunnerBase.g.cs");
+    return runner is null ? null : runner + "\n" + RunnerBaseSource();
+  }
+
+  /// <summary>
+  /// The source of Whizbang.Core's perspective runner base (#2469), the runner logic every generated runner derives,
+  /// embedded into this assembly at build time so no test reads a file at run time.
+  /// </summary>
+  public static string RunnerBaseSource() {
+    using var stream = typeof(GeneratorTestHelper).Assembly.GetManifestResourceStream("WhizbangCore/PerspectiveRunnerBase.cs")
+        ?? throw new InvalidOperationException("The runner base source is not embedded (see Whizbang.Generators.Tests.csproj).");
+    using var reader = new StreamReader(stream);
+    return reader.ReadToEnd();
   }
 
   /// <summary>

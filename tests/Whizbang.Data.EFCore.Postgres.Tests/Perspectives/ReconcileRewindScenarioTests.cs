@@ -31,7 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// inversion follow-up flips the documenting locks to the full-order-replay contract.
 /// </para>
 /// </summary>
-/// <code-under-test>src/Whizbang.Generators/Templates/PerspectiveRunnerBaseTemplate.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Core/Perspectives/PerspectiveRunnerBase.cs</code-under-test>
 [Category("Shard4")]
 public class ReconcileRewindScenarioTests : EFCoreTestBase {
 
