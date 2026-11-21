@@ -67,10 +67,10 @@ public static partial class SuppressedReceptorRoute {
         || !_reported.TryAdd(receptorType, 0)) {
       return;
     }
-    Log.Skipped(logger, receptorType, serviceType);
+    SuppressedReceptorRouteLog.Skipped(logger, receptorType, serviceType);
   }
 
-  private static partial class Log {
+  private static partial class SuppressedReceptorRouteLog {
     [LoggerMessage(
       EventId = 1,
       Level = LogLevel.Debug,

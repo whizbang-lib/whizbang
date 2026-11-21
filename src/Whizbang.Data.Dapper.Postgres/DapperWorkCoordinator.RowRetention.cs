@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 using System.Data.Common;
-using Microsoft.Extensions.Logging;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Data.Postgres;
@@ -196,11 +195,4 @@ public partial class DapperWorkCoordinator {
       LogRetentionDeclarationMatchedNoRegistryRow(_logger, clrTypeName);
     }
   }
-
-  [LoggerMessage(
-    Level = LogLevel.Warning,
-    Message = "Row-retention declaration for {ClrTypeName} matched no wh_perspective_registry row: the perspective is NOT enrolled. "
-            + "The registry key is the CLR type name (Outer+Model for a nested model); a row keyed in another form is a key drift"
-  )]
-  static partial void LogRetentionDeclarationMatchedNoRegistryRow(ILogger logger, string clrTypeName);
 }

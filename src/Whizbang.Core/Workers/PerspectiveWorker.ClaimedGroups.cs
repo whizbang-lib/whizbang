@@ -4,7 +4,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -469,10 +468,6 @@ public partial class PerspectiveWorker {
       }
     }
   }
-
-  [LoggerMessage(EventId = 82, Level = LogLevel.Warning,
-    Message = "The claimed batch's one read of its {PairCount} set-based pair(s) failed; each pair reads its own cursor and events")]
-  static partial void LogClaimedBatchReadFailed(ILogger logger, Exception exception, int pairCount);
 
   /// <summary>The services a set-based batch runs with, resolved for this batch.</summary>
   private PerspectiveApplyBatch.Services _batchServices() {
