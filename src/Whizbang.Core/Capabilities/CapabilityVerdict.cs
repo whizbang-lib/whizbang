@@ -15,13 +15,19 @@ public enum CapabilityVerdictOutcome {
   /// <summary>Required only implicitly and Ready: the feature uses it.</summary>
   Use,
 
-  /// <summary>Required explicitly and Unknown: warn; the feature fails loudly when it runs if the capability is missing.</summary>
+  /// <summary>
+  /// Required explicitly and Unknown where nothing probed it (the probe turned off, or no provider describes the
+  /// capability or probes the scope): warn; the feature fails loudly when it runs if the capability is missing.
+  /// </summary>
   Warn,
 
   /// <summary>Required only implicitly and not Ready: the feature degrades, with a warning.</summary>
   Degrade,
 
-  /// <summary>Required explicitly and known not to be Ready: start fails.</summary>
+  /// <summary>
+  /// Required explicitly and not Ready: start fails. That includes Unknown after the probe ran (and, in the
+  /// <c>Capabilities</c> step, its bounded retries), because explicit configuration means the feature is required.
+  /// </summary>
   Fail,
 }
 
@@ -92,9 +98,11 @@ public sealed record CapabilityVerdictEntry(
 /// <remarks>
 /// <para>
 /// A capability is satisfied only when it is <see cref="CapabilityState.Ready"/>. An explicit requirement on a
-/// capability in any other known state fails start; on <see cref="CapabilityState.Unknown"/> it warns, because
-/// the probe could not decide. An implicit requirement on a capability that is not Ready degrades. A capability
-/// no registered provider describes reads Unknown, with that as the reason.
+/// capability in any other state fails start, <see cref="CapabilityState.Unknown"/> included once the probe ran
+/// (#1513, decided in #1672: explicit configuration means the feature is required). It warns instead only where
+/// nothing probed the capability: the probe turned off, or no registered provider describes it or probes the
+/// requirement's scope. An implicit requirement on a capability that is not Ready degrades. A capability no
+/// registered provider describes reads Unknown, with that as the reason.
 /// </para>
 /// <para>
 /// A requirement with a <see cref="ActiveCapabilityRequirement.Scope"/> is judged only on that scope's status, and
@@ -128,9 +136,13 @@ public sealed class CapabilityVerdict {
   /// <summary>Judges every required capability.</summary>
   /// <param name="statuses">The registry's statuses.</param>
   /// <param name="active">The requirements in force.</param>
+  /// <param name="probed">
+  /// Whether the probe ran for these statuses. When it did, an explicit requirement on a capability a provider
+  /// still reads Unknown fails start; when it did not, it warns.
+  /// </param>
   /// <returns>The verdict.</returns>
   public static CapabilityVerdict Evaluate(
-      IReadOnlyList<CapabilityStatus> statuses, IReadOnlyList<ActiveCapabilityRequirement> active) {
+      IReadOnlyList<CapabilityStatus> statuses, IReadOnlyList<ActiveCapabilityRequirement> active, bool probed) {
     ArgumentNullException.ThrowIfNull(statuses);
     ArgumentNullException.ThrowIfNull(active);
     var entries = new List<CapabilityVerdictEntry>();
@@ -141,14 +153,15 @@ public sealed class CapabilityVerdict {
       foreach (var status in matching) {
         var applicable = required.FindAll(a => a.Scope is null || string.Equals(a.Scope, status.Scope, StringComparison.Ordinal));
         if (applicable.Count > 0) {
-          entries.Add(new CapabilityVerdictEntry(status, applicable, _outcome(status.State, _explicitly(applicable))));
+          entries.Add(new CapabilityVerdictEntry(status, applicable, _outcome(status.State, _explicitly(applicable), probed)));
         }
       }
       if (entries.Count == judged) {
         // Nothing judged the requirements: no provider describes the capability, or none probes their scope.
         var reason = matching.Count == 0 ? UNDESCRIBED_REASON : UNPROBED_SCOPE_REASON;
         var status = _undescribed(required[0].Requirement.Capability, required[0].Scope ?? string.Empty, reason);
-        entries.Add(new CapabilityVerdictEntry(status, required, _outcome(status.State, _explicitly(required))));
+        // Never probed, whatever the step did: probing again cannot describe it or reach that scope.
+        entries.Add(new CapabilityVerdictEntry(status, required, _outcome(status.State, _explicitly(required), probed: false)));
       }
     }
     return new CapabilityVerdict(entries);
@@ -177,10 +190,10 @@ public sealed class CapabilityVerdict {
 
   private static string _key(CapabilityId id) => id.ToString().ToUpperInvariant();
 
-  private static CapabilityVerdictOutcome _outcome(CapabilityState state, bool explicitly) =>
+  private static CapabilityVerdictOutcome _outcome(CapabilityState state, bool explicitly, bool probed) =>
     (explicitly, state) switch {
       (true, CapabilityState.Ready) => CapabilityVerdictOutcome.Proceed,
-      (true, CapabilityState.Unknown) => CapabilityVerdictOutcome.Warn,
+      (true, CapabilityState.Unknown) when !probed => CapabilityVerdictOutcome.Warn,
       (true, _) => CapabilityVerdictOutcome.Fail,
       (false, CapabilityState.Ready) => CapabilityVerdictOutcome.Use,
       _ => CapabilityVerdictOutcome.Degrade,

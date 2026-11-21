@@ -22,12 +22,13 @@ public class CapabilityHealthCheckTests {
   private static readonly CapabilityRequirement _requirement =
     new(new CapabilityId("broker", "x"), "Delayed delivery", "W:Delay:Mode", "Delayed", "Off");
 
-  private static async Task<HealthCheckResult> _checkAsync(CapabilityState? state, CapabilityActivation activation = CapabilityActivation.Explicit) {
+  private static async Task<HealthCheckResult> _checkAsync(
+      CapabilityState? state, CapabilityActivation activation = CapabilityActivation.Explicit, bool probed = true) {
     var registry = new CapabilityRegistry([], NullLogger<CapabilityRegistry>.Instance);
     if (state is { } known) {
       var status = new CapabilityStatus(FakeCapabilityProvider.Describe("broker", "x"), "vhost-a", known, null, null, null);
       registry.PublishVerdict(CapabilityVerdict.Evaluate([status],
-        [new ActiveCapabilityRequirement(_requirement, _requirement.Key, "Delayed", activation)]));
+        [new ActiveCapabilityRequirement(_requirement, _requirement.Key, "Delayed", activation)], probed));
     }
     return await new CapabilityHealthCheck(registry).CheckHealthAsync(new HealthCheckContext());
   }
@@ -66,8 +67,8 @@ public class CapabilityHealthCheckTests {
   }
 
   [Test]
-  public async Task AnExplicitRequirementUnknown_IsDegradedAsync() {
-    var result = await _checkAsync(CapabilityState.Unknown);
+  public async Task AnExplicitRequirementUnknown_WithTheProbeOff_IsDegradedAsync() {
+    var result = await _checkAsync(CapabilityState.Unknown, probed: false);
 
     await Assert.That(result.Status).IsEqualTo(HealthStatus.Degraded);
   }

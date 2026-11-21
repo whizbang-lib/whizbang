@@ -66,7 +66,7 @@ public class CapabilityMetricsTests {
     var registry = new FixedRegistry([squeeze, vector]);
     var requirement = new CapabilityRequirement(squeeze.Descriptor.Id, "Online table rewrite", "W:Strategy", "PgSqueeze", "None");
     registry.PublishVerdict(CapabilityVerdict.Evaluate(registry.Statuses,
-      [new ActiveCapabilityRequirement(requirement, "W:Strategy", "PgSqueeze", CapabilityActivation.Explicit)]));
+      [new ActiveCapabilityRequirement(requirement, "W:Strategy", "PgSqueeze", CapabilityActivation.Explicit)], probed: true));
     var metrics = new CapabilityMetrics(_whizbangMetrics(provider), registry);
 
     var series = GaugeRecorder.Collect(metrics.CapabilityState);
