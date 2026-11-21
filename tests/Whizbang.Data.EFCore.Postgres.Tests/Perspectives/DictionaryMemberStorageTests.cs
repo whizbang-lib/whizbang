@@ -86,7 +86,7 @@ public class DictionaryMemberProjection : IPerspectiveFor<DictionaryMemberModel,
 /// <docs>fundamentals/perspectives/dictionary-members</docs>
 [Category("Integration")]
 [Category("Shard2")]
-public class DictionaryMemberStorageTests : IAsyncDisposable {
+public class DictionaryMemberStorageTests {
   private const string TABLE = "wh_per_dictionary_member";
 
   private static readonly DateTime _at = new(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc);
@@ -137,12 +137,11 @@ public class DictionaryMemberStorageTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_databaseName is not null) {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
 
-    GC.SuppressFinalize(this);
   }
 
   private DictionaryDbContext _context() => new(new DbContextOptionsBuilder<DictionaryDbContext>()

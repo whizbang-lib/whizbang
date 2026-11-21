@@ -63,7 +63,7 @@ public class DictionaryRewriteProjection : IPerspectiveFor<DictionaryRewriteMode
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/544_DictionaryMembersStoredAsPairs.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard2")]
-public class DictionaryPairsRewriteIntegrationTests : IAsyncDisposable {
+public class DictionaryPairsRewriteIntegrationTests {
   private const long LOCK_ID = 192837466;
   private const int TIMEOUT_SECONDS = 60;
   private const string TABLE = "wh_per_dictionary_rewrite";
@@ -104,11 +104,10 @@ public class DictionaryPairsRewriteIntegrationTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_databaseName is not null) {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
-    GC.SuppressFinalize(this);
   }
 
   private async Task _executeAsync(string sql) {
