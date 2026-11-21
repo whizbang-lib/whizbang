@@ -359,14 +359,14 @@ public static partial class LifecycleInvocationHelper {
     public void OnReceptorFailed(IMessageEnvelope envelope, LifecycleStage stage, string receptorId, Exception exception) {
       var messageType = TypeNameFormatter.DisplayName(envelope.Payload.GetType());
       if (logger is not null) {
-        Log.ReceptorFailed(logger, exception, receptorId, stage, messageType, envelope.MessageId.Value);
+        LifecycleInvocationLog.ReceptorFailed(logger, exception, receptorId, stage, messageType, envelope.MessageId.Value);
       }
       _record(messageType, envelope.MessageId.Value, exception);
     }
 
     public void RecordMessageFailure(string messageType, Guid messageId, Exception exception) {
       if (logger is not null) {
-        Log.MessageFailed(logger, exception, flushStage, messageType, messageId);
+        LifecycleInvocationLog.MessageFailed(logger, exception, flushStage, messageType, messageId);
       }
       _record(messageType, messageId, exception);
     }
@@ -381,7 +381,7 @@ public static partial class LifecycleInvocationHelper {
     }
   }
 
-  private static partial class Log {
+  private static partial class LifecycleInvocationLog {
     [LoggerMessage(
       EventId = 1,
       Level = LogLevel.Error,

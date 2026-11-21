@@ -76,7 +76,7 @@ public sealed partial class ImmediateDetachedDrainer(ILogger logger, int warning
       cancellationToken.ThrowIfCancellationRequested();
 
       if (++depth % _warningThreshold == 0) {
-        Log.ChainDepthExceedsThreshold(_logger, depth, _warningThreshold);
+        ImmediateDetachedDrainerLog.ChainDepthExceedsThreshold(_logger, depth, _warningThreshold);
       }
 
       await receptorInvoker.InvokeAsync(
@@ -89,7 +89,7 @@ public sealed partial class ImmediateDetachedDrainer(ILogger logger, int warning
     return depth;
   }
 
-  private static partial class Log {
+  private static partial class ImmediateDetachedDrainerLog {
     [LoggerMessage(
       EventId = 1,
       Level = LogLevel.Warning,

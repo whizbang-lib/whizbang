@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Transports;
 using Whizbang.Data.Postgres;
@@ -244,14 +243,4 @@ public partial class DapperWorkCoordinator {
   }
 
   private void _reportScopeUnreadable(Exception ex) => LogReconcileScopeUnreadable(_log, ex);
-
-  [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to query orphaned lifecycle events ({TypeCount} type(s))")]
-  static partial void LogOrphanedLifecycleQueryFailed(ILogger logger, Exception ex, int typeCount);
-
-  [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to deserialize orphaned event {EventId} (type: {EventType}) for reconciliation")]
-  static partial void LogOrphanedLifecycleEventUnreadable(ILogger logger, Exception ex, Guid eventId, string eventType);
-
-  [LoggerMessage(Level = LogLevel.Warning,
-    Message = "Failed to parse reconciliation scope JSON; the replayed lifecycle event will run without its stored scope.")]
-  static partial void LogReconcileScopeUnreadable(ILogger logger, Exception ex);
 }
