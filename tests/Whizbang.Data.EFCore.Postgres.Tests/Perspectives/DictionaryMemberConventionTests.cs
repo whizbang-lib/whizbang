@@ -122,4 +122,27 @@ public class DictionaryMemberConventionTests {
     await Assert.That(() => DictionaryMemberForms.RegisterMember(typeof(int), "x", null!)).Throws<ArgumentNullException>();
     await Assert.That(() => DictionaryMemberForms.MembersOf(null!)).Throws<ArgumentNullException>();
   }
+
+  /// <summary>
+  /// A promoted jsonb column of a dictionary is written in the stored form its mapping gives it, whether the column
+  /// names a converter or only its type mapping does, so every writer of the column agrees.
+  /// </summary>
+  [Test]
+  public async Task APromotedDictionaryColumn_IsWrittenInItsMappingsStoredFormAsync() {
+    var modelBuilder = new ModelBuilder();
+    var entity = modelBuilder.Entity<DictionaryMemberLine>();
+    entity.HasKey(e => e.Name);
+    var mapped = entity.Property<Dictionary<string, int>>("counts").HasColumnType("jsonb").Metadata;
+    mapped.SetTypeMapping(DictionaryMemberTypeMapping.For(typeof(Dictionary<string, int>))!);
+    var unmapped = entity.Property<Dictionary<string, int>>("raw").HasColumnType("jsonb").Metadata;
+    var counts = new Dictionary<string, int> { ["a"] = 1 };
+
+    var fromMapping = BaseUpsertStrategy.PhysicalColumnValue("counts", mapped, counts);
+    var withoutOne = BaseUpsertStrategy.PhysicalColumnValue("raw", unmapped, counts);
+
+    await Assert.That(fromMapping.IsJsonDocument).IsTrue();
+    await Assert.That(fromMapping.Value).IsEqualTo("""[{"Key":"a","Value":1}]""");
+    await Assert.That(withoutOne.IsJsonDocument).IsFalse()
+      .Because("a column with no converter anywhere is bound as the value itself, as before");
+  }
 }

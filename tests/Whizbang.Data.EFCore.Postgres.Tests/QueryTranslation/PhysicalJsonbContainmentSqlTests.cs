@@ -65,14 +65,14 @@ public class PhysicalJsonbContainmentSqlTests {
 
     // Entity Framework evaluates a dictionary indexer's captured key into the query as a literal, so the key
     // is part of the compiled query's shape and only the value is a parameter.
-    await Assert.That(sql).Contains("w.grid_filter @> jsonb_build_object('region', jsonb_build_array(to_jsonb(@value)))");
+    await Assert.That(sql).Contains("w.grid_filter @> jsonb_build_array(jsonb_build_object('Key', to_jsonb('region'::text)) || jsonb_build_object('Value', jsonb_build_array(to_jsonb(@value))))");
   }
 
   [Test]
   public async Task DictionaryKeyContains_Constant_CompilesToContainmentAsync() {
     var sql = _sql(rows => rows.Where(r => r.Data.GridFilter["region"].Contains("north")));
 
-    await Assert.That(sql).Contains("w.grid_filter @> jsonb_build_object('region', jsonb_build_array(to_jsonb('north'::text)))");
+    await Assert.That(sql).Contains("w.grid_filter @> jsonb_build_array(jsonb_build_object('Key', to_jsonb('region'::text)) || jsonb_build_object('Value', jsonb_build_array(to_jsonb('north'::text))))");
   }
 
   [Test]
@@ -81,7 +81,7 @@ public class PhysicalJsonbContainmentSqlTests {
 
     var sql = _sql(rows => rows.Where(r => r.Data.GridFilter["region"].Any(v => v == value)));
 
-    await Assert.That(sql).Contains("w.grid_filter @> jsonb_build_object('region', jsonb_build_array(to_jsonb(@value)))");
+    await Assert.That(sql).Contains("w.grid_filter @> jsonb_build_array(jsonb_build_object('Key', to_jsonb('region'::text)) || jsonb_build_object('Value', jsonb_build_array(to_jsonb(@value))))");
   }
 
   [Test]
@@ -90,7 +90,20 @@ public class PhysicalJsonbContainmentSqlTests {
 
     var sql = _sql(rows => rows.Where(r => r.Data.Counts["open"] == count));
 
-    await Assert.That(sql).Contains("w.counts @> jsonb_build_object('open', to_jsonb(@count))");
+    await Assert.That(sql).Contains("w.counts @> jsonb_build_array(jsonb_build_object('Key', to_jsonb('open'::text)) || jsonb_build_object('Value', to_jsonb(@count)))");
+  }
+
+  /// <summary>
+  /// A dictionary type no perspective holds has no stored form registered, so its column holds a JSON object and a
+  /// key is an object's member, as before #1911.
+  /// </summary>
+  [Test]
+  public async Task DictionaryKeyEquals_OnAnUnregisteredDictionary_CompilesToContainmentOfTheObjectAsync() {
+    short count = 3;
+
+    var sql = _sql(rows => rows.Where(r => r.Data.Shorts["open"] == count));
+
+    await Assert.That(sql).Contains("w.shorts @> jsonb_build_object('open', to_jsonb(@count))");
   }
 
   // ------------------------------------------------------------------
@@ -166,7 +179,7 @@ public class PhysicalJsonbContainmentSqlTests {
     var sql = _sql(rows => rows.Where(r => r.Data.Tags.Contains(tag) && r.Data.GridFilter["region"].Contains(value)));
 
     await Assert.That(sql).Contains("w.tags @> jsonb_build_array(to_jsonb(@tag))");
-    await Assert.That(sql).Contains("w.grid_filter @> jsonb_build_object('region', jsonb_build_array(to_jsonb(@value)))");
+    await Assert.That(sql).Contains("w.grid_filter @> jsonb_build_array(jsonb_build_object('Key', to_jsonb('region'::text)) || jsonb_build_object('Value', jsonb_build_array(to_jsonb(@value))))");
   }
 
   [Test]
@@ -253,6 +266,9 @@ public class PhysicalJsonbContainmentSqlTests {
     public List<Dictionary<string, string>> Rows { get; set; } = [];
     public Dictionary<int, string> ByNumber { get; set; } = [];
 
+    /// <summary>A dictionary type no perspective holds, so no form is registered for it: stored as an object.</summary>
+    public Dictionary<string, short> Shorts { get; set; } = [];
+
     /// <summary>A column whose type the serializer has no metadata for.</summary>
     [JsonIgnore]
     public JsonbUnlisted? Other { get; set; }
@@ -295,6 +311,7 @@ public class PhysicalJsonbContainmentSqlTests {
       PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(Places), "places");
       PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(Rows), "rows");
       PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(ByNumber), "by_number");
+      PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(Shorts), "shorts");
       PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(Other), "other");
       PhysicalFieldRegistry.Register<JsonbColumnsModel>(nameof(Bare), "bare");
     }
@@ -319,6 +336,7 @@ public class PhysicalJsonbContainmentSqlTests {
           d.Ignore(m => m.Places);
           d.Ignore(m => m.Rows);
           d.Ignore(m => m.ByNumber);
+          d.Ignore(m => m.Shorts);
           d.Ignore(m => m.Other);
           d.Ignore(m => m.Bare);
         });
@@ -347,6 +365,7 @@ public class PhysicalJsonbContainmentSqlTests {
         _jsonb<List<JsonbLocation>>(entity, "places");
         _jsonb<List<Dictionary<string, string>>>(entity, "rows");
         _jsonb<Dictionary<int, string>>(entity, "by_number");
+        _jsonb<Dictionary<string, short>>(entity, "shorts");
         _jsonb<JsonbUnlisted?>(entity, "other");
         _jsonb<JsonbBare?>(entity, "bare");
       });

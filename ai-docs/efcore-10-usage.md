@@ -402,7 +402,9 @@ public class Order {
 - **How**: the perspective schema generator registers each closed dictionary type with
   `DictionaryMemberForms.Register<K, V>()`; the persistence profile resolves it to `KeyValueArrayJsonConverter`, and
   the Whizbang options extension (`UseWhizbangFunctions`) adds `DictionaryMemberTypeMappingSourcePlugin`, so EF maps it
-  as a value. A context built without the extension refuses the model, in EF's words, naming the member.
+  as a value. A context built without the extension gets the same mapping from the generated `ConfigureWhizbang`
+  (`DictionaryMemberConvention.Apply`, over the members the generator registered); a hand-written mapping that calls
+  neither refuses the model, in EF's words, naming the member.
 - **Queries**: `ContainsKey(k)` is `data @> {"Counts":[{"Key":k}]}` (GIN-answerable); `m.Counts[k]` is
   `jsonb_path_query_first(...) ->> 'Value'` cast to the value type. A temporal or structured value, a key that is not a
   constant or parameter, and other dictionary methods are refused by EF at query time, never evaluated on the client.
