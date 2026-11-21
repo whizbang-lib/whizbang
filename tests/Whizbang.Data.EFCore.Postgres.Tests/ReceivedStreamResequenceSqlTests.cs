@@ -337,13 +337,13 @@ public class ReceivedStreamResequenceSqlTests : EFCoreTestBase {
     }
 
     var first = await _resequencer().ResequenceAsync(_request() with { BatchSize = 1, MaxStreams = 2 });
+    await Assert.That(await _orderAsync(conn, streams[2])).IsEquivalentTo([ids[5], ids[4]], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the bounded run stopped before it");
     var second = await _resequencer().ResequenceAsync(_request() with { StartAfterStreamId = first.ResumeAfterStreamId });
 
     await Assert.That(first.StreamsExamined).IsEqualTo(2);
     await Assert.That(first.ResumeAfterStreamId).IsEqualTo(streams[1]);
     await Assert.That(first.Resequenced.Select(s => s.StreamId)).IsEquivalentTo([streams[0], streams[1]]);
-    await Assert.That(await _orderAsync(conn, streams[2])).IsEquivalentTo([ids[5], ids[4]], TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("the bounded run stopped before it");
     await Assert.That(second.StreamsExamined).IsEqualTo(1);
     await Assert.That(second.ResumeAfterStreamId).IsNull();
     await Assert.That(second.Resequenced.Select(s => s.StreamId)).IsEquivalentTo([streams[2]]);
@@ -514,6 +514,21 @@ public class ReceivedStreamResequenceSqlTests : EFCoreTestBase {
     await Assert.That(nothingAfter.StreamsExamined).IsEqualTo(0);
     await Assert.That(logger.Messages.Count(m => m.Contains(report.RunId.ToString(), StringComparison.Ordinal))).IsEqualTo(3)
       .Because("the start, the one batch and the run are each recorded");
+  }
+
+  [Test]
+  public async Task Resequence_WithANamedSchema_ReadsAndWritesThatSchemasTablesAsync() {
+    await using var conn = await _openAsync();
+    var schema = await _scalarAsync<string>(conn, "SELECT current_schema()");
+    var stream = _newId();
+    var (a, b, _) = _threeIds();
+    await _seedAsync(conn, stream, new Seed(b, 1, _originA), new Seed(a, 2, _originA));
+
+    var report = await new PostgresReceivedStreamResequencer(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync, schema)
+      .ResequenceAsync(_request());
+
+    await Assert.That(report.Resequenced.Select(s => s.StreamId)).IsEquivalentTo([stream]);
+    await Assert.That(await _orderAsync(conn, stream)).IsEquivalentTo([a, b], TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
 
   // ---------------------------------------------------------------------------------------------
