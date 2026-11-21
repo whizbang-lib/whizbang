@@ -922,7 +922,7 @@ public interface IWorkCoordinator {
   /// <param name="streamIds">Stream IDs to fetch cursors for</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>List of cursor info for all streams that have checkpoints</returns>
-  /// <docs>fundamentals/perspectives/drain-mode#batch-cursor-fetch</docs>
+  /// <docs>fundamentals/perspectives/write-modes#batch-formation</docs>
   Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(
     Guid[] streamIds,
     CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
@@ -3570,7 +3570,7 @@ public interface IWorkCoordinator {
   /// <param name="workItemIds">Array of event_work_id values to delete</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Number of rows deleted</returns>
-  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  /// <docs>operations/workers/perspective-worker#completion-flush-path</docs>
   Task<int> CompletePerspectiveEventsAsync(
     Guid[] workItemIds,
     CancellationToken cancellationToken = default) => CompletePerspectiveEventsAsync(workItemIds, debugMode: false, cancellationToken);
@@ -3599,7 +3599,7 @@ public interface IWorkCoordinator {
   /// <param name="streamIds">Stream IDs to fetch events for</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>List of stream event data for processing</returns>
-  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  /// <docs>operations/workers/perspective-worker#the-perspective-work-pipeline</docs>
   Task<List<StreamEventData>> GetStreamEventsAsync(
     Guid instanceId,
     Guid[] streamIds,
@@ -3614,7 +3614,7 @@ public interface IWorkCoordinator {
   /// unambiguously an orphan, so attempts (not age) are the safety. Returns the count reaped.
   /// Default is a no-op for coordinators that do not back a relational event store.
   /// </summary>
-  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  /// <docs>operations/workers/perspective-worker#error-tracking-retry</docs>
   Task<int> ReapExhaustedOrphanedPerspectiveRowsAsync(
     Guid instanceId,
     IReadOnlyList<Guid> streamIds,

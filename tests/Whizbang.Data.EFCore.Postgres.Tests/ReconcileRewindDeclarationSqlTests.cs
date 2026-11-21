@@ -20,7 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// completion time and only catches events the runner never saw — a reconciled event is seen,
 /// applied in arrival order, and marked processed, so that check stays silent.
 /// </summary>
-/// <docs>fundamentals/perspectives/rewind-invariants</docs>
+/// <docs>fundamentals/perspectives/rewind#detection</docs>
 [Category("Shard4")]
 public class ReconcileRewindDeclarationSqlTests : EFCoreTestBase {
 

@@ -1681,7 +1681,7 @@ public partial class PerspectiveWorker(
   static partial void LogAwaitingAbandonedApplies(ILogger logger, int count);
 
   /// <summary>One affinity gate held by an apply in progress: who holds it, where it is, and for how long.</summary>
-  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  /// <docs>operations/workers/perspective-worker#affinity-hold-watchdog</docs>
   public readonly record struct AffinityHold(Guid StreamId, string PerspectiveName, string Path, string Phase, TimeSpan Held);
 
   /// <summary>
@@ -1888,7 +1888,7 @@ public partial class PerspectiveWorker(
   /// Full lifecycle chain: PrePerspective → RunWithEvents → PostPerspective → signal coordinator.
   /// PostAllPerspectives + PostLifecycle fire via FirePostLifecycleDetachedAsync after this returns.
   /// </summary>
-  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  /// <docs>operations/workers/perspective-worker#the-perspective-work-pipeline</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.cs</tests>
   private async Task _processDrainModeStreamsAsync(
       AsyncServiceScope scope,
@@ -6098,7 +6098,7 @@ public class PerspectiveWorkerOptions {
   /// separate apply cycle. With 300 ms the window almost always coalesces all 46
   /// into one apply pass.
   /// </remarks>
-  /// <docs>fundamentals/perspectives/drain-mode#sliding-window</docs>
+  /// <docs>operations/workers/perspective-worker#sliding-window-drain-batching</docs>
   public SlidingWindowBatcherOptions DrainBatcher { get; set; } = new() {
     SlidingWindow = TimeSpan.FromMilliseconds(300),
     MaxWait = TimeSpan.FromSeconds(3),

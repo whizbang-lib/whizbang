@@ -31,7 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// showed as claimed and lease-expired.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/perspectives/drain-mode</docs>
+/// <docs>operations/workers/perspective-worker#security-context</docs>
 [Category("Integration")]
 [Category("Shard3")]
 public class ReplayScopeRehydrationTests : EFCoreTestBase {
