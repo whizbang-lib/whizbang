@@ -107,6 +107,28 @@ Describe 'Get-SecuritySettings' {
       $Api['repos/o/r/rulesets/2'] = ConvertTo-Live '{"id":2,"name":"main","target":"branch","enforcement":"active","conditions":null,"rules":[],"bypass_actors":[]}'
     }
   }
+
+  It 'captures a bypass list of <Count> actor(s) as a JSON array of <Count>, the shape the check reads (#2480)' -ForEach @(
+    @{ Count = 0 }, @{ Count = 1 }, @{ Count = 2 }
+  ) {
+    # PowerShell unrolls a one-element array to its element and an empty one to nothing, so a capture
+    # could write one bypass actor as an object and none as null.
+    $actors = @(@{ actor_id = 9; actor_type = 'Team'; bypass_mode = 'pull_request' }, @{ actor_id = 5; actor_type = 'Integration'; bypass_mode = 'always' }) |
+      Select-Object -First $Count
+    $ruleset = @{ id = 2; name = 'main'; target = 'branch'; enforcement = 'active'; conditions = $null; rules = @(); bypass_actors = @($actors) }
+    $saved = $Api['repos/o/r/rulesets/2']
+    $Api['repos/o/r/rulesets/2'] = ConvertTo-Live (ConvertTo-Json -InputObject $ruleset -Depth 5)
+    try {
+      # The same serialization -Mode Capture writes to the baseline file, read back the way -Mode Check reads it.
+      $json = ConvertTo-Json -InputObject (Get-SecuritySettings -Repository 'o/r') -Depth 30
+      $captured = ($json | ConvertFrom-Json -AsHashtable).rulesets['main'].bypass_actors
+      , $captured | Should -BeOfType [System.Collections.IList]
+      $captured.Count | Should -Be $Count
+      if ($Count -gt 0) { $captured[0].actor_type | Should -Be 'Integration' -Because 'the actors are sorted by type' }
+    } finally {
+      $Api['repos/o/r/rulesets/2'] = $saved
+    }
+  }
 }
 
 Describe 'Compare-SecuritySettings' {
