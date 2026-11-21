@@ -65,6 +65,7 @@ public static class DictionaryPairsRewrite {
   public const string KIND = "dictionary-pairs";
 
   private const string JSONB = "jsonb";
+  private const string END_IF = "  END IF;\n";
 
   /// <summary>A key stored as the name itself, a JSON string.</summary>
   internal const short STRING_KEY = 1;
@@ -162,13 +163,13 @@ public static class DictionaryPairsRewrite {
     sb.Append(CultureInfo.InvariantCulture,
       $"    RAISE NOTICE USING MESSAGE = format('%s: dictionaries: no journal yet, nothing to convert', {tableLiteral});\n");
     sb.Append("    RETURN;\n");
-    sb.Append("  END IF;\n");
+    sb.Append(END_IF);
     sb.Append(CultureInfo.InvariantCulture, $"  SELECT settled_at INTO v_settled FROM {journal} WHERE name = {name};\n");
     sb.Append("  IF v_settled IS NOT NULL THEN\n");
     sb.Append(CultureInfo.InvariantCulture,
       $"    RAISE NOTICE USING MESSAGE = format('%s: dictionaries: settled, skipped', {tableLiteral});\n");
     sb.Append("    RETURN;\n");
-    sb.Append("  END IF;\n");
+    sb.Append(END_IF);
     // A table this release has not created yet holds no row in the old form: it is settled at once below.
     sb.Append(CultureInfo.InvariantCulture, $"  IF to_regclass({SqlText.Literal(qualifiedTable)}) IS NOT NULL THEN\n");
 
@@ -186,7 +187,7 @@ public static class DictionaryPairsRewrite {
       sb.Append("    v_touched := v_touched + v_count;\n");
     }
 
-    sb.Append("  END IF;\n");
+    sb.Append(END_IF);
     sb.Append(CultureInfo.InvariantCulture,
       $"  INSERT INTO {journal} (name, table_name, kind, first_applied_at, last_applied_at, rows_converted, settled_at)\n");
     sb.Append(CultureInfo.InvariantCulture,
@@ -198,7 +199,7 @@ public static class DictionaryPairsRewrite {
     sb.Append(CultureInfo.InvariantCulture,
       $"    {IndexStatistics.MarkRewrittenSql(SqlText.Literal(schema), tableLiteral)}\n");
     sb.Append(StoredFormApplier.RecordSql(journal, "name", name, "    "));
-    sb.Append("  END IF;\n");
+    sb.Append(END_IF);
     sb.Append(CultureInfo.InvariantCulture,
       $"  RAISE NOTICE USING MESSAGE = format('%s: dictionaries: converted, %s row update(s)', {tableLiteral}, v_touched);\n");
     sb.Append("END\n");

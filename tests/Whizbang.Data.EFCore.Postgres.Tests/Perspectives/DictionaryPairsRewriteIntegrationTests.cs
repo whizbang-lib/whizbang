@@ -125,9 +125,9 @@ public class DictionaryPairsRewriteIntegrationTests {
     return await command.ExecuteScalarAsync() is { } value and not DBNull ? value.ToString() ?? "<null>" : "<null>";
   }
 
-  private async Task _createTableAsync() => await _executeAsync($"""
-    CREATE TABLE {TABLE} (
-      id uuid PRIMARY KEY, data jsonb NOT NULL, metadata jsonb NOT NULL DEFAULT '{"{}"}', scope jsonb NOT NULL DEFAULT '{"{}"}',
+  private async Task _createTableAsync() => await _executeAsync($$"""
+    CREATE TABLE {{TABLE}} (
+      id uuid PRIMARY KEY, data jsonb NOT NULL, metadata jsonb NOT NULL DEFAULT '{}', scope jsonb NOT NULL DEFAULT '{}',
       created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), version int NOT NULL DEFAULT 1)
     """);
 

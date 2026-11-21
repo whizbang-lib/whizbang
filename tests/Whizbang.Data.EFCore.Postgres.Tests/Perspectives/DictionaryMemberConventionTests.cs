@@ -145,4 +145,49 @@ public class DictionaryMemberConventionTests {
     await Assert.That(withoutOne.IsJsonDocument).IsFalse()
       .Because("a column with no converter anywhere is bound as the value itself, as before");
   }
+
+  /// <summary>A column-split complex type holding a nested one: the nested type is a document only if it maps to JSON.</summary>
+  public sealed class SplitHolder {
+    public Guid Id { get; set; }
+    public SplitOuter Outer { get; set; } = new();
+  }
+
+  /// <summary>Spread over columns; its nested types decide for themselves whether they are documents.</summary>
+  public sealed class SplitOuter {
+    public string Name { get; set; } = "";
+    public SplitDocument Document { get; set; } = new();
+    public SplitColumns Columns { get; set; } = new();
+  }
+
+  /// <summary>Mapped to JSON inside a column-split parent.</summary>
+  public sealed class SplitDocument {
+    public Dictionary<string, int> Counts { get; set; } = [];
+  }
+
+  /// <summary>Spread over columns inside a column-split parent.</summary>
+  public sealed class SplitColumns {
+    public int Total { get; set; }
+  }
+
+  [Test]
+  public async Task ADocumentNestedInAColumnSplitType_GetsItsDictionaries_AndAColumnSplitOneDoesNotAsync() {
+    DictionaryMemberForms.RegisterMember(typeof(SplitDocument), nameof(SplitDocument.Counts), typeof(Dictionary<string, int>));
+    var modelBuilder = new ModelBuilder();
+    modelBuilder.Entity<SplitHolder>(entity => {
+      entity.HasKey(e => e.Id);
+      entity.ComplexProperty(e => e.Outer, o => {
+        o.ComplexProperty(x => x.Document, d => d.ToJson("document"));
+        o.ComplexProperty(x => x.Columns);
+      });
+    });
+    var outer = modelBuilder.Model.FindEntityType(typeof(SplitHolder))!.FindComplexProperty("Outer")!.ComplexType;
+
+    DictionaryMemberConvention.Apply(modelBuilder);
+
+    await Assert.That(outer.FindComplexProperty("Document")!.ComplexType.FindProperty("Counts")?.GetTypeMapping())
+      .IsTypeOf<DictionaryMemberTypeMapping>()
+      .Because("a nested type mapped to JSON is a document even when its parent is spread over columns");
+    await Assert.That(outer.FindComplexProperty("Columns")!.ComplexType.FindProperty("Counts")).IsNull()
+      .Because("a nested type spread over columns holds no document members");
+  }
 }
