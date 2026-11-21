@@ -184,12 +184,10 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
     await Assert.That(await _flushCommitsAsync(conn)).IsTrue()
       .Because("precondition: the WAL is flushed through every earlier commit, so the vacuum can hint their rows");
     // A vacuum marks a page all-visible only if no snapshot open in this database could still see an older version of a
-    // row on it. The test runs alone (keyless NotInParallel) in a database of its own, and its own connections hold no
-    // snapshot here, so the one other backend that can enter is an autovacuum worker, whose ANALYZE holds a snapshot for
-    // as long as it reads a table: one started on a table the chain writes, but this test did not measure, left a page
-    // unmarked once. Autovacuum is therefore off on every table of the database (see _disableAutovacuumAsync), so no
-    // worker has anything to do here, and one vacuum is the transition itself.
-    await _executeAsync(conn, "VACUUM wh_stream_lifecycle");
+    // row on it. Autovacuum is off on every table of the test's schema (see _disableAutovacuumAsync), but a worker can
+    // still analyze a catalog of this database, and a snapshot taken here can reach back to a transaction open in
+    // another database on the shared server; either left a page unmarked (#2473). The vacuum waits until nothing can.
+    await _vacuumOnceNoOlderSnapshotSeesTheRowsAsync(conn, cancellationToken);
     var (vacuumedPages, vacuumedPagesNotAllVisible) = await _pagesHoldingAsync(conn, vacuumedBefore);
     await Assert.That(vacuumedPages).IsGreaterThanOrEqualTo(1L).Because("precondition: the streams' rows are on some page");
     await Assert.That(vacuumedPagesNotAllVisible).IsEqualTo(0L)
@@ -223,6 +221,99 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
       .Because("an update on an all-visible page also reads the visibility map, which pg_statio counts as the table's");
     await Assert.That(duringVacuum.LedgerBlocks).IsGreaterThanOrEqualTo(clean.LedgerBlocks + ledgerPages)
       .Because("a vacuum in the window reads every heap page of the ledger, and pg_statio charges those reads to the window");
+  }
+
+  /// <summary>
+  /// An older snapshot held in this database while the vacuum runs (#2473): the vacuum still marks every page holding the
+  /// streams' rows all-visible, because it runs only once no snapshot that could see an older version of them remains.
+  /// The holder takes its snapshot before the rows are written and lets it go only when told that the vacuum is waiting
+  /// for it, so without the wait the vacuum runs while it is held, every time.
+  /// </summary>
+  [Test]
+  [Timeout(600000)]
+  public async Task TheVacuum_WaitsOutAnOlderSnapshot_AndMarksEveryPageAllVisibleAsync(CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await _disableAutovacuumAsync(conn);
+    await _executeAsync(conn, "CREATE EXTENSION IF NOT EXISTS pg_visibility");
+    await using var holder = new NpgsqlConnection(ConnectionString);
+    await holder.OpenAsync(cancellationToken);
+    await using var snapshot = await holder.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, cancellationToken);
+    // A repeatable-read transaction takes its snapshot at its first statement and keeps it to the end.
+    _ = await _scalarAsync(holder, "SELECT count(*) FROM wh_stream_lifecycle");
+    var streams = await _seedWarmStreamsAsync(conn);
+    await Assert.That(await _flushCommitsAsync(conn)).IsTrue()
+      .Because("precondition: the WAL is flushed through every earlier commit, so the vacuum can hint their rows");
+
+    var waited = false;
+    await _vacuumOnceNoOlderSnapshotSeesTheRowsAsync(conn, cancellationToken, onWaiting: async () => {
+      waited = true;
+      await snapshot.CommitAsync(cancellationToken);
+    });
+
+    var (pages, notAllVisible) = await _pagesHoldingAsync(conn, streams);
+    await Assert.That(pages).IsGreaterThanOrEqualTo(1L).Because("precondition: the streams' rows are on some page");
+    await Assert.That(waited).IsTrue().Because("the vacuum waits for the snapshot that could still see an older version of the rows");
+    await Assert.That(notAllVisible).IsEqualTo(0L)
+      .Because($"the vacuum ran once no older snapshot remained, so it marked all {pages} pages all-visible");
+  }
+
+  /// <summary>
+  /// Vacuums the ledger once no snapshot that could see an older version of a row on it remains (#2473). A vacuum marks a
+  /// page all-visible only when every row on it is older than the oldest snapshot of this database, and one other
+  /// session holding a snapshot during the vacuum leaves pages unmarked: an autovacuum worker analyzing a catalog of this
+  /// database (autovacuum is off on its tables only), or any of its backends whose snapshot reaches back to a transaction
+  /// still open in another database on the shared server. Nothing here can stop those, so the vacuum waits for them.
+  /// </summary>
+  /// <remarks>
+  /// The wait ends on a condition that, once true, stays true, so the vacuum after it marks the pages whatever starts
+  /// meanwhile. Take <c>horizon</c> as the next transaction id once every row is written. When no transaction below it is
+  /// still running anywhere on the server (a fresh snapshot's lowest running id is at or past it; prepared transactions
+  /// count), no snapshot taken from then on can reach below it; when, besides, no other backend of this database holds a
+  /// snapshot reaching below it, none ever will again, and every row older than <c>horizon</c> is visible to all.
+  /// Bounded by the test's timeout only: the wait ends on the condition, never on a clock.
+  /// </remarks>
+  /// <param name="conn">The test's connection, outside any transaction.</param>
+  /// <param name="cancellationToken">The test's cancellation.</param>
+  /// <param name="onWaiting">Called once, the first time the wait finds a snapshot it must wait for.</param>
+  private static async Task _vacuumOnceNoOlderSnapshotSeesTheRowsAsync(
+      NpgsqlConnection conn, CancellationToken cancellationToken, Func<Task>? onWaiting = null) {
+    string horizon;
+    await using (var next = conn.CreateCommand()) {
+      next.CommandText = "SELECT pg_snapshot_xmax(pg_current_snapshot())::text";
+      horizon = (string)(await next.ExecuteScalarAsync(cancellationToken))!;
+    }
+    var notified = false;
+    while (await _olderSnapshotsAsync(conn, horizon, cancellationToken) is { } holders) {
+      if (!notified) {
+        notified = true;
+        Console.WriteLine($"[#2473] waiting before the vacuum for: {holders}");
+        if (onWaiting is not null) {
+          await onWaiting();
+        }
+      }
+      await _executeAsync(conn, "SELECT pg_sleep(0.05)");
+    }
+    await _executeAsync(conn, "VACUUM wh_stream_lifecycle");
+  }
+
+  /// <summary>
+  /// What could still see a row older than <paramref name="horizon"/>, or null when nothing can: a transaction below it
+  /// still running anywhere on the server, or another backend of this database whose snapshot reaches below it.
+  /// </summary>
+  private static async Task<string?> _olderSnapshotsAsync(NpgsqlConnection conn, string horizon, CancellationToken cancellationToken) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      SELECT NULLIF(concat_ws('; ',
+        CASE WHEN pg_snapshot_xmin(pg_current_snapshot()) < @horizon::xid8
+             THEN 'a transaction below ' || @horizon || ' still running on the server' END,
+        (SELECT string_agg(backend_type || ' ' || pid || ' (xmin ' || backend_xmin || '): ' || left(query, 80), '; ')
+         FROM pg_stat_activity
+         WHERE datname = current_database() AND pid <> pg_backend_pid()
+           AND backend_xmin IS NOT NULL AND age(backend_xmin) > age(@horizon::xid8::xid))), '')
+      """;
+    cmd.Parameters.AddWithValue(nameof(horizon), horizon);
+    return await cmd.ExecuteScalarAsync(cancellationToken) as string;
   }
 
   /// <summary>Makes every earlier commit's WAL durable, so a vacuum after it can mark their rows all-visible (#2158).</summary>
