@@ -109,7 +109,7 @@ Describe 'Get-SecuritySettings' {
   }
 
   It 'captures a bypass list of <Count> actor(s) as a JSON array of <Count>, the shape the check reads (#2480)' -ForEach @(
-    @{ Count = 0 }, @{ Count = 1 }, @{ Count = 2 }
+    @{ Count = 0; First = $null }, @{ Count = 1; First = 'Team' }, @{ Count = 2; First = 'Integration' }
   ) {
     # PowerShell unrolls a one-element array to its element and an empty one to nothing, so a capture
     # could write one bypass actor as an object and none as null.
@@ -124,7 +124,7 @@ Describe 'Get-SecuritySettings' {
       $captured = ($json | ConvertFrom-Json -AsHashtable).rulesets['main'].bypass_actors
       , $captured | Should -BeOfType [System.Collections.IList]
       $captured.Count | Should -Be $Count
-      if ($Count -gt 0) { $captured[0].actor_type | Should -Be 'Integration' -Because 'the actors are sorted by type' }
+      if ($Count -gt 0) { $captured[0].actor_type | Should -Be $First -Because 'the actors are sorted by type' }
     } finally {
       $Api['repos/o/r/rulesets/2'] = $saved
     }
