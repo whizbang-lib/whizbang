@@ -174,7 +174,7 @@ WHIZ804 | active | Whizbang.Generators | Table storage value out of range
 WHIZ805 | active | Whizbang.Generators | Split Mode No Physical Fields
 WHIZ807 | active | Whizbang.Generators | Physical Fields Discovered
 WHIZ808 | active | Whizbang.Generators | Split class model cannot be copied
-WHIZ810 | active | Whizbang.Data.EFCore.Postgres.Generators | Perspective model contains Dictionary property
+WHIZ810 | retired | Whizbang.Data.EFCore.Postgres.Generators | Perspective model contained a Dictionary property; retired in #1911 (dictionaries are stored as key/value arrays), never reused
 WHIZ811 | active | Whizbang.Data.EFCore.Postgres.Generators | Perspective model contains polymorphic type
 WHIZ812 | active | Whizbang.Data.EFCore.Postgres.Generators | Perspective model declares a JSON converter that is never consulted
 WHIZ820 | active | Whizbang.Data.EFCore.Postgres.Generators | Table name exceeds database limit

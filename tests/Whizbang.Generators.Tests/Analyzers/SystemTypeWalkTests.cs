@@ -14,12 +14,11 @@ using PolymorphicModelDiscovery = shared::Whizbang.Generators.Shared.Models.Poly
 namespace Whizbang.Generators.Tests.Analyzers;
 
 /// <summary>
-/// The model walks behind WHIZ810, WHIZ811 and the polymorphic-storage decision never descend into a
+/// The model walks behind WHIZ811 and the polymorphic-storage decision never descend into a
 /// non-collection <c>System</c> type: the walk stops at the type itself, so <c>string</c>, <c>Guid</c>,
 /// <c>Uri</c> and their kin contribute nothing whether they are a property's type or a generic
 /// argument, and a reportable member declared after them is still found.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres.Generators/PerspectiveModelDictionaryAnalyzer.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres.Generators/PerspectiveModelPolymorphicAnalyzer.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Generators.Shared/Models/PolymorphicModelDiscovery.cs</code-under-test>
 public class SystemTypeWalkTests {
@@ -41,46 +40,6 @@ public class SystemTypeWalkTests {
       public Holder<Version> Held { get; set; } = new();
       public Holder<TimeOnly> HeldTime { get; set; } = new();
     """;
-
-  [Test]
-  [RequiresAssemblyFiles]
-  public async Task DictionaryAnalyzer_SystemTypesContributeNothing_AndALaterDictionaryIsReportedAsync() {
-    var source = $$"""
-      using System;
-      using System.Collections.Generic;
-      using Whizbang.Core;
-      using Whizbang.Core.Perspectives;
-
-      namespace TestApp;
-
-      public record WalkEvent : IEvent;
-
-      public class Holder<T> {
-        public T? Value { get; set; }
-      }
-
-      public class Inner {
-        public Dictionary<string, int> Map { get; set; } = new();
-      }
-
-      public class WalkModel {
-        {{SYSTEM_MEMBERS}}
-        public Holder<Inner> Nested { get; set; } = new();
-        public Dictionary<string, Guid> Lookup { get; set; } = new();
-      }
-
-      public class WalkPerspective : IPerspectiveFor<WalkModel, WalkEvent> {
-        public WalkModel Apply(WalkModel currentData, WalkEvent @event) => currentData;
-      }
-      """;
-
-    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveModelDictionaryAnalyzer>(source);
-    var reported = _reportedMembers(diagnostics, "WHIZ810", ["Map", "Lookup"]);
-
-    await Assert.That(reported).IsEquivalentTo(["Map", "Lookup"]);
-    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ810").All(d => _mentionsAny(d, ["Map", "Lookup"]))).IsTrue()
-      .Because("no System-typed member, direct or as a generic argument, is reported");
-  }
 
   [Test]
   [RequiresAssemblyFiles]

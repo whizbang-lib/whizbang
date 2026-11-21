@@ -14,22 +14,6 @@ internal static class DiagnosticDescriptors {
   private const string GENERATOR_CATEGORY = "Whizbang.Generator";
 
   /// <summary>
-  /// WHIZ810: Warning - Perspective model contains Dictionary property.
-  /// EF Core's ComplexProperty().ToJson() does not support Dictionary types.
-  /// </summary>
-  /// <docs>operations/diagnostics/whiz810</docs>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveModelDictionaryAnalyzerTests.cs:PerspectiveModel_WithDictionary_ReportsDiagnosticAsync</tests>
-  public static readonly DiagnosticDescriptor PerspectiveModelDictionaryProperty = new(
-      id: "WHIZ810",
-      title: "Perspective model contains Dictionary property",
-      messageFormat: "Property '{0}' on perspective model '{1}' uses Dictionary<{2}, {3}> which is not supported by EF Core's ComplexProperty().ToJson(). Use a List of a class with Key ({2}) and Value ({3}) properties instead.",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Warning,
-      isEnabledByDefault: true,
-      description: "EF Core 10's ComplexProperty().ToJson() throws NullReferenceException for Dictionary properties. Use List<T> with Key/Value properties (like ScopeExtension or AttributeEntry pattern) instead."
-  );
-
-  /// <summary>
   /// WHIZ812: Warning - a perspective model declares a JSON converter that nothing will consult.
   /// </summary>
   /// <docs>operations/diagnostics/whiz812</docs>
