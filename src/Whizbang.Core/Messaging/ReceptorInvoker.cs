@@ -148,10 +148,10 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     // Optional test-only observer. Null in production when nothing is registered.
     _firingObserver = scopedProvider.GetService<IReceptorFiringObserver>();
 
-    _receptorInterceptors = ReceptorInterceptorGate.Active(scopedProvider);
+    _receptorInterceptors = ReceptorInterceptorGate.ForInvocation(scopedProvider);
   }
 
-  /// <summary>Whether any receptor interceptor is registered, so receptor invocations are gated (#1996).</summary>
+  /// <summary>Whether any receptor interceptor (#1996) or admission recorder (#2470) is registered, so receptor invocations pass the gate.</summary>
   internal bool HasReceptorInterceptors => _receptorInterceptors is not null;
 
   /// <inheritdoc/>
@@ -166,7 +166,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(stages);
-    if (_receptorInterceptors is null || _extractMessage(envelope) is not { } message) {
+    // A pipeline that only records (command audit, #2470) can deny nothing, so it is not asked ahead of time
+    if (_receptorInterceptors is not { HasInterceptors: true } || _extractMessage(envelope) is not { } message) {
       return InterceptorResult.Allowed;
     }
     var messageType = message.GetType();

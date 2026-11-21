@@ -8,7 +8,6 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Pipeline;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
 
@@ -166,19 +165,27 @@ public class SystemEventServiceCollectionExtensionsTests {
   }
 
   [Test]
-  public async Task AddSystemEventAuditing_RegistersPipelineBehaviorAsync() {
-    // Arrange
+  public async Task AddSystemEvents_CommandAuditEnabled_RegistersOneCommandAuditRecorderAsync() {
     var services = new ServiceCollection();
 
-    // Act
-    services.AddSystemEventAuditing();
+    // Twice: the recorder is registered once, so a command is never audited twice per receptor
+    services.AddSystemEventAuditing(options => options.EnableCommandAudit());
+    services.AddSystemEvents(options => options.EnableAudit());
 
-    // Assert - Check that the generic pipeline behavior type is registered
-    var descriptor = services.FirstOrDefault(d =>
-        d.ServiceType == typeof(IPipelineBehavior<,>) &&
-        d.ImplementationType == typeof(CommandAuditPipelineBehavior<,>));
+    var recorders = services.Where(d => d.ServiceType == typeof(Whizbang.Core.Security.IReceptorAdmissionRecorder)).ToList();
+    await Assert.That(recorders.Count).IsEqualTo(1);
+    await using var provider = services.BuildServiceProvider();
+    await Assert.That(provider.GetServices<Whizbang.Core.Security.IReceptorAdmissionRecorder>().Single()).IsTypeOf<CommandAuditRecorder>();
+  }
 
-    await Assert.That(descriptor).IsNotNull();
+  [Test]
+  public async Task AddSystemEvents_CommandAuditNotEnabled_RegistersNoRecorderAsync() {
+    var services = new ServiceCollection();
+
+    services.AddSystemEventAuditing(options => options.EnableEventAudit());
+
+    await Assert.That(services.Any(d => d.ServiceType == typeof(Whizbang.Core.Security.IReceptorAdmissionRecorder))).IsFalse()
+      .Because("without command audit nothing is recorded, so the receptor gate stays empty and costs nothing");
   }
 
   [Test]
