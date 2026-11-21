@@ -245,7 +245,7 @@ namespace Whizbang.Core.Tests.Workers {
           services.AddSingleton<IMessageDiscardPolicy>(sp => new MessageDiscardPolicy(
             new ConsumerRegistry(hasAnyConsumer), NullLogger<MessageDiscardPolicy>.Instance,
             new System.Diagnostics.Metrics.Meter(MessageDiscardPolicy.METER_NAME), Options.Create(routing),
-            new EventMarkerResolver(NullMessageTypeCatalog.Instance)));
+            new EventMarkerResolver(NullMessageTypeCatalog.Instance), global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), global::Whizbang.Core.NullMessageTypeCatalog.Instance));
         }
         await using var provider = services.BuildServiceProvider();
 

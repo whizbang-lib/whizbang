@@ -101,8 +101,8 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   private readonly PassiveCounter<long> _skippedCounter;
   private readonly IReadOnlySet<string> _absorbedNamespaces;
   private readonly IEventMarkerResolver _markerResolver;
-  private readonly Messaging.RetiredEventTypesOptions? _retired;
-  private readonly IMessageTypeCatalog? _catalog;
+  private readonly Messaging.RetiredEventTypesOptions _retired;
+  private readonly IMessageTypeCatalog _catalog;
   // The tag attributes this host has a hook for. A tagged event is work for this host only where
   // one of these is the tag it carries.
   private readonly HashSet<Type> _hookedTagAttributes;
@@ -136,29 +136,31 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   /// recognize composite payload types (which never have receptors — their consumers are the inner
   /// events, addressable only after fan-out) and keep them. Optional — when null, composites are
   /// not exempted (legacy behavior).</param>
+  /// <param name="retired">The retired event types (#2329): discarded at receive whatever else would keep them. Required,
+  /// so a registration cannot leave it unset; the turnkey registration binds it from configuration (empty by default).</param>
+  /// <param name="catalog">This service's message types (#2329): a retired name it still declares is not turned away.
+  /// Required; the defaults register <see cref="NullMessageTypeCatalog"/>.</param>
   /// <param name="coreOptions">Supplies the host's tag hooks, so an event whose only reason to exist
   /// here is a tag this host acts on is kept rather than dropped for having no receptor. Optional —
   /// when null, a tag is no reason to keep anything, which is the behavior that shipped.</param>
-  /// <param name="retired">The retired event types (#2329): discarded at receive whatever else would keep them.
-  /// Optional; when null, nothing is retired. The turnkey registration always passes it.</param>
-  /// <param name="catalog">This service's message types (#2329): a retired name it still declares is not turned away.
-  /// Optional; when null, no retired name is still declared.</param>
   public MessageDiscardPolicy(
       IConsumerRegistry registry,
       ILogger<MessageDiscardPolicy> logger,
       Meter meter,
       IOptions<RoutingOptions> routingOptions,
       IEventMarkerResolver markerResolver,
-      Configuration.WhizbangCoreOptions? coreOptions = null,
-      IOptions<Messaging.RetiredEventTypesOptions>? retired = null,
-      IMessageTypeCatalog? catalog = null) {
+      IOptions<Messaging.RetiredEventTypesOptions> retired,
+      IMessageTypeCatalog catalog,
+      Configuration.WhizbangCoreOptions? coreOptions = null) {
     ArgumentNullException.ThrowIfNull(registry);
     _registry = registry;
     ArgumentNullException.ThrowIfNull(logger);
     _logger = logger;
     ArgumentNullException.ThrowIfNull(meter);
     _markerResolver = markerResolver;
-    _retired = retired?.Value;
+    ArgumentNullException.ThrowIfNull(retired);
+    ArgumentNullException.ThrowIfNull(catalog);
+    _retired = retired.Value;
     _catalog = catalog;
     _absorbedNamespaces = routingOptions.Value.AbsorbedNamespaces;
     _hookedTagAttributes = coreOptions?.Tags.HookRegistrations.Select(h => h.AttributeType).ToHashSet() ?? [];
@@ -204,7 +206,7 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
 
   /// <inheritdoc />
   public bool IsRetired(string payloadClrType) =>
-    _retired is { Names.Count: > 0 } retired && retired.IsRetired(payloadClrType, _catalog);
+    _retired.Names.Count > 0 && _retired.IsRetired(payloadClrType, _catalog);
 
   /// <summary>
   /// True when the payload's event namespace is in <see cref="RoutingOptions.AbsorbedNamespaces"/>. The

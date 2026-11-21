@@ -47,7 +47,7 @@ public class MessageDiscardPolicyTests {
     var registry = new TestRegistry { Consumed = { CONSUMED_TYPE } };
     var logger = new RecordingLogger<MessageDiscardPolicy>();
     var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests");
-    var policy = new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    var policy = new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance), retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
     return (policy, registry, logger, meter);
   }
 
@@ -83,7 +83,7 @@ public class MessageDiscardPolicyTests {
     var logger = new RecordingLogger<MessageDiscardPolicy>();
     var policy = new MessageDiscardPolicy(registry: new TestRegistry { Consumed = { CONSUMED_TYPE } }, logger: logger, meter: meter,
       routingOptions: Options.Create(routing), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      retired: Options.Create(new RetiredEventTypesOptions { Names = { CONSUMED_TYPE } }));
+      retired: Options.Create(new RetiredEventTypesOptions { Names = { CONSUMED_TYPE } }), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
 
     var decision = policy.EvaluateReceive(CONSUMED_TYPE + ", Test.Contracts", topic: "t", subscription: "s");
     policy.RecordDiscard(MessageDiscardGate.Receive, decision, CONSUMED_TYPE);
@@ -125,7 +125,7 @@ public class MessageDiscardPolicyTests {
     routing.AbsorbNamespaces(absorb);
     var registry = new TestRegistry(); // UNCONSUMED_TYPE has NO consumer
     var logger = new RecordingLogger<MessageDiscardPolicy>();
-    return new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(routing), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    return new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(routing), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance), retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
   }
 
   [Test]
@@ -300,7 +300,7 @@ public class MessageDiscardPolicyTests {
     var registry = new TestRegistry(); // composite type has NO consumer — faithful to every service
     var logger = new RecordingLogger<MessageDiscardPolicy>();
     var markerResolver = new EventMarkerResolver(new Whizbang.Core.Generated.GeneratedMessageTypeCatalog());
-    return new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: markerResolver);
+    return new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: markerResolver, retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
   }
 
   [Test]
@@ -414,7 +414,7 @@ public class MessageDiscardPolicyTests {
     listener.Start();
 
     var registry = new TestRegistry { Consumed = { CONSUMED_TYPE } };
-    var policy = new MessageDiscardPolicy(registry: registry, logger: new RecordingLogger<MessageDiscardPolicy>(), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    var policy = new MessageDiscardPolicy(registry: registry, logger: new RecordingLogger<MessageDiscardPolicy>(), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance), retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
     var decision = new MessageDiscardDecision(
       ShouldDiscard: true, MessageDiscardReason.RegistryChanged, Detail: "no consumer registered now");
 

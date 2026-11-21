@@ -200,7 +200,7 @@ public class InboxDispatchWorkerReceptorDenialTests {
         leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
         leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
         receptorRegistry: new PermissiveReceptorRegistryQuery(),
-        discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+        discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance), global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), global::Whizbang.Core.NullMessageTypeCatalog.Instance),
         runtimeReceptorRegistry: NullReceptorRegistry.Instance,
         deadLetterStore: deadLetters ?? DeadLetters,
         generationProvider: new DefaultGenerationProvider());

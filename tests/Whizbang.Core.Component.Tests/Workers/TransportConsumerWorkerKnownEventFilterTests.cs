@@ -160,7 +160,7 @@ public partial class TransportConsumerWorkerKnownEventFilterTests {
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IMessageDiscardPolicy>(new MessageDiscardPolicy(
       noConsumer, NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("known-event-filter-test"),
-      Options.Create(routing), new EventMarkerResolver(NullMessageTypeCatalog.Instance)));
+      Options.Create(routing), new EventMarkerResolver(NullMessageTypeCatalog.Instance), global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), global::Whizbang.Core.NullMessageTypeCatalog.Instance));
     await using var sp = services.BuildServiceProvider();
     var transport = new FilterTransport();
     var worker = _buildWorker(transport, sp);

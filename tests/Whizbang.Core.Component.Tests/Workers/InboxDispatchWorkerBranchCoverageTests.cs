@@ -220,7 +220,8 @@ public class InboxDispatchWorkerBranchCoverageTests {
   private sealed class WorkerParts {
     private static MessageDiscardPolicy _permissiveDiscardPolicy() =>
       new(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new Meter("test"),
-        Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+        Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+        global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), global::Whizbang.Core.NullMessageTypeCatalog.Instance);
 
     public FakeInboxChannelWriter Inbox { get; } = new();
     public FakeHandlerCommitChannel HandlerCommit { get; } = new();

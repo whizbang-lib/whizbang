@@ -107,7 +107,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests {
       services.AddSingleton<IMessageDiscardPolicy>(new MessageDiscardPolicy(
         noConsumer, NullLogger<MessageDiscardPolicy>.Instance,
         new System.Diagnostics.Metrics.Meter("Whizbang.Tests.AbsorbedEventReachesEventStoreTests"), Options.Create(routing),
-        new EventMarkerResolver(NullMessageTypeCatalog.Instance)));
+        new EventMarkerResolver(NullMessageTypeCatalog.Instance), global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), global::Whizbang.Core.NullMessageTypeCatalog.Instance));
       await using var provider = services.BuildServiceProvider();
 
       var transport = new HandingTransport();
