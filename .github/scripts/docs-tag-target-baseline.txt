@@ -1,0 +1,323 @@
+# Dangling <docs> targets that .github/scripts/Test-DocsTagTarget.ps1 tolerates.
+#
+# Format: target | reason
+#   target  the tag's text, trimmed, exactly as written (path, or path#anchor)
+#   reason  what is missing on the docs repository's develop branch
+#
+# Each entry is a target that named no docs-site page, or no heading on its page, when the guard was
+# added (#2495). Fix one by writing the page or heading on the docs site, or by pointing every tag that
+# names it at a page that exists, then delete the entry: the guard fails on an entry whose target now
+# resolves or that no tag names any more, so this list only shrinks. Never add an entry to get a change
+# through.
+
+# Targets with no page (187).
+apis/graphql/authorization#require-permission | no page
+apis/mutations/command-endpoints | no page
+apis/mutations/command-endpoints#dispatch | no page
+apis/mutations/command-endpoints#graphql-mutation | no page
+apis/mutations/command-endpoints#rest-route | no page
+attributes/must-exist | no page
+components/transports/azure-service-bus#sqlfilter-syntax | no page
+components/workers/work-coordinator | no page
+contributors/testing/test-infrastructure#process-runner | no page
+core-concepts/cascade-context#initiating-context | no page
+core-concepts/cascade-context#message-context-new | no page
+core-concepts/dispatcher#deferred-event-channel | no page
+core-concepts/dispatcher#deferred-publishing | no page
+core-concepts/dispatcher#local-invoke-and-sync | no page
+core-concepts/dispatcher#null-envelope-cascade-paths | no page
+core-concepts/dispatcher#perspective-sync | no page
+core-concepts/dispatcher#synchronous-invocation | no page
+core-concepts/event-store-query | no page
+core-concepts/event-store#append-and-wait-callbacks | no page
+core-concepts/lifecycle-receptors | no page
+core-concepts/lifecycle-receptors#stage-isolation | no page
+core-concepts/lifecycle-stages | no page
+core-concepts/lifecycle-stages#immediate-async | no page
+core-concepts/message-associations | no page
+core-concepts/message-context-extraction | no page
+core-concepts/message-security#asynclocal-context-flow | no page
+core-concepts/message-security#automatic-security-propagation | no page
+core-concepts/message-security#exceptions | no page
+core-concepts/message-security#explicit-security-context-api | no page
+core-concepts/message-security#immutable-context | no page
+core-concepts/message-security#integration | no page
+core-concepts/message-security#local-invoke-security | no page
+core-concepts/message-security#message-hop-extractor | no page
+core-concepts/message-security#registration | no page
+core-concepts/message-security#transport-metadata | no page
+core-concepts/message-tags#generated-dispatcher | no page
+core-concepts/model-action | no page
+core-concepts/perspectives/event-completion | no page
+core-concepts/perspectives/perspective-sync | no page
+core-concepts/perspectives/perspective-sync#event-tracking | no page
+core-concepts/perspectives/perspective-sync#sync-context | no page
+core-concepts/perspectives/perspective-sync#tracker-integration | no page
+core-concepts/perspectives/perspective-sync#type-registry | no page
+core-concepts/pinned-identity | no page
+core-concepts/receptors#synchronous-receptors | no page
+core-concepts/scope-propagation | no page
+core-concepts/security-context#perspective-worker-propagation | no page
+data-access/schema-generation-pattern | no page
+data/dapper/sqlite-type-handlers | no page
+diagnostics/WHIZ070 | no page
+diagnostics/WHIZ071 | no page
+diagnostics/whiz090 | no page
+diagnostics/whiz300 | no page
+docs/transport-routing-architecture.md#transport-echo-suppression | no page
+features/debugger-aware-clock | no page
+features/vector-search#auto-config | no page
+fundamentals/dispatcher/projection-sync | no page
+fundamentals/event-store/version-ordering | no page
+fundamentals/events/carry-forward-tier2 | no page
+fundamentals/events/event-store-serialization | no page
+fundamentals/events/retired-event-types | no page
+fundamentals/events/retired-event-types#cursors-and-snapshots | no page
+fundamentals/events/retired-event-types#declaring-a-retired-type | no page
+fundamentals/events/retired-event-types#the-receive-boundary | no page
+fundamentals/events/retired-event-types#what-the-purge-does | no page
+fundamentals/events/type-definition-fingerprint | no page
+fundamentals/hosting/configuration-disposal | no page
+fundamentals/lifecycle/lifecycle-reconciliation | no page
+fundamentals/messages/json-serialization | no page
+fundamentals/messaging/body-offload | no page
+fundamentals/messaging/directed-messages | no page
+fundamentals/messaging/inbox | no page
+fundamentals/messaging/publishing-events | no page
+fundamentals/observability | no page
+fundamentals/offloads/body-offload-hook | no page
+fundamentals/offloads/body-offload-receive | no page
+fundamentals/offloads/di-registration | no page
+fundamentals/offloads/post-serialize-hooks | no page
+fundamentals/perspectives/cursor-inversion | no page
+fundamentals/perspectives/drain-mode | no page
+fundamentals/perspectives/drain-mode#batch-cursor-fetch | no page
+fundamentals/perspectives/drain-mode#lifecycle-skip | no page
+fundamentals/perspectives/drain-mode#sliding-window | no page
+fundamentals/perspectives/efcore-perspectives | no page
+fundamentals/perspectives/perspective-runner | no page
+fundamentals/perspectives/perspective-worker | no page
+fundamentals/perspectives/query-translation | no page
+fundamentals/perspectives/rewind-invariants | no page
+fundamentals/perspectives/transient-storage | no page
+fundamentals/perspectives/typed-accessors | no page
+fundamentals/receptors/raw-receptors | no page
+fundamentals/sagas/saga-events | no page
+fundamentals/security/effective-permissions | no page
+fundamentals/security/effective-permissions#in-memory | no page
+fundamentals/security/jwt-claim-builder | no page
+fundamentals/security/token-refresh | no page
+fundamentals/security/token-refresh#signalr-default | no page
+fundamentals/serialization/type-binding | no page
+fundamentals/tags/tags | no page
+fundamentals/temporal/pre-fire-hook | no page
+fundamentals/temporal/recurrence | no page
+fundamentals/temporal/saga-deadlines | no page
+fundamentals/temporal/temporal-engine | no page
+fundamentals/testing/query-plans | no page
+fundamentals/transport/asb-receive | no page
+fundamentals/transport/message-headers | no page
+fundamentals/work-coordinator/backup-tick-coordinator | no page
+fundamentals/work-coordinator/claim-cadence | no page
+fundamentals/work-coordinator/commit-handler-batch | no page
+fundamentals/work-coordinator/idle-activity-tracking | no page
+fundamentals/work-coordinator/inbox-drain | no page
+fundamentals/work-coordinator/lease-cancellation | no page
+fundamentals/work-coordinator/maintenance | no page
+fundamentals/work-coordinator/notify-instance-owners | no page
+fundamentals/work-coordinator/outbox-publish | no page
+fundamentals/work-coordinator/scheduled-retries | no page
+fundamentals/work-coordinator/strategies | no page
+fundamentals/work-coordinator/stream-ownership | no page
+fundamentals/work-coordinator/transport-publish-strategy | no page
+fundamentals/work-coordinator/work-pump | no page
+internals/message-discard-policy | no page
+internals/ordering-invariant | no page
+internals/stream-affinity | no page
+lenses/lens-query-factory | no page
+messaging/dead-letters | no page
+messaging/inbox-channel | no page
+messaging/transports/dlq-push-subscription | no page
+messaging/transports/transport-consumer-readiness | no page
+messaging/transports/transport-options | no page
+migrate-from-marten-wolverine/cli-wizard | no page
+migrate-from-marten-wolverine/cli-wizard#domain-ownership | no page
+migrate-from-marten-wolverine/cli-wizard#inbox-strategy | no page
+migrate-from-marten-wolverine/cli-wizard#project-management | no page
+migrate-from-marten-wolverine/cli-wizard#schema-configuration | no page
+migration-guide/automated-migration | no page
+migration-guide/automated-migration#domain-ownership-detection | no page
+migration-guide/automated-migration#guid-to-trackedguid | no page
+migration-guide/automated-migration#stream-id-detection | no page
+migration-guide/automated-migration#tenant-context-detection | no page
+migration-guide/json-migration | no page
+observability/metrics | no page
+observability/tracing#perspective-sync | no page
+offloads | no page
+operations/configuration/connection-tuning | no page
+operations/configuration/dependency-injection#multiple-addwhizbang-calls | no page
+operations/dead-letter-queue/error-fingerprinting | no page
+operations/dead-letter-queue/metrics | no page
+operations/dead-letter-queue/outbox-dlq-promotion | no page
+operations/dead-letter-queue/summary-aggregation | no page
+operations/diagnostics/health-probes | no page
+operations/infrastructure/partitioning | no page
+operations/maintenance | no page
+operations/observability/logging#startup | no page
+operations/observability/receptor-logging | no page
+operations/observability/tracing-attributes | no page
+operations/testing/chaos-injection | no page
+operations/testing/receptor-firing-observer | no page
+operations/workers/claim-worker | no page
+operations/workers/concurrency-governor | no page
+operations/workers/outbox-publish-worker#processing-hooks | no page
+operations/workers/processing-hooks | no page
+operations/workers/publisher-worker | no page
+operations/workers/publisher-worker#immediate-poll | no page
+operations/workers/stuck-rows | no page
+operations/workers/transport-consumer | no page
+perspectives/physical-fields | no page
+perspectives/polymorphic-discriminator | no page
+perspectives/sync | no page
+perspectives/vector-fields | no page
+proposals/stream-integrity | no page
+resilience/circuit-breaker | no page
+resilience/stream-rate-limiter | no page
+source-generators/json-contexts | no page
+testing/lifecycle-synchronization | no page
+testing/multi-service-harness | no page
+transports/azure-service-bus | no page
+workers/perspective-worker#security-context | no page
+workers/service-bus-consumer-worker#full-context-establishment | no page
+workers/service-bus-consumer-worker#message-context | no page
+workers/service-bus-consumer-worker#missing-security-context | no page
+workers/service-bus-consumer-worker#scope-context | no page
+workers/service-bus-consumer-worker#security-context | no page
+workers/transport-consumer-worker#full-context-establishment | no page
+workers/transport-consumer-worker#message-context | no page
+workers/transport-consumer-worker#missing-security-context | no page
+workers/transport-consumer-worker#scope-context-establishment | no page
+workers/transport-consumer-worker#security-context | no page
+
+# Pages that exist without the anchor (121).
+apis/graphql/scoping#claim-aggregation | no such heading on v1.0.0/apis/graphql/scoping.md
+apis/graphql/scoping#middleware | no such heading on v1.0.0/apis/graphql/scoping.md
+apis/graphql/scoping#options | no such heading on v1.0.0/apis/graphql/scoping.md
+apis/graphql/setup#configuration | no such heading on v1.0.0/apis/graphql/setup.md
+data/event-store#row-values | no such heading on v1.0.0/data/event-store.md
+data/event-store#trim-gate | no such heading on v1.0.0/data/event-store.md
+data/turnkey-initialization#multi-instance | no such heading on v1.0.0/data/turnkey-initialization.md
+fundamentals/dispatcher/dispatcher#cascade-default-dispatch | no such heading on v1.0.0/fundamentals/dispatcher/dispatcher.md
+fundamentals/dispatcher/dispatcher#deferred-publishing | no such heading on v1.0.0/fundamentals/dispatcher/dispatcher.md
+fundamentals/dispatcher/dispatcher#local-invoke-and-sync-perspective | no such heading on v1.0.0/fundamentals/dispatcher/dispatcher.md
+fundamentals/dispatcher/dispatcher#localinvokeasync | no such heading on v1.0.0/fundamentals/dispatcher/dispatcher.md
+fundamentals/dispatcher/dispatcher#localsendmanyasync | no such heading on v1.0.0/fundamentals/dispatcher/dispatcher.md
+fundamentals/dispatcher/dispatcher#null-envelope-cascade-paths | no such heading on v1.0.0/fundamentals/dispatcher/dispatcher.md
+fundamentals/dispatcher/dispatcher#publishmanyasync | no such heading on v1.0.0/fundamentals/dispatcher/dispatcher.md
+fundamentals/dispatcher/dispatcher#sendmanyasync | no such heading on v1.0.0/fundamentals/dispatcher/dispatcher.md
+fundamentals/dispatcher/dispatcher#synchronous-invocation | no such heading on v1.0.0/fundamentals/dispatcher/dispatcher.md
+fundamentals/dispatcher/dispatcher#void-cascade | no such heading on v1.0.0/fundamentals/dispatcher/dispatcher.md
+fundamentals/dispatcher/message-cascade#cascade-to-outbox | no such heading on v1.0.0/fundamentals/dispatcher/message-cascade.md
+fundamentals/dispatcher/message-cascade#routed-message-cascading | no such heading on v1.0.0/fundamentals/dispatcher/message-cascade.md
+fundamentals/dispatcher/routing#control-class | no such heading on v1.0.0/fundamentals/dispatcher/routing.md
+fundamentals/dispatcher/routing#dispatch-context | no such heading on v1.0.0/fundamentals/dispatcher/routing.md
+fundamentals/dispatcher/routing#envelope-versioning | no such heading on v1.0.0/fundamentals/dispatcher/routing.md
+fundamentals/dispatcher/routing#namespace-outbox | no such heading on v1.0.0/fundamentals/dispatcher/routing.md
+fundamentals/dispatcher/routing#topology-manifest | no such heading on v1.0.0/fundamentals/dispatcher/routing.md
+fundamentals/events/event-store#append-batch | no such heading on v1.0.0/fundamentals/events/event-store.md
+fundamentals/events/event-upcasting#a-new-field-with-a-fixed-default | no such heading on v1.0.0/fundamentals/events/event-upcasting.md
+fundamentals/events/stream-id#validation | no such heading on v1.0.0/fundamentals/events/stream-id.md
+fundamentals/events/system-events#audit-builder | no such heading on v1.0.0/fundamentals/events/system-events.md
+fundamentals/events/system-events#audit-mode | no such heading on v1.0.0/fundamentals/events/system-events.md
+fundamentals/events/system-events#audit-model | no such heading on v1.0.0/fundamentals/events/system-events.md
+fundamentals/events/system-events#audit-projection | no such heading on v1.0.0/fundamentals/events/system-events.md
+fundamentals/events/system-events#audit-shipping | no such heading on v1.0.0/fundamentals/events/system-events.md
+fundamentals/events/system-events#perspective-index-advised | no such heading on v1.0.0/fundamentals/events/system-events.md
+fundamentals/events/system-events#subscribe-to-audit | no such heading on v1.0.0/fundamentals/events/system-events.md
+fundamentals/identity/whizbang-ids#suppress-interception | no such heading on v1.0.0/fundamentals/identity/whizbang-ids.md
+fundamentals/identity/whizbang-ids#suppress-ordering-validation | no such heading on v1.0.0/fundamentals/identity/whizbang-ids.md
+fundamentals/lenses/scoped-queries#scope-override | no such heading on v1.0.0/fundamentals/lenses/scoped-queries.md
+fundamentals/lifecycle/lifecycle-coordinator#context | no such heading on v1.0.0/fundamentals/lifecycle/lifecycle-coordinator.md
+fundamentals/lifecycle/lifecycle-coordinator#diagnostics | no such heading on v1.0.0/fundamentals/lifecycle/lifecycle-coordinator.md
+fundamentals/lifecycle/lifecycle-coordinator#perspective-context | no such heading on v1.0.0/fundamentals/lifecycle/lifecycle-coordinator.md
+fundamentals/lifecycle/lifecycle-coordinator#tracking | no such heading on v1.0.0/fundamentals/lifecycle/lifecycle-coordinator.md
+fundamentals/lifecycle/lifecycle-coordinator#tracking-state | no such heading on v1.0.0/fundamentals/lifecycle/lifecycle-coordinator.md
+fundamentals/lifecycle/lifecycle-coordinator#whenall | no such heading on v1.0.0/fundamentals/lifecycle/lifecycle-coordinator.md
+fundamentals/lifecycle/lifecycle-stages#post-all-perspectives | no such heading on v1.0.0/fundamentals/lifecycle/lifecycle-stages.md
+fundamentals/messages/message-tags#coalescing | no such heading on v1.0.0/fundamentals/messages/message-tags.md
+fundamentals/messages/message-tags#configuration | no such heading on v1.0.0/fundamentals/messages/message-tags.md
+fundamentals/messages/message-tags#system-tags | no such heading on v1.0.0/fundamentals/messages/message-tags.md
+fundamentals/messages/message-tags#transport-namespace-routing | no such heading on v1.0.0/fundamentals/messages/message-tags.md
+fundamentals/messages/message-tags#validation | no such heading on v1.0.0/fundamentals/messages/message-tags.md
+fundamentals/messaging/composite-events#dispatch-fanout | no such heading on v1.0.0/fundamentals/messaging/composite-events.md
+fundamentals/messaging/composite-events#fanout-control | no such heading on v1.0.0/fundamentals/messaging/composite-events.md
+fundamentals/messaging/composite-events#no-rebroadcast | no such heading on v1.0.0/fundamentals/messaging/composite-events.md
+fundamentals/messaging/composite-events#pre-fanout | no such heading on v1.0.0/fundamentals/messaging/composite-events.md
+fundamentals/messaging/composite-events#treatment-flags | no such heading on v1.0.0/fundamentals/messaging/composite-events.md
+fundamentals/messaging/message-priority#the-idle-band | no such heading on v1.0.0/fundamentals/messaging/message-priority.md
+fundamentals/offloads/providers/azure-blob#emulator | no such heading on v1.0.0/fundamentals/offloads/providers/azure-blob.md
+fundamentals/perspectives/perspective-sync#callbacks | no such heading on v1.0.0/fundamentals/perspectives/perspective-sync.md
+fundamentals/perspectives/perspective-sync#stream-based | no such heading on v1.0.0/fundamentals/perspectives/perspective-sync.md
+fundamentals/perspectives/perspective-sync#tracked-events | no such heading on v1.0.0/fundamentals/perspectives/perspective-sync.md
+fundamentals/perspectives/perspectives#rebuild-events | no such heading on v1.0.0/fundamentals/perspectives/perspectives.md
+fundamentals/perspectives/perspectives#rewind-events | no such heading on v1.0.0/fundamentals/perspectives/perspectives.md
+fundamentals/perspectives/perspectives#scope-handling | no such heading on v1.0.0/fundamentals/perspectives/perspectives.md
+fundamentals/perspectives/perspectives#status-model | no such heading on v1.0.0/fundamentals/perspectives/perspectives.md
+fundamentals/perspectives/rewind#a-rewind-that-changes-nothing-is-settled | no such heading on v1.0.0/fundamentals/perspectives/rewind.md
+fundamentals/perspectives/rewind#stream-events | no such heading on v1.0.0/fundamentals/perspectives/rewind.md
+fundamentals/receptors/lifecycle-receptors#replay-safety | no such heading on v1.0.0/fundamentals/receptors/lifecycle-receptors.md
+fundamentals/security/audit-logging#audit-shipping | no such heading on v1.0.0/fundamentals/security/audit-logging.md
+fundamentals/security/message-security#asynclocal-context-flow | no such heading on v1.0.0/fundamentals/security/message-security.md
+fundamentals/security/message-security#lifecycle-receptors | no such heading on v1.0.0/fundamentals/security/message-security.md
+fundamentals/security/scope-propagation#cross-tenant-impersonation | no such heading on v1.0.0/fundamentals/security/scope-propagation.md
+fundamentals/security/scope-propagation#cross-tenant-operations | no such heading on v1.0.0/fundamentals/security/scope-propagation.md
+fundamentals/security/scope-propagation#preserve-ambient-tenant | no such heading on v1.0.0/fundamentals/security/scope-propagation.md
+fundamentals/security/scope-propagation#tenant-scoped-impersonation | no such heading on v1.0.0/fundamentals/security/scope-propagation.md
+fundamentals/security/scope-propagation#tenant-scoped-system-operations | no such heading on v1.0.0/fundamentals/security/scope-propagation.md
+fundamentals/security/scoping#composable-filters | no such heading on v1.0.0/fundamentals/security/scoping.md
+fundamentals/security/scoping#scope-events | no such heading on v1.0.0/fundamentals/security/scoping.md
+fundamentals/security/scoping#stream-scope-events | no such heading on v1.0.0/fundamentals/security/scoping.md
+fundamentals/security/scoping#update-stream-scope | no such heading on v1.0.0/fundamentals/security/scoping.md
+fundamentals/security/security#permission-based-rls | no such heading on v1.0.0/fundamentals/security/security.md
+fundamentals/work-coordinator/commit-sequence#polling-cadence | no such heading on v1.0.0/fundamentals/work-coordinator/commit-sequence.md
+fundamentals/work-coordinator/configuration-reference#backup-tick-coordinator | no such heading on v1.0.0/fundamentals/work-coordinator/configuration-reference.md
+fundamentals/work-coordinator/configuration-reference#command-timeout | no such heading on v1.0.0/fundamentals/work-coordinator/configuration-reference.md
+fundamentals/work-coordinator/configuration-reference#max-in-flight-commands | no such heading on v1.0.0/fundamentals/work-coordinator/configuration-reference.md
+fundamentals/work-coordinator/handler-commit#bulk-path | no such heading on v1.0.0/fundamentals/work-coordinator/handler-commit.md
+fundamentals/work-coordinator/notifications-and-pgbouncer#tcp-keepalive | no such heading on v1.0.0/fundamentals/work-coordinator/notifications-and-pgbouncer.md
+fundamentals/work-coordinator/per-stream-drain#cross-stream-parallelism | no such heading on v1.0.0/fundamentals/work-coordinator/per-stream-drain.md
+messaging/inbox-pattern#source-identity | no such heading on v1.0.0/messaging/inbox-pattern.md
+messaging/transports/azure-service-bus#batch-subscribe | no such heading on v1.0.0/messaging/transports/azure-service-bus.md
+messaging/transports/azure-service-bus#dead-lettering | no such heading on v1.0.0/messaging/transports/azure-service-bus.md
+messaging/transports/azure-service-bus#prefetch | no such heading on v1.0.0/messaging/transports/azure-service-bus.md
+messaging/transports/azure-service-bus#publish-concurrency | no such heading on v1.0.0/messaging/transports/azure-service-bus.md
+messaging/transports/azure-service-bus#transport-namespaces | no such heading on v1.0.0/messaging/transports/azure-service-bus.md
+messaging/transports/rabbitmq#batch-receive | no such heading on v1.0.0/messaging/transports/rabbitmq.md
+messaging/transports/rabbitmq#batch-subscribe | no such heading on v1.0.0/messaging/transports/rabbitmq.md
+messaging/transports/rabbitmq#channels | no such heading on v1.0.0/messaging/transports/rabbitmq.md
+messaging/transports/rabbitmq#dead-lettering | no such heading on v1.0.0/messaging/transports/rabbitmq.md
+messaging/transports/rabbitmq#prefetch | no such heading on v1.0.0/messaging/transports/rabbitmq.md
+messaging/transports/rabbitmq#transport-namespaces | no such heading on v1.0.0/messaging/transports/rabbitmq.md
+messaging/transports/transport-consumer#batch-options | no such heading on v1.0.0/messaging/transports/transport-consumer.md
+messaging/transports/transport-consumer#batch-receive | no such heading on v1.0.0/messaging/transports/transport-consumer.md
+messaging/transports/transport-consumer#concurrency | no such heading on v1.0.0/messaging/transports/transport-consumer.md
+messaging/transports/transport-consumer#message-processing-options | no such heading on v1.0.0/messaging/transports/transport-consumer.md
+messaging/transports/transports#batch-subscribe | no such heading on v1.0.0/messaging/transports/transports.md
+messaging/transports/transports#max-message-size | no such heading on v1.0.0/messaging/transports/transports.md
+messaging/transports/transports#transport-namespaces | no such heading on v1.0.0/messaging/transports/transports.md
+messaging/work-coordinator#channel-routing | no such heading on v1.0.0/messaging/work-coordinator.md
+messaging/work-coordinator#inbox-completions | no such heading on v1.0.0/messaging/work-coordinator.md
+messaging/work-coordinator#skip-inbox-claiming | no such heading on v1.0.0/messaging/work-coordinator.md
+operations/configuration/configuration-reference#body-offload | no such heading on v1.0.0/operations/configuration/configuration-reference.md
+operations/configuration/configuration-reference#dead-letter-recovery | no such heading on v1.0.0/operations/configuration/configuration-reference.md
+operations/configuration/whizbang-options#banner | no such heading on v1.0.0/operations/configuration/whizbang-options.md
+operations/diagnostics/whiz070#suppression | no such heading on v1.0.0/operations/diagnostics/whiz070.md
+operations/infrastructure/capabilities#descriptor | no such heading on v1.0.0/operations/infrastructure/capabilities.md
+operations/infrastructure/migrations#migration-events | no such heading on v1.0.0/operations/infrastructure/migrations.md
+operations/infrastructure/partitioned-ledgers#lifecycle-completions | no such heading on v1.0.0/operations/infrastructure/partitioned-ledgers.md
+operations/observability/metrics#notify-debounce | no such heading on v1.0.0/operations/observability/metrics.md
+operations/observability/tracing#parent-context | no such heading on v1.0.0/operations/observability/tracing.md
+operations/observability/tracing#perspective-sync | no such heading on v1.0.0/operations/observability/tracing.md
+operations/workers/perspective-worker#rewind-flow | no such heading on v1.0.0/operations/workers/perspective-worker.md
+operations/workers/perspective-worker#rewind-replay | no such heading on v1.0.0/operations/workers/perspective-worker.md
+resilience/stream-integrity#retired-event-types | no such heading on v1.0.0/resilience/stream-integrity.md
