@@ -68,9 +68,24 @@
     <Message Text="ILRepack: Merging Whizbang.Generators.Shared.dll into $(TargetName)$(TargetExt)" Importance="High" />
     <Message Text="ILRepack: Search directories = $(_ILRepackSearchDirs)" Importance="High" />
 
+    <!-- The package's copy, merged without symbols from the same inputs before the in-place merge replaces them: ILRepack
+         writes the symbol file's path, under a per-run temp folder, into the assembly, so only this merge is identical
+         in two builds of one commit (#2484). The package ships it (WhizbangPackagedAnalyzer, Directory.Build.targets). -->
+    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(WhizbangPackagedAnalyzer)'))" />
     <ILRepack
       Parallel="true"
-      DebugInfo="$(WhizbangILRepackDebugInfo)"
+      DebugInfo="false"
+      Internalize="false"
+      InputAssemblies="@(InputAssemblies)"
+      TargetKind="SameAsPrimaryAssembly"
+      OutputFile="$(WhizbangPackagedAnalyzer)"
+      KeyFile="$(AssemblyOriginatorKeyFile)"
+      LibraryPath="$(OutputPath);$(_ILRepackSearchDirs)"
+    />
+    <!-- The tests' copy, with symbols: coverage of the Whizbang.Generators.Shared code merged into it needs them. -->
+    <ILRepack
+      Parallel="true"
+      DebugInfo="true"
       Internalize="false"
       InputAssemblies="@(InputAssemblies)"
       TargetKind="SameAsPrimaryAssembly"
@@ -81,6 +96,7 @@
     <Touch Files="$(IntermediateOutputPath)$(TargetName).merged.stamp" AlwaysCreate="true" />
     <ItemGroup>
       <FileWrites Include="$(IntermediateOutputPath)$(TargetName).merged.stamp" />
+      <FileWrites Include="$(WhizbangPackagedAnalyzer)" />
     </ItemGroup>
   </Target>
 

@@ -40,7 +40,7 @@
   <!-- Target to add the merged analyzer DLL to the package -->
   <Target Name="PackAnalyzerDll">
     <ItemGroup>
-      <TfmSpecificPackageFile Include="$(TargetPath)" PackagePath="analyzers/dotnet/cs/" />
+      <TfmSpecificPackageFile Include="$(WhizbangPackagedAnalyzer)" PackagePath="analyzers/dotnet/cs/" />
     </ItemGroup>
   </Target>
 

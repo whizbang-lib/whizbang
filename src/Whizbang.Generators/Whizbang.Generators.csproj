@@ -43,7 +43,7 @@
       <_CodeFixesDll>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\Whizbang.Generators.CodeFixes\bin\$(Configuration)\netstandard2.0\Whizbang.Generators.CodeFixes.dll'))</_CodeFixesDll>
     </PropertyGroup>
     <ItemGroup>
-      <TfmSpecificPackageFile Include="$(TargetPath)" PackagePath="analyzers/dotnet/cs/" />
+      <TfmSpecificPackageFile Include="$(WhizbangPackagedAnalyzer)" PackagePath="analyzers/dotnet/cs/" />
       <TfmSpecificPackageFile Include="$(_CodeFixesDll)" PackagePath="analyzers/dotnet/cs/" Condition="Exists('$(_CodeFixesDll)')" />
     </ItemGroup>
     <Warning Text="Whizbang.Generators.CodeFixes.dll not found at $(_CodeFixesDll); the PinnedIdCodeFixProvider will not be packaged. Build Whizbang.Generators.CodeFixes before packing Whizbang.Generators." Condition="!Exists('$(_CodeFixesDll)')" />

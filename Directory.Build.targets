@@ -172,4 +172,18 @@
        nuget.org to download, so restore would fail (NU1101). It is still validated, against itself; after its first
        stable release, delete the property so it is compared like every other package (docs/RELEASING.md,
        "Public API baseline"). -->
+
+  <!-- Reproducible generator packages (#2484). A generator that ILRepack merges is merged twice from one compiler output,
+       in its ILRepack.targets: in place with symbols, which the tests and coverage run, and here without symbols, which
+       its package ships. ILRepack writes the symbol file's path, under a per-run temp folder, into the assembly, so only
+       the merge without symbols is identical in two builds. Pack reads this file whether or not it rebuilds (CI packs
+       the tested build with no-build), and fails rather than pack without it.
+       .github/scripts/tests/ReproducibleBuildSettings.Tests.ps1 fails if either merge or the pack item changes. -->
+  <PropertyGroup Condition="'$(ILRepackEnabled)' == 'true'">
+    <WhizbangPackagedAnalyzer>$(MSBuildProjectDirectory)/$(IntermediateOutputPath)packaged/$(TargetName)$(TargetExt)</WhizbangPackagedAnalyzer>
+  </PropertyGroup>
+  <Target Name="WhizbangRequirePackagedAnalyzer" BeforeTargets="GenerateNuspec" Condition="'$(ILRepackEnabled)' == 'true'">
+    <Error Condition="!Exists('$(WhizbangPackagedAnalyzer)')"
+           Text="$(WhizbangPackagedAnalyzer) is missing: build $(MSBuildProjectName) before packing it, so its package ships the generator merged without symbols." />
+  </Target>
 </Project>

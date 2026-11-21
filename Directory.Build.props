@@ -98,11 +98,6 @@
     <Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
     <DeterministicTimestamp Condition="'$(DeterministicTimestamp)' == ''">2000-01-01T00:00:00Z</DeterministicTimestamp>
-    <!-- ILRepack writes the merged symbol file's path, under a per-run temp folder, into the generator assembly, so a
-         CI build merges without symbols. A local build keeps them, so a generator can still be debugged; the
-         generator packages ship no symbols either way. -->
-    <WhizbangILRepackDebugInfo Condition="'$(WhizbangILRepackDebugInfo)' == '' and '$(ContinuousIntegrationBuild)' == 'true'">false</WhizbangILRepackDebugInfo>
-    <WhizbangILRepackDebugInfo Condition="'$(WhizbangILRepackDebugInfo)' == ''">true</WhizbangILRepackDebugInfo>
   </PropertyGroup>
 
   <!-- Strong naming: identity, not security — the modern .NET runtime never validates
