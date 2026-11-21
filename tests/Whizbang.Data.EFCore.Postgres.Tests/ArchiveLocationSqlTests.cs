@@ -13,6 +13,9 @@ using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
+// Plain http endpoints are the subject here (the storage emulator, and the default-port rule for http): no request is sent.
+#pragma warning disable S5332
+
 /// <summary>
 /// Archive locations (#2137, migration 353) against a database the EF Core driver migrated: legacy locators are split
 /// into a location per container and a path from the stream, an older instance's locator-only write is given the same,
@@ -292,5 +295,123 @@ public class ArchiveLocationSqlTests : EFCoreTestBase {
         "SELECT concat_ws('|', location_id, relative_path, COALESCE(locator, '<none>')) FROM wh_archive_object_deletions"))
       .IsEquivalentTo([$"{location}|{stream:D}/one.jsonl.br|<none>"])
       .Because("the queue keeps what the store checks before it deletes: the location and the path from the stream");
+  }
+
+  // ── Normalized pins (#2141, migration 553) ──────────────────────────────────────────────────────────
+
+  // The endpoints and names ArchiveLocationNormalizationTests holds the library to, and some it keeps apart.
+  private static readonly string?[] _endpoints = [
+    null, "https://account.blob.core.windows.net", "HTTPS://Account.Blob.Core.Windows.NET", "https://account.blob.core.windows.net/",
+    "https://account.blob.core.windows.net//", " \thttps://account.blob.core.windows.net \r\n", "https://account.blob.core.windows.net:443",
+    "https://ACCOUNT.blob.core.windows.net:443/", "http://127.0.0.1:80/devstoreaccount1", "http://127.0.0.1:10000/DevStoreAccount1/",
+    "http://[::1]:80/devstoreaccount1", "http://account.blob.core.windows.net", "https://account.blob.core.windows.net:4430",
+    "https://account.blob.core.windows.net:8443", "http://account.blob.core.windows.net:443", "https://account:80", "ftp://account:443",
+    "https://account-secondary.blob.core.windows.net", "https://account.blob.core.windows.net/account2", "",
+  ];
+
+  private static readonly string?[] _names = [null, "archive", " Archive ", "ARCHIVE-A", "\tdefault\r\n", ""];
+
+  [Test]
+  public async Task Normalize_InSql_IsTheLibrarysNormalization_ForEveryCaseAsync() {
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+
+    foreach (var endpoint in _endpoints) {
+      await Assert.That((string?)await _scalarAsync(connection, "SELECT _wh_normalize_archive_endpoint($1::text)", endpoint))
+        .IsEqualTo(ArchiveLocation.NormalizeEndpoint(endpoint)).Because($"endpoint '{endpoint}' normalizes the same in both places");
+    }
+    foreach (var name in _names) {
+      await Assert.That((string?)await _scalarAsync(connection, "SELECT _wh_normalize_archive_name($1::text)", name))
+        .IsEqualTo(ArchiveLocation.NormalizeName(name)).Because($"name '{name}' normalizes the same in both places");
+    }
+  }
+
+  [Test]
+  public async Task LocationId_FindsALocationWrittenAnotherWay_AndRepointStoresItNormalizedAsync() {
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+
+    var created = await _locationIdAsync(connection, "https://a.blob.core.windows.net", "archive", "archive-a", create: true);
+    var found = await _locationIdAsync(connection, " HTTPS://A.Blob.Core.Windows.Net:443/ ", " Archive", "ARCHIVE-A", create: false);
+    var notCreatedAgain = await _locationIdAsync(connection, "https://a.blob.core.windows.net/", "ARCHIVE", "archive-a ", create: true);
+    var repointed = (long?)await _scalarAsync(connection, "SELECT wh_repoint_archive_location($1, ' Azure-Blob', $2, $3, $4)",
+      created, "HTTPS://DR.blob.core.windows.net/", " Archive ", "Archive-DR");
+    var foundAfterRepoint = await _locationIdAsync(connection, "https://dr.blob.core.windows.net", "archive", "archive-dr", create: false);
+
+    await Assert.That(found).IsEqualTo(created).Because("a location written another way is the same location");
+    await Assert.That(notCreatedAgain).IsEqualTo(created);
+    await Assert.That(repointed).IsEqualTo(created);
+    await Assert.That(foundAfterRepoint).IsEqualTo(created);
+    await Assert.That(await _locationsAsync(connection)).IsEquivalentTo(["https://dr.blob.core.windows.net|archive|archive-dr"]);
+    await Assert.That(await _rowsAsync(connection, "SELECT provider FROM wh_archive_locations")).IsEquivalentTo(["azure-blob"]);
+  }
+
+  [Test]
+  public async Task Locations_AreStoredNormalized_WhateverWritesThemAsync() {
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+
+    await _executeAsync(connection,
+      "INSERT INTO wh_archive_locations (provider, account_endpoint, connection_name, container) " +
+      "VALUES ('Azure-Blob', 'HTTPS://A.blob.core.windows.net:443/', ' Archive ', 'Archive-A')");
+    await _executeAsync(connection,
+      "INSERT INTO wh_archive_locations (provider, account_endpoint, connection_name, container) VALUES ('azure-blob', NULL, NULL, ' Archive-B')");
+    var inserted = await _locationsAsync(connection);
+    await _executeAsync(connection, "UPDATE wh_archive_locations SET account_endpoint = 'HTTP://B.blob.core.windows.net:80//' WHERE container = 'archive-a'");
+
+    await Assert.That(inserted).IsEquivalentTo(["https://a.blob.core.windows.net|archive|archive-a", "-|-|archive-b"],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching).Because("an operator's own insert is stored as the pin it means");
+    await Assert.That(await _locationsAsync(connection)).IsEquivalentTo(["http://b.blob.core.windows.net|archive|archive-a", "-|-|archive-b"],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching).Because("so is an operator's own update, the documented repoint by hand");
+  }
+
+  [Test]
+  public async Task NormalizeLocations_MergesTheRowsThatAreOneLocation_AndKeepsEveryRecordAsync() {
+    await using var ctx = CreateDbContext();
+    var connection = await _openAsync(ctx);
+    var stream = await _archivedStreamAsync(connection);
+    // Rows as a database holds them from before 553: written as they were configured, not normalized.
+    await _executeAsync(connection, "ALTER TABLE wh_archive_locations DISABLE TRIGGER wh_archive_locations_normalize_trg");
+    async Task<long> insertAsync(string? endpoint, string? name, string container) =>
+      (long)(await _scalarAsync(connection,
+        "INSERT INTO wh_archive_locations (provider, account_endpoint, connection_name, container) VALUES ('azure-blob', $1::text, $2::text, $3) " +
+        "RETURNING location_id", endpoint, name, container))!;
+    var upperFirst = await insertAsync("HTTPS://A.blob.core.windows.net/", "Archive", "archive-a");
+    var normal = await insertAsync("https://a.blob.core.windows.net", "archive", "archive-a");
+    var portAndSpace = await insertAsync(" https://a.blob.core.windows.net:443", "ARCHIVE ", "Archive-A");
+    var legacy = await insertAsync(null, null, "Archive-B");
+    var otherAccount = await insertAsync("https://b.blob.core.windows.net", "Archive", "archive-b");
+    var neitherNormalA = await insertAsync("https://c.blob.core.windows.net/", "X", "c");
+    var neitherNormalB = await insertAsync("HTTPS://c.blob.core.windows.net", "x ", "C");
+    await _executeAsync(connection, "ALTER TABLE wh_archive_locations ENABLE TRIGGER wh_archive_locations_normalize_trg");
+    await _rowAsync(connection, stream, 1, upperFirst, $"{stream:D}/one.jsonl.br");
+    await _rowAsync(connection, stream, 2, portAndSpace, $"{stream:D}/two.jsonl.br");
+    await _rowAsync(connection, stream, 3, legacy, $"{stream:D}/three.jsonl.br");
+    await _rowAsync(connection, stream, 4, neitherNormalB, $"{stream:D}/four.jsonl.br");
+    await _executeAsync(connection,
+      "INSERT INTO wh_archive_object_deletions (stream_id, location_id, relative_path) VALUES ($1, $2, 'dup'), ($1, $3, 'dup'), ($1, $4, 'own')",
+      stream, upperFirst, normal, otherAccount);
+
+    var changed = (long)(await _scalarAsync(connection, "SELECT wh_normalize_archive_locations()"))!;
+    var changedAgain = (long)(await _scalarAsync(connection, "SELECT wh_normalize_archive_locations()"))!;
+
+    await Assert.That(await _locationsAsync(connection)).IsEquivalentTo([
+        "https://a.blob.core.windows.net|archive|archive-a", "-|-|archive-b", "https://b.blob.core.windows.net|archive|archive-b",
+        "https://c.blob.core.windows.net|x|c",
+      ], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("one row per location once normalized: a row already in normal form absorbs the others, else the first one written does");
+    await Assert.That(await _rowsAsync(connection,
+        "SELECT concat_ws('|', first_version, location_id, relative_path) FROM wh_archive_manifest ORDER BY first_version"))
+      .IsEquivalentTo([
+        $"1|{normal}|{stream:D}/one.jsonl.br", $"2|{normal}|{stream:D}/two.jsonl.br", $"3|{legacy}|{stream:D}/three.jsonl.br",
+        $"4|{neitherNormalA}|{stream:D}/four.jsonl.br",
+      ], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("every record written before the pin was normalized keeps working: it names the one location it always meant");
+    await Assert.That(await _rowsAsync(connection,
+        "SELECT concat_ws('|', location_id, relative_path) FROM wh_archive_object_deletions ORDER BY relative_path"))
+      .IsEquivalentTo([$"{normal}|dup", $"{otherAccount}|own"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("an object queued under two rows that are one location is one queued object");
+    await Assert.That(changed).IsEqualTo(6L).Because("three merged into another row, three rewritten in place");
+    await Assert.That(changedAgain).IsEqualTo(0L).Because("a re-run finds every row normalized");
   }
 }

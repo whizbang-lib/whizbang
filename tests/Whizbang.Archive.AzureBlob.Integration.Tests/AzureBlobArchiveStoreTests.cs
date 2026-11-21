@@ -68,10 +68,16 @@ public partial class AzureBlobArchiveStoreTests {
 
   private AzureBlobArchiveStore _store(
       int maxEventsPerChunk = 2, HttpPipelinePolicy? fault = null, string? container = null, ILogger<AzureBlobArchiveStore>? logger = null,
-      string? connectionString = null, PostgresArchiveConnection? database = null, bool verifyLocation = true) {
+      string? connectionString = null, PostgresArchiveConnection? database = null,
+      ArchiveLocationMismatchHandling locationMismatch = ArchiveLocationMismatchHandling.Error, string? connectionName = null) {
     var client = _container(container, fault, connectionString);
     return new(database ?? _database(), client,
-      new AzureBlobArchiveOptions { MaxEventsPerChunk = maxEventsPerChunk, ContainerName = client.Name, VerifyLocation = verifyLocation },
+      new AzureBlobArchiveOptions {
+        MaxEventsPerChunk = maxEventsPerChunk,
+        ContainerName = client.Name,
+        LocationMismatch = locationMismatch,
+        ConnectionName = connectionName ?? AzureBlobArchiveOptions.DEFAULT_CONNECTION_NAME,
+      },
       logger);
   }
 
@@ -620,7 +626,11 @@ public partial class AzureBlobArchiveStoreTests {
   }
 
   [Test]
-  public async Task VerifyLocationOff_AMismatchedRecord_IsRead_Restored_AndDeleted_InTheConfiguredLocationOnlyAsync() {
+  [Arguments(ArchiveLocationMismatchHandling.Warning)]
+  [Arguments(ArchiveLocationMismatchHandling.Info)]
+  [Arguments(ArchiveLocationMismatchHandling.Ignore)]
+  public async Task LocationMismatchAllowed_AMismatchedRecord_IsRead_Restored_AndDeleted_InTheConfiguredLocationOnlyAsync(
+      ArchiveLocationMismatchHandling handling) {
     var (restored, _) = await _seedAsync(3);
     var (deleted, _) = await _seedAsync(2);
     var (written, _) = await _seedAsync(3);
@@ -631,7 +641,7 @@ public partial class AzureBlobArchiveStoreTests {
     _ = await source.WriteAsync(ArchiveBatch.WholeStream(deleted));
     _ = await source.WriteAsync(ArchiveBatch.Prefix(written, 1));
     var sourceObjects = await _objectsAsync();
-    var unverified = _store(maxEventsPerChunk: 10, container: $"archive-{Guid.NewGuid():N}", verifyLocation: false);
+    var unverified = _store(maxEventsPerChunk: 10, container: $"archive-{Guid.NewGuid():N}", locationMismatch: handling);
     var target = unverified.ConfiguredLocation.Container;
     await _copyObjectsAsync(_containerName, target);
 
@@ -641,11 +651,11 @@ public partial class AzureBlobArchiveStoreTests {
     var write = await unverified.WriteAsync(ArchiveBatch.Prefix(written, 2));
 
     await Assert.That(read).IsEquivalentTo(hotAsRead, TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("with the check off, the record's location is not compared: the object is read from the configured container");
+      .Because("a mismatch that is not an error goes ahead: the object is read from the configured container");
     await Assert.That(restore.Status).IsEqualTo(ArchiveStatus.RESTORED);
     await Assert.That(await _hotAsync(restored)).IsEquivalentTo(hot, TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(eventsDeleted).IsEqualTo(2L);
-    await Assert.That(write.Status).IsEqualTo(ArchiveStatus.ARCHIVED).Because("with the check off, a write is not refused");
+    await Assert.That(write.Status).IsEqualTo(ArchiveStatus.ARCHIVED).Because("a mismatch that is not an error does not refuse a write");
     await Assert.That(await _objectsAsync()).IsEquivalentTo(sourceObjects)
       .Because("the configured location is the only place it reads, restores, deletes or writes: the source is untouched");
     await Assert.That((await _objectsAsync(target)).All(n => n.StartsWith($"{written:D}/", StringComparison.Ordinal))).IsTrue()
@@ -654,7 +664,7 @@ public partial class AzureBlobArchiveStoreTests {
         "SELECT l.container FROM wh_archive_manifest m JOIN wh_archive_locations l USING (location_id) " +
         "WHERE m.stream_id = @s ORDER BY m.first_version", written))
       .IsEquivalentTo([_containerName, target], TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("location rows are still written, so the check can be turned back on later");
+      .Because("location rows are still written, so the handling can be set back to Error later");
   }
 
   [Test]

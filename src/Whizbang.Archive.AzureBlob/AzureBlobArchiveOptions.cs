@@ -94,6 +94,15 @@ public sealed class AzureBlobArchiveOptions {
   /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:VerifyLocationOff_AMismatchedRecord_IsRead_Restored_AndDeleted_InTheConfiguredLocationOnlyAsync</tests>
   public bool VerifyLocation { get; set; } = true;
 
+  /// <summary>RED stub (#2141).</summary>
+  public Whizbang.Core.Archival.ArchiveLocationMismatchHandling LocationMismatch { get; set; }
+
+  /// <summary>RED stub (#2141).</summary>
+  internal static string? RefusalForLocationMismatch(Whizbang.Core.Archival.ArchiveLocationMismatchHandling handling) {
+    _ = handling;
+    return null;
+  }
+
   /// <summary>
   /// How long a queued object deletion waits before the object is deleted from storage, for storage that keeps nothing
   /// after a delete (no soft delete, no versioning). <see langword="null"/> (the default) deletes at once, as before.
