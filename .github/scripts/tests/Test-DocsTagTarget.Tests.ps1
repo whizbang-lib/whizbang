@@ -231,9 +231,9 @@ Describe 'Compare-DocsTagBaseline' {
     Set-Content -Path $path -Value @('known/page | missing page', 'fixed/page | missing page', 'gone/page | missing page')
     $comparison = Compare-DocsTagBaseline -Tags $tags -Baseline (Read-DocsTagBaseline -Path $path)
     @($comparison.Unbaselined | ForEach-Object Text) | Should -Be @('new/page')
-    @($comparison.Stale | ForEach-Object { "$($_.Entry.Text): $($_.Why)" }) | Should -Be @(
-      'fixed/page: the target now resolves; delete the entry',
-      'gone/page: no tag names that target any more; delete the entry'
+    @($comparison.Stale | ForEach-Object { "$($_.Entry.Text): $($_.Resolved): $($_.Why)" }) | Should -Be @(
+      'fixed/page: True: the target now resolves; delete the entry',
+      'gone/page: False: no tag names that target any more; delete the entry'
     )
   }
 }
@@ -265,13 +265,24 @@ Describe 'running the guard' {
     $text | Should -Match 'Checked 5 <docs> tags \(4 distinct targets\): 4 dangling, 1 baselined, 0 stale'
   }
 
-  It 'fails on a stale baseline entry even when nothing is dangling' {
+  It 'warns without failing on an entry whose target a docs change made resolve, since no W! pull request caused it' {
     $repo = New-FakeTree @{ 'src/P/A.cs' = '/// <docs>a/page</docs>' }
     $baseline = Join-Path -Path $repo -ChildPath 'baseline.txt'
     Set-Content -Path $baseline -Value @('# known', 'a/page | missing page')
     $output = & $script:ScriptPath -Root $repo -DocsRoot $script:GuardDocs -BaselinePath $baseline
+    $LASTEXITCODE | Should -Be 0
+    $text = $output -join "`n"
+    $text | Should -Match '::warning file=.*baseline\.txt,line=2::stale entry ''a/page'': the target now resolves'
+    $text | Should -Match '1 stale baseline entries'
+  }
+
+  It 'fails on an entry no tag names any more, which only a change in this repository can cause' {
+    $repo = New-FakeTree @{ 'src/P/A.cs' = '/// <docs>a/page</docs>' }
+    $baseline = Join-Path -Path $repo -ChildPath 'baseline.txt'
+    Set-Content -Path $baseline -Value @('# known', 'a/unused | missing page')
+    $output = & $script:ScriptPath -Root $repo -DocsRoot $script:GuardDocs -BaselinePath $baseline
     $LASTEXITCODE | Should -Be 1
-    ($output -join "`n") | Should -Match 'baseline\.txt:2: stale entry ''a/page'': the target now resolves'
+    ($output -join "`n") | Should -Match 'baseline\.txt:2: stale entry ''a/unused'': no tag names that target any more'
   }
 
   It 'fails when no tag is found, so a scan that finds nothing cannot pass' {
