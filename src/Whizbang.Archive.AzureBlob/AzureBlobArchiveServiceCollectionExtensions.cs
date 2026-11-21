@@ -52,7 +52,7 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
   /// <summary>
   /// Registers the Azure Blob store as the <see cref="IArchiveStore"/>, with settings read from
   /// <c>Whizbang:Archive:AzureBlob</c> (<c>ServiceUri</c>, <c>ConnectionString</c>, <c>ContainerName</c>, <c>ConnectionName</c>,
-  /// <c>CompressionLevel</c>, <c>MaxEventsPerChunk</c>, <c>AccessTier</c>, <c>VerifyLocation</c>, <c>DeleteAfter</c>; environment form <c>Whizbang__Archive__AzureBlob__ServiceUri</c>).
+  /// <c>CompressionLevel</c>, <c>MaxEventsPerChunk</c>, <c>AccessTier</c>, <c>LocationMismatch</c>, <c>DeleteAfter</c>; environment form <c>Whizbang__Archive__AzureBlob__ServiceUri</c>).
   /// </summary>
   /// <param name="services">The service collection.</param>
   /// <param name="configuration">The application's configuration.</param>
@@ -87,11 +87,18 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
           $"{CONFIGURATION_SECTION}:{nameof(AzureBlobArchiveOptions.ConnectionName)} is a logical name, not a connection string: " +
           "it may not contain ';' or '='.");
     }
-    var verifyLocation = section[nameof(AzureBlobArchiveOptions.VerifyLocation)];
-    if (!string.IsNullOrWhiteSpace(verifyLocation)) {
-      options.VerifyLocation = bool.TryParse(verifyLocation, out var verify)
-        ? verify
-        : throw _unreadable(nameof(AzureBlobArchiveOptions.VerifyLocation), verifyLocation);
+    // #2141: VerifyLocation was replaced by LocationMismatch. Refused rather than ignored, so an archive configured
+    // with it never changes behavior unannounced.
+    if (!string.IsNullOrWhiteSpace(section[REMOVED_VERIFY_LOCATION])) {
+      throw new InvalidOperationException(
+        $"{CONFIGURATION_SECTION}:{REMOVED_VERIFY_LOCATION} was replaced by {CONFIGURATION_SECTION}:{nameof(AzureBlobArchiveOptions.LocationMismatch)} " +
+        "(#2141): VerifyLocation true is LocationMismatch Error, the default, and false is Ignore. Remove VerifyLocation, and set " +
+        "LocationMismatch to Error, Warning, Info or Ignore where the default does not fit.");
+    }
+    var locationMismatch = section[nameof(AzureBlobArchiveOptions.LocationMismatch)];
+    if (!string.IsNullOrWhiteSpace(locationMismatch)) {
+      options.LocationMismatch = AzureBlobArchiveOptions.LocationMismatchNamed(locationMismatch)
+        ?? throw _locationMismatchRefused(locationMismatch);
     }
     options.CompressionLevel = _int(section, nameof(AzureBlobArchiveOptions.CompressionLevel), options.CompressionLevel);
     options.MaxEventsPerChunk = _int(section, nameof(AzureBlobArchiveOptions.MaxEventsPerChunk), options.MaxEventsPerChunk);
@@ -114,19 +121,29 @@ public static class AzureBlobArchiveServiceCollectionExtensions {
 
   /// <summary>
   /// Refuses, when the host starts, a tier set in code that the store cannot write at, the same tiers
-  /// <see cref="Bind"/> refuses from configuration.
+  /// <see cref="Bind"/> refuses from configuration, and a location-mismatch handling that is not defined.
   /// </summary>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveRegistrationTests.cs:Startup_AnUndefinedLocationMismatchSetInCode_FailsTheHostAtStartAsync</tests>
   /// <tests>tests/Whizbang.Archive.AzureBlob.Tests/AzureBlobArchiveRegistrationTests.cs:Startup_AnArchiveTierSetInCode_FailsTheHostAtStart_ACoolTierDoesNotAsync</tests>
   private sealed class AccessTierValidator : IValidateOptions<AzureBlobArchiveOptions> {
     public ValidateOptionsResult Validate(string? name, AzureBlobArchiveOptions options) {
       if (AzureBlobArchiveOptions.RefusalFor(options.AccessTier) is { } refusal) {
         return ValidateOptionsResult.Fail(_tierRefused($"{options.AccessTier}", refusal).Message);
       }
+      if (AzureBlobArchiveOptions.RefusalForLocationMismatch(options.LocationMismatch) is not null) {
+        return ValidateOptionsResult.Fail(_locationMismatchRefused($"{options.LocationMismatch}").Message);
+      }
       return AzureBlobArchiveOptions.RefusalForDeleteAfter(options.DeleteAfter) is { } delayRefusal
         ? ValidateOptionsResult.Fail($"{CONFIGURATION_SECTION}:{nameof(AzureBlobArchiveOptions.DeleteAfter)} is '{options.DeleteAfter}'. {delayRefusal}")
         : ValidateOptionsResult.Success;
     }
   }
+
+  // The setting an earlier release read in place of LocationMismatch.
+  private const string REMOVED_VERIFY_LOCATION = "VerifyLocation";
+
+  private static InvalidOperationException _locationMismatchRefused(string value) =>
+    new($"{CONFIGURATION_SECTION}:{nameof(AzureBlobArchiveOptions.LocationMismatch)} is '{value}'. {AzureBlobArchiveOptions.LOCATION_MISMATCH_VALUES}");
 
   private static InvalidOperationException _tierRefused(string value, string refusal) =>
     new($"{CONFIGURATION_SECTION}:{nameof(AzureBlobArchiveOptions.AccessTier)} is '{value}'. {refusal}");
