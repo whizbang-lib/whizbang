@@ -184,7 +184,7 @@ public static class AzureBlobStorageServiceCollectionExtensions {
 /// <param name="options">The package's options; reading them binds and validates them.</param>
 /// <param name="logger">The logger.</param>
 /// <docs>fundamentals/storage/azure-blob#migrating-from-the-earlier-packages</docs>
-/// <tests>tests/Whizbang.Storage.AzureBlob.Tests/AzureBlobStorageConfigurationTests.cs</tests>
+/// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobStorageStartupNoticesTests.cs:TheStartupNotices_AreLoggedOnce_EachAsAWarningAsync</tests>
 internal sealed partial class AzureBlobStorageStartupNotices(IOptions<AzureBlobStorageOptions> options, ILogger<AzureBlobStorageStartupNotices> logger)
     : IHostedService {
   /// <inheritdoc />

@@ -11,6 +11,10 @@
     <IsTrimmable>true</IsTrimmable>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
+    <!-- No stable release on nuget.org yet, so package validation has no baseline to download (on CI a restore would
+         otherwise look for SoftwareExtravaganza.Whizbang.Storage.AzureBlob 0.4521.0 and fail with NU1101). Delete this
+         after the package's first stable release, when the baseline moves (docs/RELEASING.md, "Public API baseline"). -->
+    <WhizbangUnreleasedPackage>true</WhizbangUnreleasedPackage>
   </PropertyGroup>
 
   <ItemGroup>

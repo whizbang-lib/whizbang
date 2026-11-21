@@ -102,7 +102,7 @@ public sealed class WhizbangCoreOptions {
   /// package inactive, and register what you want from it yourself.
   /// </summary>
   /// <docs>fundamentals/storage/azure-blob#opting-out</docs>
-  /// <tests>tests/Whizbang.Core.Tests/StorageProviderTurnkeyTests.cs:AddWhizbang_RunsEveryLoadedStorageProvider_UnlessTheHostOptsOutAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Configuration/StorageProviderTurnkeyTests.cs:AddWhizbang_RunsEveryLoadedStorageProvider_UnlessTheHostOptsOutAsync</tests>
   public bool AutoRegisterStorageProviders { get; set; } = true;
 
   /// <summary>

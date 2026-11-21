@@ -13,7 +13,7 @@ using Whizbang.Core.Archival;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Offloads;
 
-namespace Whizbang.Core.Tests;
+namespace Whizbang.Core.Tests.Configuration;
 
 /// <summary>
 /// Storage provider packages are turnkey (#2502): a loaded package registers itself, <c>AddWhizbang</c> runs it unless the

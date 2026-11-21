@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- https://learn.microsoft.com/dotnet/fundamentals/package-validation/diagnostic-ids -->
+<!-- #2502: the body store and its options moved to Whizbang.Storage.AzureBlob (namespace Whizbang.Storage.AzureBlob), which
+     this shim package depends on. A type cannot be forwarded across a namespace change, so the old types are gone and the
+     [Obsolete] registration call takes the moved options type: a lambda written against it compiles unchanged, and code
+     that names the type adds `using Whizbang.Storage.AzureBlob;` (changelog.d/2502.md, Upgrade). -->
+<Suppressions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:Whizbang.Offloads.AzureBlob.AzureBlobMessageBodyStore</Target>
+    <Left>lib/net10.0/Whizbang.Offloads.AzureBlob.dll</Left>
+    <Right>lib/net10.0/Whizbang.Offloads.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:Whizbang.Offloads.AzureBlob.AzureBlobOffloadOptions</Target>
+    <Left>lib/net10.0/Whizbang.Offloads.AzureBlob.dll</Left>
+    <Right>lib/net10.0/Whizbang.Offloads.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:Whizbang.Offloads.AzureBlob.AzureBlobMessageBodyStore</Target>
+    <Left>lib/net11.0/Whizbang.Offloads.AzureBlob.dll</Left>
+    <Right>lib/net11.0/Whizbang.Offloads.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:Whizbang.Offloads.AzureBlob.AzureBlobOffloadOptions</Target>
+    <Left>lib/net11.0/Whizbang.Offloads.AzureBlob.dll</Left>
+    <Right>lib/net11.0/Whizbang.Offloads.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Offloads.AzureBlob.AzureBlobOffloadServiceCollectionExtensions.AddWhizbangAzureBlobOffload(Microsoft.Extensions.DependencyInjection.IServiceCollection,System.String,System.Action{Whizbang.Offloads.AzureBlob.AzureBlobOffloadOptions})</Target>
+    <Left>lib/net10.0/Whizbang.Offloads.AzureBlob.dll</Left>
+    <Right>lib/net10.0/Whizbang.Offloads.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Offloads.AzureBlob.AzureBlobOffloadServiceCollectionExtensions.AddWhizbangAzureBlobOffload(Microsoft.Extensions.DependencyInjection.IServiceCollection,System.String,System.Action{Whizbang.Offloads.AzureBlob.AzureBlobOffloadOptions})</Target>
+    <Left>lib/net11.0/Whizbang.Offloads.AzureBlob.dll</Left>
+    <Right>lib/net11.0/Whizbang.Offloads.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+</Suppressions>

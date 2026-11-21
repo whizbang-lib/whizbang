@@ -20,7 +20,7 @@ namespace Whizbang.Core.Configuration;
 /// <param name="Provider">The provider the feature uses: for body offload, the store's provider name.</param>
 /// <param name="Reason">Why, for example the configuration key that named the account.</param>
 /// <docs>fundamentals/storage/azure-blob#startup-report</docs>
-/// <tests>tests/Whizbang.Core.Tests/StorageProviderTurnkeyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Configuration/StorageProviderTurnkeyTests.cs</tests>
 public sealed record StorageFeatureActivation(string Feature, string Provider, string Reason) {
   /// <summary>The event archive.</summary>
   public const string ARCHIVE = "archive";
@@ -37,7 +37,7 @@ public sealed record StorageFeatureActivation(string Feature, string Provider, s
 /// </summary>
 /// <param name="services">The host's services.</param>
 /// <docs>fundamentals/storage/azure-blob#startup-report</docs>
-/// <tests>tests/Whizbang.Core.Tests/StorageProviderTurnkeyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Configuration/StorageProviderTurnkeyTests.cs</tests>
 internal sealed partial class StorageProviderStartupReport(IServiceProvider services) : IHostedService {
   /// <summary>The storage provider packages the framework knows, with every key that names an account for each.</summary>
   internal static readonly IReadOnlyList<(string Provider, string Package, string[] AccountKeys)> KnownPackages = [

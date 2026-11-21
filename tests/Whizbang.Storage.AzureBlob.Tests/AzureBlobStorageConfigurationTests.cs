@@ -3,9 +3,6 @@
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -205,26 +202,6 @@ public class AzureBlobStorageConfigurationTests {
     await Assert.That(_options(provider).Archive!.ContainerName).IsEqualTo("given");
     await Assert.That(() => ((IServiceCollection)null!).AddWhizbangAzureBlobStorage(_config())).Throws<ArgumentNullException>();
     await Assert.That(() => new ServiceCollection().AddWhizbangAzureBlobStorage((IConfiguration)null!)).Throws<ArgumentNullException>();
-  }
-
-  [Test]
-  public async Task TheStartupNotices_AreLoggedOnce_EachAsAWarningAsync() {
-    var logger = new FakeLogger<AzureBlobStorageStartupNotices>();
-    var services = new ServiceCollection();
-    services.AddLogging();
-    services.AddSingleton(_config(("Whizbang:Archive:AzureBlob:ConnectionString", EMULATOR)));
-    services.AddSingleton<ILogger<AzureBlobStorageStartupNotices>>(logger);
-    services.AddWhizbangAzureBlobStorage(_config(("Whizbang:Archive:AzureBlob:ContainerName", "given")));
-    await using var provider = services.BuildServiceProvider();
-    var notices = provider.GetServices<IHostedService>().OfType<AzureBlobStorageStartupNotices>().Single();
-
-    await notices.StartAsync(CancellationToken.None);
-    await notices.StopAsync(CancellationToken.None);
-
-    await Assert.That(logger.Collector.GetSnapshot()).Count().IsEqualTo(1)
-      .Because("the same warning from the host's configuration and a given one is logged once");
-    await Assert.That(logger.LatestRecord.Level).IsEqualTo(LogLevel.Warning);
-    await Assert.That(logger.LatestRecord.Message).Contains("Whizbang:Archive:AzureBlob is read for compatibility");
   }
 
   [Test]

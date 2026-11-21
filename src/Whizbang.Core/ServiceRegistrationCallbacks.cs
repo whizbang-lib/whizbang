@@ -263,7 +263,7 @@ public static class ServiceRegistrationCallbacks {
   /// <param name="provider">The provider name, for example <c>azure-blob</c>.</param>
   /// <param name="register">Adds the provider's services.</param>
   /// <docs>fundamentals/storage/azure-blob#turnkey-activation</docs>
-  /// <tests>tests/Whizbang.Core.Tests/StorageProviderTurnkeyTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Configuration/StorageProviderTurnkeyTests.cs</tests>
   public static void RegisterStorageProvider(string provider, Action<IServiceCollection> register) {
     ArgumentException.ThrowIfNullOrWhiteSpace(provider);
     ArgumentNullException.ThrowIfNull(register);
@@ -274,7 +274,7 @@ public static class ServiceRegistrationCallbacks {
 
   /// <summary>The storage providers whose packages are loaded, by name, in order.</summary>
   /// <docs>fundamentals/storage/azure-blob#startup-report</docs>
-  /// <tests>tests/Whizbang.Core.Tests/StorageProviderTurnkeyTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Configuration/StorageProviderTurnkeyTests.cs</tests>
   public static IReadOnlyList<string> StorageProviders {
     get {
       lock (_lock) {

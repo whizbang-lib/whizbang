@@ -43,8 +43,12 @@ public class ObjectArchiveCoordinatorTests : PostgresTestBase {
 
   private static InMemoryArchiveObjectStore _objects(int maxEventsPerChunk = 2, TimeSpan? deleteAfter = null, string container = "archive",
       bool verifyLocation = true, TimeProvider? clock = null) =>
-    new(new ArchiveObjectStoreSettings { MaxEventsPerChunk = maxEventsPerChunk, DeleteAfter = deleteAfter, VerifyLocation = verifyLocation },
-      container, clock: clock);
+    new(clock ?? new FakeTimeProvider(_start),
+      new ArchiveObjectStoreSettings { MaxEventsPerChunk = maxEventsPerChunk, DeleteAfter = deleteAfter, VerifyLocation = verifyLocation },
+      container);
+
+  // Where every store's clock starts when a test sets none: objects are stamped on it, never on the system clock.
+  private static readonly DateTimeOffset _start = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
   private async Task<NpgsqlConnection> _openAsync() {
     var connection = new NpgsqlConnection(ConnectionString);

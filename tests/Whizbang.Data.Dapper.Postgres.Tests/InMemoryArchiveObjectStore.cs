@@ -17,11 +17,14 @@ internal sealed class InMemoryArchiveObjectStore : IArchiveObjectStore {
   private readonly ConcurrentDictionary<string, (byte[] Bytes, DateTimeOffset CreatedOn)> _objects = new(StringComparer.Ordinal);
   private readonly TimeProvider _clock;
 
+  /// <summary>Creates an empty store whose objects are stamped on <paramref name="clock"/>.</summary>
+  /// <param name="clock">The clock creation times are read from, so a test decides every object's age.</param>
   public InMemoryArchiveObjectStore(
-      ArchiveObjectStoreSettings? settings = null, string container = "archive", string connectionName = "default", TimeProvider? clock = null) {
+      TimeProvider clock, ArchiveObjectStoreSettings? settings = null, string container = "archive", string connectionName = "default") {
+    ArgumentNullException.ThrowIfNull(clock);
     Settings = settings ?? new ArchiveObjectStoreSettings();
     Location = new ArchiveLocation(PROVIDER, "memory://account", connectionName, container);
-    _clock = clock ?? TimeProvider.System;
+    _clock = clock;
   }
 
   /// <summary>The provider name this store records in every location and locator.</summary>
