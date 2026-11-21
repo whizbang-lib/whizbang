@@ -99,7 +99,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
   public async Task EphemeralRewind_GuardsFullReplayFallbackAgainstReapedBodiesAsync() {
     // E1 (3) invariant lock. An ephemeral stream's consumed bodies are reaped (wh_event_body rows
     // deleted, pointer-only). If RewindAndRunAsync finds no qualifying snapshot floor, it MUST NOT
-    // fall through to the full replay-from-zero (_runFromModelAsync with a null model / null anchor) —
+    // fall through to the full replay-from-zero (_runFromModelAsync with a null model / null anchor):
     // that would read reaped/absent bodies and silently corrupt the authoritative model. The template
     // guards the fallback with `_traits.IsEphemeral && !hasSnapshot`; the guard must remain, and it
     // must sit between the snapshot lookup and the replay call (_replayCheckedAsync, which runs _runFromModelAsync) so it can short-circuit it.
@@ -313,17 +313,17 @@ public class PerspectiveRunnerTemplateInvariantTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task SaveModelAndCheckpoint_AsksTheWriteGuardBeforeItWritesAsync() {
-    // #1677 regression lock: every row write goes through _saveModelAndCheckpointAsync, which asks
+    // #1677 regression lock: every row write goes through SaveModelAndCheckpointAsync, which asks
     // PerspectiveRowWriteGuard first, so a model no Apply produced (the scaffolded default) is never stored.
     var template = _loadTemplate();
-    var method = template.IndexOf("private async Task<bool> _saveModelAndCheckpointAsync(", StringComparison.Ordinal);
+    var method = template.IndexOf("internal async Task<bool> SaveModelAndCheckpointAsync(", StringComparison.Ordinal);
     var guard = template.IndexOf("PerspectiveRowWriteGuard.AllowsWrite(producedByApply", StringComparison.Ordinal);
     var upsert = template.IndexOf("var physicalFieldValues = PhysicalFieldValues(model);", method, StringComparison.Ordinal);
 
     await Assert.That(method).IsGreaterThan(0);
     await Assert.That(guard).IsGreaterThan(method).Because("the guard is inside the write method");
     await Assert.That(guard).IsLessThan(upsert).Because("the guard runs before the upsert");
-    var calls = template.Split("await _saveModelAndCheckpointAsync(").Length - 1;
+    var calls = template.Split("await SaveModelAndCheckpointAsync(").Length - 1;
     var provenance = template.Split("perspectiveName,\n                updatedModel,\n                hasWrittenUpdate,").Length - 1
       + template.Split("perspectiveName,\n              updatedModel,\n              hasWrittenUpdate,").Length - 1
       + template.Split("streamId, perspectiveName, updatedModel, producedByApply,").Length - 1;
@@ -340,7 +340,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
     // resolved by _rowWriteStartAsync, which the set-based write's preparation shares (#2246), so both begin the same
     // start before the store sees the row.
     var template = _loadTemplate();
-    var method = template.IndexOf("private async Task<bool> _saveModelAndCheckpointAsync(", StringComparison.Ordinal);
+    var method = template.IndexOf("internal async Task<bool> SaveModelAndCheckpointAsync(", StringComparison.Ordinal);
     var start = template.IndexOf("await _rowWriteStartAsync(", method, StringComparison.Ordinal);
     var begin = template.IndexOf("PerspectiveRowStart.Begin(streamId, rowStartedAt)", method, StringComparison.Ordinal);
     var upsert = template.IndexOf("var physicalFieldValues = PhysicalFieldValues(model);", method, StringComparison.Ordinal);
@@ -360,7 +360,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
     await Assert.That(prepareStart).IsGreaterThan(prepare).Because("the set-based write's preparation dates the row the same way");
     await Assert.That(prepareBegin).IsGreaterThan(prepareStart);
     await Assert.That(prepareCall).IsGreaterThan(prepareBegin).Because("the start is in force when the store prepares the row");
-    var calls = template.Split("await _saveModelAndCheckpointAsync(").Length - 1;
+    var calls = template.Split("await SaveModelAndCheckpointAsync(").Length - 1;
     var rowFacts = template.Split("modelLoadedFromDb,\n              processedEvents,").Length - 1
       + template.Split("modelLoadedFromDb,\n                processedEvents,").Length - 1
       + template.Split("outcome.FirstStreamEvent is { } firstStreamEvent ? [firstStreamEvent] : [],").Length - 1;

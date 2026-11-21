@@ -696,7 +696,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
     var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource).Contains("_snapshotOptions.Value.SnapshotEveryNEvents")
+    await Assert.That(runnerSource).Contains(": options.SnapshotEveryNEvents")
       .Because("A Sourced perspective uses the standard snapshot cadence.");
     await Assert.That(runnerSource).DoesNotContain("IsEphemeral = true,")
       .Because("A Sourced perspective does not use the ephemeral cadence.");
