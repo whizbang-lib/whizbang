@@ -8,7 +8,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 
-namespace Whizbang.Generators.Tests;
+namespace Whizbang.Generators.Component.Tests;
 
 /// <summary>
 /// Each type that declares <c>[LoggerMessage]</c> methods does so in one declaration, under a name no other such
