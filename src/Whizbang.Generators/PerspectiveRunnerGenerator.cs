@@ -41,6 +41,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
   /// <summary>The marker of an overwrite-only perspective (#1869).</summary>
   private const string OVERWRITE_ONLY_ATTRIBUTE = "Whizbang.Core.Attributes.OverwriteOnlyAttribute";
+  private const string INHERITDOC_LINE = "/// <inheritdoc/>";
 
   private const string MUST_EXIST_ATTRIBUTE_NAME = "Whizbang.Core.Perspectives.MustExistAttribute";
 
@@ -710,24 +711,24 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static string _buildOverrides(PerspectiveInfo perspective, string modelTypeName) {
     var sb = new StringBuilder();
     if (perspective.UnconditionalPurgeEventTypes is { Length: > 0 } purgeTypes) {
-      sb.AppendLine("/// <inheritdoc/>");
+      sb.AppendLine(INHERITDOC_LINE);
       sb.AppendLine($"protected override bool IsUnconditionalPurge(global::Whizbang.Core.IEvent @event) => @event is {string.Join(" or ", purgeTypes)};");
       sb.AppendLine();
     }
     if (perspective.OverwriteDecisiveEventTypes is { Length: > 0 } decisive) {
-      sb.AppendLine("/// <inheritdoc/>");
+      sb.AppendLine(INHERITDOC_LINE);
       sb.AppendLine($"protected override bool DecidesTheRowAlone(global::Whizbang.Core.IEvent @event) => @event is {string.Join(" or ", decisive)};");
       sb.AppendLine();
     }
     if (perspective.PhysicalFields is { Length: > 0 }) {
-      sb.AppendLine("/// <inheritdoc/>");
+      sb.AppendLine(INHERITDOC_LINE);
       sb.AppendLine($"protected override global::System.Collections.Generic.Dictionary<string, object?>? PhysicalFieldValues({modelTypeName} model) {{");
       _appendPhysicalFieldValuesDictionary(sb, perspective);
       sb.AppendLine("  return physicalFieldValues;");
       sb.AppendLine("}");
       sb.AppendLine();
       if (perspective.StorageMode == 2) {
-        sb.AppendLine("/// <inheritdoc/>");
+        sb.AppendLine(INHERITDOC_LINE);
         sb.AppendLine($"protected override {modelTypeName} StripPhysicalFields({modelTypeName} model) {{");
         _appendSplitModePhysicalFieldStripping(sb, perspective);
         sb.AppendLine("  return model;");
