@@ -30,7 +30,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/dictionary-members</docs>
-/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/DictionaryMemberFormsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/DictionaryMemberFormTests.cs</tests>
 public static class DictionaryMemberForms {
   /// <summary>
   /// The resolver's priority on the persistence profile: above every generated context (the persistence context is

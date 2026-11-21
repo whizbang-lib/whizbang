@@ -209,9 +209,9 @@ public class DictionaryMemberFormTests {
 
     await Assert.That(form.KeyType).IsEqualTo(typeof(Guid));
     await Assert.That(form.ValueType).IsEqualTo(typeof(FormLine));
-    await Assert.That(form.MemberTypes).IsEquivalentTo(new[] {
+    await Assert.That(form.MemberTypes).IsEquivalentTo([
       typeof(Dictionary<Guid, FormLine>), typeof(IDictionary<Guid, FormLine>), typeof(IReadOnlyDictionary<Guid, FormLine>),
-    });
+    ]);
     await Assert.That(form.Accept(new TypeArgumentsVisitor())).IsEqualTo("Guid->FormLine");
     await Assert.That(() => form.Accept<string>(null!)).Throws<ArgumentNullException>();
   }

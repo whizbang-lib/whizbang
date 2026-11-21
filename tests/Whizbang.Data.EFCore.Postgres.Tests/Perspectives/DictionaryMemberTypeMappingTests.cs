@@ -154,7 +154,7 @@ public class DictionaryMemberTypeMappingTests {
 
     await Assert.That(plugin.FindMapping(new RelationalTypeMappingInfo(typeof(Dictionary<string, int>)))).IsTypeOf<DictionaryMemberTypeMapping>();
     await Assert.That(plugin.FindMapping(new RelationalTypeMappingInfo(typeof(List<int>)))).IsNull();
-    await Assert.That(plugin.FindMapping(default(RelationalTypeMappingInfo))).IsNull();
+    await Assert.That(plugin.FindMapping(default)).IsNull();
   }
 
   [Test]
@@ -187,7 +187,7 @@ public class DictionaryMemberTypeMappingTests {
     var logger = context.GetService<IDiagnosticsLogger<DbLoggerCategory.Query>>();
     var dictionary = new SqlConstantExpression(new Dictionary<string, int>(), typeof(Dictionary<string, int>), _mapping<Dictionary<string, int>>());
     var key = new SqlConstantExpression("a", typeof(string), mappings.FindMapping(typeof(string)));
-    var containsKey = typeof(Dictionary<string, int>).GetMethod(nameof(Dictionary<string, int>.ContainsKey))!;
+    var containsKey = typeof(Dictionary<string, int>).GetMethod(nameof(Dictionary<,>.ContainsKey))!;
     var toString = typeof(object).GetMethod(nameof(ToString))!;
 
     await Assert.That(translator.Translate(null, containsKey, [key], logger)).IsNull();

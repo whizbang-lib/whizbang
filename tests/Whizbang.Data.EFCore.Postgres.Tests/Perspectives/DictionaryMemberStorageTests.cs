@@ -345,15 +345,15 @@ public class DictionaryMemberStorageTests : IAsyncDisposable {
     await using var query = _context();
     var rows = query.Set<PerspectiveRow<DictionaryMemberModel>>();
 
-    await Assert.That(await rows.Where(r => r.Data.Counts.ContainsKey("mike")).Select(r => r.Id).ToListAsync()).IsEquivalentTo(new[] { matching });
-    await Assert.That(await rows.Where(r => r.Data.Counts["mike"] == 13).Select(r => r.Id).ToListAsync()).IsEquivalentTo(new[] { matching });
+    await Assert.That(await rows.Where(r => r.Data.Counts.ContainsKey("mike")).Select(r => r.Id).ToListAsync()).IsEquivalentTo([matching]);
+    await Assert.That(await rows.Where(r => r.Data.Counts["mike"] == 13).Select(r => r.Id).ToListAsync()).IsEquivalentTo([matching]);
     await Assert.That(await rows.Where(r => r.Data.Counts["mike"] > 20).CountAsync()).IsEqualTo(0);
-    await Assert.That(await rows.Where(r => r.Data.Section.Totals.ContainsKey("net")).Select(r => r.Id).ToListAsync()).IsEquivalentTo(new[] { matching });
-    await Assert.That(await rows.Where(r => r.Data.Sections.Any(s => s.Totals.ContainsKey("tax"))).Select(r => r.Id).ToListAsync()).IsEquivalentTo(new[] { matching });
-    await Assert.That(await rows.Where(r => r.Data.Lines!.ContainsKey(_lineId)).Select(r => r.Id).ToListAsync()).IsEquivalentTo(new[] { matching });
-    await Assert.That(await rows.Where(r => r.Data.Notes["a"] == "ay").Select(r => r.Id).ToListAsync()).IsEquivalentTo(new[] { matching });
+    await Assert.That(await rows.Where(r => r.Data.Section.Totals.ContainsKey("net")).Select(r => r.Id).ToListAsync()).IsEquivalentTo([matching]);
+    await Assert.That(await rows.Where(r => r.Data.Sections.Any(s => s.Totals.ContainsKey("tax"))).Select(r => r.Id).ToListAsync()).IsEquivalentTo([matching]);
+    await Assert.That(await rows.Where(r => r.Data.Lines!.ContainsKey(_lineId)).Select(r => r.Id).ToListAsync()).IsEquivalentTo([matching]);
+    await Assert.That(await rows.Where(r => r.Data.Notes["a"] == "ay").Select(r => r.Id).ToListAsync()).IsEquivalentTo([matching]);
     await Assert.That(await rows.Where(r => r.Data.Counts.ContainsKey("absent")).CountAsync()).IsEqualTo(0);
-    await Assert.That(await rows.Where(r => r.Data.Sections[0].Totals.ContainsKey("tax")).Select(r => r.Id).ToListAsync()).IsEquivalentTo(new[] { matching })
+    await Assert.That(await rows.Where(r => r.Data.Sections[0].Totals.ContainsKey("tax")).Select(r => r.Id).ToListAsync()).IsEquivalentTo([matching])
       .Because("a dictionary under an indexed element is asked of its own member, the path naming no fixed key");
   }
 

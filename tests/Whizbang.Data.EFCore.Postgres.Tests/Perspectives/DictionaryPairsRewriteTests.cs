@@ -139,9 +139,9 @@ public class DictionaryPairsRewriteTests {
 
     await Assert.That(DictionaryPairsRewrite.KeyFormOf(DictionaryMemberForm<string, int>.Instance, options)!.Value.Kind).IsEqualTo((short)1);
     await Assert.That(DictionaryPairsRewrite.KeyFormOf(DictionaryMemberForm<int, string>.Instance, options)!.Value.Kind).IsEqualTo((short)2);
-    var color = DictionaryPairsRewrite.KeyFormOf(DictionaryMemberForm<DictionaryRewriteColor, int>.Instance, options)!.Value;
-    await Assert.That(color.Kind).IsEqualTo((short)3);
-    await Assert.That(color.Map).IsEqualTo("""{"Red":1,"Green":2}""");
+    var (Kind, Map) = DictionaryPairsRewrite.KeyFormOf(DictionaryMemberForm<DictionaryRewriteColor, int>.Instance, options)!.Value;
+    await Assert.That(Kind).IsEqualTo((short)3);
+    await Assert.That(Map).IsEqualTo("""{"Red":1,"Green":2}""");
     await Assert.That(DictionaryPairsRewrite.KeyFormOf(DictionaryMemberForm<DateTime, int>.Instance, options)).IsNull();
   }
 
