@@ -1,0 +1,135 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
+name: Runner self-check
+
+# The self-hosted pool's capability check (#1880). The runner picker (Select-CiRunner.ps1) sends CI jobs only to a
+# pool machine with a recent passing self-check, so a machine that is online but cannot do the work (no PowerShell,
+# a full disk, an upload too slow for the compile, a broken Docker) is skipped without anyone changing its labels.
+# This workflow runs .github/scripts/Test-CiRunnerCapability.ps1 on each online pool machine and records the result
+# as an Actions cache entry whose key the picker reads. A machine that has not passed in the last
+# RUNNER_POOL_CHECK_MAX_AGE_HOURS (24) gets no job, so a new machine joins the pool at its first passing check:
+# run this workflow by hand after adding one. Setup: .github/WORKFLOWS.md, "Runner selection".
+
+on:
+  schedule:
+    - cron: '23 */6 * * *'  # every 6 hours, so a machine busy at one check is caught at another within the 24-hour limit
+  workflow_dispatch:
+
+permissions: {}
+
+# A check job waits for a machine that is busy; one still waiting when the next check starts (the machine went
+# offline after the plan counted it) is replaced instead of holding a queue entry for a day.
+concurrency:
+  group: runner-self-check
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Plan · Pool runners to check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      HAS_POOL_APP: ${{ secrets.RUNNER_POOL_APP_ID != '' && secrets.RUNNER_POOL_APP_PRIVATE_KEY != '' }}
+    outputs:
+      slots: ${{ steps.plan.outputs.slots || '[]' }}
+    steps:
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+
+      # Reads the organization's runners, as the picker does. Absent secrets check no machine.
+      - name: Create the runner-pool app token
+        id: app-token
+        if: env.HAS_POOL_APP == 'true'
+        continue-on-error: true
+        timeout-minutes: 1
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.RUNNER_POOL_APP_ID }}
+          private-key: ${{ secrets.RUNNER_POOL_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-organization-self-hosted-runners: read
+
+      - name: One check per online pool machine
+        id: plan
+        shell: pwsh
+        env:
+          RUNNER_POOL_TOKEN: ${{ steps.app-token.outputs.token }}
+          ORGANIZATION: ${{ github.repository_owner }}
+          GROUP: ${{ vars.RUNNER_POOL_GROUP || 'Default' }}
+        run: ./.github/scripts/Test-CiRunnerCapability.ps1 -Mode Plan -Organization "$env:ORGANIZATION" -GroupName "$env:GROUP"
+
+  check:
+    name: Check · Pool runner ${{ matrix.slot }}
+    needs: plan
+    if: needs.plan.outputs.slots != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: ${{ fromJSON(needs.plan.outputs.slots) }}
+    # Jobs queued together go to different idle machines; a machine busy now takes a slot when it is free, or is
+    # caught by the next check.
+    runs-on: [self-hosted, whizbang]
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      PROBE_FILE: ${{ github.workspace }}/.runner-check/probe.bin
+      RECORD_FILE: ${{ github.workspace }}/.runner-check/record.txt
+      UPLOAD_MB: '200'
+    steps:
+      # No pwsh here means this step fails and no record is written: as safe as a failing record.
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+
+      - name: Write the upload probe
+        id: prepare
+        shell: pwsh
+        run: ./.github/scripts/Test-CiRunnerCapability.ps1 -Mode Prepare -UploadFile "$env:PROBE_FILE" -UploadMB "$env:UPLOAD_MB"
+
+      # The compile uploads the build (about 1 GB) as artifacts, so the speed that matters is this one.
+      - name: Upload the probe
+        id: upload
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runner-check-${{ matrix.slot }}-${{ github.run_attempt }}
+          path: ${{ env.PROBE_FILE }}
+          retention-days: 1
+          compression-level: 0
+
+      - name: Check the machine
+        id: record
+        shell: pwsh
+        env:
+          STARTED_MS: ${{ steps.prepare.outputs.started-ms }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.slot }}
+          MIN_DISK_GB: ${{ vars.RUNNER_POOL_MIN_DISK_GB || '20' }}
+        run: >-
+          ./.github/scripts/Test-CiRunnerCapability.ps1 -Mode Record -UploadMB "$env:UPLOAD_MB" -StartedMs "$env:STARTED_MS"
+          -UploadOutcome "$env:UPLOAD_OUTCOME" -Nonce "$env:NONCE" -MinDiskGB "$env:MIN_DISK_GB" -RecordFile "$env:RECORD_FILE"
+
+      # The cache entry is the record: the picker lists entries by key prefix and reads the result from the key.
+      - name: Record the result
+        if: steps.record.outputs.key != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.RECORD_FILE }}
+          key: ${{ steps.record.outputs.key }}
+
+      - name: Fail a machine that failed its check
+        if: steps.record.outputs.ok != 'true'
+        shell: pwsh
+        run: |
+          Write-Host '::error title=Runner self-check::This machine failed its self-check and gets no CI job until it passes; see the job summary.'
+          exit 1

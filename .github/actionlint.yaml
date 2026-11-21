@@ -1,0 +1,9 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
+# actionlint's settings. The custom labels of the team's self-hosted pool (.github/WORKFLOWS.md, "Runner selection"),
+# which runner-self-check.yml names directly.
+self-hosted-runner:
+  labels:
+    - whizbang
+    - docker
