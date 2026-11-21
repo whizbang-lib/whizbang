@@ -53,6 +53,15 @@ public static class ReceivedStreamOrder {
   /// <exception cref="ArgumentNullException"><paramref name="stream"/> is null.</exception>
   public static IReadOnlyList<ResequencedEvent> Resequence(IReadOnlyList<StoredStreamEvent> stream) {
     ArgumentNullException.ThrowIfNull(stream);
-    return [];
+    var stored = stream.OrderBy(e => e.Version).ToArray();
+    var ordered = ReplayEventOrder.InOriginOrderWithinTheirSlots(
+      (StoredStreamEvent[])stored.Clone(), e => e.OriginServiceId, e => e.OriginCommitSequence, e => e.EventId);
+    var moves = new List<ResequencedEvent>();
+    for (var slot = 0; slot < stored.Length; slot++) {
+      if (ordered[slot].EventId != stored[slot].EventId) {
+        moves.Add(new ResequencedEvent(ordered[slot].EventId, ordered[slot].Version, stored[slot].Version));
+      }
+    }
+    return moves;
   }
 }

@@ -78,22 +78,38 @@ public static class ReplayEventOrder {
 
   // #2257: each origin's events dealt, in origin order, into the places that origin holds in the local order. #2379: an
   // event of the origin with no origin position takes its place among them by its id, which the origin minted in order.
-  private static MessageEnvelope<IEvent>[] _inOriginOrderWithinTheirSlots(MessageEnvelope<IEvent>[] local) {
+  private static MessageEnvelope<IEvent>[] _inOriginOrderWithinTheirSlots(MessageEnvelope<IEvent>[] local) =>
+    InOriginOrderWithinTheirSlots(local, e => e.SourceServiceId, e => e.SourceCommitSequence, e => e.MessageId.Value);
+
+  /// <summary>
+  /// Deals each origin's items, in the origin's order, into the places that origin holds in <paramref name="local"/>
+  /// (#2257, #2379). Items whose origin is <see cref="Guid.Empty"/> (local) keep their places, and so does the
+  /// interleaving of different origins. The one rule a replay folds by and the received-stream re-sequence (#1629)
+  /// stores by, so the two can never disagree.
+  /// </summary>
+  /// <typeparam name="T">An event, or a stored row standing for one.</typeparam>
+  /// <param name="local">The items in local order. Written in place and returned.</param>
+  /// <param name="origin">The service the item was received from; <see cref="Guid.Empty"/> for a local item.</param>
+  /// <param name="originSequence">Its position at the origin; zero or less when it carries none.</param>
+  /// <param name="id">Its id.</param>
+  /// <returns><paramref name="local"/>, each origin's items now in the origin's order.</returns>
+  internal static T[] InOriginOrderWithinTheirSlots<T>(
+      T[] local, Func<T, Guid> origin, Func<T, long> originSequence, Func<T, Guid> id) {
     var slotsByOrigin = new Dictionary<Guid, List<int>>();
     for (var i = 0; i < local.Length; i++) {
-      var origin = local[i].SourceServiceId;
-      if (origin == Guid.Empty) {
+      var from = origin(local[i]);
+      if (from == Guid.Empty) {
         continue;
       }
-      if (!slotsByOrigin.TryGetValue(origin, out var slots)) {
-        slotsByOrigin[origin] = slots = [];
+      if (!slotsByOrigin.TryGetValue(from, out var slots)) {
+        slotsByOrigin[from] = slots = [];
       }
       slots.Add(i);
     }
     var ordered = local;
     foreach (var slots in slotsByOrigin.Values.Where(s => s.Count > 1)) {
       // Read before any write: each origin's slots are its own, so dealing one origin never moves another's events.
-      var inOriginOrder = _inOriginOrder(slots.Select(i => local[i]));
+      var inOriginOrder = _inOriginOrder(slots.Select(i => local[i]), originSequence, id);
       for (var k = 0; k < slots.Count; k++) {
         ordered[slots[k]] = inOriginOrder[k];
       }
@@ -108,20 +124,23 @@ public static class ReplayEventOrder {
   /// first positioned event whose id sorts after its own.
   /// </summary>
   /// <param name="events">The events of one origin.</param>
+  /// <param name="originSequence">An event's position at the origin.</param>
+  /// <param name="id">An event's id.</param>
   /// <returns>The same events in the origin's order.</returns>
-  private static List<MessageEnvelope<IEvent>> _inOriginOrder(IEnumerable<MessageEnvelope<IEvent>> events) {
-    var positioned = new List<MessageEnvelope<IEvent>>();
-    var unpositioned = new List<MessageEnvelope<IEvent>>();
-    foreach (var envelope in events) {
-      (envelope.SourceCommitSequence > 0 ? positioned : unpositioned).Add(envelope);
+  private static List<T> _inOriginOrder<T>(IEnumerable<T> events, Func<T, long> originSequence, Func<T, Guid> id) {
+    var positioned = new List<T>();
+    var unpositioned = new List<T>();
+    foreach (var item in events) {
+      (originSequence(item) > 0 ? positioned : unpositioned).Add(item);
     }
-    var byPosition = positioned.OrderBy(e => e.SourceCommitSequence).ThenBy(TieBreak, StringComparer.Ordinal).ToList();
-    var byId = unpositioned.OrderBy(TieBreak, StringComparer.Ordinal).ToList();
-    var merged = new List<MessageEnvelope<IEvent>>(byPosition.Count + byId.Count);
+    string tieBreak(T item) => id(item).ToString("D");
+    var byPosition = positioned.OrderBy(originSequence).ThenBy(tieBreak, StringComparer.Ordinal).ToList();
+    var byId = unpositioned.OrderBy(tieBreak, StringComparer.Ordinal).ToList();
+    var merged = new List<T>(byPosition.Count + byId.Count);
     int p = 0, u = 0;
     while (p < byPosition.Count || u < byId.Count) {
       var takeUnpositioned = p == byPosition.Count
-        || (u < byId.Count && string.CompareOrdinal(TieBreak(byId[u]), TieBreak(byPosition[p])) < 0);
+        || (u < byId.Count && string.CompareOrdinal(tieBreak(byId[u]), tieBreak(byPosition[p])) < 0);
       merged.Add(takeUnpositioned ? byId[u++] : byPosition[p++]);
     }
     return merged;
