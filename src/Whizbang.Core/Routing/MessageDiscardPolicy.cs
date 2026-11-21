@@ -73,7 +73,7 @@ public interface IMessageDiscardPolicy {
   /// <param name="payloadClrType">The payload type name, in any form.</param>
   /// <returns>True when the type is retired.</returns>
   /// <docs>fundamentals/events/retired-event-types#the-receive-boundary</docs>
-  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/MessageDiscardPolicyTests.cs:EvaluateReceive_ARetiredType_IsDiscardedAsRetired_EvenWhenConsumedOrAbsorbedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Routing/MessageDiscardPolicyTests.cs:IsRetired_OnAPolicyThatDoesNotAnswerIt_RetiresNothingAsync</tests>
   bool IsRetired(string payloadClrType) => false;
 
   /// <summary>
@@ -143,6 +143,7 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   /// <param name="coreOptions">Supplies the host's tag hooks, so an event whose only reason to exist
   /// here is a tag this host acts on is kept rather than dropped for having no receptor. Optional —
   /// when null, a tag is no reason to keep anything, which is the behavior that shipped.</param>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "A dependency-injection constructor: each parameter is a separate registered service the container supplies, so a parameter object would only be another registration to keep in step.")]
   public MessageDiscardPolicy(
       IConsumerRegistry registry,
       ILogger<MessageDiscardPolicy> logger,

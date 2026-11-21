@@ -453,4 +453,20 @@ public class MessageDiscardPolicyTests {
 
     await Assert.That(logger.Entries).IsEmpty();
   }
+  /// <summary>A policy written before #2329 that does not answer IsRetired: the interface's default retires nothing.</summary>
+  private sealed class PolicyWithoutRetirement : IMessageDiscardPolicy {
+    public MessageDiscardDecision EvaluateReceive(string payloadClrType, string topic, string subscription) => default;
+    public MessageDiscardDecision EvaluateInbox(string payloadClrType) => default;
+    public MessageDiscardDecision EvaluateOutbox(string payloadClrType) => default;
+    public void RecordDiscard(MessageDiscardGate gate, MessageDiscardDecision decision, string payloadClrType,
+      IReadOnlyDictionary<string, object?>? additionalTags = null) { }
+  }
+
+  [Test]
+  public async Task IsRetired_OnAPolicyThatDoesNotAnswerIt_RetiresNothingAsync() {
+    IMessageDiscardPolicy policy = new PolicyWithoutRetirement();
+
+    await Assert.That(policy.IsRetired(CONSUMED_TYPE)).IsFalse()
+      .Because("a custom policy written before retirement existed must keep every type it kept before");
+  }
 }

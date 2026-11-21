@@ -172,7 +172,8 @@ public class StoredMetadataTrimGateSqlTests : EFCoreTestBase {
     await _registerThisBuildAsync();
     var step = new MetadataTrimGateStep(NullLogger<MetadataTrimGateStep>.Instance);
 
-    await step.RunAsync(_services(), CancellationToken.None);
+    // No schema: the function is found on the search path rather than schema-qualified.
+    await step.RunAsync(_services(schema: null), CancellationToken.None);
 
     await Assert.That(step.Name).IsEqualTo("metadata-trim-gate");
     await Assert.That(await _flagAsync(conn)).IsEqualTo("true");
@@ -189,13 +190,13 @@ public class StoredMetadataTrimGateSqlTests : EFCoreTestBase {
       : throw new JsonException("missing required properties including: 'MessageId'");
   }
 
-  private ServiceProvider _services() =>
+  private ServiceProvider _services(string? schema = "public") =>
     new ServiceCollection()
       .AddSingleton(new PostgresArchiveConnection(async ct => {
         var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync(ct);
         return connection;
-      }, "public"))
+      }, schema))
       .BuildServiceProvider();
 
   private async Task<string> _gateAsync() =>
