@@ -32,7 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Otherwise event 3 is silently lost — exactly the symptom produced in
 /// production at the projection level, with a handful of line numbers missing.</para>
 /// </summary>
-/// <docs>fundamentals/perspectives/rewind-invariants</docs>
+/// <docs>operations/workers/perspective-worker#the-perspective-work-pipeline</docs>
 [Category("Shard3")]
 public class PerspectiveCursorAdvanceTests : EFCoreTestBase {
 
