@@ -111,7 +111,8 @@ public class alphaPerspective : IPerspectiveFor<alphaModel, alphaEvent> {
 
     // The runner lookup switch and the registration list are both ordered by the perspective's CLR name.
     await _assertOrdinalAsync(a, b, "\"TestApp.ZetaPerspective\" =>", "\"TestApp.alphaPerspective\" =>");
-    var registered = a!.Substring(a.IndexOf("_registeredPerspectives", StringComparison.Ordinal));
+    var full = a!;
+    var registered = full[full.IndexOf("_registeredPerspectives", StringComparison.Ordinal)..];
     await _assertOrdinalAsync(registered, registered, "\"TestApp.ZetaPerspective\",", "\"TestApp.alphaPerspective\",");
   }
 
