@@ -330,8 +330,16 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         var storedFormMigrations = GetStoredFormMigrations();
         await global::Whizbang.Data.Postgres.StoredFormMigrationSql.DeclareAsync(
           rewriteConnectionFactory, "__SCHEMA__", storedFormMigrations, cancellationToken);
-        var rewrites = global::System.Linq.Enumerable.ToList(global::System.Linq.Enumerable.Concat(global::System.Linq.Enumerable.Concat(
+        // A dictionary an earlier release stored as an object becomes an array of key/value pairs before the temporal
+        // rewrite, so a temporal held in a dictionary's value is at the path the readers read (#1911).
+        var rewrites = global::System.Linq.Enumerable.ToList(global::System.Linq.Enumerable.Concat(global::System.Linq.Enumerable.Concat(global::System.Linq.Enumerable.Concat(
           global::Whizbang.Data.Postgres.StoredFormMigrationSql.ForPhase("__SCHEMA__", storedFormMigrations),
+          global::System.Linq.Enumerable.Select(
+            Whizbang.Data.EFCore.Postgres.Perspectives.DictionaryPairsRewrite.ForModel(
+              dbContext.Model,
+              Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options,
+              "__SCHEMA__"),
+            t => (t.Name, t.Sql))),
           Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalRewrite.ForModel(
             dbContext.Model,
             Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options,
@@ -992,9 +1000,13 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         r => r.Name),
       global::System.Linq.Enumerable.Concat(
         global::System.Linq.Enumerable.Select(GetStoredFormMigrations(), m => (m.Name, m.Table)),
-        global::System.Linq.Enumerable.Select(
-          Whizbang.Data.EFCore.Postgres.Perspectives.DeclaredKeyShapes.ForModel(dbContext.Model, documentOptions),
-          t => (t.JournalName, t.Table))),
+        global::System.Linq.Enumerable.Concat(
+          global::System.Linq.Enumerable.Select(
+            Whizbang.Data.EFCore.Postgres.Perspectives.DeclaredKeyShapes.ForModel(dbContext.Model, documentOptions),
+            t => (t.JournalName, t.Table)),
+          global::System.Linq.Enumerable.Select(
+            Whizbang.Data.EFCore.Postgres.Perspectives.DictionaryPairsRewrite.ForModel(dbContext.Model, documentOptions, "__SCHEMA__"),
+            t => (t.Name, t.Table)))),
       global::System.Linq.Enumerable.Select(GetPhysicalColumnRewrites(), r => r.Name),
       cancellationToken);
   }

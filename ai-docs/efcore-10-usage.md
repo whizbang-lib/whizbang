@@ -385,26 +385,29 @@ EF Core's `InternalComplexCollectionEntry` tracks collection elements using inte
 
 ---
 
-### ❌ Dictionary<K,V> NOT Supported
+### Dictionary<K,V> members are stored as key/value arrays (#1911)
 
-EF Core does NOT support `Dictionary<TKey, TValue>` with `ToJson()` (GitHub #29825).
+EF Core's `ToJson()` mapping refuses a dictionary (it takes one for a navigation). A perspective model declares a
+plain `Dictionary<K,V>`, `IDictionary<K,V>` or `IReadOnlyDictionary<K,V>`, at any depth, and nothing else:
 
 ```csharp
-// ❌ WON'T WORK with ToJson()
-public class BadModel {
-    public Dictionary<string, string> Extensions { get; set; } = new();
-}
-
-// ✅ USE List of key-value objects instead
-public class GoodModel {
-    public List<KeyValuePair> Extensions { get; set; } = [];
-}
-
-public class KeyValuePair {
-    public string Key { get; set; } = string.Empty;
-    public string? Value { get; set; }
+public class Order {
+    public Dictionary<string, int> Counts { get; set; } = [];
+    public Dictionary<Guid, Line>? Lines { get; set; }
 }
 ```
+
+- **Stored form**: an array of key/value objects in the dictionary's order, `[{"Key":"a","Value":1}]`, written the same
+  by the serializer (the atomic upsert) and by EF Core. A JSON object would lose the order (jsonb sorts keys).
+- **How**: the perspective schema generator registers each closed dictionary type with
+  `DictionaryMemberForms.Register<K, V>()`; the persistence profile resolves it to `KeyValueArrayJsonConverter`, and
+  the Whizbang options extension (`UseWhizbangFunctions`) adds `DictionaryMemberTypeMappingSourcePlugin`, so EF maps it
+  as a value. A context built without the extension refuses the model, in EF's words, naming the member.
+- **Queries**: `ContainsKey(k)` is `data @> {"Counts":[{"Key":k}]}` (GIN-answerable); `m.Counts[k]` is
+  `jsonb_path_query_first(...) ->> 'Value'` cast to the value type. A temporal or structured value, a key that is not a
+  constant or parameter, and other dictionary methods are refused by EF at query time, never evaluated on the client.
+- **Reads** accept the object form an earlier release wrote (counted on
+  `whizbang.perspective.dictionary_form_fallbacks`); duplicate keys in a stored array are refused.
 
 ### ❌ Collections of Structs NOT Supported
 

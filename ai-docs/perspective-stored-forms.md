@@ -188,6 +188,24 @@ Not handled: a stored key that differs by more than case (`Points` declared `pts
 `[StoredForm(PreviousName = ...)]`. EF's mapped reader cannot refuse a missing required key, and a type shared with
 an event is read tolerantly on every path; the settle step's Error is the only signal there.
 
+## Dictionary members: an array of key/value objects (#1911)
+
+Entity Framework's JSON mapping takes a dictionary for a navigation and refuses the model. Every
+`Dictionary<K,V>`, `IDictionary<K,V>` and `IReadOnlyDictionary<K,V>` in a perspective document, at any depth, is
+stored as `[{"Key":..,"Value":..}]` in the dictionary's order (a jsonb object would sort its keys). Pieces:
+
+| Piece | What it does |
+|---|---|
+| `DictionaryMemberDiscovery` (Generators.Shared) + `PerspectiveSchemaGenerator` | Emits `DictionaryMemberForms.Register<K, V>()` in the schema module initializer for every closed dictionary type a model holds (members, nested objects, collection elements, dictionary values) |
+| `DictionaryMemberForm<K,V>` (Core) | The one reader/writer: keys and values through the persistence options' metadata (a temporal value is the canonical number), reads the array or an earlier release's object (counted on `whizbang.perspective.dictionary_form_fallbacks`), refuses a duplicate or missing key |
+| `DictionaryMemberForms` (Core) | The registry, and a resolver at priority 2000 on the persistence profile resolving a registered type to `KeyValueArrayJsonConverter` (the atomic upsert's writer) |
+| `DictionaryMemberTypeMappingSourcePlugin` / `DictionaryMemberTypeMapping` (EF) | A type mapping, not a convention: EF asks the type mapping source while discovering a complex type's members, which is where it fails. JSON reader/writer, a stored-form converter and a deep comparer. Rides `UseWhizbangFunctions`; a context without it refuses the model in EF's words |
+| `DictionaryMemberTranslator` (EF) | `ContainsKey(k)` becomes `data @> {"Path":[{"Key":k}]}` (GIN-answerable) or `member @> [...]` inside a collection element; `m.D[k]` becomes `jsonb_path_query_first(member, '$[*] ? (@.Key == $k)', ...) ->> 'Value'` cast to the value type. The key is sent through the mapping's own key converter, so any key type compares as stored. Temporal and structured values, non-constant keys and other methods are left for EF to refuse |
+| `DictionaryPairsRewrite` (EF) + migration 544 | The stored-form phase rewrites object-form dictionaries (opaque documents and promoted jsonb columns) once per table, before the temporal rewrite; key kinds string, number and enum-name map; journaled `dictionary-pairs:<table>:<hash>` in `wh_stored_form_migrations`, settled on a pass that converts nothing; included in `StoredFormSettlement`. A date or structured key is left for the reader |
+
+Not handled: `SortedDictionary`, `ImmutableDictionary`, `ConcurrentDictionary` and custom dictionary types (not
+registered, so EF still refuses them); the Dapper driver writes with the options the app gives it and has no rewrite.
+
 ## Objects a consumer owns over a temporal key
 
 Anything a consumer creates over a perspective document's temporal key reads the canonical number:

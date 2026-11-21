@@ -220,6 +220,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         BuildsMetadataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsMetadataIndex,
         BuildsDataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsDataIndex,
         CompositeIndexes: [.. JsonIndexDiscovery.CompositesFrom(modelType as INamedTypeSymbol)],
+        DictionaryForms: [.. DictionaryMemberDiscovery.From(modelType as INamedTypeSymbol).Select(static f => $"{f.KeyType}, {f.ValueType}")],
         TableStorage: TableStorageInfo.From(modelType)
     );
   }
@@ -254,6 +255,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         BuildsMetadataIndex: candidate.BuildsMetadataIndex,
         BuildsDataIndex: candidate.BuildsDataIndex,
         CompositeIndexes: candidate.CompositeIndexes,
+        DictionaryForms: candidate.DictionaryForms,
         TableStorage: candidate.TableStorage
     );
   }
@@ -626,6 +628,11 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
       schemaBuilder.AppendLine(
         $"        global::Whizbang.Core.Perspectives.PerspectiveDocumentModels.Register(\"{perspective.TableName}\", typeof({perspective.ModelFullyQualifiedName}));");
     }
+    // Each closed dictionary type a model holds, once: its stored form, an array of key/value objects, for both writers
+    // of the document (#1911). The author declares a plain dictionary; this is what makes it storable.
+    foreach (var form in perspectives.SelectMany(static p => p.DictionaryForms).Distinct(StringComparer.Ordinal)) {
+      schemaBuilder.AppendLine($"        global::Whizbang.Core.Perspectives.DictionaryMemberForms.Register<{form}>();");
+    }
     schemaBuilder.AppendLine("    }");
   }
 
@@ -958,6 +965,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
 /// <param name="DocumentProperties">The model's properties kept only in the document, whose columns an earlier release may have left behind (#1022)</param>
 /// <param name="BuildsMetadataIndex">Whether the model's [PerspectiveQueries] asks for the metadata index</param>
+/// <param name="DictionaryForms">Each closed dictionary type the model holds, as <c>Key, Value</c> type arguments (#1911)</param>
 /// <param name="TableStorage">The table's storage options from <c>[PerspectiveTableStorage]</c>, if any</param>
 internal sealed record PerspectiveSchemaInfo(
     string ClassName,
@@ -978,6 +986,7 @@ internal sealed record PerspectiveSchemaInfo(
     bool BuildsMetadataIndex,
     bool BuildsDataIndex,
     EquatableArray<CompositeIndexInfo> CompositeIndexes,
+    EquatableArray<string> DictionaryForms,
     TableStorageInfo? TableStorage = null
 );
 
@@ -1016,6 +1025,7 @@ public enum GeneratorFieldStorageMode {
 /// <param name="BuildsMetadataIndex">Whether the model's [PerspectiveQueries] asks for the metadata index</param>
 /// <param name="BuildsDataIndex">Whether the model's [PerspectiveQueries] asks for the index over its whole document</param>
 /// <param name="CompositeIndexes">The indexes the model declares with <c>[PerspectiveIndex]</c></param>
+/// <param name="DictionaryForms">Each closed dictionary type the model holds, as <c>Key, Value</c> type arguments (#1911)</param>
 /// <param name="TableStorage">The table's storage options from <c>[PerspectiveTableStorage]</c>, if any</param>
 internal sealed record PerspectiveCandidate(
     string ClassName,
@@ -1034,5 +1044,6 @@ internal sealed record PerspectiveCandidate(
     bool BuildsMetadataIndex,
     bool BuildsDataIndex,
     EquatableArray<CompositeIndexInfo> CompositeIndexes,
+    EquatableArray<string> DictionaryForms,
     TableStorageInfo? TableStorage = null
 );

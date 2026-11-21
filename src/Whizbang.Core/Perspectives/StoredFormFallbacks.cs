@@ -43,6 +43,9 @@ public static class StoredFormFallbacks {
 
   /// <summary>The counter of identifiers read in the scalar form where the object form was expected. Tagged by <c>type</c>.</summary>
   public const string IDENTIFIER_INSTRUMENT_NAME = "whizbang.perspective.identifier_form_fallbacks";
+
+  /// <summary>The counter of dictionaries read as a JSON object where the array of pairs was expected. Tagged by <c>type</c>.</summary>
+  public const string DICTIONARY_INSTRUMENT_NAME = "whizbang.perspective.dictionary_form_fallbacks";
 #pragma warning restore CA1707
 
   /// <summary>The kind names as tag values, indexed by the enum, so a read allocates nothing.</summary>
@@ -58,6 +61,7 @@ public static class StoredFormFallbacks {
   private static Meter? _ownMeter;
   private static Counter<long> _fallbacks = null!;
   private static Counter<long> _identifierFallbacks = null!;
+  private static Counter<long> _dictionaryFallbacks = null!;
   private static ILogger _logger = NullLogger.Instance;
 
   /// <summary>One bit per kind, set once that kind has been announced.</summary>
@@ -107,6 +111,27 @@ public static class StoredFormFallbacks {
     }
   }
 
+  /// <summary>Records that a dictionary of these types was read as a JSON object rather than an array of pairs.</summary>
+  /// <param name="dictionaryType">The dictionary type read.</param>
+  /// <remarks>
+  /// A document written before #1911, by the serializer or into a promoted jsonb column, holds each dictionary as an
+  /// object. The stored-form rewrite converts them; until it has, the readers take either form, and this count is what
+  /// says the rewrite has not reached a row.
+  /// </remarks>
+  public static void ObjectFormDictionaryRead(Type dictionaryType) {
+    ArgumentNullException.ThrowIfNull(dictionaryType);
+    var typeName = TypeNameFormatter.ForLog(dictionaryType);
+    _dictionaryFallbacks.Add(1, new KeyValuePair<string, object?>("type", typeName));
+
+    bool first;
+    lock (_gate) {
+      first = _announcedTypes.Add(typeName);
+    }
+    if (first) {
+      StoredFormFallbacksLog.ObjectFormDictionaryRead(_logger, typeName, DICTIONARY_INSTRUMENT_NAME);
+    }
+  }
+
   /// <summary>Records that a stored value of this kind was read as a rendering.</summary>
   /// <param name="kind">The kind read.</param>
   public static void RenderingRead(StoredTemporalKind kind) {
@@ -137,6 +162,9 @@ public static class StoredFormFallbacks {
     _identifierFallbacks = meter.CreateCounter<long>(
       IDENTIFIER_INSTRUMENT_NAME,
       description: "Stored identifiers read in the scalar form where the object form was expected; tagged by type");
+    _dictionaryFallbacks = meter.CreateCounter<long>(
+      DICTIONARY_INSTRUMENT_NAME,
+      description: "Stored dictionaries read as a JSON object where the array of key/value pairs was expected; tagged by type");
   }
 }
 
@@ -159,4 +187,12 @@ internal static partial class StoredFormFallbacksLog {
               + "read is counted on {Instrument} by type; a later release stops accepting the scalar "
               + "form")]
   public static partial void ScalarIdentifierRead(ILogger logger, string type, string instrument);
+
+  [LoggerMessage(
+      EventId = 3,
+      Level = LogLevel.Warning,
+      Message = "A stored {Type} was read as a JSON object rather than an array of key/value pairs, so the "
+              + "startup rewrite did not reach the row. Every such read is counted on {Instrument} by type; "
+              + "a later release stops accepting the object form")]
+  public static partial void ObjectFormDictionaryRead(ILogger logger, string type, string instrument);
 }

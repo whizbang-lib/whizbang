@@ -17,8 +17,6 @@ using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 
-// RED (#1911): WHIZ810 still asks for this model to be rewritten; the GREEN commit retires it with this line.
-#pragma warning disable WHIZ810
 
 /// <summary>A line keyed by its id in <see cref="DictionaryMemberModel.Lines"/>: a complex dictionary value.</summary>
 public class DictionaryMemberLine {
@@ -57,8 +55,6 @@ public class DictionaryMemberModel {
   /// <summary>A dictionary declared through the read-only interface.</summary>
   public IReadOnlyDictionary<string, string> Notes { get; set; } = new Dictionary<string, string>();
 }
-
-#pragma warning restore WHIZ810
 
 public record DictionaryMemberNoted([property: StreamId] Guid Id) : IEvent;
 
@@ -165,8 +161,8 @@ public class DictionaryMemberStorageTests : IAsyncDisposable {
     await using var db = new NpgsqlConnection(_connectionString);
     await db.OpenAsync();
     await using var command = new NpgsqlCommand(sql, db);
-    var value = await command.ExecuteScalarAsync();
-    return value?.ToString() ?? "<null>";
+    // A SQL NULL comes back as DBNull, whose text is empty: named, so an assertion about a null cannot pass on "".
+    return await command.ExecuteScalarAsync() is { } value and not DBNull ? value.ToString() ?? "<null>" : "<null>";
   }
 
   private static readonly string[] _countsOrder = ["zulu", "alpha", "mike"];
@@ -260,10 +256,9 @@ public class DictionaryMemberStorageTests : IAsyncDisposable {
       VALUES ('{{stjId}}', now(), now(), 1, '{{document}}'::jsonb, '{}', '{}');
       """);
 
-    var differs = await _scalarAsync($"""
-      SELECT (a.data - 'Id') = (b.data - 'Id') FROM {TABLE} a, {TABLE} b WHERE a.id = '{efId}' AND b.id = '{stjId}'
-      """);
-    await Assert.That(differs).IsEqualTo("True")
+    var efDocument = await _scalarAsync($"SELECT (data - 'Id')::text FROM {TABLE} WHERE id = '{efId}'");
+    var stjDocument = await _scalarAsync($"SELECT (data - 'Id')::text FROM {TABLE} WHERE id = '{stjId}'");
+    await Assert.That(stjDocument).IsEqualTo(efDocument)
       .Because("one stored form: a row reads the same whichever writer wrote it");
     await _assertSameAsSeededAsync(await _readAsync(stjId));
   }
@@ -339,6 +334,8 @@ public class DictionaryMemberStorageTests : IAsyncDisposable {
     await using (var context = _context()) {
       var other = _model(TrackedGuid.New(), "other");
       other.Counts = new() { ["beta"] = 2 };
+      other.Lines = null;
+      other.Notes = new Dictionary<string, string>();
       other.Section.Totals = [];
       other.Sections = [];
       context.Add(_row(other));
