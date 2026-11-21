@@ -184,11 +184,9 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
     await Assert.That(await _flushCommitsAsync(conn)).IsTrue()
       .Because("precondition: the WAL is flushed through every earlier commit, so the vacuum can hint their rows");
     // A vacuum marks a page all-visible only if no snapshot open in this database could still see an older version of a
-    // row on it. The test runs alone (keyless NotInParallel) in a database of its own, and its own connections hold no
-    // snapshot here, so the one other backend that can enter is an autovacuum worker, whose ANALYZE holds a snapshot for
-    // as long as it reads a table: one started on a table the chain writes, but this test did not measure, left a page
-    // unmarked once. Autovacuum is therefore off on every table of the database (see _disableAutovacuumAsync), so no
-    // worker has anything to do here, and one vacuum is the transition itself.
+    // row on it. Autovacuum is off on every table of the test's schema (see _disableAutovacuumAsync), but a worker can
+    // still analyze a catalog of this database, and a snapshot taken here can reach back to a transaction open in
+    // another database on the shared server; either left a page unmarked (#2473). The vacuum waits until nothing can.
     await _vacuumOnceNoOlderSnapshotSeesTheRowsAsync(conn, cancellationToken);
     var (vacuumedPages, vacuumedPagesNotAllVisible) = await _pagesHoldingAsync(conn, vacuumedBefore);
     await Assert.That(vacuumedPages).IsGreaterThanOrEqualTo(1L).Because("precondition: the streams' rows are on some page");
@@ -280,9 +278,42 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
   /// <param name="onWaiting">Called once, the first time the wait finds a snapshot it must wait for.</param>
   private static async Task _vacuumOnceNoOlderSnapshotSeesTheRowsAsync(
       NpgsqlConnection conn, CancellationToken cancellationToken, Func<Task>? onWaiting = null) {
-    _ = onWaiting;
-    _ = cancellationToken;
+    string horizon;
+    await using (var next = conn.CreateCommand()) {
+      next.CommandText = "SELECT pg_snapshot_xmax(pg_current_snapshot())::text";
+      horizon = (string)(await next.ExecuteScalarAsync(cancellationToken))!;
+    }
+    var notified = false;
+    while (await _olderSnapshotsAsync(conn, horizon, cancellationToken) is { } holders) {
+      if (!notified) {
+        notified = true;
+        Console.WriteLine($"[#2473] waiting before the vacuum for: {holders}");
+        if (onWaiting is not null) {
+          await onWaiting();
+        }
+      }
+      await _executeAsync(conn, "SELECT pg_sleep(0.05)");
+    }
     await _executeAsync(conn, "VACUUM wh_stream_lifecycle");
+  }
+
+  /// <summary>
+  /// What could still see a row older than <paramref name="horizon"/>, or null when nothing can: a transaction below it
+  /// still running anywhere on the server, or another backend of this database whose snapshot reaches below it.
+  /// </summary>
+  private static async Task<string?> _olderSnapshotsAsync(NpgsqlConnection conn, string horizon, CancellationToken cancellationToken) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      SELECT NULLIF(concat_ws('; ',
+        CASE WHEN pg_snapshot_xmin(pg_current_snapshot()) < @horizon::xid8
+             THEN 'a transaction below ' || @horizon || ' still running on the server' END,
+        (SELECT string_agg(backend_type || ' ' || pid || ' (xmin ' || backend_xmin || '): ' || left(query, 80), '; ')
+         FROM pg_stat_activity
+         WHERE datname = current_database() AND pid <> pg_backend_pid()
+           AND backend_xmin IS NOT NULL AND age(backend_xmin) > age(@horizon::xid8::xid))), '')
+      """;
+    cmd.Parameters.AddWithValue(nameof(horizon), horizon);
+    return await cmd.ExecuteScalarAsync(cancellationToken) as string;
   }
 
   /// <summary>Makes every earlier commit's WAL durable, so a vacuum after it can mark their rows all-visible (#2158).</summary>
