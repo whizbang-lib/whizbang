@@ -46,12 +46,13 @@
     The baseline (docs-tag-target-baseline.txt next to this script) lists the targets that were already
     dangling when the guard was added, one per line as "target | reason"; # starts a comment. A tag whose
     target is baselined is not reported, so the guard blocks every new dangling target while the old ones
-    are fixed. An entry whose target now resolves, or that no tag names any more, is stale and fails the
-    run too, so the baseline only shrinks. That includes a page added on the docs side: delete the entry
-    in the same week. Never add an entry to get a change through; point the tag at a page that exists.
+    are fixed. An entry that no tag names any more is stale and fails the run, so a change here that
+    drops a tag also drops its entry. An entry whose target now resolves, because a page or heading was
+    added on the docs side, is reported as a warning only: no pull request here caused it, so it must not
+    fail one. Delete such an entry when the warning appears. Never add an entry to get a change through; point the tag at a page that exists.
 
-    Exits 0 when every target resolves or is baselined and nothing in the baseline is stale; 1 listing
-    each unbaselined dangling tag (file, line, tag and why) and each stale entry, or when no tag is found
+    Exits 0 when every target resolves or is baselined and no baseline entry is unused (resolved entries
+    only warn); 1 listing each unbaselined dangling tag (file, line, tag and why) and each unused entry, or when no tag is found
     at all; 2 when the docs repository cannot be fetched or holds no pages, so a failed fetch is never a
     pass. Dot-source the script to load its functions without running the check.
 
@@ -238,8 +239,9 @@ function Compare-DocsTagBaseline([object[]]$Tags, [System.Collections.Generic.Di
   })
   $stale = @(foreach ($entry in $Baseline.Values) {
     if ($dangling.Contains($entry.Text)) { continue }
-    $why = if ($all.Contains($entry.Text)) { 'the target now resolves; delete the entry' } else { 'no tag names that target any more; delete the entry' }
-    [pscustomobject]@{ Entry = $entry; Why = $why }
+    $resolved = $all.Contains($entry.Text)
+    $why = if ($resolved) { 'the target now resolves; delete the entry' } else { 'no tag names that target any more; delete the entry' }
+    [pscustomobject]@{ Entry = $entry; Resolved = $resolved; Why = $why }
   })
   return [pscustomobject]@{ Unbaselined = $unbaselined; Stale = $stale; Dangling = $dangling }
 }
@@ -294,13 +296,19 @@ try {
     Write-Output "$($tag.Source):$($tag.Line): <docs>$($tag.Text)</docs>: $($tag.Reason)"
   }
   foreach ($stale in $comparison.Stale) {
-    Write-Output "${BaselinePath}:$($stale.Entry.Line): stale entry '$($stale.Entry.Text)': $($stale.Why)"
+    if ($stale.Resolved) {
+      # A docs-side change made it resolve: no pull request here caused it, so it must not fail one. Warn until deleted.
+      Write-Output "::warning file=${BaselinePath},line=$($stale.Entry.Line)::stale entry '$($stale.Entry.Text)': $($stale.Why)"
+    } else {
+      Write-Output "${BaselinePath}:$($stale.Entry.Line): stale entry '$($stale.Entry.Text)': $($stale.Why)"
+    }
   }
   $distinct = @($tags | ForEach-Object Text | Sort-Object -Unique -CaseSensitive).Count
   $baselined = @($comparison.Dangling | Where-Object { $baseline.ContainsKey($_) }).Count
   Write-Output ("Checked $($tags.Count) <docs> tags ($distinct distinct targets): $($comparison.Dangling.Count) dangling, " +
     "$baselined baselined, $($comparison.Stale.Count) stale baseline entries.")
-  if ($comparison.Unbaselined.Count -gt 0 -or $comparison.Stale.Count -gt 0) { exit 1 }
+  $unused = @($comparison.Stale | Where-Object { -not $_.Resolved })
+  if ($comparison.Unbaselined.Count -gt 0 -or $unused.Count -gt 0) { exit 1 }
   exit 0
 } finally {
   if ($clone -and (Test-Path -LiteralPath $clone)) { Remove-Item -LiteralPath $clone -Recurse -Force }
