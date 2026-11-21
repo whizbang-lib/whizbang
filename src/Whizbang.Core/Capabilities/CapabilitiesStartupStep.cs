@@ -50,23 +50,31 @@ public sealed class CapabilityOptions {
 /// pipeline.
 /// </para>
 /// <para>
+/// While an explicit requirement in force reads <see cref="CapabilityState.Unknown"/> after the probe, the step
+/// probes again, at most <see cref="UNKNOWN_RETRIES"/> times, waiting
+/// <see cref="StartupAssessmentSource.RetryDelay"/> before each (1, 2 and 4 seconds). One still Unknown after the
+/// last retry fails start (#1513, decided in #1672). An implicit requirement is never waited for, and nothing is
+/// retried for a capability no provider describes. The step does not block readiness, so the wait holds nothing back.
+/// </para>
+/// <para>
 /// Provisioning runs between the probe and the verdict, so a required capability the library creates is Ready
 /// when it is judged. Only what a requirement in force names is provisioned; everything else is only detected.
 /// </para>
 /// <para>
 /// With the probe turned off the verdict is still published, every capability Unknown, so an explicit
-/// requirement warns rather than passing unseen. Nothing is provisioned on a guess.
+/// requirement warns rather than passing unseen; it does not fail start, because nothing probed it. Nothing is
+/// provisioned on a guess.
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#verdict</docs>
 /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Capabilities/CapabilitiesStartupStepTests.cs</tests>
-public sealed class CapabilitiesStartupStep : IStartupStep {
+public sealed partial class CapabilitiesStartupStep : IStartupStep {
 #pragma warning disable CA1707
   /// <summary>The step's name in the startup pipeline.</summary>
   public const string STEP_NAME = "Capabilities";
 
-  /// <summary>How many times the step probes again while an explicit requirement reads Unknown.</summary>
-  public const int UNKNOWN_RETRIES = 0;
+  /// <summary>How many times the step probes again while an explicit requirement reads Unknown: the retry's bound.</summary>
+  public const int UNKNOWN_RETRIES = 3;
 #pragma warning restore CA1707
 
   private readonly ICapabilityRegistry _registry;
@@ -134,10 +142,17 @@ public sealed class CapabilitiesStartupStep : IStartupStep {
 
   /// <inheritdoc />
   public async ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken) {
-    _ = _time;
     var inForce = _sources.SelectMany(source => source.Resolve(_configuration)).Distinct().ToList();
     if (_options.ProbeOnStartup) {
       await _registry.RefreshAsync(cancellationToken).ConfigureAwait(false);
+      for (var retry = 1; retry <= UNKNOWN_RETRIES && _explicitlyUnknown(inForce) is { } unknown; retry++) {
+        // Scheduled before it is logged, so a test driving the clock can advance it as soon as it hears.
+        var delay = StartupAssessmentSource.RetryDelay(retry);
+        var wait = Task.Delay(delay, _time, cancellationToken);
+        LogProbingAgain(_logger, unknown, (long)delay.TotalMilliseconds, retry, UNKNOWN_RETRIES);
+        await wait.ConfigureAwait(false);
+        await _registry.RefreshAsync(cancellationToken).ConfigureAwait(false);
+      }
       _registry.Record(await CapabilityProvisioningRunner.RunAsync(
         _registry.Statuses, inForce, _provisioners, _options, _configuration, _logger, cancellationToken).ConfigureAwait(false));
     }
@@ -154,4 +169,19 @@ public sealed class CapabilitiesStartupStep : IStartupStep {
     return new StartupStepReport(StartupStepOutcome.Completed,
       $"{statuses.Count(s => s.IsUsable)} of {statuses.Count} usable");
   }
+
+  // The capabilities an explicit requirement in force would fail start on only because a provider reads them
+  // Unknown, named with their scope; null when there are none.
+  private string? _explicitlyUnknown(List<ActiveCapabilityRequirement> inForce) {
+    var unknown = CapabilityVerdict.Evaluate(_registry.Statuses, inForce, probed: true).Failures
+      .Where(entry => entry.Status.State == CapabilityState.Unknown)
+      .Select(entry => $"{entry.Status.Descriptor.Id} on '{entry.Status.Scope}'")
+      .ToList();
+    return unknown.Count == 0 ? null : string.Join(", ", unknown);
+  }
+
+  [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
+    Message = "Explicitly required capabilities read Unknown ({Capabilities}); probing again in {DelayMs} ms (retry {Retry} of {Retries}). "
+      + "Still Unknown after the last retry fails start")]
+  static partial void LogProbingAgain(ILogger logger, string capabilities, long delayMs, int retry, int retries);
 }
