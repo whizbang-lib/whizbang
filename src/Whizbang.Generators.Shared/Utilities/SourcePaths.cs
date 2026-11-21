@@ -43,7 +43,7 @@ public static class SourcePaths {
         continue;
       }
       // The compiler ends every replacement with a separator, so it holds a slash, a backslash or both.
-      var mapped = entry.To + path.Substring(entry.From.Length);
+      var mapped = entry.To + path[entry.From.Length..];
       if (entry.To.IndexOf('\\') < 0) {
         return mapped.Replace('\\', '/');
       }
