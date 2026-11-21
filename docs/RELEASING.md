@@ -934,8 +934,10 @@ success. CI always starts clean.
   the SLSA provenance attestation is the tamper-evidence on the published bits.
 - **Two builds of one commit are byte-identical** (#2484). The settings that make them so are in
   `Directory.Build.props` and locked by `.github/scripts/tests/ReproducibleBuildSettings.Tests.ps1`;
-  a generator that sorts names uses `StringComparer.Ordinal`, and one that writes a source path into
-  generated code maps it with `SourcePaths.Map`. See [Reproducible builds](#reproducible-builds).
+  a generator that sorts names uses `StringComparer.Ordinal`, one that writes a source path into
+  generated code maps it with `SourcePaths.Map`, and a type declares its `[LoggerMessage]` methods in
+  one partial declaration (`LoggerMessageDeclarationGuardTests` (Whizbang.Generators.Component.Tests)). See
+  [Reproducible builds](#reproducible-builds).
 - **The fast-forward queue skip is tree-keyed and fails safe.** `ff-validated` skips the queue
   suites only for a single-PR group whose merge tree is byte-identical to a fully-green (incl.
   Quality) PR run's tree. Every uncertain path emits `skip=false` (full queue matrix) and the job
@@ -1030,6 +1032,7 @@ small set of causes. The weekly run finds a break within a week; a release branc
 | The checkout's directory in PDBs, `CallerFilePath` and embedded sources | `ContinuousIntegrationBuild` on every CI build (`CI=true`): the repository root reads `/_/` |
 | A generator writing a source file's absolute path (the message registry embedded in Whizbang.Core, whose change reached every assembly referencing Core) | the generator maps the path through the build's path map (`SourcePaths.Map`), as the compiler does |
 | A generator sorting names with the build machine's culture | `StringComparer.Ordinal` in every generator sort |
+| The .NET 10 logging generator (`net10.0` only) ordering two `[LoggerMessage]` declarations with one namespace and name by a per-process hash set | each type declares its log methods in one partial declaration, and a nested log class has a name unique in its namespace; `LoggerMessageDeclarationGuardTests` (Whizbang.Generators.Component.Tests) fails on a second one. The .NET 11 generator sorts by a unique key, so the guard can go with `net10.0` |
 | ILRepack writing the merged symbol file's path, under a per-run temp folder, into each generator assembly | a CI build merges without symbols (`WhizbangILRepackDebugInfo`); the generator packages ship no symbols either way |
 | Package entries stamped with each file's write time (NuGet's default) | `DeterministicTimestamp` fixed at `2000-01-01T00:00:00Z` |
 
