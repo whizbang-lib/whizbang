@@ -24,10 +24,19 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 [Category("Shard2")]
 public class DictionaryPairsRewriteTests {
   private const string OFFLINE = "Host=localhost;Database=probe;Username=u;Password=p";
+  private static readonly string[] _tableOrder = ["wh_per_dictionary_another", "wh_per_dictionary_opaque"];
 
   /// <summary>A model stored as one value, with a dictionary in it and one in a promoted jsonb column.</summary>
   private sealed class OpaqueDbContext(DbContextOptions<OpaqueDbContext> options) : DbContext(options) {
-    protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+      // A second table, named ahead of the first, so the rewrites come back in table order whatever order the model holds.
+      modelBuilder.Entity<PerspectiveRow<DictionaryMemberModel>>(entity => {
+        entity.ToTable("wh_per_dictionary_another");
+        entity.HasKey(e => e.Id);
+        entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
+        entity.Ignore(e => e.Metadata);
+        entity.Ignore(e => e.Scope);
+      });
       modelBuilder.Entity<PerspectiveRow<DictionaryRewriteModel>>(entity => {
         entity.ToTable("wh_per_dictionary_opaque");
         entity.HasKey(e => e.Id);
@@ -35,17 +44,49 @@ public class DictionaryPairsRewriteTests {
           .HasConversion(PerspectiveDocumentSerialization.ConverterFor<DictionaryRewriteModel>());
         entity.Property<Dictionary<string, int>>("by_name").HasColumnName("by_name").HasColumnType("jsonb")
           .HasConversion(PerspectiveDocumentSerialization.ConverterFor<Dictionary<string, int>>());
-        entity.Ignore(e => e.Metadata);
+        // A jsonb column of a type no serializer metadata describes: nothing to walk.
+        entity.Property<Unregistered>("unregistered").HasColumnName("unregistered").HasColumnType("jsonb")
+          .HasConversion(v => "{}", v => new Unregistered());
+        // A complex property spread over columns rather than a document: not a place a dictionary is stored.
+        entity.ComplexProperty(e => e.Metadata);
         entity.Ignore(e => e.Scope);
       });
+    }
+  }
+
+  /// <summary>A type no serializer metadata describes.</summary>
+  private sealed class Unregistered;
+
+  /// <summary>A generic entity that is not a perspective row.</summary>
+  public class GenericHolder<T> {
+    public Guid Id { get; set; }
+    public T? Value { get; set; }
   }
 
   private sealed class NotAPerspectiveDbContext(DbContextOptions<NotAPerspectiveDbContext> options) : DbContext(options) {
-    protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
       modelBuilder.Entity<DictionaryMemberLine>(entity => {
         entity.ToTable("lines");
         entity.HasKey(e => e.Name);
       });
+      modelBuilder.Entity<GenericHolder<int>>(entity => entity.ToTable("holders"));
+      // A perspective row whose model holds no dictionary.
+      modelBuilder.Entity<PerspectiveRow<DictionaryMemberLine>>(entity => {
+        entity.ToTable("wh_per_lines");
+        entity.HasKey(e => e.Id);
+        entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
+        entity.Ignore(e => e.Metadata);
+        entity.Ignore(e => e.Scope);
+      });
+      // A perspective row mapped to no table.
+      modelBuilder.Entity<PerspectiveRow<DictionaryMemberSection>>(entity => {
+        entity.ToTable((string?)null);
+        entity.HasKey(e => e.Id);
+        entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
+        entity.Ignore(e => e.Metadata);
+        entity.Ignore(e => e.Scope);
+      });
+    }
   }
 
   private static TContext _context<TContext>(Func<DbContextOptions<TContext>, TContext> make) where TContext : DbContext =>
@@ -62,15 +103,18 @@ public class DictionaryPairsRewriteTests {
     var paths = DictionaryPairsRewrite.PathsOf(
       context.Model.FindEntityType(typeof(PerspectiveRow<DictionaryRewriteModel>))!, PerspectiveDocumentSerialization.Options);
 
-    await Assert.That(tables.Single().Table).IsEqualTo("wh_per_dictionary_opaque");
+    await Assert.That(tables.Select(t => t.Table)).IsEquivalentTo(_tableOrder, TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(paths.Select(p => p.ToString())).Contains("data:ByName");
     await Assert.That(paths.Select(p => p.ToString())).Contains("data:Sections.[].Totals");
     await Assert.That(paths.Select(p => p.ToString())).Contains("data:Nested.[].Value");
     await Assert.That(paths.Select(p => p.ToString())).Contains("by_name:");
+    await Assert.That(paths.Select(p => p.ToString())).Contains("data:Root.Children")
+      .Because("a dictionary whose value holds the type the walk is already inside is found, and the walk ends there");
+    await Assert.That(paths.Any(p => p.Column is "unregistered" or "metadata")).IsFalse();
   }
 
   [Test]
-  public async Task AModelWithNoPerspective_HasNoRewriteAsync() {
+  public async Task ARowThatIsNoPerspectiveOrHoldsNoDictionaryOrHasNoTable_HasNoRewriteAsync() {
     await using var context = _context<NotAPerspectiveDbContext>(o => new NotAPerspectiveDbContext(o));
 
     await Assert.That(DictionaryPairsRewrite.ForModel(context.Model, PerspectiveDocumentSerialization.Options, "public")).IsEmpty();

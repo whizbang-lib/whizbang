@@ -116,10 +116,9 @@ public static class DictionaryPairsRewrite {
       }
     }
 
-    foreach (var property in rowType.GetProperties()) {
-      if (property.GetColumnType() == JSONB && !property.ClrType.IsValueType && property.ClrType != typeof(string)) {
-        _walkSerialized(documentOptions, property.ClrType, property.GetColumnName(), [], found, []);
-      }
+    // A promoted jsonb field, or a document stored as one value: the serializer reads it, so its metadata is walked.
+    foreach (var property in rowType.GetProperties().Where(p => p.GetColumnType() == JSONB)) {
+      _walkSerialized(documentOptions, property.ClrType, property.GetColumnName(), [], found, []);
     }
 
     return found.ToImmutable();
@@ -279,8 +278,9 @@ public static class DictionaryPairsRewrite {
       return;
     }
 
-    // The resolver rather than the options: the options throw for a type nothing describes.
-    var info = options.TypeInfoResolver?.GetTypeInfo(type, options);
+    // The resolver rather than the options: the options throw for a type nothing describes. The document options always
+    // carry one (the registry's union).
+    var info = options.TypeInfoResolver!.GetTypeInfo(type, options);
     if (info is null || !visiting.Add(type)) {
       return;
     }

@@ -235,7 +235,8 @@ public sealed class DictionaryMemberForm<TKey, TValue> : DictionaryMemberForm wh
     var valueInfo = _typeInfo<TValue>(options);
     var result = new Dictionary<TKey, TValue>();
 
-    while (reader.Read() && reader.TokenType != JsonTokenType.EndArray) {
+    // A complete value is in the reader, so Read never runs out before the closing token; it throws on a truncated one.
+    while (_next(ref reader) != JsonTokenType.EndArray) {
       if (reader.TokenType != JsonTokenType.StartObject) {
         throw new JsonException($"A dictionary pair is an object with {KEY} and {VALUE}; found {reader.TokenType}.");
       }
@@ -243,7 +244,7 @@ public sealed class DictionaryMemberForm<TKey, TValue> : DictionaryMemberForm wh
       var hasKey = false;
       TKey key = default!;
       TValue value = default!;
-      while (reader.Read() && reader.TokenType != JsonTokenType.EndObject) {
+      while (_next(ref reader) != JsonTokenType.EndObject) {
         var name = reader.GetString();
         reader.Read();
         if (string.Equals(name, KEY, StringComparison.OrdinalIgnoreCase)) {
@@ -271,7 +272,7 @@ public sealed class DictionaryMemberForm<TKey, TValue> : DictionaryMemberForm wh
 
     var valueInfo = _typeInfo<TValue>(options);
     var result = new Dictionary<TKey, TValue>();
-    while (reader.Read() && reader.TokenType != JsonTokenType.EndObject) {
+    while (_next(ref reader) != JsonTokenType.EndObject) {
       var key = _keyFromName(reader.GetString()!, options);
       reader.Read();
       _add(result, key, JsonSerializer.Deserialize(ref reader, valueInfo)!);
@@ -318,6 +319,11 @@ public sealed class DictionaryMemberForm<TKey, TValue> : DictionaryMemberForm wh
     if (!result.TryAdd(key, value)) {
       throw new JsonException($"A stored dictionary names the duplicate key '{key}'; each key is stored once.");
     }
+  }
+
+  private static JsonTokenType _next(ref Utf8JsonReader reader) {
+    reader.Read();
+    return reader.TokenType;
   }
 
   private static JsonTypeInfo<T> _typeInfo<T>(JsonSerializerOptions options) =>

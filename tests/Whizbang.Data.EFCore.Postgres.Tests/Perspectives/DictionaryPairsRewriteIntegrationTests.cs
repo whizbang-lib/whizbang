@@ -26,6 +26,11 @@ public enum DictionaryRewriteColor {
   Green = 2,
 }
 
+/// <summary>A folder holding folders by name: a dictionary whose value holds the same dictionary type.</summary>
+public class DictionaryRewriteFolder {
+  public Dictionary<string, DictionaryRewriteFolder> Children { get; set; } = [];
+}
+
 /// <summary>A model holding a dictionary under every key kind the rewrite converts, and one it leaves for the reader.</summary>
 [SuppressIndexAdvisory("rewrite fixture; rows are seeded in the old form and read back raw")]
 public class DictionaryRewriteModel {
@@ -38,6 +43,7 @@ public class DictionaryRewriteModel {
   public Dictionary<DateTime, int> ByDay { get; set; } = [];
   public List<DictionaryMemberSection> Sections { get; set; } = [];
   public Dictionary<string, Dictionary<string, int>> Nested { get; set; } = [];
+  public DictionaryRewriteFolder Root { get; set; } = new();
 }
 
 public record DictionaryRewriteNoted([property: StreamId] Guid Id) : IEvent;

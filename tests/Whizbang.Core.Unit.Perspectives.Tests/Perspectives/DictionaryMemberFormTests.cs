@@ -159,8 +159,10 @@ public class DictionaryMemberFormTests {
   [Test]
   public async Task AStoredNameThatIsNotAKey_IsRefusedAsync() {
     var failure = await Assert.That(() => _read<FormRecordKey, int>("""{"null":1}""")).Throws<JsonException>();
+    var notAMember = await Assert.That(() => _read<FormColor, string>("""{"Purple":"x"}""")).Throws<JsonException>();
 
     await Assert.That(failure!.Message).Contains("is not a");
+    await Assert.That(notAMember!.Message).Contains("'Purple'");
   }
 
   [Test]
@@ -181,6 +183,13 @@ public class DictionaryMemberFormTests {
     var read = _read<string, int>("""[{"Note":{"x":[1]},"Key":"a","Value":3}]""");
 
     await Assert.That(read["a"]).IsEqualTo(3);
+  }
+
+  [Test]
+  public async Task TheStoredText_IsTheArrayOfPairsAsync() {
+    var text = DictionaryMemberForm<string, int>.Instance.ToJson(new Dictionary<string, int> { ["b"] = 2, ["a"] = 1 }, _options());
+
+    await Assert.That(text).IsEqualTo("""[{"Key":"b","Value":2},{"Key":"a","Value":1}]""");
   }
 
   [Test]

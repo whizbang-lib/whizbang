@@ -353,6 +353,8 @@ public class DictionaryMemberStorageTests : IAsyncDisposable {
     await Assert.That(await rows.Where(r => r.Data.Lines!.ContainsKey(_lineId)).Select(r => r.Id).ToListAsync()).IsEquivalentTo(new[] { matching });
     await Assert.That(await rows.Where(r => r.Data.Notes["a"] == "ay").Select(r => r.Id).ToListAsync()).IsEquivalentTo(new[] { matching });
     await Assert.That(await rows.Where(r => r.Data.Counts.ContainsKey("absent")).CountAsync()).IsEqualTo(0);
+    await Assert.That(await rows.Where(r => r.Data.Sections[0].Totals.ContainsKey("tax")).Select(r => r.Id).ToListAsync()).IsEquivalentTo(new[] { matching })
+      .Because("a dictionary under an indexed element is asked of its own member, the path naming no fixed key");
   }
 
   /// <summary>The plan carries the key predicate: the filter ran in the database, not on rows read back.</summary>
