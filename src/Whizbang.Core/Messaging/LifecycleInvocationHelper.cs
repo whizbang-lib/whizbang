@@ -47,6 +47,13 @@ public readonly record struct DistributeLifecycleContext(
   /// the reading of its payload) failed for, so the caller stores only the others (#2313).
   /// </summary>
   internal ISet<Guid>? RefusedMessageIds { get; init; }
+
+  /// <summary>
+  /// The payloads this flush has read, shared by its five Distribute stages so each message is parsed once between them
+  /// (#1526). A copy made with <c>with</c> keeps the same instance, so every stage started from one flush's context shares
+  /// it; a new context is a new flush and reads its payloads again.
+  /// </summary>
+  internal FlushPayloads Payloads { get; } = new();
 }
 
 /// <summary>
@@ -107,6 +114,7 @@ public static partial class LifecycleInvocationHelper {
   private readonly record struct LifecycleInvocationDependencies(
     IServiceScopeFactory? ScopeFactory,
     ILifecycleMessageDeserializer? LifecycleMessageDeserializer,
+    FlushPayloads Payloads,
     ILogger? Logger,
     bool EnableLifecycleTracing,
     LifecycleMetrics? Metrics);
@@ -129,7 +137,7 @@ public static partial class LifecycleInvocationHelper {
     // The main thread may modify the original collections while the background task iterates
     var outboxSnapshot = context.OutboxMessages.ToArray();
     var inboxSnapshot = context.InboxMessages.ToArray();
-    var deps = new LifecycleInvocationDependencies(context.ScopeFactory, context.LifecycleMessageDeserializer, context.Logger, context.EnableLifecycleTracing, context.Metrics);
+    var deps = new LifecycleInvocationDependencies(context.ScopeFactory, context.LifecycleMessageDeserializer, context.Payloads, context.Logger, context.EnableLifecycleTracing, context.Metrics);
 
     // Invoke async stage (non-blocking, backgrounded), recorded so a stopping host can wait for it
     _startDetached(outboxSnapshot, inboxSnapshot, asyncStage, deps, context.DetachedWork, ct);
@@ -147,7 +155,7 @@ public static partial class LifecycleInvocationHelper {
     var failures = context.InlineFailures == InlineStageFailureHandling.StopAtFirstFailure
       ? null
       : new StageFailures(context.Logger, context.Metrics, inlineStage) { Refused = context.RefusedMessageIds };
-    var stage = new StageInvocation(inlineStage, context.ScopeFactory, context.LifecycleMessageDeserializer, context.EnableLifecycleTracing, context.Metrics, failures);
+    var stage = new StageInvocation(inlineStage, context.ScopeFactory, context.LifecycleMessageDeserializer, context.Payloads, context.EnableLifecycleTracing, context.Metrics, failures);
     await _processOutboxMessagesAsync(outboxSnapshot, stage, ct);
     await _processInboxMessagesAsync(inboxSnapshot, stage, ct);
 
@@ -176,7 +184,7 @@ public static partial class LifecycleInvocationHelper {
     // CRITICAL: Snapshot collections before Task.Run to avoid "Collection was modified" exceptions
     var outboxSnapshot = context.OutboxMessages.ToArray();
     var inboxSnapshot = context.InboxMessages.ToArray();
-    var deps = new LifecycleInvocationDependencies(context.ScopeFactory, context.LifecycleMessageDeserializer, context.Logger, context.EnableLifecycleTracing, context.Metrics);
+    var deps = new LifecycleInvocationDependencies(context.ScopeFactory, context.LifecycleMessageDeserializer, context.Payloads, context.Logger, context.EnableLifecycleTracing, context.Metrics);
 
     // Invoke async stage (non-blocking, backgrounded) - no inline stage for DistributeDetached
     _startDetached(outboxSnapshot, inboxSnapshot, asyncStage, deps, context.DetachedWork, ct);
@@ -216,7 +224,7 @@ public static partial class LifecycleInvocationHelper {
       var stageSw = Stopwatch.StartNew();
 
       // Nothing waits on a detached stage, so each failure is logged against its own message and the rest still run.
-      var stage = new StageInvocation(asyncStage, deps.ScopeFactory, deps.LifecycleMessageDeserializer, deps.EnableLifecycleTracing, deps.Metrics,
+      var stage = new StageInvocation(asyncStage, deps.ScopeFactory, deps.LifecycleMessageDeserializer, deps.Payloads, deps.EnableLifecycleTracing, deps.Metrics,
         new StageFailures(deps.Logger, deps.Metrics, asyncStage));
       try {
         await _processOutboxMessagesAsync(outboxSnapshot, stage, ct);
@@ -235,6 +243,7 @@ public static partial class LifecycleInvocationHelper {
     LifecycleStage Stage,
     IServiceScopeFactory ScopeFactory,
     ILifecycleMessageDeserializer Deserializer,
+    FlushPayloads Payloads,
     bool EnableLifecycleTracing,
     LifecycleMetrics? Metrics,
     StageFailures? Failures);
@@ -303,8 +312,9 @@ public static partial class LifecycleInvocationHelper {
       if (receptorInvoker is null) {
         return;
       }
-      var message = stage.Deserializer.DeserializeFromJsonElement(envelope.Payload, messageType);
-      MessageParseDiagnostics.Record(messageId, MessageParseSource.LifecycleStage, MessageParseKind.Payload);
+      // Read once per flush and shared by its stages (#1526); the envelope is still this stage's own, so hops and stamps
+      // it adds are never seen by another stage.
+      var message = stage.Payloads.GetOrRead(envelope, messageType, messageId, stage.Deserializer);
       var typedEnvelope = envelope.ReconstructWithPayload(message);
 
       stage.Metrics?.ReceptorInvocations.Add(1,

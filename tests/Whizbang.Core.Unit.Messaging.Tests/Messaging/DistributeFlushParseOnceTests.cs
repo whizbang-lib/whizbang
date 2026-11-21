@@ -110,7 +110,7 @@ public class DistributeFlushParseOnceTests {
   [Test]
   public async Task OneFlush_APayloadThatFailedToParse_IsReadAgainByTheNextStageAsync() {
     var outbox = _outbox();
-    var deserializer = new CountingDeserializer(failFirst: 1);
+    var deserializer = new CountingDeserializer(unreadable: true);
     var invoker = new RecordingInvoker();
     await using var provider = _provider(invoker);
     var context = _context(provider, deserializer, [outbox], []);
@@ -120,16 +120,18 @@ public class DistributeFlushParseOnceTests {
         LifecycleStage.PreDistributeDetached, LifecycleStage.PreDistributeInline, context))
       .ThrowsExactly<JsonException>();
     await context.DetachedWork!.DrainAsync(CancellationToken.None);
-    var parsesBefore = deserializer.CallsFor(outbox.MessageId);
+    await Assert.That(deserializer.CallsFor(outbox.MessageId)).IsEqualTo(2)
+      .Because("both pre-store stages tried to read the payload, and neither read was kept");
+    deserializer.MakeReadable();
 
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
       LifecycleStage.PostDistributeDetached, LifecycleStage.PostDistributeInline, context);
     await context.DetachedWork!.DrainAsync(CancellationToken.None);
 
-    await Assert.That(deserializer.CallsFor(outbox.MessageId)).IsEqualTo(parsesBefore + 1)
+    await Assert.That(deserializer.CallsFor(outbox.MessageId)).IsEqualTo(3)
       .Because("a failure is never remembered: the next stage reads the payload again, and then shares what it read");
-    await Assert.That(invoker.StagesFor(outbox.MessageId)).Contains(LifecycleStage.PostDistributeInline)
-      .Because("a stage after a failed read still runs once the payload can be read");
+    await Assert.That(invoker.StagesFor(outbox.MessageId)).IsEquivalentTo([LifecycleStage.PostDistributeDetached, LifecycleStage.PostDistributeInline])
+      .Because("the stages that could not read the payload invoked nothing; the ones after them ran once it could be read");
   }
 
   [Test]
@@ -231,12 +233,14 @@ public class DistributeFlushParseOnceTests {
   private sealed record ParseOnceProbe(string Body) : IMessage;
 
   /// <summary>
-  /// Reads each payload as a new <see cref="ParseOnceProbe"/> and counts the reads per message id. The first
-  /// <c>failFirst</c> reads fail with a <see cref="JsonException"/>.
+  /// Reads each payload as a new <see cref="ParseOnceProbe"/> and counts the reads per message id. While
+  /// <c>unreadable</c> holds (until <see cref="MakeReadable"/>), every read fails with a <see cref="JsonException"/>.
   /// </summary>
-  private sealed class CountingDeserializer(int failFirst = 0) : ILifecycleMessageDeserializer {
+  private sealed class CountingDeserializer(bool unreadable = false) : ILifecycleMessageDeserializer {
     private readonly ConcurrentDictionary<Guid, int> _calls = new();
-    private int _failuresLeft = failFirst;
+    private volatile bool _unreadable = unreadable;
+
+    public void MakeReadable() => _unreadable = false;
 
     public int CallsFor(Guid messageId) => _calls.GetValueOrDefault(messageId);
 
@@ -247,7 +251,7 @@ public class DistributeFlushParseOnceTests {
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) {
       var messageId = jsonElement.GetProperty("id").GetGuid();
       _calls.AddOrUpdate(messageId, 1, static (_, count) => count + 1);
-      if (Interlocked.Decrement(ref _failuresLeft) >= 0) {
+      if (_unreadable) {
         throw new JsonException($"cannot read {messageId}");
       }
       return new ParseOnceProbe(jsonElement.GetProperty("body").GetString()!);
