@@ -4,24 +4,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
-    <Description>Azure Blob Storage IMessageBodyStore provider for Whizbang offloads (claim-check pattern). Supports Azurite emulator and live Azure Blob Storage via the same connection-string conventions.</Description>
+    <Description>Replaced by Whizbang.Storage.AzureBlob, which this release depends on: the earlier registration calls compile and work, marked obsolete. Reference Whizbang.Storage.AzureBlob instead.</Description>
     <!-- The README package table groups by these (scripts/Update-ReadmeStats.ps1). -->
     <WhizbangPackageTier>Application</WhizbangPackageTier>
     <WhizbangPackageArea>Message offload</WhizbangPackageArea>
   </PropertyGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="Whizbang.Offloads.AzureBlob.Tests" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Azure.Storage.Blobs" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="../Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../Whizbang.Storage.AzureBlob/Whizbang.Storage.AzureBlob.csproj" />
   </ItemGroup>
 
 </Project>

@@ -289,6 +289,10 @@ public class ObjectArchiveCoordinatorTests : PostgresTestBase {
 
     await Assert.That(restored.Status).IsEqualTo(ArchiveStatus.RESTORED);
     await Assert.That(await _hotAsync(stream)).IsEquivalentTo(hot, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await using (var connection = await _openAsync()) {
+      await Assert.That(await connection.QueryAsync<string>("SELECT DISTINCT last_error FROM wh_archive_object_deletions WHERE stream_id = @stream", new { stream }))
+        .IsEquivalentTo(["injected storage failure"]).Because("the row records the storage error's own message");
+    }
     await Assert.That((await _queuedAsync(stream)).Select(q => q.Split('|')[1])).IsEquivalentTo(["1", "1"])
       .Because("a delete storage refused stays queued, its attempt counted, for the maintenance step");
     await Assert.That(_archiveObjects(objects)).Count().IsEqualTo(2);

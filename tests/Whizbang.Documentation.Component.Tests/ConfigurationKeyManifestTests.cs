@@ -6,7 +6,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
-using Whizbang.Archive.AzureBlob;
 using Whizbang.Core;
 using Whizbang.Core.Capabilities;
 using Whizbang.Core.Health;
@@ -21,8 +20,8 @@ using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Notifications;
 using Whizbang.Hosting.AspNet;
-using Whizbang.Offloads.AzureBlob;
 using Whizbang.Sagas;
+using Whizbang.Storage.AzureBlob;
 using Whizbang.Transports.AzureServiceBus;
 using Whizbang.Transports.HotChocolate;
 using Whizbang.Transports.HotChocolate.Middleware;
@@ -101,8 +100,8 @@ public class ConfigurationKeyManifestTests {
     services.AddWhizbangScope();
     services.AddAzureServiceBusTransport(FAKE_SERVICE_BUS);
     services.AddRabbitMQTransport("amqp://guest:guest@localhost:5672/");
-    services.AddWhizbangAzureBlobOffloadsFromConfiguration(configuration);
-    services.AddWhizbangAzureBlobArchive(configuration);
+    // #2502: the Azure Blob package, as a host that references it gets it: its new keys and the earlier packages' keys.
+    services.AddWhizbangAzureBlobStorage();
     services.AddWhizbangManagedHealth();
     services.AddWhizbangRunControl();
     services.AddWhizbangMessageSecurity();
@@ -241,6 +240,12 @@ public class ConfigurationKeyManifestTests {
     "ConnectionStrings:*",
     "Whizbang:BodyOffload:Cipher:KeyEncryptionKey",
     "Whizbang:BodyOffload:Cipher:PreviousKeyEncryptionKey",
+    // #2502: bound into the features nested in AzureBlobStorageOptions (the earlier packages' keys under the new ones), so
+    // the read-back of its top-level SensitiveString finds only the shared account's.
+    "Whizbang:Archive:AzureBlob:ConnectionString",
+    "Whizbang:Offloads:AzureBlob:*:ConnectionString",
+    "Whizbang:Storage:AzureBlob:Archive:ConnectionString",
+    "Whizbang:Storage:AzureBlob:Offloads:ConnectionString",
   ];
 
   private const string SENTINEL = "sentinel:";

@@ -25,6 +25,12 @@ namespace Whizbang.Generators;
 /// Nothing is emitted for a compilation without a name, or one that does not reference Whizbang.Core (it has nothing
 /// to register into).
 /// </para>
+/// <para>
+/// #2502: the module initializer also calls the registrar of every referenced package marked
+/// <c>[assembly: WhizbangTurnkeyPackage(typeof(...))]</c>, so a package a host references and configures activates
+/// without any code naming its types (an assembly no code touches is never loaded, and its own module initializer never
+/// runs). A registrar without a public static, parameterless <c>Register()</c> is skipped.
+/// </para>
 /// </remarks>
 /// <docs>extending/extensibility/replaceable-services#service-scope</docs>
 /// <tests>tests/Whizbang.Generators.Tests/ServiceAssemblyFactsGeneratorTests.cs</tests>
@@ -33,9 +39,11 @@ public sealed class ServiceAssemblyFactsGenerator : IIncrementalGenerator {
   internal const string MARKER_ATTRIBUTE = "Whizbang.Core.WhizbangServiceAssemblyAttribute";
   internal const string REGISTRY = "Whizbang.Core.WhizbangServiceAssemblies";
   internal const string DB_CONTEXT_ATTRIBUTE = "Whizbang.Data.EFCore.Custom.WhizbangDbContextAttribute";
+  internal const string TURNKEY_ATTRIBUTE = "Whizbang.Core.WhizbangTurnkeyPackageAttribute";
 
   /// <summary>The facts of one compilation, equatable so an edit that changes none of them regenerates nothing.</summary>
-  private sealed record Facts(string? Assembly, bool IsExecutable, bool HasRegistry, EquatableArray<string> References);
+  private sealed record Facts(
+    string? Assembly, bool IsExecutable, bool HasRegistry, EquatableArray<string> References, EquatableArray<string> Turnkeys);
 
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
@@ -63,7 +71,28 @@ public sealed class ServiceAssemblyFactsGenerator : IIncrementalGenerator {
       .ToArray();
     var isExecutable = compilation.Options.OutputKind is OutputKind.ConsoleApplication or OutputKind.WindowsApplication;
     var hasRegistry = compilation.GetTypeByMetadataName(REGISTRY) is not null;
-    return new Facts(compilation.AssemblyName, isExecutable, hasRegistry, new EquatableArray<string>([.. references]));
+    return new Facts(compilation.AssemblyName, isExecutable, hasRegistry, new EquatableArray<string>([.. references]),
+      new EquatableArray<string>([.. _turnkeys(compilation)]));
+  }
+
+  // The registrars of the referenced turnkey packages (#2502), fully qualified and sorted: each a public type with a
+  // public static, parameterless Register().
+  private static string[] _turnkeys(Compilation compilation) {
+    var turnkey = compilation.GetTypeByMetadataName(TURNKEY_ATTRIBUTE);
+    if (turnkey is null) {
+      return [];
+    }
+    return compilation.SourceModule.ReferencedAssemblySymbols
+      .SelectMany(assembly => assembly.GetAttributes())
+      .Where(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, turnkey))
+      .Select(a => a.ConstructorArguments.Length == 1 ? a.ConstructorArguments[0].Value as INamedTypeSymbol : null)
+      .Where(registrar => registrar is { DeclaredAccessibility: Accessibility.Public }
+        && registrar.GetMembers("Register").OfType<IMethodSymbol>()
+          .Any(m => m.IsStatic && m.Parameters.Length == 0 && m.DeclaredAccessibility == Accessibility.Public))
+      .Select(registrar => TypeNameUtilities.FullyQualified(registrar!))
+      .Distinct()
+      .OrderBy(name => name, System.StringComparer.Ordinal)
+      .ToArray();
   }
 
   private static void _emit(SourceProductionContext context, Facts facts, bool declaresDbContext) {
@@ -84,11 +113,15 @@ public sealed class ServiceAssemblyFactsGenerator : IIncrementalGenerator {
     source.AppendLine("internal static class WhizbangServiceAssemblyFacts {");
     source.AppendLine("  /// <summary>Registers the facts when the assembly loads.</summary>");
     source.AppendLine("  [global::System.Runtime.CompilerServices.ModuleInitializer]");
-    source.AppendLine("  internal static void Register() =>");
+    source.AppendLine("  internal static void Register() {");
     source.Append("    global::Whizbang.Core.WhizbangServiceAssemblies.Register(")
       .Append(Literal(facts.Assembly)).Append(", ").Append(isRoot).Append(", new string[] { ")
       .Append(string.Join(", ", facts.References.Select(Literal)))
       .AppendLine(" });");
+    foreach (var registrar in facts.Turnkeys) {
+      source.Append("    ").Append(registrar).AppendLine(".Register();");
+    }
+    source.AppendLine("  }");
     source.AppendLine("}");
     context.AddSource("WhizbangServiceAssemblyFacts.g.cs", source.ToString());
   }

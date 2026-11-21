@@ -270,6 +270,16 @@ public static class ServiceCollectionExtensions {
       ServiceRegistrationCallbacks.HostingIntegration?.Invoke(services);
     }
 
+    // Turnkey (#2502): every loaded storage provider package (Whizbang.Storage.AzureBlob) registers itself; each of its
+    // features activates when its configuration names an account. Opt out via AutoRegisterStorageProviders = false. The
+    // startup report names the provider each feature uses, and warns when configuration names an account for a package
+    // that is not loaded.
+    if (coreOptions.AutoRegisterStorageProviders) {
+      ServiceRegistrationCallbacks.InvokeStorageProviders(services);
+    }
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, Configuration.StorageProviderStartupReport>(
+      sp => new Configuration.StorageProviderStartupReport(sp)));
+
     // Auto-invoke WhizbangId provider DI callbacks if any were registered
     WhizbangIdProviderRegistry.InvokeDICallbacks(services);
 

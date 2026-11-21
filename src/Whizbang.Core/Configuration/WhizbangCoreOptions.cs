@@ -96,6 +96,16 @@ public sealed class WhizbangCoreOptions {
   public bool AutoRegisterAspNetHosting { get; set; } = true;
 
   /// <summary>
+  /// When <see langword="true"/> (the default, turnkey), <see cref="ServiceCollectionExtensions.AddWhizbang"/> runs the
+  /// registration of every storage provider package that is loaded (#2502), such as Whizbang.Storage.AzureBlob: each of
+  /// its features activates when its configuration names an account. Set to <see langword="false"/> to keep a loaded
+  /// package inactive, and register what you want from it yourself.
+  /// </summary>
+  /// <docs>fundamentals/storage/azure-blob#opting-out</docs>
+  /// <tests>tests/Whizbang.Core.Tests/StorageProviderTurnkeyTests.cs:AddWhizbang_RunsEveryLoadedStorageProvider_UnlessTheHostOptsOutAsync</tests>
+  public bool AutoRegisterStorageProviders { get; set; } = true;
+
+  /// <summary>
   /// Validate at startup that every registered type's constructor can be satisfied. Default true.
   /// </summary>
   /// <remarks>

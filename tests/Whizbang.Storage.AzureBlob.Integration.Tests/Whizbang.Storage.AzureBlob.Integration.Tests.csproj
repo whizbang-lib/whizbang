@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <!-- Integration: Azurite and PostgreSQL via Testcontainers: body offload, and the Postgres driver's archive coordinator
+         writing through the Azure Blob object store. Runs in the Azure Blob suite. -->
+    <WhizbangTestType>Integration</WhizbangTestType>
+    <WhizbangTestTags>AzureBlob;Docker;Archive;Offloads</WhizbangTestTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="SSH.NET" />
+    <PackageReference Include="Testcontainers.Azurite" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Storage.AzureBlob/Whizbang.Storage.AzureBlob.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Data.Dapper.Postgres/Whizbang.Data.Dapper.Postgres.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Data.Postgres/Whizbang.Data.Postgres.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Testing/Whizbang.Testing.csproj" />
+  </ItemGroup>
+
+</Project>

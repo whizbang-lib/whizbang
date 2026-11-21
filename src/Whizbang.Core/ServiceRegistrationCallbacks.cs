@@ -249,6 +249,58 @@ public static class ServiceRegistrationCallbacks {
   /// </summary>
   public static Action<IServiceCollection>? HostingIntegration { get; set; }
 
+  // #2502: each storage provider package's turnkey registration, by provider name (the package's own module initializer,
+  // and the generated one of every assembly compiled against it, register it; the same name twice keeps one).
+  private static readonly Dictionary<string, Action<IServiceCollection>> _storageProviders = new(StringComparer.Ordinal);
+
+  /// <summary>
+  /// Registers a storage provider package's turnkey registration (#2502), which <see cref="ServiceCollectionExtensions.AddWhizbang"/>
+  /// runs unless the host opts out (<see cref="WhizbangCoreOptions.AutoRegisterStorageProviders"/>). Called by the
+  /// package when it loads; registering the same provider again replaces its registration, so loading twice adds nothing.
+  /// The registration activates each feature from configuration when the container is built, so a package that is
+  /// referenced and not configured changes nothing.
+  /// </summary>
+  /// <param name="provider">The provider name, for example <c>azure-blob</c>.</param>
+  /// <param name="register">Adds the provider's services.</param>
+  /// <docs>fundamentals/storage/azure-blob#turnkey-activation</docs>
+  /// <tests>tests/Whizbang.Core.Tests/StorageProviderTurnkeyTests.cs</tests>
+  public static void RegisterStorageProvider(string provider, Action<IServiceCollection> register) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(provider);
+    ArgumentNullException.ThrowIfNull(register);
+    lock (_lock) {
+      _storageProviders[provider] = register;
+    }
+  }
+
+  /// <summary>The storage providers whose packages are loaded, by name, in order.</summary>
+  /// <docs>fundamentals/storage/azure-blob#startup-report</docs>
+  /// <tests>tests/Whizbang.Core.Tests/StorageProviderTurnkeyTests.cs</tests>
+  public static IReadOnlyList<string> StorageProviders {
+    get {
+      lock (_lock) {
+        return [.. _storageProviders.Keys.Order(StringComparer.Ordinal)];
+      }
+    }
+  }
+
+  /// <summary>Runs every registered storage provider's registration, in provider-name order.</summary>
+  internal static void InvokeStorageProviders(IServiceCollection services) {
+    List<Action<IServiceCollection>> registrations;
+    lock (_lock) {
+      registrations = [.. _storageProviders.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Value)];
+    }
+    foreach (var register in registrations) {
+      register(services);
+    }
+  }
+
+  /// <summary>Removes a storage provider's registration. Used for testing purposes only.</summary>
+  internal static void UnregisterStorageProvider(string provider) {
+    lock (_lock) {
+      _storageProviders.Remove(provider);
+    }
+  }
+
   /// <summary>Registers <paramref name="assembly"/>'s lens services. Called from generated code (#2243).</summary>
   /// <param name="assembly">The registering assembly's name.</param>
   /// <param name="register">The registration.</param>
@@ -492,6 +544,7 @@ public static class ServiceRegistrationCallbacks {
       MessageTypeCatalog = null;
       _collectiveApplyRegistry.Set(null);
       HostingIntegration = null;
+      _storageProviders.Clear();
     }
   }
 }

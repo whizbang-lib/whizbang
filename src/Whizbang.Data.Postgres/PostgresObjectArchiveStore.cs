@@ -788,7 +788,8 @@ public sealed partial class PostgresObjectArchiveStore : IArchiveObjectCoordinat
       confirmed = true;
       sql = $"DELETE FROM {_prefix}wh_archive_object_deletions WHERE relative_path = $1 AND location_id = $2";
     } catch (ArchiveObjectStoreException ex) {
-      error = ex.Message;
+      // The storage error's own message, as the queue row has always recorded it.
+      error = ex.InnerException?.Message ?? ex.Message;
       LogObjectNotDeleted(_logger, ex, relativePath, streamId);
       sql = $"UPDATE {_prefix}wh_archive_object_deletions SET attempts = attempts + 1, last_error = $3, " +
         "next_attempt_at = NOW() + LEAST(interval '1 minute' * power(2, attempts), interval '1 hour') " +

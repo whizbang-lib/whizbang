@@ -152,7 +152,7 @@ public static class OffloadServiceCollectionExtensions {
   /// </remarks>
   /// <docs>fundamentals/offloads/message-body-store#cipher-from-settings</docs>
   /// <tests>tests/Whizbang.Core.Tests/Offloads/BodyCipherFromConfigurationTests.cs</tests>
-  /// <tests>tests/Whizbang.Offloads.AzureBlob.Tests/AzureBlobOffloadFromConfigurationTests.cs</tests>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Tests/AzureBlobOffloadFromConfigurationTests.cs</tests>
   /// <exception cref="InvalidOperationException">A cipher is named but its key settings are absent or invalid.</exception>
   public static IServiceCollection AddWhizbangBodyCipherFromConfiguration(
       this IServiceCollection services,
@@ -160,10 +160,45 @@ public static class OffloadServiceCollectionExtensions {
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(configuration);
 
+    if (_cipherFromConfiguration(configuration) is not { } cipher) {
+      return services;
+    }
+    services.AddWhizbangAesGcmBodyCipher(cipher.Name, _ => cipher.Wrapper);
+    services.Configure<MessageBodyOffloadOptions>(opts => opts.CipherName = cipher.Name);
+    return services;
+  }
+
+  /// <summary>
+  /// The settings-driven cipher of <see cref="AddWhizbangBodyCipherFromConfiguration(IServiceCollection, IConfiguration)"/>,
+  /// read from the host's configuration when the container is built rather than when services are registered (#2502), for a
+  /// registration that runs before configuration can be read, such as a storage package that activates itself. The
+  /// cipher <c>Whizbang:BodyOffload:CipherName</c> names resolves by that name; any other name resolves to nothing, so a
+  /// cipher registered in code under its own name is never shadowed.
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <returns>The service collection.</returns>
+  /// <docs>fundamentals/offloads/message-body-store#cipher-from-settings</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Offloads/BodyCipherFromConfigurationTests.cs:FromTheHostsConfiguration_ResolvesTheNamedCipher_AndNothingElseAsync</tests>
+  /// <exception cref="InvalidOperationException">When resolved: a cipher is named but its key settings are absent or invalid.</exception>
+  public static IServiceCollection AddWhizbangBodyCipherFromConfiguration(this IServiceCollection services) {
+    ArgumentNullException.ThrowIfNull(services);
+    // The service key is object? on .NET 10 and object on .NET 11 (#2135); see AddWhizbangAesGcmBodyCipher.
+#pragma warning disable S8969
+    services.TryAddEnumerable(ServiceDescriptor.KeyedSingleton<IMessageBodyCipher, AesGcmEnvelopeCipher>(KeyedService.AnyKey,
+      (sp, key) => sp.GetService<IConfiguration>() is { } configuration && _cipherFromConfiguration(configuration) is { } cipher
+        && string.Equals(cipher.Name, key as string, StringComparison.Ordinal)
+          ? new AesGcmEnvelopeCipher(cipher.Name, cipher.Wrapper)
+          : null!));
+#pragma warning restore S8969
+    return services;
+  }
+
+  // The cipher Whizbang:BodyOffload names, with its key wrapper, or null when none is named.
+  private static (string Name, RotatingAesKeyWrapper Wrapper)? _cipherFromConfiguration(IConfiguration configuration) {
     var bodyOffload = configuration.GetSection(BODY_OFFLOAD_SECTION);
     var cipherName = bodyOffload[CIPHER_NAME_KEY];
     if (string.IsNullOrWhiteSpace(cipherName)) {
-      return services;
+      return null;
     }
 
     var cipher = bodyOffload.GetSection(CIPHER_SECTION);
@@ -177,10 +212,7 @@ public static class OffloadServiceCollectionExtensions {
         $"{BODY_OFFLOAD_SECTION}:{CIPHER_SECTION}:{missing} is not configured. A rotation window needs both the previous key id and the previous key encryption key, or neither.");
     }
 
-    var wrapper = new RotatingAesKeyWrapper(keyId, key, string.IsNullOrWhiteSpace(previousKeyId) ? null : previousKeyId, previousKey);
-    services.AddWhizbangAesGcmBodyCipher(cipherName, _ => wrapper);
-    services.Configure<MessageBodyOffloadOptions>(opts => opts.CipherName = cipherName);
-    return services;
+    return (cipherName, new RotatingAesKeyWrapper(keyId, key, string.IsNullOrWhiteSpace(previousKeyId) ? null : previousKeyId, previousKey));
   }
 
   private static string _requiredSetting(IConfiguration cipher, string key) {
@@ -223,7 +255,9 @@ public static class OffloadServiceCollectionExtensions {
   public static IServiceCollection AddWhizbangPostSerializeHook<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THook>(
       this IServiceCollection services) where THook : class, IPostSerializeHook {
     ArgumentNullException.ThrowIfNull(services);
-    services.AddSingleton<IPostSerializeHook, THook>();
+    // Once per hook type (#2502): an offload a provider activated from its settings and an explicit call both register
+    // the body-offload hook, and a second copy would offload a body twice.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostSerializeHook, THook>());
     services.TryAddSingleton<PostSerializeHookChain>();
     return services;
   }

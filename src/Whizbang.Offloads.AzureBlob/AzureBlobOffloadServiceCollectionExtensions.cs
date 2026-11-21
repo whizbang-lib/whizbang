@@ -1,40 +1,35 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using Azure.Storage.Blobs.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Offloads;
+using Whizbang.Storage.AzureBlob;
 
 namespace Whizbang.Offloads.AzureBlob;
 
 /// <summary>
-/// DI registration for the Azure Blob body-store provider.
+/// The registration calls of the earlier body-offload package, kept for one release so existing hosts compile and run
+/// unchanged (#2502). The provider is <c>Whizbang.Storage.AzureBlob</c>, which activates from configuration with no call.
 /// </summary>
-/// <docs>fundamentals/offloads/providers/azure-blob</docs>
+/// <docs>fundamentals/storage/azure-blob#migrating-from-the-earlier-packages</docs>
+/// <tests>tests/Whizbang.Storage.AzureBlob.Tests/AzureBlobOffloadDIRegistrationTests.cs</tests>
+/// <tests>tests/Whizbang.Storage.AzureBlob.Tests/AzureBlobOffloadFromConfigurationTests.cs</tests>
 public static class AzureBlobOffloadServiceCollectionExtensions {
-
-  // Config section holding one subsection per Azure Blob offload provider
-  // (Whizbang:Offloads:AzureBlob:<providerName>).
-  private const string AZURE_BLOB_PROVIDERS_SECTION = "Whizbang:Offloads:AzureBlob";
-
-  // Config section holding the send-side body-offload selector (MessageBodyOffloadOptions):
-  // Whizbang:BodyOffload.
-  private const string BODY_OFFLOAD_SECTION = "Whizbang:BodyOffload";
+  internal const string OBSOLETE =
+    "Whizbang.Offloads.AzureBlob is replaced by Whizbang.Storage.AzureBlob, which activates from Whizbang:Storage:AzureBlob " +
+    "with no call: reference it, move the settings, and remove this call. See fundamentals/storage/azure-blob.";
 
   /// <summary>
-  /// Registers an <see cref="AzureBlobMessageBodyStore"/> under the supplied
-  /// provider name. The <paramref name="configure"/> action binds
-  /// <see cref="AzureBlobOffloadOptions"/> for this specific provider —
-  /// multiple Azure Blob providers can coexist (e.g., <c>"azure-blob-prod"</c>
-  /// + <c>"azure-blob-archive"</c>) with different connection strings,
-  /// containers, or access tiers.
+  /// Registers an Azure Blob body store under <paramref name="providerName"/>, configured by <paramref name="configure"/>,
+  /// as before. Several stores can coexist under distinct names.
   /// </summary>
   /// <param name="services">The service collection.</param>
-  /// <param name="providerName">Stable identifier the receive-side resolver uses to find this store. MUST match the <see cref="MessageBodyClaim.ProviderName"/> the sender emits.</param>
-  /// <param name="configure">Action that populates <see cref="AzureBlobOffloadOptions"/> for this provider (ConnectionString, ContainerName, optional DefaultAccessTier, MaxDownloadBytes).</param>
-  /// <returns>The service collection for chaining.</returns>
-  /// <tests>tests/Whizbang.Offloads.AzureBlob.Tests/AzureBlobOffloadDIRegistrationTests.cs</tests>
+  /// <param name="providerName">The name the sender's claims record and the receiver resolves the store by.</param>
+  /// <param name="configure">Sets the store's connection string, container, access tier and download cap.</param>
+  /// <returns>The service collection.</returns>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Tests/AzureBlobOffloadDIRegistrationTests.cs</tests>
+  [Obsolete(OBSOLETE)]
   public static IServiceCollection AddWhizbangAzureBlobOffload(
       this IServiceCollection services,
       string providerName,
@@ -48,95 +43,47 @@ public static class AzureBlobOffloadServiceCollectionExtensions {
   }
 
   /// <summary>
-  /// Convention-based, config-driven offload wiring — the one call a host needs. Registers an
-  /// Azure Blob body store for EVERY provider found under
-  /// <c>Whizbang:Offloads:AzureBlob:&lt;providerName&gt;</c>, then enables the send-side claim-check
-  /// hook and binds the selector (<see cref="MessageBodyOffloadOptions"/>) from
-  /// <c>Whizbang:BodyOffload</c>. The provider whose name matches
-  /// <c>Whizbang:BodyOffload:ProviderName</c> becomes the active offload target.
-  ///
-  /// <para>A no-op when no providers are configured, so a service runs with inline message bodies
-  /// until the environment (env vars / appsettings) supplies the keys — offload is opt-in by config
-  /// presence, with nothing to wire per-service.</para>
-  ///
-  /// <para>Options bind explicitly (not <c>configuration.Bind</c>) so the Azure SDK extensible-enum
-  /// <see cref="AzureBlobOffloadOptions.DefaultAccessTier"/> can be constructed from its string form
-  /// (e.g. <c>"Cool"</c>), which <c>ConfigurationBinder</c> cannot convert.</para>
+  /// Registers every body store <c>Whizbang:Offloads:AzureBlob:&lt;providerName&gt;</c> configures, the send-side offload
+  /// hook with its selector (<c>Whizbang:BodyOffload</c>), and the cipher <c>Whizbang:BodyOffload:CipherName</c> names,
+  /// all read from <paramref name="configuration"/>, as before. The new keys under <c>Whizbang:Storage:AzureBlob</c> are
+  /// read too.
   /// </summary>
   /// <param name="services">The service collection.</param>
-  /// <param name="configuration">Application configuration (root). Read paths:
-  /// <c>Whizbang:Offloads:AzureBlob</c> and <c>Whizbang:BodyOffload</c>.</param>
-  /// <returns>The service collection for chaining.</returns>
-  /// <docs>fundamentals/offloads/providers/azure-blob</docs>
-  /// <tests>tests/Whizbang.Offloads.AzureBlob.Tests/AzureBlobOffloadFromConfigurationTests.cs</tests>
+  /// <param name="configuration">The application's configuration.</param>
+  /// <returns>The service collection.</returns>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Tests/AzureBlobOffloadFromConfigurationTests.cs</tests>
+  [Obsolete(OBSOLETE)]
   public static IServiceCollection AddWhizbangAzureBlobOffloadsFromConfiguration(
       this IServiceCollection services,
       IConfiguration configuration) {
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(configuration);
 
-    var anyProvider = false;
-    foreach (var providerSection in configuration.GetSection(AZURE_BLOB_PROVIDERS_SECTION).GetChildren()) {
-      var providerName = providerSection.Key;
-      if (string.IsNullOrWhiteSpace(providerName)) {
-        continue;
-      }
-
-      services.AddWhizbangAzureBlobOffload(providerName, opts => _bindProviderOptions(providerSection, opts));
-      anyProvider = true;
-    }
-
-    // No providers configured → leave offload off (hook unregistered = pass-through publish).
-    if (!anyProvider) {
-      return services;
-    }
-
-    // Send-side claim-check hook + the selector that points it at a provider.
-    services.AddWhizbangBodyOffload();
+    services.AddWhizbangAzureBlobStorage(configuration);
+    // The selector from the given configuration, as before; Whizbang:BodyOffload is also read from the host's own
+    // configuration by Core, whatever the provider.
     var bodyOffload = configuration.GetSection(BODY_OFFLOAD_SECTION);
     services.Configure<MessageBodyOffloadOptions>(opts => _bindBodyOffloadOptions(bodyOffload, opts));
-    // The cipher named in Whizbang:BodyOffload:CipherName, keyed from Whizbang:BodyOffload:Cipher,
-    // so the whole sealed path comes from settings. No cipher name registers nothing.
     services.AddWhizbangBodyCipherFromConfiguration(configuration);
     return services;
   }
 
-  private static void _bindProviderOptions(IConfiguration section, AzureBlobOffloadOptions options) {
-    Whizbang.Core.Configuration.ConfigurationValueBinder.BindSensitive(section, "ConnectionString", value => options.ConnectionString = value);
-
-    var containerName = section["ContainerName"];
-    if (!string.IsNullOrWhiteSpace(containerName)) {
-      options.ContainerName = containerName;
-    }
-
-    var accessTier = section["DefaultAccessTier"];
-    if (!string.IsNullOrWhiteSpace(accessTier)) {
-      options.DefaultAccessTier = new AccessTier(accessTier);
-    }
-
-    if (long.TryParse(section["MaxDownloadBytes"], out var maxDownloadBytes)) {
-      options.MaxDownloadBytes = maxDownloadBytes;
-    }
-  }
+  private const string BODY_OFFLOAD_SECTION = "Whizbang:BodyOffload";
 
   private static void _bindBodyOffloadOptions(IConfiguration section, MessageBodyOffloadOptions options) {
     var providerName = section["ProviderName"];
     if (!string.IsNullOrWhiteSpace(providerName)) {
       options.ProviderName = providerName;
     }
-
-    if (long.TryParse(section["SizeThresholdBytes"], out var sizeThresholdBytes)) {
+    if (long.TryParse(section["SizeThresholdBytes"], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var sizeThresholdBytes)) {
       options.SizeThresholdBytes = sizeThresholdBytes;
     }
-
     if (bool.TryParse(section["ActiveCleanup"], out var activeCleanup)) {
       options.ActiveCleanup = activeCleanup;
     }
-
     if (bool.TryParse(section["RequireSealedBodies"], out var requireSealed)) {
       options.RequireSealedBodies = requireSealed;
     }
-
     var cipherName = section["CipherName"];
     if (!string.IsNullOrWhiteSpace(cipherName)) {
       options.CipherName = cipherName;

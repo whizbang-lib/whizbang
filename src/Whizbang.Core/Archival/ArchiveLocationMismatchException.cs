@@ -24,7 +24,7 @@ namespace Whizbang.Core.Archival;
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#archive-locations</docs>
 /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveLocationMismatchExceptionTests.cs</tests>
-/// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Read_Restore_Delete_InAnotherContainer_ThrowTheMismatch_AndTouchNoObjectAsync</tests>
+/// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Read_Restore_Delete_InAnotherContainer_ThrowTheMismatch_AndTouchNoObjectAsync</tests>
 public sealed class ArchiveLocationMismatchException : Exception {
   /// <summary>Creates the exception with no message.</summary>
   public ArchiveLocationMismatchException() { }

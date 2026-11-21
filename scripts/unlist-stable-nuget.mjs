@@ -47,6 +47,7 @@ const CANDIDATES = [
   'SoftwareExtravaganza.Whizbang.Sagas.Contracts',
   'SoftwareExtravaganza.Whizbang.Sagas.Generators',
   'SoftwareExtravaganza.Whizbang.SignalR',
+  'SoftwareExtravaganza.Whizbang.Storage.AzureBlob',
   'SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus',
   'SoftwareExtravaganza.Whizbang.Transports.FastEndpoints',
   'SoftwareExtravaganza.Whizbang.Transports.FastEndpoints.Generators',

@@ -116,16 +116,16 @@ the tags that were already broken, each with a reason.
 
 ## Projects
 
-### Unit (41)
+### Unit (40)
 
-`tests/`: `Whizbang.Archive.AzureBlob.Tests`, `Whizbang.CLI.Tests`, `Whizbang.Core.Tests`,
+`tests/`: `Whizbang.CLI.Tests`, `Whizbang.Core.Tests`,
 `Whizbang.Core.Unit.Dispatcher.Tests`, `Whizbang.Core.Unit.Messaging.Tests`, `Whizbang.Core.Unit.Perspectives.Tests`,
 `Whizbang.Core.Unit.Workers.Tests`, `Whizbang.Data.Schema.Tests`,
 `Whizbang.Data.Tests`, `Whizbang.Documentation.Tests`, `Whizbang.Execution.Tests`,
 `Whizbang.Generators.Tests`, `Whizbang.Hosting.AspNet.Tests`, `Whizbang.Hosting.Azure.ServiceBus.Tests`,
 `Whizbang.Hosting.RabbitMQ.Tests`, `Whizbang.LanguageServer.Tests`, `Whizbang.Migrate.Tests`,
-`Whizbang.Observability.Tests`, `Whizbang.Offloads.AzureBlob.Tests`, `Whizbang.Offloads.InMemory.Tests`,
-`Whizbang.Partitioning.Tests`, `Whizbang.Policies.Tests`, `Whizbang.Sagas.Tests`, `Whizbang.SignalR.Tests`, `Whizbang.TestAnalyzers.Tests`, `Whizbang.Testing.Tests`,
+`Whizbang.Observability.Tests`, `Whizbang.Offloads.InMemory.Tests`,
+`Whizbang.Partitioning.Tests`, `Whizbang.Policies.Tests`, `Whizbang.Sagas.Tests`, `Whizbang.SignalR.Tests`, `Whizbang.Storage.AzureBlob.Tests`, `Whizbang.TestAnalyzers.Tests`, `Whizbang.Testing.Tests`,
 `Whizbang.Transports.AzureServiceBus.Tests`, `Whizbang.Transports.FastEndpoints.Tests`,
 `Whizbang.Transports.HotChocolate.Tests`, `Whizbang.Transports.HotChocolate.Ids.Tests`, `Whizbang.Transports.Mutations.Tests`,
 `Whizbang.Transports.RabbitMQ.Tests`, `Whizbang.Transports.Tests`.
@@ -168,7 +168,7 @@ despite the name, a unit project),
 | `Whizbang.Transports.HotChocolate.Component.Tests` | Component tests of the HotChocolate transport that run a second async flow, moved out of `Whizbang.Transports.HotChocolate.Tests` |
 | `Whizbang.Transports.RabbitMQ.Component.Tests` | Component tests of the RabbitMQ transport (real consumer threads, flush loops and drainers against in-process channel doubles), moved out of `Whizbang.Transports.RabbitMQ.Tests` |
 
-### Integration (15)
+### Integration (14)
 
 | Project | Tags | Suite |
 |---------|------|-------|
@@ -180,8 +180,7 @@ despite the name, a unit project),
 | `Whizbang.Transports.AzureServiceBus.Integration.Tests` | AzureServiceBus;Docker;Messaging | Service Bus |
 | `ECommerce.AzureServiceBus.Integration.Tests` | AzureServiceBus;Docker;Messaging;ECommerce | Service Bus |
 | `ECommerce.InMemory.Integration.Tests` | Docker;ECommerce;InMemory | InMemory |
-| `Whizbang.Offloads.AzureBlob.Integration.Tests` | AzureBlob;Docker;Offloads | Azure Blob |
-| `Whizbang.Archive.AzureBlob.Integration.Tests` | AzureBlob;Docker;Archive | Azure Blob |
+| `Whizbang.Storage.AzureBlob.Integration.Tests` | AzureBlob;Docker;Archive;Offloads | Azure Blob |
 | `Whizbang.Core.Integration.Tests` | Integration | Integration (general) |
 | `Whizbang.Migrate.Integration.Tests` | Integration | Integration (general) |
 | `Whizbang.Transports.FastEndpoints.Integration.Tests` | Integration | Integration (general) |

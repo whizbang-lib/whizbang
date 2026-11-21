@@ -93,17 +93,16 @@ internal sealed class InMemoryArchiveObjectStore : IArchiveObjectStore {
   private void _request(string operation, string? path, Fault fault, Action apply) {
     Requests.Enqueue(path is null ? operation : $"{operation} {path}");
     if (fault == Fault.Before) {
-      _fail(operation, path);
+      // Refused before it reached storage: a failure with no provider error inside.
+      Interlocked.Increment(ref Faulted);
+      throw new ArchiveObjectStoreException("injected storage failure");
     }
     apply();
     if (fault == Fault.After) {
-      _fail(operation, path);
+      // Taken effect, and the response lost: the provider's error inside.
+      Interlocked.Increment(ref Faulted);
+      throw new ArchiveObjectStoreException(operation, path, Location, new IOException("injected lost response"));
     }
-  }
-
-  private void _fail(string operation, string? path) {
-    Interlocked.Increment(ref Faulted);
-    throw new ArchiveObjectStoreException(operation, path, Location, new IOException("injected storage failure"));
   }
 
   internal enum Fault {

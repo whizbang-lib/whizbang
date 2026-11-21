@@ -11,6 +11,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **One Azure Blob package for body offload and the event archive, active when referenced and configured (#2502).**
+  `Whizbang.Storage.AzureBlob` holds both Azure Blob providers and no database code. A host that references it and
+  names an account under `Whizbang:Storage:AzureBlob` (`ConnectionString`, `ServiceUri`, or `ConnectionName` naming a
+  `ConnectionStrings` entry) gets each feature whose section is set (`Offloads`, `Archive`) with no registration call:
+  the package registers itself with `AddWhizbang()`, and an explicit `AddWhizbangAzureBlobStorage(...)` wins, before
+  or after. `WhizbangCoreOptions.AutoRegisterStorageProviders = false` keeps the package loaded but inactive. The
+  startup log names the provider each feature uses and why, and warns, naming the package, when configuration names an
+  account for a package that is not loaded.
+  **Upgrade:** reference `Whizbang.Storage.AzureBlob`, move the settings to `Whizbang:Storage:AzureBlob` and remove the
+  registration calls. Nothing is required this release: the earlier keys and calls keep working.
+
+### Changed
+
+- **The database driver owns the archive's transaction; a storage provider only moves objects (#2503).** The archive
+  coordinator moved into `Whizbang.Data.Postgres` (`PostgresObjectArchiveStore`) and writes through the new
+  `IArchiveObjectStore` contract (put, get, delete, list, and the location it reaches). Its SQL, locks, manifest,
+  location rows, object names and locator are unchanged, so archives written before stay readable and a rolling deploy
+  beside the previous release works. A stream lifecycle policy that archives on a driver with no archive coordinator
+  (SQLite), or with an object store no coordinator writes through, now fails the start naming the missing piece,
+  rather than the first archive.
+  **Upgrade:** code that resolved `AzureBlobArchiveStore` (to repoint a location) resolves `IArchiveStore` as
+  `IArchiveObjectCoordinator`; `ArchiveObjectCorruptedException` and `ArchiveObjectDeletionStep` are in
+  `Whizbang.Core.Archival`, `ArchiveSweepMetrics` in `Whizbang.Data.Postgres` (meter name unchanged). A storage failure
+  surfaces as `ArchiveObjectStoreException` with the Azure error inside.
+
+### Deprecated
+
+- **`Whizbang.Offloads.AzureBlob` and `Whizbang.Archive.AzureBlob` (#2502).** Both ship this release as shims that
+  depend on `Whizbang.Storage.AzureBlob`; their registration calls are `[Obsolete]` and still work, and their keys
+  (`Whizbang:Offloads:AzureBlob`, `Whizbang:Archive:AzureBlob`, `Whizbang:BodyOffload:ProviderName` beside the new
+  offload section) still bind with a startup warning naming the new key. The new key wins when both are set.
+
 ## [0.4521.0] - 2026-11-20
 
 ### Changed
