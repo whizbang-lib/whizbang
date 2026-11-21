@@ -22,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <param name="timeProvider">The clock the system-time columns are stamped from; the system clock by default.</param>
 /// <docs>fundamentals/perspectives/write-modes</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SetBasedPerspectiveWriteSinkTests.cs</tests>
-public sealed class EFCorePostgresPerspectiveWriteSink(DbContext context, TimeProvider? timeProvider = null) : IPerspectiveWriteSink {
+public sealed class EFCorePostgresPerspectiveWriteSink(DbContext context, TimeProvider? timeProvider = null) : IPerspectiveWriteSink, IPerspectiveBulkLoadSink {
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
   /// <summary>The context this sink writes through.</summary>
@@ -63,4 +63,9 @@ public sealed class EFCorePostgresPerspectiveWriteSink(DbContext context, TimePr
     }
     return outcomes;
   }
+
+  /// <inheritdoc/>
+  public Task<IReadOnlyList<PerspectiveWriteOutcome>> LoadAsync(
+      IReadOnlyList<PendingPerspectiveWrite> writes, CancellationToken cancellationToken = default) =>
+    WriteAsync(writes, cancellationToken);
 }
