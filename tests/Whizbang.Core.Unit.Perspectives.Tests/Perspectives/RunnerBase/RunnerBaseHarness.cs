@@ -91,23 +91,20 @@ public sealed record RbTraits {
 /// A runner derived from the shared base by hand, as the generator derives one (#2469): each hook a generated runner
 /// emits is a delegate a test can set, and an unset hook takes the base's default.
 /// </summary>
-internal sealed class RbRunner : PerspectiveRunnerBase<RbPerspective, RbModel> {
-  public RbRunner(
-      RbTraits traits,
-      IServiceProvider serviceProvider,
-      ILogger logger,
-      IEventStore eventStore,
-      IPerspectiveStore<RbModel> perspectiveStore,
-      IOptionsMonitor<TracingOptions>? tracingOptions,
-      IPerspectiveSnapshotStore? snapshotStore,
-      IOptions<PerspectiveSnapshotOptions>? snapshotOptions,
-      IPerspectiveApplyCoordinator? applyCoordinator,
-      ICollectiveReplayApplier? collectiveReplayApplier)
-      : base(_traitsOf(traits), serviceProvider, logger, eventStore, perspectiveStore,
-          serviceProvider.GetRequiredService<IServiceScopeFactory>(), tracingOptions, snapshotStore, snapshotOptions,
-          applyCoordinator, collectiveReplayApplier) {
-  }
-
+internal sealed class RbRunner(
+    RbTraits traits,
+    IServiceProvider serviceProvider,
+    ILogger logger,
+    IEventStore eventStore,
+    IPerspectiveStore<RbModel> perspectiveStore,
+    IOptionsMonitor<TracingOptions>? tracingOptions,
+    IPerspectiveSnapshotStore? snapshotStore,
+    IOptions<PerspectiveSnapshotOptions>? snapshotOptions,
+    IPerspectiveApplyCoordinator? applyCoordinator,
+    ICollectiveReplayApplier? collectiveReplayApplier)
+    : PerspectiveRunnerBase<RbPerspective, RbModel>(_traitsOf(traits), serviceProvider, logger, eventStore, perspectiveStore,
+        serviceProvider.GetRequiredService<IServiceScopeFactory>(), tracingOptions, snapshotStore, snapshotOptions,
+        applyCoordinator, collectiveReplayApplier) {
   private static RunnerTraits _traitsOf(RbTraits traits) {
     var built = new RunnerTraits {
       EventTypes = [typeof(RbMarked), typeof(RbOther), typeof(RbScoped)],

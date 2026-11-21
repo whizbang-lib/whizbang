@@ -12,13 +12,11 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Events.System;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Perspectives;
-using Whizbang.Core.Events.System;
 using Whizbang.Core.Tracing;
 
 namespace Whizbang.Core.Perspectives;
@@ -60,7 +58,9 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives</docs>
-/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRunnerBaseTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RunnerBase/RunnerBaseEntryPointTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RunnerBase/RunnerBaseLiveApplyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RunnerBase/RunnerBaseReplayTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerGeneratedSizeTests.cs:ASecondPerspective_AddsOnlyItsOwnRunner_NoRunnerBaseIsGeneratedAsync</tests>
 public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspectiveRunner
     where TPerspective : class
@@ -322,14 +322,14 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       } else if (ledger is not null) {
         ledger.Add(partition);
       } else {
-        completions.Add(await RunRekeyedRowAsync(partition.Row, perspectiveName, new[] { partition.Events }, cancellationToken));
+        completions.Add(await RunRekeyedRowAsync(partition.Row, perspectiveName, [partition.Events], cancellationToken));
       }
     }
 
     // No events, or every one re-keyed onto a row the run folds later: a single no-op completion for the physical
     // stream keeps the rebuilder's one-completion-per-stream contract.
     if (completions.Count == 0) {
-      return new[] {
+      return [
         new PerspectiveCursorCompletion {
           StreamId = physicalStreamId,
           PerspectiveName = perspectiveName,
@@ -338,7 +338,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
           Status = PerspectiveProcessingStatus.None,
           RowChanged = false,  // no events folded onto a row here, so no row was touched
         }
-      };
+      ];
     }
     return completions;
   }
@@ -375,7 +375,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     var completion = await _replayCheckedAsync(
         streamId, perspectiveName, snapshotModel, latest.SnapshotData,
         new ReplayFrom(latest.SnapshotEventId, ReadThroughArchiveAfterVersion: null, latest.CollectivesThroughSequence), cancellationToken);
-    return new[] { completion };
+    return [completion];
   }
 
   /// <summary>
@@ -502,7 +502,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     if (events.Count > 1) {
       events = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild
           ? global::Whizbang.Core.Perspectives.ReplayEventOrder.Order(events)
-          : events.OrderByMessageId().ToList();
+          : [.. events.OrderByMessageId()];
     }
     return events;
   }
@@ -690,26 +690,19 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// A pair <see cref="PrepareAsync"/> prepared, with the state <see cref="CompleteAsync"/> needs: the fold, or the
   /// completion already decided (a batch the row already holds).
   /// </summary>
-  private sealed class Prepared : PreparedPerspectiveApply {
-    public Prepared(
-        PerspectiveRunnerBase<TPerspective, TModel> runner,
-        Guid streamId,
-        string perspectiveName,
-        Guid? lastProcessedEventId,
-        IReadOnlyList<MessageEnvelope<IEvent>> events,
-        global::Whizbang.Core.Perspectives.PendingPerspectiveWrite? write,
-        global::Whizbang.Core.Perspectives.PerspectivePerPairReason perPairReason,
-        ApplyState? state,
-        PerspectiveCursorCompletion? decided)
-        : base(streamId, perspectiveName, lastProcessedEventId, events, write, perPairReason) {
-      Runner = runner;
-      State = state;
-      Decided = decided;
-    }
-
-    public PerspectiveRunnerBase<TPerspective, TModel> Runner { get; }
-    public ApplyState? State { get; }
-    public PerspectiveCursorCompletion? Decided { get; }
+  private sealed class Prepared(
+      PerspectiveRunnerBase<TPerspective, TModel> runner,
+      Guid streamId,
+      string perspectiveName,
+      Guid? lastProcessedEventId,
+      IReadOnlyList<MessageEnvelope<IEvent>> events,
+      global::Whizbang.Core.Perspectives.PendingPerspectiveWrite? write,
+      global::Whizbang.Core.Perspectives.PerspectivePerPairReason perPairReason,
+      ApplyState? state,
+      PerspectiveCursorCompletion? decided) : PreparedPerspectiveApply(streamId, perspectiveName, lastProcessedEventId, events, write, perPairReason) {
+    public PerspectiveRunnerBase<TPerspective, TModel> Runner { get; } = runner;
+    public ApplyState? State { get; } = state;
+    public PerspectiveCursorCompletion? Decided { get; } = decided;
   }
 
   /// <summary>What a batch's row write does.</summary>
@@ -730,7 +723,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     public Guid StreamId;
     public string PerspectiveName = string.Empty;
     public Guid? LastProcessedEventId;
-    public IReadOnlyList<MessageEnvelope<IEvent>> Events = Array.Empty<MessageEnvelope<IEvent>>();
+    public IReadOnlyList<MessageEnvelope<IEvent>> Events = [];
     public List<Task> BackgroundTasks = [];
     public TPerspective Perspective = null!;
     // The batch a prepare reads from (#2246), or null on the per-pair path.
@@ -1460,8 +1453,6 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     // concurrency configured - need to know whether DB write or in-memory apply or
     // lifecycle dominates per drain.
     state.SaveStartTicks = _timeProvider.GetTimestamp();
-    // Issue #983: taken before the write, which strips a Split class model's promoted fields in place.
-    JsonDocument? snapshotBeforeWrite = null;
     // Issue #1002: whether this run ends in a snapshot, decided before the write, so a model the write strips in
     // place is serialized before it only when a snapshot is actually due.
     var snapshotDue = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
@@ -1478,7 +1469,8 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
           state.ProcessedEvents,
           state.Rebuilding);
       // #1956: the row at its last event when collectives folded after it, so the snapshot holds none of them.
-      snapshotBeforeWrite = snapshotDue ? modelAtLastEvent ?? _snapshotBeforeWrite(updatedModel) : null;
+      // Issue #983: taken before the write, which strips a Split class model's promoted fields in place.
+      var snapshotBeforeWrite = snapshotDue ? modelAtLastEvent ?? _snapshotBeforeWrite(updatedModel) : null;
       if (snapshotDue) {
         state.ModelAtLastEvent = null;  // handed to the snapshot write
       }
@@ -2080,7 +2072,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// the guard's refusal cannot be reached through them, and it stays because a write of the scaffolded default would
   /// store a row no event made.
   /// </remarks>
-  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RunnerBase/RunnerBaseWriteGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RunnerBase/RunnerBaseSnapshotTests.cs:TheRowWrite_RefusesAModelNoApplyProduced_AndWritesNothingAsync</tests>
   internal async Task<bool> SaveModelAndCheckpointAsync(
       Guid streamId,
       string perspectiveName,
@@ -2505,7 +2497,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     if (ledger is null) {
       return null;
     }
-    var extents = await ledger.GetExtentsAsync(new[] { streamId }, cancellationToken);
+    var extents = await ledger.GetExtentsAsync([streamId], cancellationToken);
     return extents.TryGetValue(streamId, out var extent)
         && extent is global::Whizbang.Core.Archival.ArchivedStreamExtent.PrefixDeleted
           or global::Whizbang.Core.Archival.ArchivedStreamExtent.WholeDeleted
