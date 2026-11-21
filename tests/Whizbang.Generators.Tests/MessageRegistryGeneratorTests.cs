@@ -310,6 +310,73 @@ namespace TestNamespace {
     await Assert.That(generatedSource).Contains("\"\"lineNumber\"\":");
   }
 
+  private const string PATH_MAP_SOURCE = """
+using Whizbang.Core;
+
+namespace TestNamespace {
+  public record CreateOrderCommand : ICommand {
+    public string OrderId { get; init; } = "";
+  }
+}
+""";
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task MessageRegistryGenerator_SameCommitInTwoDirectories_EmitsIdenticalRegistryUnderThePathMapAsync() {
+    // Two checkouts of one commit, each built with the path map ContinuousIntegrationBuild sets (#2484).
+    var first = GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(
+        PATH_MAP_SOURCE, "/home/runner/work/whizbang/src/Orders.cs", [new("/home/runner/work/whizbang/", "/_/")]);
+    var second = GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(
+        PATH_MAP_SOURCE, "/tmp/second/checkout/whizbang/src/Orders.cs", [new("/tmp/second/checkout/whizbang/", "/_/")]);
+
+    var firstSource = GeneratorTestHelper.GetGeneratedSource(first, "MessageRegistry.g.cs");
+    var secondSource = GeneratorTestHelper.GetGeneratedSource(second, "MessageRegistry.g.cs");
+    await Assert.That(firstSource).Contains("/_/src/Orders.cs");
+    await Assert.That(secondSource).IsEqualTo(firstSource);
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task MessageRegistryGenerator_WithoutAPathMap_KeepsTheFullPathForTheEditorAsync() {
+    // A local build maps nothing, so the editor can still open the file the registry names.
+    var result = GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(
+        PATH_MAP_SOURCE, "/home/dev/whizbang/src/Orders.cs", []);
+
+    await Assert.That(GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs")).Contains("/home/dev/whizbang/src/Orders.cs");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task MessageRegistryGenerator_WindowsPathUnderAForwardSlashMap_UsesForwardSlashesAsync() {
+    // The compiler writes a mapped path with the separator of the prefix it maps to, so the registry does too.
+    var result = GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(
+        PATH_MAP_SOURCE, @"C:\a\whizbang\src\Orders.cs", [new(@"D:\elsewhere\", "/x/"), new(@"C:\a\whizbang\", "/_/")]);
+
+    await Assert.That(GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs")).Contains("/_/src/Orders.cs");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task MessageRegistryGenerator_ForwardSlashPathUnderABackslashMap_UsesBackslashesAsync() {
+    var result = GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(
+        PATH_MAP_SOURCE, "/a/whizbang/src/Orders.cs", [new("/a/whizbang/", @"X:\_\")]);
+
+    // JSON-escaped inside the registry: each backslash is doubled.
+    await Assert.That(GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs")).Contains(@"X:\\_\\src\\Orders.cs");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  [Arguments("_", "_src/Orders.cs")]
+  [Arguments(@"/_\", @"/_\\src/Orders.cs")]
+  public async Task MessageRegistryGenerator_MapWithNoSingleSeparator_KeepsTheRestOfThePathAsWrittenAsync(string to, string expected) {
+    // A replacement with no separator, or with both, gives no separator to convert to, so the compiler keeps the rest.
+    var result = GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(
+        PATH_MAP_SOURCE, "/a/whizbang/src/Orders.cs", [new("/a/whizbang/", to)]);
+
+    await Assert.That(GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs")).Contains(expected);
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task MessageRegistryGenerator_PerspectiveWithMultipleEvents_DiscoversAllEventsAsync() {
