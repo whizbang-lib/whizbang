@@ -60,6 +60,38 @@ public class PerspectiveMarkerOnlyEventTests {
     await Assert.That((await ReportedAsync(source, ID)).Length).IsEqualTo(1);
   }
 
+  /// <summary>
+  /// A custom interface that extends <c>IPerspectiveBase</c> and declares its own <c>Apply</c> still routes nothing the
+  /// runner calls: the runner dispatches only through <c>IPerspectiveFor</c>, <c>IPerspectiveWithActionsFor</c> and
+  /// <c>IGlobalPerspectiveFor</c> (#1936), and custom families are not supported yet (#1943). Its Apply never runs, so
+  /// the event is an error exactly as it is under a marker that declares nothing.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [RequiresUnreferencedCode("Finds the analyzers by reflection.")]
+  public async Task AnEventListedOnlyByACustomInterfaceThatDeclaresItsOwnApply_IsAnErrorAsync() {
+    const string source = PREAMBLE + """
+        public interface IOrderFamily<TModel, TEvent> : IPerspectiveBase<TModel, TEvent>
+          where TModel : class
+          where TEvent : IEvent {
+          TModel Apply(TModel current, TEvent @event);
+        }
+
+        public class OrderProjection : IPerspectiveFor<Order, OrderPlaced>, IOrderFamily<Order, OrderStatusChanged> {
+          public Order Apply(Order current, OrderPlaced @event) => current;
+          public Order Apply(Order current, OrderStatusChanged @event) => current with { Status = @event.Status };
+        }
+        """;
+
+    var reported = await ReportedAsync(source, ID);
+
+    await Assert.That(reported.Length).IsEqualTo(1);
+    await Assert.That(LocatedText(reported[0])).IsEqualTo("OrderProjection");
+    var message = reported[0].GetMessage(CultureInfo.InvariantCulture);
+    await Assert.That(message).Contains("OrderStatusChanged");
+    await Assert.That(message).Contains("IPerspectiveFor<Order");
+  }
+
   [Test]
   [RequiresAssemblyFiles]
   [RequiresUnreferencedCode("Finds the analyzers by reflection.")]

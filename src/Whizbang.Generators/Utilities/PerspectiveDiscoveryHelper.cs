@@ -53,6 +53,21 @@ internal static class PerspectiveDiscoveryHelper {
 
 
   /// <summary>
+  /// Whether <paramref name="perspectiveInterface"/> is one of the families whose <c>Apply</c> the generated runner calls
+  /// (<c>IPerspectiveFor</c>, <c>IPerspectiveWithActionsFor</c>, <c>IGlobalPerspectiveFor</c>). An <c>Apply</c> that any
+  /// other interface declares, including a custom interface that extends <c>IPerspectiveBase</c>, is never called by
+  /// the runner: custom families are not supported yet (#1943).
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveMarkerOnlyEventTests.cs:AnEventListedOnlyByACustomInterfaceThatDeclaresItsOwnApply_IsAnErrorAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveMarkerOnlyEventTests.cs:AnEventAMarkerAndADeclaringInterfaceBothList_IsNotReportedAsync</tests>
+  public static bool IsRunnerDispatchedFamily(INamedTypeSymbol perspectiveInterface) {
+    var originalDef = TypeNameUtilities.Display(perspectiveInterface.OriginalDefinition);
+    return originalDef.StartsWith(PERSPECTIVE_FOR + "<", StringComparison.Ordinal) ||
+           originalDef.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR + "<", StringComparison.Ordinal) ||
+           originalDef.StartsWith(GLOBAL_PERSPECTIVE_FOR + "<", StringComparison.Ordinal);
+  }
+
+  /// <summary>
   /// Checks if a class implements any perspective interface.
   /// </summary>
   public static bool IsPerspectiveClass(INamedTypeSymbol classSymbol) {
