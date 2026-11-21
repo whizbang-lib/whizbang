@@ -393,7 +393,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
         .Select(t => t.AttributeFullName)
         .Where(a => !_builtInAttributeTypes.Contains(a))
         .Distinct()
-        .OrderBy(a => a) // Deterministic ordering for consistent output
+        .OrderBy(a => a, StringComparer.Ordinal) // Ordinal: the same order on every build machine (#2484)
         .ToList();
 
     // Only generate dispatcher if there are custom attributes

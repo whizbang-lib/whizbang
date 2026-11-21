@@ -175,7 +175,7 @@ public class TopicRegistryGenerator : IIncrementalGenerator {
     source.AppendLine();
 
     // Generate if-else chain for type matching (can't use switch with Type)
-    var orderedTopics = topics.OrderBy(t => t.TypeName).ToList();
+    var orderedTopics = topics.OrderBy(t => t.TypeName, StringComparer.Ordinal).ToList();
     foreach (var topic in orderedTopics) {
       source.AppendLine($"    if (messageType == typeof({topic.TypeName})) {{");
       source.AppendLine($"      return \"{topic.BaseTopic}\";");

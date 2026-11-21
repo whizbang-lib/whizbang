@@ -2944,7 +2944,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Get all embedded SQL migration files
     var migrationResources = assembly.GetManifestResourceNames()
         .Where(name => name.StartsWith(resourcePrefix, StringComparison.Ordinal) && name.EndsWith(".sql", StringComparison.Ordinal))
-        .OrderBy(name => name)
+        .OrderBy(name => name, StringComparer.Ordinal)
         .ToArray();
 
     // DIAGNOSTIC: Report what we found (informational level)
@@ -3032,7 +3032,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var uniqueTables = perspectives
       .GroupBy(p => p.TableName)
       .Select(g => g.First())
-      .OrderBy(p => p.TableName)
+      .OrderBy(p => p.TableName, StringComparer.Ordinal)
       .ToList();
 
     foreach (var perspective in uniqueTables) {
@@ -3553,7 +3553,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var uniqueTables = perspectives
         .GroupBy(p => p.TableName)
         .Select(g => g.First())
-        .OrderBy(p => p.TableName)
+        .OrderBy(p => p.TableName, StringComparer.Ordinal)
         .ToList();
 
     var sb = new StringBuilder();
@@ -3599,7 +3599,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     var quotedSchema = _quotePostgresIdentifier(schema);
     var sb = new StringBuilder();
-    foreach (var perspective in perspectives.GroupBy(p => p.TableName).Select(g => g.First()).OrderBy(p => p.TableName)) {
+    foreach (var perspective in perspectives.GroupBy(p => p.TableName).Select(g => g.First()).OrderBy(p => p.TableName, StringComparer.Ordinal)) {
       var perspSql = new StringBuilder();
       _generatePerspectiveTableSql(perspSql, perspective, quotedSchema);
       _generatePerspectiveIndexSql(perspSql, perspective, quotedSchema);
