@@ -65,6 +65,15 @@ public sealed class RabbitMQChannelPool(IConnection connection, int maxChannels)
   }
 
   /// <summary>
+  /// Opens a channel outside the pool, owned and disposed by the caller. Used where a broker refusal closes the channel
+  /// it happened on (#2421: re-declaring a queue an earlier version declared with other arguments), so the work that
+  /// follows needs a channel of its own rather than a pooled one that was just closed underneath its renter.
+  /// </summary>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQDeadLetterUpgradeTests.cs:ProvisionManifest_QueueFromEarlierVersion_ContinuesOnAFreshChannelAsync</tests>
+  internal Task<IChannel> OpenUnpooledChannelAsync(CancellationToken cancellationToken) =>
+    _connection.CreateChannelAsync(cancellationToken: cancellationToken);
+
+  /// <summary>
   /// Returns a channel to the pool.
   /// </summary>
   /// <param name="channel">The channel to return.</param>

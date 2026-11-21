@@ -105,7 +105,13 @@ public class RabbitMQOptions {
   /// <summary>
   /// Whether to automatically declare dead-letter exchange and queue.
   /// Default: true
+  /// <para>
+  /// Each exchange gets one direct dead-letter exchange, <c>{exchange}.dlx.direct</c>; each queue dead-letters with its
+  /// own dead-letter queue name (<c>{queue}.dlq</c>) as the routing key, and that queue is bound only on it, so a poison
+  /// message reaches only its own service's dead-letter queue (#2421).
+  /// </para>
   /// </summary>
+  /// <docs>messaging/transports/rabbitmq#dead-lettering</docs>
   public bool AutoDeclareDeadLetterExchange { get; set; } = true;
 
   #region FIFO / Single Active Consumer

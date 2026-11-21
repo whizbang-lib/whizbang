@@ -71,7 +71,7 @@ public sealed class RabbitMQDeadLetterUpgradeIntegrationTests {
       await Assert.That(arguments["x-dead-letter-routing-key"]).IsEqualTo(dlq)
         .Because("the empty queue was deleted and re-declared with the per-queue dead-letter route");
       await Assert.That(await RabbitMqManagementProbe.QueueBindingsAsync(dlq, ct))
-        .IsEquivalentTo(new[] { ($"{exchange}.dlx.direct", dlq) })
+        .IsEquivalentTo([($"{exchange}.dlx.direct", dlq)])
         .Because("the DLQ leaves the earlier fanout, or other subscribers' poison would still be copied into it");
       await Assert.That(await RabbitMqManagementProbe.ExchangeTypeAsync($"{exchange}.dlx", ct)).IsNull()
         .Because("with no dead-letter queue left bound to it, the earlier fanout is retired");
@@ -149,9 +149,9 @@ public sealed class RabbitMQDeadLetterUpgradeIntegrationTests {
       await Assert.That(await RabbitMqManagementProbe.ExchangeTypeAsync($"{exchange}.dlx", ct)).IsEqualTo("fanout")
         .Because("another service's DLQ is still bound to the earlier fanout");
       await Assert.That(await RabbitMqManagementProbe.QueueBindingsAsync(otherDlq, ct))
-        .IsEquivalentTo(new[] { ($"{exchange}.dlx", "") });
+        .IsEquivalentTo([($"{exchange}.dlx", "")]);
       await Assert.That(await RabbitMqManagementProbe.QueueBindingsAsync(dlq, ct))
-        .IsEquivalentTo(new[] { ($"{exchange}.dlx.direct", dlq) })
+        .IsEquivalentTo([($"{exchange}.dlx.direct", dlq)])
         .Because("the upgraded service's DLQ no longer receives copies of the other service's poison");
     } finally {
       subscription.Dispose();

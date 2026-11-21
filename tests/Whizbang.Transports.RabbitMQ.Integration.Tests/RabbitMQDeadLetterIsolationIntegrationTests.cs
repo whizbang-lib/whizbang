@@ -80,10 +80,10 @@ public sealed class RabbitMQDeadLetterIsolationIntegrationTests {
         .IsEqualTo("direct")
         .Because("a direct dead-letter exchange routes each dead-lettered message by its queue's own key");
       await Assert.That(await RabbitMqManagementProbe.QueueBindingsAsync(bystanderDlq, cancellationToken))
-        .IsEquivalentTo(new[] { (deadLetterExchange, bystanderDlq) })
+        .IsEquivalentTo([(deadLetterExchange, bystanderDlq)])
         .Because("the bystander's DLQ must be bound only on its own key, so the owner's poison can never reach it");
       await Assert.That(await RabbitMqManagementProbe.QueueBindingsAsync(ownerDlq, cancellationToken))
-        .IsEquivalentTo(new[] { (deadLetterExchange, ownerDlq) });
+        .IsEquivalentTo([(deadLetterExchange, ownerDlq)]);
 
       // ...and so only the owner's dead-letter store takes custody of it.
       var ownerDrained = await owner.GetRequiredService<ITransportDeadLetterDrainer>()

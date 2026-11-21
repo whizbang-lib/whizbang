@@ -467,7 +467,7 @@ public class RabbitMQTransportFailurePathTests {
       .Because("a fanout dead-letter exchange copies one queue's poison into every subscriber's DLQ (#2421)");
     await Assert.That(channel.DeclaredQueues.Any(q => q.Queue == "test-subscriber-test-exchange.dlq")).IsTrue();
     await Assert.That(channel.QueueBindings.Where(b => b.Queue == "test-subscriber-test-exchange.dlq")).IsEquivalentTo(
-      new[] { ("test-subscriber-test-exchange.dlq", "test-exchange.dlx.direct", "test-subscriber-test-exchange.dlq") });
+      [("test-subscriber-test-exchange.dlq", "test-exchange.dlx.direct", "test-subscriber-test-exchange.dlq")]);
 
     var mainQueue = channel.DeclaredQueues.Single(q => q.Queue == "test-subscriber-test-exchange");
     await Assert.That((string)mainQueue.Arguments!["x-dead-letter-exchange"]!).IsEqualTo("test-exchange.dlx.direct");
