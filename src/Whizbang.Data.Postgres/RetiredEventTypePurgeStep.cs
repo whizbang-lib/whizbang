@@ -111,13 +111,14 @@ public sealed partial class RetiredEventTypePurgeStep : IMaintenanceStep {
     var waiting = 0;
     var status = "ok";
     while (batches < options.MaxBatchesPerCycle) {
-      var batch = await _batchAsync(database, prefix, names, options.BatchStreams, cancellationToken).ConfigureAwait(false);
+      var (batchEvents, batchStreams, batchWaiting, batchStatus) =
+        await _batchAsync(database, prefix, names, options.BatchStreams, cancellationToken).ConfigureAwait(false);
       batches++;
-      events += batch.Events;
-      streams += batch.Streams;
-      waiting = batch.Waiting;
-      status = batch.Status;
-      if (batch.Streams == 0) {
+      events += batchEvents;
+      streams += batchStreams;
+      waiting = batchWaiting;
+      status = batchStatus;
+      if (batchStreams == 0) {
         break;
       }
     }

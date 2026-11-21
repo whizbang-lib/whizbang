@@ -89,7 +89,7 @@ public class InboxDispatchSkipGateTests {
       meter: new Meter(meterName),
       routingOptions: Options.Create(new RoutingOptions()),
       markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      coreOptions: core, retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
+      retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance, coreOptions: core);
   }
 
   /// <summary>
