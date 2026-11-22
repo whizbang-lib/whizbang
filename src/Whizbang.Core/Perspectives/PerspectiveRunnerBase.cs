@@ -79,9 +79,9 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     public required string ArchivedStreamRowsName { get; init; }
 
     /// <summary>
-    /// The model's [InheritScope] OnCreate fields. Defaults to every field (63), so creation records ownership.
+    /// The model's [InheritScope] OnCreate fields. Defaults to every field (All), so creation records ownership.
     /// </summary>
-    public global::Whizbang.Core.Lenses.ScopeFields InheritScopeOnCreate { get; init; } = (global::Whizbang.Core.Lenses.ScopeFields)63;
+    public global::Whizbang.Core.Lenses.ScopeFields InheritScopeOnCreate { get; init; } = global::Whizbang.Core.Lenses.ScopeFields.All;
 
     /// <summary>The model's [InheritScope] Always fields. Defaults to none (0), so scope is set once, at creation.</summary>
     public global::Whizbang.Core.Lenses.ScopeFields InheritScopeAlways { get; init; }
@@ -918,10 +918,10 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         if (preparing) {
           return global::Whizbang.Core.Perspectives.PerspectivePerPairReason.MissingRowWithHistory;
         }
-        var floor = !_traits.IsEphemeral
-            ? (State: EvictedRowFloor.Readable, SnapshotEventId: Guid.Empty)
+        var (floorState, floorSnapshotEventId) = !_traits.IsEphemeral
+            ? (EvictedRowFloor.Readable, Guid.Empty)
             : await _evictedRowFloorAsync(streamId, perspectiveName, events[0].MessageId.Value, cancellationToken);
-        if (floor.State == EvictedRowFloor.Readable) {
+        if (floorState == EvictedRowFloor.Readable) {
           _logger.LogInformation(
               "Row for stream {StreamId} in {PerspectiveName} is missing but the stream has history: resurrecting via re-fold",
               streamId,
@@ -930,12 +930,12 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
           return await _rewindAndRunCoreAsync(
               streamId, perspectiveName, events[0].MessageId.Value, null, cancellationToken);
         }
-        if (floor.State == EvictedRowFloor.Stale) {
+        if (floorState == EvictedRowFloor.Stale) {
           _logger.LogWarning(
               "Row for stream {StreamId} in {PerspectiveName} was evicted and its ephemeral history is reaped; its snapshot at {SnapshotEventId} has a stale serialization version and cannot be restored, so starting it fresh from event {EventId}",
               streamId,
               perspectiveName,
-              floor.SnapshotEventId,
+              floorSnapshotEventId,
               events[0].MessageId.Value
           );
         } else {
@@ -1063,7 +1063,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
             Status = PerspectiveProcessingStatus.Completed,
             EventsProcessed = 0,
             RowChanged = false,  // every event was judged already applied, so the model was not touched
-            ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray()
+            ProcessedEventIds = [.. events.Select(e => e.MessageId.Value)]
           };
         } else {
           // Partial skip: SOME events filtered, SOME pass through to Apply. Surface the
@@ -1754,7 +1754,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       EventsProcessed = eventsProcessed,
       RowChanged = rowChanged,
       UnchangedReason = unchangedReason,
-      ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray(),
+      ProcessedEventIds = [.. events.Select(e => e.MessageId.Value)],
       PurgedBy = pendingPurge && purgeEventId.HasValue ? purgeEventType : null
     };
   }
