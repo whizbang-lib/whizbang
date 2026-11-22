@@ -288,6 +288,17 @@ public sealed class ProcessWideOptionsBindingTests {
   }
 
   [Test]
+  public async Task PerspectiveRebuildOptions_EveryKeyBindsAsync() {
+    await using var provider = _workers(new() {
+      ["Whizbang:Perspectives:Rebuild:StreamReadBatchSize"] = "250",
+    });
+
+    var options = provider.GetRequiredService<IOptions<PerspectiveRebuildOptions>>().Value;
+
+    await Assert.That(options.StreamReadBatchSize).IsEqualTo(250);
+  }
+
+  [Test]
   public async Task PerspectiveStreamLockOptions_EveryKeyBindsAsync() {
     await using var provider = _workers(new() {
       ["Whizbang:Perspectives:StreamLock:LockTimeout"] = "00:01:00",

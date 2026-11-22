@@ -214,6 +214,13 @@ internal static class Rb {
     return JsonSerializer.Deserialize(read.Model.GetRawText(), info)!;
   }
 
+  /// <summary>Runs <paramref name="body"/> as a rebuild runs it, and returns what it returned.</summary>
+  public static async Task<T> RunAsRebuildAsync<T>(Func<Task<T>> body) {
+    T result = default!;
+    await WithModeAsync(ProcessingMode.Rebuild, async () => result = await body());
+    return result;
+  }
+
   public static async Task WithModeAsync(ProcessingMode mode, Func<Task> body) {
     var previous = ProcessingModeAccessor.Current;
     ProcessingModeAccessor.Current = mode;
@@ -275,9 +282,47 @@ internal sealed class RbEvents() : ForwardingEventStoreDecorator(new InMemoryEve
   public IReadOnlyList<MessageEnvelope<IEvent>> Stream(Guid streamId) =>
     _streams.TryGetValue(streamId, out var stream) ? stream : [];
 
+  /// <summary>Whether the store reads many streams with one read; false answers a batched read with null.</summary>
+  public bool ReadsInBatches { get; set; }
+
+  /// <summary>Throws from every batched read.</summary>
+  public Exception? BatchReadFails { get; set; }
+
+  /// <summary>Streams a batched read leaves out of its answer, as a store that does not hold them might.</summary>
+  public HashSet<Guid> BatchOmits { get; } = [];
+
+  /// <summary>Called before each batched read with the streams it reads, so a test can cancel there.</summary>
+  public Action<IReadOnlyList<Guid>>? BeforeBatchRead { get; set; }
+
+  /// <summary>The round trips the store served: one per per-stream read, one per batched read.</summary>
+  public int RoundTrips => StreamReads.Count + BatchReads.Count;
+
+  /// <summary>Each per-stream polymorphic read, by stream.</summary>
+  public List<Guid> StreamReads { get; } = [];
+
+  /// <summary>Each batched read, with the streams it read.</summary>
+  public List<IReadOnlyList<Guid>> BatchReads { get; } = [];
+
+  public override Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
+      IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) {
+    if (!ReadsInBatches) {
+      return Task.FromResult<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?>(null);
+    }
+    var ids = streams.Select(s => s.StreamId).ToList();
+    BeforeBatchRead?.Invoke(ids);
+    BatchReads.Add(ids);
+    if (BatchReadFails is { } failure) {
+      throw failure;
+    }
+    return Task.FromResult<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?>(
+      streams.Where(s => !BatchOmits.Contains(s.StreamId)).ToDictionary(s => s.StreamId, s => (IReadOnlyList<MessageEnvelope<IEvent>>)_after(s.StreamId, s.FromEventId, eventTypes)));
+  }
+
   public override async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
       Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes,
       [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+    StreamReads.Add(streamId);
     BeforeRead?.Invoke(streamId);
     foreach (var envelope in _after(streamId, fromEventId, eventTypes)) {
       yield return envelope;
