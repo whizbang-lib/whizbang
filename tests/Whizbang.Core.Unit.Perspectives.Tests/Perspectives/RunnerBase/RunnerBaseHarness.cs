@@ -102,9 +102,11 @@ internal sealed class RbRunner(
     IOptions<PerspectiveSnapshotOptions>? snapshotOptions,
     IPerspectiveApplyCoordinator? applyCoordinator,
     ICollectiveReplayApplier? collectiveReplayApplier)
-    : PerspectiveRunnerBase<RbPerspective, RbModel>(_traitsOf(traits), serviceProvider, logger, eventStore, perspectiveStore,
-        serviceProvider.GetRequiredService<IServiceScopeFactory>(), tracingOptions, snapshotStore, snapshotOptions,
-        applyCoordinator, collectiveReplayApplier) {
+    : PerspectiveRunnerBase<RbPerspective, RbModel>(_traitsOf(traits), new(serviceProvider, logger, eventStore, perspectiveStore,
+        serviceProvider.GetRequiredService<IServiceScopeFactory>()) {
+      TracingOptions = tracingOptions, SnapshotStore = snapshotStore, SnapshotOptions = snapshotOptions,
+      ApplyCoordinator = applyCoordinator, CollectiveReplayApplier = collectiveReplayApplier,
+    }) {
   private static RunnerTraits _traitsOf(RbTraits traits) {
     var built = new RunnerTraits {
       EventTypes = [typeof(RbMarked), typeof(RbOther), typeof(RbScoped)],

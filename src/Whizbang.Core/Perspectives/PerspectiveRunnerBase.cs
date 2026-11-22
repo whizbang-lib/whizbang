@@ -199,41 +199,75 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
 
   private int _eventsSinceSnapshot(Guid streamId) => _eventsSinceLastSnapshot.GetValueOrDefault(streamId);
 
-  /// <summary>Creates the runner of one perspective, with that perspective's <paramref name="traits"/>.</summary>
-  protected PerspectiveRunnerBase(
-      RunnerTraits traits,
+  /// <summary>
+  /// The services a perspective's runner works with, which its generated constructor receives from DI and hands to the
+  /// base in one piece: the five every runner needs, and the optional ones, which default to none.
+  /// </summary>
+  protected sealed class RunnerDependencies(
       IServiceProvider serviceProvider,
       ILogger logger,
       IEventStore eventStore,
       IPerspectiveStore<TModel> perspectiveStore,
-      IServiceScopeFactory scopeFactory,
-      IOptionsMonitor<TracingOptions>? tracingOptions = null,
-      IPerspectiveSnapshotStore? snapshotStore = null,
-      IOptions<PerspectiveSnapshotOptions>? snapshotOptions = null,
-      global::Whizbang.Core.Perspectives.IPerspectiveApplyCoordinator? applyCoordinator = null,
-      global::Whizbang.Core.Perspectives.ICollectiveReplayApplier? collectiveReplayApplier = null) {
+      IServiceScopeFactory scopeFactory) {
+    /// <summary>The provider the runner resolves its perspective and optional collaborators from.</summary>
+    public IServiceProvider ServiceProvider { get; } = serviceProvider;
+
+    /// <summary>The runner's logger.</summary>
+    public ILogger Logger { get; } = logger;
+
+    /// <summary>The event store the runner reads the perspective's streams from.</summary>
+    public IEventStore EventStore { get; } = eventStore;
+
+    /// <summary>The store of the perspective's rows.</summary>
+    public IPerspectiveStore<TModel> PerspectiveStore { get; } = perspectiveStore;
+
+    /// <summary>Creates the scopes the lifecycle stages run in.</summary>
+    public IServiceScopeFactory ScopeFactory { get; } = scopeFactory;
+
+    /// <summary>The tracing options, or none.</summary>
+    public IOptionsMonitor<TracingOptions>? TracingOptions { get; init; }
+
+    /// <summary>The snapshot store, or none.</summary>
+    public IPerspectiveSnapshotStore? SnapshotStore { get; init; }
+
+    /// <summary>The snapshot options, or none.</summary>
+    public IOptions<PerspectiveSnapshotOptions>? SnapshotOptions { get; init; }
+
+    /// <summary>The same-pod apply coordinator, or none.</summary>
+    public global::Whizbang.Core.Perspectives.IPerspectiveApplyCoordinator? ApplyCoordinator { get; init; }
+
+    /// <summary>The applier that folds collective events into a replay, or none.</summary>
+    public global::Whizbang.Core.Perspectives.ICollectiveReplayApplier? CollectiveReplayApplier { get; init; }
+  }
+
+  /// <summary>
+  /// Creates the runner of one perspective, with that perspective's <paramref name="traits"/> and the
+  /// <paramref name="dependencies"/> its generated constructor received.
+  /// </summary>
+  protected PerspectiveRunnerBase(RunnerTraits traits, RunnerDependencies dependencies) {
     ArgumentNullException.ThrowIfNull(traits);
+    ArgumentNullException.ThrowIfNull(dependencies);
     _traits = traits;
     _handledEventTypes = traits.EventTypes;
-    ArgumentNullException.ThrowIfNull(serviceProvider);
-    _serviceProvider = serviceProvider;
-    _timeProvider = serviceProvider.GetService<TimeProvider>() ?? TimeProvider.System;
-    ArgumentNullException.ThrowIfNull(logger);
-    _logger = logger;
-    ArgumentNullException.ThrowIfNull(eventStore);
-    _eventStore = eventStore;
-    ArgumentNullException.ThrowIfNull(perspectiveStore);
-    _perspectiveStore = perspectiveStore;
-    ArgumentNullException.ThrowIfNull(scopeFactory);
-    _scopeFactory = scopeFactory;
-    _tracingOptions = tracingOptions;
+    ArgumentNullException.ThrowIfNull(dependencies.ServiceProvider);
+    _serviceProvider = dependencies.ServiceProvider;
+    _timeProvider = _serviceProvider.GetService<TimeProvider>() ?? TimeProvider.System;
+    ArgumentNullException.ThrowIfNull(dependencies.Logger);
+    _logger = dependencies.Logger;
+    ArgumentNullException.ThrowIfNull(dependencies.EventStore);
+    _eventStore = dependencies.EventStore;
+    ArgumentNullException.ThrowIfNull(dependencies.PerspectiveStore);
+    _perspectiveStore = dependencies.PerspectiveStore;
+    ArgumentNullException.ThrowIfNull(dependencies.ScopeFactory);
+    _scopeFactory = dependencies.ScopeFactory;
+    _tracingOptions = dependencies.TracingOptions;
     // #2295: a perspective that keeps no rewind floor takes no snapshots and restores from none.
     // The framework's null default (IsConfigured false) is no store: a rewind asking it for a floor threw, so a service
     // with no snapshot store failed every rewind its drain path ran (#2366).
-    _snapshotStore = traits.KeepsRewindFloor && snapshotStore is { IsConfigured: true } ? snapshotStore : null;
-    _snapshotOptions = snapshotOptions;
-    _applyCoordinator = applyCoordinator;
-    _collectiveReplayApplier = collectiveReplayApplier;
+    _snapshotStore = traits.KeepsRewindFloor && dependencies.SnapshotStore is { IsConfigured: true } ? dependencies.SnapshotStore : null;
+    _snapshotOptions = dependencies.SnapshotOptions;
+    _applyCoordinator = dependencies.ApplyCoordinator;
+    _collectiveReplayApplier = dependencies.CollectiveReplayApplier;
   }
 
   /// <inheritdoc/>

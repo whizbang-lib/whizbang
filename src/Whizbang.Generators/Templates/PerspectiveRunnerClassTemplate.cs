@@ -94,8 +94,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : global::Whizbang.Core.Perspectives
       IOptions<PerspectiveSnapshotOptions>? snapshotOptions = null,
       global::Whizbang.Core.Perspectives.IPerspectiveApplyCoordinator? applyCoordinator = null,
       global::Whizbang.Core.Perspectives.ICollectiveReplayApplier? collectiveReplayApplier = null)
-      : base(_traits, serviceProvider, logger, eventStore, perspectiveStore, scopeFactory, tracingOptions, snapshotStore,
-          snapshotOptions, applyCoordinator, collectiveReplayApplier) {
+      : base(_traits, new(serviceProvider, logger, eventStore, perspectiveStore, scopeFactory) {
+        TracingOptions = tracingOptions, SnapshotStore = snapshotStore, SnapshotOptions = snapshotOptions,
+        ApplyCoordinator = applyCoordinator, CollectiveReplayApplier = collectiveReplayApplier,
+      }) {
   }
 
   /// <inheritdoc/>
