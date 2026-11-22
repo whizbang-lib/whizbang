@@ -29,6 +29,7 @@ public sealed class ArchiveObjectStoreException : Exception {
   /// <param name="location">The location the request went to.</param>
   /// <param name="innerException">The provider's own error.</param>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveObjectStoreContractTests.cs:StoreException_NamesTheOperationTheObjectAndTheLocation_AndKeepsTheCauseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveObjectStoreContractTests.cs:StoreException_WithNoProviderError_StillNamesTheOperationAndTheLocationAsync</tests>
   public ArchiveObjectStoreException(string operation, string? path, ArchiveLocation location, Exception innerException)
     : base($"The archive {operation} of {(path is null ? "the location" : $"object {path}")} failed in storage ({location}): " +
            innerException?.Message, innerException) {

@@ -125,6 +125,30 @@ public class ServiceAssemblyFactsGeneratorTests {
   }
 
   [Test]
+  public async Task ATurnkeyAttributeThatDoesNotNameOneRegistrar_IsSkipped_AndTheOthersAreStillRegisteredAsync() {
+    // A reference still being edited (an IDE's live compilation) can carry an attribute that binds to no constructor:
+    // no registrar, or one too many arguments. Neither is a registrar the generator can call, and neither may stop the
+    // valid one beside it from being registered.
+    var package = GeneratorTestHelper.CreateCompilation("""
+      [assembly: Whizbang.Core.WhizbangTurnkeyPackage]
+      [assembly: Whizbang.Core.WhizbangTurnkeyPackage(typeof(Storage.Broken), typeof(Storage.Broken))]
+      [assembly: Whizbang.Core.WhizbangTurnkeyPackage(typeof(Storage.Turnkey))]
+      namespace Storage;
+      public static class Turnkey { public static void Register() { } }
+      public static class Broken { public static void Register() { } }
+      """, "Storage.Editing");
+    await Assert.That(package.GetDiagnostics().Count(d => d.Severity == DiagnosticSeverity.Error)).IsEqualTo(2)
+      .Because("the premise: both attributes fail to bind, so the reference carries them in error");
+
+    var result = _run(_compilation(PLAIN_SOURCE, "Orders", OutputKind.ConsoleApplication, package.ToMetadataReference()));
+    var facts = GeneratorTestHelper.GetRequiredGeneratedSource(result, FACTS_FILE);
+
+    await Assert.That(result.Results.Single().Exception).IsNull();
+    await Assert.That(facts).Contains("global::Storage.Turnkey.Register();");
+    await Assert.That(facts).DoesNotContain("Broken").Because("an attribute that names no single registrar names nothing to call");
+  }
+
+  [Test]
   public async Task ACompilationThatDoesNotReferenceWhizbangCore_RecordsNothingAsync() {
     var compilation = CSharpCompilation.Create(
       "Unrelated", [CSharpSyntaxTree.ParseText(PLAIN_SOURCE)],

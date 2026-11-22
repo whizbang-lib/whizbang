@@ -35,7 +35,7 @@ public static class AzureBlobStorageServiceCollectionExtensions {
     if (services.Any(d => d.ServiceType == typeof(Registered))) {
       return services;
     }
-    services.AddSingleton<Registered>();
+    services.AddSingleton(Registered.Instance);
 
     services.AddOptions<AzureBlobStorageOptions>().ValidateOnStart();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<AzureBlobStorageOptions>, BindFromConfiguration>(
@@ -129,10 +129,9 @@ public static class AzureBlobStorageServiceCollectionExtensions {
       AzureBlobStorageConfiguration.CreateContainerClient(null, named.ConnectionString, named.ContainerName, credential: null, "body store"));
   }
 
-  /// <summary>Marks the package registered, so a second registration adds nothing.</summary>
+  /// <summary>Marks the package registered, so a second registration adds nothing. Registered as an instance: nothing to activate.</summary>
   private sealed class Registered {
-    /// <summary>The provider the marker stands for, as the turnkey registers it.</summary>
-    public string Provider { get; } = AzureBlobArchiveObjectStore.PROVIDER_NAME;
+    public static readonly Registered Instance = new();
   }
 
   private sealed class BindFromConfiguration(IConfiguration? configuration) : IConfigureOptions<AzureBlobStorageOptions> {

@@ -89,7 +89,9 @@ public class AzureBlobStorageConfigurationTests {
 
   [Test]
   [Arguments("https://named.blob.core.windows.net", "https://named.blob.core.windows.net/", null)]
+  [Arguments("http://127.0.0.1:10000/devstoreaccount1", "http://127.0.0.1:10000/devstoreaccount1", null)]
   [Arguments("UseDevelopmentStorage=true", null, "UseDevelopmentStorage=true")]
+  [Arguments("ftp://named.example/blobs", null, "ftp://named.example/blobs")]
   public async Task AConnectionName_NamesTheAccount_FromTheHostsConnectionStrings_AndIsTheArchivesLocationNameAsync(
       string entry, string? serviceUri, string? connectionString) {
     await using var provider = _build(_config(

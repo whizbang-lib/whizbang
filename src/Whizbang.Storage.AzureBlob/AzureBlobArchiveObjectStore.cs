@@ -84,6 +84,7 @@ public sealed class AzureBlobArchiveObjectStore : IArchiveObjectStore {
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Tests/AzureBlobArchiveObjectStoreFailureTests.cs:Prepare_RefusedByStorage_IsAStoreException_NamingTheLocation_WithTheServicesErrorInsideAsync</tests>
   public async Task PrepareAsync(CancellationToken cancellationToken = default) {
     try {
       _ = await _container.CreateIfNotExistsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -134,6 +135,7 @@ public sealed class AzureBlobArchiveObjectStore : IArchiveObjectStore {
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Tests/AzureBlobArchiveObjectStoreFailureTests.cs:List_RefusedByStorage_IsAStoreException_NamingTheLocation_WithTheServicesErrorInsideAsync</tests>
   public async IAsyncEnumerable<ArchiveObjectInfo> ListAsync([EnumeratorCancellation] CancellationToken cancellationToken = default) {
     await using var pages = _container.GetBlobsAsync(cancellationToken: cancellationToken).AsPages().GetAsyncEnumerator(cancellationToken);
     while (true) {

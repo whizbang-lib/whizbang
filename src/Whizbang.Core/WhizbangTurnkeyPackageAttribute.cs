@@ -12,6 +12,7 @@ namespace Whizbang.Core;
 /// <param name="registrar">The package's public static class with a public static, parameterless <c>Register()</c>.</param>
 /// <docs>fundamentals/storage/azure-blob#turnkey-activation</docs>
 /// <tests>tests/Whizbang.Generators.Tests/ServiceAssemblyFactsGeneratorTests.cs:AReferencedTurnkeyPackage_IsRegistered_FromTheModuleInitializerAsync</tests>
+/// <tests>tests/Whizbang.Storage.AzureBlob.Tests/AzureBlobStorageTurnkeyTests.cs:ThePackage_DeclaresItselfTurnkey_NamingTheRegistrarTheGeneratedInitializerCallsAsync</tests>
 [AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
 public sealed class WhizbangTurnkeyPackageAttribute(Type registrar) : Attribute {
   /// <summary>The package's registrar.</summary>

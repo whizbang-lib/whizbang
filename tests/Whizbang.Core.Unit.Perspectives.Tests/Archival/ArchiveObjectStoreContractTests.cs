@@ -69,6 +69,19 @@ public class ArchiveObjectStoreContractTests {
   }
 
   [Test]
+  public async Task StoreException_WithNoProviderError_StillNamesTheOperationAndTheLocationAsync() {
+    // The provider's error is expected, but an exception type must never throw while it is being built: a store that
+    // has no inner error to give still gets a readable message, and no cause.
+    var onObject = new ArchiveObjectStoreException("get", "s/1-2-aa.jsonl.br", _location, innerException: null!);
+    var onLocation = new ArchiveObjectStoreException("prepare", path: null, _location, innerException: null!);
+
+    await Assert.That(onObject.Message).Contains("get of object s/1-2-aa.jsonl.br").And.Contains("container 'archive'");
+    await Assert.That(onObject.Message).EndsWith("): ");
+    await Assert.That(onLocation.Message).Contains("prepare of the location").And.Contains("container 'archive'");
+    await Assert.That(onObject.InnerException).IsNull();
+  }
+
+  [Test]
   public async Task Registration_ExplicitReplaces_TryAddKeepsTheFirst_AndTheStepIsAddedOnceAsync() {
     var first = new ArchiveObjectStoreSelection(new NoObjects(), "first");
     var explicitly = new ArchiveObjectStoreSelection(new NoObjects(), "code");

@@ -137,6 +137,58 @@ public class StorageProviderTurnkeyTests {
   }
 
   [Test]
+  public async Task Report_WithNoLoggingRegistered_StillReadsEveryFeature_AndDoesNotFailTheStartAsync() {
+    // A host that registers no logging still starts: the report reads every feature (the archive selection is built
+    // here, so a configuration that cannot work fails the start) and writes to nowhere.
+    var selectionBuilt = false;
+    var offloadStoreResolved = false;
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder()
+      .AddInMemoryCollection([new KeyValuePair<string, string?>("Whizbang:Storage:AzureBlob:ConnectionString", "UseDevelopmentStorage=true")])
+      .Build());
+    services.AddWhizbangArchiveObjectStore(_ => {
+      selectionBuilt = true;
+      return new ArchiveObjectStoreSelection(new NoObjects(), "configured");
+    });
+    services.Configure<MessageBodyOffloadOptions>(o => o.ProviderName = "azure-blob");
+    services.AddKeyedSingleton<IMessageBodyStore>("azure-blob", (_, _) => {
+      offloadStoreResolved = true;
+      return new NoBodies();
+    });
+    await using var provider = services.BuildServiceProvider();
+    await Assert.That(provider.GetService<ILogger<StorageProviderStartupReport>>()).IsNull().Because("the premise: no logging");
+
+    var report = new StorageProviderStartupReport(provider);
+    await report.StartAsync(CancellationToken.None);
+
+    await Assert.That(selectionBuilt).IsTrue().Because("the archive selection is still built, and so still checked, at start");
+    await Assert.That(offloadStoreResolved).IsTrue().Because("the offload store is still resolved to be named");
+  }
+
+  [Test]
+  public async Task Report_InAContainerThatCannotSayWhatIsRegistered_NamesNoBuiltInArchive_AndNeverBuildsItToFindOutAsync() {
+    // Only IServiceProviderIsService can say whether the driver's store is registered without building it. A container
+    // without it gets no archive line, rather than a guess or a store built at start.
+    var logger = new FakeLogger<StorageProviderStartupReport>();
+    var archiveBuilt = false;
+    var provider = new LookupOnlyServiceProvider(new Dictionary<Type, Func<object>> {
+      [typeof(ILogger<StorageProviderStartupReport>)] = () => logger,
+      [typeof(IArchiveStore)] = () => {
+        archiveBuilt = true;
+        throw new InvalidOperationException("never built");
+      },
+    });
+
+    var report = new StorageProviderStartupReport(provider);
+    await report.StartAsync(CancellationToken.None);
+
+    await Assert.That(logger.Collector.GetSnapshot()).IsEmpty();
+    await Assert.That(archiveBuilt).IsFalse();
+    await Assert.That(provider.Asked).Contains(typeof(IServiceProviderIsService))
+      .Because("the report asked whether the container can say what is registered, and was told no");
+  }
+
+  [Test]
   public async Task NamedAccount_IgnoresBlankValues_AndAHostWithoutConfigurationAsync() {
     var blank = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
       ["Whizbang:Storage:AzureBlob:ConnectionString"] = " ",
@@ -166,6 +218,16 @@ public class StorageProviderTurnkeyTests {
 
     await Assert.That(services.Count(d => d.ServiceType == typeof(IPostSerializeHook))).IsEqualTo(1)
       .Because("a provider activated from its settings and an explicit call both enable offload; a second hook would offload twice");
+  }
+
+  /// <summary>A container that resolves from a fixed list and can say nothing else, as some third-party containers do.</summary>
+  private sealed class LookupOnlyServiceProvider(Dictionary<Type, Func<object>> services) : IServiceProvider {
+    public List<Type> Asked { get; } = [];
+
+    public object? GetService(Type serviceType) {
+      Asked.Add(serviceType);
+      return services.TryGetValue(serviceType, out var factory) ? factory() : null;
+    }
   }
 
   private sealed class NoObjects : IArchiveObjectStore {

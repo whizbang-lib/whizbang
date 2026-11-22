@@ -99,6 +99,21 @@ public class AzureBlobStorageTurnkeyTests {
   }
 
   [Test]
+  public async Task ThePackage_DeclaresItselfTurnkey_NamingTheRegistrarTheGeneratedInitializerCallsAsync() {
+    // The generators read this assembly attribute from every reference and call the registrar it names from the
+    // consumer's module initializer, so a package no code names still registers itself (#2502).
+    var declared = typeof(AzureBlobStorageTurnkey).Assembly
+      .GetCustomAttributes(typeof(WhizbangTurnkeyPackageAttribute), inherit: false)
+      .Cast<WhizbangTurnkeyPackageAttribute>()
+      .ToArray();
+
+    await Assert.That(declared).Count().IsEqualTo(1);
+    await Assert.That(declared[0].Registrar).IsEqualTo(typeof(AzureBlobStorageTurnkey));
+    await Assert.That(new WhizbangTurnkeyPackageAttribute(typeof(string)).Registrar).IsEqualTo(typeof(string))
+      .Because("the attribute carries exactly the registrar it was given");
+  }
+
+  [Test]
   public async Task Register_IsSafeToCallAgainAsync() {
     AzureBlobStorageTurnkey.Register();
     AzureBlobStorageTurnkey.Register();
