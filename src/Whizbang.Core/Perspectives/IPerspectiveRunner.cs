@@ -243,6 +243,11 @@ public interface IPerspectiveRunner {
   /// <param name="physicalStreamId">The stored stream whose events are replayed.</param>
   /// <param name="perspectiveName">Name of the perspective to run.</param>
   /// <param name="events">The stream's events, as <see cref="ReadRebuildEventsAsync"/> read them.</param>
+  /// <param name="batchState">
+  /// The reads the rebuild planned for the stream's batch (<see cref="IPerspectiveStateSource"/>): its rows, the purge
+  /// markers of the missing ones and the commit sequences of its events, each read once for the whole batch; null to
+  /// read them per stream.
+  /// </param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>One cursor completion per materialised target stream.</returns>
   /// <docs>fundamentals/perspectives/rebuild#batched-reads</docs>
@@ -251,6 +256,7 @@ public interface IPerspectiveRunner {
     Guid physicalStreamId,
     string perspectiveName,
     IReadOnlyList<MessageEnvelope<IEvent>> events,
+    IPerspectiveBatchState? batchState = null,
     CancellationToken cancellationToken = default
   ) => RunRebuildAsync(physicalStreamId, perspectiveName, cancellationToken);
 

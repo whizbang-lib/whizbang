@@ -89,6 +89,20 @@ public class RunnerBaseEntryPointTests {
   }
 
   [Test]
+  public async Task RunRebuildWithEventsAsync_FoldsTheRow_UnderTheApplyLock_AsTheLiveApplyDoesAsync() {
+    var coordinator = new RbCoordinator();
+    var harness = new RbHarness { Coordinator = coordinator };
+    var first = harness.Add(harness.Marked("a"));
+
+    _ = await Rb.RunAsRebuildAsync(() =>
+      ((IPerspectiveRunner)harness.Runner).RunRebuildWithEventsAsync(harness.StreamId, RbHarness.NAME, [first]));
+
+    await Assert.That(coordinator.Acquired).IsEquivalentTo([(harness.StreamId, RbHarness.NAME)]);
+    await Assert.That(coordinator.Released).IsEqualTo(1);
+    await Assert.That(harness.Rows.Row(harness.StreamId).Marks).IsEqualTo("a");
+  }
+
+  [Test]
   public async Task RunRebuildWithEventsAsync_OfNoEvents_ReportsOneUntouchedCompletionAsync() {
     var harness = new RbHarness();
 

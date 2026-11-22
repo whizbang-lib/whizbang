@@ -181,6 +181,37 @@ public partial class BlueGreenRebuildIntegrationTests {
   }
 
   /// <summary>
+  /// A batched read of rows in a redirected flow (#2513): the staging load answers it, every row absent and no statement
+  /// sent, while the load holds none of them; a row it holds, no staging load (a catch-up pass) or a redirect of another
+  /// table leaves each row to its own read.
+  /// </summary>
+  [Test]
+  public async Task Store_InARedirectedFlow_AnswersABatchedRowRead_FromTheStagingLoadOnly_WhileItHoldsNoneOfTheRowsAsync() {
+    await _execAsync($"CREATE TABLE {TABLE}_bg (LIKE {TABLE} INCLUDING ALL)");
+    var (absent, held) = (Guid.NewGuid(), Guid.NewGuid());
+    await using var context = CreateDbContext();
+    var store = new EFCorePostgresPerspectiveStore<RebuildBalanceModel>(context, TABLE);
+    var load = new PerspectiveStagingLoad(TABLE + "_bg", 100);
+
+    using (PerspectiveTableRedirect.Begin(TABLE, TABLE + "_bg")) {
+      await Assert.That(await store.ReadForApplyManyAsync([absent])).IsNull().Because("a catch-up pass has no staging load");
+      using (PerspectiveStagingLoad.Begin(load)) {
+        using var log = new NpgsqlStatementLog(ConnectionString);
+        await Assert.That(await store.ReadForApplyManyAsync([absent])).IsEmpty()
+          .Because("the load has written none of the rows, so every one is absent");
+        await Assert.That(log.Statements).IsEmpty();
+        await store.UpsertAsync(held, new RebuildBalanceModel { Id = held, Balance = 1m });
+        await Assert.That(await store.ReadForApplyManyAsync([absent, held])).IsNull()
+          .Because("a row the load holds is read on its own, which loads it first");
+      }
+    }
+    using (PerspectiveTableRedirect.Begin("wh_per_some_other_table", "wh_per_some_other_table_bg")) {
+      await Assert.That(await store.ReadForApplyManyAsync([absent])).IsNull()
+        .Because("a redirect of another table leaves this store's flow to its own reads");
+    }
+  }
+
+  /// <summary>
   /// Stamps every event's commit sequence, as the stamper does once events are committed. An unstamped event always
   /// counts as written during the rebuild, so without this every stream would be caught up again after the load.
   /// </summary>

@@ -305,6 +305,7 @@ public sealed partial class PerspectiveRebuilder(
         ArchivedData = origin?.ArchivedData ?? RebuildArchivedData.Skip,
         ArchivedExtents = sp.GetService<Archival.IArchivedStreamExtents>(),
         StreamReadBatchSize = Math.Max(1, (sp.GetOptionsValue<PerspectiveRebuildOptions>() ?? new PerspectiveRebuildOptions()).StreamReadBatchSize),
+        StateSource = sp.GetService<IPerspectiveStateSource>(),
       };
 
       // When the caller didn't supply an explicit list, narrow to streams that actually contain
@@ -501,11 +502,12 @@ public sealed partial class PerspectiveRebuilder(
       foreach (var batch in streamIds.Chunk(run.StreamReadBatchSize)) {
         ct.ThrowIfCancellationRequested();
         var read = await _readBatchAsync(run, batch, extents, ct);
+        var batchState = _planBatchState(run, read);
         foreach (var streamId in batch) {
           ct.ThrowIfCancellationRequested();
           processed = await _replayStreamAsync(
             run, streamId, extents.GetValueOrDefault(streamId, Archival.ArchivedStreamExtent.None),
-            read?.GetValueOrDefault(streamId), status, processed, ct);
+            new StreamRead(read?.GetValueOrDefault(streamId), batchState), status, processed, ct);
         }
       }
     }
@@ -754,7 +756,7 @@ public sealed partial class PerspectiveRebuilder(
   /// doesn't kill the rebuild. Returns the phase's processed count.
   /// </summary>
   private async Task<int> _replayStreamAsync(
-      RebuildRun run, Guid streamId, Archival.ArchivedStreamExtent extent, IReadOnlyList<Observability.MessageEnvelope<IEvent>>? read,
+      RebuildRun run, Guid streamId, Archival.ArchivedStreamExtent extent, StreamRead read,
       RebuildStatus status, int processed, CancellationToken ct) {
     var streamSw = Stopwatch.StartNew();
     try {
@@ -832,8 +834,7 @@ public sealed partial class PerspectiveRebuilder(
   /// whose replay from the start would fold the hot events alone.
   /// </summary>
   private async Task<IReadOnlyList<PerspectiveCursorCompletion>?> _rebuildStreamAsync(
-      RebuildRun run, Guid streamId, Archival.ArchivedStreamExtent extent, IReadOnlyList<Observability.MessageEnvelope<IEvent>>? read,
-      CancellationToken ct) {
+      RebuildRun run, Guid streamId, Archival.ArchivedStreamExtent extent, StreamRead read, CancellationToken ct) {
     var fromSnapshot = run.ArchivedData == RebuildArchivedData.Skip;
     switch (extent) {
       case Archival.ArchivedStreamExtent.WholeDeleted:
@@ -846,10 +847,33 @@ public sealed partial class PerspectiveRebuilder(
         return await run.Runner.RunRebuildFromLatestSnapshotAsync(streamId, run.PerspectiveName, ct);
       default:
         // A stream its batch read folds from that read; one the batch did not read reads its own (#2513).
-        return read is null
+        return read.Events is null
           ? await run.Runner.RunRebuildAsync(streamId, run.PerspectiveName, ct)
-          : await run.Runner.RunRebuildWithEventsAsync(streamId, run.PerspectiveName, read, ct);
+          : await run.Runner.RunRebuildWithEventsAsync(streamId, run.PerspectiveName, read.Events, read.BatchState, ct);
     }
+  }
+
+  /// <summary>What a batch read of one stream: its events, or null to read its own, and the batch's planned reads.</summary>
+  private readonly record struct StreamRead(
+      IReadOnlyList<Observability.MessageEnvelope<IEvent>>? Events, IPerspectiveBatchState? BatchState);
+
+  /// <summary>
+  /// Plans the reads a batch's folds make beside its events (#2513): every row the batch re-derives, the purge markers of
+  /// the missing ones, and the commit sequences of the events, each read once for the batch through the host's
+  /// <see cref="IPerspectiveStateSource"/>. Each stream with events is planned from the events the batch read: no stream
+  /// is known new, since the row a rebuild re-derives may exist, and its history is asked before the first event its
+  /// replay folds. Null, and each stream reads its own, when the batch read no events or the host has no state source.
+  /// </summary>
+  private static IPerspectiveBatchState? _planBatchState(
+      RebuildRun run, IReadOnlyDictionary<Guid, IReadOnlyList<Observability.MessageEnvelope<IEvent>>>? read) {
+    if (read is null || run.StateSource is null) {
+      return null;
+    }
+    return run.StateSource.BeginBatch([.. read
+      .Where(stream => stream.Value.Count > 0)
+      .Select(stream => new PerspectiveStateRequest(
+        stream.Key, run.PerspectiveName, ReplayEventOrder.Order(stream.Value)[0].MessageId.Value, KnownNew: false,
+        [.. stream.Value.Select(e => e.MessageId.Value)]))]);
   }
 
   /// <summary>
@@ -955,6 +979,8 @@ public sealed partial class PerspectiveRebuilder(
     public int StreamsSkipped { get; set; }
     /// <summary>How many streams one read reads the events of (#2513); 1 reads each stream on its own.</summary>
     public int StreamReadBatchSize { get; init; } = 1;
+    /// <summary>Plans the reads beside a batch's events (#2513); null in a host with none, and each stream reads its own.</summary>
+    public IPerspectiveStateSource? StateSource { get; init; }
     /// <summary>What the rebuild may read of the archive (#1931).</summary>
     public RebuildArchivedData ArchivedData { get; init; }
     /// <summary>What the ledger says each stream has archived; null in a host with no archive.</summary>
