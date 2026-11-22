@@ -44,7 +44,7 @@ public sealed record ArchiveObjectStoreSettings {
   /// Whether every archive record's location is checked against the store's location before a read, restore, delete or
   /// write (#2137). On by default.
   /// </summary>
-  /// <docs>fundamentals/events/archive-store#verify-location</docs>
+  /// <docs>fundamentals/events/archive-store#location-mismatch</docs>
   public bool VerifyLocation { get; init; } = true;
 
   /// <summary>
