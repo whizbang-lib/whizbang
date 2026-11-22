@@ -103,6 +103,49 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
         + "times a second, in the same process as its request handlers");
   }
 
+  /// <summary>
+  /// The scenario measures its code, not a draw (#2521). Two fills of one depth must be the same workload, or the cost the
+  /// scenario reports is partly the luck of the ids it drew: the streams' ids decide their partitions, and so which streams
+  /// a poll takes and which index pages it reads. Drawn at random, five fills of the 50-deep workload cost 7,624 to 8,125
+  /// blocks a call against a ceiling of 8,000, and the scenario failed about one run in two; the same fill five times cost
+  /// the same to within 0.1%.
+  /// </summary>
+  [Test]
+  [Timeout(1800000)]
+  public async Task ClaimPollPerCallCost_TwoFillsOfOneDepth_AreOneWorkloadAtOneCostAsync(CancellationToken cancellationToken) {
+    await using var dbContext = CreateDbContext();
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(cancellationToken);
+    }
+    var recorder = new WorkCostRecorder(ConnectionString);
+    const int depth = 50;
+
+    var first = await _measureAtDepthAsync(conn, recorder, depth, cancellationToken);
+    var firstWorkload = await _workloadAsync(conn);
+    var second = await _measureAtDepthAsync(conn, recorder, depth, cancellationToken);
+    var secondWorkload = await _workloadAsync(conn);
+
+    await Assert.That(secondWorkload).IsEqualTo(firstWorkload)
+      .Because("each fill of a depth is the same streams and events, so the scenario measures the claim and not the draw");
+    await Assert.That(second.RowsLeasedPerCall).IsEqualTo(first.RowsLeasedPerCall)
+      .Because("the same workload, polled the same way, leases the same rows");
+    await Assert.That(Math.Abs(second.BlocksPerCall - first.BlocksPerCall)).IsLessThanOrEqualTo(first.BlocksPerCall / 100)
+      .Because($"the same workload costs the same blocks a call to within 1% ({first.BlocksPerCall:F1} and {second.BlocksPerCall:F1}); "
+        + "fills drawn at random differed by 6.5%");
+  }
+
+  /// <summary>The streams, events and poller of the current fill, as one fingerprint.</summary>
+  private static async Task<string> _workloadAsync(NpgsqlConnection conn) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      SELECT md5(string_agg(stream_id::text || ':' || event_id::text, ',' ORDER BY stream_id, event_id))
+        || ' ' || (SELECT string_agg(instance_id::text, ',') FROM wh_service_instances)
+      FROM wh_perspective_events
+      """;
+    return (string)(await cmd.ExecuteScalarAsync())!;
+  }
+
   private readonly record struct DepthMeasure(double BlocksPerCall, double RowsLeasedPerCall);
 
   /// <summary>

@@ -259,6 +259,66 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// A page pinned while the vacuum runs (#2521): the vacuum still marks every page holding the streams' rows
+  /// all-visible. Any backend can hold a pin on a page for a moment (the checkpointer or the background writer writing it
+  /// out, a reader whose snapshot is newer than the rows, which the wait above rightly ignores), and on a busy server one
+  /// is held while the vacuum reaches the page often enough to fail the scenario. The pinner here opens after the wait,
+  /// so its snapshot is newer than every row, and lets the page go only when the vacuum is seen waiting for it; a vacuum
+  /// that does not wait for the pin passes the page by, every time.
+  /// </summary>
+  [Test]
+  [Timeout(600000)]
+  public async Task TheVacuum_WaitsOutAPinOnAPage_AndMarksEveryPageAllVisibleAsync(CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await _disableAutovacuumAsync(conn);
+    await _executeAsync(conn, "CREATE EXTENSION IF NOT EXISTS pg_visibility");
+    var vacuumPid = await _scalarAsync(conn, "SELECT pg_backend_pid()");
+    var streams = await _seedWarmStreamsAsync(conn);
+    await Assert.That(await _flushCommitsAsync(conn)).IsTrue()
+      .Because("precondition: the WAL is flushed through every earlier commit, so the vacuum can hint their rows");
+    await using var pinner = new NpgsqlConnection(ConnectionString);
+    await pinner.OpenAsync(cancellationToken);
+    await using var watcher = new NpgsqlConnection(ConnectionString);
+    await watcher.OpenAsync(cancellationToken);
+    using var vacuumDone = new CancellationTokenSource();
+    Task<bool>? released = null;
+
+    await _vacuumOnceNoOlderSnapshotSeesTheRowsAsync(conn, cancellationToken, beforeVacuum: async () => {
+      // A cursor keeps the page of the row it last returned pinned until it moves on or its transaction ends.
+      await _executeAsync(pinner, "BEGIN; DECLARE pin CURSOR FOR SELECT * FROM wh_stream_lifecycle; FETCH 1 FROM pin;");
+      released = _releaseWhenTheVacuumWaitsForThePinAsync(watcher, pinner, vacuumPid, vacuumDone.Token);
+    });
+    await vacuumDone.CancelAsync();
+    var vacuumWaitedForThePin = await released!;
+
+    var (pages, notAllVisible) = await _pagesHoldingAsync(conn, streams);
+    await Assert.That(pages).IsGreaterThanOrEqualTo(1L).Because("precondition: the streams' rows are on some page");
+    await Assert.That(notAllVisible).IsEqualTo(0L)
+      .Because($"the vacuum waited for the pinned page instead of passing it by, so it marked all {pages} pages all-visible");
+    await Assert.That(vacuumWaitedForThePin).IsTrue().Because("the vacuum reached the pinned page and waited for it");
+  }
+
+  /// <summary>
+  /// Ends <paramref name="pinner"/>'s transaction, releasing its pin, once the backend <paramref name="vacuumPid"/> is
+  /// seen waiting for a buffer pin; or, when <paramref name="vacuumDone"/> fires first, ends it then. Returns whether the
+  /// vacuum waited for the pin.
+  /// </summary>
+  private static async Task<bool> _releaseWhenTheVacuumWaitsForThePinAsync(
+      NpgsqlConnection watcher, NpgsqlConnection pinner, long vacuumPid, CancellationToken vacuumDone) {
+    var waited = false;
+    while (!vacuumDone.IsCancellationRequested) {
+      if (await _scalarAsync(watcher, $"SELECT count(*) FROM pg_stat_activity WHERE pid = {vacuumPid} AND wait_event = 'BufferPin'") > 0) {
+        waited = true;
+        break;
+      }
+      await _executeAsync(watcher, "SELECT pg_sleep(0.05)");
+    }
+    await _executeAsync(pinner, "COMMIT");
+    return waited;
+  }
+
+  /// <summary>
   /// Vacuums the ledger once no snapshot that could see an older version of a row on it remains (#2473). A vacuum marks a
   /// page all-visible only when every row on it is older than the oldest snapshot of this database, and one other
   /// session holding a snapshot during the vacuum leaves pages unmarked: an autovacuum worker analyzing a catalog of this
@@ -276,8 +336,9 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
   /// <param name="conn">The test's connection, outside any transaction.</param>
   /// <param name="cancellationToken">The test's cancellation.</param>
   /// <param name="onWaiting">Called once, the first time the wait finds a snapshot it must wait for.</param>
+  /// <param name="beforeVacuum">Called once the wait is over, just before the vacuum.</param>
   private static async Task _vacuumOnceNoOlderSnapshotSeesTheRowsAsync(
-      NpgsqlConnection conn, CancellationToken cancellationToken, Func<Task>? onWaiting = null) {
+      NpgsqlConnection conn, CancellationToken cancellationToken, Func<Task>? onWaiting = null, Func<Task>? beforeVacuum = null) {
     string horizon;
     await using (var next = conn.CreateCommand()) {
       next.CommandText = "SELECT pg_snapshot_xmax(pg_current_snapshot())::text";
@@ -293,6 +354,9 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
         }
       }
       await _executeAsync(conn, "SELECT pg_sleep(0.05)");
+    }
+    if (beforeVacuum is not null) {
+      await beforeVacuum();
     }
     await _executeAsync(conn, "VACUUM wh_stream_lifecycle");
   }
