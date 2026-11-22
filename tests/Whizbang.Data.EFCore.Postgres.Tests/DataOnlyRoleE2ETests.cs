@@ -100,9 +100,6 @@ public class DataOnlyRoleE2ETests {
     return builder.Build();
   }
 
-  /// <summary>How long a phase may take before it is reported as hung. A hang detector over signal waits, not a speed check.</summary>
-  private static readonly TimeSpan _phaseBound = TimeSpan.FromSeconds(60);
-
   /// <summary>
   /// The first start applies every migration to a brand-new database. On a saturated build server that took over 60 s
   /// with nothing hung (flaky-tests.md, Pattern 3), so it gets its own bound, still inside the test timeout so a real
@@ -110,24 +107,23 @@ public class DataOnlyRoleE2ETests {
   /// </summary>
   private static readonly TimeSpan _migratingStartBound = TimeSpan.FromSeconds(180);
 
+  private readonly StartupPhases _phases = new(TimeProvider.System);
+
   /// <summary>Bounds one phase, so a hang names where it happened instead of running into the test's timeout.</summary>
-  private static async Task _phaseAsync(string phase, Func<Task> work, IHost? host = null, ErrorLog? errors = null, TimeSpan? bound = null) {
-    var limit = bound ?? _phaseBound;
-    try {
-      await work().WaitAsync(limit);
-    } catch (TimeoutException ex) {
-      var steps = host?.Services.GetService<IStartupPipelineState>()?.SnapshotSteps()
-        .Select(s => $"{s.Name}={s.Status}/{s.Outcome}: {s.Reason}") ?? [];
-      // #2419: the Migrate step spans the startup stages Preflight to Coordinate; the stage and its message say which
-      // of them a hang is in, which the step alone does not.
-      var stage = host?.Services.GetService<IStartupStageReporter>()?.Current is { } current
-        ? $"{current.Stage}: {current.Message}"
-        : "none reported";
-      throw new TimeoutException(
-        $"Phase '{phase}' did not finish within {limit.TotalSeconds}s. Startup stage: [{stage}]. "
-        + $"Startup steps: [{string.Join("; ", steps)}]. "
-        + $"Errors logged: [{string.Join(" | ", errors?.Entries ?? [])}]", ex);
-    }
+  private Task _phaseAsync(string phase, Func<Task> work, IHost? host = null, ErrorLog? errors = null, TimeSpan? bound = null) =>
+    _phases.RunAsync(phase, work, () => _describe(host, errors), bound);
+
+  private static string _describe(IHost? host, ErrorLog? errors) {
+    var steps = host?.Services.GetService<IStartupPipelineState>()?.SnapshotSteps()
+      .Select(s => $"{s.Name}={s.Status}/{s.Outcome}: {s.Reason}") ?? [];
+    // #2419: the Migrate step spans the startup stages Preflight to Coordinate; the stage and its message say which
+    // of them a hang is in, which the step alone does not.
+    var stage = host?.Services.GetService<IStartupStageReporter>()?.Current is { } current
+      ? $"{current.Stage}: {current.Message}"
+      : "none reported";
+    return $"Startup stage: [{stage}]. "
+      + $"Startup steps: [{string.Join("; ", steps)}]. "
+      + $"Errors logged: [{string.Join(" | ", errors?.Entries ?? [])}]";
   }
 
   private static async Task<IReadOnlyList<StartupStepResult>> _startAsync(IHost host, CancellationToken cancellationToken) {
