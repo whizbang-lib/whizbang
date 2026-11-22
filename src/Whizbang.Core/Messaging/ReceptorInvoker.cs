@@ -48,6 +48,7 @@ namespace Whizbang.Core.Messaging;
 /// <docs>fundamentals/receptors/exactly-once-firing</docs>
 /// <docs>operations/observability/tracing#parent-context</docs>
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorHandlingTests.cs</tests>
 public sealed partial class ReceptorInvoker : IReceptorInvoker {
   private readonly IReceptorRegistry _registry;
   private readonly IServiceProvider _scopedProvider;
