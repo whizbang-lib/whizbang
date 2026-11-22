@@ -42,49 +42,73 @@ public sealed partial class PostgresReceivedStreamResequencer(
     }
     await using var connection = await openConnection(cancellationToken).ConfigureAwait(false);
 
-    var after = request.StartAfterStreamId ?? Guid.Empty;
-    var examined = 0;
-    var resequenced = new List<StreamResequence>();
-    var skipped = new List<StreamLeftAlone>();
-    Guid? resumeAfter = null;
-    var batchIndex = 0;
-    while (true) {
-      cancellationToken.ThrowIfCancellationRequested();
-      var window = request.MaxStreams is { } max ? Math.Min(request.BatchSize, max - examined) : request.BatchSize;
-      var streams = await _windowAsync(connection, after, window, cancellationToken).ConfigureAwait(false);
-      if (streams.Count == 0) {
-        break;
-      }
-      examined += streams.Count;
-      after = streams[^1].StreamId;
-      skipped.AddRange(streams.Where(s => s.OutOfOrder && s.Skip is not null).Select(s => new StreamLeftAlone(s.StreamId, s.Skip!.Value)));
-      var candidates = streams.Where(s => s.OutOfOrder && s.Skip is null).Select(s => s.StreamId).ToArray();
-      if (candidates.Length > 0) {
-        var (done, left) = request.DryRun
-          ? (await _planDryAsync(connection, candidates, cancellationToken).ConfigureAwait(false), [])
-          : await _applyBatchAsync(connection, candidates, cancellationToken).ConfigureAwait(false);
-        resequenced.AddRange(done);
-        skipped.AddRange(left);
-        if (logger is not null) {
-          LogBatch(logger, request.RunId, batchIndex, request.DryRun, done.Count, left.Count);
-        }
-      }
-      batchIndex++;
-      if (streams.Count < window) {
-        break;
-      }
-      if (request.MaxStreams is { } limit && examined >= limit) {
-        resumeAfter = after;
-        break;
-      }
+    var run = new RunState(request);
+    while (await _nextBatchAsync(connection, run, cancellationToken).ConfigureAwait(false)) {
+      run.BatchIndex++;
     }
 
-    var report = new ReceivedStreamResequenceReport(request.RunId, request.DryRun, examined, resequenced, skipped, resumeAfter);
+    var report = new ReceivedStreamResequenceReport(
+      request.RunId, request.DryRun, run.Examined, run.Resequenced, run.Skipped, run.ResumeAfter);
     if (logger is not null) {
-      LogRun(logger, request.RunId, request.DryRun, examined, resequenced.Count, resequenced.Sum(s => s.Moves.Count),
-        skipped.Count, resumeAfter);
+      LogRun(logger, request.RunId, request.DryRun, run.Examined, run.Resequenced.Count, run.Resequenced.Sum(s => s.Moves.Count),
+        run.Skipped.Count, run.ResumeAfter);
     }
     return report;
+  }
+
+  /// <summary>Where a run stands: the walk's position, and what it has done and left alone so far.</summary>
+  private sealed class RunState(ReceivedStreamResequenceRequest request) {
+    public ReceivedStreamResequenceRequest Request { get; } = request;
+    public Guid After { get; set; } = request.StartAfterStreamId ?? Guid.Empty;
+    public int Examined { get; set; }
+    public int BatchIndex { get; set; }
+    public Guid? ResumeAfter { get; set; }
+    public List<StreamResequence> Resequenced { get; } = [];
+    public List<StreamLeftAlone> Skipped { get; } = [];
+
+    /// <summary>The streams the next window reads: the batch size, or what is left of the run's bound.</summary>
+    public int NextWindow => Request.MaxStreams is { } max ? Math.Min(Request.BatchSize, max - Examined) : Request.BatchSize;
+  }
+
+  /// <summary>
+  /// Reads the next window and handles its out-of-order streams. Returns whether the run goes on: false once the store is
+  /// walked, or once the run's bound is reached (recording where to resume).
+  /// </summary>
+  private async Task<bool> _nextBatchAsync(NpgsqlConnection connection, RunState run, CancellationToken cancellationToken) {
+    cancellationToken.ThrowIfCancellationRequested();
+    var window = run.NextWindow;
+    var streams = await _windowAsync(connection, run.After, window, cancellationToken).ConfigureAwait(false);
+    if (streams.Count == 0) {
+      return false;
+    }
+    run.Examined += streams.Count;
+    run.After = streams[^1].StreamId;
+    run.Skipped.AddRange(streams.Where(s => s.OutOfOrder && s.Skip is not null).Select(s => new StreamLeftAlone(s.StreamId, s.Skip!.Value)));
+    var candidates = streams.Where(s => s.OutOfOrder && s.Skip is null).Select(s => s.StreamId).ToArray();
+    if (candidates.Length > 0) {
+      await _handleCandidatesAsync(connection, run, candidates, cancellationToken).ConfigureAwait(false);
+    }
+    if (streams.Count < window) {
+      return false;
+    }
+    if (run.Request.MaxStreams is { } limit && run.Examined >= limit) {
+      run.ResumeAfter = run.After;
+      return false;
+    }
+    return true;
+  }
+
+  /// <summary>Plans (a dry run) or re-sequences one window's out-of-order streams, and records the outcome.</summary>
+  private async Task _handleCandidatesAsync(
+      NpgsqlConnection connection, RunState run, Guid[] candidates, CancellationToken cancellationToken) {
+    var (done, left) = run.Request.DryRun
+      ? (await _planDryAsync(connection, candidates, cancellationToken).ConfigureAwait(false), [])
+      : await _applyBatchAsync(connection, candidates, cancellationToken).ConfigureAwait(false);
+    run.Resequenced.AddRange(done);
+    run.Skipped.AddRange(left);
+    if (logger is not null) {
+      LogBatch(logger, run.Request.RunId, run.BatchIndex, run.Request.DryRun, done.Count, left.Count);
+    }
   }
 
   /// <summary>One stream of a window: whether it is out of its origins' order, and why it is left alone if it is.</summary>

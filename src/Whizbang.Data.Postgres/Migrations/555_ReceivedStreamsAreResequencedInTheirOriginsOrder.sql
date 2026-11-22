@@ -62,13 +62,13 @@ RETURNS TABLE(stream_id UUID, out_of_order BOOLEAN, skip_reason TEXT) AS $$
     SELECT DISTINCT es.stream_id
     FROM __SCHEMA__.wh_event_store es
     WHERE es.stream_id > p_after_stream_id
-    ORDER BY es.stream_id
+    ORDER BY es.stream_id ASC
     LIMIT p_window
   ),
   received AS (
     SELECT es.stream_id, es.event_id, es.version, es.origin_service_id,
            COALESCE(es.origin_commit_sequence, 0) AS seq,
-           lag(es.event_id) OVER (PARTITION BY es.stream_id, es.origin_service_id ORDER BY es.version) AS prev_id
+           lag(es.event_id) OVER (PARTITION BY es.stream_id, es.origin_service_id ORDER BY es.version ASC) AS prev_id
     FROM __SCHEMA__.wh_event_store es
     JOIN w ON w.stream_id = es.stream_id
     WHERE es.origin_service_id IS NOT NULL
@@ -76,7 +76,7 @@ RETURNS TABLE(stream_id UUID, out_of_order BOOLEAN, skip_reason TEXT) AS $$
   ),
   positioned AS (
     SELECT r.stream_id, r.seq,
-           lag(r.seq) OVER (PARTITION BY r.stream_id, r.origin_service_id ORDER BY r.version) AS prev_seq
+           lag(r.seq) OVER (PARTITION BY r.stream_id, r.origin_service_id ORDER BY r.version ASC) AS prev_seq
     FROM received r
     WHERE r.seq > 0
   ),
@@ -97,7 +97,7 @@ RETURNS TABLE(stream_id UUID, out_of_order BOOLEAN, skip_reason TEXT) AS $$
              OR EXISTS (SELECT 1 FROM __SCHEMA__.wh_event_archive ea WHERE ea.stream_id = m.stream_id) THEN 'Archived'
          END
   FROM marked m
-  ORDER BY m.stream_id;
+  ORDER BY m.stream_id ASC;
 $$ LANGUAGE sql STABLE;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_received_stream_order_window(UUID, INTEGER) IS
@@ -114,7 +114,7 @@ RETURNS SETOF UUID AS $$
 DECLARE
   v_stream UUID;
 BEGIN
-  FOR v_stream IN SELECT DISTINCT s FROM unnest(p_stream_ids) AS s ORDER BY s LOOP
+  FOR v_stream IN SELECT DISTINCT s FROM unnest(p_stream_ids) AS s ORDER BY s ASC LOOP
     IF pg_try_advisory_xact_lock(hashtext('wh_event_store:' || v_stream::text)) THEN
       RETURN NEXT v_stream;
     END IF;
@@ -154,8 +154,8 @@ BEGIN
      OR COALESCE(array_length(p_from_versions, 1), 0) <> v_count
      OR COALESCE(array_length(p_to_versions, 1), 0) <> v_count
      OR (SELECT count(DISTINCT e) FROM unnest(p_event_ids) AS e) <> v_count
-     OR (SELECT array_agg(v ORDER BY v) FROM unnest(p_from_versions) AS v)
-        IS DISTINCT FROM (SELECT array_agg(v ORDER BY v) FROM unnest(p_to_versions) AS v) THEN
+     OR (SELECT array_agg(v ORDER BY v ASC) FROM unnest(p_from_versions) AS v)
+        IS DISTINCT FROM (SELECT array_agg(v ORDER BY v ASC) FROM unnest(p_to_versions) AS v) THEN
     RAISE EXCEPTION 'wh_resequence_stream: the plan for stream % is not a permutation of the versions its events hold', p_stream_id
       USING ERRCODE = '22023';
   END IF;
@@ -196,7 +196,7 @@ BEGIN
   SELECT es.event_id INTO v_trigger
   FROM __SCHEMA__.wh_event_store es
   WHERE es.stream_id = p_stream_id
-  ORDER BY es.version
+  ORDER BY es.version ASC
   LIMIT 1;
 
   WITH flagged AS (
