@@ -2680,12 +2680,8 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     // begin, so it is not used: the replay starts from the stream's start, which reads through the archive by its gap.
     if (snapshot?.ArchivedThroughVersion is not null && snapshot.SnapshotVersion is null) {
       var coveredSnapshotEventId = snapshot.SnapshotEventId;
-      return (null, null, () => {
-        _logger.LogWarning(
-            "Snapshot of {PerspectiveName} stream {StreamId} at {SnapshotEventId} is covered by an archive and records no stream version; performing full replay through the archive due to late event {TriggeringEventId}",
-            perspectiveName, streamId, coveredSnapshotEventId, triggeringEventId);
-        _logNoSnapshotPlaced(perspectiveName, streamId, triggeringEventId, triggeringCommitSequence);
-      });
+      return (null, null, () => _logCoveredSnapshotNotUsed(
+          perspectiveName, streamId, coveredSnapshotEventId, triggeringEventId, triggeringCommitSequence));
     }
     if (snapshot is null) {
       return (null, null, () => _logNoSnapshotPlaced(perspectiveName, streamId, triggeringEventId, triggeringCommitSequence));
@@ -2713,6 +2709,18 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     return (snapshot, snapshotModel, () => _logger.LogWarning(
         "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} (stream version {SnapshotVersion}) due to late event {TriggeringEventId} (detected at commit sequence {TriggeringCommitSequence})",
         perspectiveName, streamId, snapshot.SnapshotEventId, snapshot.SnapshotVersion, triggeringEventId, triggeringCommitSequence));
+  }
+
+  /// <summary>
+  /// The lines a full replay logs when the snapshot placed before its late event is covered by an archive and records no
+  /// stream version, so it is not used, and no other snapshot is placed.
+  /// </summary>
+  private void _logCoveredSnapshotNotUsed(
+      string perspectiveName, Guid streamId, Guid coveredSnapshotEventId, Guid triggeringEventId, long? triggeringCommitSequence) {
+    _logger.LogWarning(
+        "Snapshot of {PerspectiveName} stream {StreamId} at {SnapshotEventId} is covered by an archive and records no stream version; performing full replay through the archive due to late event {TriggeringEventId}",
+        perspectiveName, streamId, coveredSnapshotEventId, triggeringEventId);
+    _logNoSnapshotPlaced(perspectiveName, streamId, triggeringEventId, triggeringCommitSequence);
   }
 
   /// <summary>The line a full replay logs when no snapshot is placed before its late event.</summary>
