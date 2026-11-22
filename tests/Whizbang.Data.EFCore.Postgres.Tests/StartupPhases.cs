@@ -10,6 +10,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <param name="time">The clock the bound runs on.</param>
 internal sealed class StartupPhases(TimeProvider time) {
+  /// <summary>How long the whole test may take before the phase it is in is reported as hung.</summary>
+  public static readonly TimeSpan TestDeadline = TimeSpan.FromSeconds(280);
+
   /// <summary>How long a phase may take before it is reported as hung.</summary>
   public static readonly TimeSpan PhaseBound = TimeSpan.FromSeconds(60);
 
