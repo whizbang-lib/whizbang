@@ -86,7 +86,7 @@ public class SonarQueueRulesTests {
       .ReplaceSyntaxTree(compilation.SyntaxTrees.Single(), tree)
       .WithOptions(compilation.Options
         .WithGeneralDiagnosticOption(ReportDiagnostic.Error)
-        .WithSpecificDiagnosticOptions(severities));
+        .WithSyntaxTreeOptionsProvider(new EditorConfigSeverities(severities)));
 
     var sonar = new AnalyzerFileReference(Path.Combine(AppContext.BaseDirectory, "sonar", "SonarAnalyzer.CSharp.dll"), new FileAnalyzerLoader())
       .GetAnalyzers(LanguageNames.CSharp)
@@ -114,6 +114,19 @@ public class SonarQueueRulesTests {
       directory = directory.Parent;
     }
     return directory?.FullName ?? throw new InvalidOperationException("The repository root (Whizbang.slnx) was not found above the test output.");
+  }
+
+  /// <summary>Hands the compiler a tree's .editorconfig severities the way the build does, so warnings-as-errors applies.</summary>
+  private sealed class EditorConfigSeverities(ImmutableDictionary<string, ReportDiagnostic> severities) : SyntaxTreeOptionsProvider {
+    public override GeneratedKind IsGenerated(SyntaxTree tree, CancellationToken cancellationToken) => GeneratedKind.NotGenerated;
+
+    public override bool TryGetDiagnosticValue(SyntaxTree tree, string diagnosticId, CancellationToken cancellationToken, out ReportDiagnostic severity) =>
+      severities.TryGetValue(diagnosticId, out severity);
+
+    public override bool TryGetGlobalDiagnosticValue(string diagnosticId, CancellationToken cancellationToken, out ReportDiagnostic severity) {
+      severity = ReportDiagnostic.Default;
+      return false;
+    }
   }
 
   private sealed class FileAnalyzerLoader : IAnalyzerAssemblyLoader {
