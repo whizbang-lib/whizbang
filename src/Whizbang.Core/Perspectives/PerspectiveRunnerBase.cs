@@ -1536,8 +1536,9 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       string eventTypeName,
       out TModel? appliedModel,
       out global::Whizbang.Core.Perspectives.ModelAction action) {
+    var perspective = state.Perspective;
     try {
-      (appliedModel, action) = _applyEvent(state.Perspective, state.UpdatedModel, envelope.Payload, envelope.IsFirstInLocalStream);
+      (appliedModel, action) = _applyEvent(perspective, state.UpdatedModel, envelope.Payload, envelope.IsFirstInLocalStream);
       return true;
     } catch (Exception applyEx) {
       _logger.LogError(
@@ -1601,13 +1602,15 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// </summary>
   private void _applyScopeEvent(ApplyState state, global::Whizbang.Core.IScopeEvent scopeEvent) {
     var proposedScope = scopeEvent.Scope;
+    PerspectiveScope? scopeEventScope;
     if (_traits.HasScopeInterface
         && state.Perspective is global::Whizbang.Core.Perspectives.IPerspectiveScopeFor<TModel> scopePerspective) {
       var currentScope = state.ScopeEventScope ?? state.ApplyRead.Scope ?? new global::Whizbang.Core.Lenses.PerspectiveScope();
-      state.ScopeEventScope = scopePerspective.ApplyScope(currentScope, proposedScope);
+      scopeEventScope = scopePerspective.ApplyScope(currentScope, proposedScope);
     } else {
-      state.ScopeEventScope = proposedScope;
+      scopeEventScope = proposedScope;
     }
+    state.ScopeEventScope = scopeEventScope;
   }
 
   /// <summary>
@@ -2872,7 +2875,6 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       ReplayFrom from,
       CancellationToken cancellationToken) {
     var replayFromEventId = from.EventId;
-    var readThroughArchiveAfterVersion = from.ReadThroughArchiveAfterVersion;
 
     // Use provided model or create empty one (full replay from event zero)
     // The row version this replay writes against, read before any event is (#1863): a writer that commits after this
@@ -2882,10 +2884,6 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     var rowVersion = applyRead.Version;
 
     var currentModel = initialModel ?? CreateEmptyModel(streamId);
-    // True once the model is one an Apply produced: a snapshot's model was, the scaffolded empty one is only Apply
-    // input. A replay whose every event the perspective declines writes nothing, exactly as the live drain does,
-    // instead of storing the scaffold as a blank row (#1677).
-    var producedByApply = initialModel is not null;
 
     // Purge stays purged (issue #1027): a full replay begins purged when the stream is marked, exactly as the
     // live drain does on a missing row - the history before an operator purge is gone, so the fold alone could
@@ -2895,42 +2893,11 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     // Get perspective instance from DI
     var perspective = _serviceProvider.GetRequiredService<TPerspective>();
 
-    // Track progress
-    var eventsProcessed = 0;
-    Guid? lastSuccessfulEventId = replayFromEventId;
-    string? lastSuccessfulEventType = null;
-    DateTime? lastSuccessfulEventAt = null;
-    TModel? updatedModel = currentModel;
-    var pendingPurge = startedPurged;
-    Guid? purgeEventId = null;
-    var resurrected = false;
-    var purgedEventsSkipped = 0;
-    PerspectiveScope? lastScope = null;
-    // The replay FRONTIER - max event id / max local commit_sequence across everything
-    // applied. The checkpoint metadata must carry the frontier, not the origin-order-last
-    // event's stamp: after a replay everything at or below the frontier IS applied (that is
-    // the idempotency floor's meaning), and the upsert's cross-pod lost-update guard rightly
-    // refuses a write whose sequence sits below the stored floor - an origin-order replay's
-    // final event can carry a LOWER local stamp than a backfilled straggler it slotted.
-    Guid? frontierEventId = null;
-    long? frontierCommitSequence = null;
-    // #2366: the replayed event last in stream order (by version), the position the cursor reports.
-    var lastInStream = new LastInStream();
-
     // Slice 24c: intermediate-snapshot tracking. When the rewind interval is configured
     // (> 0) we snapshot every N events DURING the replay, not just at the end. Subsequent
     // rewinds - including "very late" events whose MessageId falls between intermediate
     // points and the end - find a qualifying snapshot rather than replaying from event zero.
     var snapshotsOn = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true;
-    var rewindSnapshotInterval = snapshotsOn ? _snapshotOptions!.Value.RewindSnapshotIntervalEvents : 0;
-    var eventsSinceIntermediateSnapshot = 0;
-    // #2379: an intermediate snapshot is taken only where the fold so far is every event up to some version, at that
-    // version's event: a fold in origin order can hold a later version before an earlier one.
-    var foldedPrefix = new global::Whizbang.Core.Perspectives.FoldedVersionPrefix();
-    global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>? firstStreamEvent = null;
-
-    // Build list of event types this perspective handles
-    var eventTypes = _handledEventTypes;
 
     // An overwrite-only perspective (#1869): every Apply builds the row from its event alone, so the last event decides
     // the row and the rewind applies only it. It answers null when the last event cannot decide alone (a purge-capable
@@ -2941,10 +2908,47 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     // last event alone would write.
     var foldsCollectives = _modelHasCollectives();
     if (_traits.IsOverwriteOnly && !startedPurged && !foldsCollectives
-        && await _replayLastEventOnlyAsync(streamId, perspectiveName, perspective, rowVersion, replayFromEventId, eventTypes, cancellationToken)
+        && await _replayLastEventOnlyAsync(streamId, perspectiveName, perspective, rowVersion, replayFromEventId, _handledEventTypes, cancellationToken)
           is { } lastEventOnly) {
       return lastEventOnly;
     }
+
+    // #1956: a rewind is a replay, so it folds the row's collectives as a rebuild does. It folds those committed after
+    // where it starts: after the snapshot's event, whose model already holds the ones committed before it, or every one
+    // for a replay from the stream's start. Each folds once across the catch-up passes, and none moves the checkpoint.
+    long? collectiveStartSequence = foldsCollectives && replayFromEventId is Guid snapshotEventId
+        ? await _eventStore.GetCommitSequenceAsync(snapshotEventId, cancellationToken)
+        : null;
+    // #1963: how far the row holds its collectives at its last stream event, for the snapshots this replay takes. It holds
+    // what the start held (the snapshot's mark, or the snapshot-event rule for a snapshot that records none) and every
+    // collective folded before that event, whose own commit sequence it reaches too. A collective folded with no commit
+    // sequence cannot be described by one, so the replay's snapshots then record no mark.
+    var heldStart = from.CollectivesThroughSequence ?? collectiveStartSequence;
+    var run = new ReplayRun {
+      Outcome = new ReplayOutcome {
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        RowVersion = rowVersion,
+        ReplayFromEventId = replayFromEventId,
+        LastSuccessfulEventId = replayFromEventId,
+        UpdatedModel = currentModel,
+        // True once the model is one an Apply produced: a snapshot's model was, the scaffolded empty one is only Apply
+        // input. A replay whose every event the perspective declines writes nothing, exactly as the live drain does,
+        // instead of storing the scaffold as a blank row (#1677).
+        ProducedByApply = initialModel is not null,
+        PendingPurge = startedPurged,
+        StartedPurged = startedPurged,
+      },
+      Perspective = perspective,
+      From = from,
+      ApplyRead = applyRead,
+      FromASnapshotModel = initialModel is not null,
+      SnapshotsOn = snapshotsOn,
+      RewindSnapshotInterval = snapshotsOn ? _snapshotOptions!.Value.RewindSnapshotIntervalEvents : 0,
+      FoldsCollectives = foldsCollectives,
+      CollectiveStartSequence = collectiveStartSequence,
+      HeldThrough = new CollectiveHold(foldsCollectives, heldStart, startDescribed: replayFromEventId is null || heldStart is not null),
+    };
 
     // v0.688 - Rewind catch-up loop (a production forensic fix). The original
     // implementation read events ONCE here and applied that fixed list. Events
@@ -2964,24 +2968,6 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     // <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReconcileRewindDeclarationSqlTests.cs</tests>
     var rewindCatchUpIterations = 0;
     var anchorEventId = replayFromEventId;
-
-    // #1956: a rewind is a replay, so it folds the row's collectives as a rebuild does. It folds those committed after
-    // where it starts: after the snapshot's event, whose model already holds the ones committed before it, or every one
-    // for a replay from the stream's start. Each folds once across the catch-up passes, and none moves the checkpoint.
-    long? collectiveStartSequence = foldsCollectives && replayFromEventId is Guid snapshotEventId
-        ? await _eventStore.GetCommitSequenceAsync(snapshotEventId, cancellationToken)
-        : null;
-    var foldedCollectives = new HashSet<Guid>();
-    // #1963: how far the row holds its collectives at its last stream event, for the snapshots this replay takes. It holds
-    // what the start held (the snapshot's mark, or the snapshot-event rule for a snapshot that records none) and every
-    // collective folded before that event, whose own commit sequence it reaches too. A collective folded with no commit
-    // sequence cannot be described by one, so the replay's snapshots then record no mark.
-    var heldStart = from.CollectivesThroughSequence ?? collectiveStartSequence;
-    var heldThrough = new CollectiveHold(foldsCollectives, heldStart, startDescribed: replayFromEventId is null || heldStart is not null);
-    // The row at its last event, taken when collectives committed after that event fold into it: the snapshot this replay
-    // ends with is taken at that event, so it must not hold them, or a rewind from it would fold them again.
-    JsonDocument? modelAtLastEvent = null;
-
     while (true) {
       rewindCatchUpIterations++;
       if (rewindCatchUpIterations > MAX_REWIND_CATCH_UP_ITERATIONS) {
@@ -2991,201 +2977,15 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         break;
       }
 
-      // Read events from the current anchor. First pass uses replayFromEventId
-      // (snapshot or null=from-beginning). Subsequent passes use the last event
-      // we applied, so we only pick up the delta of events appended since.
-      var events = new global::System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
-      // #1738: the first pass from a snapshot an archive covers reads the archived events after it, then the hot ones; every
-      // later pass resumes after the last event applied, which is hot.
-      var read = rewindCatchUpIterations == 1 && readThroughArchiveAfterVersion is long afterVersion
-          ? _eventStore.ReadPolymorphicThroughArchiveAsync(streamId, anchorEventId, afterVersion, eventTypes, cancellationToken)
-          : _eventStore.ReadPolymorphicAsync(streamId, anchorEventId, eventTypes, cancellationToken);
-      await foreach (var envelope in read) {
-        events.Add(envelope);
-      }
-      // #2152: the first of the stream's own events the replay reads, across every pass.
-      firstStreamEvent ??= events.Count > 0 ? events[0] : null;
-
-      // Ordering invariant: origin order for a single-origin stream, else commit order when every event is
-      // stamped, else id order. The inversion detector is commit-sequence-authoritative, and an id-ordered replay
-      // would silently undo newer writes. The rule lives in ReplayEventOrder, which the rebuild shares.
-      if (events.Count > 1) {
-        events = [.. global::Whizbang.Core.Perspectives.ReplayEventOrder.Order(events)];
-      }
-
-      // The row's collectives committed after the replay's start, merged among the stream's events in commit order (#1956).
-      // A first pass from a snapshot with no stream event after it still folds those committed since the snapshot, for the
-      // tenant the row is stored under.
-      if (foldsCollectives
-          && _collectiveTenant(events, applyRead, firstPassFromASnapshot: rewindCatchUpIterations == 1 && initialModel is not null)
-            is { Known: true } tenant) {
-        var merged = await _collectiveReplayApplier!.InterleaveAfterAsync(
-            typeof(TModel), events,
-            new global::Whizbang.Core.Perspectives.CollectiveReplayStart(tenant.TenantId, replayFromEventId, collectiveStartSequence) {
-              CollectivesThroughSequence = from.CollectivesThroughSequence,
-            },
-            cancellationToken);
-        events = [.. merged.Where(e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent || foldedCollectives.Add(e.MessageId.Value))];
-      }
-
-      foldedPrefix.Read(events.Where(e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent));
+      var events = await _readReplayPassAsync(run, anchorEventId, firstPass: rewindCatchUpIterations == 1, cancellationToken);
       if (events.Count == 0) {
         // Event store quiescent: the rewind has caught up to HEAD AT THIS COMMIT.
         // This is the contract PerspectiveRewindCompleted now honors.
         break;
       }
 
-      // A batch whose last event always purges the row (#1151) discards whatever the events before it fold: they
-      // move the frontier and count as processed, and only the purge is applied.
-      var foldFrom = 0;
-      if (events.Count > 1 && IsUnconditionalPurge(events[^1].Payload)) {
-        foldFrom = events.Count - 1;
-        foreach (var skipped in events.Take(foldFrom)) {
-          if (skipped.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent) {
-            (frontierEventId, frontierCommitSequence) = _advanceFrontier(frontierEventId, frontierCommitSequence, skipped);
-            lastInStream.Offer(skipped);
-            _ = foldedPrefix.Folded(skipped);
-          }
-          eventsProcessed++;
-        }
-      }
-
       // Apply all events in memory - no intermediate DB writes, no lifecycle hooks
-      foreach (var envelope in events.Skip(foldFrom)) {
-        var @event = envelope.Payload;
-
-        // A collective folds into the row and moves no checkpoint and no frontier (#1956), as in a rebuild (#1931). A purged
-        // row has nothing to fold into. Its scope is the collective's, not the row's, so it is not tracked for the write.
-        if (@event is global::Whizbang.Core.Messaging.ICollectiveEvent) {
-          if (!pendingPurge && updatedModel is not null) {
-            if (snapshotsOn && modelAtLastEvent is null) {
-              modelAtLastEvent = _toSnapshotJson(updatedModel);
-            }
-            updatedModel = (TModel?)_collectiveReplayApplier!.ApplyInMemory(
-                typeof(TModel), updatedModel, streamId, @event);
-            producedByApply = true;
-            heldThrough.Fold(envelope.LocalCommitSequence);
-            // #1970: a collective still in flight may yet reach the row live, so no snapshot of this replay says what it holds.
-            if (_collectiveReplayApplier.IsInFlight(@event)) {
-              heldThrough.MeetInFlight();
-            }
-          }
-          eventsProcessed++;
-          continue;
-        }
-        // A stream event after collectives: the row at the last event is the one this event leaves.
-        modelAtLastEvent?.Dispose();
-        modelAtLastEvent = null;
-        heldThrough.ReachEvent(envelope.LocalCommitSequence);
-
-        // Track scope from envelope for perspective upsert
-        var envelopeScope = envelope.GetCurrentScope();
-        if (envelopeScope?.Scope != null) {
-          lastScope = envelopeScope.Scope;
-        }
-
-        // A purged stream stays purged: skip the event unless its Apply returns Resurrect. The frontier still
-        // moves past a skipped event, so the cursor never re-flags it as a straggler.
-        if (pendingPurge) {
-          var resurrection = _tryResurrect(perspective, streamId, @event, envelope.IsFirstInLocalStream);
-          lastSuccessfulEventId = envelope.MessageId.Value;
-          lastSuccessfulEventAt = _eventTime(envelope);
-          eventsProcessed++;
-          (frontierEventId, frontierCommitSequence) = _advanceFrontier(frontierEventId, frontierCommitSequence, envelope);
-          lastInStream.Offer(envelope);
-          _ = foldedPrefix.Folded(envelope);
-          if (resurrection is null) {
-            purgedEventsSkipped++;
-            continue;
-          }
-          pendingPurge = false;
-          resurrected = true;
-          updatedModel = resurrection;
-          producedByApply = true;
-          lastSuccessfulEventType = PerspectiveRunnerTypeNames.Recorded(@event.GetType());
-          continue;
-        }
-
-        // Apply event to model using perspective's pure Apply method
-        TModel? appliedModel;
-        global::Whizbang.Core.Perspectives.ModelAction action;
-        try {
-          (appliedModel, action) = _applyEvent(perspective, updatedModel, @event, envelope.IsFirstInLocalStream);
-        } catch (Exception applyEx) {
-          _logger.LogError(
-              applyEx,
-              "Error applying {EventType} to perspective stream {StreamId}, skipping event {EventId}",
-              global::Whizbang.Core.TypeNameFormatter.SimpleName(@event.GetType()),
-              streamId,
-              envelope.MessageId.Value
-          );
-          lastSuccessfulEventId = envelope.MessageId.Value;
-          lastSuccessfulEventAt = _eventTime(envelope);
-          eventsProcessed++;
-          _ = foldedPrefix.Folded(envelope);
-          continue;
-        }
-
-        switch (action) {
-          case global::Whizbang.Core.Perspectives.ModelAction.Delete:
-            updatedModel = appliedModel ?? updatedModel;
-            producedByApply |= appliedModel != null;
-            break;
-          case global::Whizbang.Core.Perspectives.ModelAction.Purge:
-            pendingPurge = true;
-            purgeEventId = envelope.MessageId.Value;
-            updatedModel = null;
-            break;
-          default:
-            if (appliedModel != null) {
-              updatedModel = appliedModel;
-              producedByApply = true;
-            }
-            break;
-        }
-
-        lastSuccessfulEventId = envelope.MessageId.Value;
-
-        lastSuccessfulEventAt = _eventTime(envelope);
-        lastSuccessfulEventType = PerspectiveRunnerTypeNames.Recorded(@event.GetType());
-        eventsProcessed++;
-        (frontierEventId, frontierCommitSequence) = _advanceFrontier(frontierEventId, frontierCommitSequence, envelope);
-        lastInStream.Offer(envelope);
-        var prefixAt = foldedPrefix.Folded(envelope);
-
-        // Slice 24c: take an intermediate snapshot every N replayed events. Puts a snapshot
-        // at THIS point in the stream's history so future rewinds for late events with
-        // MessageId near this point find a qualifying restore point. PruneOldSnapshotsAsync
-        // caps total snapshots per stream so this can't bloat the table without bound.
-        if (rewindSnapshotInterval > 0
-            && !pendingPurge && updatedModel is not null && producedByApply && heldThrough.Settled) {
-          eventsSinceIntermediateSnapshot++;
-          // A due snapshot waits for the next point where the fold is a version prefix (#2379).
-          if (eventsSinceIntermediateSnapshot >= rewindSnapshotInterval && prefixAt is not null
-              && !await _cadenceSnapshotSlotTakenAsync(streamId, perspectiveName, cancellationToken)) {
-            try {
-              // Slice 26.11: resolve commit_sequence for the intermediate snapshot too,
-              // so a rewind triggered by a "very late" event with commit_sequence between
-              // intermediate snapshots finds the right restore point.
-              var intermediateCommitSequence = await _eventStore.GetCommitSequenceAsync(
-                  prefixAt.MessageId.Value, cancellationToken);
-              await _snapshotStore!.CreateSnapshotAsync(
-                  streamId, perspectiveName, prefixAt.MessageId.Value,
-                  intermediateCommitSequence,
-                  _toSnapshotJson(updatedModel), heldThrough.Mark, cancellationToken);
-              await _snapshotStore.PruneOldSnapshotsAsync(
-                  streamId, perspectiveName, _snapshotOptions!.Value.MaxSnapshotsPerStream, cancellationToken);
-              eventsSinceIntermediateSnapshot = 0;
-            } catch (Exception snapshotEx) when (snapshotEx is not OperationCanceledException) {
-              // Intermediate snapshots are best-effort - failures here don't break the rewind.
-              // The end-of-rewind snapshot at line ~833 is the durable fallback. Just log.
-              _logger.LogDebug(snapshotEx,
-                  "Intermediate snapshot at event {EventId} for {PerspectiveName} stream {StreamId} failed; continuing replay",
-                  lastSuccessfulEventId.Value, perspectiveName, streamId);
-            }
-          }
-        }
-      } // closes foreach (var envelope in foldEvents)
+      await _foldReplayPassAsync(run, events, cancellationToken);
 
       // v0.688 - advance the catch-up anchor past everything this pass READ so the next
       // iteration's ReadPolymorphicAsync only returns events appended since. The store reads after the anchor's
@@ -3195,33 +2995,353 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       // collectives leaves the anchor where it was.
       anchorEventId = global::Whizbang.Core.Perspectives.StreamReadAnchor.After(
         events.Where(e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent), anchorEventId);
-    } // closes while (true)
+    }
 
-    return await _finishReplayAsync(new ReplayOutcome {
-      StreamId = streamId,
-      PerspectiveName = perspectiveName,
-      RowVersion = rowVersion,
-      ReplayFromEventId = replayFromEventId,
-      EventsProcessed = eventsProcessed,
-      PendingPurge = pendingPurge,
-      PurgeEventId = purgeEventId,
-      UpdatedModel = updatedModel,
-      ProducedByApply = producedByApply,
-      LastSuccessfulEventId = lastSuccessfulEventId,
-      LastSuccessfulEventType = lastSuccessfulEventType,
-      LastSuccessfulEventAt = lastSuccessfulEventAt,
-      LastScope = lastScope,
-      Resurrected = resurrected,
-      StartedPurged = startedPurged,
-      PurgedEventsSkipped = purgedEventsSkipped,
-      FrontierEventId = frontierEventId,
-      FrontierCommitSequence = frontierCommitSequence,
-      LastInStream = lastInStream,
-      ModelAtLastEvent = modelAtLastEvent,
-      CollectivesHeldThrough = heldThrough.Mark,
-      CollectivesSettled = heldThrough.Settled,
-      FirstStreamEvent = firstStreamEvent,
-    }, cancellationToken);
+    var outcome = run.Outcome;
+    outcome.CollectivesHeldThrough = run.HeldThrough.Mark;
+    outcome.CollectivesSettled = run.HeldThrough.Settled;
+    return await _finishReplayAsync(outcome, cancellationToken);
+  }
+
+  /// <summary>
+  /// One full replay in progress (<see cref="_runFromModelAsync"/>): what it folds into (<see cref="Outcome"/>) and what
+  /// its catch-up passes share. One per replay, so the per-event fold passes it by reference and allocates nothing.
+  /// </summary>
+  private sealed class ReplayRun {
+    /// <summary>What the replay folded, for the write that ends it.</summary>
+    public required ReplayOutcome Outcome { get; init; }
+
+    /// <summary>The perspective whose Apply folds the events.</summary>
+    public required TPerspective Perspective { get; init; }
+
+    /// <summary>Where the replay starts.</summary>
+    public required ReplayFrom From { get; init; }
+
+    /// <summary>The row as the replay read it before any event, which a first pass's collectives take their tenant from.</summary>
+    public required global::Whizbang.Core.Perspectives.PerspectiveApplyRead ApplyRead { get; init; }
+
+    /// <summary>True when the replay restores a snapshot's model rather than starting from the stream's start.</summary>
+    public bool FromASnapshotModel { get; init; }
+
+    /// <summary>Whether snapshots are on, decided once for the replay.</summary>
+    public bool SnapshotsOn { get; init; }
+
+    /// <summary>Every how many applied events the replay takes an intermediate snapshot (slice 24c); 0 for none.</summary>
+    public int RewindSnapshotInterval { get; init; }
+
+    /// <summary>Events applied since the last intermediate snapshot.</summary>
+    public int EventsSinceIntermediateSnapshot { get; set; }
+
+    /// <summary>Whether the replay folds the model's collectives (#1956).</summary>
+    public bool FoldsCollectives { get; init; }
+
+    /// <summary>The commit sequence of the snapshot's event, after which the replay's collectives were committed.</summary>
+    public long? CollectiveStartSequence { get; init; }
+
+    /// <summary>The collectives folded so far, so each folds once across the catch-up passes.</summary>
+    public HashSet<Guid> FoldedCollectives { get; } = [];
+
+    /// <summary>
+    /// #2379: an intermediate snapshot is taken only where the fold so far is every event up to some version, at that
+    /// version's event: a fold in origin order can hold a later version before an earlier one.
+    /// </summary>
+    public global::Whizbang.Core.Perspectives.FoldedVersionPrefix FoldedPrefix { get; } = new();
+
+    /// <summary>How far the row holds its collectives at its last stream event (#1963).</summary>
+    public required CollectiveHold HeldThrough { get; init; }
+  }
+
+  /// <summary>
+  /// Reads one catch-up pass of a replay from the anchor, in the order it folds, with the row's collectives merged
+  /// among the stream's events.
+  /// </summary>
+  private async Task<List<MessageEnvelope<IEvent>>> _readReplayPassAsync(
+      ReplayRun run, Guid? anchorEventId, bool firstPass, CancellationToken cancellationToken) {
+    var outcome = run.Outcome;
+    var streamId = outcome.StreamId;
+    var eventTypes = _handledEventTypes;
+    // Read events from the current anchor. First pass uses replayFromEventId
+    // (snapshot or null=from-beginning). Subsequent passes use the last event
+    // we applied, so we only pick up the delta of events appended since.
+    var events = new global::System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
+    // #1738: the first pass from a snapshot an archive covers reads the archived events after it, then the hot ones; every
+    // later pass resumes after the last event applied, which is hot.
+    var read = firstPass && run.From.ReadThroughArchiveAfterVersion is long afterVersion
+        ? _eventStore.ReadPolymorphicThroughArchiveAsync(streamId, anchorEventId, afterVersion, eventTypes, cancellationToken)
+        : _eventStore.ReadPolymorphicAsync(streamId, anchorEventId, eventTypes, cancellationToken);
+    await foreach (var envelope in read) {
+      events.Add(envelope);
+    }
+    // #2152: the first of the stream's own events the replay reads, across every pass.
+    outcome.FirstStreamEvent ??= events.Count > 0 ? events[0] : null;
+
+    // Ordering invariant: origin order for a single-origin stream, else commit order when every event is
+    // stamped, else id order. The inversion detector is commit-sequence-authoritative, and an id-ordered replay
+    // would silently undo newer writes. The rule lives in ReplayEventOrder, which the rebuild shares.
+    if (events.Count > 1) {
+      events = [.. global::Whizbang.Core.Perspectives.ReplayEventOrder.Order(events)];
+    }
+
+    // The row's collectives committed after the replay's start, merged among the stream's events in commit order (#1956).
+    // A first pass from a snapshot with no stream event after it still folds those committed since the snapshot, for the
+    // tenant the row is stored under.
+    if (run.FoldsCollectives
+        && _collectiveTenant(events, run.ApplyRead, firstPassFromASnapshot: firstPass && run.FromASnapshotModel)
+          is { Known: true } tenant) {
+      var merged = await _collectiveReplayApplier!.InterleaveAfterAsync(
+          typeof(TModel), events,
+          new global::Whizbang.Core.Perspectives.CollectiveReplayStart(tenant.TenantId, run.From.EventId, run.CollectiveStartSequence) {
+            CollectivesThroughSequence = run.From.CollectivesThroughSequence,
+          },
+          cancellationToken);
+      var foldedCollectives = run.FoldedCollectives;
+      events = [.. merged.Where(e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent || foldedCollectives.Add(e.MessageId.Value))];
+    }
+
+    run.FoldedPrefix.Read(events.Where(e => e.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent));
+    return events;
+  }
+
+  /// <summary>
+  /// Folds one catch-up pass of a replay into it, event by event, taking each intermediate snapshot that falls due.
+  /// </summary>
+  private async Task _foldReplayPassAsync(ReplayRun run, List<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken) {
+    var foldEvents = events.Skip(_skipReplayToUnconditionalPurge(run, events));
+    foreach (var envelope in foldEvents) {
+      if (_foldReplayEvent(run, envelope) is { } snapshotAt) {
+        await _takeIntermediateSnapshotAsync(run, snapshotAt, cancellationToken);
+      }
+    }
+  }
+
+  /// <summary>
+  /// A pass whose last event always purges the row (#1151) discards whatever the events before it fold: they move the
+  /// frontier and count as processed, and only the purge is applied. Returns the index the fold starts from.
+  /// </summary>
+  private int _skipReplayToUnconditionalPurge(ReplayRun run, List<MessageEnvelope<IEvent>> events) {
+    if (events.Count <= 1 || !IsUnconditionalPurge(events[^1].Payload)) {
+      return 0;
+    }
+    var outcome = run.Outcome;
+    var foldFrom = events.Count - 1;
+    foreach (var skipped in events.Take(foldFrom)) {
+      if (skipped.Payload is not global::Whizbang.Core.Messaging.ICollectiveEvent) {
+        _advanceReplayPosition(outcome, skipped);
+        _ = run.FoldedPrefix.Folded(skipped);
+      }
+      outcome.EventsProcessed++;
+    }
+    return foldFrom;
+  }
+
+  /// <summary>Moves a replay's frontier and its last-in-stream position past an event it read.</summary>
+  private static void _advanceReplayPosition(ReplayOutcome outcome, MessageEnvelope<IEvent> envelope) {
+    (outcome.FrontierEventId, outcome.FrontierCommitSequence) = _advanceFrontier(outcome.FrontierEventId, outcome.FrontierCommitSequence, envelope);
+    outcome.LastInStream.Offer(envelope);
+  }
+
+  /// <summary>
+  /// Folds one replayed event into the replay: a collective, a skip or resurrection, or an Apply. Returns the event an
+  /// intermediate snapshot is due at, or null. Synchronous, over the replay's one state object, so it allocates nothing
+  /// of its own per event.
+  /// </summary>
+  private MessageEnvelope<IEvent>? _foldReplayEvent(ReplayRun run, MessageEnvelope<IEvent> envelope) {
+    var outcome = run.Outcome;
+    var @event = envelope.Payload;
+
+    // A collective folds into the row and moves no checkpoint and no frontier (#1956), as in a rebuild (#1931). A purged
+    // row has nothing to fold into. Its scope is the collective's, not the row's, so it is not tracked for the write.
+    if (@event is global::Whizbang.Core.Messaging.ICollectiveEvent) {
+      _foldReplayCollective(run, envelope);
+      return null;
+    }
+    // A stream event after collectives: the row at the last event is the one this event leaves.
+    outcome.ModelAtLastEvent?.Dispose();
+    outcome.ModelAtLastEvent = null;
+    run.HeldThrough.ReachEvent(envelope.LocalCommitSequence);
+
+    // Track scope from envelope for perspective upsert
+    var envelopeScope = envelope.GetCurrentScope();
+    if (envelopeScope?.Scope != null) {
+      outcome.LastScope = envelopeScope.Scope;
+    }
+
+    // A purged stream stays purged: skip the event unless its Apply returns Resurrect. The frontier still
+    // moves past a skipped event, so the cursor never re-flags it as a straggler.
+    if (outcome.PendingPurge) {
+      _foldReplayOntoPurged(run, envelope);
+      return null;
+    }
+
+    // Apply event to model using perspective's pure Apply method
+    if (!_tryApplyReplay(run, envelope, out var appliedModel, out var action)) {
+      return null;
+    }
+    _takeReplayAction(outcome, envelope, appliedModel, action);
+
+    outcome.LastSuccessfulEventId = envelope.MessageId.Value;
+    outcome.LastSuccessfulEventAt = _eventTime(envelope);
+    outcome.LastSuccessfulEventType = PerspectiveRunnerTypeNames.Recorded(@event.GetType());
+    outcome.EventsProcessed++;
+    _advanceReplayPosition(outcome, envelope);
+    var prefixAt = run.FoldedPrefix.Folded(envelope);
+    return _intermediateSnapshotDue(run) ? prefixAt : null;
+  }
+
+  /// <summary>Folds a collective into a replay's row, unless the row is purged; it counts as processed either way.</summary>
+  private void _foldReplayCollective(ReplayRun run, MessageEnvelope<IEvent> envelope) {
+    var outcome = run.Outcome;
+    var updatedModel = outcome.UpdatedModel;
+    if (!outcome.PendingPurge && updatedModel is not null) {
+      // The row at its last event, taken when collectives committed after that event fold into it: the snapshot this
+      // replay ends with is taken at that event, so it must not hold them, or a rewind from it would fold them again.
+      var snapshotsOn = run.SnapshotsOn;
+      var modelAtLastEvent = outcome.ModelAtLastEvent;
+      if (snapshotsOn && modelAtLastEvent is null) {
+        modelAtLastEvent = _toSnapshotJson(updatedModel);
+      }
+      outcome.ModelAtLastEvent = modelAtLastEvent;
+      outcome.UpdatedModel = (TModel?)_collectiveReplayApplier!.ApplyInMemory(
+          typeof(TModel), updatedModel, outcome.StreamId, envelope.Payload);
+      outcome.ProducedByApply = true;
+      run.HeldThrough.Fold(envelope.LocalCommitSequence);
+      // #1970: a collective still in flight may yet reach the row live, so no snapshot of this replay says what it holds.
+      if (_collectiveReplayApplier.IsInFlight(envelope.Payload)) {
+        run.HeldThrough.MeetInFlight();
+      }
+    }
+    outcome.EventsProcessed++;
+  }
+
+  /// <summary>
+  /// An event of a replay whose stream is purged (issue #1027): skipped, unless its Apply returns Resurrect, which
+  /// recreates the row. The checkpoint and the frontier move past it either way.
+  /// </summary>
+  private void _foldReplayOntoPurged(ReplayRun run, MessageEnvelope<IEvent> envelope) {
+    var outcome = run.Outcome;
+    var @event = envelope.Payload;
+    var resurrection = _tryResurrect(run.Perspective, outcome.StreamId, @event, envelope.IsFirstInLocalStream);
+    outcome.LastSuccessfulEventId = envelope.MessageId.Value;
+    outcome.LastSuccessfulEventAt = _eventTime(envelope);
+    outcome.EventsProcessed++;
+    _advanceReplayPosition(outcome, envelope);
+    _ = run.FoldedPrefix.Folded(envelope);
+    if (resurrection is null) {
+      outcome.PurgedEventsSkipped++;
+      return;
+    }
+    outcome.PendingPurge = false;
+    outcome.Resurrected = true;
+    outcome.UpdatedModel = resurrection;
+    outcome.ProducedByApply = true;
+    outcome.LastSuccessfulEventType = PerspectiveRunnerTypeNames.Recorded(@event.GetType());
+  }
+
+  /// <summary>
+  /// Runs a replayed event's Apply. An Apply that throws is logged and skipped: the checkpoint moves past it, and false
+  /// is returned.
+  /// </summary>
+  private bool _tryApplyReplay(
+      ReplayRun run,
+      MessageEnvelope<IEvent> envelope,
+      out TModel? appliedModel,
+      out global::Whizbang.Core.Perspectives.ModelAction action) {
+    var outcome = run.Outcome;
+    var perspective = run.Perspective;
+    try {
+      (appliedModel, action) = _applyEvent(perspective, outcome.UpdatedModel, envelope.Payload, envelope.IsFirstInLocalStream);
+      return true;
+    } catch (Exception applyEx) {
+      _logger.LogError(
+          applyEx,
+          "Error applying {EventType} to perspective stream {StreamId}, skipping event {EventId}",
+          global::Whizbang.Core.TypeNameFormatter.SimpleName(envelope.Payload.GetType()),
+          outcome.StreamId,
+          envelope.MessageId.Value
+      );
+      outcome.LastSuccessfulEventId = envelope.MessageId.Value;
+      outcome.LastSuccessfulEventAt = _eventTime(envelope);
+      outcome.EventsProcessed++;
+      _ = run.FoldedPrefix.Folded(envelope);
+      appliedModel = null;
+      action = default;
+      return false;
+    }
+  }
+
+  /// <summary>What a replay does with the model and the action an Apply returned.</summary>
+  private static void _takeReplayAction(
+      ReplayOutcome outcome,
+      MessageEnvelope<IEvent> envelope,
+      TModel? appliedModel,
+      global::Whizbang.Core.Perspectives.ModelAction action) {
+    switch (action) {
+      case global::Whizbang.Core.Perspectives.ModelAction.Delete:
+        outcome.UpdatedModel = appliedModel ?? outcome.UpdatedModel;
+        outcome.ProducedByApply |= appliedModel != null;
+        break;
+      case global::Whizbang.Core.Perspectives.ModelAction.Purge:
+        outcome.PendingPurge = true;
+        outcome.PurgeEventId = envelope.MessageId.Value;
+        outcome.UpdatedModel = null;
+        break;
+      default:
+        if (appliedModel != null) {
+          outcome.UpdatedModel = appliedModel;
+          outcome.ProducedByApply = true;
+        }
+        break;
+    }
+  }
+
+  /// <summary>
+  /// Slice 24c: counts an applied event toward the replay's next intermediate snapshot, and says whether one is due.
+  /// Counted only while the replay holds a row an Apply produced and no folded collective is in flight.
+  /// </summary>
+  private static bool _intermediateSnapshotDue(ReplayRun run) {
+    var outcome = run.Outcome;
+    if (run.RewindSnapshotInterval <= 0
+        || outcome.PendingPurge || outcome.UpdatedModel is null || !outcome.ProducedByApply || !run.HeldThrough.Settled) {
+      return false;
+    }
+    run.EventsSinceIntermediateSnapshot++;
+    return run.EventsSinceIntermediateSnapshot >= run.RewindSnapshotInterval;
+  }
+
+  /// <summary>
+  /// Slice 24c: takes an intermediate snapshot at <paramref name="prefixAt"/>, the point where the fold is a version
+  /// prefix (#2379). Puts a snapshot at THIS point in the stream's history so future rewinds for late events with
+  /// MessageId near this point find a qualifying restore point. PruneOldSnapshotsAsync caps total snapshots per stream
+  /// so this can't bloat the table without bound.
+  /// </summary>
+  private async Task _takeIntermediateSnapshotAsync(
+      ReplayRun run, MessageEnvelope<IEvent> prefixAt, CancellationToken cancellationToken) {
+    var outcome = run.Outcome;
+    var streamId = outcome.StreamId;
+    var perspectiveName = outcome.PerspectiveName;
+    if (await _cadenceSnapshotSlotTakenAsync(streamId, perspectiveName, cancellationToken)) {
+      return;
+    }
+    try {
+      // Slice 26.11: resolve commit_sequence for the intermediate snapshot too,
+      // so a rewind triggered by a "very late" event with commit_sequence between
+      // intermediate snapshots finds the right restore point.
+      var intermediateCommitSequence = await _eventStore.GetCommitSequenceAsync(
+          prefixAt.MessageId.Value, cancellationToken);
+      await _snapshotStore!.CreateSnapshotAsync(
+          streamId, perspectiveName, prefixAt.MessageId.Value,
+          intermediateCommitSequence,
+          _toSnapshotJson(outcome.UpdatedModel!), run.HeldThrough.Mark, cancellationToken);
+      await _snapshotStore.PruneOldSnapshotsAsync(
+          streamId, perspectiveName, _snapshotOptions!.Value.MaxSnapshotsPerStream, cancellationToken);
+      run.EventsSinceIntermediateSnapshot = 0;
+    } catch (Exception snapshotEx) when (snapshotEx is not OperationCanceledException) {
+      // Intermediate snapshots are best-effort - failures here don't break the rewind.
+      // The end-of-rewind snapshot is the durable fallback. Just log.
+      _logger.LogDebug(snapshotEx,
+          "Intermediate snapshot at event {EventId} for {PerspectiveName} stream {StreamId} failed; continuing replay",
+          outcome.LastSuccessfulEventId!.Value, perspectiveName, streamId);
+    }
   }
 
   /// <summary>
@@ -3232,27 +3352,11 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   private async Task<PerspectiveCursorCompletion> _finishReplayAsync(ReplayOutcome outcome, CancellationToken cancellationToken) {
     var streamId = outcome.StreamId;
     var perspectiveName = outcome.PerspectiveName;
-    var rowVersion = outcome.RowVersion;
-    var replayFromEventId = outcome.ReplayFromEventId;
     var eventsProcessed = outcome.EventsProcessed;
-    var pendingPurge = outcome.PendingPurge;
-    var purgeEventId = outcome.PurgeEventId;
-    var updatedModel = outcome.UpdatedModel;
-    var producedByApply = outcome.ProducedByApply;
-    var lastSuccessfulEventId = outcome.LastSuccessfulEventId;
-    var lastSuccessfulEventType = outcome.LastSuccessfulEventType;
-    var lastSuccessfulEventAt = outcome.LastSuccessfulEventAt;
-    var lastScope = outcome.LastScope;
-    var resurrected = outcome.Resurrected;
-    var startedPurged = outcome.StartedPurged;
-    var purgedEventsSkipped = outcome.PurgedEventsSkipped;
-    var frontierEventId = outcome.FrontierEventId;
     var frontierCommitSequence = outcome.FrontierCommitSequence;
     var rowChanged = false;  // True once this replay actually wrote or purged the row
     // Why a rebuild that folded events left the row untouched (#2252)
     var unchangedReason = global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason.Unreported;
-    var rebuilding = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
-        is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild;
 
     // Single atomic write at the end - lenses see pre-replay data until this point.
     // Checkpoint at the replay FRONTIER (max id / max local sequence applied): the floor's
@@ -3260,95 +3364,18 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     // would be refused by the upsert's cross-pod lost-update guard - discarding the very
     // correction the rewind computed.
     if (eventsProcessed > 0) {
-      // Issue #983: taken before the write, which strips a Split class model's promoted fields in place.
-      JsonDocument? snapshotBeforeWrite = null;
-      if (pendingPurge) {
-        // The replay ends purged: record it first, then remove the row (a rewind can run over a live one).
-        if (purgeEventId.HasValue) {
-          await _markPurgedAsync(streamId, perspectiveName, purgeEventId, cancellationToken);
-        }
-        await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
-        rowChanged = true;
-      } else if (updatedModel != null && producedByApply) {
-        var checkpointEventId = frontierEventId ?? lastSuccessfulEventId!.Value;
-        var replayCheckpointCommitSequence = frontierCommitSequence
-            ?? await _eventStore.GetCommitSequenceAsync(checkpointEventId, cancellationToken);
-        // Issue #1002: the snapshot below follows every rewind that applied something, when snapshots are on.
-        var snapshotDue = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true && lastSuccessfulEventId.HasValue
-            && outcome.CollectivesSettled;
-        // #1956: the row at its last event when collectives folded after it, so the snapshot holds none of them.
-        snapshotBeforeWrite = snapshotDue ? _takeModelAtLastEvent(outcome) ?? _snapshotBeforeWrite(updatedModel) : null;
-        // #2252: a Split class model's fold, taken before the write strips its promoted fields; null for any other model.
-        using var foldBeforeWrite = rebuilding ? _snapshotBeforeWrite(updatedModel) : null;
-        rowChanged = await SaveModelAndCheckpointAsync(
-            streamId, perspectiveName, updatedModel, producedByApply,
-            new RowCheckpoint(
-                checkpointEventId, _checkpointType(lastSuccessfulEventType), replayCheckpointCommitSequence,
-                _checkpointTime(lastSuccessfulEventAt)),
-            new RowWriteTarget(
-                rowVersion.State == global::Whizbang.Core.Perspectives.PerspectiveRowVersionState.Present,
-                outcome.FirstStreamEvent is { } firstStreamEvent ? [firstStreamEvent] : [],
-                // A rewind reads no stored scope, so it writes scope only if it recreates the row; an existing row keeps
-                // its scope (Always fields catch up on the next live apply).
-                new global::Whizbang.Core.Lenses.ScopeWrite(
-                    global::Whizbang.Core.Lenses.ScopeInheritance.Resolve(
-                        lastScope, rowScope: null, rowExists: false, _traits.InheritScopeOnCreate, _traits.InheritScopeAlways, scopeEventScope: null).Scope,
-                    ForceUpdate: false),
-                rowVersion),
-            cancellationToken);
-        if (rowChanged && resurrected && startedPurged) {
-          await _clearPurgeAsync(streamId, perspectiveName, cancellationToken);
-        }
-        // The row did not move while the replay ran (a moved row is refused above, and replayed again), yet its
-        // ordering guard refused the write: the row is stamped past everything this replay read. The replay's
-        // correction is not in the row, and a rewind that wrote nothing is not one that applied (#1863).
-        if (!rowChanged && rebuilding) {
-          unchangedReason = _readRefusedRebuildWrite(
-              foldBeforeWrite, updatedModel, await _perspectiveStore.GetByStreamIdAsync(streamId, cancellationToken));
-        }
-        if (!rowChanged) {
-          _logger.LogWarning(
-              "[diag.rewind.write.refused] {PerspectiveName} stream {StreamId}: the row is stamped past the rewind's frontier at event {EventId}, so the replay was not written and the row keeps what it holds",
-              perspectiveName,
-              streamId,
-              checkpointEventId);
-        }
-      } else {
-        // No event produced a model, so there was nothing to write (#2252).
-        unchangedReason = global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason.NoModel;
-      }
-      _reportPurgedEventsSkipped(perspectiveName, streamId, purgedEventsSkipped);
+      var written = await _writeReplayRowAsync(outcome, cancellationToken);
+      rowChanged = written.RowChanged;
+      unchangedReason = written.Reason;
+      _reportPurgedEventsSkipped(perspectiveName, streamId, outcome.PurgedEventsSkipped);
 
       await _perspectiveStore.FlushAsync(cancellationToken);
 
       _logger.LogDebug(
           "Replay completed: {EventCount} events for {PerspectiveName} stream {StreamId}, checkpoint: {CheckpointEventId}",
-          eventsProcessed, perspectiveName, streamId, lastSuccessfulEventId);
+          eventsProcessed, perspectiveName, streamId, outcome.LastSuccessfulEventId);
 
-      // Create snapshot after replay if configured.
-      // Slice 26.11 / production forensic G3: resolve commit_sequence so the snapshot row carries it.
-      // Without this, GetLatestSnapshotBeforeCommitSequenceAsync (which filters
-      // snapshot_commit_sequence IS NOT NULL) silently misses this snapshot on subsequent
-      // rewinds - defeating the deterministic-replay invariant the column was added for.
-      if (_snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
-          && !pendingPurge && updatedModel is not null && producedByApply && lastSuccessfulEventId.HasValue
-          && outcome.CollectivesSettled
-          && !await _cadenceSnapshotSlotTakenAsync(streamId, perspectiveName, cancellationToken)) {
-        // #2379: taken at the event with the highest version the replay read, so the snapshot's version names the events
-        // it holds (the floor's and every one read above it). The last event folded can sit lower in a stream the replay
-        // folds in origin order.
-        var snapshotEventId = outcome.LastInStream.Position ?? lastSuccessfulEventId.Value;
-        var afterReplayCommitSequence = await _eventStore.GetCommitSequenceAsync(
-            snapshotEventId, cancellationToken);
-        await _snapshotStore.CreateSnapshotAsync(
-            streamId, perspectiveName, snapshotEventId,
-            afterReplayCommitSequence,
-            snapshotBeforeWrite ?? _toSnapshotJson(updatedModel), outcome.CollectivesHeldThrough, cancellationToken);
-        snapshotBeforeWrite = null; // handed to the store
-        await _snapshotStore.PruneOldSnapshotsAsync(
-            streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
-        _eventsSinceLastSnapshot.TryRemove(streamId, out _);
-      }
+      var snapshotBeforeWrite = await _snapshotAfterReplayAsync(outcome, written.SnapshotBeforeWrite, cancellationToken);
       snapshotBeforeWrite?.Dispose(); // no snapshot taken
     }
     outcome.ModelAtLastEvent?.Dispose(); // not handed to the store
@@ -3364,7 +3391,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       // when ids and versions disagree (copies stored after a newer event), and the cursor was put back on that id.
       // The id frontier stays the fallback when the store gives no versions.
       // A replay's last successful event starts at the event it replays from, so it already falls back to that event.
-      LastEventId = outcome.LastInStream.Position ?? frontierEventId ?? lastSuccessfulEventId ?? Guid.Empty,
+      LastEventId = outcome.LastInStream.Position ?? outcome.FrontierEventId ?? outcome.LastSuccessfulEventId ?? Guid.Empty,
       // Reported rather than left for the caller to rediscover. The caller used to look the id above
       // up among the rows its batch claimed, which a replay never applied, so the commit-sequence
       // cursor stayed behind while the event-id cursor moved and the inversion detector then
@@ -3373,12 +3400,135 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       // #2366: a replay from the stream's start read every event stamped at or below its frontier (a stamp is assigned
       // only after the event commits), so each is folded and the cursor stores the frontier. A replay from a snapshot
       // reads only the events after the snapshot's id, which says nothing about a stamp below the frontier.
-      ReplayedThroughCommitSequence = eventsProcessed > 0 && replayFromEventId is null ? frontierCommitSequence : null,
+      ReplayedThroughCommitSequence = eventsProcessed > 0 && outcome.ReplayFromEventId is null ? frontierCommitSequence : null,
       Status = resultStatus,
       RowChanged = rowChanged,
       UnchangedReason = unchangedReason,
       EventsProcessed = eventsProcessed
     };
+  }
+
+  /// <summary>
+  /// The row write that ends a replay that applied events: the purge it ends in, the folded model, or nothing when no
+  /// event produced a model (#2252). Returns whether the row changed, why a rebuild left it untouched, and the snapshot
+  /// taken before the write (issue #983), which the caller hands to the snapshot or disposes.
+  /// </summary>
+  private async Task<(bool RowChanged, global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason Reason, JsonDocument? SnapshotBeforeWrite)> _writeReplayRowAsync(
+      ReplayOutcome outcome, CancellationToken cancellationToken) {
+    var streamId = outcome.StreamId;
+    var perspectiveName = outcome.PerspectiveName;
+    if (outcome.PendingPurge) {
+      // The replay ends purged: record it first, then remove the row (a rewind can run over a live one).
+      if (outcome.PurgeEventId.HasValue) {
+        await _markPurgedAsync(streamId, perspectiveName, outcome.PurgeEventId, cancellationToken);
+      }
+      await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
+      return (true, global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason.Unreported, null);
+    }
+    if (outcome.UpdatedModel == null || !outcome.ProducedByApply) {
+      // No event produced a model, so there was nothing to write (#2252).
+      return (false, global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason.NoModel, null);
+    }
+    return await _saveReplayRowAsync(outcome, cancellationToken);
+  }
+
+  /// <summary>
+  /// Writes a replay's folded model at the replay's frontier, against the row version it read before any event (#1863).
+  /// </summary>
+  private async Task<(bool RowChanged, global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason Reason, JsonDocument? SnapshotBeforeWrite)> _saveReplayRowAsync(
+      ReplayOutcome outcome, CancellationToken cancellationToken) {
+    var streamId = outcome.StreamId;
+    var perspectiveName = outcome.PerspectiveName;
+    var rowVersion = outcome.RowVersion;
+    var updatedModel = outcome.UpdatedModel!;
+    var producedByApply = outcome.ProducedByApply;
+    var lastSuccessfulEventId = outcome.LastSuccessfulEventId;
+    var unchangedReason = global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason.Unreported;
+    var rebuilding = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
+        is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild;
+    var checkpointEventId = outcome.FrontierEventId ?? lastSuccessfulEventId!.Value;
+    var replayCheckpointCommitSequence = outcome.FrontierCommitSequence
+        ?? await _eventStore.GetCommitSequenceAsync(checkpointEventId, cancellationToken);
+    // Issue #1002: the snapshot below follows every rewind that applied something, when snapshots are on.
+    var snapshotDue = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true && lastSuccessfulEventId.HasValue
+        && outcome.CollectivesSettled;
+    // Issue #983: taken before the write, which strips a Split class model's promoted fields in place.
+    // #1956: the row at its last event when collectives folded after it, so the snapshot holds none of them.
+    var snapshotBeforeWrite = snapshotDue ? _takeModelAtLastEvent(outcome) ?? _snapshotBeforeWrite(updatedModel) : null;
+    // #2252: a Split class model's fold, taken before the write strips its promoted fields; null for any other model.
+    using var foldBeforeWrite = rebuilding ? _snapshotBeforeWrite(updatedModel) : null;
+    var rowChanged = await SaveModelAndCheckpointAsync(
+        streamId, perspectiveName, updatedModel, producedByApply,
+        new RowCheckpoint(
+            checkpointEventId, _checkpointType(outcome.LastSuccessfulEventType), replayCheckpointCommitSequence,
+            _checkpointTime(outcome.LastSuccessfulEventAt)),
+        new RowWriteTarget(
+            rowVersion.State == global::Whizbang.Core.Perspectives.PerspectiveRowVersionState.Present,
+            outcome.FirstStreamEvent is { } firstStreamEvent ? [firstStreamEvent] : [],
+            // A rewind reads no stored scope, so it writes scope only if it recreates the row; an existing row keeps
+            // its scope (Always fields catch up on the next live apply).
+            new global::Whizbang.Core.Lenses.ScopeWrite(
+                global::Whizbang.Core.Lenses.ScopeInheritance.Resolve(
+                    outcome.LastScope, rowScope: null, rowExists: false, _traits.InheritScopeOnCreate, _traits.InheritScopeAlways, scopeEventScope: null).Scope,
+                ForceUpdate: false),
+            rowVersion),
+        cancellationToken);
+    if (rowChanged && outcome.Resurrected && outcome.StartedPurged) {
+      await _clearPurgeAsync(streamId, perspectiveName, cancellationToken);
+    }
+    // The row did not move while the replay ran (a moved row is refused above, and replayed again), yet its
+    // ordering guard refused the write: the row is stamped past everything this replay read. The replay's
+    // correction is not in the row, and a rewind that wrote nothing is not one that applied (#1863).
+    if (!rowChanged && rebuilding) {
+      unchangedReason = _readRefusedRebuildWrite(
+          foldBeforeWrite, updatedModel, await _perspectiveStore.GetByStreamIdAsync(streamId, cancellationToken));
+    }
+    if (!rowChanged) {
+      _logger.LogWarning(
+          "[diag.rewind.write.refused] {PerspectiveName} stream {StreamId}: the row is stamped past the rewind's frontier at event {EventId}, so the replay was not written and the row keeps what it holds",
+          perspectiveName,
+          streamId,
+          checkpointEventId);
+    }
+    return (rowChanged, unchangedReason, snapshotBeforeWrite);
+  }
+
+  /// <summary>
+  /// Creates the snapshot after a replay that wrote its row, when snapshots are on and the stream's slot is free.
+  /// Returns the snapshot taken before the write when it was not handed to the store, for the caller to dispose.
+  /// </summary>
+  /// <remarks>
+  /// Slice 26.11 / production forensic G3: resolve commit_sequence so the snapshot row carries it.
+  /// Without this, GetLatestSnapshotBeforeCommitSequenceAsync (which filters
+  /// snapshot_commit_sequence IS NOT NULL) silently misses this snapshot on subsequent
+  /// rewinds - defeating the deterministic-replay invariant the column was added for.
+  /// </remarks>
+  private async Task<JsonDocument?> _snapshotAfterReplayAsync(
+      ReplayOutcome outcome, JsonDocument? snapshotBeforeWrite, CancellationToken cancellationToken) {
+    var streamId = outcome.StreamId;
+    var perspectiveName = outcome.PerspectiveName;
+    var updatedModel = outcome.UpdatedModel;
+    var lastSuccessfulEventId = outcome.LastSuccessfulEventId;
+    if (_snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
+        && !outcome.PendingPurge && updatedModel is not null && outcome.ProducedByApply && lastSuccessfulEventId.HasValue
+        && outcome.CollectivesSettled
+        && !await _cadenceSnapshotSlotTakenAsync(streamId, perspectiveName, cancellationToken)) {
+      // #2379: taken at the event with the highest version the replay read, so the snapshot's version names the events
+      // it holds (the floor's and every one read above it). The last event folded can sit lower in a stream the replay
+      // folds in origin order.
+      var snapshotEventId = outcome.LastInStream.Position ?? lastSuccessfulEventId.Value;
+      var afterReplayCommitSequence = await _eventStore.GetCommitSequenceAsync(
+          snapshotEventId, cancellationToken);
+      await _snapshotStore.CreateSnapshotAsync(
+          streamId, perspectiveName, snapshotEventId,
+          afterReplayCommitSequence,
+          snapshotBeforeWrite ?? _toSnapshotJson(updatedModel), outcome.CollectivesHeldThrough, cancellationToken);
+      await _snapshotStore.PruneOldSnapshotsAsync(
+          streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
+      _eventsSinceLastSnapshot.TryRemove(streamId, out _);
+      return null; // handed to the store
+    }
+    return snapshotBeforeWrite;
   }
 
   /// <summary>
@@ -3791,20 +3941,8 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     }
 
     var floor = await _snapshotStore.GetSnapshotFloorAsync(streamId, perspectiveName, boundaryEventId, cancellationToken);
-    TModel? model = null;
-    if (floor is not null) {
-      model = _fromSnapshotJson(floor.SnapshotData);
-      if (model is null) {
-        // The bodies below the floor may be reaped already, so a fold from the stream's start could not reproduce them.
-        _logger.LogWarning(
-            "Bootstrap snapshot of {PerspectiveName} stream {StreamId} through event {BoundaryEventId} not taken: the snapshot below it at {FloorEventId} cannot be read, and the history it covers may be reaped",
-            perspectiveName, streamId, boundaryEventId, floor.SnapshotEventId);
-        return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Refused;
-      }
-    } else if (await _deletedArchiveExtentAsync(streamId, cancellationToken) is not null) {
-      _logger.LogWarning(
-          "Bootstrap snapshot of {PerspectiveName} stream {StreamId} through event {BoundaryEventId} not taken: the stream's archived history was deleted, so a fold from its start would be partial",
-          perspectiveName, streamId, boundaryEventId);
+    var (refused, model) = await _bootstrapFloorModelAsync(streamId, perspectiveName, boundaryEventId, floor, cancellationToken);
+    if (refused) {
       return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Refused;
     }
 
@@ -3861,6 +3999,36 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         "Bootstrap snapshot created for {PerspectiveName} stream {StreamId} through its reap boundary at event {EventId}",
         perspectiveName, streamId, boundaryEventId);
     return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Written;
+  }
+
+  /// <summary>
+  /// The model the reap-boundary bootstrap folds from: the floor's, or none for a fold from the stream's start. Refused,
+  /// with a warning, when the floor cannot be read (the bodies below it may be reaped already, so a fold from the
+  /// stream's start could not reproduce them), or when there is no floor and the stream's archived history was deleted.
+  /// </summary>
+  private async Task<(bool Refused, TModel? Model)> _bootstrapFloorModelAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid boundaryEventId,
+      global::Whizbang.Core.Perspectives.PerspectiveSnapshotFloor? floor,
+      CancellationToken cancellationToken) {
+    if (floor is not null) {
+      var model = _fromSnapshotJson(floor.SnapshotData);
+      if (model is null) {
+        _logger.LogWarning(
+            "Bootstrap snapshot of {PerspectiveName} stream {StreamId} through event {BoundaryEventId} not taken: the snapshot below it at {FloorEventId} cannot be read, and the history it covers may be reaped",
+            perspectiveName, streamId, boundaryEventId, floor.SnapshotEventId);
+        return (true, null);
+      }
+      return (false, model);
+    }
+    if (await _deletedArchiveExtentAsync(streamId, cancellationToken) is not null) {
+      _logger.LogWarning(
+          "Bootstrap snapshot of {PerspectiveName} stream {StreamId} through event {BoundaryEventId} not taken: the stream's archived history was deleted, so a fold from its start would be partial",
+          perspectiveName, streamId, boundaryEventId);
+      return (true, null);
+    }
+    return (false, null);
   }
 
   /// <summary>

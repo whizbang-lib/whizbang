@@ -2614,9 +2614,9 @@ namespace TestNamespace {
     var runnerSource = GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
-    // Should have Purge case handling with pendingPurge flag
+    // Should have Purge case handling that marks the apply's state for purge
     await Assert.That(runnerSource).Contains("case global::Whizbang.Core.Perspectives.ModelAction.Purge:");
-    await Assert.That(runnerSource).Contains("pendingPurge = true");
+    await Assert.That(runnerSource).Contains("PendingPurge = true");
   }
 
   /// <summary>
