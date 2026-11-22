@@ -1,30 +1,20 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-extern alias shared;
-
 using System.Diagnostics.CodeAnalysis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using TemplateUtilities = shared::Whizbang.Generators.Shared.Utilities.TemplateUtilities;
 
 namespace Whizbang.Generators.Tests;
 
 /// <summary>
-/// Phase H step 7 slice 6: invariant locks for PerspectiveRunnerBaseTemplate.cs log levels.
+/// Phase H step 7 slice 6: invariant locks for the runner base's log levels (src/Whizbang.Core/Perspectives/PerspectiveRunnerBase.cs).
 /// The template controls every generated runner's idempotency-guard logging. Bumping a level
 /// here changes log volume on every Whizbang consumer, so we lock the rules in tests.
 /// </summary>
 public class PerspectiveRunnerTemplateInvariantTests {
-  private static readonly System.Reflection.Assembly _generatorsAssembly = typeof(MessageRegistryGenerator).Assembly;
-
-  private static string _loadTemplate() {
-    return TemplateUtilities.GetEmbeddedTemplate(
-        _generatorsAssembly,
-        "PerspectiveRunnerBaseTemplate.cs"
-    );
-  }
+  private static string _loadTemplate() => GeneratorTestHelper.RunnerBaseSource();
 
   [Test]
   [RequiresAssemblyFiles]
@@ -109,10 +99,10 @@ public class PerspectiveRunnerTemplateInvariantTests {
   public async Task EphemeralRewind_GuardsFullReplayFallbackAgainstReapedBodiesAsync() {
     // E1 (3) invariant lock. An ephemeral stream's consumed bodies are reaped (wh_event_body rows
     // deleted, pointer-only). If RewindAndRunAsync finds no qualifying snapshot floor, it MUST NOT
-    // fall through to the full replay-from-zero (RunFromModelAsync with a null model / null anchor) —
+    // fall through to the full replay-from-zero (_runFromModelAsync with a null model / null anchor):
     // that would read reaped/absent bodies and silently corrupt the authoritative model. The template
     // guards the fallback with `_traits.IsEphemeral && !hasSnapshot`; the guard must remain, and it
-    // must sit between the snapshot lookup and the replay call (_replayCheckedAsync, which runs RunFromModelAsync) so it can short-circuit it.
+    // must sit between the snapshot lookup and the replay call (_replayCheckedAsync, which runs _runFromModelAsync) so it can short-circuit it.
     var template = _loadTemplate();
 
     await Assert.That(template).Contains("_traits.IsEphemeral && !hasSnapshot")
@@ -120,7 +110,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
     await Assert.That(template).Contains("public bool IsEphemeral { get; init; }")
       .Because("each generated runner sets the per-perspective ephemeral flag in its traits");
 
-    // The guard must appear inside RewindAndRunAsync and BEFORE the RunFromModelAsync call it protects.
+    // The guard must appear inside RewindAndRunAsync and BEFORE the _runFromModelAsync call it protects.
     var rewindIdx = template.IndexOf("async Task<PerspectiveCursorCompletion> RewindAndRunAsync", StringComparison.Ordinal);
     await Assert.That(rewindIdx).IsGreaterThan(0);
     var guardIdx = template.IndexOf("_traits.IsEphemeral && !hasSnapshot", rewindIdx, StringComparison.Ordinal);
@@ -128,7 +118,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
     await Assert.That(guardIdx).IsGreaterThan(rewindIdx)
       .Because("the guard must live inside RewindAndRunAsync");
     await Assert.That(replayCallIdx).IsGreaterThan(guardIdx)
-      .Because("the guard must short-circuit the full replay-from-zero, so it precedes the RunFromModelAsync call");
+      .Because("the guard must short-circuit the full replay-from-zero, so it precedes the _runFromModelAsync call");
   }
 
   [Test]
@@ -326,7 +316,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
     // #1677 regression lock: every row write goes through SaveModelAndCheckpointAsync, which asks
     // PerspectiveRowWriteGuard first, so a model no Apply produced (the scaffolded default) is never stored.
     var template = _loadTemplate();
-    var method = template.IndexOf("private async Task<bool> SaveModelAndCheckpointAsync(", StringComparison.Ordinal);
+    var method = template.IndexOf("internal async Task<bool> SaveModelAndCheckpointAsync(", StringComparison.Ordinal);
     var guard = template.IndexOf("PerspectiveRowWriteGuard.AllowsWrite(producedByApply", StringComparison.Ordinal);
     var upsert = template.IndexOf("var physicalFieldValues = PhysicalFieldValues(model);", method, StringComparison.Ordinal);
 
@@ -350,7 +340,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
     // resolved by _rowWriteStartAsync, which the set-based write's preparation shares (#2246), so both begin the same
     // start before the store sees the row.
     var template = _loadTemplate();
-    var method = template.IndexOf("private async Task<bool> SaveModelAndCheckpointAsync(", StringComparison.Ordinal);
+    var method = template.IndexOf("internal async Task<bool> SaveModelAndCheckpointAsync(", StringComparison.Ordinal);
     var start = template.IndexOf("await _rowWriteStartAsync(", method, StringComparison.Ordinal);
     var begin = template.IndexOf("PerspectiveRowStart.Begin(streamId, rowStartedAt)", method, StringComparison.Ordinal);
     var upsert = template.IndexOf("var physicalFieldValues = PhysicalFieldValues(model);", method, StringComparison.Ordinal);
@@ -360,7 +350,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
     var prepare = template.IndexOf("private async Task<global::Whizbang.Core.Perspectives.PendingPerspectiveWrite?> _prepareRowWriteAsync(", StringComparison.Ordinal);
     var prepareStart = template.IndexOf("await _rowWriteStartAsync(", prepare, StringComparison.Ordinal);
     var prepareBegin = template.IndexOf("PerspectiveRowStart.Begin(streamId, rowStartedAt)", prepare, StringComparison.Ordinal);
-    var prepareCall = template.IndexOf("return PrepareRowWrite(", prepare, StringComparison.Ordinal);
+    var prepareCall = template.IndexOf("return _prepareRowWrite(", prepare, StringComparison.Ordinal);
 
     await Assert.That(start).IsGreaterThan(method).Because("the start is resolved inside the write method");
     await Assert.That(begin).IsGreaterThan(start).Because("the resolved start is begun for the row being written");
