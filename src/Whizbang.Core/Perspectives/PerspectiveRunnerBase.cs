@@ -939,11 +939,10 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
 
     // Create new model if none exists (null from DB)
     if (currentModel == null) {
-      var missing = await _readMissingRowAsync(request, cancellationToken);
-      if (missing.Decided is { } decided) {
+      (var missingDecided, startedPurged) = await _readMissingRowAsync(request, cancellationToken);
+      if (missingDecided is { } decided) {
         return decided;
       }
-      startedPurged = missing.StartedPurged;
       currentModel = CreateEmptyModel(streamId);
     }
 
@@ -974,11 +973,10 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     }
     var existingMetadata = loaded.Metadata;
     if (!string.IsNullOrEmpty(existingMetadata?.EventId) && events.Count > 0) {
-      var filtered = await _filterAlreadyAppliedAsync(request, existingMetadata, cancellationToken);
-      if (filtered.Decided is { } decided) {
+      (var filteredDecided, events) = await _filterAlreadyAppliedAsync(request, existingMetadata, cancellationToken);
+      if (filteredDecided is { } decided) {
         return decided;
       }
-      events = filtered.Events;
     }
 
     // Get perspective instance from DI, and track progress from the row the batch folds onto.
@@ -1745,12 +1743,11 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
 
     // Unit of Work: Save model + checkpoint ONCE at end
     if (eventsProcessed > 0) {
-      var settled = await _settleLiveWriteAsync(
+      (var settledRewound, unchangedReason) = await _settleLiveWriteAsync(
           state, rowChanged, foldBeforeWrite, snapshotBeforeWrite, modelAtLastEvent, cancellationToken);
-      if (settled.Rewound is { } rewound) {
+      if (settledRewound is { } rewound) {
         return rewound;
       }
-      unchangedReason = settled.Reason;
       _reportPurgedEventsSkipped(perspectiveName, streamId, state.PurgedEventsSkipped);
 
       // CRITICAL: Explicitly flush all changes to ensure data is committed and queryable
@@ -2640,17 +2637,17 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
           : null);
     }
 
-    var placed = await _placeSnapshotAsync(streamId, perspectiveName, triggeringEventId, cancellationToken);
-    if (placed.Snapshot is not { } snapshot) {
-      var announceReplay = placed.AnnounceReplay;
-      if (replaysWithoutAFloor && !placed.Refused) {
+    var (snapshot, placedModel, announceReplay, refused) =
+        await _placeSnapshotAsync(streamId, perspectiveName, triggeringEventId, cancellationToken);
+    if (snapshot is null) {
+      if (replaysWithoutAFloor && !refused) {
         announceReplay += () => _logger.LogWarning(
             "No snapshot of {PerspectiveName} stream {StreamId} is placed before event {TriggeringEventId} (detected at commit sequence {TriggeringCommitSequence}); performing full replay",
             perspectiveName, streamId, triggeringEventId, triggeringCommitSequence);
       }
       return new RewindFloor(null, null, default, HasSnapshot: false, announceReplay);
     }
-    if (placed.SnapshotModel is not { } snapshotModel) {
+    if (placedModel is not { } snapshotModel) {
       return new RewindFloor(null, null, default, HasSnapshot: false, replaysWithoutAFloor
           ? () => _logger.LogWarning(
               "Snapshot for {PerspectiveName} stream {StreamId} has a stale serialization version; performing full replay due to late event {TriggeringEventId}",
@@ -3364,9 +3361,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     // would be refused by the upsert's cross-pod lost-update guard - discarding the very
     // correction the rewind computed.
     if (eventsProcessed > 0) {
-      var written = await _writeReplayRowAsync(outcome, cancellationToken);
-      rowChanged = written.RowChanged;
-      unchangedReason = written.Reason;
+      (rowChanged, unchangedReason, var writtenSnapshot) = await _writeReplayRowAsync(outcome, cancellationToken);
       _reportPurgedEventsSkipped(perspectiveName, streamId, outcome.PurgedEventsSkipped);
 
       await _perspectiveStore.FlushAsync(cancellationToken);
@@ -3375,7 +3370,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
           "Replay completed: {EventCount} events for {PerspectiveName} stream {StreamId}, checkpoint: {CheckpointEventId}",
           eventsProcessed, perspectiveName, streamId, outcome.LastSuccessfulEventId);
 
-      var snapshotBeforeWrite = await _snapshotAfterReplayAsync(outcome, written.SnapshotBeforeWrite, cancellationToken);
+      var snapshotBeforeWrite = await _snapshotAfterReplayAsync(outcome, writtenSnapshot, cancellationToken);
       snapshotBeforeWrite?.Dispose(); // no snapshot taken
     }
     outcome.ModelAtLastEvent?.Dispose(); // not handed to the store
