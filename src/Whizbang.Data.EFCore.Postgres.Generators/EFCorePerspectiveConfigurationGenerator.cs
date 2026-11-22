@@ -732,8 +732,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// </summary>
   /// <remarks>
   /// The column is where such a field is read from: the hydrators copy it into the model. Mapped as
-  /// part of the document as well, a dictionary is refused by the mapping outright (WHIZ810), and any
-  /// other shape would be a second, competing reader of the same value.
+  /// part of the document as well, the field would have a second, competing reader of the same value.
   /// </remarks>
   private static string _generateDocumentExclusions(ImmutableArray<PhysicalFieldInfo> physicalFields) {
     var sb = new StringBuilder();

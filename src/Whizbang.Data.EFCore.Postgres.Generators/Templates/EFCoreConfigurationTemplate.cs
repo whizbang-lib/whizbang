@@ -56,6 +56,10 @@ public static class WhizbangModelBuilderExtensions {
     // JsonbContainmentRewriter for why negation and null comparisons keep the extraction form.
     modelBuilder.UseWhizbangJsonbContainment();
 
+    // A dictionary inside a perspective document is a value stored as key/value pairs (#1911). The Whizbang options
+    // extension maps it that way; this maps it the same way for a context built without the extension.
+    global::Whizbang.Data.EFCore.Postgres.Perspectives.DictionaryMemberConvention.Apply(modelBuilder);
+
     return modelBuilder;
   }
 

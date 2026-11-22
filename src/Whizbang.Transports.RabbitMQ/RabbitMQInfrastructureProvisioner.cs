@@ -3,6 +3,7 @@
 
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
+using RabbitMQ.Client;
 using RabbitMQ.Client.Exceptions;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
@@ -174,7 +175,20 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
     }
 
     // Subscription entities: exchange + queue + bindings, exactly as the transport would
-    // create them at subscribe time.
+    // create them at subscribe time. A queue an earlier version declared with other arguments closes the channel it is
+    // refused on (#2421); the helper declares it again on a channel of its own, and the rest of the pass continues there.
+    List<IChannel> replacementChannels = [];
+    try {
+      await _provisionSubscriptionsAsync(manifest, channel, replacementChannels, cancellationToken);
+    } finally {
+      foreach (var replacement in replacementChannels) {
+        replacement.Dispose();
+      }
+    }
+  }
+
+  private async Task _provisionSubscriptionsAsync(
+      TopologyManifest manifest, IChannel channel, List<IChannel> replacementChannels, CancellationToken cancellationToken) {
     foreach (var subscription in manifest.Subscriptions) {
       cancellationToken.ThrowIfCancellationRequested();
       var exchangeName = subscription.Topic;
@@ -189,8 +203,9 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
         await _probeOwnershipDriftAsync(exchangeName, queueName, cancellationToken);
       }
 
-      await RabbitMQEntityProvisioning.DeclareSubscriptionInfrastructureAsync(
+      var live = await RabbitMQEntityProvisioning.DeclareSubscriptionInfrastructureAsync(
         channel,
+        _channelPool.OpenUnpooledChannelAsync,
         _options,
         exchangeName,
         queueName,
@@ -198,6 +213,10 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
         _logger,
         cancellationToken,
         controlClass: NamespaceInboxStrategy.IsControlClassSubscription(subscription));
+      if (!ReferenceEquals(live, channel)) {
+        replacementChannels.Add(live);
+        channel = live;
+      }
       _declaredSubscriptions[(exchangeName, queueName)] = true;
       _declaredExchanges[exchangeName] = true;
     }

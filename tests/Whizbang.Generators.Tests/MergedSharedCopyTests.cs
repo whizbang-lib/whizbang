@@ -51,7 +51,7 @@ public class MergedSharedCopyTests {
     new MergedHost("Whizbang.Generators",
       typeof(core_generators::Whizbang.Generators.MessageJsonContextGenerator).Assembly),
     new MergedHost("Whizbang.Data.EFCore.Postgres.Generators",
-      typeof(postgres_generators::Whizbang.Data.EFCore.Postgres.Generators.PerspectiveModelDictionaryAnalyzer).Assembly),
+      typeof(postgres_generators::Whizbang.Data.EFCore.Postgres.Generators.PerspectiveModelPolymorphicAnalyzer).Assembly),
     new MergedHost("Whizbang.Transports.HotChocolate.Generators",
       typeof(hotchocolate_generators::Whizbang.Transports.HotChocolate.Generators.GraphQLLensTypeGenerator).Assembly),
     new MergedHost("Whizbang.Transports.FastEndpoints.Generators",

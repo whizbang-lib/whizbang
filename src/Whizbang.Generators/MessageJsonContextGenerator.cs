@@ -1361,7 +1361,13 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Oblivious to nullability on purpose: the built-in string converter is JsonConverter<string?>
     // and the value info is JsonTypeInfo<string>, a difference that is annotation rather than type.
     sb.AppendLine("#nullable disable");
-    sb.AppendLine("private static JsonTypeInfo<TValue> _registeredOrBuiltIn<TValue>(JsonSerializerOptions options, JsonConverter<TValue> builtIn) {");
+    sb.AppendLine("private static JsonTypeInfo<TValue> _registeredOrBuiltIn<TValue>(JsonSerializerOptions options, JsonConverter<TValue> builtIn) =>");
+    sb.AppendLine("  _registered<TValue>(options) ?? JsonMetadataServices.CreateValueInfo<TValue>(options, builtIn);");
+    sb.AppendLine();
+    // The same question for a dictionary: a perspective document stores one as key/value pairs through a converter
+    // the persistence profile registers (#1911), and the built-in dictionary form here would otherwise answer first.
+    sb.AppendLine("/// <summary>A value type info using the converter registered on the options for the type, or null when none is.</summary>");
+    sb.AppendLine("private static JsonTypeInfo<TValue> _registered<TValue>(JsonSerializerOptions options) {");
     sb.AppendLine("  foreach (var candidate in options.Converters) {");
     sb.AppendLine("    if (!candidate.CanConvert(typeof(TValue))) {");
     sb.AppendLine("      continue;");
@@ -1371,7 +1377,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine("      return JsonMetadataServices.CreateValueInfo<TValue>(options, typed);");
     sb.AppendLine("    }");
     sb.AppendLine("  }");
-    sb.AppendLine("  return JsonMetadataServices.CreateValueInfo<TValue>(options, builtIn);");
+    sb.AppendLine("  return null;");
     sb.AppendLine("}");
     sb.AppendLine("#nullable restore");
     sb.AppendLine();
@@ -2516,8 +2522,15 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 #pragma warning disable S3267
     foreach (var type in allTypes) {
       foreach (var property in type.Properties) {
-        _tryDiscoverEnumFromProperty(property, compilation, discoveredEnums);
+        _tryDiscoverEnum(property.Type, compilation, discoveredEnums);
       }
+    }
+
+    // A dictionary's key and value are serialized through their own metadata too: an enumeration keying a dictionary
+    // (a perspective document stores each key as its type writes it, #1911) needs a type info like any member's.
+    foreach (var dictionary in _discoverDictionaryTypes(allTypes)) {
+      _tryDiscoverEnum(dictionary.KeyTypeName, compilation, discoveredEnums);
+      _tryDiscoverEnum(dictionary.ValueTypeName, compilation, discoveredEnums);
     }
 #pragma warning restore S3267
 
@@ -2525,14 +2538,15 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Inspects a single property and adds it to the enum dictionary if it is a user-defined enum type.
+  /// Inspects a single type and adds it to the enum dictionary if it is a user-defined enum type.
   /// Skips nullable wrappers, collections, primitives, framework types, and framework enums.
   /// </summary>
-  private static void _tryDiscoverEnumFromProperty(
-      PropertyInfo property,
+  /// <tests>tests/Whizbang.Generators.Tests/DictionaryMemberDiscoveryTests.cs:AnEnumerationKeyingADictionary_HasItsOwnTypeInfoAsync</tests>
+  private static void _tryDiscoverEnum(
+      string typeName,
       Compilation compilation,
       Dictionary<string, JsonEnumInfo> discoveredEnums) {
-    var propertyTypeName = property.Type;
+    var propertyTypeName = typeName;
 
     // Strip nullable suffix if present
     if (propertyTypeName.EndsWith("?", StringComparison.Ordinal)) {
@@ -2544,7 +2558,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     // Skip collection types, primitives, and framework enums
-    if (_extractElementType(property.Type) != null ||
+    if (_extractElementType(typeName) != null ||
         _isPrimitiveOrFrameworkType(propertyTypeName) ||
         _isFrameworkEnum(propertyTypeName)) {
       return;

@@ -345,10 +345,10 @@ public sealed class NamespaceInboxFlipE2ELockTests {
       await Assert.That(stored.Single(r => r.MessageId == sentinelWork.MessageId).DiscardedOnReceive).IsNull()
         .Because("the sentinel is this service's only work");
 
-      // Stored, then acked at the broker: NOT dead-lettered. The DLQ is read for THIS message rather than counted: the
-      // dead-letter exchange ({exchange}.dlx) is a fanout every subscriber's DLQ on the orders exchange is bound to, so
-      // a message dead-lettered from ANOTHER queue on it (the DLQ test in the other target framework's process, on the
-      // same shared broker) is copied into this queue's DLQ too (#2417).
+      // Stored, then acked at the broker: NOT dead-lettered. The DLQ is read for THIS message rather than counted. Before
+      // #2421 the dead-letter exchange was a fanout every subscriber's DLQ on the orders exchange was bound to, so a
+      // message dead-lettered from ANOTHER queue on it (the DLQ test in the other target framework's process, on the same
+      // shared broker) was copied into this queue's DLQ too (#2417); reading for this message stays correct either way.
       var deadLettered = await _deadLetteredMessageIdsAsync($"{handlerService}-{ORDERS_ENTITY}.dlq", ct);
       await Assert.That(deadLettered).DoesNotContain(misdelivered.MessageId.ToString())
         .Because("a mis-delivery is stored and skipped, not poison");
@@ -557,7 +557,7 @@ public sealed class NamespaceInboxFlipE2ELockTests {
   [Timeout(90000)]
   public async Task FlippedNamespaceFailures_LandInThatNamespacesDlq_AndReplayFromTheNewEntityAsync(CancellationToken ct) {
     // Failures on a flipped namespace land in THE FLIPPED QUEUE's DLQ ({queue}.dlq via
-    // {exchange}.dlx — per contract area), and dead-letter recovery replays from the new
+    // {exchange}.dlx.direct on the DLQ's own key (#2421), per contract area), and dead-letter recovery replays from the new
     // entity. MaxDeliveryAttempts=2: first delivery nacks+requeues, second dead-letters.
     var failureMarker = $"dlq-{Guid.CreateVersion7():N}";
     var handlerService = _uniqueService("svc-orders");

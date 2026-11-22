@@ -144,6 +144,38 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
     await Assert.That(fetched[0].ScheduledFor.HasValue).IsFalse();
   }
 
+  /// <summary>
+  /// #1628: the fetch reads each single's position in this service's commit lane, the sequence a direct delivery of it
+  /// carries, so the fold can hand it to the composite's child. A single stored as an event and stamped has one; a
+  /// forwarded event (whose direct delivery carries its origin's identity), an event the stamper has not reached, and a
+  /// message not stored as an event have none.
+  /// </summary>
+  [Test]
+  public async Task FetchPendingCoalesce_ReadsEachSinglesPositionInThisServicesCommitLaneAsync() {
+    await using var dbContext = CreateDbContext();
+    var coordinator = _coordinator(dbContext);
+    var connection = await _openAsync(dbContext);
+    const string group = "group-seq";
+    var local = await _seedPendingAsync(connection, group, createdAgoSeconds: 400, isEvent: true);
+    var forwarded = await _seedPendingAsync(connection, group, createdAgoSeconds: 300, isEvent: true);
+    var unstamped = await _seedPendingAsync(connection, group, createdAgoSeconds: 200, isEvent: true);
+    var notAnEvent = await _seedPendingAsync(connection, group, createdAgoSeconds: 100);
+    var localSequence = await _seedStoredEventAsync(connection, local, stamped: true, origin: null);
+    await _seedStoredEventAsync(connection, forwarded, stamped: true, origin: (Guid.CreateVersion7(), 9_001));
+    await _seedStoredEventAsync(connection, unstamped, stamped: false, origin: null);
+
+    var fetched = (await coordinator.FetchPendingCoalesceAsync(group, limit: 10)).ToDictionary(m => m.MessageId);
+
+    await Assert.That(fetched.Count).IsEqualTo(4);
+    await Assert.That(localSequence.HasValue).IsTrue();
+    await Assert.That(fetched[local].SourceCommitSequence).IsEqualTo(localSequence)
+      .Because("a stamped local event's position is its commit sequence, the one its direct delivery carries");
+    await Assert.That(fetched[forwarded].SourceCommitSequence).IsNull()
+      .Because("a forwarded event's direct delivery carries its origin's identity, which one composite cannot carry per child");
+    await Assert.That(fetched[unstamped].SourceCommitSequence).IsNull();
+    await Assert.That(fetched[notAnEvent].SourceCommitSequence).IsNull();
+  }
+
   [Test]
   public async Task FetchPendingCoalesce_WhenStoredMetadataIsJsonNull_SynthesizesMinimalMetadataAsync() {
     // A JSON null is a stored value, not a missing column: it deserializes to no metadata at all.
@@ -337,20 +369,22 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
       int createdAgoSeconds,
       string? scheduledForSql = null,
       string? eventDataJson = null,
-      string metadataJson = "{}") {
+      string metadataJson = "{}",
+      bool isEvent = false) {
     var messageId = (Guid)TrackedGuid.New();
     await using var ins = connection.CreateCommand();
     ins.CommandText = $$"""
 
       INSERT INTO wh_outbox
         (message_id, destination, message_type, event_data, metadata, status, attempts,
-         created_at, stream_id, partition_number, coalesce_group, scheduled_for)
+         created_at, stream_id, partition_number, coalesce_group, scheduled_for, is_event)
       VALUES (@msg, 'test-topic', 'TestEvent',
         @data::jsonb,
         @meta::jsonb, 0, 0,
         NOW() - INTERVAL '{{createdAgoSeconds}} seconds', @stream, 0, @grp,
-        {{scheduledForSql ?? "NOW() + INTERVAL '60 seconds'"}})
+        {{scheduledForSql ?? "NOW() + INTERVAL '60 seconds'"}}, @is_event)
 """;
+    ins.Parameters.AddWithValue("is_event", isEvent);
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", Guid.NewGuid());
     ins.Parameters.AddWithValue("grp", group);
@@ -358,6 +392,29 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
     ins.Parameters.AddWithValue("meta", metadataJson);
     await ins.ExecuteNonQueryAsync();
     return messageId;
+  }
+
+  /// <summary>
+  /// Stores the event an outbox single was stored with, stamped from the commit sequence or not, and forwarded from
+  /// <paramref name="origin"/> or local. Returns the commit sequence it was stamped with.
+  /// </summary>
+  private static async Task<long?> _seedStoredEventAsync(
+      NpgsqlConnection connection, Guid eventId, bool stamped, (Guid Service, long Sequence)? origin) {
+    await using var ins = connection.CreateCommand();
+    ins.CommandText = $"""
+      INSERT INTO wh_event_store
+        (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, commit_sequence,
+         origin_service_id, origin_commit_sequence)
+      VALUES (@event, @stream, @stream, 'TestAggregate', 'TestEvent', 1, {(stamped ? "nextval('wh_commit_seq')" : "NULL")},
+        @origin_service, @origin_sequence)
+      RETURNING commit_sequence
+      """;
+    ins.Parameters.AddWithValue("event", eventId);
+    ins.Parameters.AddWithValue("stream", (Guid)TrackedGuid.New());
+    ins.Parameters.Add(new NpgsqlParameter("origin_service", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)origin?.Service ?? DBNull.Value });
+    ins.Parameters.Add(new NpgsqlParameter("origin_sequence", NpgsqlTypes.NpgsqlDbType.Bigint) { Value = (object?)origin?.Sequence ?? DBNull.Value });
+    var sequence = await ins.ExecuteScalarAsync();
+    return sequence is long value ? value : null;
   }
 
   /// <summary>

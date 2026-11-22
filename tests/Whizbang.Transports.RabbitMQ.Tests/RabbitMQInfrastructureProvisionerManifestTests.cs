@@ -124,7 +124,10 @@ public class RabbitMQInfrastructureProvisionerManifestTests {
     var arguments = channel.QueueDeclareArgumentsByQueue[queueName];
     await Assert.That(arguments!.ContainsKey("x-dead-letter-exchange")).IsTrue();
     await Assert.That((string)arguments["x-dead-letter-exchange"]!)
-      .IsEqualTo("inbox.myapp.orders.commands.dlx");
+      .IsEqualTo("inbox.myapp.orders.commands.dlx.direct");
+    await Assert.That((string)arguments["x-dead-letter-routing-key"]!)
+      .IsEqualTo($"{queueName}.dlq")
+      .Because("each queue dead-letters on its own DLQ's key, so no other subscriber's DLQ receives it (#2421)");
   }
 
   [Test]

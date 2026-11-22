@@ -382,7 +382,8 @@ public record ProcessOrder(System.DateTime At) : ICommand;
         + "reflection is needed to read it");
     await Assert.That(code).Contains("candidate is JsonConverterFactory factory ? factory.CreateConverter(typeof(TValue), options) : candidate")
       .Because("a registered factory has to be asked for its converter, as the serializer would ask it");
-    await Assert.That(code).Contains("return JsonMetadataServices.CreateValueInfo<TValue>(options, builtIn);");
+    await Assert.That(code).Contains("_registered<TValue>(options) ?? JsonMetadataServices.CreateValueInfo<TValue>(options, builtIn);")
+      .Because("the built-in converter is the fallback when nothing is registered");
     await Assert.That(code).Contains("var elementInfo = _registeredOrBuiltIn<DateTime>(options, JsonMetadataServices.DateTimeConverter);")
       .Because("a collection's element info is fixed at creation, so a list of dates has to defer the "
         + "same way or its elements are written in the built-in form whatever the profile says");

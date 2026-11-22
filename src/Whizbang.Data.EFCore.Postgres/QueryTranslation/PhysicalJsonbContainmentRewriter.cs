@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres.Perspectives;
 
 namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
@@ -189,6 +190,7 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
 
     var names = new HashSet<string>(StringComparer.Ordinal);
     Expression? merged = null;
+    bool? elementIsDictionary = null;
 
     foreach (var condition in conditions) {
       if (!_elementCondition(condition, element, out var steps, out var leaf)) {
@@ -201,11 +203,17 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
         return conditions.Count == 1;
       }
 
-      // Merging is a shallow concatenation, so two conditions under one top-level member would replace
-      // each other rather than both apply. That shape is left alone.
-      if (steps[0] is not ConstantExpression { Value: string first } || !names.Add(first)) {
+      // Merging is a shallow concatenation: of two objects, which joins their members, or of two arrays of pairs,
+      // which joins their pairs (an element that is a dictionary stored as pairs, #1911). Two conditions under one
+      // top-level member or key would replace or contradict each other, and an element is an object or a
+      // dictionary, never both. Those shapes are left alone.
+      var isPair = steps[0].Type == typeof(object);
+      var top = isPair ? ((UnaryExpression)steps[0]).Operand : steps[0];
+      if (top is not ConstantExpression { Value: string first } || !names.Add(first)
+          || (elementIsDictionary is { } known && known != isPair)) {
         return false;
       }
+      elementIsDictionary = isPair;
 
       var part = _wrap(steps, leaf);
       merged = merged is null ? part : Expression.Call(JsonbDocument.MergeMethod, merged, part);
@@ -266,11 +274,23 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
     return true;
   }
 
-  /// <summary>Nests <paramref name="leaf"/> inside one single-member object per step, innermost last.</summary>
+  /// <summary>
+  /// Nests <paramref name="leaf"/> inside one single-member object per step, innermost last, or, for a key of a
+  /// dictionary stored as pairs, inside a one-pair array: <c>[{"Key": key, "Value": inner}]</c>.
+  /// </summary>
   private static Expression _wrap(List<Expression> steps, Expression leaf) {
     var document = leaf;
     for (var i = steps.Count - 1; i >= 0; i--) {
-      document = Expression.Call(JsonbDocument.MemberMethod, steps[i], document);
+      // Every other step is a string: a member's stored name, or a key of a dictionary stored as an object.
+      document = steps[i].Type == typeof(object)
+        ? Expression.Call(JsonbDocument.ArrayMethod, Expression.Call(
+            JsonbDocument.MergeMethod,
+            Expression.Call(
+              JsonbDocument.MemberMethod,
+              Expression.Constant(DictionaryMemberForm.KEY),
+              Expression.Call(JsonbDocument.ValueOverloadFor(typeof(string))!, ((UnaryExpression)steps[i]).Operand)),
+            Expression.Call(JsonbDocument.MemberMethod, Expression.Constant(DictionaryMemberForm.VALUE), document)))
+        : Expression.Call(JsonbDocument.MemberMethod, steps[i], document);
     }
 
     return document;
@@ -327,7 +347,9 @@ public sealed class PhysicalJsonbContainmentRewriter(IModel? model) : Expression
           return false;
         }
 
-        steps.Add(key);
+        // A dictionary a perspective document stores is an array of key/value pairs (#1911), so its key is a pair's
+        // Key, not an object's member: marked by widening it to object, which a member step never is.
+        steps.Add(DictionaryMemberForms.TryGet(dictionary.Type, out _) ? Expression.Convert(key, typeof(object)) : key);
         return true;
 
       default:

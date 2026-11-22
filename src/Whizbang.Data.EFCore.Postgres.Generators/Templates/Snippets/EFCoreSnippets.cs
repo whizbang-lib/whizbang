@@ -37,12 +37,9 @@ public class EFCoreSnippets {
       //   - Collection queries (Any, Contains, Count)
       //   - String methods (Contains, StartsWith)
       //
-      // IMPORTANT LIMITATION - Dictionary<K,V> NOT SUPPORTED:
-      //   EF Core 10's ToJson() throws NullReferenceException for Dictionary properties.
-      //   If your perspective model needs key-value metadata, use one of these alternatives:
-      //     - List<KeyValuePair<string, string>> for ordered pairs
-      //     - List<AttributeEntry> where AttributeEntry has Key/Value properties
-      //     - String property with manual JSON serialization
+      // Dictionary<K,V>, IDictionary<K,V> and IReadOnlyDictionary<K,V> members, at any depth, are stored as
+      // arrays of key/value objects ([{"Key":..,"Value":..}]) by the type mapping the Whizbang options extension
+      // adds (#1911); nothing is configured for them here. See DictionaryMemberTypeMapping.
       //
       // Prerequisites (implemented in Whizbang):
       //   1. WhizbangId types store Guid directly (not TrackedGuid) for simple EF Core construction

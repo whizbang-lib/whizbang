@@ -654,8 +654,10 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// <returns>The value to write.</returns>
   internal static PerspectivePhysicalValue PhysicalColumnValue(string column, IReadOnlyProperty? property, object? value) {
     var storeType = property?.GetColumnType();
+    // The property's own converter, or its type mapping's: a dictionary column takes its stored form, an array of
+    // key/value pairs, from its mapping (#1911), the same form the collective apply and the document write.
     if (value is not null
-        && property?.GetValueConverter() is { } converter
+        && (property?.GetValueConverter() ?? property?.FindTypeMapping()?.Converter) is { } converter
         && string.Equals(storeType, "jsonb", StringComparison.OrdinalIgnoreCase)) {
       return new PerspectivePhysicalValue(column, converter.ConvertToProvider(value), storeType, IsJsonDocument: true);
     }
