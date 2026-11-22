@@ -32,6 +32,9 @@ public class DispatcherDerivedIdentityInHandlingTests {
   /// <summary>An event a receptor publishes explicitly, on a stream it names.</summary>
   public record DerivedPublishProbeEvent([property: StreamId] Guid StreamId) : IEvent;
 
+  /// <summary>The handled message: it names no stream, so a returned event does not inherit one from it.</summary>
+  public record DerivedSourceCommand(string Data);
+
   /// <summary>An event that starts a stream of its own.</summary>
   public class DerivedStreamProbeEvent : IEvent, IHasStreamId {
     /// <inheritdoc />
@@ -215,7 +218,7 @@ public class DispatcherDerivedIdentityInHandlingTests {
   /// </summary>
   private static MessageEnvelope<object> _handling(Guid sourceMessageId, string handlerName) => new() {
     MessageId = MessageId.From(sourceMessageId),
-    Payload = new DerivedPublishProbeEvent((Guid)TrackedGuid.New()),
+    Payload = new DerivedSourceCommand("origin"),
     Hops = [],
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local, HandlerName = handlerName },
   };
