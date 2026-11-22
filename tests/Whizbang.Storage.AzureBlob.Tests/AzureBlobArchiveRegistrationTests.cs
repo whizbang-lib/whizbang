@@ -261,10 +261,27 @@ public class AzureBlobArchiveRegistrationTests {
   }
 
   [Test]
+  public async Task Startup_AnUndefinedLocationMismatchSetInCode_FailsTheHostAtStartAsync() {
+    var services = new ServiceCollection();
+    _driver(services);
+    services.AddWhizbangAzureBlobArchive(o => {
+      o.ConnectionString = EMULATOR;
+      o.LocationMismatch = (Whizbang.Core.Archival.ArchiveLocationMismatchHandling)42;
+    });
+    await using var provider = services.BuildServiceProvider();
+
+    var refused = await Assert.That(() => provider.GetRequiredService<IStartupValidator>().Validate())
+      .Throws<OptionsValidationException>();
+
+    await Assert.That(refused!.Message).Contains("Whizbang:Storage:AzureBlob:Archive:LocationMismatch");
+  }
+
+  [Test]
   [Arguments("CompressionLevel", "fast")]
   [Arguments("MaxEventsPerChunk", "ten thousand")]
   [Arguments("ServiceUri", "not an absolute uri")]
   [Arguments("VerifyLocation", "maybe")]
+  [Arguments("LocationMismatch", "maybe")]
   [Arguments("DeleteAfter", "soon")]
   [Arguments("DeleteAfter", "00:00:00")]
   [Arguments("DeleteAfter", "-01:00:00")]
@@ -333,11 +350,11 @@ public class AzureBlobArchiveRegistrationTests {
   [Arguments(0, 1)]
   [Arguments(11, 1)]
   public async Task Store_AcceptsTheEdgesOfTheRange_AndHandsThemToTheCoordinatorAsync(int quality, int maxEventsPerChunk) {
-    var options = new AzureBlobArchiveOptions { CompressionLevel = quality, MaxEventsPerChunk = maxEventsPerChunk, VerifyLocation = false };
+    var options = new AzureBlobArchiveOptions { CompressionLevel = quality, MaxEventsPerChunk = maxEventsPerChunk, LocationMismatch = ArchiveLocationMismatchHandling.Ignore };
 
     var settings = new AzureBlobArchiveObjectStore(_container(), options).Settings;
 
-    var expected = new ArchiveObjectStoreSettings { CompressionLevel = quality, MaxEventsPerChunk = maxEventsPerChunk, VerifyLocation = false };
+    var expected = new ArchiveObjectStoreSettings { CompressionLevel = quality, MaxEventsPerChunk = maxEventsPerChunk, LocationMismatch = ArchiveLocationMismatchHandling.Ignore };
     await Assert.That(settings).IsEqualTo(expected).Because("the control: Brotli's whole range and a one-event chunk are valid, and the coordinator writes with them");
   }
 

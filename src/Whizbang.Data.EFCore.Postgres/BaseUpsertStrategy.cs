@@ -237,7 +237,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // or any other unsupported case).
     if (UsesAtomicUpsert
         && _tryPrepareAtomicWrite(context, args, hookPlan, expiresAt, businessTime) is { } prepared
-        && await _tryAtomicUpsertAsync<TModel>(context, prepared, cancellationToken) is bool atomicLanded) {
+        && await _stageOrUpsertAsync<TModel>(context, prepared, cancellationToken) is bool atomicLanded) {
       return atomicLanded;
     }
     if (!string.Equals(args.TableName, mappedTable, StringComparison.Ordinal)) {
@@ -465,6 +465,27 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     }
     var (args, hookPlan, expiresAt, businessTime, _) = _planRowWrite(context, row);
     return _tryPrepareAtomicWrite(context, args, hookPlan, expiresAt, businessTime);
+  }
+
+  /// <summary>
+  /// Writes a prepared row: held by the staging load of a blue-green rebuild's first pass when one writes its table and
+  /// the row is new to it (#2248), and otherwise with the atomic statement. A row the load holds is loaded before it is
+  /// written again, so that write meets the row and the ordering guard as the per-row path always does.
+  /// </summary>
+  /// <returns>Whether the write landed (a held row has), or null to fall back to the Entity Framework path.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/BlueGreenRebuildIntegrationTests.Staging.cs</tests>
+  private static async Task<bool?> _stageOrUpsertAsync<TModel>(
+      DbContext context, PendingPerspectiveWrite write, CancellationToken cancellationToken)
+      where TModel : class {
+    if (PerspectiveStagingLoad.For(write.Table) is { } load) {
+      if (load.TryStage(write, new EFCorePostgresPerspectiveWriteSink(context))) {
+        return true;
+      }
+      if (load.StateOf(write.StreamId) == PerspectiveStagedRowState.Staged) {
+        await load.FlushAsync(cancellationToken);
+      }
+    }
+    return await _tryAtomicUpsertAsync<TModel>(context, write, cancellationToken);
   }
 
   /// <summary>

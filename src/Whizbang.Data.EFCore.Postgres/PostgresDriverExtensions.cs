@@ -443,6 +443,13 @@ public static class PostgresDriverExtensions {
             jsonOptions: global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
             schema: defaultSchema(sp),
             logger: sp.GetService<ILogger<PostgresFanoutChildRefiler>>()));
+        // The operator repair for received streams stored out of their origin's order (#1629), over the same data source.
+        // <docs>operations/infrastructure/resequencing-received-streams</docs>
+        selector.Services.TryAddSingleton<IReceivedStreamResequencer>(sp =>
+          new PostgresReceivedStreamResequencer(
+            sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
+            schema: defaultSchema(sp),
+            logger: sp.GetService<ILogger<PostgresReceivedStreamResequencer>>()));
 
         // TURNKEY: managed-resource health for the event-store DB. AlwaysRequired — a DB fault is a
         // real fault even during a migration (the migration needs it), so this replaces a consumer's

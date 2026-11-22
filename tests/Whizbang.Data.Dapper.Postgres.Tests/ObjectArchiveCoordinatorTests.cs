@@ -42,9 +42,9 @@ public class ObjectArchiveCoordinatorTests : PostgresTestBase {
     new(_database(), objects, logger: null, clock, metrics);
 
   private static InMemoryArchiveObjectStore _objects(int maxEventsPerChunk = 2, TimeSpan? deleteAfter = null, string container = "archive",
-      bool verifyLocation = true, TimeProvider? clock = null) =>
+      ArchiveLocationMismatchHandling locationMismatch = ArchiveLocationMismatchHandling.Error, TimeProvider? clock = null) =>
     new(clock ?? new FakeTimeProvider(_start),
-      new ArchiveObjectStoreSettings { MaxEventsPerChunk = maxEventsPerChunk, DeleteAfter = deleteAfter, VerifyLocation = verifyLocation },
+      new ArchiveObjectStoreSettings { MaxEventsPerChunk = maxEventsPerChunk, DeleteAfter = deleteAfter, LocationMismatch = locationMismatch },
       container);
 
   // Where every store's clock starts when a test sets none: objects are stamped on it, never on the system clock.
@@ -264,17 +264,27 @@ public class ObjectArchiveCoordinatorTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task VerifyLocationOff_AMismatchedRecord_IsRead_InTheConfiguredLocationOnlyAsync() {
+  public async Task LocationMismatchIgnore_AMismatchedRecord_IsRead_InTheConfiguredLocationOnlyAsync() {
     var stream = await _seedAsync(2);
     var source = _objects(maxEventsPerChunk: 10, container: "archive-source");
     _ = await _coordinator(source).WriteAsync(ArchiveBatch.WholeStream(stream));
-    var copy = _objects(maxEventsPerChunk: 10, container: "archive-copy", verifyLocation: false);
+    var copy = _objects(maxEventsPerChunk: 10, container: "archive-copy",
+      locationMismatch: ArchiveLocationMismatchHandling.Ignore);
     foreach (var path in source.Paths) {
       copy.Seed(path, await source.GetAsync(path));
     }
 
     await Assert.That(await _readAsync(_coordinator(copy), stream)).Count().IsEqualTo(2)
-      .Because("with the check off the configured location is used without comparison");
+      .Because("with Ignore the configured location is used without comparison");
+  }
+
+  [Test]
+  public async Task ConfiguredLocation_IsTheStoresLocationNormalized_WhateverCaseAndWhitespaceItUsesAsync() {
+    // #2141: the pin is stored and compared normalized, so the same location written another way is not a mismatch.
+    var coordinator = new PostgresObjectArchiveStore(_database(), new Located(new(" Memory ", " HTTPS://Account:443/ ", " Archive ", " C ")));
+
+    await Assert.That(coordinator.ConfiguredLocation).IsEqualTo(new ArchiveLocation("memory", "https://account", "archive", "c"));
+    await Assert.That(coordinator.ConfiguredLocation).IsEqualTo(coordinator.ConfiguredLocation.Normalize());
   }
 
   // ── Restore, delete and the deletion queue ─────────────────────────────────────────────────────────
@@ -453,6 +463,9 @@ public class ObjectArchiveCoordinatorTests : PostgresTestBase {
     var looksLikeASecret = await Assert.That(() => new PostgresObjectArchiveStore(_database(), new Located(new("memory", "e", "AccountKey=k", "c"))))
       .Throws<ArgumentException>();
     await Assert.That(() => new PostgresObjectArchiveStore(_database(), new Located(new("memory", "e", null, "c")))).Throws<ArgumentException>();
+    await Assert.That(() => new PostgresObjectArchiveStore(_database(), new Located(new("memory", "e", " \t", "c")))).Throws<ArgumentException>()
+      .Because("a connection name that normalizes to nothing names no connection (#2141)");
+    await Assert.That(() => _coordinator(_objects(locationMismatch: (ArchiveLocationMismatchHandling)42))).Throws<ArgumentOutOfRangeException>();
     await Assert.That(looksLikeASecret!.Message).DoesNotContain("AccountKey=k").Because("a value that looks like a connection string may be one");
     await Assert.That(_coordinator(_objects()).Clock).IsSameReferenceAs(TimeProvider.System); // review-checks:allow compares the default reference; reads no time
     await Assert.That(_coordinator(_objects()).Objects).IsNotNull();

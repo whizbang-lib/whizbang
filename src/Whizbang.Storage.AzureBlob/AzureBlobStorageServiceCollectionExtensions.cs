@@ -160,6 +160,10 @@ public static class AzureBlobStorageServiceCollectionExtensions {
       if (AzureBlobArchiveOptions.RefusalFor(archive.AccessTier) is { } refusal) {
         return ValidateOptionsResult.Fail(AzureBlobStorageConfiguration.TierRefused(AzureBlobStorageOptions.ARCHIVE_SECTION, $"{archive.AccessTier}", refusal).Message);
       }
+      if (AzureBlobArchiveOptions.RefusalForLocationMismatch(archive.LocationMismatch) is not null) {
+        return ValidateOptionsResult.Fail(
+          AzureBlobStorageConfiguration.LocationMismatchRefused(AzureBlobStorageOptions.ARCHIVE_SECTION, $"{archive.LocationMismatch}").Message);
+      }
       return archive.ToSettings().Refusal() is { } settings
         ? ValidateOptionsResult.Fail($"{AzureBlobStorageOptions.ARCHIVE_SECTION}: {settings}")
         : ValidateOptionsResult.Success;

@@ -70,6 +70,30 @@ public interface IPerspectiveTableSwapper {
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/PostgresPerspectiveTableSwapperTests.cs</tests>
   Task<string?> FindPerspectiveAsync(string table, CancellationToken cancellationToken) =>
     Task.FromResult<string?>(null);
+
+  /// <summary>
+  /// Drops the shadow table's secondary indexes before a staging load writes it, and returns the statements that build
+  /// them again (#2248). An index a constraint or a uniqueness rule needs stays, so the load refuses the same rows the
+  /// per-row write would.
+  /// </summary>
+  /// <remarks>Default: none deferred, so every index is kept up to date through the load.</remarks>
+  /// <param name="shadowTable">The shadow table, as <see cref="CreateShadowAsync"/> named it.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The statements that build the dropped indexes, in order.</returns>
+  /// <docs>fundamentals/perspectives/rebuild#staging-load</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderBlueGreenTests.Staging.cs</tests>
+  Task<IReadOnlyList<string>> DeferIndexesAsync(string shadowTable, CancellationToken cancellationToken) =>
+    Task.FromResult<IReadOnlyList<string>>([]);
+
+  /// <summary>Builds the indexes <see cref="DeferIndexesAsync"/> dropped, once the staging load has written every row.</summary>
+  /// <remarks>Default: nothing to build.</remarks>
+  /// <param name="shadowTable">The shadow table.</param>
+  /// <param name="definitions">The statements <see cref="DeferIndexesAsync"/> returned.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/perspectives/rebuild#staging-load</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderBlueGreenTests.Staging.cs</tests>
+  Task BuildDeferredIndexesAsync(string shadowTable, IReadOnlyList<string> definitions, CancellationToken cancellationToken) =>
+    Task.CompletedTask;
 }
 
 /// <summary>One blue-green swap: which table becomes live, and what happens to the one it replaces.</summary>
@@ -97,4 +121,16 @@ public sealed class BlueGreenRebuildOptions {
 
   /// <summary>How long the swap waits for its locks before the rebuild fails. Default 10 seconds.</summary>
   public TimeSpan SwapLockTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
+  /// <summary>
+  /// Whether the first pass writes the empty shadow table through a staging load: its rows held and loaded in chunks the
+  /// fastest way the driver has, with the secondary indexes built after the load (#2248). Default true, and chosen for
+  /// every blue-green rebuild; a service can only switch it off. Without it each row is upserted on its own.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#staging-load</docs>
+  public bool StagingLoad { get; set; } = true;
+
+  /// <summary>How many rows a staging load holds before it writes them. Default 1,000.</summary>
+  /// <docs>fundamentals/perspectives/rebuild#staging-load</docs>
+  public int StagingChunkRows { get; set; } = 1_000;
 }

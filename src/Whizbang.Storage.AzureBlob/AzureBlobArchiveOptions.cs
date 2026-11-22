@@ -64,8 +64,9 @@ public sealed class AzureBlobArchiveOptions {
   /// location (#2137). A name, never a connection string: a value with <c>;</c> or <c>=</c> is refused.
   /// </summary>
   /// <remarks>
-  /// Every archive record names its location, and the store refuses to read, restore or delete a record whose location
-  /// is not the configured one (<see cref="ArchiveLocationMismatchException"/>). Give each
+  /// Every archive record names its location, and by default the store refuses to read, restore, delete or write through
+  /// a record whose location is not the configured one (<see cref="LocationMismatch"/>). The name is compared without
+  /// surrounding whitespace and without case. Give each
   /// environment that shares a storage account its own name or container, so a database copied between them is refused
   /// rather than reaching the other's objects.
   /// </remarks>
@@ -81,27 +82,51 @@ public sealed class AzureBlobArchiveOptions {
   internal bool ConnectionNameBound { get; set; }
 
   /// <summary>
-  /// Whether every archive record's location is checked against the configured one before a read, restore, delete or
-  /// write (#2137). On by default.
+  /// What the store does when an archive record's location is not the configured one (#2141): <c>Error</c> (the
+  /// default), <c>Warning</c>, <c>Info</c> or <c>Ignore</c>, bound from <c>Whizbang:Storage:AzureBlob:Archive:LocationMismatch</c>
+  /// in any case (the earlier <c>Whizbang:Archive:AzureBlob:LocationMismatch</c> is still read; the new key wins).
   /// </summary>
   /// <remarks>
   /// <para>
-  /// On, a record whose location (account endpoint, connection name, container) is not the configured one is refused
-  /// with <see cref="ArchiveLocationMismatchException"/> before any request reaches storage, and a
-  /// write never lets a stream span two locations.
+  /// The database stores the location each record was written to, normalized (account endpoint, connection name,
+  /// container; see <see cref="ArchiveLocation.Normalize"/>), and infrastructure controls where the
+  /// objects actually are. After a restore, a storage failover or a copy of the database to another environment the
+  /// records still name the old location while the configuration names the new one.
   /// </para>
   /// <para>
-  /// Off, the store reads, restores, deletes and writes in the configured location only and never compares a record's
-  /// location. What turning it off gives up is the safety net against a copied or restored database, or a configuration
-  /// pointed at another account or container, reading the wrong objects or deleting the objects at the same path in the
-  /// configured container that belong to another environment. Location rows are still written, so the check can be
-  /// turned back on later; a record written while it was off names the configured location.
+  /// <c>Error</c> refuses the read, restore, delete or write with
+  /// <see cref="Whizbang.Core.Archival.ArchiveLocationMismatchException"/> before any request reaches storage, so the
+  /// archive stops until the operator repoints the location (<c>RepointLocationAsync</c> of the driver's archive coordinator) or
+  /// corrects the configuration, and the deletion queue deletes only objects queued in the configured location.
+  /// <c>Warning</c> and <c>Info</c> go ahead in the configured location and log each mismatch at that level, and the
+  /// deletion queue deletes every queued object from the configured container. <c>Ignore</c> does the same without
+  /// comparing or logging. What every handling but <c>Error</c> gives up is the safety net against a configuration pointed
+  /// at the wrong account or container reading objects that are not this database's, or deleting another environment's
+  /// objects at the same paths. Location rows are written whatever the handling, so it can be set back to <c>Error</c>.
   /// </para>
   /// </remarks>
-  /// <docs>fundamentals/events/archive-store#archive-locations</docs>
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Tests/AzureBlobArchiveLocationTests.cs:VerifyLocation_DefaultsToOn_AndIsBoundFromConfigurationAsync</tests>
-  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:VerifyLocationOff_AMismatchedRecord_IsRead_Restored_AndDeleted_InTheConfiguredLocationOnlyAsync</tests>
-  public bool VerifyLocation { get; set; } = true;
+  /// <docs>fundamentals/events/archive-store#location-mismatch</docs>
+  /// <docs>fundamentals/events/archive-store#upgrading-from-verify-location</docs>
+  /// <tests>tests/Whizbang.Storage.AzureBlob.Tests/AzureBlobArchiveLocationTests.cs:LocationMismatch_DefaultsToError_SoAMismatchStopsTheArchiveAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreLocationMismatchTests.cs:Move_ARecordPinnedToTheOldLocation_IsHandledAsConfiguredAsync</tests>
+  public ArchiveLocationMismatchHandling LocationMismatch { get; set; }
+
+  /// <summary>Why the store cannot run with <paramref name="handling"/>, or <see langword="null"/> when it is a defined handling.</summary>
+  internal static string? RefusalForLocationMismatch(ArchiveLocationMismatchHandling handling) =>
+    ArchiveObjectStoreSettings.RefusalForLocationMismatch(handling);
+
+  /// <summary>The handlings a location mismatch can have.</summary>
+  internal const string LOCATION_MISMATCH_VALUES = ArchiveObjectStoreSettings.LOCATION_MISMATCH_VALUES;
+
+  /// <summary>The handling <paramref name="value"/> names, in any case and with surrounding whitespace, or <see langword="null"/>.</summary>
+  internal static ArchiveLocationMismatchHandling? LocationMismatchNamed(string value) =>
+    value.Trim().ToLowerInvariant() switch {
+      "error" => ArchiveLocationMismatchHandling.Error,
+      "warning" => ArchiveLocationMismatchHandling.Warning,
+      "info" => ArchiveLocationMismatchHandling.Info,
+      "ignore" => ArchiveLocationMismatchHandling.Ignore,
+      _ => null,
+    };
 
   /// <summary>
   /// How long a queued object deletion waits before the object is deleted from storage, for storage that keeps nothing
@@ -146,13 +171,16 @@ public sealed class AzureBlobArchiveOptions {
   internal ArchiveObjectStoreSettings ToSettings() => new() {
     CompressionLevel = CompressionLevel,
     MaxEventsPerChunk = MaxEventsPerChunk,
-    VerifyLocation = VerifyLocation,
+    LocationMismatch = LocationMismatch,
     DeleteAfter = DeleteAfter,
   };
 
-  /// <summary>Whether <paramref name="name"/> can be a logical connection name: not empty, without <c>;</c> or <c>=</c>.</summary>
+  /// <summary>
+  /// Whether <paramref name="name"/> can be a logical connection name: not empty or whitespace (it would normalize to
+  /// nothing), without <c>;</c> or <c>=</c>.
+  /// </summary>
   internal static bool IsLogicalName(string? name) =>
-    !string.IsNullOrEmpty(name) && name.IndexOfAny([';', '=']) < 0;
+    !string.IsNullOrWhiteSpace(name) && name.IndexOfAny([';', '=']) < 0;
 
   /// <summary>The Brotli quality, 0 (fastest) to 11 (smallest). See <see cref="DEFAULT_COMPRESSION_LEVEL"/>.</summary>
   public int CompressionLevel { get; set; } = DEFAULT_COMPRESSION_LEVEL;

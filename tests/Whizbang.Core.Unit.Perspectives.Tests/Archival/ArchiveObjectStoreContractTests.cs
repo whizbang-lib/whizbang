@@ -26,7 +26,7 @@ public class ArchiveObjectStoreContractTests {
 
     await Assert.That(settings.CompressionLevel).IsEqualTo(4);
     await Assert.That(settings.MaxEventsPerChunk).IsEqualTo(10_000);
-    await Assert.That(settings.VerifyLocation).IsTrue();
+    await Assert.That(settings.LocationMismatch).IsEqualTo(ArchiveLocationMismatchHandling.Error);
     await Assert.That(settings.DeleteAfter).IsNull();
     await Assert.That(settings.Refusal()).IsNull();
   }
@@ -43,6 +43,11 @@ public class ArchiveObjectStoreContractTests {
     await Assert.That(smallest.Refusal()).IsNull();
     await Assert.That(new ArchiveObjectStoreSettings { CompressionLevel = 11 }.Refusal()).IsNull();
     await Assert.That(ArchiveObjectStoreSettings.RefusalForDeleteAfter(null)).IsNull();
+    await Assert.That(new ArchiveObjectStoreSettings().LocationMismatch).IsEqualTo(ArchiveLocationMismatchHandling.Error)
+      .Because("a mismatch stops the archive unless the service says otherwise (#2141)");
+    await Assert.That(new ArchiveObjectStoreSettings { LocationMismatch = (ArchiveLocationMismatchHandling)99 }.Refusal())
+      .IsEqualTo(ArchiveObjectStoreSettings.LOCATION_MISMATCH_VALUES);
+    await Assert.That(new ArchiveObjectStoreSettings { LocationMismatch = ArchiveLocationMismatchHandling.Ignore }.Refusal()).IsNull();
   }
 
   [Test]

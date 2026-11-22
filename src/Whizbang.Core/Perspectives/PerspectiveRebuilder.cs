@@ -551,7 +551,7 @@ public sealed partial class PerspectiveRebuilder(
     LogBlueGreenShadowCreated(logger, run.PerspectiveName, table, shadow);
     try {
       using var redirect = PerspectiveTableRedirect.Begin(table, shadow);
-      await _replayStreamsAsync(run, streamIds, RebuildPhase.Replaying, ct).ConfigureAwait(false);
+      await _loadShadowAsync(run, swapper, shadow, options, streamIds, ct).ConfigureAwait(false);
 
       for (var pass = 0; pass < options.MaxCatchUpPasses; pass++) {
         var next = await changes.WatermarkAsync(ct).ConfigureAwait(false);
@@ -572,6 +572,54 @@ public sealed partial class PerspectiveRebuilder(
     } catch {
       await _dropShadowAsync(swapper, run.PerspectiveName, shadow).ConfigureAwait(false);
       throw;
+    }
+  }
+
+  /// <summary>
+  /// The first pass of a blue-green rebuild: every stream replayed into the empty shadow table. By default through a
+  /// staging load (#2248): the shadow's secondary indexes are dropped, the rows the stores write are held and loaded in
+  /// chunks, and the indexes are built once every row is in, before the catch-up writes through them. Switched off
+  /// (<see cref="BlueGreenRebuildOptions.StagingLoad"/>), each row is upserted on its own.
+  /// </summary>
+  private async Task _loadShadowAsync(
+      RebuildRun run, IPerspectiveTableSwapper swapper, string shadow, BlueGreenRebuildOptions options,
+      List<Guid> streamIds, CancellationToken ct) {
+    if (!options.StagingLoad) {
+      await _replayStreamsAsync(run, streamIds, RebuildPhase.Replaying, ct).ConfigureAwait(false);
+      return;
+    }
+    var load = new PerspectiveStagingLoad(shadow, options.StagingChunkRows);
+    var deferred = await swapper.DeferIndexesAsync(shadow, ct).ConfigureAwait(false);
+    run.Staging = load;
+    try {
+      using (PerspectiveStagingLoad.Begin(load)) {
+        await _replayStreamsAsync(run, streamIds, RebuildPhase.Replaying, ct).ConfigureAwait(false);
+      }
+    } finally {
+      run.Staging = null;
+    }
+    LogStagingLoaded(logger, run.PerspectiveName, shadow, load.RowsLoaded, deferred.Count);
+    await swapper.BuildDeferredIndexesAsync(shadow, deferred, ct).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Writes the rows the staging load holds, and fails the stream of every row the table refused: its cursor is not
+  /// written and it no longer counts as rebuilt. Runs before any cursor is written, so no cursor names a row the table
+  /// does not hold.
+  /// </summary>
+  private async Task _flushStagingAsync(RebuildRun run, CancellationToken ct) {
+    if (run.Staging is not { } load) {
+      return;
+    }
+    await load.FlushAsync(ct).ConfigureAwait(false);
+    foreach (var refused in load.TakeRefused()) {
+      run.PendingCompletions?.RemoveAll(c => c.StreamId == refused.RowId);
+      var stream = run.StagedRowStreams.GetValueOrDefault(refused.RowId, refused.RowId);
+      if (!run.FailedStreams.Contains(stream)) {
+        run.FailedStreams.Add(stream);
+        run.StreamsProcessed--;
+      }
+      LogStagedRowRefused(logger, refused.Error, run.PerspectiveName, refused.RowId, stream);
     }
   }
 
@@ -737,13 +785,20 @@ public sealed partial class PerspectiveRebuilder(
       foreach (var completion in completions) {
         LogStreamReplayed(logger, run.PerspectiveName, completion.StreamId, completion.LastEventId,
             completion.Status, streamSw.ElapsedMilliseconds, processed, status.TotalStreams);
+        if (run.Staging is not null && completion.StreamId != streamId) {
+          // A row re-keyed away from the stream read: a refusal of it fails the stream a rerun replays (#2248).
+          run.StagedRowStreams[completion.StreamId] = streamId;
+        }
 
         if (run.PendingCompletions != null) {
           run.PendingCompletions.Add(completion);
-          if (run.PendingCompletions.Count >= COMPLETION_FLUSH_BATCH_SIZE) {
+          if (run.PendingCompletions.Count >= (run.Staging?.ChunkRows ?? COMPLETION_FLUSH_BATCH_SIZE)) {
             await _flushPendingCompletionsAsync(run, processed, status.TotalStreams, ct);
           }
         }
+      }
+      if (run.Staging is { } staging && staging.StagedCount >= staging.ChunkRows) {
+        await _flushStagingAsync(run, ct);
       }
 
       await _reportProgressAsync(run, status, processed);
@@ -827,6 +882,8 @@ public sealed partial class PerspectiveRebuilder(
   /// <see cref="IPerspectiveCheckpointCompleter"/> and logs the batch size + flush time.
   /// No-op when the completer or pending list is null/empty.</summary>
   private async Task _flushPendingCompletionsAsync(RebuildRun run, int processed, int totalStreams, CancellationToken ct) {
+    // The rows a cursor names are written before the cursor is (#2248).
+    await _flushStagingAsync(run, ct);
     if (run.Completer is null || run.PendingCompletions is not { Count: > 0 } pending) {
       return;
     }
@@ -882,6 +939,10 @@ public sealed partial class PerspectiveRebuilder(
     public IPerspectivePurgeMarkerStore? PurgeMarkers { get; init; }
     /// <summary>The events re-keyed onto each row this run has read, across all of its phases (#1820).</summary>
     public RebuildRekeyLedger Rekeys { get; } = new();
+    /// <summary>The staging load of the first pass of a blue-green rebuild, while it runs (#2248).</summary>
+    public PerspectiveStagingLoad? Staging { get; set; }
+    /// <summary>The stream each staged row re-keyed away from its own stream was read from.</summary>
+    public Dictionary<Guid, Guid> StagedRowStreams { get; } = [];
   }
 
   /// <summary>
@@ -945,6 +1006,14 @@ public sealed partial class PerspectiveRebuilder(
   [LoggerMessage(Level = LogLevel.Warning,
       Message = "Blue-green rebuild of {Perspective} failed and its shadow table {Shadow} could not be dropped; the next rebuild replaces it")]
   private static partial void LogBlueGreenShadowDropFailed(ILogger logger, Exception ex, string perspective, string shadow);
+
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "Blue-green rebuild of {Perspective}: staging load wrote {Rows} rows into {Shadow}; building its {Indexes} deferred indexes")]
+  private static partial void LogStagingLoaded(ILogger logger, string perspective, string shadow, long rows, int indexes);
+
+  [LoggerMessage(Level = LogLevel.Error,
+      Message = "Blue-green rebuild of {Perspective}: the shadow table refused row {Row}, so stream {StreamId} was not rebuilt")]
+  private static partial void LogStagedRowRefused(ILogger logger, Exception ex, string perspective, Guid row, Guid streamId);
 
   [LoggerMessage(Level = LogLevel.Information,
       Message = "Starting {Mode} rebuild of perspective {Perspective} — {StreamCount} streams; cursor persistence enabled={CursorPersistence}")]

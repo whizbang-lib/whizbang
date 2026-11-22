@@ -528,14 +528,16 @@ public static class ServiceCollectionExtensions {
   /// Registers the purge markers that keep a purged perspective row purged (<see cref="IPerspectivePurgeMarkerStore"/>)
   /// and the operator stream purge (<see cref="IStreamPurger"/>), both the shared Postgres implementations over a
   /// connection of their own per call, and the repair for composite children filed under the composite's stream
-  /// (<see cref="IFanoutChildRefiler"/>, #1798), and the built-in archive store (<c>IArchiveStore</c>, WS-3 S7). A host's
-  /// own registration wins.
+  /// (<see cref="IFanoutChildRefiler"/>, #1798), the re-sequence of received streams stored out of their origin's order
+  /// (<see cref="IReceivedStreamResequencer"/>, #1629), and the built-in archive store (<c>IArchiveStore</c>, WS-3 S7). A
+  /// host's own registration wins.
   /// </summary>
   /// <param name="services">The service collection.</param>
   /// <param name="connectionString">The service's database.</param>
   /// <docs>operations/infrastructure/purging-streams</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPurgeTests.cs:AddWhizbangPostgres_RegistersPurgeMarkersAndStreamPurger_BothOverloadsAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveStoreTests.cs:AddWhizbangPostgres_RegistersTheTableArchiveStore_AndTheTruncateWritesThroughItAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPurgeTests.cs:Resequence_OnADapperMigratedDatabase_StoresAReceivedStreamInItsOriginsOrderAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamSealingTests.cs:Finalize_ThroughTheRegisteredFinalizer_SealsTheStream_AndTheNextAppendThrowsAsync</tests>
   internal static void AddStreamPurge(IServiceCollection services, string connectionString) {
     services.TryAddSingleton<IPerspectivePurgeMarkerStore>(_ =>
@@ -610,6 +612,11 @@ public static class ServiceCollectionExtensions {
         jsonOptions: global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
         schema: null,
         logger: sp.GetService<ILogger<PostgresFanoutChildRefiler>>()));
+    services.TryAddSingleton<IReceivedStreamResequencer>(sp =>
+      new PostgresReceivedStreamResequencer(
+        ct => OpenConnectionAsync(connectionString, ct),
+        schema: null,
+        logger: sp.GetService<ILogger<PostgresReceivedStreamResequencer>>()));
   }
 
   /// <summary>

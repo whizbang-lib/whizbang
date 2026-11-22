@@ -117,7 +117,7 @@ public class StartupSettingsReportTests {
       await Assert.That(ConfigurationKeyDefaults.Library[$"{section}:CompressionLevel"]).IsEqualTo("4");
       await Assert.That(ConfigurationKeyDefaults.Library[$"{section}:MaxEventsPerChunk"]).IsEqualTo("10000");
       await Assert.That(ConfigurationKeyDefaults.Library[$"{section}:ConnectionName"]).IsEqualTo("default");
-      await Assert.That(ConfigurationKeyDefaults.Library[$"{section}:VerifyLocation"]).IsEqualTo("true");
+      await Assert.That(ConfigurationKeyDefaults.Library[$"{section}:LocationMismatch"]).IsEqualTo("Error");
     }
     var report = StartupSettingsReport.Build(null, KnownConfigurationKeys.Library, KnownConfigurationKeys.Sensitive, [],
       ConfigurationKeyDefaults.Library);

@@ -334,7 +334,7 @@ public class ConfigurationKeyManifestTests {
     foreach (var section in new[] { "Whizbang:Storage:AzureBlob:Archive", "Whizbang:Archive:AzureBlob" }) {
       await Assert.That(expected).Contains($"{section}:CompressionLevel=4").And.Contains($"{section}:ConnectionName=default")
         .And.Contains($"{section}:ContainerName=whizbang-archive").And.Contains($"{section}:MaxEventsPerChunk=10000")
-        .And.Contains($"{section}:VerifyLocation=true")
+        .And.Contains($"{section}:LocationMismatch=Error")
         .Because("a nested options object's defaults must reach the startup settings report");
     }
     await Assert.That(expected).Contains("Whizbang:Storage:AzureBlob:Offloads:ContainerName=whizbang-offload-bodies");

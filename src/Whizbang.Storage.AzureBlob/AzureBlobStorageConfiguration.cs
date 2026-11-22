@@ -116,11 +116,18 @@ internal static class AzureBlobStorageConfiguration {
       options.ConnectionName = connectionName;
       options.ConnectionNameBound = true;
     }
-    var verifyLocation = section[nameof(AzureBlobArchiveOptions.VerifyLocation)];
-    if (!string.IsNullOrWhiteSpace(verifyLocation)) {
-      options.VerifyLocation = bool.TryParse(verifyLocation, out var verify)
-        ? verify
-        : throw _unreadable(sectionName, nameof(AzureBlobArchiveOptions.VerifyLocation), verifyLocation);
+    // #2141: VerifyLocation was replaced by LocationMismatch, in either section. Refused rather than ignored, so an
+    // archive configured with it never changes behavior unannounced.
+    if (!string.IsNullOrWhiteSpace(section[REMOVED_VERIFY_LOCATION])) {
+      throw new InvalidOperationException(
+        $"{sectionName}:{REMOVED_VERIFY_LOCATION} was replaced by {AzureBlobStorageOptions.ARCHIVE_SECTION}:{nameof(AzureBlobArchiveOptions.LocationMismatch)} " +
+        "(#2141): VerifyLocation true is LocationMismatch Error, the default, and false is Ignore. Remove VerifyLocation, and set " +
+        "LocationMismatch to Error, Warning, Info or Ignore where the default does not fit.");
+    }
+    var locationMismatch = section[nameof(AzureBlobArchiveOptions.LocationMismatch)];
+    if (!string.IsNullOrWhiteSpace(locationMismatch)) {
+      options.LocationMismatch = AzureBlobArchiveOptions.LocationMismatchNamed(locationMismatch)
+        ?? throw LocationMismatchRefused(sectionName, locationMismatch);
     }
     options.CompressionLevel = _int(section, sectionName, nameof(AzureBlobArchiveOptions.CompressionLevel), options.CompressionLevel);
     options.MaxEventsPerChunk = _int(section, sectionName, nameof(AzureBlobArchiveOptions.MaxEventsPerChunk), options.MaxEventsPerChunk);
@@ -250,6 +257,12 @@ internal static class AzureBlobStorageConfiguration {
     }
     return new BlobServiceClient(serviceUri, credential).GetBlobContainerClient(containerName);
   }
+
+  // The setting an earlier release read in place of LocationMismatch.
+  private const string REMOVED_VERIFY_LOCATION = "VerifyLocation";
+
+  internal static InvalidOperationException LocationMismatchRefused(string sectionName, string value) =>
+    new($"{sectionName}:{nameof(AzureBlobArchiveOptions.LocationMismatch)} is '{value}'. {AzureBlobArchiveOptions.LOCATION_MISMATCH_VALUES}");
 
   internal static InvalidOperationException TierRefused(string sectionName, string value, string refusal) =>
     new($"{sectionName}:{nameof(AzureBlobArchiveOptions.AccessTier)} is '{value}'. {refusal}");

@@ -15,6 +15,7 @@ Whizbang:Archive:AzureBlob:ConnectionName
 Whizbang:Archive:AzureBlob:ConnectionString
 Whizbang:Archive:AzureBlob:ContainerName
 Whizbang:Archive:AzureBlob:DeleteAfter
+Whizbang:Archive:AzureBlob:LocationMismatch
 Whizbang:Archive:AzureBlob:MaxEventsPerChunk
 Whizbang:Archive:AzureBlob:ServiceUri
 Whizbang:Archive:AzureBlob:VerifyLocation
@@ -320,6 +321,7 @@ Whizbang:Storage:AzureBlob:Archive:ConnectionName
 Whizbang:Storage:AzureBlob:Archive:ConnectionString
 Whizbang:Storage:AzureBlob:Archive:ContainerName
 Whizbang:Storage:AzureBlob:Archive:DeleteAfter
+Whizbang:Storage:AzureBlob:Archive:LocationMismatch
 Whizbang:Storage:AzureBlob:Archive:MaxEventsPerChunk
 Whizbang:Storage:AzureBlob:Archive:ServiceUri
 Whizbang:Storage:AzureBlob:Archive:VerifyLocation
