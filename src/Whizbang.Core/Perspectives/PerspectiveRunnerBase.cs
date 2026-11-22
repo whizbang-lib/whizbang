@@ -1544,6 +1544,11 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     var hasWrittenUpdate = state.HasWrittenUpdate;
     var modelLoadedFromDb = state.ModelLoadedFromDb;
     var processedEvents = state.ProcessedEvents;
+    var target = new RowWriteTarget(
+              modelLoadedFromDb,
+              processedEvents,
+              state.ScopeWrite,
+              state.RowVersion);
     // The store says whether the row was written: its ordering guard can refuse a write quietly, and a row it
     // left untouched is not a changed row (#1342).
     return await SaveModelAndCheckpointAsync(
@@ -1551,16 +1556,9 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
               perspectiveName,
               updatedModel,
               hasWrittenUpdate,
-              state.LastSuccessfulEventId!.Value,
-              _checkpointType(state.LastSuccessfulEventType),
-              state.CheckpointCommitSequence,
-              _checkpointTime(state.LastSuccessfulEventAt),
-              modelLoadedFromDb,
-              processedEvents,
-              cancellationToken,
-              state.ScopeWrite.Scope,
-              state.ScopeWrite.ForceUpdate,
-              state.RowVersion
+              _checkpointOf(state),
+              target,
+              cancellationToken
           );
   }
 
@@ -1573,14 +1571,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       ApplyState state, CancellationToken cancellationToken) {
     var streamId = state.StreamId;
     var (metadata, rowStartedAt) = await _rowWriteStartAsync(
-        streamId,
-        state.LastSuccessfulEventId!.Value,
-        _checkpointType(state.LastSuccessfulEventType),
-        state.CheckpointCommitSequence,
-        _checkpointTime(state.LastSuccessfulEventAt),
-        state.ModelLoadedFromDb,
-        state.ProcessedEvents,
-        cancellationToken);
+        streamId, _checkpointOf(state), state.ModelLoadedFromDb, state.ProcessedEvents, cancellationToken);
     using var rowStart = global::Whizbang.Core.Perspectives.PerspectiveRowStart.Begin(streamId, rowStartedAt);
     return _prepareRowWrite(
         streamId, state.UpdatedModel!, metadata, state.ScopeWrite.Scope, state.ScopeWrite.ForceUpdate, state.RowVersion);
@@ -1836,21 +1827,21 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
               processedEvents,
               rebuilding);
           var partialScopeWrite = _resolveScopeWrite(lastScope, applyRead, modelLoadedFromDb, scopeEventScope);
+          var partialTarget = new RowWriteTarget(
+              modelLoadedFromDb,
+              processedEvents,
+              partialScopeWrite,
+              rowVersion);
           await SaveModelAndCheckpointAsync(
               streamId,
               perspectiveName,
               updatedModel,
               hasWrittenUpdate,
-              successful,
-              _checkpointType(lastSuccessfulEventType),
-              partialCheckpointCommitSequence,
-              _checkpointTime(lastSuccessfulEventAt),
-              modelLoadedFromDb,
-              processedEvents,
-              cancellationToken,
-              partialScopeWrite.Scope,
-              partialScopeWrite.ForceUpdate,
-              rowVersion
+              new RowCheckpoint(
+                  successful, _checkpointType(lastSuccessfulEventType), partialCheckpointCommitSequence,
+                  _checkpointTime(lastSuccessfulEventAt)),
+              partialTarget,
+              cancellationToken
           );
         }
       } catch (Exception saveEx) {
@@ -2078,6 +2069,27 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// <summary>The time a row write records: the last applied event's, or now when no event set one.</summary>
   private static DateTime _checkpointTime(DateTime? lastSuccessfulEventAt) => lastSuccessfulEventAt ?? DateTime.UtcNow;
 
+  /// <summary>The checkpoint a live apply's row write records: its last applied event.</summary>
+  private static RowCheckpoint _checkpointOf(ApplyState state) =>
+      new(
+          state.LastSuccessfulEventId!.Value,
+          _checkpointType(state.LastSuccessfulEventType),
+          state.CheckpointCommitSequence,
+          _checkpointTime(state.LastSuccessfulEventAt));
+
+  /// <summary>The checkpoint a row write records: the last applied event's id, type, commit sequence and time.</summary>
+  internal readonly record struct RowCheckpoint(Guid EventId, string EventType, long? CommitSequence, DateTime EventAt);
+
+  /// <summary>
+  /// The row a write lands on: whether it exists, the events folded into it (which date a row it inserts), the scope it
+  /// is written with, and the row version the write is checked against (issue #928).
+  /// </summary>
+  internal readonly record struct RowWriteTarget(
+      bool RowExists,
+      IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> Folded,
+      global::Whizbang.Core.Lenses.ScopeWrite Scope = default,
+      global::Whizbang.Core.Perspectives.PerspectiveRowVersion ExpectedVersion = default);
+
   /// <summary>
   /// The scope this apply writes, decided by the model's [InheritScope] over the row the apply read.
   /// </summary>
@@ -2112,16 +2124,9 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       string perspectiveName,
       TModel model,
       bool producedByApply,
-      Guid checkpointEventId,
-      string checkpointEventType,
-      long? checkpointCommitSequence,
-      DateTime checkpointEventAt,
-      bool rowExists,
-      IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> folded,
-      CancellationToken cancellationToken,
-      PerspectiveScope? scope = null,
-      bool forceUpdateScope = false,
-      global::Whizbang.Core.Perspectives.PerspectiveRowVersion expectedVersion = default) {
+      RowCheckpoint checkpoint,
+      RowWriteTarget target,
+      CancellationToken cancellationToken) {
 
     // The last check before the write (#1677): a row is stored only from a model an Apply produced, or the stored
     // row or snapshot an apply continues from, never from the scaffolded default built as Apply input.
@@ -2130,9 +2135,11 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     }
 
     var (metadata, rowStartedAt) = await _rowWriteStartAsync(
-        streamId, checkpointEventId, checkpointEventType, checkpointCommitSequence, checkpointEventAt, rowExists, folded,
-        cancellationToken);
+        streamId, checkpoint, target.RowExists, target.Folded, cancellationToken);
     using var rowStart = global::Whizbang.Core.Perspectives.PerspectiveRowStart.Begin(streamId, rowStartedAt);
+    var scope = target.Scope.Scope;
+    var forceUpdateScope = target.Scope.ForceUpdate;
+    var expectedVersion = target.ExpectedVersion;
 
     // Upsert model (insert or update): metadata.EventId records the last applied event so the next run can skip
     // already-applied events (see RunWithEventsAsync idempotency guard), and expectedVersion lands the write only on the
@@ -2181,13 +2188,11 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// </summary>
   private async Task<(global::Whizbang.Core.Lenses.PerspectiveMetadata Metadata, DateTime? RowStartedAt)> _rowWriteStartAsync(
       Guid streamId,
-      Guid checkpointEventId,
-      string checkpointEventType,
-      long? checkpointCommitSequence,
-      DateTime checkpointEventAt,
+      RowCheckpoint checkpoint,
       bool rowExists,
       IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> folded,
       CancellationToken cancellationToken) {
+    var (checkpointEventId, checkpointEventType, checkpointCommitSequence, checkpointEventAt) = checkpoint;
     // Build metadata that captures the last applied event's identity AND commit_sequence.
     // The runner reads metadata back on the next run (ReadForApplyAsync, or GetMetadataByStreamIdAsync) to filter
     // out already-applied events (idempotency across worker crashes between row upsert and
@@ -3023,17 +3028,21 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         // #2252: a Split class model's fold, taken before the write strips its promoted fields; null for any other model.
         using var foldBeforeWrite = rebuilding ? _snapshotBeforeWrite(updatedModel) : null;
         rowChanged = await SaveModelAndCheckpointAsync(
-            streamId, perspectiveName, updatedModel, producedByApply, checkpointEventId, _checkpointType(lastSuccessfulEventType),
-            replayCheckpointCommitSequence, _checkpointTime(lastSuccessfulEventAt),
-            rowVersion.State == global::Whizbang.Core.Perspectives.PerspectiveRowVersionState.Present,
-            outcome.FirstStreamEvent is { } firstStreamEvent ? [firstStreamEvent] : [],
-            cancellationToken,
-            // A rewind reads no stored scope, so it writes scope only if it recreates the row; an existing row keeps
-            // its scope (Always fields catch up on the next live apply).
-            global::Whizbang.Core.Lenses.ScopeInheritance.Resolve(
-                lastScope, rowScope: null, rowExists: false, _traits.InheritScopeOnCreate, _traits.InheritScopeAlways, scopeEventScope: null).Scope,
-            forceUpdateScope: false,
-            expectedVersion: rowVersion);
+            streamId, perspectiveName, updatedModel, producedByApply,
+            new RowCheckpoint(
+                checkpointEventId, _checkpointType(lastSuccessfulEventType), replayCheckpointCommitSequence,
+                _checkpointTime(lastSuccessfulEventAt)),
+            new RowWriteTarget(
+                rowVersion.State == global::Whizbang.Core.Perspectives.PerspectiveRowVersionState.Present,
+                outcome.FirstStreamEvent is { } firstStreamEvent ? [firstStreamEvent] : [],
+                // A rewind reads no stored scope, so it writes scope only if it recreates the row; an existing row keeps
+                // its scope (Always fields catch up on the next live apply).
+                new global::Whizbang.Core.Lenses.ScopeWrite(
+                    global::Whizbang.Core.Lenses.ScopeInheritance.Resolve(
+                        lastScope, rowScope: null, rowExists: false, _traits.InheritScopeOnCreate, _traits.InheritScopeAlways, scopeEventScope: null).Scope,
+                    ForceUpdate: false),
+                rowVersion),
+            cancellationToken);
         if (rowChanged && resurrected && startedPurged) {
           await _clearPurgeAsync(streamId, perspectiveName, cancellationToken);
         }

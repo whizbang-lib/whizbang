@@ -215,8 +215,8 @@ public class RunnerBaseSnapshotTests {
     var harness = new RbHarness();
 
     var written = await harness.Runner.SaveModelAndCheckpointAsync(
-      harness.StreamId, RbHarness.NAME, new RbModel { Id = harness.StreamId }, producedByApply: false, TrackedGuid.New().Value,
-      "type", null, DateTime.UnixEpoch, rowExists: false, [], CancellationToken.None);
+      harness.StreamId, RbHarness.NAME, new RbModel { Id = harness.StreamId }, producedByApply: false,
+      new(TrackedGuid.New().Value, "type", null, DateTime.UnixEpoch), new(RowExists: false, []), CancellationToken.None);
 
     await Assert.That(written).IsFalse();
     await Assert.That(harness.Rows.Writes).IsEqualTo(0);
