@@ -419,11 +419,35 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
     if (beforeVacuum is not null) {
       await beforeVacuum();
     }
+    await _flushThroughTheRowsCommitGroupsAsync(conn, long.Parse(horizon, CultureInfo.InvariantCulture), cancellationToken);
     // FREEZE (#2521): a plain vacuum that cannot take a page's cleanup lock, because another backend holds a pin on it for
     // the moment, prunes the page without marking it all-visible and moves on. An aggressive vacuum with every row due for
     // freezing needs that lock for each page, so it waits for the pin to go (wait_event BufferPin) and marks every page.
     // The pages end all-frozen as well, which an update reads in the visibility map exactly as it reads all-visible.
     await _executeAsync(conn, "VACUUM (FREEZE) wh_stream_lifecycle");
+  }
+
+  /// <summary>
+  /// Makes every row older than <paramref name="horizon"/> hintable (#2521). A commit is hinted on a row only once the WAL
+  /// is flushed through the commit LSN the commit log records for it, which is one LSN per group of
+  /// <see cref="CLOG_LSN_GROUP"/> transaction ids: the latest commit in the group. The rows' groups can hold ids at or
+  /// above the horizon, which other sessions (other databases, on a shared server) commit asynchronously, any time. So:
+  /// every id of those groups is taken (by this session, one transaction each, when nobody else has), none of them is
+  /// still running, and then one synchronous commit flushes the WAL through every commit made so far. From there each
+  /// group's LSN is flushed and stays so, whatever commits afterwards: the groups are full and finished.
+  /// </summary>
+  private static async Task _flushThroughTheRowsCommitGroupsAsync(NpgsqlConnection conn, long horizon, CancellationToken cancellationToken) {
+    var groupsEnd = (horizon + CLOG_LSN_GROUP - 1) / CLOG_LSN_GROUP * CLOG_LSN_GROUP;
+    while (await _scalarAsync(conn, "SELECT pg_current_xact_id()::text::bigint") + 1 < groupsEnd) {
+      // Each call is a transaction of its own and takes one id.
+    }
+    while (await _scalarAsync(conn, "SELECT pg_snapshot_xmin(pg_current_snapshot())::text::bigint") < groupsEnd) {
+      await _executeAsync(conn, "SELECT pg_sleep(0.05)");
+      cancellationToken.ThrowIfCancellationRequested();
+    }
+    if (!await _flushCommitsAsync(conn)) {
+      throw new InvalidOperationException("The synchronous commit did not flush the WAL through the point written before it.");
+    }
   }
 
   /// <summary>
