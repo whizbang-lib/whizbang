@@ -2930,6 +2930,11 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         RowVersion = rowVersion,
         ReplayFromEventId = replayFromEventId,
         LastSuccessfulEventId = replayFromEventId,
+        // #2519: the frontier the row is stamped with covers everything the row holds, the snapshot's events included, so
+        // it starts at the floor's event. Seeded from the events replayed alone, it named the highest id read after the
+        // floor; when the floor's event has the stream's highest id (events derived from an older cause stored after a
+        // newer one), that sat below the id the row is stamped at, and a versioned-apply row refused the replay's write.
+        FrontierEventId = replayFromEventId,
         UpdatedModel = currentModel,
         // True once the model is one an Apply produced: a snapshot's model was, the scaffolded empty one is only Apply
         // input. A replay whose every event the perspective declines writes nothing, exactly as the live drain does,
@@ -3552,6 +3557,8 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       RowVersion = rowVersion,
       ReplayFromEventId = replayFromEventId,
       LastSuccessfulEventId = replayFromEventId,
+      // #2519: the row holds the floor's events too, so the frontier the row is stamped with starts at the floor's event.
+      FrontierEventId = replayFromEventId,
     };
     var anchorEventId = replayFromEventId;
     var pass = 0;
