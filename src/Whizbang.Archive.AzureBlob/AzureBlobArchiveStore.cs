@@ -538,8 +538,13 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     if (_onMismatch == ArchiveLocationMismatchHandling.Error) {
       throw new ArchiveLocationMismatchException(streamId, operation, first.LocationId, first.Recorded, ConfiguredLocation);
     }
-    LogMismatchAllowed(_logger, _mismatchLevel, operation, streamId, ConfiguredLocation, mismatched.Count,
-      first.Recorded ?? (object)NO_LOCATION, _onMismatch);
+    var recorded = first.Recorded ?? (object)NO_LOCATION;
+    // One method per level, so each stays within the parameter limit; the text is the same apart from the setting's value.
+    if (_onMismatch == ArchiveLocationMismatchHandling.Warning) {
+      LogMismatchAllowedWarning(_logger, operation, streamId, ConfiguredLocation, mismatched.Count, recorded);
+    } else {
+      LogMismatchAllowedInfo(_logger, operation, streamId, ConfiguredLocation, mismatched.Count, recorded);
+    }
   }
 
   // The level a mismatch that does not stop the archive is logged at.
@@ -970,11 +975,15 @@ public sealed partial class AzureBlobArchiveStore : IArchiveStore {
     Message = "The owner marker of archive container {Container} could not be written or read")]
   static partial void LogMarkerUnavailable(ILogger logger, Exception exception, string container);
 
-  [LoggerMessage(
-    Message = "Archive {Operation} of stream {StreamId} goes ahead in the configured location ({Configured}) although {Count} of its record(s) name another ({Recorded}): Whizbang:Archive:AzureBlob:LocationMismatch is {Handling}. Repoint the location to record where the objects are now")]
-  static partial void LogMismatchAllowed(
-    ILogger logger, LogLevel level, string operation, Guid streamId, ArchiveLocation configured, int count, object recorded,
-    ArchiveLocationMismatchHandling handling);
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Archive {Operation} of stream {StreamId} goes ahead in the configured location ({Configured}) although {Count} of its record(s) name another ({Recorded}): Whizbang:Archive:AzureBlob:LocationMismatch is Warning. Repoint the location to record where the objects are now")]
+  static partial void LogMismatchAllowedWarning(
+    ILogger logger, string operation, Guid streamId, ArchiveLocation configured, int count, object recorded);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Archive {Operation} of stream {StreamId} goes ahead in the configured location ({Configured}) although {Count} of its record(s) name another ({Recorded}): Whizbang:Archive:AzureBlob:LocationMismatch is Info. Repoint the location to record where the objects are now")]
+  static partial void LogMismatchAllowedInfo(
+    ILogger logger, string operation, Guid streamId, ArchiveLocation configured, int count, object recorded);
 
   [LoggerMessage(
     Message = "Deleting {Count} queued archive object(s) recorded at another location from the configured location ({Configured}): Whizbang:Archive:AzureBlob:LocationMismatch is {Handling}")]
