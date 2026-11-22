@@ -140,7 +140,9 @@ public partial class DapperPostgresEventStore(
   /// </summary>
   /// <remarks>
   /// The stream is read in its own order: <c>version</c> ascending, <c>event_id</c> breaking ties, as the EF Core
-  /// store reads it, and each envelope carries its version (<see cref="MessageEnvelope{T}.LocalStreamVersion"/>).
+  /// store reads it, and each envelope carries its version (<see cref="MessageEnvelope{T}.LocalStreamVersion"/>) and
+  /// its origin (<see cref="MessageEnvelope{T}.SourceServiceId"/>, <see cref="MessageEnvelope{T}.SourceCommitSequence"/>),
+  /// which the replay deals a received stream into its origin's order by (#2509).
   /// An event id is minted before commit, so two producers can append in the opposite order to their ids (#1003);
   /// a commit sequence stamped after the fact can run backward against the versions (#1352). Either order would
   /// replay the stream backward.
@@ -148,6 +150,7 @@ public partial class DapperPostgresEventStore(
   /// <docs>fundamentals/events/event-store#read-order</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.EdgeCaseTests.cs:ReadPolymorphicAsync_IdsAndCommitsRunBackwardToVersions_ReadsInStreamOrderAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStoredMetadataRowValuesTests.cs:EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventOriginReadTests.cs:Replay_OfAReceivedStreamReadOnDapper_FoldsInItsOriginsOrderAsync</tests>
   public override async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
     Guid streamId,
     Guid? fromEventId,
@@ -212,7 +215,7 @@ public partial class DapperPostgresEventStore(
       eb.event_data::text AS EventData,
       eb.metadata::text AS Metadata,
       es.scope::text AS Scope,
-      es.version AS Version
+      es.version AS Version, es.origin_service_id AS OriginServiceId, es.origin_commit_sequence AS OriginCommitSequence
     FROM wh_event_store es
     LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
     WHERE es.stream_id = @StreamId AND es.version >= @FromSequence
@@ -232,7 +235,7 @@ public partial class DapperPostgresEventStore(
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.EdgeCaseTests.cs:GetEventsBetweenPolymorphicAsync_BetweenEventsTheStreamDoesNotHold_SelectsByTheirIdsAsync</tests>
   protected override string GetEventsBetweenSql() => @"
     SELECT es.event_id AS EventId, es.event_type AS EventType, eb.event_data::text AS EventData, eb.metadata::text AS Metadata, es.scope::text AS Scope,
-           es.version AS Version
+           es.version AS Version, es.origin_service_id AS OriginServiceId, es.origin_commit_sequence AS OriginCommitSequence
     FROM wh_event_store es
     LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
     WHERE es.stream_id = @StreamId
@@ -443,7 +446,7 @@ public partial class DapperPostgresEventStore(
                  eb.event_data::text AS EventData,
                  eb.metadata::text AS Metadata,
                  es.scope::text AS Scope,
-                 es.version AS Version
+                 es.version AS Version, es.origin_service_id AS OriginServiceId, es.origin_commit_sequence AS OriginCommitSequence
           FROM wh_event_store es
           LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
           WHERE es.stream_id = @StreamId
@@ -455,7 +458,7 @@ public partial class DapperPostgresEventStore(
                  eb.event_data::text AS EventData,
                  eb.metadata::text AS Metadata,
                  es.scope::text AS Scope,
-                 es.version AS Version
+                 es.version AS Version, es.origin_service_id AS OriginServiceId, es.origin_commit_sequence AS OriginCommitSequence
           FROM wh_event_store es
           LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
           WHERE es.stream_id = @StreamId AND es.event_id > @FromEventId
@@ -498,7 +501,7 @@ public partial class DapperPostgresEventStore(
                  eb.event_data::text AS EventData,
                  eb.metadata::text AS Metadata,
                  es.scope::text AS Scope,
-                 es.version AS Version,
+                 es.version AS Version, es.origin_service_id AS OriginServiceId, es.origin_commit_sequence AS OriginCommitSequence,
                  CASE
                    WHEN es.version = 0 THEN TRUE
                    WHEN es.version = 1 THEN NOT EXISTS (
@@ -517,6 +520,8 @@ public partial class DapperPostgresEventStore(
       MetadataJson = row.Metadata,
       ScopeJson = row.Scope,
       EventId = row.EventId,
+      OriginServiceId = row.OriginServiceId,
+      OriginCommitSequence = row.OriginCommitSequence,
     };
 
     var envelope = _adapter.FromJsonb<TMessage>(jsonb);
@@ -559,7 +564,7 @@ public partial class DapperPostgresEventStore(
         var eventData = _deserializeEventData(jsonb, concreteType);
         var (messageId, hops) = _deserializeMetadataAndHops(jsonb);
         StoredScope.RestoreInto(hops, StoredScope.Read(jsonb.ScopeJson, JsonOptions));
-        var envelope = _buildPolymorphicEnvelope(eventData, messageId, hops);
+        var envelope = _buildPolymorphicEnvelope(eventData, messageId, hops, jsonb);
         envelope.LocalCommitSequence = raw.CommitSequence;
         results.Add(envelope);
       } catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException) {
@@ -587,7 +592,7 @@ public partial class DapperPostgresEventStore(
     var (messageId, hops) = _deserializeMetadataAndHops(jsonb);
     StoredScope.RestoreInto(hops, StoredScope.Read(jsonb.ScopeJson, JsonOptions));
 
-    var envelope = _buildPolymorphicEnvelope(eventData, messageId, hops);
+    var envelope = _buildPolymorphicEnvelope(eventData, messageId, hops, jsonb);
     envelope.LocalStreamVersion = row.Version;
     envelope.IsFirstInLocalStream = row.IsFirstInStream;
     return envelope;
@@ -621,6 +626,8 @@ public partial class DapperPostgresEventStore(
       MetadataJson = row.Metadata,
       ScopeJson = row.Scope,
       EventId = row.EventId,
+      OriginServiceId = row.OriginServiceId,
+      OriginCommitSequence = row.OriginCommitSequence,
     };
   }
 
@@ -640,7 +647,8 @@ public partial class DapperPostgresEventStore(
   private static MessageEnvelope<IEvent> _buildPolymorphicEnvelope(
     object eventData,
     Guid messageId,
-    List<MessageHop> hops) {
+    List<MessageHop> hops,
+    JsonbPersistenceModel jsonb) {
 
     if (eventData is not IEvent eventPayload) {
       throw new InvalidOperationException(
@@ -651,7 +659,10 @@ public partial class DapperPostgresEventStore(
       MessageId = MessageId.From(messageId),
       Payload = eventPayload,
       Hops = hops,
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+      // #2509: the event's origin, when the read selected it, as the EF Core store's replay read carries it.
+      SourceServiceId = jsonb.OriginServiceId ?? Guid.Empty,
+      SourceCommitSequence = jsonb.OriginCommitSequence ?? 0,
     };
   }
 

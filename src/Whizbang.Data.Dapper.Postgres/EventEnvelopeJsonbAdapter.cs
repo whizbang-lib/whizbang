@@ -108,6 +108,7 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
   /// </summary>
   /// <tests>No tests found</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStoredMetadataRowValuesTests.cs:EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventOriginReadTests.cs:EveryReader_CarriesEachEventsOrigin_OntoItsEnvelopeAsync</tests>
   public MessageEnvelope<TMessage> FromJsonb<TMessage>(JsonbPersistenceModel jsonb) {
     ArgumentNullException.ThrowIfNull(jsonb);
 
@@ -143,6 +144,9 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
       Payload = (TMessage)payload,
       Hops = hops,
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+      // #2509: the event's origin, when the read selected it, so a replay deals a received stream into its origin's order.
+      SourceServiceId = jsonb.OriginServiceId ?? Guid.Empty,
+      SourceCommitSequence = jsonb.OriginCommitSequence ?? 0,
       Priority = metadataDict.TryGetValue("pri", out var pri) && pri.ValueKind == JsonValueKind.Number
         ? pri.GetInt32()
         : Whizbang.Core.Priority.WorkPriority.UNDECLARED,
