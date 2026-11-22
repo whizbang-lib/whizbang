@@ -1680,6 +1680,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("    // convention plugin, and the rows it reads were written as numbers. After the extension, so");
       sb.AppendLine("    // the walk sees what the consumer configured too.");
       sb.AppendLine("    global::Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalConvention.Apply(modelBuilder);");
+      sb.AppendLine("    // A strongly-typed id is a uuid scalar, stored in a document as the UUID string the atomic upsert");
+      sb.AppendLine("    // writes, whether or not this context carries the options extension whose type mapping makes it one");
+      sb.AppendLine("    // (#2518).");
+      sb.AppendLine("    global::Whizbang.Data.EFCore.Postgres.Perspectives.WhizbangIdConvention.Apply(modelBuilder);");
       sb.AppendLine("  }");
       sb.AppendLine();
       sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);

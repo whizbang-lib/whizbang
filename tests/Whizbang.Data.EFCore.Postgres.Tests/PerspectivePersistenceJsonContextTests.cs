@@ -20,20 +20,19 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <remarks>
 /// The critical invariant: [WhizbangId] struct properties (e.g., TestOrderId : Value=Guid)
-/// must serialize as nested objects {"Value":"&lt;guid&gt;"}, NOT as flattened primitive strings.
-/// EF treats every non-primitive property as structural; if our writer flattens via the
-/// WhizbangIdConverter the bytes diverge and EF's reader rejects them.
-/// This context exists specifically to bypass the WhizbangIdConverter for perspective TModels.
+/// serialize as the UUID string, the form Entity Framework writes under WhizbangIdTypeMapping
+/// (#2518). A release before stored them as objects {"Value":"&lt;guid&gt;"}; the reader still takes
+/// that form, counted, until the stored-form rewrite has reached every row.
 /// </remarks>
 [Category("Shard1")]
 public class PerspectivePersistenceJsonContextTests {
   /// <summary>
   /// Locks the byte-format invariant for [WhizbangId] struct properties on perspective TModels.
   /// The Order TModel has a TestOrderId OrderId property; through Path 1, OrderId MUST
-  /// serialize as a nested {"Value":"..."} object so the bytes match EF's ComplexProperty writer.
+  /// serialize as the UUID string so the bytes match EF's writer under the id's scalar type mapping (#2518).
   /// </summary>
   [Test]
-  public async Task Serialize_OrderWithWhizbangIdProperty_EmitsNestedValueObjectAsync() {
+  public async Task Serialize_OrderWithWhizbangIdProperty_EmitsTheUuidStringAsync() {
     // Arrange
     var testGuid = Guid.Parse("019e244a-6bda-78a9-a08f-a1011c9c31dd");
     var order = new Order {
@@ -41,21 +40,20 @@ public class PerspectivePersistenceJsonContextTests {
       Amount = 100.00m,
       Status = "Created"
     };
-    // CreateOptions chains: PerspectivePersistenceJsonContext (object-mode [WhizbangId]) +
+    // CreateOptions chains: PerspectivePersistenceJsonContext (scalar [WhizbangId]) +
     // MessageJsonContext (perspective TModels and other discovered messages).
     // Order's JsonTypeInfo comes from MessageJsonContext; OrderId resolution falls through
-    // back to PerspectivePersistenceJsonContext (first in the chain) and returns object-mode.
+    // back to PerspectivePersistenceJsonContext (first in the chain) and returns the scalar form.
     var options = PerspectivePersistenceJsonContext.CreateOptions(MessageJsonContext.Default);
     var typeInfo = options.GetTypeInfo(typeof(Order));
 
     // Act
     var json = JsonSerializer.Serialize(order, typeInfo);
 
-    // Assert — OrderId must appear as a nested object with "Value" property,
-    // NOT as a flattened primitive string. This is what EF Core 10's
-    // ComplexProperty().ToJson() writer produces for value-object properties.
-    await Assert.That(json).Contains("\"OrderId\":{\"Value\":\"019e244a-6bda-78a9-a08f-a1011c9c31dd\"}");
-    await Assert.That(json).DoesNotContain("\"OrderId\":\"019e244a-6bda-78a9-a08f-a1011c9c31dd\"");
+    // Assert — OrderId appears as the UUID string, not the object {"Value": ...} a release before
+    // #2518 stored. This is what Entity Framework writes under WhizbangIdTypeMapping.
+    await Assert.That(json).Contains("\"OrderId\":\"019e244a-6bda-78a9-a08f-a1011c9c31dd\"");
+    await Assert.That(json).DoesNotContain("\"Value\"");
   }
 
   /// <summary>
@@ -118,15 +116,9 @@ public class PerspectivePersistenceJsonContextTests {
   }
 
   /// <summary>
-  /// An identifier stored in the object form reads back, and one stored as the scalar string an
-  /// older row may hold reads back too.
+  /// An identifier stored as the UUID string reads back, and one stored in the object form a release
+  /// before #2518 wrote reads back too.
   /// </summary>
-  /// <remarks>
-  /// A document stored as one value once took its identifiers in the scalar form when the atomic
-  /// path was unavailable and Entity Framework wrote it under the default profile, whose reader
-  /// flattens an identifier to a string. Those rows are still rows. The scalar read is counted, so
-  /// the tolerance can go once the count says nothing needs it.
-  /// </remarks>
   [Test]
   public async Task Deserialize_OrderWithEitherIdentifierForm_ReadsTheIdentifierAsync() {
     var options = PerspectivePersistenceJsonContext.CreateOptions(MessageJsonContext.Default);
@@ -139,7 +131,7 @@ public class PerspectivePersistenceJsonContextTests {
 
     await Assert.That(fromObject.OrderId.Value).IsEqualTo(Guid.Parse("019e244a-6bda-78a9-a08f-a1011c9c31dd"));
     await Assert.That(fromScalar.OrderId.Value).IsEqualTo(Guid.Parse("019e244a-6bda-78a9-a08f-a1011c9c31dd"))
-      .Because("a row written under the default profile holds the scalar form, and it is still a row");
+      .Because("the UUID string is the stored form since #2518");
   }
 
   /// <summary>Any other token is refused with a message naming the type and the forms accepted.</summary>

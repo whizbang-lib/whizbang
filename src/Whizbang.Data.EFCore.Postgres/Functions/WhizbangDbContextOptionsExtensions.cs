@@ -250,6 +250,11 @@ internal sealed class WhizbangOptionsExtension : IDbContextOptionsExtension {
     // Framework asks the type mapping source while it discovers a complex type's members, so the mapping has to be
     // answered there. A key lookup on one is translated by DictionaryMemberTranslatorPlugin, above.
     services.AddSingleton<IRelationalTypeMappingSourcePlugin, DictionaryMemberTypeMappingSourcePlugin>();
+
+    // A strongly-typed id is a uuid scalar (#2518): inside a document a UUID string, like a Guid and like the transport
+    // writes it, rather than the object {"Value": ...} Entity Framework would otherwise discover. Answered at the same
+    // point as the dictionary mapping, for the same reason.
+    services.AddSingleton<IRelationalTypeMappingSourcePlugin, WhizbangIdTypeMappingSourcePlugin>();
   }
 
   public void Validate(IDbContextOptions options) {

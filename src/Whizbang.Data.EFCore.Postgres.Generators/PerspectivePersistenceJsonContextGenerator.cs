@@ -322,28 +322,26 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
   }
 
   /// <summary>
-  /// Emits the per-WhizbangId factory method pair: object-mode JsonTypeInfo and its nullable counterpart.
-  /// The object-mode form writes the struct as a single-property object, <c>{"Value":"&lt;guid&gt;"}</c>,
-  /// the JSON shape EF Core 10's writer produces for the same property, and reads that shape or the
-  /// scalar string a row written under the default profile holds.
+  /// Emits the per-WhizbangId factory method pair: the document JsonTypeInfo and its nullable counterpart.
+  /// It writes the id as a UUID string, the JSON shape Entity Framework's writer produces for the same
+  /// property under the id's scalar type mapping (#2518), and reads that shape or the object
+  /// <c>{"Value":"&lt;guid&gt;"}</c> a release before #2518 stored.
   /// </summary>
   /// <remarks>
-  /// A converter rather than object metadata, because object metadata reads the object form and
-  /// nothing else. A document stored as one value once took its identifiers in the scalar form when
-  /// the atomic path was unavailable and Entity Framework wrote it under the default profile; those
-  /// rows are still rows. The scalar read is counted, so the tolerance can go once nothing needs it.
+  /// The object read is counted, so the tolerance can go once the stored-form rewrite has reached every row.
+  /// The read goes through the id's unchecked constructor: a stored row is whatever was persisted.
   /// </remarks>
   private static void _emitWhizbangIdFactory(StringBuilder sb, WhizbangIdInfo info) {
     var fqn = info.FullyQualifiedName;
     sb.AppendLine($"  private sealed class _{info.TypeName}DocumentConverter : JsonConverter<{fqn}> {{");
     sb.AppendLine($"    public override {fqn} Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {{");
     sb.AppendLine("      if (reader.TokenType == JsonTokenType.String) {");
-    sb.AppendLine($"        global::Whizbang.Core.Perspectives.StoredFormFallbacks.ScalarIdentifierRead(\"{info.TypeName}\");");
     sb.AppendLine($"        return new {fqn}(reader.GetGuid());");
     sb.AppendLine(CLOSE_BRACE_INDENT_6);
     sb.AppendLine("      if (reader.TokenType != JsonTokenType.StartObject) {");
-    sb.AppendLine($"        throw new JsonException($\"A stored {info.TypeName} must be an object holding a Value or a string, but the document holds {{reader.TokenType}}\");");
+    sb.AppendLine($"        throw new JsonException($\"A stored {info.TypeName} must be a UUID string or an object holding a Value, but the document holds {{reader.TokenType}}\");");
     sb.AppendLine(CLOSE_BRACE_INDENT_6);
+    sb.AppendLine($"      global::Whizbang.Core.Perspectives.StoredFormFallbacks.ObjectFormIdentifierRead(\"{info.TypeName}\");");
     sb.AppendLine("      global::System.Guid value = default;");
     sb.AppendLine("      var found = false;");
     sb.AppendLine("      while (reader.Read() && reader.TokenType != JsonTokenType.EndObject) {");
@@ -362,9 +360,7 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();
     sb.AppendLine($"    public override void Write(Utf8JsonWriter writer, {fqn} value, JsonSerializerOptions options) {{");
-    sb.AppendLine("      writer.WriteStartObject();");
-    sb.AppendLine("      writer.WriteString(\"Value\", value.Value);");
-    sb.AppendLine("      writer.WriteEndObject();");
+    sb.AppendLine("      writer.WriteStringValue(value.Value);");
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine("  }");
     sb.AppendLine();

@@ -905,6 +905,12 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterValueMember<global::{id.FullyQualifiedName}>(" +
         "static id => id.Value);"
       );
+      // The id's stored form, loaded through its unchecked constructor, so a storage integration can map the id as a
+      // Guid without reflection (#2518).
+      guidConversions.AppendLine(
+        $"    global::Whizbang.Core.WhizbangIdForms.Register<global::{id.FullyQualifiedName}>(" +
+        $"static guid => new global::{id.FullyQualifiedName}(guid));"
+      );
     }
     template = TemplateUtilities.ReplaceRegion(
       template,

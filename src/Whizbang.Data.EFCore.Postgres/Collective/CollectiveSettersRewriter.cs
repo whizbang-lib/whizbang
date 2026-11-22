@@ -29,7 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 /// serialized <c>(PathName, JsonValue, IsNull)</c> triples. Values are
 /// serialized with the <see cref="SerializationProfile.Persistence"/> profile
 /// so they match byte-for-byte how the column stores them (e.g. WhizbangId
-/// object-mode, plain Guid as a JSON string, null as JSON null).
+/// or plain Guid as a JSON string, null as JSON null).
 /// </para>
 /// <para>
 /// Constraint matrix:
@@ -55,7 +55,7 @@ namespace Whizbang.Data.EFCore.Postgres.Collective;
 [SuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "Captured value sub-expressions are compiled from spec setter metadata known at build time, not synthesized at runtime.")]
 internal static class CollectiveSettersRewriter {
   // Persistence-profile options so a value serializes byte-for-byte the way the jsonb column stores it
-  // (e.g. WhizbangId object-mode, plain Guid as a JSON string, null as JSON null).
+  // (e.g. a WhizbangId or a plain Guid as a JSON string, null as JSON null).
   private static readonly JsonSerializerOptions _persistenceJsonOptions =
     JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Persistence);
 

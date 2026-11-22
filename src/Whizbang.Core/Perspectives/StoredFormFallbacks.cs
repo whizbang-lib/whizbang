@@ -90,15 +90,14 @@ public static class StoredFormFallbacks {
     }
   }
 
-  /// <summary>Records that an identifier of this type was read in the scalar form.</summary>
+  /// <summary>Records that an identifier of this type was read in the object form, <c>{"Value": ...}</c>.</summary>
   /// <param name="typeName">The identifier type's name.</param>
   /// <remarks>
-  /// A document stored as one value once took its identifiers in the scalar form when the atomic
-  /// path was unavailable and Entity Framework wrote it under the default profile. The persistence
-  /// readers store an identifier as an object and accept the scalar too, for now; this count is
-  /// what decides when they can stop.
+  /// A release before #2518 stored a strongly-typed id inside a document as an object; both writers now store it as a
+  /// UUID string. The stored-form rewrite converts old rows; until it has, the readers take either form, and this count
+  /// is what says the rewrite has not reached a row.
   /// </remarks>
-  public static void ScalarIdentifierRead(string typeName) {
+  public static void ObjectFormIdentifierRead(string typeName) {
     ArgumentNullException.ThrowIfNull(typeName);
     _identifierFallbacks.Add(1, new KeyValuePair<string, object?>("type", typeName));
 
@@ -107,7 +106,7 @@ public static class StoredFormFallbacks {
       first = _announcedTypes.Add(typeName);
     }
     if (first) {
-      StoredFormFallbacksLog.ScalarIdentifierRead(_logger, typeName, IDENTIFIER_INSTRUMENT_NAME);
+      StoredFormFallbacksLog.ObjectFormIdentifierRead(_logger, typeName, IDENTIFIER_INSTRUMENT_NAME);
     }
   }
 
@@ -161,7 +160,7 @@ public static class StoredFormFallbacks {
       description: "Stored temporals read as a rendering where the canonical number was expected; tagged by kind");
     _identifierFallbacks = meter.CreateCounter<long>(
       IDENTIFIER_INSTRUMENT_NAME,
-      description: "Stored identifiers read in the scalar form where the object form was expected; tagged by type");
+      description: "Stored identifiers read in the object form where the UUID string was expected; tagged by type");
     _dictionaryFallbacks = meter.CreateCounter<long>(
       DICTIONARY_INSTRUMENT_NAME,
       description: "Stored dictionaries read as a JSON object where the array of key/value pairs was expected; tagged by type");
@@ -182,11 +181,10 @@ internal static partial class StoredFormFallbacksLog {
   [LoggerMessage(
       EventId = 2,
       Level = LogLevel.Warning,
-      Message = "A stored {Type} identifier was read in its scalar form rather than as an object, "
-              + "so the row was written outside the atomic path under the wire's profile. Every such "
-              + "read is counted on {Instrument} by type; a later release stops accepting the scalar "
-              + "form")]
-  public static partial void ScalarIdentifierRead(ILogger logger, string type, string instrument);
+      Message = "A stored {Type} identifier was read as an object holding a Value rather than as a UUID "
+              + "string, so the startup rewrite did not reach the row. Every such read is counted on "
+              + "{Instrument} by type; a later release stops accepting the object form")]
+  public static partial void ObjectFormIdentifierRead(ILogger logger, string type, string instrument);
 
   [LoggerMessage(
       EventId = 3,

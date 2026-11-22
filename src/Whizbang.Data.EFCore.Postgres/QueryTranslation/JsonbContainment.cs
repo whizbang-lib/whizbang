@@ -309,7 +309,7 @@ public static class JsonbContainment {
       return _equality(args[0], args[1]);
     }
 
-    SqlExpression payload = _normalized(args[1], json, json.Json.TypeMapping);
+    SqlExpression payload = _normalized(_withoutStrongIdConversion(args[1], json), json, json.Json.TypeMapping);
 
     // Build the containment document from the inside out, so a.b.c becomes {"a":{"b":{"c":value}}}.
     for (var i = json.Path.Count - 1; i >= 0; i--) {
@@ -416,6 +416,28 @@ public static class JsonbContainment {
   /// decimal written with a different number of trailing zeros still matches.
   /// </para>
   /// </remarks>
+  /// <summary>
+  /// A strongly-typed id's value as the id itself, carrying the member's id mapping, rather than the conversion to
+  /// <see cref="Guid"/> the rewriter wrapped it in to reach the Guid overload (#2518).
+  /// </summary>
+  /// <remarks>
+  /// The rewriter runs after the query's parameters are extracted, so its conversion stays in the tree around a
+  /// parameter typed by the id, which no mapping describes as a Guid. Given the member's mapping, the parameter is sent
+  /// through the id's converter as a uuid, which <c>jsonb_build_object</c> renders as the UUID string the row holds.
+  /// </remarks>
+  private static SqlExpression _withoutStrongIdConversion(SqlExpression value, JsonScalarExpression member) {
+    if (member.TypeMapping is not Perspectives.WhizbangIdTypeMapping mapping
+        || value is not SqlUnaryExpression { OperatorType: ExpressionType.Convert } conversion) {
+      return value;
+    }
+
+    return conversion.Operand switch {
+      SqlParameterExpression parameter => parameter.ApplyTypeMapping(mapping),
+      SqlConstantExpression constant => constant.ApplyTypeMapping(mapping),
+      _ => value,
+    };
+  }
+
   private static SqlExpression _normalized(
     SqlExpression value, JsonScalarExpression member, RelationalTypeMapping jsonb) {
     var clrType = Nullable.GetUnderlyingType(member.Type) ?? member.Type;
@@ -610,7 +632,8 @@ public static class JsonbContainment {
   /// would offer a property whose document the emission cannot build correctly.
   /// </para>
   /// <para>
-  /// One conversion is not a hazard. An enumeration to its own underlying number is how every
+  /// Two conversions are not a hazard. A strongly-typed id to its Guid is how every id is stored, as the UUID string
+  /// jsonb renders a uuid as (#2518). An enumeration to its own underlying number is how every
   /// enumeration is stored, and the overload chosen for it is the underlying type's, so the document
   /// is built in exactly the stored form. Treating that as converted would exclude every enumeration
   /// for the wrong reason. An enumeration stored as its name is a real conversion and is excluded,
@@ -625,11 +648,18 @@ public static class JsonbContainment {
     }
 
     var model = Nullable.GetUnderlyingType(clrType) ?? clrType;
+    var provider = Nullable.GetUnderlyingType(converter.ProviderClrType) ?? converter.ProviderClrType;
+
+    // A strongly-typed id to its Guid is how every id is stored (#2518): the document is built from the Guid, which
+    // jsonb renders as the same lowercase UUID string the writers store.
+    if (provider == typeof(Guid) && typeof(Whizbang.Core.IWhizbangId).IsAssignableFrom(model)) {
+      return true;
+    }
+
     if (!model.IsEnum) {
       return false;
     }
 
-    var provider = Nullable.GetUnderlyingType(converter.ProviderClrType) ?? converter.ProviderClrType;
     return provider == Enum.GetUnderlyingType(model);
   }
 

@@ -250,18 +250,17 @@ public class CanonicalTemporalReaderToleranceTests {
   }
 
   /// <summary>
-  /// An identifier read in its scalar form is counted and announced the same way, on its own
+  /// An identifier read in its object form is counted and announced the same way, on its own
   /// instrument, tagged by type.
   /// </summary>
   /// <remarks>
-  /// A document stored as one value once took its identifiers in the scalar form when the atomic
-  /// path was unavailable and Entity Framework wrote it under the default profile. The persistence
-  /// readers store an identifier as an object and now accept the scalar too; the count is what
-  /// decides when they can stop.
+  /// A release before #2518 stored a strongly-typed id inside a document as <c>{"Value": ...}</c>; both
+  /// writers now store the UUID string. The readers accept the object form until the stored-form rewrite
+  /// has reached every row; the count is what says it has not.
   /// </remarks>
   [Test]
   [NotInParallel]
-  public async Task ReadingAScalarIdentifierIsCountedAndAnnouncedAsync() {
+  public async Task ReadingAnObjectFormIdentifierIsCountedAndAnnouncedAsync() {
     var measurements = new List<(long Value, string? Type)>();
     using var listener = new MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
@@ -283,9 +282,9 @@ public class CanonicalTemporalReaderToleranceTests {
     var logger = new FakeLogger();
     StoredFormFallbacks.Configure(meterFactory: null, logger: logger);
 
-    StoredFormFallbacks.ScalarIdentifierRead("OrderId");
-    StoredFormFallbacks.ScalarIdentifierRead("OrderId");
-    StoredFormFallbacks.ScalarIdentifierRead("CustomerId");
+    StoredFormFallbacks.ObjectFormIdentifierRead("OrderId");
+    StoredFormFallbacks.ObjectFormIdentifierRead("OrderId");
+    StoredFormFallbacks.ObjectFormIdentifierRead("CustomerId");
 
     await Assert.That(measurements.Count).IsEqualTo(3);
     await Assert.That(string.Join(",", measurements.Select(m => m.Type))).IsEqualTo("OrderId,OrderId,CustomerId");
@@ -293,7 +292,7 @@ public class CanonicalTemporalReaderToleranceTests {
 
     var records = logger.Collector.GetSnapshot();
     await Assert.That(records.Count).IsEqualTo(2)
-      .Because("two types were read in the scalar form, and each is announced exactly once");
+      .Because("two types were read in the object form, and each is announced exactly once");
     await Assert.That(records[0].Message).Contains("OrderId");
     await Assert.That(records[0].Message).Contains(StoredFormFallbacks.IDENTIFIER_INSTRUMENT_NAME);
     await Assert.That(records[1].Message).Contains("CustomerId");

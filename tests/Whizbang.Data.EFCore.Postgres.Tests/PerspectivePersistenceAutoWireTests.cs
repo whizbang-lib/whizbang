@@ -34,8 +34,8 @@ public class PerspectivePersistenceAutoWireTests {
 
     var json = PerspectiveDocumentSerialization.Serialize(order);
 
-    // Byte-format invariant matches what EF Core 10's ComplexProperty.ToJson writes.
-    await Assert.That(json).Contains("\"OrderId\":{\"Value\":\"019e244a-6bda-78a9-a08f-a1011c9c31dd\"}");
-    await Assert.That(json).DoesNotContain("\"OrderId\":\"019e244a-6bda-78a9-a08f-a1011c9c31dd\"");
+    // Byte-format invariant matches what Entity Framework writes under the id's scalar type mapping (#2518).
+    await Assert.That(json).Contains("\"OrderId\":\"019e244a-6bda-78a9-a08f-a1011c9c31dd\"");
+    await Assert.That(json).DoesNotContain("\"Value\"");
   }
 }

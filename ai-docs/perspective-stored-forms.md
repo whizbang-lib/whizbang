@@ -209,6 +209,25 @@ stored as `[{"Key":..,"Value":..}]` in the dictionary's order (a jsonb object wo
 Not handled: `SortedDictionary`, `ImmutableDictionary`, `ConcurrentDictionary` and custom dictionary types (not
 registered, so EF still refuses them); the Dapper driver writes with the options the app gives it and has no rewrite.
 
+## Strong ids: a UUID string (#2518)
+
+A `[WhizbangId]` in a perspective document is stored as its UUID string, like a `Guid` and like the transport writes
+it, not as the object `{"Value":".."}` Entity Framework discovers for a struct. Pieces:
+
+| Piece | What it does |
+|---|---|
+| `WhizbangIdForms.Register<TId>(guid => new TId(guid))` (Core), emitted by `WhizbangIdGenerator` in each id's module initializer | The registry of id types, with the unchecked load (the constructor) and a visitor so the EF side builds typed converters without reflection |
+| `WhizbangIdTypeMappingSourcePlugin` / `WhizbangIdTypeMapping` (EF) | A type mapping, as for dictionaries: EF asks while discovering a complex type's members, which is where it would make the id a complex type. `uuid` store type, `TId <-> Guid` converter through the constructor, and `WhizbangIdJsonReaderWriter<TId>` (writes the string, reads the string or the object form, counted). Rides `UseWhizbangFunctions` |
+| `WhizbangIdConvention.Apply` (EF), called by the generated `OnModelCreating` | A context without the options extension (a pooled factory registered by hand) still discovers ids as complex types; `Apply` removes each and adds the member back as a property with the id mapping. A collection of ids is left as discovered |
+| Persistence JSON context (`_{T}DocumentConverter`) | The atomic upsert's writer: the UUID string; reads either form, counting the object form on `whizbang.perspective.identifier_form_fallbacks` (`StoredFormFallbacks.ObjectFormIdentifierRead`) |
+| `JsonbContainmentRewriter` / `JsonbContainment` (EF) | An id equality goes through the `Guid` marker: the member unboxed through `object` (stripped around the JSON member at translation), the value converted to its Guid; `Emit` drops that conversion and gives the parameter the member's id mapping, so the document is `jsonb_build_object('OrderId', @id)` and the GIN index answers it. `StoredFormIsNatural` accepts the id-to-Guid converter |
+| `StrongIdScalarRewrite` (EF) + migration 556 | The stored-form phase rewrites object-form ids (EF-mapped documents and opaque jsonb columns) once per table, before the dictionary rewrite; journaled `strong-id-scalar:<table>:<hash>`, settled on a pass that converts nothing; included in `StoredFormSettlement` |
+| `WhizbangIdFilterHandler` (HotChocolate) | Compares the id itself everywhere; the inner `Value` it used to read in a document is no longer a mapped member |
+
+The rewrite must settle before any id predicate runs: `CAST(data ->> 'OrderId' AS uuid)` fails (`22P02`) on a row
+still holding the object form. The stored-form phase runs at startup before the service serves, so this holds for the
+framework's own queries; hand-written SQL that matched `{"Value": ...}` has to match the string.
+
 ## Objects a consumer owns over a temporal key
 
 Anything a consumer creates over a perspective document's temporal key reads the canonical number:
@@ -236,8 +255,8 @@ the last microsecond. A date key is the same number at midnight UTC; a duration 
 ## Tolerance, and when it goes
 
 Readers are strict about units and, for now, tolerant of renderings: a rendering is read as the value
-it renders and counted on `whizbang.perspective.temporal_form_fallbacks{kind}` (identifiers on
-`whizbang.perspective.identifier_form_fallbacks{type}`), announced once per kind at Warning by
+it renders and counted on `whizbang.perspective.temporal_form_fallbacks{kind}` (identifiers read in the object form
+on `whizbang.perspective.identifier_form_fallbacks{type}`), announced once per kind at Warning by
 `StoredFormFallbacks`. The rendering branch is removed once the counter reads zero across a release
 cycle. Removing it earlier makes a row the rewrite did not reach a stopped feature again.
 

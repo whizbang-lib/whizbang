@@ -74,7 +74,7 @@ public class GraphQLWhizbangIdFilterIntegrationTests : EFCoreTestBase {
     await Assert.That(json).Contains("\"second\"").Because(json);
     await Assert.That(json).DoesNotContain("\"first\"").Because(json);
     await Assert.That(json).DoesNotContain("\"third\"").Because(json);
-    await Assert.That(sql).Contains("WHERE (CAST(w.data #>> '{OrderId,Value}' AS uuid)) = @").Because(sql);
+    await Assert.That(sql).Contains("WHERE (CAST(w.data ->> 'OrderId' AS uuid)) = @").Because(sql);
   }
 
   [Test]
@@ -84,7 +84,7 @@ public class GraphQLWhizbangIdFilterIntegrationTests : EFCoreTestBase {
     await Assert.That(json).Contains("\"first\"").Because(json);
     await Assert.That(json).DoesNotContain("\"second\"").Because(json);
     await Assert.That(json).Contains("\"third\"").Because(json);
-    await Assert.That(sql).Contains("WHERE (CAST(w.data #>> '{OrderId,Value}' AS uuid)) <> @").Because(sql);
+    await Assert.That(sql).Contains("WHERE (CAST(w.data ->> 'OrderId' AS uuid)) <> @").Because(sql);
   }
 
   [Test]

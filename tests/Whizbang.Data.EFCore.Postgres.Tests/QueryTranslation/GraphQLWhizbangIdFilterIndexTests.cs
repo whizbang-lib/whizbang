@@ -28,11 +28,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// </summary>
 /// <remarks>
 /// <para>
-/// A strong id cannot carry an index over its own extraction: its document form is an object, which no declared
-/// cast reaches (WHIZ303). The index that answers an equality on it is the whole-document GIN index a model asks for
-/// with <c>[PerspectiveQueries(MatchOnAnyField = true)]</c>, through the containment rewrite, which turns an equality
-/// on a value inside the document into <c>data @&gt; ...</c>. The rewrite answers the id's inner <c>Value</c>, not the
-/// id object, so the filter compares that.
+/// The index that answers an equality on a strong id is the whole-document GIN index a model asks for with
+/// <c>[PerspectiveQueries(MatchOnAnyField = true)]</c>, through the containment rewrite, which turns an equality on a
+/// value inside the document into <c>data @&gt; ...</c>. Since #2518 the id is a uuid scalar stored as its UUID string,
+/// so the rewrite compares the id itself through its Guid.
 /// </para>
 /// <para>
 /// The index is built from the schema's own declaration of it (<see cref="SchemaRegistry.Indexes"/>, the
@@ -86,6 +85,8 @@ public class GraphQLWhizbangIdFilterIndexTests {
       });
 
       modelBuilder.UseWhizbangJsonbContainment();
+      // The id is a uuid scalar, as every generated context's OnModelCreating makes it (#2518).
+      global::Whizbang.Data.EFCore.Postgres.Perspectives.WhizbangIdConvention.Apply(modelBuilder);
     }
   }
 
@@ -245,4 +246,5 @@ public class GraphQLWhizbangIdFilterIndexTests {
     await Assert.That(json).Contains("\"third\"").Because(json);
     await Assert.That(plan).Contains(_documentIndex.Name).Because(plan);
   }
+
 }
