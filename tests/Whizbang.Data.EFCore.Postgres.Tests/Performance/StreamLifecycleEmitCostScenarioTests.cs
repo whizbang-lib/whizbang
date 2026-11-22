@@ -300,6 +300,67 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// A transaction of another session commits late into the commit-log group of the rows (#2521): the vacuum still marks
+  /// every page holding the streams' rows all-visible. A row's commit is hinted on its page only once the WAL is flushed
+  /// through the commit LSN the commit log records for it, and the log records one LSN per group of 32 transaction ids:
+  /// the latest commit in the group. On a shared server the neighbors of the rows' transaction ids belong to other
+  /// databases, commit asynchronously, and often do so after the rows' WAL was flushed; the vacuum then cannot hint the
+  /// rows and leaves their pages unmarked. Here the late transaction takes its id before the rows are written, so it
+  /// shares their group, and commits asynchronously when the vacuum's wait finds it.
+  /// </summary>
+  [Test]
+  [Timeout(600000)]
+  public async Task TheVacuum_HintsRowsWhoseCommitGroupATransactionCommittedIntoLate_AndMarksEveryPageAllVisibleAsync(
+      CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await _disableAutovacuumAsync(conn);
+    await _executeAsync(conn, "CREATE EXTENSION IF NOT EXISTS pg_visibility");
+    await _executeAsync(conn, "CREATE TABLE IF NOT EXISTS late_commit_probe (id int)");
+    await using var late = new NpgsqlConnection(ConnectionString);
+    await late.OpenAsync(cancellationToken);
+    // The late transaction takes the first id of a group, so the rows' transactions, a few ids later, share it. Other
+    // databases' transactions can take ids in between; the vacuum must hint the rows whichever group they land in.
+    while ((await _scalarAsync(conn, "SELECT pg_current_xact_id()::text::bigint") + 1) % CLOG_LSN_GROUP != 0) {
+      // Each call is a transaction of its own and takes one id.
+    }
+    var lateXid = await _scalarAsync(late, "BEGIN; SELECT pg_current_xact_id()::text::bigint");
+    var streams = await _seedWarmStreamsAsync(conn);
+    var rowXids = await _rowXidsAsync(conn, streams);
+    Console.WriteLine($"late transaction {lateXid}; the rows' transactions {string.Join(", ", rowXids)} (groups of {CLOG_LSN_GROUP})");
+    await Assert.That(await _flushCommitsAsync(conn)).IsTrue()
+      .Because("precondition: the WAL is flushed through every earlier commit");
+
+    var waited = false;
+    await _vacuumOnceNoOlderSnapshotSeesTheRowsAsync(conn, cancellationToken, onWaiting: async () => {
+      waited = true;
+      await _executeAsync(late, "SET LOCAL synchronous_commit = off; INSERT INTO late_commit_probe VALUES (1); COMMIT;");
+    });
+
+    var (pages, notAllVisible) = await _pagesHoldingAsync(conn, streams);
+    await Assert.That(waited).IsTrue().Because("the vacuum waits for the late transaction, which runs below its horizon");
+    await Assert.That(pages).IsGreaterThanOrEqualTo(1L).Because("precondition: the streams' rows are on some page");
+    await Assert.That(notAllVisible).IsEqualTo(0L)
+      .Because($"the WAL was flushed through the late commit before the vacuum, so it hinted the rows and marked all {pages} pages all-visible");
+  }
+
+  /// <summary>Transaction ids per commit-log LSN group (CLOG_XACTS_PER_LSN_GROUP).</summary>
+  private const long CLOG_LSN_GROUP = 32;
+
+  /// <summary>The transaction ids that wrote the streams' current rows.</summary>
+  private static async Task<long[]> _rowXidsAsync(NpgsqlConnection conn, Guid[] streams) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT DISTINCT xmin::text::bigint FROM wh_stream_lifecycle WHERE stream_id = ANY(@streams)";
+    cmd.Parameters.AddWithValue(nameof(streams), streams);
+    var xids = new List<long>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      xids.Add(reader.GetInt64(0));
+    }
+    return [.. xids];
+  }
+
+  /// <summary>
   /// Ends <paramref name="pinner"/>'s transaction, releasing its pin, once the backend <paramref name="vacuumPid"/> is
   /// seen waiting for a buffer pin; or, when <paramref name="vacuumDone"/> fires first, ends it then. Returns whether the
   /// vacuum waited for the pin.
