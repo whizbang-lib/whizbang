@@ -2306,6 +2306,15 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     return highest;
   }
 
+  /// <summary>
+  /// The id frontier of a replay's row (#2519): the higher of the frontier of the events it replayed and the floor's
+  /// event, which the restored snapshot holds; the replayed frontier alone for a replay from the stream's start.
+  /// </summary>
+  private static Guid _idFrontierWithFloor(Guid replayedFrontier, Guid? floorEventId) =>
+    floorEventId is Guid floor && string.CompareOrdinal(floor.ToString("D"), replayedFrontier.ToString("D")) > 0
+      ? floor
+      : replayedFrontier;
+
   private static (Guid? EventId, long? CommitSequence) _advanceFrontier(
       Guid? frontierEventId,
       long? frontierCommitSequence,
@@ -3497,7 +3506,11 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     var unchangedReason = global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason.Unreported;
     var rebuilding = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
         is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild;
-    var checkpointEventId = outcome.FrontierEventId ?? lastSuccessfulEventId!.Value;
+    // #2519: the row holds the floor's events as well as the ones replayed after it, so its stamp is the id frontier of
+    // both. Taken from the replayed events alone, it named the highest id read after the floor; when the floor's event
+    // has the stream's highest id (events derived from an older cause, stored after a newer one), that sat below the id
+    // the row is stamped at, and a versioned-apply row refused the replay's write.
+    var checkpointEventId = _idFrontierWithFloor(outcome.FrontierEventId ?? lastSuccessfulEventId!.Value, outcome.ReplayFromEventId);
     var replayCheckpointCommitSequence = outcome.FrontierCommitSequence
         ?? await _eventStore.GetCommitSequenceAsync(checkpointEventId, cancellationToken);
     // Issue #1002: the snapshot below follows every rewind that applied something, when snapshots are on.

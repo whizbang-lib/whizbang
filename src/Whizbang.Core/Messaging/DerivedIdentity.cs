@@ -34,8 +34,9 @@ namespace Whizbang.Core.Messaging;
 /// about 2^36 such pairs.
 /// </para>
 /// <para>
-/// Used by <see cref="EmissionIdentity"/> (a handler's emissions) and <see cref="CompositeChildIdentity"/> (a
-/// composite's children). Each caller owns its canonical prefix, so the two derivations never collide.
+/// Used by <see cref="EmissionIdentity"/> (a handler's emissions), <see cref="CompositeChildIdentity"/> (a
+/// composite's children) and <see cref="GeneratedStreamIdentity"/> (the stream a message starts, at the message's
+/// own position). Each caller owns its canonical prefix, so the derivations never collide.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
@@ -43,6 +44,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DerivedIdentityPropertyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EmissionIdentityTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CompositeChildIdentityTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/GeneratedStreamIdentityTests.cs</tests>
 internal static class DerivedIdentity {
   private const int MAX_ORDINAL_FIELD = 0xFFF;
 
@@ -51,17 +53,36 @@ internal static class DerivedIdentity {
   /// whose remaining bits hash <paramref name="canonical"/>.
   /// </summary>
   internal static Guid FromCanonical(Guid source, int ordinal, string canonical) {
-    Span<byte> hash = stackalloc byte[32];
-    SHA256.HashData(Encoding.UTF8.GetBytes(canonical), hash);
-
     Span<byte> id = stackalloc byte[16];
+    _writeSourcePrefix(source, id);
+    var field = Math.Min(ordinal, MAX_ORDINAL_FIELD);
+    id[10] = (byte)(field >> 4);
+    id[11] = (byte)((field & 0x0F) << 4);
+    return _withHash(id, canonical);
+  }
+
+  /// <summary>
+  /// Derives the id that sorts exactly where <paramref name="source"/> does (its first 92 bits: millisecond, counter
+  /// and ordinal) and whose last 36 bits hash <paramref name="canonical"/>: a second id for the same position, such as
+  /// the stream a message starts (see <see cref="GeneratedStreamIdentity"/>).
+  /// </summary>
+  internal static Guid AtTheSamePosition(Guid source, string canonical) {
+    Span<byte> id = stackalloc byte[16];
+    _writeSourcePrefix(source, id);
+    id[11] &= 0xF0;
+    return _withHash(id, canonical);
+  }
+
+  private static void _writeSourcePrefix(Guid source, Span<byte> id) {
     source.TryWriteBytes(id, bigEndian: true, out _);
     id[6] = (byte)(0x70 | (id[6] & 0x0F));   // version 7
     id[8] = (byte)(0x80 | (id[8] & 0x3F));   // RFC variant 10xx
+  }
 
-    var field = Math.Min(ordinal, MAX_ORDINAL_FIELD);
-    id[10] = (byte)(field >> 4);
-    id[11] = (byte)(((field & 0x0F) << 4) | (hash[0] & 0x0F));
+  private static Guid _withHash(Span<byte> id, string canonical) {
+    Span<byte> hash = stackalloc byte[32];
+    SHA256.HashData(Encoding.UTF8.GetBytes(canonical), hash);
+    id[11] |= (byte)(hash[0] & 0x0F);
     hash[1..5].CopyTo(id[12..]);
     return new Guid(id, bigEndian: true);
   }

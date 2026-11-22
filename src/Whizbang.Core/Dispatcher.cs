@@ -3378,8 +3378,8 @@ public abstract partial class Dispatcher(
     var eventId = _mintEmissionId(sourceEnvelope, messageType);
     var streamId = _streamIdExtractor?.ExtractStreamId(msg, messageType) ?? Guid.Empty;
 
-    // Auto-generate StreamId based on [GenerateStreamId] attribute policy
-    streamId = _autoGenerateStreamIdIfNeeded(msg, messageType, streamId);
+    // Auto-generate StreamId based on [GenerateStreamId] attribute policy, derived from the event's own id (#2274)
+    streamId = _autoGenerateStreamIdIfNeeded(msg, messageType, streamId, startedBy: eventId);
 
     // Cascade StreamId propagation: inherit from source command when event's StreamId is still empty
     streamId = _cascadeStreamIdFromSourceIfNeeded(msg, messageType, streamId, sourceEnvelope);
@@ -3438,15 +3438,27 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
-  /// Auto-generates a StreamId based on [GenerateStreamId] attribute policy if applicable.
+  /// The id of an event published explicitly. Inside a receptor's handling (<see cref="ReceptorHandling"/>) it is
+  /// derived from the handling through <see cref="_mintEmissionId"/>, on the same ordinals as what the receptor returns,
+  /// so a retry of the handling publishes under the ids of its first run and the stored copies absorb it (#2274).
+  /// Outside a handling it is minted.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDerivedIdentityInHandlingTests.cs</tests>
+  private MessageId _mintPublishedMessageId(Type eventType) =>
+    ReceptorHandling.Current is { } handling ? new MessageId(_mintEmissionId(handling, eventType)) : MessageId.New();
+
+  /// <summary>
+  /// Auto-generates a StreamId based on [GenerateStreamId] attribute policy if applicable, derived from
+  /// <paramref name="startedBy"/>, the id of the message that starts the stream (#2274).
   /// Returns the (potentially updated) streamId.
   /// </summary>
-  private Guid _autoGenerateStreamIdIfNeeded(object msg, Type messageType, Guid streamId) {
+  private Guid _autoGenerateStreamIdIfNeeded(object msg, Type messageType, Guid streamId, Guid startedBy) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (_streamIdExtractor is not null) {
       var (shouldGenerate, onlyIfEmpty) = _streamIdExtractor.GetGenerationPolicy(msg);
       if (shouldGenerate && (!onlyIfEmpty || streamId == Guid.Empty)) {
-        var minted = ValueObjects.TrackedGuid.New();
+        var minted = GeneratedStreamIdentity.Derive(startedBy);
         // A [StreamId] property as well as IHasStreamId, as the publish path sets it (#1410 follow-up)
         if (msg is IHasStreamId hasStreamId) {
           hasStreamId.StreamId = minted;
@@ -3470,9 +3482,10 @@ public abstract partial class Dispatcher(
   /// Auto-generates StreamId for messages with [GenerateStreamId] attribute during envelope creation.
   /// This ensures commands (and any IMessage) get their StreamId populated before dispatch,
   /// using the same plumbing as [Populate*] attributes.
-  /// Events cascaded from receptors are handled separately in the cascade path.
+  /// Events cascaded from receptors are handled separately in the cascade path. With <paramref name="startedBy"/>,
+  /// the id of the message that starts the stream, the stream id derives from it (#2274); without it one is minted.
   /// </summary>
-  private void _autoGenerateStreamIdIfNeeded(object message, Type messageType) {
+  private void _autoGenerateStreamIdIfNeeded(object message, Type messageType, Guid? startedBy = null) {
     if (_streamIdExtractor is null) {
       return;
     }
@@ -3484,7 +3497,7 @@ public abstract partial class Dispatcher(
 
     var streamId = _streamIdExtractor.ExtractStreamId(message, messageType) ?? Guid.Empty;
     if (!onlyIfEmpty || streamId == Guid.Empty) {
-      var newStreamId = ValueObjects.TrackedGuid.New();
+      var newStreamId = startedBy is { } messageId ? GeneratedStreamIdentity.Derive(messageId) : (Guid)ValueObjects.TrackedGuid.New();
 
       // Try IHasStreamId first (direct interface), then fall back to generated setter
       if (message is IHasStreamId hasStreamId) {
@@ -4092,11 +4105,12 @@ public abstract partial class Dispatcher(
     _resolveReEmissionDiagnostic()?.RecordEmission(TypeNameFormatter.Format(eventType));
     try {
 
-      // Auto-generate StreamId for events with [GenerateStreamId] attribute
-      _autoGenerateStreamIdIfNeeded(eventData, eventType);
+      // Create MessageId once - used for the outbox row and, for an event, as its event store event_id (store_outbox_messages -> _emit_event_store_chain).
+      // Inside a receptor's handling it derives from the handling, as a returned event's does (#2274)
+      var messageId = _mintPublishedMessageId(eventType);
 
-      // Create MessageId once - used for the outbox row and, for an event, as its event store event_id (store_outbox_messages -> _emit_event_store_chain)
-      var messageId = MessageId.New();
+      // Auto-generate StreamId for events with [GenerateStreamId] attribute, derived from the event's id (#2274)
+      _autoGenerateStreamIdIfNeeded(eventData, eventType, startedBy: messageId.Value);
 
       // Extract stream ID early — needed for both sync tracking and delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType);
@@ -4212,10 +4226,11 @@ public abstract partial class Dispatcher(
     _resolveReEmissionDiagnostic()?.RecordEmission(TypeNameFormatter.Format(eventType));
     try {
 
-      // Auto-generate StreamId for events with [GenerateStreamId] attribute
-      _autoGenerateStreamIdIfNeeded(eventData, eventType);
+      // Inside a receptor's handling the id derives from the handling, as a returned event's does (#2274)
+      var messageId = _mintPublishedMessageId(eventType);
 
-      var messageId = MessageId.New();
+      // Auto-generate StreamId for events with [GenerateStreamId] attribute, derived from the event's id (#2274)
+      _autoGenerateStreamIdIfNeeded(eventData, eventType, startedBy: messageId.Value);
 
       // Tracked for perspective sync as the plain overload tracks it (#1410 follow-up)
       if (_streamIdExtractor?.ExtractStreamId(eventData, eventType) is { } trackedStreamId) {
@@ -4390,7 +4405,7 @@ public abstract partial class Dispatcher(
     // CRITICAL: This is the primary path for receptor event cascading via DispatcherEventCascader
     if (message is IEvent) {
       eventId = presetEventId ?? _mintEmissionId(sourceEnvelope, messageType);
-      var streamId = _resolveStreamId(message, messageType, sourceEnvelope);
+      var streamId = _resolveStreamId(message, messageType, sourceEnvelope, eventId.Value);
       if (_persists(mode)) {
         _trackEventForSync(messageType, eventId.Value, streamId);
       }
@@ -4422,9 +4437,9 @@ public abstract partial class Dispatcher(
 
   /// <summary>
   /// Resolves the StreamId for a cascaded event, including inheritance from source command
-  /// and auto-generation based on [GenerateStreamId] attribute policy.
+  /// and auto-generation based on [GenerateStreamId] attribute policy, derived from the event's own id (#2274).
   /// </summary>
-  private Guid _resolveStreamId(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope) {
+  private Guid _resolveStreamId(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope, Guid eventId) {
     var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType) ?? Guid.Empty;
 
     // Cascade StreamId propagation: inherit from source command when event's StreamId is empty
@@ -4433,7 +4448,7 @@ public abstract partial class Dispatcher(
     // Auto-generate StreamId based on [GenerateStreamId] attribute policy, for a [StreamId] property as well
     // as IHasStreamId: the cascade used to leave a plain property empty (#1410 follow-up)
     if (streamId == Guid.Empty) {
-      streamId = _autoGenerateStreamIdIfNeeded(message, messageType, streamId);
+      streamId = _autoGenerateStreamIdIfNeeded(message, messageType, streamId, startedBy: eventId);
     }
 
     return streamId;

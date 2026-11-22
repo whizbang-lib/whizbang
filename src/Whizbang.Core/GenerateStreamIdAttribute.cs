@@ -45,6 +45,12 @@ namespace Whizbang.Core;
 /// auto-generate its own stream id.
 /// </para>
 /// <para>
+/// An event, returned by a receptor or published, starts a stream whose id derives from the event's own id
+/// (<see cref="Messaging.GeneratedStreamIdentity"/>): inside a receptor's handling the event's id derives from the
+/// handling, so a retry of that handling starts the same stream rather than a second one (#2274). A command sent
+/// with [GenerateStreamId] still gets a minted id.
+/// </para>
+/// <para>
 /// Events with [StreamId] but WITHOUT [GenerateStreamId] must have a StreamId provided
 /// before dispatch — the StreamIdGuard will throw if it's Guid.Empty.
 /// </para>
@@ -54,6 +60,7 @@ namespace Whizbang.Core;
 /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherStreamIdGenerationTests.cs:SendAsync_CommandWithGenerateStreamId_AutoGeneratesStreamIdAsync</tests>
 /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherStreamIdGenerationTests.cs:PublishAsync_EventWithGenerateStreamId_AutoGeneratesStreamIdAsync</tests>
 /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherStreamIdGenerationTests.cs:SendAsync_CommandWithoutGenerateStreamId_DoesNotAutoGenerateAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDerivedIdentityInHandlingTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ADerivedTypeWithItsOwnStreamIdAndNoGenerateStreamId_DoesNotInheritTheBasesGenerateStreamIdAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/StreamIdDerivedFirstGeneratorTests.cs:ADerivedTypeWithNoStreamIdOfItsOwn_InheritsTheBasesGenerateStreamIdAsync</tests>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter | AttributeTargets.Class, AllowMultiple = false, Inherited = true)]
