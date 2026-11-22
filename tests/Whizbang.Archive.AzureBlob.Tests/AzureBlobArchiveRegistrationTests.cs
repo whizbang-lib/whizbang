@@ -272,10 +272,27 @@ public class AzureBlobArchiveRegistrationTests {
   }
 
   [Test]
+  public async Task Startup_AnUndefinedLocationMismatchSetInCode_FailsTheHostAtStartAsync() {
+    var services = new ServiceCollection();
+    _driver(services);
+    services.AddWhizbangAzureBlobArchive(o => {
+      o.ConnectionString = EMULATOR;
+      o.LocationMismatch = (Whizbang.Core.Archival.ArchiveLocationMismatchHandling)42;
+    });
+    await using var provider = services.BuildServiceProvider();
+
+    var refused = await Assert.That(() => provider.GetRequiredService<IStartupValidator>().Validate())
+      .Throws<OptionsValidationException>();
+
+    await Assert.That(refused!.Message).Contains("Whizbang:Archive:AzureBlob:LocationMismatch");
+  }
+
+  [Test]
   [Arguments("CompressionLevel", "fast")]
   [Arguments("MaxEventsPerChunk", "ten thousand")]
   [Arguments("ServiceUri", "not an absolute uri")]
   [Arguments("VerifyLocation", "maybe")]
+  [Arguments("LocationMismatch", "maybe")]
   [Arguments("DeleteAfter", "soon")]
   [Arguments("DeleteAfter", "00:00:00")]
   [Arguments("DeleteAfter", "-01:00:00")]

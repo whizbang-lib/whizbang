@@ -15,6 +15,7 @@ Whizbang:Archive:AzureBlob:ConnectionName
 Whizbang:Archive:AzureBlob:ConnectionString
 Whizbang:Archive:AzureBlob:ContainerName
 Whizbang:Archive:AzureBlob:DeleteAfter
+Whizbang:Archive:AzureBlob:LocationMismatch
 Whizbang:Archive:AzureBlob:MaxEventsPerChunk
 Whizbang:Archive:AzureBlob:ServiceUri
 Whizbang:Archive:AzureBlob:VerifyLocation
