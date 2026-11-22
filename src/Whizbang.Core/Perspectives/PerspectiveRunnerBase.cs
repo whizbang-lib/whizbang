@@ -1061,7 +1061,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// What a batch does when its row is missing: re-fold an evicted row whose stream woke, hand a prepare back to the
   /// per-pair path, or fold onto a new model, purged when the stream carries a purge marker.
   /// </summary>
-  private async Task<(BatchRead? Decided, bool StartedPurged)> _readMissingRowAsync(
+  private async ValueTask<(BatchRead? Decided, bool StartedPurged)> _readMissingRowAsync(
       BatchRequest request, CancellationToken cancellationToken) {
     var streamId = request.StreamId;
     var perspectiveName = request.PerspectiveName;
@@ -1149,7 +1149,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// The idempotency filter of a batch onto a row with a recorded position: a re-fold for an event below it, the
   /// completion of a batch the row already holds whole, or the events the row does not hold yet.
   /// </summary>
-  private async Task<(BatchRead? Decided, IReadOnlyList<MessageEnvelope<IEvent>> Events)> _filterAlreadyAppliedAsync(
+  private async ValueTask<(BatchRead? Decided, IReadOnlyList<MessageEnvelope<IEvent>> Events)> _filterAlreadyAppliedAsync(
       BatchRequest request, global::Whizbang.Core.Lenses.PerspectiveMetadata existingMetadata, CancellationToken cancellationToken) {
     var events = request.Events;
     if (await _rewindBelowPositionAsync(request, existingMetadata, cancellationToken) is { } rewound) {
@@ -1768,7 +1768,9 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
           lastSuccessfulEventId
       );
 
-      snapshotBeforeWrite = await _snapshotLiveRowAsync(state, snapshotBeforeWrite, cancellationToken);
+      if (_liveSnapshotMayFollow(state)) {
+        snapshotBeforeWrite = await _snapshotLiveRowAsync(state, snapshotBeforeWrite, cancellationToken);
+      }
       snapshotBeforeWrite?.Dispose(); // not due this run
       modelAtLastEvent?.Dispose(); // not handed to the snapshot write
 
@@ -1805,7 +1807,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// refused rebuild write says why (#2252), and a refused live write is rewound (#1608), whose completion is returned
   /// in place of this one. A batch that wrote nothing because no event produced a model reports that (#2252).
   /// </summary>
-  private async Task<(PerspectiveCursorCompletion? Rewound, global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason Reason)> _settleLiveWriteAsync(
+  private async ValueTask<(PerspectiveCursorCompletion? Rewound, global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason Reason)> _settleLiveWriteAsync(
       ApplyState state,
       bool rowChanged,
       JsonDocument? foldBeforeWrite,
@@ -1881,12 +1883,10 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// <summary>
   /// Counts the batch toward its stream's snapshot cadence and, when a snapshot is due, takes it (#1002, #1963,
   /// #2456). Returns the snapshot taken before the write when it was not handed to the store, for the caller to dispose.
+  /// Called only when <see cref="_liveSnapshotMayFollow"/> holds, so a run with snapshots off allocates nothing here.
   /// </summary>
-  private async Task<JsonDocument?> _snapshotLiveRowAsync(
+  private async ValueTask<JsonDocument?> _snapshotLiveRowAsync(
       ApplyState state, JsonDocument? snapshotBeforeWrite, CancellationToken cancellationToken) {
-    if (!_liveSnapshotMayFollow(state)) {
-      return snapshotBeforeWrite;
-    }
     var streamId = state.StreamId;
     var perspectiveName = state.PerspectiveName;
     var eventsProcessed = state.EventsProcessed;
@@ -2626,7 +2626,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// The floor a rewind for a late event restores from (<see cref="RewindFloor"/>): the snapshot the store places before
   /// the trigger when the replay can read it and it holds only events that come first in the replay's order, else none.
   /// </summary>
-  private async Task<RewindFloor> _rewindFloorAsync(
+  private async ValueTask<RewindFloor> _rewindFloorAsync(
       Guid streamId, string perspectiveName, Guid triggeringEventId, long? triggeringCommitSequence, CancellationToken cancellationToken) {
     // Without a snapshot floor an ephemeral perspective does not replay at all (the drop in the rewind core), so the
     // "performing full replay" warnings would describe a replay that never runs. The drop's own warning is the one line
@@ -2695,7 +2695,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// repair.
   /// </para>
   /// </remarks>
-  private async Task<(global::Whizbang.Core.Perspectives.PerspectiveSnapshotFloor? Snapshot, TModel? SnapshotModel, Action? AnnounceReplay, bool Refused)> _placeSnapshotAsync(
+  private async ValueTask<(global::Whizbang.Core.Perspectives.PerspectiveSnapshotFloor? Snapshot, TModel? SnapshotModel, Action? AnnounceReplay, bool Refused)> _placeSnapshotAsync(
       Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken) {
     var snapshot = await _snapshotStore!.GetSnapshotFloorAsync(
         streamId, perspectiveName, triggeringEventId, cancellationToken);
@@ -3413,7 +3413,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// event produced a model (#2252). Returns whether the row changed, why a rebuild left it untouched, and the snapshot
   /// taken before the write (issue #983), which the caller hands to the snapshot or disposes.
   /// </summary>
-  private async Task<(bool RowChanged, global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason Reason, JsonDocument? SnapshotBeforeWrite)> _writeReplayRowAsync(
+  private async ValueTask<(bool RowChanged, global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason Reason, JsonDocument? SnapshotBeforeWrite)> _writeReplayRowAsync(
       ReplayOutcome outcome, CancellationToken cancellationToken) {
     var streamId = outcome.StreamId;
     var perspectiveName = outcome.PerspectiveName;
@@ -3435,7 +3435,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// <summary>
   /// Writes a replay's folded model at the replay's frontier, against the row version it read before any event (#1863).
   /// </summary>
-  private async Task<(bool RowChanged, global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason Reason, JsonDocument? SnapshotBeforeWrite)> _saveReplayRowAsync(
+  private async ValueTask<(bool RowChanged, global::Whizbang.Core.Perspectives.PerspectiveRowUnchangedReason Reason, JsonDocument? SnapshotBeforeWrite)> _saveReplayRowAsync(
       ReplayOutcome outcome, CancellationToken cancellationToken) {
     var streamId = outcome.StreamId;
     var perspectiveName = outcome.PerspectiveName;
@@ -3503,7 +3503,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// snapshot_commit_sequence IS NOT NULL) silently misses this snapshot on subsequent
   /// rewinds - defeating the deterministic-replay invariant the column was added for.
   /// </remarks>
-  private async Task<JsonDocument?> _snapshotAfterReplayAsync(
+  private async ValueTask<JsonDocument?> _snapshotAfterReplayAsync(
       ReplayOutcome outcome, JsonDocument? snapshotBeforeWrite, CancellationToken cancellationToken) {
     var streamId = outcome.StreamId;
     var perspectiveName = outcome.PerspectiveName;
@@ -4006,7 +4006,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// with a warning, when the floor cannot be read (the bodies below it may be reaped already, so a fold from the
   /// stream's start could not reproduce them), or when there is no floor and the stream's archived history was deleted.
   /// </summary>
-  private async Task<(bool Refused, TModel? Model)> _bootstrapFloorModelAsync(
+  private async ValueTask<(bool Refused, TModel? Model)> _bootstrapFloorModelAsync(
       Guid streamId,
       string perspectiveName,
       Guid boundaryEventId,
