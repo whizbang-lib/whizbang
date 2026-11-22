@@ -63,6 +63,55 @@ public partial class BlueGreenRebuildIntegrationTests {
   }
 
   /// <summary>
+  /// A rebuild's statements grow with its batches, not its streams (#2513): rebuilding 4, then 8, then 12 streams in two
+  /// batches each (of 2, 4 and 6 streams) sends the same number of statements every time. Every read a stream used to cost
+  /// (its events, its row and purge-marker reads, its commit-sequence lookup) and its cursor write are made once per
+  /// batch. A blue-green rebuild writes its rows to the shadow table through the staging load, so its count is constant
+  /// outright; a rebuild in place still writes each row with its own statement, which is counted apart and locked here,
+  /// one per stream, so the day it is batched too this test says so.
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task Rebuild_SendsTheSameStatementsForTheSameBatches_WhateverTheirStreamCountAsync(bool blueGreen) {
+    var counts = new List<int>();
+    var streams = new List<Guid>();
+    foreach (var (streamCount, batchSize) in new[] { (4, 2), (8, 4), (12, 6) }) {
+      await using var sp = _services(() => Task.CompletedTask, onFirstRun: _ => Task.CompletedTask,
+        rebuildOptions: new PerspectiveRebuildOptions { StreamReadBatchSize = batchSize }, observed: false);
+      while (streams.Count < streamCount) {
+        var stream = Guid.CreateVersion7();
+        streams.Add(stream);
+        await _appendAsync(sp, new RebuildCreditedEvent { StreamId = stream, Amount = 10m });
+        await _appendAsync(sp, new RebuildDebitedEvent { StreamId = stream, Amount = 1m });
+      }
+      if (counts.Count == 0) {
+        await _registerTableAsync();
+      }
+      await _stampCommitSequencesAsync();
+      using var log = new NpgsqlStatementLog(ConnectionString);
+      var result = blueGreen
+        ? await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildBlueGreenAsync(PERSPECTIVE)
+        : await sp.GetRequiredService<IPerspectiveRebuilder>().RebuildStreamsAsync(PERSPECTIVE, streams);
+      await Assert.That(result.Success).IsTrue().Because(result.Error ?? "");
+      await Assert.That(result.StreamsProcessed).IsEqualTo(streamCount);
+      var rowWrites = log.Statements.Count(statement =>
+        statement.Contains("wh_per_rebuild_balance", StringComparison.Ordinal)
+        && (statement.TrimStart().StartsWith("INSERT", StringComparison.OrdinalIgnoreCase)
+          || statement.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase)));
+      await Assert.That(rowWrites).IsEqualTo(blueGreen ? 0 : streamCount)
+        .Because("blue-green stages its rows; in place each row is still written on its own");
+      counts.Add(log.Statements.Count - rowWrites);
+      Console.WriteLine($"streams={streamCount} batch={batchSize} statements={log.Statements.Count}{Environment.NewLine}" +
+        string.Join(Environment.NewLine, log.Statements.Select(s => "  " + s.Split('\n')[0])));
+    }
+
+    await Assert.That(counts.Distinct().Count()).IsEqualTo(1)
+      .Because($"two batches cost the same statements whether they hold 4, 8 or 12 streams; counted {string.Join(", ", counts)}");
+    await Assert.That((await _liveBalancesAsync()).Values.Distinct()).IsEquivalentTo([9m]);
+  }
+
+  /// <summary>
   /// The plan of the batched read (#2513), printed rather than asserted: N streams of two events each, the statement the
   /// rebuild sent for its first batch prepared and run under <c>EXPLAIN (ANALYZE, BUFFERS)</c> with a full batch of
   /// stream ids. A measurement, not a gate: it runs only when asked for by name.

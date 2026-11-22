@@ -217,7 +217,7 @@ public class IPerspectiveRunnerDefaultsTests {
     IPerspectiveRunner runner = new MinimalRunner();
     var streamId = Guid.NewGuid();
 
-    var completions = await runner.RunRebuildWithEventsAsync(streamId, "P", events: [], CancellationToken.None);
+    var completions = await runner.RunRebuildWithEventsAsync(streamId, "P", events: [], cancellationToken: CancellationToken.None);
 
     // MinimalRunner's RunAsync reports Completed: the default ran RunRebuildAsync, which calls it.
     await Assert.That(completions).Count().IsEqualTo(1);

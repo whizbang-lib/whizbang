@@ -366,7 +366,31 @@ internal sealed class RbEvents() : ForwardingEventStoreDecorator(new InMemoryEve
     return Task.FromResult(stream.Take(at < 0 ? 0 : at).Any(e => eventTypes.Contains(e.Payload.GetType())));
   }
 
+  /// <summary>Whether the store answers many commit sequences with one read; false asks each event on its own.</summary>
+  public bool ReadsCommitSequencesInBatches { get; set; }
+
+  /// <summary>Each per-event commit-sequence lookup.</summary>
+  public List<Guid> CommitSequenceReads { get; } = [];
+
+  /// <summary>Each batched commit-sequence lookup, with the events it asked.</summary>
+  public List<IReadOnlyCollection<Guid>> BatchCommitSequenceReads { get; } = [];
+
+  public override async Task<IReadOnlyDictionary<Guid, long?>> GetCommitSequencesAsync(
+      IReadOnlyCollection<Guid> eventIds, CancellationToken cancellationToken = default) {
+    if (!ReadsCommitSequencesInBatches) {
+      var each = new Dictionary<Guid, long?>();
+      foreach (var eventId in eventIds) {
+        each[eventId] = await GetCommitSequenceAsync(eventId, cancellationToken);
+      }
+      return each;
+    }
+    BatchCommitSequenceReads.Add([.. eventIds]);
+    var all = _streams.Values.SelectMany(s => s).ToList();
+    return eventIds.Distinct().ToDictionary(id => id, id => all.FirstOrDefault(e => e.MessageId.Value == id)?.LocalCommitSequence);
+  }
+
   public override Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken cancellationToken = default) {
+    CommitSequenceReads.Add(eventId);
     if (CommitSequenceOverrides.TryGetValue(eventId, out var given)) {
       return Task.FromResult(given);
     }
@@ -423,7 +447,33 @@ internal sealed class RbRows : IPerspectiveStore<RbModel> {
   public RbModel Row(Guid id) => _rows[id].Model;
   public PerspectiveMetadata MetadataOf(Guid id) => _rows[id].Metadata;
 
+  /// <summary>Whether the store reads many rows with one read; false answers a batched read with null.</summary>
+  public bool ReadsInBatches { get; set; }
+
+  /// <summary>Each per-stream read of a row (its version and metadata, or its model), by stream.</summary>
+  public List<Guid> RowReads { get; } = [];
+
+  /// <summary>Each batched read of rows, with the streams it read.</summary>
+  public List<IReadOnlyCollection<Guid>> BatchRowReads { get; } = [];
+
+  public Task<IReadOnlyDictionary<Guid, PerspectiveStoredRow<RbModel>>?> ReadForApplyManyAsync(
+      IReadOnlyCollection<Guid> streamIds, CancellationToken cancellationToken = default) {
+    if (!ReadsInBatches) {
+      return Task.FromResult<IReadOnlyDictionary<Guid, PerspectiveStoredRow<RbModel>>?>(null);
+    }
+    BatchRowReads.Add([.. streamIds]);
+    var rows = new Dictionary<Guid, PerspectiveStoredRow<RbModel>>();
+    foreach (var id in streamIds.Where(_rows.ContainsKey)) {
+      var row = _rows[id];
+      rows[id] = new PerspectiveStoredRow<RbModel>(
+        Versioned ? new PerspectiveApplyRead(PerspectiveRowVersion.Of(row.Version), row.Metadata) { Scope = row.Scope } : PerspectiveApplyRead.Unchecked,
+        row.Model);
+    }
+    return Task.FromResult<IReadOnlyDictionary<Guid, PerspectiveStoredRow<RbModel>>?>(rows);
+  }
+
   public Task<PerspectiveApplyRead> ReadForApplyAsync(Guid streamId, CancellationToken cancellationToken = default) {
+    RowReads.Add(streamId);
     if (!Versioned) {
       return Task.FromResult(PerspectiveApplyRead.Unchecked);
     }
@@ -432,8 +482,10 @@ internal sealed class RbRows : IPerspectiveStore<RbModel> {
       : new PerspectiveApplyRead(PerspectiveRowVersion.Absent, null));
   }
 
-  public Task<RbModel?> GetByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) =>
-    Task.FromResult(_rows.TryGetValue(streamId, out var row) ? row.Model : null);
+  public Task<RbModel?> GetByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) {
+    RowReads.Add(streamId);
+    return Task.FromResult(_rows.TryGetValue(streamId, out var row) ? row.Model : null);
+  }
 
   public Task<PerspectiveMetadata?> GetMetadataByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) =>
     Task.FromResult(_rows.TryGetValue(streamId, out var row) ? row.Metadata : null);

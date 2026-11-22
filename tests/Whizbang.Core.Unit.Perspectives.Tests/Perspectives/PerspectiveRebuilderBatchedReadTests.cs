@@ -87,6 +87,64 @@ public class PerspectiveRebuilderBatchedReadTests {
   }
 
   [Test]
+  public async Task Rebuild_ReadsEachBatchsRowsPurgeMarkersAndCommitSequences_WithOneReadEach_NotOnePerStreamAsync() {
+    var batched = _world(batchSize: 2, stateSource: true);
+    var perStream = _world(batchSize: 2, stateSource: false);
+
+    var batchedResult = await batched.Rebuilder.RebuildStreamsAsync(RbHarness.NAME, _streams);
+    var perStreamResult = await perStream.Rebuilder.RebuildStreamsAsync(RbHarness.NAME, _streams);
+
+    await Assert.That(batchedResult.Success).IsTrue().Because(batchedResult.Error ?? "");
+    // The control: without a state source each stream with events reads its row, probes a missing row's purge marker
+    // and looks up its last event's commit sequence on its own.
+    await Assert.That(perStream.Rows.RowReads.Distinct()).IsEquivalentTo([_multi, _received, _mixed]);
+    await Assert.That(perStream.PurgeMarkers.Probes).IsEquivalentTo([_received]);
+    await Assert.That(perStream.Events.CommitSequenceReads.Count).IsEqualTo(3);
+
+    await Assert.That(batched.Rows.RowReads).IsEmpty().Because("no row of a batch is read on its own");
+    await Assert.That(batched.Rows.BatchRowReads.Count).IsEqualTo(3)
+      .Because("each of the three batches that holds a stream with events reads its rows once");
+    await Assert.That(batched.Rows.BatchRowReads.SelectMany(r => r)).IsEquivalentTo([_multi, _received, _mixed]);
+    await Assert.That(batched.PurgeMarkers.Probes).IsEmpty();
+    await Assert.That(batched.PurgeMarkers.BatchProbes.Single()).IsEquivalentTo([_received])
+      .Because("only the batch with a missing row asks for purge markers, once");
+    await Assert.That(batched.Events.CommitSequenceReads).IsEmpty();
+    await Assert.That(batched.Events.BatchCommitSequenceReads.Count).IsEqualTo(3);
+
+    foreach (var stream in _streams) {
+      await Assert.That(batched.Rows.Has(stream)).IsEqualTo(perStream.Rows.Has(stream));
+      if (perStream.Rows.Has(stream)) {
+        await Assert.That(batched.Rows.Row(stream)).IsEqualTo(perStream.Rows.Row(stream));
+        await Assert.That(batched.Rows.MetadataOf(stream).EventId).IsEqualTo(perStream.Rows.MetadataOf(stream).EventId);
+        await Assert.That(batched.Rows.MetadataOf(stream).CommitSequence).IsEqualTo(perStream.Rows.MetadataOf(stream).CommitSequence);
+      }
+    }
+    await Assert.That(batched.Rows.Row(_multi).Marks).IsEqualTo("abc").Because("the stale row is re-derived, not folded onto");
+    await Assert.That(_cursors(batched)).IsEquivalentTo(_cursors(perStream));
+    await Assert.That(_counts(batchedResult)).IsEqualTo(_counts(perStreamResult));
+    await Assert.That(batchedResult.StreamsAlreadyCorrect).IsEqualTo(perStreamResult.StreamsAlreadyCorrect);
+  }
+
+  [Test]
+  public async Task Rebuild_ARowThatMovesUnderItsWrite_IsReadAgainOnItsOwn_NotFromTheBatchsReadAsync() {
+    var world = _world(batchSize: 10, stateSource: true);
+    var moved = false;
+    world.Rows.BeforeWrite = id => {
+      if (id == _multi && !moved) {
+        moved = true;
+        world.Rows.Touch(_multi);
+      }
+    };
+
+    var result = await world.Rebuilder.RebuildStreamsAsync(RbHarness.NAME, _streams);
+
+    await Assert.That(result.Success).IsTrue().Because(result.Error ?? "");
+    await Assert.That(world.Rows.RowReads).Contains(_multi)
+      .Because("the batch's read is older than the row now; the retry reads the row as it is");
+    await Assert.That(world.Rows.Row(_multi).Marks).IsEqualTo("abc");
+  }
+
+  [Test]
   public async Task Rebuild_WhenTheStoreReadsNoStreamsInBatches_ReadsEachStreamOnItsOwnAsync() {
     var world = _world(batchSize: 2, readsInBatches: false);
 
@@ -163,9 +221,10 @@ public class PerspectiveRebuilderBatchedReadTests {
     var result = await world.Rebuilder.RebuildStreamsAsync(RbHarness.NAME, _streams, cancel.Token);
 
     await Assert.That(result.Success).IsFalse().Because("a canceled rebuild ends failed, as it did reading each stream");
-    await Assert.That(world.Rows.Has(_multi)).IsTrue().Because("the batch before the cancellation was folded");
+    await Assert.That(world.Rows.Row(_multi).Marks).IsEqualTo("abc").Because("the batch before the cancellation was folded");
     await Assert.That(world.Rows.Has(_received)).IsFalse();
-    await Assert.That(world.Rows.Has(_mixed)).IsFalse();
+    await Assert.That(world.Rows.Row(_mixed).Marks).IsEqualTo("xo").Because("the last batch was never folded: its row is as seeded");
+    await Assert.That(world.Rows.MetadataOf(_mixed).CommitSequence).IsNull();
     await Assert.That(world.Events.BatchReads.Count).IsEqualTo(2).Because("no batch is read after the cancellation");
   }
 
@@ -224,10 +283,20 @@ public class PerspectiveRebuilderBatchedReadTests {
   /// The same streams in every world: the stream and event ids are fixed, so two worlds' rows and cursors compare; the store
   /// and the rows are each world's own.
   /// </summary>
-  private static World _world(int? batchSize, bool readsInBatches = true, Dictionary<Guid, ArchivedStreamExtent>? extents = null) {
+  private static World _world(int? batchSize, bool readsInBatches = true, Dictionary<Guid, ArchivedStreamExtent>? extents = null,
+      bool stateSource = false) {
     var harness = new RbHarness();
     var events = harness.Events;
     events.ReadsInBatches = readsInBatches;
+    // The state a batch reads beside the events (#2513): the rows, the purge markers of the missing ones, and the commit
+    // sequences, each answerable for many streams at once.
+    events.ReadsCommitSequencesInBatches = true;
+    harness.Rows.ReadsInBatches = true;
+    var purgeMarkers = new CountingPurgeMarkers();
+    harness.Services.AddSingleton<IPerspectivePurgeMarkerStore>(purgeMarkers);
+    // An existing stale row and an existing current one, so the batch reads rows that exist as well as rows that do not.
+    harness.Rows.Seed(_multi, new RbModel { Id = _multi, Marks = "zz" }, stampEventId: new Guid("00000000-0000-7000-8000-000000000000"));
+    harness.Rows.Seed(_mixed, new RbModel { Id = _mixed, Marks = "xo" }, stampEventId: new Guid("00000000-0000-7000-8000-000000000033"));
     // Versions a, b, c; the ids run the other way, so an id-ordered fold would give "cba".
     events.Add(_multi, new RbMarked { StreamId = _multi, Mark = "a" }, id: new Guid("00000000-0000-7000-8000-000000000003"));
     events.Add(_multi, new RbMarked { StreamId = _multi, Mark = "b" }, id: new Guid("00000000-0000-7000-8000-000000000002"));
@@ -253,9 +322,12 @@ public class PerspectiveRebuilderBatchedReadTests {
     if (extents is not null) {
       services.AddSingleton<IArchivedStreamExtents>(new Extents(extents));
     }
+    if (stateSource) {
+      services.AddSingleton<IPerspectiveStateSource>(new BatchedPerspectiveStateSource());
+    }
     var sp = services.BuildServiceProvider();
     var rebuilder = new PerspectiveRebuilder(sp.GetRequiredService<IServiceScopeFactory>(), new TypedLog(log));
-    return new World(rebuilder, events, harness.Rows, completer, dispatcher, log);
+    return new World(rebuilder, events, harness.Rows, completer, dispatcher, log, purgeMarkers);
   }
 
   private static MessageEnvelope<IEvent> _receivedEvent(string mark, long originSequence, Guid id) => new() {
@@ -269,7 +341,29 @@ public class PerspectiveRebuilderBatchedReadTests {
 
   private sealed record World(
     PerspectiveRebuilder Rebuilder, RbEvents Events, RbRows Rows, RecordingCompleter Completer,
-    RebuildEventDispatcherDouble Dispatcher, RbLog Log);
+    RebuildEventDispatcherDouble Dispatcher, RbLog Log, CountingPurgeMarkers PurgeMarkers);
+
+  /// <summary>Purge markers that hold none, counting each per-stream probe and each batched one.</summary>
+  private sealed class CountingPurgeMarkers : IPerspectivePurgeMarkerStore {
+    public List<Guid> Probes { get; } = [];
+    public List<IReadOnlyCollection<Guid>> BatchProbes { get; } = [];
+
+    public Task<bool> IsPurgedAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) {
+      Probes.Add(streamId);
+      return Task.FromResult(false);
+    }
+
+    public Task<IReadOnlySet<Guid>> PurgedAmongAsync(
+        IReadOnlyCollection<Guid> streamIds, string perspectiveName, CancellationToken cancellationToken = default) {
+      BatchProbes.Add([.. streamIds]);
+      return Task.FromResult<IReadOnlySet<Guid>>(new HashSet<Guid>());
+    }
+
+    public Task MarkPurgedAsync(Guid streamId, string perspectiveName, Guid? purgeEventId, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+
+    public Task ClearAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.CompletedTask;
+  }
 
   private sealed class RecordingCompleter : IPerspectiveCheckpointCompleter {
     public List<PerspectiveCursorCompletion> Completed { get; } = [];

@@ -460,6 +460,11 @@ public partial class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
     services.AddSingleton<IPerspectiveRunnerRegistry>(s => observed
       ? new ObservingRegistry((IPerspectiveRunnerRegistry)s.GetRequiredService(registryType), beforeEachStream, () => onFirstRun(s))
       : (IPerspectiveRunnerRegistry)s.GetRequiredService(registryType));
+    // What the driver registers beside the rebuild (#2513): the purge markers a missing row is probed in, and the state
+    // source that reads a batch's rows, markers and commit sequences with one statement each.
+    services.AddSingleton<IPerspectivePurgeMarkerStore>(_ =>
+      new Whizbang.Data.Postgres.PostgresPerspectivePurgeMarkerStore(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync));
+    services.AddSingleton<IPerspectiveStateSource, BatchedPerspectiveStateSource>();
     services.AddScoped<IPerspectiveCheckpointCompleter>(s =>
       new EFCorePostgresPerspectiveCheckpointCompleter(s.GetRequiredService<WorkCoordinationDbContext>()));
     services.AddSingleton<IPerspectiveTableSwapper>(s =>
