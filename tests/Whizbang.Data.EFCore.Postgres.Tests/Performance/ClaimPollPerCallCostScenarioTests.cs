@@ -46,6 +46,8 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
   private const int STREAMS = 100;
   /// <summary>The claim's batch, in streams. Held constant across the depths.</summary>
   private const int BATCH = 10;
+  /// <summary>The instance that polls: fixed, as every id of the workload is (#2521).</summary>
+  private static readonly Guid _poller = Guid.Parse("01a20000-0000-7000-8000-000000002521");
   /// <summary>Polls measured at each depth.</summary>
   private const int POLLS = 6;
   /// <summary>
@@ -201,7 +203,12 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
   /// priorities, with autovacuum off and nothing vacuumed.
   /// </summary>
   private static async Task<Guid> _fillAtDepthAsync(NpgsqlConnection conn, int depth) {
-    var poller = Guid.NewGuid();
+    // The poller and every id are fixed (#2521): the ids decide the partitions, so which streams a poll takes and which
+    // pages it reads, and ids drawn at random made the cost a draw. Measured at depth 50 across id sets: 6,897 to 8,563
+    // blocks a call; at depth 200, 1,300 to 1,600 (a mid-depth poll reading five to six times a deep one is #2523). This
+    // set is the dearest measured, 8,563 at depth 50, so the ceiling it is held to is not one a cheaper draw happens to
+    // keep: the depth-50 ceiling in baseline.tsv is 10,000 until #2523 lowers the cost.
+    var poller = _poller;
     await using var fill = conn.CreateCommand();
     fill.CommandText = @"
       ALTER TABLE wh_outbox SET (autovacuum_enabled = false);
@@ -218,12 +225,12 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
 
       INSERT INTO wh_perspective_events
         (stream_id, perspective_name, event_id, status, attempts, created_at, partition_number, priority)
-      SELECT st.stream_id, 'TestPerspective', gen_random_uuid(), 0, 0,
+      SELECT st.stream_id, 'TestPerspective', md5('claim-cost-event-' || st.ordinal || '-' || r)::uuid, 0, 0,
              NOW() - (st.ordinal * INTERVAL '1 millisecond') + (r * INTERVAL '1 microsecond'),
              compute_partition(st.stream_id),
              CASE st.ordinal % 3 WHEN 0 THEN 50 WHEN 1 THEN 150 ELSE 250 END
       FROM (
-        SELECT gen_random_uuid() AS stream_id, s AS ordinal FROM generate_series(1, @streams) s
+        SELECT md5('claim-cost-stream-' || s)::uuid AS stream_id, s AS ordinal FROM generate_series(1, @streams) s
       ) st CROSS JOIN generate_series(1, @depth) r;
 
       ANALYZE wh_perspective_events;";
