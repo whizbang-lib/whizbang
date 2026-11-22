@@ -358,7 +358,11 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
     if (beforeVacuum is not null) {
       await beforeVacuum();
     }
-    await _executeAsync(conn, "VACUUM wh_stream_lifecycle");
+    // FREEZE (#2521): a plain vacuum that cannot take a page's cleanup lock, because another backend holds a pin on it for
+    // the moment, prunes the page without marking it all-visible and moves on. An aggressive vacuum with every row due for
+    // freezing needs that lock for each page, so it waits for the pin to go (wait_event BufferPin) and marks every page.
+    // The pages end all-frozen as well, which an update reads in the visibility map exactly as it reads all-visible.
+    await _executeAsync(conn, "VACUUM (FREEZE) wh_stream_lifecycle");
   }
 
   /// <summary>
