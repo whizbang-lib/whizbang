@@ -267,6 +267,8 @@ public static class PostgresDriverExtensions {
         // TURNKEY: stream-integrity R1b — runtime-register RedeliveryRequestReceptor so a received
         // RequestRedeliveryCommand drives the selection + targeted re-delivery pump. Same rationale as above.
         selector.Services.AddHostedService<RedeliveryRequestReceptorRegistrar>();
+        // One repair build at a time per service: the gate its redelivery builds pass, and report through.
+        selector.Services.TryAddSingleton<RedeliveryBuildGate>();
 
         // TURNKEY: #80-D scheduled integrity sweep — the receptor reacts to the idle-time cron's
         // occurrences, and the scheduler registers that cron on the temporal engine (standing the
@@ -348,7 +350,7 @@ public static class PostgresDriverExtensions {
             logger: sp.GetService<ILogger<PostgresStreamPurger>>(),
             integrityMetrics: sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()));
         // TURNKEY: the built-in archive store (WS-3 S7), over the same data source. The prefix truncate's archive path
-        // writes through it; a blob store package registers its own IArchiveStore first and wins.
+        // writes through it.
         // <docs>fundamentals/events/archive-store#the-postgres-table-store</docs>
         // How an archive store reaches this database, shared by the table store and any store that keeps state here.
         selector.Services.TryAddSingleton(sp =>
@@ -361,10 +363,9 @@ public static class PostgresDriverExtensions {
         // <docs>fundamentals/perspectives/snapshots#collectives</docs>
         selector.Services.TryAddSingleton<global::Whizbang.Core.Perspectives.ICollectiveSnapshotFence>(sp =>
           new PostgresCollectiveSnapshotFence(sp.GetRequiredService<PostgresArchiveConnection>()));
-        selector.Services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(sp => {
-          var database = sp.GetRequiredService<PostgresArchiveConnection>();
-          return new PostgresTableArchiveStore(database.Open, database.Schema, sp.GetService<ILogger<PostgresTableArchiveStore>>());
-        });
+        // #2503: the archive coordinator when a storage provider selected an object store (it moves objects only; the
+        // transaction is the driver's), otherwise the table store.
+        selector.Services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(PostgresArchiveStores.Create);
         // TURNKEY: the maintenance step that performs the restores an AutoRestore append queued (#1738), through whichever
         // archive store is registered, under the maintainer duty.
         // <docs>fundamentals/events/archive-store#restore-requests</docs>

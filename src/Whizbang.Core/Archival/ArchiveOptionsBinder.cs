@@ -191,6 +191,8 @@ internal static class ArchiveOptionsBinder {
       sp => new ArchivedStreamRowsOptionsSetup(sp.GetService<IConfiguration>())));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<StreamLifecycleOptions>, CloseBooksNeedsAHandler>(
       sp => new CloseBooksNeedsAHandler(sp)));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<StreamLifecycleOptions>, ArchivingNeedsACoordinator>(
+      sp => new ArchivingNeedsACoordinator(sp)));
     return services;
   }
 
@@ -218,6 +220,42 @@ internal static class ArchiveOptionsBinder {
         Bind(configuration, options);
       }
     }
+  }
+
+  // #2503: a policy that archives on a driver with no archive store (SQLite), or with an object store configured that the
+  // driver's store does not write through, fails the start naming the missing piece rather than the first archive.
+  private sealed class ArchivingNeedsACoordinator(IServiceProvider services) : IValidateOptions<StreamLifecycleOptions> {
+    public ValidateOptionsResult Validate(string? name, StreamLifecycleOptions options) =>
+      RefusalForArchiving(options, services) is { } refusal ? ValidateOptionsResult.Fail(refusal) : ValidateOptionsResult.Success;
+  }
+
+  /// <summary>
+  /// Why the start fails for <paramref name="options"/> (#2503), or <see langword="null"/>: a type whose end-of-life
+  /// policy archives (or closes its books, which archives the sealed predecessor) needs an <see cref="IArchiveStore"/>, and
+  /// an object store that is configured needs the driver's <see cref="IArchiveObjectCoordinator"/> to write through it.
+  /// </summary>
+  /// <param name="options">The bound lifecycle options.</param>
+  /// <param name="services">The host's services.</param>
+  /// <returns>The refusal naming the types and the missing piece, or <see langword="null"/>.</returns>
+  internal static string? RefusalForArchiving(StreamLifecycleOptions options, IServiceProvider services) {
+    var archiving = options.EndOfLifePolicies().Where(p => p.Action.ToDisposition() == Lifecycle.Disposition.Archive).Select(p => p.StreamType)
+      .Concat(options.Types.Where(t => t.Value.Action == StreamLifecycleAction.CloseBooks).Select(t => t.Key))
+      .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+    if (archiving.Count == 0) {
+      return null;
+    }
+    var types = string.Join(", ", archiving);
+    var store = services.GetService<IArchiveStore>();
+    if (store is null) {
+      return $"{TYPES_SECTION}:<StreamType>:Action archives {types}, but no {nameof(IArchiveStore)} is registered: the database " +
+        "driver has no archive coordinator (the SQLite driver has none). Use a Postgres driver, or set the action to Compact " +
+        "or Purge (#2503).";
+    }
+    return ArchiveObjectStoreSelection.Resolve(services) is { } objects && store is not IArchiveObjectCoordinator
+      ? $"{TYPES_SECTION}:<StreamType>:Action archives {types}, and an archive object store is configured ({objects.Location}), " +
+        $"but the database driver has no archive coordinator ({nameof(IArchiveObjectCoordinator)}) to write through it, so " +
+        "archives would never reach it. Use a Postgres driver, or remove the object store's archive configuration (#2503)."
+      : null;
   }
 
   // #1741: only the domain can write a closing summary and an opening balance, so a type whose action closes the books

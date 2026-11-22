@@ -73,7 +73,7 @@ public static class WhizbangMeters {
     // literal to the owning METER_NAME constant.
     "Whizbang.Sagas",                    // Whizbang.Sagas — SagaMetrics
     "Whizbang.Postgres.Notifications",   // Whizbang.Data.Postgres — NotifyMetrics
-    "Whizbang.Archive.AzureBlob",        // Whizbang.Archive.AzureBlob: ArchiveSweepMetrics
+    "Whizbang.Archive.AzureBlob",        // Whizbang.Data.Postgres: ArchiveSweepMetrics (name kept from its first package, #2503)
   ];
 
   /// <summary>

@@ -10,7 +10,7 @@ using Whizbang.Core.Archival;
 using Whizbang.Data.Postgres;
 using Whizbang.Testing.Containers;
 
-namespace Whizbang.Archive.AzureBlob.Integration.Tests;
+namespace Whizbang.Storage.AzureBlob.Integration.Tests;
 
 /// <summary>
 /// #2367: the optional deletion delay (<see cref="AzureBlobArchiveOptions.DeleteAfter"/>) for storage that keeps
@@ -78,7 +78,7 @@ public partial class AzureBlobArchiveStoreTests {
         await Assert.That(await _readAllAsync(restoredDatabase, stream)).IsEquivalentTo(hot, TUnit.Assertions.Enums.CollectionOrdering.Matching)
           .Because("within the delay, every object the restored database names is still in storage");
       } else {
-        await Assert.That(() => _completedAsync(_readAllAsync(restoredDatabase, stream))).Throws<RequestFailedException>()
+        await Assert.That(() => _completedAsync(_readAllAsync(restoredDatabase, stream))).Throws<ArchiveObjectStoreException>()
           .Because("the control: deleted at once, as before, the restored database names objects storage no longer has");
       }
     } finally {
@@ -94,7 +94,7 @@ public partial class AzureBlobArchiveStoreTests {
     var (stream, _) = await _seedAsync(3);
     var crash = new FaultObjectWrites(afterSending: true);
     var store = _recordedStore(recorder, crash);
-    await Assert.That(() => _completedAsync(store.WriteAsync(ArchiveBatch.WholeStream(stream)))).Throws<RequestFailedException>();
+    await Assert.That(() => _completedAsync(store.WriteAsync(ArchiveBatch.WholeStream(stream)))).Throws<ArchiveObjectStoreException>();
     var orphaned = await _objectsAsync();
 
     var swept = await store.SweepOrphanedObjectsAsync();
@@ -120,7 +120,7 @@ public partial class AzureBlobArchiveStoreTests {
     _ = await store.WriteAsync(ArchiveBatch.WholeStream(queued));
     clock.Now = await _databaseNowAsync();
     _ = await store.RestoreAsync(queued);
-    await Assert.That(() => _completedAsync(crashing.WriteAsync(ArchiveBatch.WholeStream(orphan)))).Throws<RequestFailedException>();
+    await Assert.That(() => _completedAsync(crashing.WriteAsync(ArchiveBatch.WholeStream(orphan)))).Throws<ArchiveObjectStoreException>();
     // Not an object this store writes: never touched, however old.
     _ = await _container().GetBlobClient("notes/readme.txt").UploadAsync(BinaryData.FromString("operator notes"));
     var created = await _createdAsync();
@@ -168,7 +168,7 @@ public partial class AzureBlobArchiveStoreTests {
     var elsewhere = $"archive-{Guid.NewGuid():N}";
     await _copyObjectsAsync(_containerName, elsewhere);
     var copied = await _objectsAsync(elsewhere);
-    var store = new AzureBlobArchiveStore(_database(), _container(elsewhere),
+    var store = AzureBlobArchive.Create(_database(), _container(elsewhere),
       new AzureBlobArchiveOptions { ContainerName = elsewhere, DeleteAfter = _delay }, logger: null, new ManualClock(_farFuture));
 
     var swept = await store.SweepOrphanedObjectsAsync();
@@ -186,7 +186,7 @@ public partial class AzureBlobArchiveStoreTests {
     var crash = new FaultObjectWrites(afterSending: true);
     var store = _recordedStore(new RecordRequests(), crash, new AzureBlobArchiveOptions { MaxEventsPerChunk = 10, DeleteAfter = _delay }, clock);
     await _archiveAnotherStreamAsync();
-    await Assert.That(() => _completedAsync(store.WriteAsync(ArchiveBatch.WholeStream(orphan)))).Throws<RequestFailedException>();
+    await Assert.That(() => _completedAsync(store.WriteAsync(ArchiveBatch.WholeStream(orphan)))).Throws<ArchiveObjectStoreException>();
 
     int whileLocked;
     await using (var connection = await _openAsync()) {
@@ -211,9 +211,9 @@ public partial class AzureBlobArchiveStoreTests {
     var options = new AzureBlobArchiveOptions { MaxEventsPerChunk = 10, DeleteAfter = _delay };
     var crashing = _recordedStore(new RecordRequests(), new FaultObjectWrites(afterSending: true), options, clock);
     await _archiveAnotherStreamAsync();
-    await Assert.That(() => _completedAsync(crashing.WriteAsync(ArchiveBatch.WholeStream(orphan)))).Throws<RequestFailedException>();
+    await Assert.That(() => _completedAsync(crashing.WriteAsync(ArchiveBatch.WholeStream(orphan)))).Throws<ArchiveObjectStoreException>();
     var logger = new ListLogger();
-    var failing = new AzureBlobArchiveStore(_database(), _container(fault: new FaultObjectDeletes()),
+    var failing = AzureBlobArchive.Create(_database(), _container(fault: new FaultObjectDeletes()),
       new AzureBlobArchiveOptions { ContainerName = _containerName, DeleteAfter = _delay }, logger, clock);
 
     var swept = await failing.SweepOrphanedObjectsAsync();
@@ -238,11 +238,11 @@ public partial class AzureBlobArchiveStoreTests {
     var step = new ArchiveObjectDeletionStep(store);
     var named = await _archiveAnotherStreamAsync();
 
-    await Assert.That(() => _completedAsync(store.WriteAsync(ArchiveBatch.WholeStream(first)))).Throws<RequestFailedException>();
+    await Assert.That(() => _completedAsync(store.WriteAsync(ArchiveBatch.WholeStream(first)))).Throws<ArchiveObjectStoreException>();
     await step.RunAsync(_noServices, CancellationToken.None);
     var afterFirst = await _objectsAsync();
-    await Assert.That(() => _completedAsync(store.WriteAsync(ArchiveBatch.WholeStream(second)))).Throws<RequestFailedException>();
-    clock.Now += AzureBlobArchiveStore.OrphanSweepInterval - _microsecond;
+    await Assert.That(() => _completedAsync(store.WriteAsync(ArchiveBatch.WholeStream(second)))).Throws<ArchiveObjectStoreException>();
+    clock.Now += PostgresObjectArchiveStore.OrphanSweepInterval - _microsecond;
     await step.RunAsync(_noServices, CancellationToken.None);
     var withinTheInterval = await _objectsAsync();
     clock.Now += _microsecond;
@@ -256,9 +256,9 @@ public partial class AzureBlobArchiveStoreTests {
 
   // ── Arrange ────────────────────────────────────────────────────────────────────────────────────────
 
-  private AzureBlobArchiveStore _delayedStore(TimeProvider clock) =>
-    new(_database(), _container(), new AzureBlobArchiveOptions { MaxEventsPerChunk = 2, ContainerName = _containerName, DeleteAfter = _delay },
-      logger: null, clock);
+  private PostgresObjectArchiveStore _delayedStore(TimeProvider clock) =>
+    AzureBlobArchive.Create(_database(), _container(), new AzureBlobArchiveOptions { MaxEventsPerChunk = 2, ContainerName = _containerName, DeleteAfter = _delay },
+      logger: null, timeProvider: clock);
 
   // The database's own clock now: a delay measured from here has not passed for anything queued from here on.
   private async Task<DateTimeOffset> _databaseNowAsync() {
@@ -298,7 +298,7 @@ public partial class AzureBlobArchiveStoreTests {
   private async Task<Dictionary<string, DateTimeOffset>> _createdAsync() {
     var created = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
     await foreach (var item in _container().GetBlobsAsync()) {
-      if (item.Name != AzureBlobArchiveStore.OWNER_MARKER_NAME) {
+      if (item.Name != PostgresObjectArchiveStore.OWNER_MARKER_NAME) {
         created[item.Name] = item.Properties.CreatedOn!.Value;
       }
     }

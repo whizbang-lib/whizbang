@@ -11,11 +11,11 @@ using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Data.Postgres;
 
-namespace Whizbang.Archive.AzureBlob.Integration.Tests;
+namespace Whizbang.Storage.AzureBlob.Integration.Tests;
 
 /// <summary>
 /// The archive location pin against the three moves that motivated it (#2141), under each handling of
-/// <c>Whizbang:Archive:AzureBlob:LocationMismatch</c>. The database stores the normalized location every record
+/// <c>Whizbang:Storage:AzureBlob:Archive:LocationMismatch</c>. The database stores the normalized location every record
 /// references; infrastructure decides where the objects actually are, and configuration points the store there. In
 /// each move below the infrastructure put the objects in the configured place, and the records still name the old one:
 /// <list type="bullet">
@@ -35,7 +35,7 @@ public partial class AzureBlobArchiveStoreTests {
 
   // The store a moved environment runs, configured for where infrastructure now keeps the objects, with every request
   // it sends counted.
-  private async Task<(AzureBlobArchiveStore Store, RedirectHost Requests)> _movedAsync(
+  private async Task<(PostgresObjectArchiveStore Store, RedirectHost Requests)> _movedAsync(
       string move, ArchiveLocationMismatchHandling handling, ListLogger logger) {
     if (move == FAILOVER) {
       // The same container at another account endpoint: the emulator answers for both, as a replicated account would.

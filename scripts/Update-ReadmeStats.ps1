@@ -96,6 +96,7 @@ $tiers = [ordered]@{
       'API surface'     = 'Expose read models and commands over GraphQL or REST, with the matching generator.'
       'Real-time'       = 'Push changes to connected clients.'
       'Hosting'         = 'ASP.NET Core request integration, and Aspire resources for local and cloud hosting.'
+      'Object storage'  = 'Message body offload and event archive objects in a storage account, active when referenced and configured.'
       'Message offload' = 'Move large message bodies out of the broker and database (claim check).'
       'Event archive'   = 'Keep archived event streams outside the database, readable and restorable.'
       'Observability'   = 'OpenTelemetry integration for tagged messages.'

@@ -117,6 +117,8 @@ public sealed class StartupHostedServiceAuditTests {
     "RegistrationCollisionStartupValidator",
     // Logs at Debug which assemblies the host's service scope included and excluded, from the anchors (#2243).
     "ServiceAssemblyScopeStartupReporter",
+    // Logs which provider each storage feature uses and why, from the registrations and configuration (#2502).
+    "StorageProviderStartupReport",
     "WhizbangStartupLogger", "UnsealedOffloadStartupWarning", "TagPolicyStartupValidator", "NoTransportConfiguredNotice",
     "UnobservedExceptionDiagnosticsWarmUp", "PerspectiveRowRetentionConfigurator", "ArchivedStreamRowsConfigurator",
     "CapabilityVerdictEnforcer",

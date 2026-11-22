@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- https://learn.microsoft.com/dotnet/fundamentals/package-validation/diagnostic-ids -->
+<!-- #2502, #2503: the archive options moved to Whizbang.Storage.AzureBlob, the coordinator (AzureBlobArchiveStore) became the
+     Postgres driver's PostgresObjectArchiveStore behind IArchiveObjectCoordinator, ArchiveObjectCorruptedException and
+     ArchiveObjectDeletionStep moved to Whizbang.Core.Archival, and ArchiveSweepMetrics to Whizbang.Data.Postgres. A type
+     cannot be forwarded across a namespace change, so the old types are gone and the [Obsolete] registration call takes
+     the moved options type (changelog.d/2502.md and 2503.md, Upgrade). -->
+<Suppressions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:Whizbang.Archive.AzureBlob.ArchiveObjectCorruptedException</Target>
+    <Left>lib/net10.0/Whizbang.Archive.AzureBlob.dll</Left>
+    <Right>lib/net10.0/Whizbang.Archive.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:Whizbang.Archive.AzureBlob.ArchiveObjectDeletionStep</Target>
+    <Left>lib/net10.0/Whizbang.Archive.AzureBlob.dll</Left>
+    <Right>lib/net10.0/Whizbang.Archive.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:Whizbang.Archive.AzureBlob.ArchiveSweepMetrics</Target>
+    <Left>lib/net10.0/Whizbang.Archive.AzureBlob.dll</Left>
+    <Right>lib/net10.0/Whizbang.Archive.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:Whizbang.Archive.AzureBlob.AzureBlobArchiveOptions</Target>
+    <Left>lib/net10.0/Whizbang.Archive.AzureBlob.dll</Left>
+    <Right>lib/net10.0/Whizbang.Archive.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:Whizbang.Archive.AzureBlob.AzureBlobArchiveStore</Target>
+    <Left>lib/net10.0/Whizbang.Archive.AzureBlob.dll</Left>
+    <Right>lib/net10.0/Whizbang.Archive.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:Whizbang.Archive.AzureBlob.ArchiveObjectCorruptedException</Target>
+    <Left>lib/net11.0/Whizbang.Archive.AzureBlob.dll</Left>
+    <Right>lib/net11.0/Whizbang.Archive.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:Whizbang.Archive.AzureBlob.ArchiveObjectDeletionStep</Target>
+    <Left>lib/net11.0/Whizbang.Archive.AzureBlob.dll</Left>
+    <Right>lib/net11.0/Whizbang.Archive.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:Whizbang.Archive.AzureBlob.ArchiveSweepMetrics</Target>
+    <Left>lib/net11.0/Whizbang.Archive.AzureBlob.dll</Left>
+    <Right>lib/net11.0/Whizbang.Archive.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:Whizbang.Archive.AzureBlob.AzureBlobArchiveOptions</Target>
+    <Left>lib/net11.0/Whizbang.Archive.AzureBlob.dll</Left>
+    <Right>lib/net11.0/Whizbang.Archive.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:Whizbang.Archive.AzureBlob.AzureBlobArchiveStore</Target>
+    <Left>lib/net11.0/Whizbang.Archive.AzureBlob.dll</Left>
+    <Right>lib/net11.0/Whizbang.Archive.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Archive.AzureBlob.AzureBlobArchiveServiceCollectionExtensions.AddWhizbangAzureBlobArchive(Microsoft.Extensions.DependencyInjection.IServiceCollection,System.Action{Whizbang.Archive.AzureBlob.AzureBlobArchiveOptions})</Target>
+    <Left>lib/net10.0/Whizbang.Archive.AzureBlob.dll</Left>
+    <Right>lib/net10.0/Whizbang.Archive.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Archive.AzureBlob.AzureBlobArchiveServiceCollectionExtensions.AddWhizbangAzureBlobArchive(Microsoft.Extensions.DependencyInjection.IServiceCollection,System.Action{Whizbang.Archive.AzureBlob.AzureBlobArchiveOptions})</Target>
+    <Left>lib/net11.0/Whizbang.Archive.AzureBlob.dll</Left>
+    <Right>lib/net11.0/Whizbang.Archive.AzureBlob.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+</Suppressions>

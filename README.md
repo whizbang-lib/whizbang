@@ -148,13 +148,21 @@ ASP.NET Core request integration, and Aspire resources for local and cloud hosti
 | [Whizbang.Hosting.Azure.ServiceBus](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus/) | Aspire hosting extensions for Whizbang Azure Service Bus integration |
 | [Whizbang.Hosting.RabbitMQ](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ/) | Aspire hosting extensions for Whizbang RabbitMQ integration with automatic topology configuration. |
 
+#### Object storage
+
+Message body offload and event archive objects in a storage account, active when referenced and configured.
+
+| Package | Version | What it is for |
+|---|---|---|
+| [Whizbang.Storage.AzureBlob](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Storage.AzureBlob/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Storage.AzureBlob.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Storage.AzureBlob/) | Azure Blob Storage for Whizbang: message body offload (claim check) and event archive objects, active when referenced and configured (Whizbang:Storage:AzureBlob). |
+
 #### Message offload
 
 Move large message bodies out of the broker and database (claim check).
 
 | Package | Version | What it is for |
 |---|---|---|
-| [Whizbang.Offloads.AzureBlob](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Offloads.AzureBlob/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Offloads.AzureBlob.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Offloads.AzureBlob/) | Azure Blob Storage IMessageBodyStore provider for Whizbang offloads (claim-check pattern). |
+| [Whizbang.Offloads.AzureBlob](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Offloads.AzureBlob/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Offloads.AzureBlob.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Offloads.AzureBlob/) | Replaced by Whizbang.Storage.AzureBlob, which this release depends on: the earlier registration calls compile and work, marked obsolete. |
 | [Whizbang.Offloads.InMemory](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Offloads.InMemory/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Offloads.InMemory.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Offloads.InMemory/) | In-memory IMessageBodyStore provider for Whizbang offloads. |
 
 #### Event archive
@@ -163,7 +171,7 @@ Keep archived event streams outside the database, readable and restorable.
 
 | Package | Version | What it is for |
 |---|---|---|
-| [Whizbang.Archive.AzureBlob](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Archive.AzureBlob/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Archive.AzureBlob.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Archive.AzureBlob/) | Azure Blob Storage IArchiveStore for Whizbang: archived event streams leave the database as Brotli-compressed chunks, with a manifest in the service's Postgres database. |
+| [Whizbang.Archive.AzureBlob](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Archive.AzureBlob/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Archive.AzureBlob.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Archive.AzureBlob/) | Replaced by Whizbang.Storage.AzureBlob, which this release depends on: the earlier registration calls compile and work, marked obsolete. |
 
 #### Observability
 

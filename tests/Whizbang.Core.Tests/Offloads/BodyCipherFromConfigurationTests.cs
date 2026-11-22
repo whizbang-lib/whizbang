@@ -68,6 +68,40 @@ public class BodyCipherFromConfigurationTests {
   }
 
   [Test]
+  public async Task FromTheHostsConfiguration_ResolvesTheNamedCipher_AndNothingElseAsync() {
+    // #2502: read when the container is built, for a registration that runs before configuration can be read.
+    static ServiceProvider build(Dictionary<string, string?>? values) {
+      var services = new ServiceCollection();
+      if (values is not null) {
+        services.AddSingleton(_config(values));
+      }
+      services.AddWhizbangBodyCipherFromConfiguration();
+      services.AddWhizbangBodyCipherFromConfiguration();
+      return services.BuildServiceProvider();
+    }
+    await using var named = build(new() {
+      ["Whizbang:BodyOffload:CipherName"] = "body-aes-v1",
+      ["Whizbang:BodyOffload:Cipher:KeyId"] = "kek-2026-09",
+      ["Whizbang:BodyOffload:Cipher:KeyEncryptionKey"] = Convert.ToBase64String(_keyA),
+    });
+    await using var unnamed = build(new() { ["Whizbang:BodyOffload:ProviderName"] = "blob-prod" });
+    await using var unconfigured = build(values: null);
+    await using var missingKey = build(new() { ["Whizbang:BodyOffload:CipherName"] = "body-aes-v1" });
+
+    var cipher = named.GetRequiredKeyedService<IMessageBodyCipher>("body-aes-v1");
+    var sealedBody = await cipher.SealAsync(new byte[] { 5, 6 });
+
+    await Assert.That((await cipher.OpenAsync(sealedBody.Bytes, sealedBody.Descriptor)).ToArray()).IsEquivalentTo(new byte[] { 5, 6 });
+    await Assert.That(sealedBody.Descriptor.KeyId).IsEqualTo("kek-2026-09");
+    await Assert.That(named.GetKeyedService<IMessageBodyCipher>("another-cipher")).IsNull()
+      .Because("only the name the settings give resolves, so a cipher registered in code under its own name is never shadowed");
+    await Assert.That(unnamed.GetKeyedService<IMessageBodyCipher>("body-aes-v1")).IsNull();
+    await Assert.That(unconfigured.GetKeyedService<IMessageBodyCipher>("body-aes-v1")).IsNull();
+    await Assert.That(() => missingKey.GetKeyedService<IMessageBodyCipher>("body-aes-v1")).Throws<InvalidOperationException>()
+      .Because("a named cipher without its key would store plaintext under a sealed label");
+  }
+
+  [Test]
   public async Task WithANameButNoKey_ThrowsAtStartup_NamingTheSettingAsync() {
     var ex = await Assert.That(() => _build(new() {
       ["Whizbang:BodyOffload:CipherName"] = "body-aes-v1",

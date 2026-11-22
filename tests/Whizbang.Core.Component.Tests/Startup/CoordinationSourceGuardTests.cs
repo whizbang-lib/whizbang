@@ -77,7 +77,7 @@ public partial class CoordinationSourceGuardTests {
     ["src/Whizbang.Data.EFCore.Postgres/SchemaStepRunner.cs"] = EXCLUSION,
     ["src/Whizbang.Data.EFCore.Postgres/Collective/EFCoreCollectiveAdapter.cs"] = EXCLUSION,
     ["src/Whizbang.Data.Dapper.Postgres/Collective/DapperCollectiveEventApplier.cs"] = EXCLUSION,
-    ["src/Whizbang.Archive.AzureBlob/AzureBlobArchiveStore.cs"] = EXCLUSION,
+    ["src/Whizbang.Data.Postgres/PostgresObjectArchiveStore.cs"] = EXCLUSION,
   };
 
   /// <summary>C# files that may compare a heartbeat's age or read session activity.</summary>

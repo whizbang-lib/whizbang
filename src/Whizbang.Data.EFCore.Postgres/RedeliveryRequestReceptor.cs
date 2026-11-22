@@ -28,15 +28,6 @@ public sealed partial class RedeliveryRequestReceptor(
     IServiceScopeFactory scopeFactory,
     ILogger<RedeliveryRequestReceptor> logger) : IReceptor<RequestRedeliveryCommand> {
 
-  /// <summary>
-  /// One repair build at a time per process. Redelivery requests arrive in bursts — per-bucket
-  /// auto-repair and subscription-expansion broadcasts land together — and each build holds a
-  /// page of event bodies plus its serialized composite; unbounded concurrency multiplies that
-  /// footprint and has OOM-killed origins under a first full audit. Requests queue here; inbox
-  /// redelivery semantics make waiting safe.
-  /// </summary>
-  private static readonly SemaphoreSlim _buildGate = new(1, 1);
-
   /// <inheritdoc />
   public async ValueTask HandleAsync(RequestRedeliveryCommand message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
@@ -94,7 +85,9 @@ public sealed partial class RedeliveryRequestReceptor(
     var maxEvents = message.MaxEvents is { } requested ? Math.Min(requested, cap) : cap;
     var pageSize = Math.Max(1, options.SelectPageSize);
 
-    await _buildGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+    // One repair build at a time (RedeliveryBuildGate): the service's own gate, or the process's when it registers none.
+    var buildGate = services.GetService<RedeliveryBuildGate>() ?? RedeliveryBuildGate.Process;
+    await buildGate.EnterAsync(cancellationToken).ConfigureAwait(false);
     try {
       // Phase B: the bundle names THIS origin so fanned-out children carry their original source
       // identity and repaired windows recount correctly at the consumer.
@@ -141,7 +134,7 @@ public sealed partial class RedeliveryRequestReceptor(
       metrics?.RedeliveryBuildDuration.Record(buildTimer.Elapsed.TotalSeconds);
       LogRedeliveryPublished(logger, totalShipped, totalComposites, message.RequesterService, message.Topic);
     } finally {
-      _buildGate.Release();
+      buildGate.Exit();
     }
   }
 
