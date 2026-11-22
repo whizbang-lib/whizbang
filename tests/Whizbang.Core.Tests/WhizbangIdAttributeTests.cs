@@ -95,6 +95,34 @@ public class WhizbangIdAttributeTests {
   }
 
   [Test]
+  public async Task WhizbangIdAttribute_DefaultConstructor_AcceptsUuidV7OnlyAsync() {
+    var attribute = new WhizbangIdAttribute();
+
+    await Assert.That(attribute.Versions).IsEqualTo(UuidVersions.V7);
+  }
+
+  [Test]
+  public async Task WhizbangIdAttribute_VersionsProperty_CanBeSetAsync() {
+    var attribute = new WhizbangIdAttribute { Versions = UuidVersions.V7 | UuidVersions.V5 };
+
+    await Assert.That(attribute.Versions).IsEqualTo(UuidVersions.V7 | UuidVersions.V5);
+  }
+
+  /// <summary>Each flag's bit is the RFC 9562 version number, so a Guid's version tests its flag directly.</summary>
+  [Test]
+  [Arguments(UuidVersions.V1, 1)]
+  [Arguments(UuidVersions.V2, 2)]
+  [Arguments(UuidVersions.V3, 3)]
+  [Arguments(UuidVersions.V4, 4)]
+  [Arguments(UuidVersions.V5, 5)]
+  [Arguments(UuidVersions.V6, 6)]
+  [Arguments(UuidVersions.V7, 7)]
+  [Arguments(UuidVersions.V8, 8)]
+  public async Task UuidVersions_EachFlagIsTheBitOfItsVersionNumberAsync(UuidVersions flag, int version) {
+    await Assert.That((int)flag).IsEqualTo(1 << version);
+  }
+
+  [Test]
   public async Task WhizbangIdAttribute_AttributeUsage_AllowsStructTargetAsync() {
     // Arrange & Act
     var attributeUsage = typeof(WhizbangIdAttribute)

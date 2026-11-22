@@ -159,6 +159,76 @@ public class WhizbangIdVersionAcceptanceTests {
   }
 
   // ========================================
+  // Versions = V7 | V5 (#2516)
+  // ========================================
+
+  [Test]
+  [Arguments(V5)]
+  [Arguments(V7)]
+  public async Task AllowList_AcceptedVersion_RoundTripsThroughEveryCheckedEntryPointAsync(string text) {
+    var guid = Guid.Parse(text);
+
+    await Assert.That(MintedOrNamedTestId.From(guid).Value).IsEqualTo(guid);
+    await Assert.That(MintedOrNamedTestId.From(TrackedGuid.FromExternal(guid)).Value).IsEqualTo(guid);
+    await Assert.That(MintedOrNamedTestId.Parse(text).Value).IsEqualTo(guid);
+    await Assert.That(((MintedOrNamedTestId)guid).Value).IsEqualTo(guid);
+    await Assert.That(_readJson<MintedOrNamedTestId>(text, SerializationProfile.Default).Value).IsEqualTo(guid);
+    await Assert.That(_readJson<MintedOrNamedTestId>(text, SerializationProfile.Persistence).Value).IsEqualTo(guid);
+  }
+
+  [Test]
+  [Arguments(V4)]
+  [Arguments(V8)]
+  public async Task AllowList_VersionNotInTheList_IsRejectedByEveryCheckedEntryPointAsync(string text) {
+    var guid = Guid.Parse(text);
+
+    await Assert.That(() => MintedOrNamedTestId.From(guid)).ThrowsExactly<ArgumentException>();
+    await Assert.That(() => MintedOrNamedTestId.From(TrackedGuid.FromExternal(guid))).ThrowsExactly<ArgumentException>();
+    await Assert.That(() => MintedOrNamedTestId.Parse(text)).ThrowsExactly<ArgumentException>();
+    await Assert.That(() => (MintedOrNamedTestId)guid).ThrowsExactly<ArgumentException>();
+    await Assert.That(() => _readJson<MintedOrNamedTestId>(text, SerializationProfile.Default)).Throws<Exception>();
+  }
+
+  [Test]
+  public async Task AllowList_EmptyGuid_IsRejectedAsync() {
+    await Assert.That(() => MintedOrNamedTestId.From(Guid.Empty)).ThrowsExactly<ArgumentException>();
+    await Assert.That(() => MintedOrNamedTestId.From(TrackedGuid.FromExternal(Guid.Empty)))
+      .ThrowsExactly<ArgumentException>();
+  }
+
+  [Test]
+  public async Task AllowList_Refusal_NamesTheAcceptedVersionsAndTheOneReceivedAsync() {
+    var thrown = Assert.Throws<ArgumentException>(() => MintedOrNamedTestId.From(Guid.Parse(V4)));
+
+    await Assert.That(thrown.Message).Contains("MintedOrNamedTestId requires UUIDv5 or UUIDv7 but received version 4");
+    await Assert.That(thrown.ParamName).IsEqualTo("value");
+  }
+
+  [Test]
+  public async Task AllowList_New_StillProducesUuidV7Async() {
+    var id = MintedOrNamedTestId.New();
+
+    await Assert.That(id.Value.Version).IsEqualTo(7);
+    await Assert.That(id.GetIsTimeOrdered()).IsTrue();
+  }
+
+  /// <summary>Only a v7 value is time-ordered; an accepted v5 is not (#2516).</summary>
+  [Test]
+  public async Task AllowList_V5Value_IsNotTimeOrderedAsync() {
+    var id = MintedOrNamedTestId.From(Guid.Parse(V5));
+
+    await Assert.That(id.GetIsTimeOrdered()).IsFalse();
+  }
+
+  [Test]
+  public async Task AllowList_ConstructorAndValueInit_StayUncheckedAsync() {
+    var guid = Guid.Parse(V4);
+
+    await Assert.That(new MintedOrNamedTestId(guid).Value).IsEqualTo(guid);
+    await Assert.That(new MintedOrNamedTestId { Value = Guid.Empty }.Value).IsEqualTo(Guid.Empty);
+  }
+
+  // ========================================
   // Default (UUIDv7 only)
   // ========================================
 

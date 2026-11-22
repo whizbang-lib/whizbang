@@ -178,7 +178,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         SuppressDuplicateWarning: suppressWarning,
         // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
         Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
-        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr)
+        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr),
+        Versions: _versionsOf(whizbangIdAttr),
+        DeclaresVersions: _declaresVersions(whizbangIdAttr)
     );
 
     return (idInfo, null, null);
@@ -207,6 +209,19 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// <summary>Whether <c>[WhizbangId(AcceptAnyVersion = true)]</c> is written: the id takes any non-empty Guid (#2071).</summary>
   private static bool _acceptsAnyVersion(AttributeData attribute) =>
     attribute.NamedArguments.FirstOrDefault(kvp => kvp.Key == "AcceptAnyVersion").Value.Value is true;
+
+  /// <summary>
+  /// The versions <c>[WhizbangId(Versions = ...)]</c> lists, as a <see cref="UuidVersionMask"/>; UUIDv7 when it is not
+  /// written (#2516). Bits outside versions 1 to 8 are dropped, so a cast like <c>(UuidVersions)1</c> lists nothing.
+  /// </summary>
+  private static int _versionsOf(AttributeData attribute) =>
+    attribute.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Versions").Value.Value is int mask
+      ? mask & UuidVersionMask.ALL
+      : UuidVersionMask.V7;
+
+  /// <summary>Whether <c>Versions</c> is written on the attribute at all, whatever its value.</summary>
+  private static bool _declaresVersions(AttributeData attribute) =>
+    attribute.NamedArguments.Any(kvp => kvp.Key == "Versions");
 
   private static (WhizbangIdInfo?, Location?, string?)? _extractPropertyBasedId(
       GeneratorSyntaxContext context,
@@ -255,7 +270,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         SuppressDuplicateWarning: suppressWarning,
         // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
         Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
-        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr)
+        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr),
+        Versions: _versionsOf(whizbangIdAttr),
+        DeclaresVersions: _declaresVersions(whizbangIdAttr)
     );
 
     return (idInfo, null, null);
@@ -312,7 +329,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         SuppressDuplicateWarning: suppressWarning,
         // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
         Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
-        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr)
+        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr),
+        Versions: _versionsOf(whizbangIdAttr),
+        DeclaresVersions: _declaresVersions(whizbangIdAttr)
     );
 
     return (idInfo, null, null);
@@ -444,27 +463,79 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// The one id that the routes discovering the same type resolve to. When every route agrees on
-  /// <c>AcceptAnyVersion</c>, the first is kept, as before. When they disagree, the id keeps the UUIDv7 rule (a
-  /// route without the option is kept) whatever the discovery order, and WHIZ029 is reported at each opt-in that
-  /// is ignored (#2071).
+  /// The one id that the routes discovering the same type resolve to: the strictest version rule they have in common,
+  /// whatever the discovery order. When every route agrees, the first is kept, as before. Otherwise a route without
+  /// <c>AcceptAnyVersion</c> is kept, its <c>Versions</c> narrowed to the versions every such route lists, and each
+  /// route whose rule was narrowed is reported: WHIZ029 at an ignored <c>AcceptAnyVersion</c> opt-in (#2071), WHIZ037
+  /// at a narrowed <c>Versions</c> list (#2516). A rule that accepts no version is WHIZ039, and
+  /// <c>AcceptAnyVersion = true</c> written with <c>Versions</c> is WHIZ038.
   /// </summary>
   private static WhizbangIdInfo _resolveRoutes(SourceProductionContext context, IEnumerable<WhizbangIdInfo> routes) {
     var all = routes.ToList();
-    var strict = all.Find(id => !id.AcceptAnyVersion);
-    if (strict is null) {
+    _reportVersionDeclarationErrors(context, all);
+
+    var listed = all.Where(id => !id.AcceptAnyVersion).ToList();
+    if (listed.Count == 0) {
       return all[0];
     }
 
-    foreach (var ignoredOptIn in all.Where(id => id.AcceptAnyVersion)) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.WhizbangIdAcceptAnyVersionDisagrees,
-          ignoredOptIn.Location,
-          ignoredOptIn.FullyQualifiedName
-      ));
+    var common = listed.Aggregate(UuidVersionMask.ALL, (mask, id) => mask & id.Versions);
+    if (common == 0) {
+      // No version in common: an error already, so generate the default rule rather than an id nothing can enter.
+      if (listed.All(id => id.Versions != 0)) {
+        context.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.WhizbangIdAcceptsNoVersion,
+            listed[0].Location,
+            listed[0].FullyQualifiedName,
+            "its [WhizbangId] declarations list no version in common"
+        ));
+      }
+      return listed[0] with { Versions = UuidVersionMask.V7 };
     }
 
-    return strict;
+    var description = UuidVersionMask.Describe(common);
+    foreach (var route in all) {
+      if (route.AcceptAnyVersion) {
+        context.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.WhizbangIdAcceptAnyVersionDisagrees,
+            route.Location,
+            route.FullyQualifiedName,
+            description
+        ));
+      } else if (route.Versions != common) {
+        context.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.WhizbangIdVersionsNarrowed,
+            route.Location,
+            route.FullyQualifiedName,
+            description
+        ));
+      }
+    }
+
+    return listed[0] with { Versions = common };
+  }
+
+  /// <summary>
+  /// Reports the declarations whose version rule is wrong on its own: <c>AcceptAnyVersion = true</c> together with
+  /// <c>Versions</c> (WHIZ038), and an empty <c>Versions</c> list (WHIZ039).
+  /// </summary>
+  private static void _reportVersionDeclarationErrors(SourceProductionContext context, List<WhizbangIdInfo> routes) {
+    foreach (var route in routes.Where(id => id.DeclaresVersions)) {
+      if (route.AcceptAnyVersion) {
+        context.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.WhizbangIdAcceptAnyVersionWithVersions,
+            route.Location,
+            route.FullyQualifiedName
+        ));
+      } else if (route.Versions == 0) {
+        context.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.WhizbangIdAcceptsNoVersion,
+            route.Location,
+            route.FullyQualifiedName,
+            "its Versions list is empty"
+        ));
+      }
+    }
   }
 
   /// <summary>
@@ -588,8 +659,10 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
     if (id.AcceptAnyVersion) {
       _appendAnyVersionFactories(sb, id.TypeName);
-    } else {
+    } else if (id.Versions == UuidVersionMask.V7) {
       _appendUuidV7Factories(sb, id.TypeName);
+    } else {
+      _appendAllowListFactories(sb, id.TypeName, id.Versions);
     }
 
     // New factory method using TrackedGuid.New() - generates new UUIDv7 with tracking
@@ -683,9 +756,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
-  /// <summary>What a generated id refuses, for its doc comments: a non-v7 Guid, or only the empty one.</summary>
+  /// <summary>What a generated id refuses, for its doc comments: a Guid of a version it does not list, or only the empty one.</summary>
   private static string _rejected(WhizbangIdInfo id) =>
-    id.AcceptAnyVersion ? "the Guid is empty" : "not UUIDv7";
+    id.AcceptAnyVersion ? "the Guid is empty" : $"not {UuidVersionMask.Describe(id.Versions)}";
 
   /// <summary>The default factories: <c>From</c> takes UUIDv7 only.</summary>
   private static void _appendUuidV7Factories(StringBuilder sb, string typeName) {
@@ -704,6 +777,33 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("    if (value.Version != 7)");
     sb.AppendLine($"      throw new ArgumentException($\"{typeName} requires UUIDv7 but received version {{value.Version}}\", nameof(value));");
     sb.AppendLine("    return new(TrackedGuid.FromExternal(value));");
+    sb.AppendLine("  }");
+  }
+
+  /// <summary>
+  /// The factories of an id declared with a <c>Versions</c> allow-list other than UUIDv7 alone: <c>From</c> takes a
+  /// Guid whose version is listed (#2516). <see cref="Guid.Empty"/> has version 0, which no list holds, so it is
+  /// refused with the rest. The constructor and the <c>Value</c> initializer stay unchecked, as on every id.
+  /// </summary>
+  private static void _appendAllowListFactories(StringBuilder sb, string typeName, int versions) {
+    var accepted = UuidVersionMask.Describe(versions);
+
+    sb.AppendLine($"  /// <summary>Creates an instance from a TrackedGuid, preserving tracking metadata. Throws if not {accepted}.</summary>");
+    sb.AppendLine($"  public static {typeName} From(TrackedGuid tracked) {{");
+    sb.AppendLine("    _requireAcceptedVersion(tracked.Value, nameof(tracked));");
+    sb.AppendLine("    return new(tracked);");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+
+    sb.AppendLine($"  /// <summary>Creates an instance from a Guid value. Throws if not {accepted}.</summary>");
+    sb.AppendLine($"  public static {typeName} From(Guid value) => new(TrackedGuid.FromExternal(_requireAcceptedVersion(value, nameof(value))));");
+    sb.AppendLine();
+
+    sb.AppendLine($"  /// <summary>Returns the Guid, or throws if its version is not {accepted}.</summary>");
+    sb.AppendLine("  private static Guid _requireAcceptedVersion(Guid value, string parameterName) {");
+    sb.AppendLine($"    if (value.Version is not {UuidVersionMask.Pattern(versions)})");
+    sb.AppendLine($"      throw new ArgumentException($\"{typeName} requires {accepted} but received version {{value.Version}}\", parameterName);");
+    sb.AppendLine("    return value;");
     sb.AppendLine("  }");
   }
 

@@ -36,6 +36,26 @@ public class WhizbangIdInfoEqualityTests {
     await Assert.That(strict.GetHashCode()).IsNotEqualTo(anyVersion.GetHashCode());
   }
 
+  /// <summary>An id whose version allow-list changed generates different code, so it must regenerate (#2516).</summary>
+  [Test]
+  public async Task SameName_DifferentVersions_IsNotEqualAsync() {
+    var strict = new WhizbangIdInfo("OrderId", "Shop", DiscoverySource.ExplicitType);
+    var v7OrV5 = new WhizbangIdInfo("OrderId", "Shop", DiscoverySource.ExplicitType, Versions: (1 << 7) | (1 << 5));
+
+    await Assert.That(strict.Equals(v7OrV5)).IsFalse();
+    await Assert.That(strict.GetHashCode()).IsNotEqualTo(v7OrV5.GetHashCode());
+  }
+
+  /// <summary>Whether <c>Versions</c> is written decides whether WHIZ038 is reported, so it takes part too.</summary>
+  [Test]
+  public async Task SameName_DifferentDeclaresVersions_IsNotEqualAsync() {
+    var unwritten = new WhizbangIdInfo("OrderId", "Shop", DiscoverySource.ExplicitType, AcceptAnyVersion: true);
+    var written = new WhizbangIdInfo(
+      "OrderId", "Shop", DiscoverySource.ExplicitType, AcceptAnyVersion: true, DeclaresVersions: true);
+
+    await Assert.That(unwritten.Equals(written)).IsFalse();
+  }
+
   [Test]
   public async Task DifferentName_IsNotEqualAsync() {
     var shop = new WhizbangIdInfo("OrderId", "Shop", DiscoverySource.ExplicitType);

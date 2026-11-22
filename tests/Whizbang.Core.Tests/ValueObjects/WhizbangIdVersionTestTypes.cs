@@ -15,3 +15,7 @@ public readonly partial struct AnyVersionTestId;
 /// <summary>An id with the default rule: UUIDv7 only.</summary>
 [WhizbangId]
 public readonly partial struct StrictVersionTestId;
+
+/// <summary>An id minted as UUIDv7 or derived by name as UUIDv5, and nothing else (#2516).</summary>
+[WhizbangId(Versions = UuidVersions.V7 | UuidVersions.V5)]
+public readonly partial struct MintedOrNamedTestId;

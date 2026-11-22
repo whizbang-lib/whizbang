@@ -240,14 +240,61 @@ public static class DiagnosticDescriptors {
   /// </summary>
   /// <docs>operations/diagnostics/whiz029</docs>
   /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdAcceptAnyVersionTests.cs:RoutesThatDisagree_KeepTheUuidV7RuleAndReportWhiz029AtTheOptInAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:AcceptAnyVersionAgainstAList_TakesTheListAndReportsWhiz029Async</tests>
   public static readonly DiagnosticDescriptor WhizbangIdAcceptAnyVersionDisagrees = new(
       id: "WHIZ029",
       title: "WhizbangId AcceptAnyVersion Disagrees",
-      messageFormat: "AcceptAnyVersion = true on this [WhizbangId] is ignored: another [WhizbangId] for '{0}' does not set it, so the id keeps the UUIDv7 rule. Set AcceptAnyVersion the same on every [WhizbangId] for this id.",
+      messageFormat: "AcceptAnyVersion = true on this [WhizbangId] is ignored: another [WhizbangId] for '{0}' does not set it, so the id accepts {1} only. Set AcceptAnyVersion the same on every [WhizbangId] for this id.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "The same strongly-typed id is declared through more than one [WhizbangId] (the type, a property or a parameter), and only some of them set AcceptAnyVersion. The generated id takes UUIDv7 only, whatever order the attributes are found in."
+      description: "The same strongly-typed id is declared through more than one [WhizbangId] (the type, a property or a parameter), and only some of them set AcceptAnyVersion. The generated id takes the versions the others accept (UUIDv7, or their Versions list), whatever order the attributes are found in."
+  );
+
+  /// <summary>
+  /// WHIZ037: Warning - A [WhizbangId] Versions list is narrowed by another [WhizbangId] for the same id (#2516).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz037</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:RoutesThatDisagree_TakeTheCommonVersionsAndReportWhiz037AtTheNarrowedListAsync</tests>
+  public static readonly DiagnosticDescriptor WhizbangIdVersionsNarrowed = new(
+      id: "WHIZ037",
+      title: "WhizbangId Versions Narrowed",
+      messageFormat: "The Versions on this [WhizbangId] are narrowed: the [WhizbangId] declarations for '{0}' list different versions, so the id accepts the ones they have in common, {1}. List the same Versions on every [WhizbangId] for this id.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "The same strongly-typed id is declared through more than one [WhizbangId] (the type, a property or a parameter), and they list different Versions (an omitted Versions is UUIDv7). The generated id accepts only the versions every declaration lists, whatever order the attributes are found in."
+  );
+
+  /// <summary>
+  /// WHIZ038: Error - A [WhizbangId] writes both AcceptAnyVersion = true and Versions (#2516).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz038</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:AcceptAnyVersionAndVersions_ReportWhiz038AtTheAttributeAsync</tests>
+  public static readonly DiagnosticDescriptor WhizbangIdAcceptAnyVersionWithVersions = new(
+      id: "WHIZ038",
+      title: "WhizbangId AcceptAnyVersion With Versions",
+      messageFormat: "This [WhizbangId] for '{0}' writes both AcceptAnyVersion = true and Versions. Write Versions to list the accepted versions, or AcceptAnyVersion = true to accept any non-empty Guid, not both.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "AcceptAnyVersion = true accepts any non-empty Guid and Versions lists the accepted UUID versions; together they contradict each other."
+  );
+
+  /// <summary>
+  /// WHIZ039: Error - A [WhizbangId] accepts no UUID version (#2516).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz039</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:EmptyVersions_ReportWhiz039Async</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:RoutesWithNoVersionInCommon_ReportWhiz039Async</tests>
+  public static readonly DiagnosticDescriptor WhizbangIdAcceptsNoVersion = new(
+      id: "WHIZ039",
+      title: "WhizbangId Accepts No Version",
+      messageFormat: "'{0}' accepts no UUID version: {1}. List at least one version in Versions, the same on every [WhizbangId] for this id.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "A strongly-typed id must accept at least one UUID version through From, Parse, the explicit cast and JSON. Its Versions list is empty, or the [WhizbangId] declarations for it (the type, a property, a parameter) list no version in common."
   );
 
   /// <summary>

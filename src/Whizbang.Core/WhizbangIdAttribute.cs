@@ -170,7 +170,13 @@ public sealed class WhizbangIdAttribute(string? targetNamespace = null) : Attrib
   /// </para>
   /// <para>
   /// Set the option the same way on every <c>[WhizbangId]</c> for an id (the struct, a property, a parameter). When
-  /// they disagree, the id keeps the UUIDv7 rule and WHIZ029 is reported at each ignored opt-in.
+  /// they disagree, the id keeps the stricter rule of the others (UUIDv7, or their <see cref="Versions"/>) and
+  /// WHIZ029 is reported at each ignored opt-in.
+  /// </para>
+  /// <para>
+  /// Prefer <see cref="Versions"/> when the id's values are made in known ways, for example minted (v7) or derived
+  /// by name (v5): the id then still refuses a random v4 or a raw hash. Keep this option for ids issued outside the
+  /// application, whose version it does not control. Writing both is an error (WHIZ038).
   /// </para>
   /// </remarks>
   /// <example>
@@ -182,4 +188,44 @@ public sealed class WhizbangIdAttribute(string? targetNamespace = null) : Attrib
   /// </code>
   /// </example>
   public bool AcceptAnyVersion { get; set; }
+
+  /// <summary>
+  /// Gets or sets the UUID versions the generated ID accepts through its checked entry points. Defaults to
+  /// <see cref="UuidVersions.V7"/>.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/WhizbangIdAttributeTests.cs:WhizbangIdAttribute_VersionsProperty_CanBeSetAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdVersionAcceptanceTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs</tests>
+  /// <remarks>
+  /// <para>
+  /// An allow-list between the UUIDv7-only default and <see cref="AcceptAnyVersion"/>, for ids whose values are made
+  /// in more than one known way: minted with <c>New()</c> (v7) and derived without coordination from the same facts
+  /// with <c>NameBasedGuid.V5</c> (v5), for example. <c>From(Guid)</c>, <c>From(TrackedGuid)</c>, <c>Parse</c>, the
+  /// explicit cast, the transport JSON reader and the GraphQL scalar accept a Guid whose version is in the list and
+  /// throw <see cref="ArgumentException"/> naming the accepted versions otherwise. <see cref="Guid.Empty"/> has no
+  /// version and is always refused. <c>New()</c> still produces a UUIDv7, and the public constructor and the
+  /// <c>Value</c> initializer stay unchecked, as on every id.
+  /// </para>
+  /// <para>
+  /// Only v7 values are time-ordered: for a value of another version, <c>IsTimeOrdered</c> is <c>false</c>,
+  /// <c>GetTimestamp()</c> returns no meaningful time, and comparisons do not order by creation time.
+  /// </para>
+  /// <para>
+  /// When the <c>[WhizbangId]</c> declarations for one id (the struct, a property, a parameter) list different
+  /// versions, the id accepts the versions they have in common and WHIZ037 is reported at each list that was
+  /// narrowed. An empty list, or declarations with no version in common, is an error (WHIZ039). Writing this
+  /// together with <c>AcceptAnyVersion = true</c> is an error (WHIZ038).
+  /// </para>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// [WhizbangId(Versions = UuidVersions.V7 | UuidVersions.V5)]
+  /// public readonly partial struct ConnectorInstanceId;
+  ///
+  /// var minted = ConnectorInstanceId.New();                                   // v7: accepted
+  /// var derived = ConnectorInstanceId.From(NameBasedGuid.V5(ns, "tenant/a")); // v5: accepted
+  /// var random = ConnectorInstanceId.From(Guid.NewGuid());                    // v4: ArgumentException
+  /// </code>
+  /// </example>
+  public UuidVersions Versions { get; set; } = UuidVersions.V7;
 }

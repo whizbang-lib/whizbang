@@ -154,6 +154,30 @@ public class WhizbangIdTypeTests {
       .WithMessageContaining("GraphQLOrderId requires UUIDv7");
   }
 
+  /// <summary>The scalar of an id with a version allow-list reads a listed version (#2516).</summary>
+  [Test]
+  public async Task TryDeserialize_OnAnAllowListId_ReadsAListedVersionAsync() {
+    var scalar = new WhizbangIdType(
+      typeof(GraphQLConnectorId), WhizbangIdProviderRegistry.GetGuidConversions()[typeof(GraphQLConnectorId)]);
+    const string v5 = "886313e1-3b8a-5372-9b90-0c9aee199e5d";
+
+    var read = scalar.TryDeserialize(v5, out var value);
+
+    await Assert.That(read).IsTrue();
+    await Assert.That(value).IsEqualTo(GraphQLConnectorId.From(Guid.Parse(v5)));
+  }
+
+  /// <summary>...and refuses an unlisted one, naming the accepted versions (#2516).</summary>
+  [Test]
+  public async Task TryDeserialize_OnAnAllowListId_RefusesAnUnlistedVersionNamingTheListAsync() {
+    var scalar = new WhizbangIdType(
+      typeof(GraphQLConnectorId), WhizbangIdProviderRegistry.GetGuidConversions()[typeof(GraphQLConnectorId)]);
+
+    await Assert.That(() => scalar.TryDeserialize("3f2504e0-4f89-41d3-9a0c-0305e82c3301", out _))
+      .Throws<SerializationException>()
+      .WithMessageContaining("GraphQLConnectorId requires UUIDv5 or UUIDv7 but received version 4");
+  }
+
   [Test]
   public async Task ReasonOf_AnExceptionWithAParameterName_DropsTheParameterSuffixAsync() {
     var reason = WhizbangIdType.ReasonOf(_refused(4));
