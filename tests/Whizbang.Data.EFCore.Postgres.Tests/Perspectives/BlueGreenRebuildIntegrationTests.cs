@@ -42,7 +42,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCorePerspectiveTableSwapperFactory.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard2")]
-public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
+public partial class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
   private const string PERSPECTIVE = "Whizbang.Data.EFCore.Postgres.Tests.Perspectives.RebuildBalancePerspective";
   // The registry is keyed by the MODEL, which is what the schema pass writes. Seeding it under the
   // PERSPECTIVE name built a world where the old lookup worked, which is how #1308 kept green
@@ -428,13 +428,18 @@ public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
 
   // ── Fixture ─────────────────────────────────────────────────────────────────────────────────
 
-  private ServiceProvider _services(Func<Task> beforeEachStream, Func<IServiceProvider, Task> onFirstRun, PgRoleElector? elector = null) {
+  private ServiceProvider _services(
+      Func<Task> beforeEachStream, Func<IServiceProvider, Task> onFirstRun, PgRoleElector? elector = null,
+      BlueGreenRebuildOptions? options = null) {
     var services = new ServiceCollection();
     if (elector is not null) {
       services.AddSingleton<IDutyElector>(elector);
       services.AddSingleton<IRoleAssignmentReader>(elector);
     }
     services.AddLogging();
+    if (options is not null) {
+      services.AddSingleton(Options.Create(options));
+    }
     services.AddScoped(_ => new WorkCoordinationDbContext(DbContextOptions));
     services.AddScoped<DbContext>(s => s.GetRequiredService<WorkCoordinationDbContext>());
     services.AddScoped<IEventStore>(s => new EFCoreEventStore<WorkCoordinationDbContext>(s.GetRequiredService<WorkCoordinationDbContext>()));

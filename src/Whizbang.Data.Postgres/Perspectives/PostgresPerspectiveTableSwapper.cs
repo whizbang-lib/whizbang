@@ -161,6 +161,7 @@ public sealed class PostgresPerspectiveTableSwapper(
 
     await _executeAsync(conn, tx,
       $"LOCK TABLE {_table(swap.LiveTable)}, {_table(swap.ShadowTable)} IN ACCESS EXCLUSIVE MODE", cancellationToken).ConfigureAwait(false);
+    await _copyOwnerAndGrantsAsync(conn, tx, swap, cancellationToken).ConfigureAwait(false);
     var (liveIndexes, renames) = await _indexesAsync(conn, tx, swap, cancellationToken).ConfigureAwait(false);
 
     string? previous = null;
@@ -203,6 +204,99 @@ public sealed class PostgresPerspectiveTableSwapper(
     cmd.Parameters.AddWithValue(nameof(table), table);
     return await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string;
   }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// An index is deferred when nothing but lookups depends on it: not a primary key, not unique, and backing no
+  /// constraint. Each is dropped and its <c>pg_get_indexdef</c> returned, in one transaction.
+  /// </remarks>
+  public async Task<IReadOnlyList<string>> DeferIndexesAsync(string shadowTable, CancellationToken cancellationToken) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(shadowTable);
+    await using var conn = await _openConnection(cancellationToken).ConfigureAwait(false);
+    await using var tx = await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+    var deferred = new List<(string Name, string Definition)>();
+    await using (var cmd = new NpgsqlCommand(DEFERRABLE_INDEXES, conn, tx)) {
+      cmd.Parameters.AddWithValue("table", _table(shadowTable));
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        deferred.Add((reader.GetString(0), reader.GetString(1)));
+      }
+    }
+    foreach (var (name, _) in deferred) {
+      await _executeAsync(conn, tx, $"DROP INDEX {_table(name)}", cancellationToken).ConfigureAwait(false);
+    }
+    await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+    return [.. deferred.Select(d => d.Definition)];
+  }
+
+  /// <summary>The shadow's indexes a staging load can build after it writes: no key, no uniqueness, no constraint.</summary>
+  private const string DEFERRABLE_INDEXES = """
+    SELECT i.relname, pg_get_indexdef(i.oid)
+    FROM pg_index x
+    JOIN pg_class i ON i.oid = x.indexrelid
+    WHERE x.indrelid = @table::regclass AND NOT x.indisprimary AND NOT x.indisunique
+      AND NOT EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conindid = x.indexrelid)
+    ORDER BY i.relname
+    """;
+
+  /// <inheritdoc />
+  /// <remarks>Each statement is the <c>pg_get_indexdef</c> of an index <see cref="DeferIndexesAsync"/> dropped, run as it was read.</remarks>
+  public async Task BuildDeferredIndexesAsync(string shadowTable, IReadOnlyList<string> definitions, CancellationToken cancellationToken) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(shadowTable);
+    ArgumentNullException.ThrowIfNull(definitions);
+    if (definitions.Count == 0) {
+      return;
+    }
+    await using var conn = await _openConnection(cancellationToken).ConfigureAwait(false);
+    foreach (var definition in definitions) {
+      await using var cmd = new NpgsqlCommand(definition, conn);
+      await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>
+  /// Gives the shadow table the live table's owner and exactly its grants (#2248): <c>LIKE … INCLUDING ALL</c> copies
+  /// neither, so before this the installed table belonged to the role that ran the rebuild and every grant on the live
+  /// table was lost. Runs under the swap's locks, so a grant made while the rebuild ran is carried too.
+  /// </summary>
+  private async Task _copyOwnerAndGrantsAsync(
+      NpgsqlConnection conn, NpgsqlTransaction tx, PerspectiveTableSwap swap, CancellationToken cancellationToken) {
+    var statements = new List<string>();
+    await using (var cmd = new NpgsqlCommand(OWNER_AND_GRANTS, conn, tx)) {
+      cmd.Parameters.AddWithValue("live", _table(swap.LiveTable));
+      cmd.Parameters.AddWithValue("shadow", _table(swap.ShadowTable));
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        statements.Add(reader.GetString(0));
+      }
+    }
+    foreach (var statement in statements) {
+      await _executeAsync(conn, tx, statement, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>
+  /// The statements that make the shadow's owner and grants the live table's, in order: the owner when it differs, every
+  /// grant the shadow holds revoked, then every grant the live table holds made. PostgreSQL builds them with
+  /// <c>format</c>, quoting each role as an identifier and naming each table through <c>regclass</c>.
+  /// </summary>
+  private const string OWNER_AND_GRANTS = """
+    WITH l AS (SELECT oid, relowner, relacl FROM pg_class WHERE oid = @live::regclass),
+         s AS (SELECT oid, relowner, relacl FROM pg_class WHERE oid = @shadow::regclass)
+    SELECT stmt FROM (
+      SELECT 1 AS step, format('ALTER TABLE %s OWNER TO %I', s.oid::regclass, pg_get_userbyid(l.relowner)) AS stmt
+      FROM l, s WHERE l.relowner <> s.relowner
+      UNION ALL
+      SELECT DISTINCT 2, format('REVOKE ALL ON %s FROM %s', s.oid::regclass,
+        CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(a.grantee)) END)
+      FROM s CROSS JOIN LATERAL aclexplode(s.relacl) a WHERE a.grantee <> s.relowner
+      UNION ALL
+      SELECT 3, format('GRANT %s ON %s TO %s%s', a.privilege_type, s.oid::regclass,
+        CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(a.grantee)) END,
+        CASE WHEN a.is_grantable THEN ' WITH GRANT OPTION' ELSE '' END)
+      FROM l CROSS JOIN s CROSS JOIN LATERAL aclexplode(l.relacl) a WHERE a.grantee <> l.relowner
+    ) g ORDER BY step, stmt
+    """;
 
   /// <summary>
   /// The live table's indexes, and each paired with the shadow index <c>LIKE … INCLUDING ALL</c> copied from it: the

@@ -4,7 +4,8 @@
 namespace Whizbang.Core.Archival;
 
 /// <summary>
-/// Thrown when an archive record's location is not the location the store is configured for (#2137): another storage
+/// Thrown, under the default <see cref="ArchiveLocationMismatchHandling.Error"/> (#2141), when an archive record's
+/// location is not the location the store is configured for (#2137): another storage
 /// endpoint, another logical connection name, another container, or no location at all. The store throws before it
 /// sends a single request to storage, so nothing is read, restored, deleted or written, nothing is ever deleted outside the
 /// configured location, and a stream's archive never spans two locations.
@@ -77,6 +78,7 @@ public sealed class ArchiveLocationMismatchException : Exception {
     return $"The {operation} of the archive of stream {streamId} was refused: {where}, and this service is configured for " +
       $"{configured}. Nothing was read, restored, written or deleted. If the objects are expected in the configured location (the " +
       "database was copied or restored, or the storage moved), repoint the record's location row in wh_archive_locations " +
-      "(or call the store's repoint operation); otherwise correct the configuration.";
+      "(or call the store's repoint operation); otherwise correct the configuration. Where infrastructure alone decides " +
+      "where the objects are, set the store's location-mismatch handling to Warning, Info or Ignore instead.";
   }
 }

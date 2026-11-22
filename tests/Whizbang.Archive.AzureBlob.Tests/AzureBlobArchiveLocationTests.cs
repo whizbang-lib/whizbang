@@ -103,20 +103,91 @@ public class AzureBlobArchiveLocationTests {
   }
 
   [Test]
-  public async Task VerifyLocation_DefaultsToOn_AndIsBoundFromConfigurationAsync() {
-    var off = new AzureBlobArchiveOptions();
+  public async Task LocationMismatch_DefaultsToError_SoAMismatchStopsTheArchiveAsync() {
     var blank = new AzureBlobArchiveOptions();
 
-    AzureBlobArchiveServiceCollectionExtensions.Bind(
-      new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["VerifyLocation"] = "False" }).Build(), off);
-    AzureBlobArchiveServiceCollectionExtensions.Bind(
-      new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["VerifyLocation"] = " " }).Build(), blank);
+    AzureBlobArchiveServiceCollectionExtensions.Bind(_config(new() { ["LocationMismatch"] = " " }), blank);
 
-    await Assert.That(new AzureBlobArchiveOptions().VerifyLocation).IsTrue()
-      .Because("the safety net against a copied or restored database is on unless a service turns it off");
-    await Assert.That(off.VerifyLocation).IsFalse();
-    await Assert.That(blank.VerifyLocation).IsTrue().Because("a blank value keeps the default");
+    await Assert.That(new AzureBlobArchiveOptions().LocationMismatch).IsEqualTo(ArchiveLocationMismatchHandling.Error)
+      .Because("the owner's decision (#2141): a mismatch stops the archive unless a service chooses otherwise");
+    await Assert.That(blank.LocationMismatch).IsEqualTo(ArchiveLocationMismatchHandling.Error).Because("a blank value keeps the default");
   }
+
+  [Test]
+  [Arguments("Error", ArchiveLocationMismatchHandling.Error)]
+  [Arguments("warning", ArchiveLocationMismatchHandling.Warning)]
+  [Arguments(" INFO ", ArchiveLocationMismatchHandling.Info)]
+  [Arguments("Ignore", ArchiveLocationMismatchHandling.Ignore)]
+  public async Task LocationMismatch_BindsEveryHandling_InAnyCaseAsync(string value, ArchiveLocationMismatchHandling expected) {
+    // Starts from another handling, so the value read is the one asserted, never a default left in place.
+    var bound = new AzureBlobArchiveOptions {
+      LocationMismatch = expected == ArchiveLocationMismatchHandling.Error ? ArchiveLocationMismatchHandling.Ignore : ArchiveLocationMismatchHandling.Error,
+    };
+
+    AzureBlobArchiveServiceCollectionExtensions.Bind(_config(new() { ["LocationMismatch"] = value }), bound);
+
+    await Assert.That(bound.LocationMismatch).IsEqualTo(expected);
+  }
+
+  [Test]
+  [Arguments("warn")]
+  [Arguments("Information")]
+  [Arguments("1")]
+  [Arguments("false")]
+  public async Task LocationMismatch_AValueThatIsNotAHandling_IsRefused_NamingTheKeyAndTheValuesAsync(string value) {
+    var refused = await Assert.That(() => AzureBlobArchiveServiceCollectionExtensions.Bind(
+        _config(new() { ["LocationMismatch"] = value }), new AzureBlobArchiveOptions()))
+      .Throws<InvalidOperationException>();
+
+    await Assert.That(refused!.Message).Contains("Whizbang:Archive:AzureBlob:LocationMismatch")
+      .And.Contains("Error, Warning, Info or Ignore")
+      .Because("a number or a near-miss is never read as some handling nobody chose");
+  }
+
+  [Test]
+  [Arguments("true")]
+  [Arguments("false")]
+  public async Task VerifyLocation_IsRefused_NamingTheSettingThatReplacedItAsync(string value) {
+    var refused = await Assert.That(() => AzureBlobArchiveServiceCollectionExtensions.Bind(
+        _config(new() { ["VerifyLocation"] = value }), new AzureBlobArchiveOptions()))
+      .Throws<InvalidOperationException>();
+
+    await Assert.That(refused!.Message).Contains("Whizbang:Archive:AzureBlob:VerifyLocation")
+      .And.Contains("Whizbang:Archive:AzureBlob:LocationMismatch")
+      .Because("a removed setting is refused rather than silently ignored, so nobody's archive changes behavior unannounced");
+  }
+
+  [Test]
+  public async Task Store_RefusesAHandlingThatIsNotDefinedAsync() {
+    var options = new AzureBlobArchiveOptions { LocationMismatch = (ArchiveLocationMismatchHandling)42 };
+
+    await Assert.That(() => _store(new BlobContainerClient("UseDevelopmentStorage=true", "archive-a"), options))
+      .Throws<ArgumentOutOfRangeException>();
+    await Assert.That(AzureBlobArchiveOptions.RefusalForLocationMismatch(options.LocationMismatch)).IsNotNull();
+    await Assert.That(AzureBlobArchiveOptions.RefusalForLocationMismatch(ArchiveLocationMismatchHandling.Ignore)).IsNull();
+  }
+
+  [Test]
+  public async Task ConfiguredLocation_IsStoredNormalized_WhateverCaseAndWhitespaceTheConfigurationUsesAsync() {
+    var location = _store(
+        new BlobContainerClient("UseDevelopmentStorage=true", "archive-a"),
+        new AzureBlobArchiveOptions { ContainerName = "archive-a", ConnectionName = " Archive " })
+      .ConfiguredLocation;
+
+    await Assert.That(location.ConnectionName).IsEqualTo("archive")
+      .Because("the pin is stored normalized, so the same name written another way is not a mismatch");
+    await Assert.That(location).IsEqualTo(location.Normalize());
+  }
+
+  [Test]
+  public async Task ConnectionName_Whitespace_IsRefused_WhenBuiltAsync() {
+    await Assert.That(() => _store(
+        new BlobContainerClient("UseDevelopmentStorage=true", "archive-a"), new AzureBlobArchiveOptions { ConnectionName = " \t" }))
+      .Throws<ArgumentException>().Because("a name that normalizes to nothing names no connection");
+  }
+
+  private static IConfiguration _config(Dictionary<string, string?> values) =>
+    new ConfigurationBuilder().AddInMemoryCollection(values).Build();
 
   [Test]
   public async Task RepointLocation_RefusesAnIdThatCannotNameARowAsync() {

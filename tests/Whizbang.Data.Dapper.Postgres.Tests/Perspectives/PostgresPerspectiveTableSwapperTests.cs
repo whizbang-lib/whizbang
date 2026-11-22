@@ -25,7 +25,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
 /// <code-under-test>src/Whizbang.Data.Dapper.Postgres/DapperPostgresPerspectiveStore.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("PostgreSQL")]
-public class PostgresPerspectiveTableSwapperTests : PostgresTestBase {
+public partial class PostgresPerspectiveTableSwapperTests : PostgresTestBase {
   private const string LIVE = "wh_per_swap_order";
   private const string SHADOW = LIVE + "_bg";
   private const string PREVIOUS = LIVE + "_bg_old";
