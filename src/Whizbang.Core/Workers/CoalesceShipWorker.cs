@@ -256,11 +256,13 @@ public sealed partial class CoalesceShipWorker(
 
   /// <summary>
   /// The default composite factory: the generic raw-carry <see cref="CoalescedEventsComposite"/>
-  /// carrying each single's stored payload, wire type name, and ORIGINAL message id.
+  /// carrying each single's stored payload, wire type name, ORIGINAL message id, stream, and position in this
+  /// service's commit lane (#1628).
   /// </summary>
   /// <param name="batch">The fold batch.</param>
   /// <returns>The built composite.</returns>
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CoalescedChildOriginSequenceTests.cs:BuildDefaultComposite_CarriesEachSinglesCommitSequenceInFoldOrderAsync</tests>
   public static CompositeEventBase BuildDefaultComposite(CoalesceFoldBatch batch) {
     ArgumentNullException.ThrowIfNull(batch);
     return new CoalescedEventsComposite {
@@ -271,7 +273,10 @@ public sealed partial class CoalesceShipWorker(
       InnerEventIds = [.. batch.Singles.Select(m => m.MessageId)],
       // #596: each single's OWN stream rides the wire, so the receiver's expansion restores
       // per-stream identity instead of collapsing every child onto the composite's stream.
-      InnerStreamIds = [.. batch.Singles.Select(m => m.StreamId ?? Guid.Empty)]
+      InnerStreamIds = [.. batch.Singles.Select(m => m.StreamId ?? Guid.Empty)],
+      // #1628: each single's position in this service's commit lane rides the wire, so each child carries the
+      // sequence a direct delivery of its single would, not the composite's (zero: a composite is never event-stored).
+      InnerCommitSequences = [.. batch.Singles.Select(m => m.SourceCommitSequence)]
     };
   }
 
