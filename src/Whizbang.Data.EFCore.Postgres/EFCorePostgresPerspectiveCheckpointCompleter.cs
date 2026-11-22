@@ -37,6 +37,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildStreamsAsync_WritesCursorsForTargetedStreamsOnlyAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildInPlaceAsync_WithExistingProcessingCursor_UpdatesToCompletedAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchivedStreamRebuildSqlTests.cs:Completer_TheCursorOfAStreamArchivedWhole_IsParked_AndTheRestoreBringsItBackAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchivedStreamRebuildSqlTests.cs:Completer_WritesEveryCursorOfAFlush_WithOneStatement_ParkedAndLiveAlikeAsync</tests>
 public sealed partial class EFCorePostgresPerspectiveCheckpointCompleter(
     DbContext dbContext,
     ILogger<EFCorePostgresPerspectiveCheckpointCompleter>? logger = null)
@@ -56,7 +57,7 @@ public sealed partial class EFCorePostgresPerspectiveCheckpointCompleter(
       return;
     }
 
-    var sql = _buildCursorWriteSql(_buildQualifiedName(_resolveSchema(), "wh_complete_rebuilt_cursor"));
+    var sql = _buildCursorWriteSql(_buildQualifiedName(_resolveSchema(), "wh_complete_rebuilt_cursors"));
 
     var transaction = _dbContext.Database.CurrentTransaction;
     var ownsTransaction = transaction == null;
@@ -68,12 +69,12 @@ public sealed partial class EFCorePostgresPerspectiveCheckpointCompleter(
     var skippedEmpty = 0;
     Exception? failure = null;
     try {
-      foreach (var completion in completions) {
-        if (await _tryUpsertCursorAsync(completion, sql, cancellationToken)) {
-          persisted++;
-        } else {
-          skippedEmpty++;
-        }
+      var written = _withEvents(completions);
+      skippedEmpty = completions.Count - written.Count;
+      if (written.Count > 0) {
+        await _writeCursorsAsync(written, sql, cancellationToken);
+        persisted = written.Count;
+        _logUpserts(written);
       }
 
       if (ownsTransaction && transaction != null) {
@@ -108,49 +109,59 @@ public sealed partial class EFCorePostgresPerspectiveCheckpointCompleter(
   }
 
   /// <summary>
+  /// The completions that name an event, in their order. One with <see cref="Guid.Empty"/> as its last event folded
+  /// nothing and is skipped (matches the "no events processed, skip checkpoint" branch of the live work coordinator path;
+  /// the wh_perspective_cursors.last_event_id FK to wh_event_store.event_id rejects Guid.Empty).
+  /// </summary>
+  private List<PerspectiveCursorCompletion> _withEvents(IReadOnlyList<PerspectiveCursorCompletion> completions) {
+    var written = new List<PerspectiveCursorCompletion>(completions.Count);
+    foreach (var completion in completions) {
+      if (completion.LastEventId != Guid.Empty) {
+        written.Add(completion);
+      } else if (logger?.IsEnabled(LogLevel.Debug) == true) {
+        LogSkippedEmptyLastEventId(logger, completion.StreamId, completion.PerspectiveName);
+      }
+    }
+    return written;
+  }
+
+  /// <summary>
+  /// Writes every cursor of the flush with one statement (migration 556, #2513), each as the one-cursor function wrote it.
+  /// </summary>
+  private Task<int> _writeCursorsAsync(List<PerspectiveCursorCompletion> written, string sql, CancellationToken cancellationToken) =>
+    _dbContext.Database.ExecuteSqlRawAsync(
+        sql,
+        [
+          written.ConvertAll(c => c.StreamId).ToArray(),
+          written.ConvertAll(c => c.PerspectiveName).ToArray(),
+          written.ConvertAll(c => c.LastEventId).ToArray(),
+          written.ConvertAll(c => (short)c.Status).ToArray(),
+        ],
+        cancellationToken);
+
+  /// <summary>Logs each cursor the flush wrote, at Debug.</summary>
+  private void _logUpserts(List<PerspectiveCursorCompletion> written) {
+    if (logger?.IsEnabled(LogLevel.Debug) != true) {
+      return;
+    }
+    foreach (var completion in written) {
+      LogCursorUpsert(logger, completion.StreamId, completion.PerspectiveName, completion.LastEventId, completion.Status);
+    }
+  }
+
+  /// <summary>
   /// INSERT ... ON CONFLICT DO UPDATE statement for wh_perspective_cursors. Clears
-  /// rewind_trigger_event_id, rewind_flagged_at, rewind_first_flagged_at, and error on update —
+  /// rewind_trigger_event_id, rewind_flagged_at, rewind_first_flagged_at, and error on update:
   /// a full rebuild resolves any prior rewind flagging since the entire event log has been
   /// replayed.
   /// </summary>
 #pragma warning disable S2077 // schema escaped through PgIdentifier; values are positional parameters.
-  // The shared rebuild cursor write (migration 273, #1931): a stream archived whole has its cursor parked with the stream,
-  // any other stream's is upserted into wh_perspective_cursors, exactly as the Dapper driver's completer writes it.
+  // The shared rebuild cursor write (migration 273, #1931; a flush in one statement since 556, #2513): a stream archived
+  // whole has its cursor parked with the stream, any other stream's is upserted into wh_perspective_cursors, exactly as the
+  // Dapper driver's completer writes it.
   private static string _buildCursorWriteSql(string functionName) =>
     $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}})";
 #pragma warning restore S2077
-
-  /// <summary>
-  /// Upserts a single cursor, skipping Guid.Empty last-event-ids (matches the "no events
-  /// processed — skip checkpoint" branch in the live work coordinator path; the
-  /// wh_perspective_cursors.last_event_id FK to wh_event_store.event_id rejects Guid.Empty).
-  /// Returns true if the cursor was persisted, false if skipped.
-  /// </summary>
-  private async Task<bool> _tryUpsertCursorAsync(
-      PerspectiveCursorCompletion completion, string sql, CancellationToken cancellationToken) {
-    if (completion.LastEventId == Guid.Empty) {
-      if (logger?.IsEnabled(LogLevel.Debug) == true) {
-        LogSkippedEmptyLastEventId(logger, completion.StreamId, completion.PerspectiveName);
-      }
-      return false;
-    }
-
-    await _dbContext.Database.ExecuteSqlRawAsync(
-        sql,
-        [
-          completion.StreamId,
-          completion.PerspectiveName,
-          completion.LastEventId,
-          (short)completion.Status
-        ],
-        cancellationToken);
-
-    if (logger?.IsEnabled(LogLevel.Debug) == true) {
-      LogCursorUpsert(logger, completion.StreamId, completion.PerspectiveName,
-          completion.LastEventId, completion.Status);
-    }
-    return true;
-  }
 
   [LoggerMessage(Level = LogLevel.Debug,
       Message = "Checkpoint completer: upserted cursor stream_id={StreamId} perspective={PerspectiveName} last_event_id={LastEventId} status={Status}")]

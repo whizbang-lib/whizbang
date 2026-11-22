@@ -339,6 +339,54 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         physicalStreamId, null, eventTypes, cancellationToken)) {
       events.Add(envelope);
     }
+    return await RunRebuildWithEventsAsync(physicalStreamId, perspectiveName, events, cancellationToken: cancellationToken);
+  }
+
+  /// <summary>
+  /// <see cref="RunWithEventsAsync"/> for one row of a rebuild, its first attempt reading the row, its purge marker and its
+  /// commit sequence from the batch's reads (#2513). A retry after the row moved reads the row as it is now: the batch's
+  /// read is older than the move.
+  /// </summary>
+  private async Task<PerspectiveCursorCompletion> _runRebuildPartitionAsync(
+      Guid streamId,
+      string perspectiveName,
+      IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> events,
+      global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState,
+      CancellationToken cancellationToken) {
+    await using IAsyncDisposable? __applyLock = _applyCoordinator is null
+        ? null
+        : await _applyCoordinator.AcquireAsync(streamId, perspectiveName, cancellationToken).ConfigureAwait(false);
+    return await _runWithEventsLockedAsync(
+        streamId, perspectiveName, null, events, firePreLifecycle: true, [], batchState, cancellationToken);
+  }
+
+  /// <summary>
+  /// The events <see cref="RunRebuildAsync"/> reads, for many streams with one read of the event store (#2513): each
+  /// stream from its start, of the types this perspective folds, through the same decorated store, so upcasting applies
+  /// as it does to the per-stream read. Null when the store does not read streams in batches, or cannot read this batch
+  /// as the per-stream read would.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#batched-reads</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RunnerBase/RunnerBaseEntryPointTests.cs:ReadRebuildEventsAsync_ReadsEveryStreamFromItsStart_WithOneReadOfTheTypesThePerspectiveFoldsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RunnerBase/RunnerBaseEntryPointTests.cs:ReadRebuildEventsAsync_OverAStoreThatReadsNoStreamsInBatches_ReturnsNullAsync</tests>
+  public Task<global::System.Collections.Generic.IReadOnlyDictionary<Guid, global::System.Collections.Generic.IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>>?> ReadRebuildEventsAsync(
+      global::System.Collections.Generic.IReadOnlyList<Guid> physicalStreamIds,
+      CancellationToken cancellationToken = default) =>
+    _eventStore.ReadPolymorphicManyAsync([.. physicalStreamIds.Select(id => (id, (Guid?)null))], _handledEventTypes, cancellationToken);
+
+  /// <summary>
+  /// <see cref="RunRebuildAsync"/> from the stream's events already read (#2513): the partition and folds that follow
+  /// the read, which <see cref="RunRebuildAsync"/> runs on the events it reads.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#batched-reads</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RunnerBase/RunnerBaseEntryPointTests.cs:RunRebuildWithEventsAsync_FoldsTheEventsItIsGiven_AndReadsNothingOfTheStreamAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RunnerBase/RunnerBaseEntryPointTests.cs:RunRebuildWithEventsAsync_OfNoEvents_ReportsOneUntouchedCompletionAsync</tests>
+  public async Task<IReadOnlyList<PerspectiveCursorCompletion>> RunRebuildWithEventsAsync(
+      Guid physicalStreamId,
+      string perspectiveName,
+      IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> events,
+      global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState = null,
+      CancellationToken cancellationToken = default) {
 
     // Every path keys a row by the stream an event is stored on; only a genuine re-key, an upcaster that moved the
     // event's [StreamId] as it was read, routes it elsewhere (#1798). The routing and the merge of a re-keyed row are
@@ -352,7 +400,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     var completions = new List<PerspectiveCursorCompletion>(partitions.Count);
     foreach (var partition in partitions) {
       if (!partition.IsRekeyed) {
-        completions.Add(await RunWithEventsAsync(partition.Row, perspectiveName, null, partition.Events, cancellationToken));
+        completions.Add(await _runRebuildPartitionAsync(partition.Row, perspectiveName, partition.Events, batchState, cancellationToken));
       } else if (ledger is not null) {
         ledger.Add(partition);
       } else {
@@ -454,7 +502,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         : await _applyCoordinator.AcquireAsync(streamId, perspectiveName, cancellationToken).ConfigureAwait(false);
 
     return await _runWithEventsLockedAsync(
-        streamId, perspectiveName, lastProcessedEventId, events, firePreLifecycle: true, [], cancellationToken);
+        streamId, perspectiveName, lastProcessedEventId, events, firePreLifecycle: true, [], batchState: null, cancellationToken);
   }
 
   /// <summary>
@@ -472,6 +520,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       IReadOnlyList<MessageEnvelope<IEvent>> events,
       bool firePreLifecycle,
       List<Task> backgroundTasks,
+      global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState,
       CancellationToken cancellationToken) {
 
     events = _orderForApply(events);
@@ -490,8 +539,10 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     while (true) {
       attempt++;
       try {
+        // Only the first attempt reads from a batch's reads (#2513): a retry follows a row that moved after them.
         return await _runWithEventsAttemptAsync(
-            streamId, perspectiveName, lastProcessedEventId, events, firePreLifecycle && attempt == 1, backgroundTasks, cancellationToken);
+            streamId, perspectiveName, lastProcessedEventId, events, firePreLifecycle && attempt == 1, backgroundTasks,
+            attempt == 1 ? batchState : null, cancellationToken);
       } catch (global::Whizbang.Core.Perspectives.PerspectiveRowConflictException conflict)
           when (_retriesApplyConflict(conflict, perspectiveName, streamId, attempt)) {
         // Re-read and re-apply onto the moved row.
@@ -570,10 +621,11 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       IReadOnlyList<MessageEnvelope<IEvent>> events,
       bool firePreLifecycle,
       List<Task> backgroundTasks,
+      global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState,
       CancellationToken cancellationToken) {
 
     var read = await _readBatchAsync(
-        new BatchRequest(streamId, perspectiveName, lastProcessedEventId, events, backgroundTasks, Preparing: false, BatchState: null),
+        new BatchRequest(streamId, perspectiveName, lastProcessedEventId, events, backgroundTasks, Preparing: false, batchState),
         cancellationToken);
     if (read.Completion is { } decided) {
       return decided;
@@ -688,7 +740,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       // pre-perspective stages, and its detached ones are still to be awaited.
       return await _runWithEventsLockedAsync(
           mine.StreamId, mine.PerspectiveName, mine.LastProcessedEventId, mine.Events,
-          firePreLifecycle: state is null, state?.BackgroundTasks ?? [], cancellationToken);
+          firePreLifecycle: state is null, state?.BackgroundTasks ?? [], batchState: null, cancellationToken);
     }
     if (mine.Write is not null && outcome is null) {
       throw new ArgumentNullException(nameof(outcome), "A prepared write is completed with the outcome of its write.");
@@ -711,7 +763,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       }
       return await _runWithEventsLockedAsync(
           mine.StreamId, mine.PerspectiveName, mine.LastProcessedEventId, mine.Events,
-          firePreLifecycle: false, state.BackgroundTasks, cancellationToken);
+          firePreLifecycle: false, state.BackgroundTasks, batchState: null, cancellationToken);
     }
 
     try {
@@ -857,15 +909,17 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       CancellationToken cancellationToken) {
     // A set-based batch's state source (#2246): no read for a stream it knows is new, and its one read per perspective
     // table for the rest. Whatever it cannot answer is read per stream, below.
-    if (batchState is not null && !rebuilding) {
-      if (batchState.IsKnownNew(streamId, perspectiveName)) {
+    // A rebuild's batch (#2513) plans no stream as known new: the row it re-derives may exist.
+    if (batchState is not null) {
+      if (!rebuilding && batchState.IsKnownNew(streamId, perspectiveName)) {
         return new RowLoad(
             new global::Whizbang.Core.Perspectives.PerspectiveApplyRead(global::Whizbang.Core.Perspectives.PerspectiveRowVersion.Absent, null),
             null,
             null);
       }
       if (await batchState.ReadRowAsync(_perspectiveStore, streamId, perspectiveName, cancellationToken) is { } batched) {
-        return new RowLoad(batched.ApplyRead, batched.Model, batched.Model is null ? null : batched.ApplyRead.Metadata);
+        // A rebuild reads no recorded position, as the per-stream read below does not.
+        return new RowLoad(batched.ApplyRead, batched.Model, batched.Model is null || rebuilding ? null : batched.ApplyRead.Metadata);
       }
     }
     var applyRead = await _perspectiveStore.ReadForApplyAsync(streamId, cancellationToken);

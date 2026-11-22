@@ -214,6 +214,53 @@ public interface IPerspectiveRunner {
   ) => [await RunAsync(physicalStreamId, perspectiveName, null, cancellationToken)];
 
   /// <summary>
+  /// Reads, with one round trip, the events <see cref="RunRebuildAsync"/> would read for each of
+  /// <paramref name="physicalStreamIds"/>: every stream from its start, its events in its own order, a stream with none
+  /// mapped to an empty list (#2513). A rebuild reads its streams a batch at a time through this and folds each with
+  /// <see cref="RunRebuildWithEventsAsync"/>.
+  /// </summary>
+  /// <remarks>
+  /// The default returns <see langword="null"/>, and each stream is read on its own by <see cref="RunRebuildAsync"/>.
+  /// A runner returns <see langword="null"/> too when its event store cannot read the batch as the per-stream read
+  /// would (it reads no streams in batches, an upcaster widens the read, or a stream needs the archive).
+  /// </remarks>
+  /// <param name="physicalStreamIds">The stored streams to read.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Each stream's events, or <see langword="null"/> when the runner does not read rebuild streams in batches.</returns>
+  /// <docs>fundamentals/perspectives/rebuild#batched-reads</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:ReadRebuildEventsAsync_Default_ReturnsNullAsync</tests>
+  Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadRebuildEventsAsync(
+    IReadOnlyList<Guid> physicalStreamIds,
+    CancellationToken cancellationToken = default
+  ) => Task.FromResult<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?>(null);
+
+  /// <summary>
+  /// <see cref="RunRebuildAsync"/> with the physical stream's events already read by
+  /// <see cref="ReadRebuildEventsAsync"/> (#2513): partitions and folds them exactly as <see cref="RunRebuildAsync"/>
+  /// folds the events it reads, and reads nothing of the stream itself.
+  /// </summary>
+  /// <remarks>The default ignores <paramref name="events"/> and calls <see cref="RunRebuildAsync"/>, which reads them.</remarks>
+  /// <param name="physicalStreamId">The stored stream whose events are replayed.</param>
+  /// <param name="perspectiveName">Name of the perspective to run.</param>
+  /// <param name="events">The stream's events, as <see cref="ReadRebuildEventsAsync"/> read them.</param>
+  /// <param name="batchState">
+  /// The reads the rebuild planned for the stream's batch (<see cref="IPerspectiveStateSource"/>): its rows, the purge
+  /// markers of the missing ones and the commit sequences of its events, each read once for the whole batch; null to
+  /// read them per stream.
+  /// </param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>One cursor completion per materialised target stream.</returns>
+  /// <docs>fundamentals/perspectives/rebuild#batched-reads</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:RunRebuildWithEventsAsync_Default_RunsTheRebuildThatReadsItsOwnEventsAsync</tests>
+  Task<IReadOnlyList<PerspectiveCursorCompletion>> RunRebuildWithEventsAsync(
+    Guid physicalStreamId,
+    string perspectiveName,
+    IReadOnlyList<MessageEnvelope<IEvent>> events,
+    IPerspectiveBatchState? batchState = null,
+    CancellationToken cancellationToken = default
+  ) => RunRebuildAsync(physicalStreamId, perspectiveName, cancellationToken);
+
+  /// <summary>
   /// Rebuilds a stream archived through a prefix without reading the archive (#1931): restores the stream's newest live
   /// snapshot and replays the hot events after it. Returns <see langword="null"/> when the stream has no snapshot this
   /// runner can read, so the rebuild skips the stream. The newest snapshot is always live: an archive refuses a prefix that
