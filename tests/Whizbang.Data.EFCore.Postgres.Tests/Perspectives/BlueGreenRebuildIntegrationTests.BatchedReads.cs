@@ -93,7 +93,10 @@ public partial class BlueGreenRebuildIntegrationTests {
     }
 
     await using var db = await _openAsync();
-    await using (var prepare = new Npgsql.NpgsqlCommand($"PREPARE batched_read AS {statement}", db)) {
+    // The statement's one parameter, the batch's stream ids, named as Npgsql traced it.
+    var positional = System.Text.RegularExpressions.Regex.Replace(statement, @"@\w+", "$$1",
+      System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(1));
+    await using (var prepare = new Npgsql.NpgsqlCommand($"PREPARE batched_read(uuid[]) AS {positional}", db)) {
       await prepare.ExecuteNonQueryAsync(cancellationToken);
     }
     var ids = string.Join(",", streams.Take(batchSize).Select(id => $"'{id}'"));

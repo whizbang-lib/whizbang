@@ -122,6 +122,14 @@ internal static class ProcessWideOptionsBinding {
 #pragma warning restore IL2026
       }));
 
+    services.AddOptions<PerspectiveRebuildOptions>();
+    services.AddSingleton<IConfigureOptions<PerspectiveRebuildOptions>>(sp =>
+      new ConfigureOptions<PerspectiveRebuildOptions>(options => {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+        Section(sp, "Whizbang:Perspectives:Rebuild").Bind(options);
+#pragma warning restore IL2026
+      }));
+
     services.AddOptions<PerspectiveStreamLockOptions>();
     services.AddSingleton<IConfigureOptions<PerspectiveStreamLockOptions>>(sp =>
       new ConfigureOptions<PerspectiveStreamLockOptions>(options => {

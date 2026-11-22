@@ -170,6 +170,18 @@ public class PerspectiveRebuilderBatchedReadTests {
   }
 
   [Test]
+  public async Task Rebuild_CanceledInsideABatchedRead_EndsTheRebuild_RatherThanReadingEachStreamAsync() {
+    var world = _world(batchSize: 2);
+    world.Events.BatchReadFails = new OperationCanceledException("canceled while reading");
+
+    var result = await world.Rebuilder.RebuildStreamsAsync(RbHarness.NAME, _streams);
+
+    await Assert.That(result.Success).IsFalse().Because("a cancellation is not a failed read to recover from");
+    await Assert.That(world.Events.StreamReads).IsEmpty();
+    await Assert.That(world.Events.BatchReads.Count).IsEqualTo(1);
+  }
+
+  [Test]
   [Arguments(0)]
   [Arguments(-5)]
   public async Task Rebuild_WithABatchSizeBelowOne_ReadsEachStreamOnItsOwnAsync(int batchSize) {

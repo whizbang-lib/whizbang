@@ -126,6 +126,7 @@ Whizbang:OperationalRetention:MaxBatchesPerCycle=10
 Whizbang:OrderedStreamProcessor:ParallelizeStreams=false
 Whizbang:PerspectiveRowRetention:AutoAcknowledge=true
 Whizbang:PerspectiveRowRetention:Enabled=true
+Whizbang:Perspectives:Rebuild:StreamReadBatchSize=100
 Whizbang:Perspectives:Rewind:DebounceWindow=00:00:05
 Whizbang:Perspectives:Rewind:Enabled=true
 Whizbang:Perspectives:Rewind:MaxConcurrentRewinds=3

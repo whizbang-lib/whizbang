@@ -339,6 +339,35 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         physicalStreamId, null, eventTypes, cancellationToken)) {
       events.Add(envelope);
     }
+    return await RunRebuildWithEventsAsync(physicalStreamId, perspectiveName, events, cancellationToken);
+  }
+
+  /// <summary>
+  /// The events <see cref="RunRebuildAsync"/> reads, for many streams with one read of the event store (#2513): each
+  /// stream from its start, of the types this perspective folds, through the same decorated store, so upcasting applies
+  /// as it does to the per-stream read. Null when the store does not read streams in batches, or cannot read this batch
+  /// as the per-stream read would.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#batched-reads</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RunnerBase/RunnerBaseEntryPointTests.cs:ReadRebuildEventsAsync_ReadsEveryStreamFromItsStart_WithOneReadOfTheTypesThePerspectiveFoldsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RunnerBase/RunnerBaseEntryPointTests.cs:ReadRebuildEventsAsync_OverAStoreThatReadsNoStreamsInBatches_ReturnsNullAsync</tests>
+  public Task<global::System.Collections.Generic.IReadOnlyDictionary<Guid, global::System.Collections.Generic.IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>>?> ReadRebuildEventsAsync(
+      global::System.Collections.Generic.IReadOnlyList<Guid> physicalStreamIds,
+      CancellationToken cancellationToken = default) =>
+    _eventStore.ReadPolymorphicManyAsync([.. physicalStreamIds.Select(id => (id, (Guid?)null))], _handledEventTypes, cancellationToken);
+
+  /// <summary>
+  /// <see cref="RunRebuildAsync"/> from the stream's events already read (#2513): the partition and folds that follow
+  /// the read, which <see cref="RunRebuildAsync"/> runs on the events it reads.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#batched-reads</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RunnerBase/RunnerBaseEntryPointTests.cs:RunRebuildWithEventsAsync_FoldsTheEventsItIsGiven_AndReadsNothingOfTheStreamAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/RunnerBase/RunnerBaseEntryPointTests.cs:RunRebuildWithEventsAsync_OfNoEvents_ReportsOneUntouchedCompletionAsync</tests>
+  public async Task<IReadOnlyList<PerspectiveCursorCompletion>> RunRebuildWithEventsAsync(
+      Guid physicalStreamId,
+      string perspectiveName,
+      IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> events,
+      CancellationToken cancellationToken = default) {
 
     // Every path keys a row by the stream an event is stored on; only a genuine re-key, an upcaster that moved the
     // event's [StreamId] as it was read, routes it elsewhere (#1798). The routing and the merge of a re-keyed row are
