@@ -100,18 +100,12 @@ public class DataOnlyRoleE2ETests {
     return builder.Build();
   }
 
-  /// <summary>
-  /// The first start applies every migration to a brand-new database. On a saturated build server that took over 60 s
-  /// with nothing hung (flaky-tests.md, Pattern 3), so it gets its own bound, still inside the test timeout so a real
-  /// hang is still named.
-  /// </summary>
-  private static readonly TimeSpan _migratingStartBound = TimeSpan.FromSeconds(180);
-
+  // #2508: each phase waits on its own signal for as long as it takes; one deadline for the whole test names a hang.
   private readonly StartupPhases _phases = new(TimeProvider.System);
 
-  /// <summary>Bounds one phase, so a hang names where it happened instead of running into the test's timeout.</summary>
-  private Task _phaseAsync(string phase, Func<Task> work, IHost? host = null, ErrorLog? errors = null, TimeSpan? bound = null) =>
-    _phases.RunAsync(phase, work, () => _describe(host, errors), bound);
+  /// <summary>Runs one phase, so a hang names where it happened instead of running into the test's timeout.</summary>
+  private Task _phaseAsync(string phase, Func<Task> work, IHost? host = null, ErrorLog? errors = null) =>
+    _phases.RunAsync(phase, work, () => _describe(host, errors));
 
   private static string _describe(IHost? host, ErrorLog? errors) {
     var steps = host?.Services.GetService<IStartupPipelineState>()?.SnapshotSteps()
@@ -142,7 +136,7 @@ public class DataOnlyRoleE2ETests {
     // First start: migrations run on the init connection and create everything the role is then granted.
     using (var first = _buildHost(withInitConnection: true, errors)) {
       IReadOnlyList<StartupStepResult> steps = [];
-      await _phaseAsync("first start", async () => steps = await _startAsync(first, cancellationToken), first, errors, _migratingStartBound);
+      await _phaseAsync("first start", async () => steps = await _startAsync(first, cancellationToken), first, errors);
       await Assert.That(steps.Where(s => s.Outcome == StartupStepOutcome.Failed).Select(s => $"{s.Name}: {s.Reason}")).IsEmpty();
       await Assert.That(errors.Entries).IsEmpty()
         .Because("nothing a starting service does may need schema rights from its application role");
