@@ -21,8 +21,8 @@ namespace Whizbang.Generators.Tests;
 [Category("SourceGenerators")]
 public class WhizbangIdVersionsTests {
 
-  private const string STRICT_FROM_GUARD = "if (value.Version != 7)";
-  private const string ALLOW_LIST_GUARD = "if (value.Version is not (5 or 7))";
+  private const string STRICT_FROM_GUARD = "if (value.Version != 7";
+  private const string ALLOW_LIST_GUARD = "if (value.Version is not (5 or 7)";
   private const string NON_EMPTY_GUARD = "_requireNonEmpty(";
 
   [RequiresAssemblyFiles()]
@@ -102,7 +102,7 @@ public class WhizbangIdVersionsTests {
 
     var generated = _generatedId(source);
 
-    await Assert.That(generated).Contains("if (value.Version is not (5))");
+    await Assert.That(generated).Contains("if (value.Version is not (5)");
     await Assert.That(generated).Contains("ProductId requires UUIDv5 but received version");
   }
 

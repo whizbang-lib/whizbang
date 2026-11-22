@@ -69,6 +69,28 @@ namespace Whizbang.Core;
 /// public readonly partial struct ProductId;
 /// </code>
 /// </para>
+/// <para>
+/// <strong>Grandfathered values:</strong>
+/// Every generated id declares <c>static partial void IsGrandfathered(Guid value, ref bool grandfathered)</c>. An id
+/// type whose stored data holds a few values that predate its version rule (hand-typed seed ids, well-known system
+/// identities) implements it to name them, and its checked entry points accept them while every other value keeps
+/// the rule. Left unimplemented, the compiler removes the call. <see cref="Guid.Empty"/> is never grandfathered, and
+/// <c>New()</c> mints UUIDv7 as always:
+/// <code>
+/// [WhizbangId]
+/// public readonly partial struct ProductCatalogId {
+///   // Seeded before ids were UUIDv7. Frozen: new values are always minted.
+///   private static readonly FrozenSet&lt;Guid&gt; _grandfathered = new[] {
+///     new Guid("3f2504e0-4f89-41d3-9a0c-0305e82c3301"),
+///   }.ToFrozenSet();
+///
+///   static partial void IsGrandfathered(Guid value, ref bool grandfathered) =>
+///     grandfathered = _grandfathered.Contains(value);
+/// }
+/// </code>
+/// The hook runs for every value that breaks the rule, so keep it a set lookup. It is a void method with a
+/// <c>ref</c> result because only a void partial method may be left unimplemented.
+/// </para>
 /// </remarks>
 /// <example>
 /// Complete example with all three patterns:

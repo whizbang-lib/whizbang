@@ -665,6 +665,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
       _appendAllowListFactories(sb, id.TypeName, id.Versions);
     }
 
+    _appendGrandfatheredHook(sb, id);
+
     // New factory method using TrackedGuid.New() - generates new UUIDv7 with tracking
     sb.AppendLine("  /// <summary>Creates a new instance with sub-millisecond precision from the framework's UUIDv7 generator. Preserves tracking metadata.</summary>");
     sb.AppendLine($"  public static {id.TypeName} New() => new(TrackedGuid.New());");
@@ -765,7 +767,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     // From(TrackedGuid) factory method - preserves tracking metadata
     sb.AppendLine("  /// <summary>Creates an instance from a TrackedGuid, preserving tracking metadata.</summary>");
     sb.AppendLine($"  public static {typeName} From(TrackedGuid tracked) {{");
-    sb.AppendLine("    if (!tracked.IsTimeOrdered)");
+    sb.AppendLine("    if (!tracked.IsTimeOrdered && !_isGrandfathered(tracked.Value))");
     sb.AppendLine($"      throw new ArgumentException(\"{typeName} requires UUIDv7 (time-ordered) but received a non-v7 Guid\", nameof(tracked));");
     sb.AppendLine("    return new(tracked);");
     sb.AppendLine("  }");
@@ -774,10 +776,42 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     // From(Guid) factory method - validates v7, creates untracked
     sb.AppendLine("  /// <summary>Creates an instance from a Guid value. Throws if not UUIDv7.</summary>");
     sb.AppendLine($"  public static {typeName} From(Guid value) {{");
-    sb.AppendLine("    if (value.Version != 7)");
+    sb.AppendLine("    if (value.Version != 7 && !_isGrandfathered(value))");
     sb.AppendLine($"      throw new ArgumentException($\"{typeName} requires UUIDv7 but received version {{value.Version}}\", nameof(value));");
     sb.AppendLine("    return new(TrackedGuid.FromExternal(value));");
     sb.AppendLine("  }");
+  }
+
+  /// <summary>
+  /// The grandfathered-values hook every id declares (#2517): <c>IsGrandfathered</c>, a void partial method the id type
+  /// may implement to name values that predate its version rule, and the helper the checked factories ask when a
+  /// value breaks the rule. A void partial method is the only kind C# lets go unimplemented, and then the compiler
+  /// removes the call, so an id without exceptions pays nothing. <see cref="Guid.Empty"/> is never grandfathered.
+  /// An any-version id refuses nothing else, so its factories never ask.
+  /// </summary>
+  private static void _appendGrandfatheredHook(StringBuilder sb, WhizbangIdInfo id) {
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
+    sb.AppendLine("  /// Implement to let the checked entry points (From, Parse, the explicit cast, JSON, the GraphQL scalar) accept");
+    sb.AppendLine("  /// a frozen set of values that predate this id's version rule: set <paramref name=\"grandfathered\"/> to true for");
+    sb.AppendLine("  /// them. Asked only for a value that breaks the rule; never for Guid.Empty, which is always refused. Keep it a");
+    sb.AppendLine("  /// set lookup: it runs on every refused value.");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
+    sb.AppendLine("  static partial void IsGrandfathered(Guid value, ref bool grandfathered);");
+    sb.AppendLine();
+
+    if (id.AcceptAnyVersion) {
+      return;
+    }
+
+    sb.AppendLine("  /// <summary>Whether the id type grandfathers a value that breaks its version rule. Never the empty Guid.</summary>");
+    sb.AppendLine("  private static bool _isGrandfathered(Guid value) {");
+    sb.AppendLine("    if (value == Guid.Empty)");
+    sb.AppendLine("      return false;");
+    sb.AppendLine("    var grandfathered = false;");
+    sb.AppendLine("    IsGrandfathered(value, ref grandfathered);");
+    sb.AppendLine("    return grandfathered;");
+    sb.AppendLine("  }");
+    sb.AppendLine();
   }
 
   /// <summary>
@@ -801,7 +835,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
     sb.AppendLine($"  /// <summary>Returns the Guid, or throws if its version is not {accepted}.</summary>");
     sb.AppendLine("  private static Guid _requireAcceptedVersion(Guid value, string parameterName) {");
-    sb.AppendLine($"    if (value.Version is not {UuidVersionMask.Pattern(versions)})");
+    sb.AppendLine($"    if (value.Version is not {UuidVersionMask.Pattern(versions)} && !_isGrandfathered(value))");
     sb.AppendLine($"      throw new ArgumentException($\"{typeName} requires {accepted} but received version {{value.Version}}\", parameterName);");
     sb.AppendLine("    return value;");
     sb.AppendLine("  }");
