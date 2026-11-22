@@ -9,7 +9,7 @@ namespace Whizbang.Core.Archival;
 /// read as events. A read stops at the corrupted object; a restore changes nothing and the stream stays archived.
 /// </summary>
 /// <docs>fundamentals/events/archive-store#azure-blob-integrity</docs>
-/// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Read_ACorruptedObject_IsDetectedByItsHash_AndNothingIsDecodedAsync</tests>
+/// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Read_ACorruptedObject_IsDetectedByItsHash_AndNothingIsDecodedAsync</tests>
 /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveObjectCorruptedExceptionTests.cs</tests>
 public sealed class ArchiveObjectCorruptedException : Exception {
   /// <summary>Creates the exception with no message.</summary>

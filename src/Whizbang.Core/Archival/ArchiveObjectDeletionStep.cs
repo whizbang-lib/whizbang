@@ -16,8 +16,8 @@ namespace Whizbang.Core.Archival;
 /// <docs>fundamentals/events/archive-store#purging-a-stream-archived-to-blob</docs>
 /// <docs>operations/deployment/restoring-an-environment-with-an-archive#the-orphan-sweep</docs>
 /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveObjectStoreContractTests.cs:DeletionStep_DrainsThenSweeps_AndWithoutACoordinatorDoesNothingAsync</tests>
-/// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs:Step_SweepsAtMostOncePerInterval_AndOnlyWithADelayAsync</tests>
-/// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Purge_QueuesTheObjects_AndTheStepDeletesThemAsync</tests>
+/// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs:Step_SweepsAtMostOncePerInterval_AndOnlyWithADelayAsync</tests>
+/// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Purge_QueuesTheObjects_AndTheStepDeletesThemAsync</tests>
 /// <param name="coordinator">The archive coordinator that owns the objects, or <see langword="null"/> for none.</param>
 public sealed class ArchiveObjectDeletionStep(IArchiveObjectCoordinator? coordinator) : IMaintenanceStep {
   /// <summary>

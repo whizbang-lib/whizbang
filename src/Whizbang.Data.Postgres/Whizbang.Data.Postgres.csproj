@@ -62,5 +62,6 @@
     <InternalsVisibleTo Include="Whizbang.Data.EFCore.Postgres.Tests" />
     <InternalsVisibleTo Include="Whizbang.Data.Dapper.Postgres.Tests" />
     <InternalsVisibleTo Include="Whizbang.Storage.AzureBlob.Integration.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Archive.AzureBlob.Integration.Tests" />
   </ItemGroup>
 </Project>

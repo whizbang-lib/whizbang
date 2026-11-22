@@ -135,6 +135,7 @@
     <Project Path="tests/Whizbang.Offloads.InMemory.Tests/Whizbang.Offloads.InMemory.Tests.csproj" />
     <Project Path="tests/Whizbang.Storage.AzureBlob.Tests/Whizbang.Storage.AzureBlob.Tests.csproj" />
     <Project Path="tests/Whizbang.Storage.AzureBlob.Integration.Tests/Whizbang.Storage.AzureBlob.Integration.Tests.csproj" />
+    <Project Path="tests/Whizbang.Archive.AzureBlob.Integration.Tests/Whizbang.Archive.AzureBlob.Integration.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.AzureServiceBus.Tests/Whizbang.Transports.AzureServiceBus.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.AzureServiceBus.Component.Tests/Whizbang.Transports.AzureServiceBus.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.AzureServiceBus.Integration.Tests/Whizbang.Transports.AzureServiceBus.Integration.Tests.csproj" />

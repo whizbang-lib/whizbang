@@ -58,9 +58,9 @@ namespace Whizbang.Data.Postgres;
 /// <docs>fundamentals/events/archive-store#object-stores-and-the-coordinator</docs>
 /// <docs>operations/deployment/restoring-an-environment-with-an-archive#why-it-is-consistent</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ObjectArchiveCoordinatorTests.cs</tests>
-/// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs</tests>
-/// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreImmutabilityTests.cs</tests>
-/// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs</tests>
+/// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreImmutabilityTests.cs</tests>
+/// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs</tests>
 public sealed partial class PostgresObjectArchiveStore : IArchiveObjectCoordinator {
   /// <summary>
   /// The name of the object that claims a container for one database (#2367): written create-only by the first write,
@@ -183,8 +183,8 @@ public sealed partial class PostgresObjectArchiveStore : IArchiveObjectCoordinat
   /// <exception cref="ArgumentOutOfRangeException"><paramref name="fromLocationId"/> is below 1.</exception>
   /// <exception cref="ArgumentException">No location has the id <paramref name="fromLocationId"/>.</exception>
   /// <docs>fundamentals/events/archive-store#repointing-an-environment</docs>
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:RepointLocation_MakesAMismatchedDatabaseConsistent_ForAnotherContainerAsync</tests>
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:RepointLocation_AfterTheCopyArchivedItsOwnStreams_MergesTheSourceLocationAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:RepointLocation_MakesAMismatchedDatabaseConsistent_ForAnotherContainerAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:RepointLocation_AfterTheCopyArchivedItsOwnStreams_MergesTheSourceLocationAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ObjectArchiveCoordinatorTests.cs:RepointLocation_RefusesAnIdThatCannotNameARow_AndOneNoRowHasAsync</tests>
   public async Task<long> RepointLocationAsync(long fromLocationId, CancellationToken cancellationToken = default) {
     ArgumentOutOfRangeException.ThrowIfLessThan(fromLocationId, 1);
@@ -213,10 +213,10 @@ public sealed partial class PostgresObjectArchiveStore : IArchiveObjectCoordinat
   private static bool _isLogicalName(string? name) => !string.IsNullOrEmpty(name) && name.IndexOfAny([';', '=']) < 0;
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_WholeStream_ThenRead_ReturnsTheEventsByteIdenticalInVersionOrderAsync</tests>
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_TheUploadFails_TheStreamStaysFullyHot_AndNothingIsListedAsync</tests>
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_ACrashAfterTheUploadBeforeTheCommit_IsRetriedWithoutADuplicateAsync</tests>
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_OfAStreamWhoseObjectsAreElsewhere_ThrowsTheMismatch_AndWritesNothing_UntilRepointedAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_WholeStream_ThenRead_ReturnsTheEventsByteIdenticalInVersionOrderAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_TheUploadFails_TheStreamStaysFullyHot_AndNothingIsListedAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_ACrashAfterTheUploadBeforeTheCommit_IsRetriedWithoutADuplicateAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_OfAStreamWhoseObjectsAreElsewhere_ThrowsTheMismatch_AndWritesNothing_UntilRepointedAsync</tests>
   /// <exception cref="ArchiveLocationMismatchException">The stream's earlier objects are recorded in a location other
   /// than <see cref="ConfiguredLocation"/>; nothing is written.</exception>
   public async Task<ArchiveWriteResult> WriteAsync(ArchiveBatch batch, CancellationToken cancellationToken = default) {
@@ -249,8 +249,8 @@ public sealed partial class PostgresObjectArchiveStore : IArchiveObjectCoordinat
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_WholeStream_ThenRead_ReturnsTheEventsByteIdenticalInVersionOrderAsync</tests>
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Read_EventsTheTableStoreArchived_ComeBackInVersionOrderWithTheObjectsAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_WholeStream_ThenRead_ReturnsTheEventsByteIdenticalInVersionOrderAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Read_EventsTheTableStoreArchived_ComeBackInVersionOrderWithTheObjectsAsync</tests>
   public async IAsyncEnumerable<ArchivedEvent> ReadAsync(
       Guid streamId, long fromVersion = 0, [EnumeratorCancellation] CancellationToken cancellationToken = default) {
     // Objects first, then rows the table store holds. Every archive takes a stream's lowest hot versions, and every
@@ -266,8 +266,8 @@ public sealed partial class PostgresObjectArchiveStore : IArchiveObjectCoordinat
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Restore_PutsTheStreamBackExactly_AndRemovesItsObjectsAsync</tests>
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Restore_AVersionConflict_KeepsTheArchiveAndItsObjectsAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Restore_PutsTheStreamBackExactly_AndRemovesItsObjectsAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Restore_AVersionConflict_KeepsTheArchiveAndItsObjectsAsync</tests>
   public async Task<ArchiveRestoreResult> RestoreAsync(Guid streamId, CancellationToken cancellationToken = default) {
     List<ManifestRow> objects;
     ArchiveRestoreResult result;
@@ -298,7 +298,7 @@ public sealed partial class PostgresObjectArchiveStore : IArchiveObjectCoordinat
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Delete_RemovesTheObjectsAndTheManifest_TheTombstoneStaysAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Delete_RemovesTheObjectsAndTheManifest_TheTombstoneStaysAsync</tests>
   public async Task<long> DeleteAsync(Guid streamId, CancellationToken cancellationToken = default) {
     List<ManifestRow> objects;
     long tableEvents;
@@ -576,8 +576,8 @@ public sealed partial class PostgresObjectArchiveStore : IArchiveObjectCoordinat
   /// <returns>How many objects were confirmed deleted.</returns>
   /// <docs>fundamentals/events/archive-store#purging-a-stream-archived-to-blob</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ObjectArchiveCoordinatorTests.cs</tests>
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Purge_QueuesTheObjects_AndTheStepDeletesThemAsync</tests>
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Step_AFailingDelete_StaysQueued_AndIsRetriedAfterItsBackoffAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Purge_QueuesTheObjects_AndTheStepDeletesThemAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Step_AFailingDelete_StaysQueued_AndIsRetriedAfterItsBackoffAsync</tests>
   public Task<int> DeleteQueuedObjectsAsync(int maxObjects, CancellationToken cancellationToken = default) {
     ArgumentOutOfRangeException.ThrowIfLessThan(maxObjects, 1);
     return _drainAsync(streamId: null, maxObjects, cancellationToken);
@@ -595,7 +595,7 @@ public sealed partial class PostgresObjectArchiveStore : IArchiveObjectCoordinat
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>How many objects were confirmed deleted.</returns>
   /// <docs>operations/deployment/restoring-an-environment-with-an-archive#the-orphan-sweep</docs>
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs</tests>
   public async Task<int> SweepOrphanedObjectsAsync(CancellationToken cancellationToken = default) {
     if (_deleteAfter is not { } delay) {
       return 0;
@@ -647,7 +647,7 @@ public sealed partial class PostgresObjectArchiveStore : IArchiveObjectCoordinat
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs:Step_SweepsAtMostOncePerInterval_AndOnlyWithADelayAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs:Step_SweepsAtMostOncePerInterval_AndOnlyWithADelayAsync</tests>
   public Task<int> SweepOrphanedObjectsIfDueAsync(CancellationToken cancellationToken = default) {
     if (_deleteAfter is null) {
       return Task.FromResult(0);

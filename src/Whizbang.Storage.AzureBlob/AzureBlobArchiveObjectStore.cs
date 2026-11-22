@@ -28,7 +28,7 @@ namespace Whizbang.Storage.AzureBlob;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#the-azure-blob-store</docs>
-/// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs</tests>
 /// <tests>tests/Whizbang.Storage.AzureBlob.Tests/AzureBlobArchiveLocationTests.cs</tests>
 public sealed class AzureBlobArchiveObjectStore : IArchiveObjectStore {
   /// <summary>The provider name every location and locator of this store records.</summary>

@@ -118,6 +118,7 @@ internal static class WhizbangVersionInfo
     <InternalsVisibleTo Include="Whizbang.Data.Postgres" />
     <InternalsVisibleTo Include="Whizbang.Data.Dapper.Postgres.Tests" />
     <InternalsVisibleTo Include="Whizbang.Storage.AzureBlob.Integration.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Archive.AzureBlob.Integration.Tests" />
     <InternalsVisibleTo Include="Whizbang.Benchmarks" />
     <!-- Allow generated code to access internals -->
     <InternalsVisibleTo Include="Whizbang.Core.Generated" />

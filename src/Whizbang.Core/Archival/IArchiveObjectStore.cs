@@ -29,7 +29,7 @@ namespace Whizbang.Core.Archival;
 /// </remarks>
 /// <docs>fundamentals/events/archive-store#object-stores-and-the-coordinator</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ObjectArchiveCoordinatorTests.cs</tests>
-/// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs</tests>
 public interface IArchiveObjectStore {
   /// <summary>
   /// The location this store reads and writes, from its configuration: the provider name, the account endpoint (never a

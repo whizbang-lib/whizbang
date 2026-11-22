@@ -17,7 +17,7 @@ namespace Whizbang.Data.Postgres;
 /// construction.
 /// </remarks>
 /// <docs>operations/deployment/restoring-an-environment-with-an-archive#one-database-per-container</docs>
-/// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreOwnerMarkerTests.cs</tests>
+/// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreOwnerMarkerTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ObjectArchiveCoordinatorTests.cs:ArchiveSweepMetrics_KeepsItsMeterName_AndIsListedInWhizbangMetersAsync</tests>
 public sealed class ArchiveSweepMetrics {
 #pragma warning disable CA1707

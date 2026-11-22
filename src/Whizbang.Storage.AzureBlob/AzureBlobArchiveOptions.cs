@@ -100,7 +100,7 @@ public sealed class AzureBlobArchiveOptions {
   /// </remarks>
   /// <docs>fundamentals/events/archive-store#archive-locations</docs>
   /// <tests>tests/Whizbang.Storage.AzureBlob.Tests/AzureBlobArchiveLocationTests.cs:VerifyLocation_DefaultsToOn_AndIsBoundFromConfigurationAsync</tests>
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:VerifyLocationOff_AMismatchedRecord_IsRead_Restored_AndDeleted_InTheConfiguredLocationOnlyAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:VerifyLocationOff_AMismatchedRecord_IsRead_Restored_AndDeleted_InTheConfiguredLocationOnlyAsync</tests>
   public bool VerifyLocation { get; set; } = true;
 
   /// <summary>
@@ -130,7 +130,7 @@ public sealed class AzureBlobArchiveOptions {
   /// </remarks>
   /// <docs>operations/deployment/restoring-an-environment-with-an-archive#a-deletion-delay</docs>
   /// <tests>tests/Whizbang.Storage.AzureBlob.Tests/AzureBlobArchiveRegistrationTests.cs:Configuration_DeleteAfter_IsOffByDefault_AndBindsATimeSpanAsync</tests>
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs</tests>
   public TimeSpan? DeleteAfter { get; set; }
 
   /// <summary>
@@ -182,7 +182,7 @@ public sealed class AzureBlobArchiveOptions {
   /// </remarks>
   /// <docs>fundamentals/events/archive-store#access-tier</docs>
   /// <tests>tests/Whizbang.Storage.AzureBlob.Tests/AzureBlobArchiveRegistrationTests.cs:Configuration_AccessTier_BindsHotCoolOrCold_InAnyCaseAsync</tests>
-  /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_WithAnAccessTier_StoresEveryObjectAtIt_WithoutOne_TheAccountDefaultAsync</tests>
+  /// <tests>tests/Whizbang.Archive.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Write_WithAnAccessTier_StoresEveryObjectAtIt_WithoutOne_TheAccountDefaultAsync</tests>
   public AccessTier? AccessTier { get; set; }
 
   /// <summary>

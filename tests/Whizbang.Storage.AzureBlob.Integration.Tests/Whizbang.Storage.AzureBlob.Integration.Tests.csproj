@@ -8,10 +8,10 @@
     <IsTestProject>true</IsTestProject>
     <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
-    <!-- Integration: Azurite and PostgreSQL via Testcontainers: body offload, and the Postgres driver's archive coordinator
-         writing through the Azure Blob object store. Runs in the Azure Blob suite. -->
+    <!-- Integration: Azurite via Testcontainers: body offload, and the package's startup warnings. Runs in the Azure Blob
+         suite. The archive's Azure Blob tests are in Whizbang.Archive.AzureBlob.Integration.Tests. -->
     <WhizbangTestType>Integration</WhizbangTestType>
-    <WhizbangTestTags>AzureBlob;Docker;Archive;Offloads</WhizbangTestTags>
+    <WhizbangTestTags>AzureBlob;Docker;Offloads</WhizbangTestTags>
   </PropertyGroup>
 
   <ItemGroup>

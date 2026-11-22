@@ -168,7 +168,7 @@ despite the name, a unit project),
 | `Whizbang.Transports.HotChocolate.Component.Tests` | Component tests of the HotChocolate transport that run a second async flow, moved out of `Whizbang.Transports.HotChocolate.Tests` |
 | `Whizbang.Transports.RabbitMQ.Component.Tests` | Component tests of the RabbitMQ transport (real consumer threads, flush loops and drainers against in-process channel doubles), moved out of `Whizbang.Transports.RabbitMQ.Tests` |
 
-### Integration (14)
+### Integration (15)
 
 | Project | Tags | Suite |
 |---------|------|-------|
@@ -180,7 +180,8 @@ despite the name, a unit project),
 | `Whizbang.Transports.AzureServiceBus.Integration.Tests` | AzureServiceBus;Docker;Messaging | Service Bus |
 | `ECommerce.AzureServiceBus.Integration.Tests` | AzureServiceBus;Docker;Messaging;ECommerce | Service Bus |
 | `ECommerce.InMemory.Integration.Tests` | Docker;ECommerce;InMemory | InMemory |
-| `Whizbang.Storage.AzureBlob.Integration.Tests` | AzureBlob;Docker;Archive;Offloads | Azure Blob |
+| `Whizbang.Storage.AzureBlob.Integration.Tests` | AzureBlob;Docker;Offloads | Azure Blob |
+| `Whizbang.Archive.AzureBlob.Integration.Tests` | AzureBlob;Docker;Archive | Azure Blob |
 | `Whizbang.Core.Integration.Tests` | Integration | Integration (general) |
 | `Whizbang.Migrate.Integration.Tests` | Integration | Integration (general) |
 | `Whizbang.Transports.FastEndpoints.Integration.Tests` | Integration | Integration (general) |
