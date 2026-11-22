@@ -2538,95 +2538,11 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       long? triggeringCommitSequence,
       CancellationToken cancellationToken = default) {
 
-    Guid? replayFromEventId = null;
-    TModel? snapshotModel = null;
-    JsonDocument? snapshotData = null;
-    var hasSnapshot = false;
-    // #1738: the snapshot's version when an archive covers the snapshot, so the replay reads the archived events after it.
-    long? readThroughArchiveAfterVersion = null;
-    // #1963: the commit sequence through which the snapshot's row held its collectives, when the snapshot records it.
-    long? collectivesThroughSequence = null;
     var startedAt = DateTimeOffset.UtcNow;
-    // Without a snapshot floor an ephemeral perspective does not replay at all (the drop below), so the "performing full
-    // replay" warnings would describe a replay that never runs. The drop's own warning is the one line it logs (#1862).
-    var replaysWithoutAFloor = !_traits.IsEphemeral;
-    // The lines that announce the replay, logged once the rewind knows it replays: a rewind that needs archived history
-    // whose archive was deleted (#1964) refuses instead, and its refusal is the one line it logs.
-    Action? announceReplay = null;
-
-    if (_snapshotStore is not null) {
-      // The snapshot has to sit before the triggering event IN THE ORDER THE REPLAY FOLDS, because the rewind
-      // restores it and replays forward from there. A snapshot is taken at the event with the highest version it
-      // holds and holds every event up to that version, so the store selects the newest one below the trigger's
-      // version (commit sequence and event id run backward against the stream for retroactively stamped rows and
-      // can name a snapshot later than the trigger, #1355). Version order is the replay's order only for a stream
-      // with no origin to deal, though: a single-origin stream replays in origin order, which can put an event
-      // above the snapshot's version before one it holds. Restoring such a snapshot folds the earlier event after
-      // the later one, so the floor is judged by the replay's own order (ReplayFloor, #2379): everything the
-      // snapshot holds must come first in that order, and the trigger after it.
-      //
-      // There is deliberately no fallback to any other floor or order. A fallback is not a safety net here, it is
-      // the same wrong answer arriving one branch later: it fires exactly when the floor cannot be placed. A full
-      // replay costs more and reproduces the row; a wrong restore point leaves a read model nothing is pending to
-      // repair.
-      var snapshot = await _snapshotStore.GetSnapshotFloorAsync(
-          streamId, perspectiveName, triggeringEventId, cancellationToken);
-
-      // #1738: a snapshot an archive covers, but that records no version, cannot say where the archive's events after it
-      // begin, so it is not used: the replay starts from the stream's start, which reads through the archive by its gap.
-      if (snapshot?.ArchivedThroughVersion is not null && snapshot.SnapshotVersion is null) {
-        var coveredSnapshotEventId = snapshot.SnapshotEventId;
-        announceReplay = () => _logger.LogWarning(
-            "Snapshot of {PerspectiveName} stream {StreamId} at {SnapshotEventId} is covered by an archive and records no stream version; performing full replay through the archive due to late event {TriggeringEventId}",
-            perspectiveName, streamId, coveredSnapshotEventId, triggeringEventId);
-        snapshot = null;
-      }
-
-      if (snapshot is not null) {
-        snapshotModel = _fromSnapshotJson(snapshot.SnapshotData);
-        // #2379: a readable snapshot is a floor only when the events it holds come first in the replay's order. A snapshot
-        // an archive covers, of a stream whose archive was deleted, is refused below without reading anything (#1964).
-        if (snapshotModel is not null
-            && (snapshot.ArchivedThroughVersion is null || await _deletedArchiveExtentAsync(streamId, cancellationToken) is null)
-            && !global::Whizbang.Core.Perspectives.ReplayFloor.Qualifies(
-              await _streamAsReplayedAsync(streamId, cancellationToken), snapshot.SnapshotVersion, triggeringEventId)) {
-          var refusedSnapshotEventId = snapshot.SnapshotEventId;
-          var refusedSnapshotVersion = snapshot.SnapshotVersion;
-          announceReplay = () => _logger.LogWarning(
-              "Snapshot of {PerspectiveName} stream {StreamId} at {SnapshotEventId} (stream version {SnapshotVersion}) does not hold only events that come before late event {TriggeringEventId} in replay order; performing full replay",
-              perspectiveName, streamId, refusedSnapshotEventId, refusedSnapshotVersion, triggeringEventId);
-          snapshotModel = null;
-          snapshot = null;
-          replaysWithoutAFloor = false;  // the refusal above is the one line this replay logs
-        }
-      }
-
-      if (snapshot is not null) {
-        if (snapshotModel is not null) {
-          replayFromEventId = snapshot.SnapshotEventId;
-          snapshotData = snapshot.SnapshotData;
-          hasSnapshot = true;
-          readThroughArchiveAfterVersion = snapshot.ArchivedThroughVersion is null ? null : snapshot.SnapshotVersion;
-          collectivesThroughSequence = snapshot.CollectivesThroughSequence;
-          var restoredFrom = snapshot;
-          announceReplay = () => _logger.LogWarning(
-              "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} (stream version {SnapshotVersion}) due to late event {TriggeringEventId} (detected at commit sequence {TriggeringCommitSequence})",
-              perspectiveName, streamId, restoredFrom.SnapshotEventId, restoredFrom.SnapshotVersion, triggeringEventId, triggeringCommitSequence);
-        } else if (replaysWithoutAFloor) {
-          announceReplay = () => _logger.LogWarning(
-              "Snapshot for {PerspectiveName} stream {StreamId} has a stale serialization version; performing full replay due to late event {TriggeringEventId}",
-              perspectiveName, streamId, triggeringEventId);
-        }
-      } else if (replaysWithoutAFloor) {
-        announceReplay += () => _logger.LogWarning(
-            "No snapshot of {PerspectiveName} stream {StreamId} is placed before event {TriggeringEventId} (detected at commit sequence {TriggeringCommitSequence}); performing full replay",
-            perspectiveName, streamId, triggeringEventId, triggeringCommitSequence);
-      }
-    } else if (replaysWithoutAFloor) {
-      announceReplay = () => _logger.LogWarning(
-          "Snapshot store not available for {PerspectiveName} stream {StreamId}, performing full replay due to late event {TriggeringEventId}",
-          perspectiveName, streamId, triggeringEventId);
-    }
+    var floor = await _rewindFloorAsync(streamId, perspectiveName, triggeringEventId, triggeringCommitSequence, cancellationToken);
+    var hasSnapshot = floor.HasSnapshot;
+    // #1738: the snapshot's version when an archive covers the snapshot, so the replay reads the archived events after it.
+    var readThroughArchiveAfterVersion = floor.From.ReadThroughArchiveAfterVersion;
 
     // Fire PerspectiveRewindStarted system event as System user
     // These events are marked [AuditEvent(Exclude = true)] to skip the audit pipeline
@@ -2641,13 +2557,8 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     Guid rewindStreamId = global::Whizbang.Core.ValueObjects.TrackedGuid.New();
     var dispatcher = _serviceProvider.GetService<IDispatcher>();
     if (dispatcher is not null) {
-      try {
-        await dispatcher.AsSystem().ForAllTenants().PublishAsync(new PerspectiveRewindStarted(
-            rewindStreamId, streamId, perspectiveName, triggeringEventId, replayFromEventId, hasSnapshot, startedAt));
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-        _logger.LogDebug(ex, "Failed to publish PerspectiveRewindStarted for {PerspectiveName} stream {StreamId}",
-          perspectiveName, streamId);
-      }
+      await _publishRewindStartedAsync(dispatcher, new PerspectiveRewindStarted(
+          rewindStreamId, streamId, perspectiveName, triggeringEventId, floor.From.EventId, hasSnapshot, startedAt));
     }
 
     // In-memory replay: apply all events without intermediate DB writes
@@ -2684,26 +2595,156 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
           perspectiveName, streamId, triggeringEventId, deletedExtent);
       result = _droppedStraggler(streamId, perspectiveName, triggeringEventId);
     } else {
-      announceReplay?.Invoke();
+      floor.AnnounceReplay?.Invoke();
       result = await _replayCheckedAsync(
-          streamId, perspectiveName, snapshotModel, snapshotData,
-          new ReplayFrom(replayFromEventId, readThroughArchiveAfterVersion, collectivesThroughSequence), cancellationToken);
+          streamId, perspectiveName, floor.SnapshotModel, floor.SnapshotData, floor.From, cancellationToken);
     }
 
     // Fire PerspectiveRewindCompleted system event
     if (dispatcher is not null) {
-      try {
-        await dispatcher.AsSystem().ForAllTenants().PublishAsync(new PerspectiveRewindCompleted(
-            rewindStreamId, streamId, perspectiveName, triggeringEventId, result.LastEventId,
-            result.EventsProcessed,
-            startedAt, DateTimeOffset.UtcNow));
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-        _logger.LogDebug(ex, "Failed to publish PerspectiveRewindCompleted for {PerspectiveName} stream {StreamId}",
-          perspectiveName, streamId);
-      }
+      await _publishRewindCompletedAsync(dispatcher, new PerspectiveRewindCompleted(
+          rewindStreamId, streamId, perspectiveName, triggeringEventId, result.LastEventId,
+          result.EventsProcessed,
+          startedAt, DateTimeOffset.UtcNow));
     }
 
     return result;
+  }
+
+  /// <summary>
+  /// Where a rewind restores from: the snapshot's model and stored form with where the replay after it starts, or none
+  /// for a full replay; and the lines that announce the replay, logged once the rewind knows it replays (a rewind that
+  /// needs archived history whose archive was deleted, #1964, refuses instead, and its refusal is the one line it logs).
+  /// </summary>
+  private readonly record struct RewindFloor(
+      TModel? SnapshotModel, JsonDocument? SnapshotData, ReplayFrom From, bool HasSnapshot, Action? AnnounceReplay);
+
+  /// <summary>
+  /// The floor a rewind for a late event restores from (<see cref="RewindFloor"/>): the snapshot the store places before
+  /// the trigger when the replay can read it and it holds only events that come first in the replay's order, else none.
+  /// </summary>
+  private async Task<RewindFloor> _rewindFloorAsync(
+      Guid streamId, string perspectiveName, Guid triggeringEventId, long? triggeringCommitSequence, CancellationToken cancellationToken) {
+    // Without a snapshot floor an ephemeral perspective does not replay at all (the drop in the rewind core), so the
+    // "performing full replay" warnings would describe a replay that never runs. The drop's own warning is the one line
+    // it logs (#1862).
+    var replaysWithoutAFloor = !_traits.IsEphemeral;
+    if (_snapshotStore is null) {
+      return new RewindFloor(null, null, default, HasSnapshot: false, replaysWithoutAFloor
+          ? () => _logger.LogWarning(
+              "Snapshot store not available for {PerspectiveName} stream {StreamId}, performing full replay due to late event {TriggeringEventId}",
+              perspectiveName, streamId, triggeringEventId)
+          : null);
+    }
+
+    var placed = await _placeSnapshotAsync(streamId, perspectiveName, triggeringEventId, cancellationToken);
+    if (placed.Snapshot is not { } snapshot) {
+      var announceReplay = placed.AnnounceReplay;
+      if (replaysWithoutAFloor && !placed.Refused) {
+        announceReplay += () => _logger.LogWarning(
+            "No snapshot of {PerspectiveName} stream {StreamId} is placed before event {TriggeringEventId} (detected at commit sequence {TriggeringCommitSequence}); performing full replay",
+            perspectiveName, streamId, triggeringEventId, triggeringCommitSequence);
+      }
+      return new RewindFloor(null, null, default, HasSnapshot: false, announceReplay);
+    }
+    if (placed.SnapshotModel is not { } snapshotModel) {
+      return new RewindFloor(null, null, default, HasSnapshot: false, replaysWithoutAFloor
+          ? () => _logger.LogWarning(
+              "Snapshot for {PerspectiveName} stream {StreamId} has a stale serialization version; performing full replay due to late event {TriggeringEventId}",
+              perspectiveName, streamId, triggeringEventId)
+          : null);
+    }
+    return new RewindFloor(
+        snapshotModel,
+        snapshot.SnapshotData,
+        new ReplayFrom(
+            snapshot.SnapshotEventId,
+            snapshot.ArchivedThroughVersion is null ? null : snapshot.SnapshotVersion,
+            snapshot.CollectivesThroughSequence),
+        HasSnapshot: true,
+        () => _logger.LogWarning(
+            "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} (stream version {SnapshotVersion}) due to late event {TriggeringEventId} (detected at commit sequence {TriggeringCommitSequence})",
+            perspectiveName, streamId, snapshot.SnapshotEventId, snapshot.SnapshotVersion, triggeringEventId, triggeringCommitSequence));
+  }
+
+  /// <summary>
+  /// The snapshot the store places before a late event, read, when the rewind may restore from it: null with the line
+  /// that says why for one an archive covers that records no version, and null and refused for a readable one that does
+  /// not hold only events that come first in the replay's order. A snapshot that cannot be read is returned with no
+  /// model.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The snapshot has to sit before the triggering event IN THE ORDER THE REPLAY FOLDS, because the rewind
+  /// restores it and replays forward from there. A snapshot is taken at the event with the highest version it
+  /// holds and holds every event up to that version, so the store selects the newest one below the trigger's
+  /// version (commit sequence and event id run backward against the stream for retroactively stamped rows and
+  /// can name a snapshot later than the trigger, #1355). Version order is the replay's order only for a stream
+  /// with no origin to deal, though: a single-origin stream replays in origin order, which can put an event
+  /// above the snapshot's version before one it holds. Restoring such a snapshot folds the earlier event after
+  /// the later one, so the floor is judged by the replay's own order (ReplayFloor, #2379): everything the
+  /// snapshot holds must come first in that order, and the trigger after it.
+  /// </para>
+  /// <para>
+  /// There is deliberately no fallback to any other floor or order. A fallback is not a safety net here, it is
+  /// the same wrong answer arriving one branch later: it fires exactly when the floor cannot be placed. A full
+  /// replay costs more and reproduces the row; a wrong restore point leaves a read model nothing is pending to
+  /// repair.
+  /// </para>
+  /// </remarks>
+  private async Task<(global::Whizbang.Core.Perspectives.PerspectiveSnapshotFloor? Snapshot, TModel? SnapshotModel, Action? AnnounceReplay, bool Refused)> _placeSnapshotAsync(
+      Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken) {
+    var snapshot = await _snapshotStore!.GetSnapshotFloorAsync(
+        streamId, perspectiveName, triggeringEventId, cancellationToken);
+
+    // #1738: a snapshot an archive covers, but that records no version, cannot say where the archive's events after it
+    // begin, so it is not used: the replay starts from the stream's start, which reads through the archive by its gap.
+    if (snapshot?.ArchivedThroughVersion is not null && snapshot.SnapshotVersion is null) {
+      var coveredSnapshotEventId = snapshot.SnapshotEventId;
+      return (null, null, () => _logger.LogWarning(
+          "Snapshot of {PerspectiveName} stream {StreamId} at {SnapshotEventId} is covered by an archive and records no stream version; performing full replay through the archive due to late event {TriggeringEventId}",
+          perspectiveName, streamId, coveredSnapshotEventId, triggeringEventId), false);
+    }
+    if (snapshot is null) {
+      return (null, null, null, false);
+    }
+
+    var snapshotModel = _fromSnapshotJson(snapshot.SnapshotData);
+    // #2379: a readable snapshot is a floor only when the events it holds come first in the replay's order. A snapshot
+    // an archive covers, of a stream whose archive was deleted, is refused by the rewind core without reading anything
+    // (#1964).
+    if (snapshotModel is not null
+        && (snapshot.ArchivedThroughVersion is null || await _deletedArchiveExtentAsync(streamId, cancellationToken) is null)
+        && !global::Whizbang.Core.Perspectives.ReplayFloor.Qualifies(
+          await _streamAsReplayedAsync(streamId, cancellationToken), snapshot.SnapshotVersion, triggeringEventId)) {
+      var refusedSnapshotEventId = snapshot.SnapshotEventId;
+      var refusedSnapshotVersion = snapshot.SnapshotVersion;
+      // The refusal is the one line this replay logs.
+      return (null, null, () => _logger.LogWarning(
+          "Snapshot of {PerspectiveName} stream {StreamId} at {SnapshotEventId} (stream version {SnapshotVersion}) does not hold only events that come before late event {TriggeringEventId} in replay order; performing full replay",
+          perspectiveName, streamId, refusedSnapshotEventId, refusedSnapshotVersion, triggeringEventId), true);
+    }
+    return (snapshot, snapshotModel, null, false);
+  }
+
+  /// <summary>Publishes the start of a rewind; a failure to publish is logged and does not stop the rewind.</summary>
+  private async Task _publishRewindStartedAsync(IDispatcher dispatcher, PerspectiveRewindStarted started) {
+    try {
+      await dispatcher.AsSystem().ForAllTenants().PublishAsync(started);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      _logger.LogDebug(ex, "Failed to publish PerspectiveRewindStarted for {PerspectiveName} stream {StreamId}",
+        started.PerspectiveName, started.RewoundStreamId);
+    }
+  }
+
+  /// <summary>Publishes the end of a rewind; a failure to publish is logged and does not fail the rewind.</summary>
+  private async Task _publishRewindCompletedAsync(IDispatcher dispatcher, PerspectiveRewindCompleted completed) {
+    try {
+      await dispatcher.AsSystem().ForAllTenants().PublishAsync(completed);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      _logger.LogDebug(ex, "Failed to publish PerspectiveRewindCompleted for {PerspectiveName} stream {StreamId}",
+        completed.PerspectiveName, completed.RewoundStreamId);
+    }
   }
 
   /// <summary>
