@@ -83,7 +83,7 @@ public sealed class ServiceAssemblyFactsGenerator : IIncrementalGenerator {
     if (turnkey is null) {
       return [];
     }
-    return compilation.SourceModule.ReferencedAssemblySymbols
+    return [.. compilation.SourceModule.ReferencedAssemblySymbols
       .SelectMany(assembly => assembly.GetAttributes())
       .Where(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, turnkey))
       .Select(a => a.ConstructorArguments.Length == 1 ? a.ConstructorArguments[0].Value as INamedTypeSymbol : null)
@@ -92,8 +92,7 @@ public sealed class ServiceAssemblyFactsGenerator : IIncrementalGenerator {
           .Any(m => m.IsStatic && m.Parameters.Length == 0 && m.DeclaredAccessibility == Accessibility.Public))
       .Select(registrar => TypeNameUtilities.FullyQualified(registrar!))
       .Distinct()
-      .OrderBy(name => name, System.StringComparer.Ordinal)
-      .ToArray();
+      .OrderBy(name => name, System.StringComparer.Ordinal)];
   }
 
   private static void _emit(SourceProductionContext context, Facts facts, bool declaresDbContext) {

@@ -72,7 +72,7 @@ internal sealed class InMemoryArchiveObjectStore : IArchiveObjectStore {
       if (!_objects.TryGetValue(path, out var stored)) {
         throw new ArchiveObjectStoreException("get", path, Location, new KeyNotFoundException($"No object {path}."));
       }
-      bytes = stored.Bytes.ToArray();
+      bytes = [.. stored.Bytes];
     });
     return Task.FromResult(bytes!);
   }

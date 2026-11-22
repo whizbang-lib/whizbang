@@ -18,20 +18,15 @@ namespace Whizbang.Core.Archival;
 /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Archival/ArchiveObjectStoreContractTests.cs:DeletionStep_DrainsThenSweeps_AndWithoutACoordinatorDoesNothingAsync</tests>
 /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreDeleteAfterTests.cs:Step_SweepsAtMostOncePerInterval_AndOnlyWithADelayAsync</tests>
 /// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobArchiveStoreTests.cs:Purge_QueuesTheObjects_AndTheStepDeletesThemAsync</tests>
-public sealed class ArchiveObjectDeletionStep : IMaintenanceStep {
+/// <param name="coordinator">The archive coordinator that owns the objects, or <see langword="null"/> for none.</param>
+public sealed class ArchiveObjectDeletionStep(IArchiveObjectCoordinator? coordinator) : IMaintenanceStep {
   /// <summary>
   /// The most objects one cycle deletes. A purge of many streams drains over several cycles rather than holding one
   /// cycle for a long run of storage calls.
   /// </summary>
   public const int BATCH_SIZE = 100;
 
-  private readonly IArchiveObjectCoordinator? _coordinator;
-
-  /// <summary>Creates the step.</summary>
-  /// <param name="coordinator">The archive coordinator that owns the objects, or <see langword="null"/> for none.</param>
-  public ArchiveObjectDeletionStep(IArchiveObjectCoordinator? coordinator) {
-    _coordinator = coordinator;
-  }
+  private readonly IArchiveObjectCoordinator? _coordinator = coordinator;
 
   /// <inheritdoc />
   public string Name => "archive-object-deletion";
