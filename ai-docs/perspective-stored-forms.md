@@ -217,16 +217,15 @@ it, not as the object `{"Value":".."}` Entity Framework discovers for a struct. 
 | Piece | What it does |
 |---|---|
 | `WhizbangIdForms.Register<TId>(guid => new TId(guid))` (Core), emitted by `WhizbangIdGenerator` in each id's module initializer | The registry of id types, with the unchecked load (the constructor) and a visitor so the EF side builds typed converters without reflection |
-| `WhizbangIdTypeMappingSourcePlugin` / `WhizbangIdTypeMapping` (EF) | A type mapping, as for dictionaries: EF asks while discovering a complex type's members, which is where it would make the id a complex type. `uuid` store type, `TId <-> Guid` converter through the constructor, and `WhizbangIdJsonReaderWriter<TId>` (writes the string, reads the string or the object form, counted). Rides `UseWhizbangFunctions` |
+| `WhizbangIdTypeMappingSourcePlugin` / `WhizbangIdTypeMapping` (EF) | A type mapping, as for dictionaries: EF asks while discovering a complex type's members, which is where it would make the id a complex type. `uuid` store type, `TId <-> Guid` converter through the constructor, and `WhizbangIdJsonReaderWriter<TId>` (writes and reads the string only). Rides `UseWhizbangFunctions` |
 | `WhizbangIdConvention.Apply` (EF), called by the generated `OnModelCreating` | A context without the options extension (a pooled factory registered by hand) still discovers ids as complex types; `Apply` removes each and adds the member back as a property with the id mapping. A collection of ids is left as discovered |
-| Persistence JSON context (`_{T}DocumentConverter`) | The atomic upsert's writer: the UUID string; reads either form, counting the object form on `whizbang.perspective.identifier_form_fallbacks` (`StoredFormFallbacks.ObjectFormIdentifierRead`) |
+| Persistence JSON context (`_{T}DocumentConverter`) | The atomic upsert's writer: the UUID string, and only the string on read |
 | `JsonbContainmentRewriter` / `JsonbContainment` (EF) | An id equality goes through the `Guid` marker: the member unboxed through `object` (stripped around the JSON member at translation), the value converted to its Guid; `Emit` drops that conversion and gives the parameter the member's id mapping, so the document is `jsonb_build_object('OrderId', @id)` and the GIN index answers it. `StoredFormIsNatural` accepts the id-to-Guid converter |
-| `StrongIdScalarRewrite` (EF) + migration 556 | The stored-form phase rewrites object-form ids (EF-mapped documents and opaque jsonb columns) once per table, before the dictionary rewrite; journaled `strong-id-scalar:<table>:<hash>`, settled on a pass that converts nothing; included in `StoredFormSettlement` |
 | `WhizbangIdFilterHandler` (HotChocolate) | Compares the id itself everywhere; the inner `Value` it used to read in a document is no longer a mapped member |
 
-The rewrite must settle before any id predicate runs: `CAST(data ->> 'OrderId' AS uuid)` fails (`22P02`) on a row
-still holding the object form. The stored-form phase runs at startup before the service serves, so this holds for the
-framework's own queries; hand-written SQL that matched `{"Value": ...}` has to match the string.
+No stored-form rewrite and no reader tolerance: strong ids had no consumers storing the object form when the scalar
+form shipped. Were an object-form row to exist, the readers refuse it naming the id type, and an id predicate's uuid
+cast fails on it (`22P02`).
 
 ## Objects a consumer owns over a temporal key
 
@@ -255,8 +254,8 @@ the last microsecond. A date key is the same number at midnight UTC; a duration 
 ## Tolerance, and when it goes
 
 Readers are strict about units and, for now, tolerant of renderings: a rendering is read as the value
-it renders and counted on `whizbang.perspective.temporal_form_fallbacks{kind}` (identifiers read in the object form
-on `whizbang.perspective.identifier_form_fallbacks{type}`), announced once per kind at Warning by
+it renders and counted on `whizbang.perspective.temporal_form_fallbacks{kind}` (dictionaries read as objects on
+`whizbang.perspective.dictionary_form_fallbacks{type}`), announced once per kind at Warning by
 `StoredFormFallbacks`. The rendering branch is removed once the counter reads zero across a release
 cycle. Removing it earlier makes a row the rewrite did not reach a stopped feature again.
 

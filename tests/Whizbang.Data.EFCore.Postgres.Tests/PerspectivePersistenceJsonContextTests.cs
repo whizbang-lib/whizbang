@@ -21,8 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <remarks>
 /// The critical invariant: [WhizbangId] struct properties (e.g., TestOrderId : Value=Guid)
 /// serialize as the UUID string, the form Entity Framework writes under WhizbangIdTypeMapping
-/// (#2518). A release before stored them as objects {"Value":"&lt;guid&gt;"}; the reader still takes
-/// that form, counted, until the stored-form rewrite has reached every row.
+/// (#2518), and read only that form.
 /// </remarks>
 [Category("Shard1")]
 public class PerspectivePersistenceJsonContextTests {
@@ -50,8 +49,8 @@ public class PerspectivePersistenceJsonContextTests {
     // Act
     var json = JsonSerializer.Serialize(order, typeInfo);
 
-    // Assert — OrderId appears as the UUID string, not the object {"Value": ...} a release before
-    // #2518 stored. This is what Entity Framework writes under WhizbangIdTypeMapping.
+    // Assert — OrderId appears as the UUID string, not the object {"Value": ...} Entity Framework
+    // would discover for a struct. This is what it writes under WhizbangIdTypeMapping (#2518).
     await Assert.That(json).Contains("\"OrderId\":\"019e244a-6bda-78a9-a08f-a1011c9c31dd\"");
     await Assert.That(json).DoesNotContain("\"Value\"");
   }
@@ -115,23 +114,20 @@ public class PerspectivePersistenceJsonContextTests {
       .IsEqualTo(System.Text.Json.JsonValueKind.Number);
   }
 
-  /// <summary>
-  /// An identifier stored as the UUID string reads back, and one stored in the object form a release
-  /// before #2518 wrote reads back too.
-  /// </summary>
+  /// <summary>An identifier stored as the UUID string reads back; the object form is refused.</summary>
   [Test]
-  public async Task Deserialize_OrderWithEitherIdentifierForm_ReadsTheIdentifierAsync() {
+  public async Task Deserialize_OrderWithAUuidStringIdentifier_ReadsItAndRefusesTheObjectFormAsync() {
     var options = PerspectivePersistenceJsonContext.CreateOptions(MessageJsonContext.Default);
     var typeInfo = options.GetTypeInfo(typeof(Order));
 
-    var fromObject = (Order)JsonSerializer.Deserialize(
-      """{"OrderId":{"Value":"019e244a-6bda-78a9-a08f-a1011c9c31dd"},"Amount":100,"Status":"Created"}""", typeInfo)!;
-    var fromScalar = (Order)JsonSerializer.Deserialize(
+    var fromString = (Order)JsonSerializer.Deserialize(
       """{"OrderId":"019e244a-6bda-78a9-a08f-a1011c9c31dd","Amount":100,"Status":"Created"}""", typeInfo)!;
 
-    await Assert.That(fromObject.OrderId.Value).IsEqualTo(Guid.Parse("019e244a-6bda-78a9-a08f-a1011c9c31dd"));
-    await Assert.That(fromScalar.OrderId.Value).IsEqualTo(Guid.Parse("019e244a-6bda-78a9-a08f-a1011c9c31dd"))
-      .Because("the UUID string is the stored form since #2518");
+    await Assert.That(fromString.OrderId.Value).IsEqualTo(Guid.Parse("019e244a-6bda-78a9-a08f-a1011c9c31dd"));
+    var error = await Assert.That(() => JsonSerializer.Deserialize(
+      """{"OrderId":{"Value":"019e244a-6bda-78a9-a08f-a1011c9c31dd"},"Amount":100,"Status":"Created"}""", typeInfo))
+      .Throws<JsonException>();
+    await Assert.That(error!.Message).Contains("TestOrderId must be a UUID string");
   }
 
   /// <summary>Any other token is refused with a message naming the type and the forms accepted.</summary>

@@ -10,7 +10,6 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Storage.Json;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Whizbang.Core;
-using Whizbang.Core.Perspectives;
 
 
 namespace Whizbang.Data.EFCore.Postgres.Perspectives;
@@ -29,8 +28,6 @@ namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 /// <c>= ANY (@ids)</c>.
 /// </para>
 /// <para>
-/// The JSON reader also takes the object form a release before #2518 stored, and counts it
-/// (<see cref="StoredFormFallbacks.ObjectFormIdentifierRead"/>), until the stored-form rewrite has reached every row.
 /// The converter loads through the id's unchecked constructor, so a stored value the id's version rule refuses today
 /// still loads.
 /// </para>
@@ -106,8 +103,7 @@ public static class WhizbangIdValues<TId> where TId : struct, IWhizbangId {
 }
 
 /// <summary>
-/// Entity Framework's JSON reader and writer for a strongly-typed id: writes a UUID string, reads a UUID string or the
-/// object <c>{"Value": ...}</c> an earlier release stored, counting the latter (#2518).
+/// Entity Framework's JSON reader and writer for a strongly-typed id: writes and reads a UUID string (#2518).
 /// </summary>
 /// <typeparam name="TId">The id type.</typeparam>
 /// <docs>fundamentals/identity/whizbang-ids</docs>
@@ -115,8 +111,6 @@ public static class WhizbangIdValues<TId> where TId : struct, IWhizbangId {
 [SuppressMessage("Design", "CA1000:Do not declare static members on generic types",
   Justification = "Entity Framework's reader/writers are built per closed id type")]
 public sealed class WhizbangIdJsonReaderWriter<TId> : JsonValueReaderWriter<TId> where TId : struct, IWhizbangId {
-  private const string VALUE = "Value";
-
   /// <summary>The single instance Entity Framework uses.</summary>
   public static WhizbangIdJsonReaderWriter<TId> Instance { get; } = new();
 
@@ -125,30 +119,11 @@ public sealed class WhizbangIdJsonReaderWriter<TId> : JsonValueReaderWriter<TId>
 
   /// <inheritdoc/>
   public override TId FromJsonTyped(ref Utf8JsonReaderManager manager, object? existingObject = null) {
-    if (manager.CurrentReader.TokenType == JsonTokenType.String) {
-      return WhizbangIdValues<TId>.Load(manager.CurrentReader.GetGuid());
-    }
-    if (manager.CurrentReader.TokenType != JsonTokenType.StartObject) {
+    if (manager.CurrentReader.TokenType != JsonTokenType.String) {
       throw new JsonException(
-        $"A stored {TypeNameFormatter.SimpleName(typeof(TId))} must be a UUID string or an object holding a Value, but the document holds {manager.CurrentReader.TokenType}");
+        $"A stored {TypeNameFormatter.SimpleName(typeof(TId))} must be a UUID string, but the document holds {manager.CurrentReader.TokenType}");
     }
-
-    StoredFormFallbacks.ObjectFormIdentifierRead(TypeNameFormatter.SimpleName(typeof(TId)));
-    Guid? value = null;
-    while (true) {
-      manager.MoveNext();
-      if (manager.CurrentReader.TokenType == JsonTokenType.EndObject) {
-        return WhizbangIdValues<TId>.Load(
-          value ?? throw new JsonException($"A stored {TypeNameFormatter.SimpleName(typeof(TId))} object holds no Value"));
-      }
-      var isValue = manager.CurrentReader.ValueTextEquals(VALUE);
-      manager.MoveNext();
-      if (isValue) {
-        value = manager.CurrentReader.GetGuid();
-      } else {
-        manager.Skip();
-      }
-    }
+    return WhizbangIdValues<TId>.Load(manager.CurrentReader.GetGuid());
   }
 
   /// <inheritdoc/>

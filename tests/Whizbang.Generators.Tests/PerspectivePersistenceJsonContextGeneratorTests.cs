@@ -71,15 +71,14 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
     await Assert.That(generated).Contains("if (type == typeof(global::MyApp.Domain.ProductId)) {");
     await Assert.That(generated).Contains("return _createProductIdTypeInfo(options);");
 
-    // A converter, not object metadata: the UUID string on write, either form on read (#2518)
+    // A converter, not object metadata: the UUID string on write and on read (#2518)
     await Assert.That(generated).Contains("private sealed class _ProductIdDocumentConverter : JsonConverter<global::MyApp.Domain.ProductId>");
     await Assert.That(generated).Contains("return JsonMetadataServices.CreateValueInfo<global::MyApp.Domain.ProductId>(options, new _ProductIdDocumentConverter());");
     await Assert.That(generated).Contains("writer.WriteStringValue(value.Value);")
       .Because("the UUID string is what Entity Framework writes for the same property under the id's scalar mapping, and the two writers must agree");
     await Assert.That(generated).DoesNotContain("writer.WriteString(\"Value\", value.Value);");
-    await Assert.That(generated).Contains("if (reader.TokenType == JsonTokenType.String) {");
-    await Assert.That(generated).Contains("global::Whizbang.Core.Perspectives.StoredFormFallbacks.ObjectFormIdentifierRead(\"ProductId\");")
-      .Because("an object read is a row the stored-form rewrite did not reach, and the count decides when the tolerance goes");
+    await Assert.That(generated).Contains("if (reader.TokenType != JsonTokenType.String) {");
+    await Assert.That(generated).Contains("A stored ProductId must be a UUID string");
     await Assert.That(generated).Contains("return new global::MyApp.Domain.ProductId(reader.GetGuid());");
     await Assert.That(generated).DoesNotContain("JsonObjectInfoValues<global::MyApp.Domain.ProductId>")
       .Because("object metadata reads the object form and nothing else");

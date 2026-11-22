@@ -9,8 +9,8 @@ namespace Whizbang.Core.Perspectives;
 
 /// <summary>
 /// The count of stored values read in a form other than the one the persistence profile writes: a
-/// temporal read as a rendering rather than the canonical number, an identifier read as a scalar
-/// rather than an object.
+/// temporal read as a rendering rather than the canonical number, a dictionary read as an object
+/// rather than an array of pairs.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -41,9 +41,6 @@ public static class StoredFormFallbacks {
   /// <summary>The counter of renderings read where a canonical number was expected. Tagged by <c>kind</c>.</summary>
   public const string INSTRUMENT_NAME = "whizbang.perspective.temporal_form_fallbacks";
 
-  /// <summary>The counter of identifiers read in the scalar form where the object form was expected. Tagged by <c>type</c>.</summary>
-  public const string IDENTIFIER_INSTRUMENT_NAME = "whizbang.perspective.identifier_form_fallbacks";
-
   /// <summary>The counter of dictionaries read as a JSON object where the array of pairs was expected. Tagged by <c>type</c>.</summary>
   public const string DICTIONARY_INSTRUMENT_NAME = "whizbang.perspective.dictionary_form_fallbacks";
 #pragma warning restore CA1707
@@ -60,14 +57,13 @@ public static class StoredFormFallbacks {
   private static readonly Lock _gate = new();
   private static Meter? _ownMeter;
   private static Counter<long> _fallbacks = null!;
-  private static Counter<long> _identifierFallbacks = null!;
   private static Counter<long> _dictionaryFallbacks = null!;
   private static ILogger _logger = NullLogger.Instance;
 
   /// <summary>One bit per kind, set once that kind has been announced.</summary>
   private static int _announced;
 
-  /// <summary>The identifier types announced so far, so each is announced once.</summary>
+  /// <summary>The dictionary types announced so far, so each is announced once.</summary>
   private static readonly HashSet<string> _announcedTypes = [];
 
   static StoredFormFallbacks() => _createCounters(null);
@@ -87,26 +83,6 @@ public static class StoredFormFallbacks {
       _logger = logger ?? NullLogger.Instance;
       _announced = 0;
       _announcedTypes.Clear();
-    }
-  }
-
-  /// <summary>Records that an identifier of this type was read in the object form, <c>{"Value": ...}</c>.</summary>
-  /// <param name="typeName">The identifier type's name.</param>
-  /// <remarks>
-  /// A release before #2518 stored a strongly-typed id inside a document as an object; both writers now store it as a
-  /// UUID string. The stored-form rewrite converts old rows; until it has, the readers take either form, and this count
-  /// is what says the rewrite has not reached a row.
-  /// </remarks>
-  public static void ObjectFormIdentifierRead(string typeName) {
-    ArgumentNullException.ThrowIfNull(typeName);
-    _identifierFallbacks.Add(1, new KeyValuePair<string, object?>("type", typeName));
-
-    bool first;
-    lock (_gate) {
-      first = _announcedTypes.Add(typeName);
-    }
-    if (first) {
-      StoredFormFallbacksLog.ObjectFormIdentifierRead(_logger, typeName, IDENTIFIER_INSTRUMENT_NAME);
     }
   }
 
@@ -158,9 +134,6 @@ public static class StoredFormFallbacks {
     _fallbacks = meter.CreateCounter<long>(
       INSTRUMENT_NAME,
       description: "Stored temporals read as a rendering where the canonical number was expected; tagged by kind");
-    _identifierFallbacks = meter.CreateCounter<long>(
-      IDENTIFIER_INSTRUMENT_NAME,
-      description: "Stored identifiers read in the object form where the UUID string was expected; tagged by type");
     _dictionaryFallbacks = meter.CreateCounter<long>(
       DICTIONARY_INSTRUMENT_NAME,
       description: "Stored dictionaries read as a JSON object where the array of key/value pairs was expected; tagged by type");
@@ -177,14 +150,6 @@ internal static partial class StoredFormFallbacksLog {
               + "{Instrument} by kind; find the rows with jsonb_typeof and rewrite them, because a "
               + "later release stops accepting renderings")]
   public static partial void RenderingRead(ILogger logger, string kind, string instrument);
-
-  [LoggerMessage(
-      EventId = 2,
-      Level = LogLevel.Warning,
-      Message = "A stored {Type} identifier was read as an object holding a Value rather than as a UUID "
-              + "string, so the startup rewrite did not reach the row. Every such read is counted on "
-              + "{Instrument} by type; a later release stops accepting the object form")]
-  public static partial void ObjectFormIdentifierRead(ILogger logger, string type, string instrument);
 
   [LoggerMessage(
       EventId = 3,

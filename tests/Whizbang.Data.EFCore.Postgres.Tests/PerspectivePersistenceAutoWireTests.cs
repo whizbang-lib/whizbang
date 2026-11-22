@@ -14,8 +14,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>[ModuleInitializer]</c> joins its <c>PerspectivePersistenceJsonContext</c> to the registry's
 /// persistence profile, and that registration alone is what the atomic upsert serializes with. No
 /// callback has to fire and no process-wide slot has to be set, so a perspective model with a
-/// <c>[WhizbangId]</c> property serializes in the EF-compatible <c>{"Value":"&lt;guid&gt;"}</c>
-/// nested-object form the moment the assembly has loaded.
+/// <c>[WhizbangId]</c> property serializes as the EF-compatible UUID string (#2518) the moment the
+/// assembly has loaded.
 /// </summary>
 /// <remarks>
 /// A pure unit test, with no database and no DI container: the wiring is structural. The end-to-end SQL

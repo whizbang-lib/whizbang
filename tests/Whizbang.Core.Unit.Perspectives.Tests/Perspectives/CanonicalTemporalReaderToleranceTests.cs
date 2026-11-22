@@ -249,55 +249,6 @@ public class CanonicalTemporalReaderToleranceTests {
     await Assert.That(factory.Created).Contains(StoredFormFallbacks.METER_NAME);
   }
 
-  /// <summary>
-  /// An identifier read in its object form is counted and announced the same way, on its own
-  /// instrument, tagged by type.
-  /// </summary>
-  /// <remarks>
-  /// A release before #2518 stored a strongly-typed id inside a document as <c>{"Value": ...}</c>; both
-  /// writers now store the UUID string. The readers accept the object form until the stored-form rewrite
-  /// has reached every row; the count is what says it has not.
-  /// </remarks>
-  [Test]
-  [NotInParallel]
-  public async Task ReadingAnObjectFormIdentifierIsCountedAndAnnouncedAsync() {
-    var measurements = new List<(long Value, string? Type)>();
-    using var listener = new MeterListener();
-    listener.InstrumentPublished = (instrument, l) => {
-      if (instrument.Meter.Name == StoredFormFallbacks.METER_NAME
-          && instrument.Name == StoredFormFallbacks.IDENTIFIER_INSTRUMENT_NAME) {
-        l.EnableMeasurementEvents(instrument);
-      }
-    };
-    listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
-      string? type = null;
-      foreach (var tag in tags) {
-        if (tag.Key == "type") {
-          type = tag.Value?.ToString();
-        }
-      }
-      measurements.Add((value, type));
-    });
-    listener.Start();
-    var logger = new FakeLogger();
-    StoredFormFallbacks.Configure(meterFactory: null, logger: logger);
-
-    StoredFormFallbacks.ObjectFormIdentifierRead("OrderId");
-    StoredFormFallbacks.ObjectFormIdentifierRead("OrderId");
-    StoredFormFallbacks.ObjectFormIdentifierRead("CustomerId");
-
-    await Assert.That(measurements.Count).IsEqualTo(3);
-    await Assert.That(string.Join(",", measurements.Select(m => m.Type))).IsEqualTo("OrderId,OrderId,CustomerId");
-    await Assert.That(measurements.All(m => m.Value == 1)).IsTrue();
-
-    var records = logger.Collector.GetSnapshot();
-    await Assert.That(records.Count).IsEqualTo(2)
-      .Because("two types were read in the object form, and each is announced exactly once");
-    await Assert.That(records[0].Message).Contains("OrderId");
-    await Assert.That(records[0].Message).Contains(StoredFormFallbacks.IDENTIFIER_INSTRUMENT_NAME);
-    await Assert.That(records[1].Message).Contains("CustomerId");
-  }
-
   private sealed class RecordingMeterFactory : IMeterFactory {
     public List<string> Created { get; } = [];
 

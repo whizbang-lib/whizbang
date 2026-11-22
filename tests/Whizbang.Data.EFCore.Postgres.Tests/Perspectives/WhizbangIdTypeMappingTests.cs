@@ -10,8 +10,7 @@ using Whizbang.Data.EFCore.Postgres.Perspectives;
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 
 /// <summary>
-/// The type mapping of a strongly-typed id (#2518): a uuid scalar whose JSON is the UUID string, reading the object
-/// form an earlier release stored.
+/// The type mapping of a strongly-typed id (#2518): a uuid scalar whose JSON is the UUID string.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/Perspectives/WhizbangIdTypeMapping.cs</code-under-test>
 [Category("Shard1")]
@@ -55,26 +54,23 @@ public class WhizbangIdTypeMappingTests {
   }
 
   [Test]
-  public async Task JsonReaderWriter_WritesTheUuidStringAndReadsBothFormsAsync() {
+  public async Task JsonReaderWriter_WritesAndReadsTheUuidStringAsync() {
     var readerWriter = WhizbangIdJsonReaderWriter<TestOrderId>.Instance;
     var id = TestOrderId.New();
 
     var json = readerWriter.ToJsonString(id);
-    var fromString = (TestOrderId)readerWriter.FromJsonString(json);
-    var fromObject = (TestOrderId)readerWriter.FromJsonString($"{{\"Value\":\"{id.Value}\"}}");
-    var fromObjectWithExtra = (TestOrderId)readerWriter.FromJsonString($"{{\"Other\":1,\"Value\":\"{id.Value}\"}}");
 
     await Assert.That(json).IsEqualTo($"\"{id.Value}\"");
-    await Assert.That(fromString).IsEqualTo(id);
-    await Assert.That(fromObject).IsEqualTo(id);
-    await Assert.That(fromObjectWithExtra).IsEqualTo(id);
+    await Assert.That((TestOrderId)readerWriter.FromJsonString(json)).IsEqualTo(id);
   }
 
   [Test]
-  public async Task JsonReaderWriter_RefusesAnObjectWithoutValueOrANumberAsync() {
+  public async Task JsonReaderWriter_RefusesAnythingButAUuidStringAsync() {
     var readerWriter = WhizbangIdJsonReaderWriter<TestOrderId>.Instance;
 
-    await Assert.That(() => readerWriter.FromJsonString("{\"Other\":1}")).Throws<System.Text.Json.JsonException>();
+    await Assert.That(() => readerWriter.FromJsonString($"{{\"Value\":\"{TestOrderId.New().Value}\"}}"))
+      .Throws<System.Text.Json.JsonException>()
+      .WithMessageContaining("TestOrderId must be a UUID string, but the document holds StartObject");
     await Assert.That(() => readerWriter.FromJsonString("42")).Throws<System.Text.Json.JsonException>();
   }
 }
