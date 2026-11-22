@@ -142,6 +142,42 @@ public class RunnerBaseReplayTests {
   }
 
   [Test]
+  public async Task AReplayFromASnapshotAtTheStreamsHighestId_StampsTheRowAtTheSnapshotsEventAsync() {
+    // #2519: the events after the snapshot carry lower ids than its event (derived from an older cause, stored after a
+    // newer event). The row holds the snapshot's event too, so its stamp is that event's id, not the highest replayed one:
+    // a versioned-apply row takes a write only at or after the id it is stamped at.
+    var harness = new RbHarness { Snapshots = new RbSnapshots(), SnapshotOptions = new PerspectiveSnapshotOptions { Enabled = false } };
+    var lower = (Guid)TrackedGuid.New();
+    var lowerStill = (Guid)TrackedGuid.New();
+    var floor = harness.Add(harness.Marked("c"));
+    harness.Add(harness.Marked("s"), id: lower);
+    var late = harness.Add(harness.Marked("s"), id: lowerStill);
+    harness.Snapshots.Floor = new PerspectiveSnapshotFloor(floor.MessageId.Value, 1, Rb.SnapshotOf(new RbModel { Id = harness.StreamId, Marks = "c" }), null);
+
+    var completion = await harness.Runner.RewindAndRunAsync(harness.StreamId, RbHarness.NAME, late.MessageId.Value);
+
+    await Assert.That(string.CompareOrdinal(lowerStill.ToString("D"), floor.MessageId.Value.ToString("D")) < 0).IsTrue()
+      .Because("positive control: the replayed events sort below the snapshot's event");
+    await Assert.That(harness.Rows.Row(harness.StreamId).Marks).IsEqualTo("css");
+    await Assert.That(harness.Rows.MetadataOf(harness.StreamId).EventId).IsEqualTo(floor.MessageId.Value.ToString("D"))
+      .Because("the row's stamp covers everything it holds, the snapshot's event included");
+    await Assert.That(completion.LastEventId).IsEqualTo(late.MessageId.Value)
+      .Because("the cursor still reports the replayed event last in stream order");
+  }
+
+  [Test]
+  public async Task AReplayFromASnapshotBelowTheEventsAfterIt_StampsTheRowAtTheHighestReplayedIdAsync() {
+    var harness = new RbHarness { Snapshots = new RbSnapshots(), SnapshotOptions = new PerspectiveSnapshotOptions { Enabled = false } };
+    var floor = harness.Add(harness.Marked("a"));
+    var late = harness.Add(harness.Marked("b"));
+    harness.Snapshots.Floor = new PerspectiveSnapshotFloor(floor.MessageId.Value, 1, Rb.SnapshotOf(new RbModel { Id = harness.StreamId, Marks = "a" }), null);
+
+    await harness.Runner.RewindAndRunAsync(harness.StreamId, RbHarness.NAME, late.MessageId.Value);
+
+    await Assert.That(harness.Rows.MetadataOf(harness.StreamId).EventId).IsEqualTo(late.MessageId.Value.ToString("D"));
+  }
+
+  [Test]
   public async Task AFullReplayThatFindsNothing_ReportsNoPositionAsync() {
     var harness = new RbHarness();
 
