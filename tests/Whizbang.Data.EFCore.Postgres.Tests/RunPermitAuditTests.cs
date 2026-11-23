@@ -75,7 +75,7 @@ public sealed class RunPermitAuditTests {
     "WhizbangDatabaseInitializerService", "StartupPipelineWorker", "StartupStageHostLifecycle", "StartupReadyService",
     "LifecyclePhaseWorker", "ReadModelsReadyDriver", "TypeDefinitionReconcilerHostedService",
     // Measurement and in-process state.
-    "TableStatisticsCollector", "EventTypeBytesSampler", "NotifyDebounceStatsCollector", "BacklogAgeWorker",
+    "TableStatisticsCollector", "EventTypeBytesSampler", "NotifyDebounceStatsCollector", "BacklogAgeWorker", "SequenceHoldWorker",
     "RecentlyProcessedEventCacheSweepWorker", "InProcessTrackerSweepWorker", "HealthCheckPublisherHostedService",
     // Counts what cleanup has left on one instance per window; it reads and never deletes (#2289).
     "PendingReclamationSampler",
