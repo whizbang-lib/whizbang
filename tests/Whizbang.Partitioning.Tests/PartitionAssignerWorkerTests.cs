@@ -156,6 +156,76 @@ public class PartitionAssignerWorkerTests {
   }
 
   [Test]
+  public async Task Tick_WithOwnershipByMapOff_NeverAsksForTheSwitchAsync() {
+    var (worker, store, _, _) = _create();
+
+    _ = await worker.TickAsync(new FakeDutyGrant(7), CancellationToken.None);
+
+    await Assert.That(store.SwitchRequests).IsEmpty()
+      .Because("ownership by map stays off until a release turns it on (phase 5 of #2540), so the assigner never asks");
+  }
+
+  [Test]
+  public async Task Tick_WithOwnershipByMapOn_AsksForTheSwitchAfterPublishing_AtItsEpochAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = true });
+
+    var continues = await worker.TickAsync(new FakeDutyGrant(7), CancellationToken.None);
+
+    await Assert.That(continues).IsTrue();
+    await Assert.That(store.Publishes).Count().IsEqualTo(1);
+    await Assert.That(store.SwitchRequests).IsEquivalentTo([(_self, 7L)]);
+  }
+
+  [Test]
+  public async Task Tick_OnceTheSwitchIsOn_DoesNotAskAgainAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = true });
+    var grant = new FakeDutyGrant(7);
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    store.SwitchAnswer = "open";
+
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+
+    await Assert.That(store.SwitchRequests).Count().IsEqualTo(1).Because("the switch is one-way, so once on it is never asked for again");
+  }
+
+  [Test]
+  public async Task Tick_WhileTheSwitchStaysOff_AsksAgainOnTheNextTickAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = true });
+    store.SwitchAnswer = "closed (1 of 2 live instances support ownership by map)";
+    var grant = new FakeDutyGrant(7);
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+
+    await Assert.That(store.SwitchRequests).Count().IsEqualTo(2)
+      .Because("an instance that does not support the mode may leave at any time, so the assigner keeps asking");
+  }
+
+  [Test]
+  public async Task Tick_WhenTheFenceRefusesTheSwitch_EndsTheTenureAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = true });
+    store.SwitchAnswer = null;
+    var evaluations = 0;
+    worker.OnEvaluated += _ => evaluations++;
+
+    var continues = await worker.TickAsync(new FakeDutyGrant(7), CancellationToken.None);
+
+    await Assert.That(continues).IsFalse();
+    await Assert.That(evaluations).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Tick_UnderANewTenure_AsksForTheSwitchAgainAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = true });
+    _ = await worker.TickAsync(new FakeDutyGrant(7), CancellationToken.None);
+
+    _ = await worker.TickAsync(new FakeDutyGrant(8), CancellationToken.None);
+
+    await Assert.That(store.SwitchRequests).IsEquivalentTo([(_self, 7L), (_self, 8L)])
+      .Because("what one tenure learned is not carried into the next; the database answers again at the new epoch");
+  }
+
+  [Test]
   public async Task Tick_WithAGrantWithoutAnEpoch_IsRefusedAsync() {
     var (worker, _, _, _) = _create();
 

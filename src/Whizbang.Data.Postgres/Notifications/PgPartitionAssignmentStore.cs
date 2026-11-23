@@ -13,7 +13,8 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <summary>
 /// The Postgres store behind the partition assigner (#1254): migration 203's
 /// <c>wh_read_partition_assignment</c>, <c>wh_partition_assignment_candidates</c>,
-/// <c>wh_publish_partition_assignment</c> and <c>wh_renew_partition_assignment</c>. Each call is one statement on a
+/// <c>wh_publish_partition_assignment</c> and <c>wh_renew_partition_assignment</c>, and migration 560's
+/// <c>wh_open_partition_ownership_by_map</c>. Each call is one statement on a
 /// connection of its own, so it works through a transaction pooler.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
@@ -120,6 +121,23 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
     cmd.Parameters.AddWithValue("instance", instanceId);
     cmd.Parameters.AddWithValue(nameof(epoch), epoch);
     return ScalarResult.IsTrue(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignmentSqlTests.cs:Store_OpenOwnershipByMap_TurnsTheSwitchOn_AndAnswersNullToADeposedAssignerAsync</tests>
+  public async Task<string?> OpenOwnershipByMapAsync(Guid instanceId, long epoch, CancellationToken cancellationToken) {
+    var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
+    await using var connectionScope = connection.ConfigureAwait(false);
+    await using var cmd = connection.CreateWhizbangCommand();
+    cmd.CommandText = "SELECT wh_open_partition_ownership_by_map(@role, @instance, @epoch)";
+    cmd.Parameters.AddWithValue("role", PartitionAssignerOptions.ROLE);
+    cmd.Parameters.AddWithValue("instance", instanceId);
+    cmd.Parameters.AddWithValue(nameof(epoch), epoch);
+    try {
+      return (string?)await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    } catch (PostgresException ex) when (ex.SqlState == FENCE_SQLSTATE) {
+      return null;
+    }
   }
 
   private async ValueTask<NpgsqlConnection> _openAsync(CancellationToken cancellationToken) {

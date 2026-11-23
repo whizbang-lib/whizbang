@@ -22,6 +22,12 @@ namespace Whizbang.Core.Workers;
 /// the read, so the two clocks are never compared. A copy past its lease is not presented; the database is the
 /// authority either way, and refuses a version that is no longer published or no longer leased.
 /// </para>
+/// <para>
+/// All of this is the legacy ownership mode's. Once the service owns by map (#2555), a claim reads the published map in
+/// its own statement and judges its validity on the database's clock alone (published, and its lease running or every
+/// member live, #2554), so neither this copy nor its local expiry decides anything: a claimer with no valid map claims
+/// nothing and waits, and never ranks itself.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentCacheTests.cs:ForClaim_TheFirstTime_ReadsOnceAndPresentsTheVersionAsync</tests>

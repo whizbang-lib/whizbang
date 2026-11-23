@@ -24,7 +24,8 @@ public class HeartbeatRequestStoredFormLevelTests {
 
     using var json = JsonDocument.Parse(request.MetadataJson());
 
-    await Assert.That(json.RootElement.EnumerateObject().Select(p => p.Name)).IsEquivalentTo([HeartbeatRequest.STORED_FORM_LEVEL_KEY]);
+    await Assert.That(json.RootElement.EnumerateObject().Select(p => p.Name))
+      .IsEquivalentTo([HeartbeatRequest.STORED_FORM_LEVEL_KEY, HeartbeatRequest.PARTITION_OWNERSHIP_LEVEL_KEY]);
     await Assert.That(json.RootElement.GetProperty(HeartbeatRequest.STORED_FORM_LEVEL_KEY).GetInt32())
       .IsEqualTo(HeartbeatRequest.STORED_FORM_LEVEL);
   }
@@ -39,7 +40,7 @@ public class HeartbeatRequestStoredFormLevelTests {
     await Assert.That(json.RootElement.GetProperty("zone").GetString()).IsEqualTo("a");
     await Assert.That(json.RootElement.GetProperty(HeartbeatRequest.STORED_FORM_LEVEL_KEY).GetInt32())
       .IsEqualTo(HeartbeatRequest.STORED_FORM_LEVEL).Because("the marker says what this build reads; a caller cannot lower it");
-    await Assert.That(json.RootElement.EnumerateObject().Count()).IsEqualTo(2).Because("the marker is written once");
+    await Assert.That(json.RootElement.EnumerateObject().Count()).IsEqualTo(3).Because("each marker is written once");
   }
 
   [Test]
@@ -59,5 +60,15 @@ public class HeartbeatRequestStoredFormLevelTests {
 
     await Assert.That(json.RootElement.GetProperty("stored_form_level").GetInt32()).IsEqualTo(1)
       .Because("migration 537's gate opens for level 1 or higher under this key; raising it is a new stored form, never this one");
+  }
+
+  [Test]
+  public async Task PartitionOwnershipLevel_IsOne_TheLevelThatSupportsOwnershipByMapAsync() {
+    using var given = JsonDocument.Parse("""{"partition_ownership_level":0}""");
+    using var json = JsonDocument.Parse(new HeartbeatRequest(_instance, "svc", "host", 1, Metadata: given.RootElement).MetadataJson());
+
+    await Assert.That(json.RootElement.GetProperty("partition_ownership_level").GetInt32()).IsEqualTo(1)
+      .Because("migration 560's switch turns ownership by map on only once every live instance says level 1 or higher under this key (#2555)");
+    await Assert.That(json.RootElement.EnumerateObject().Count(p => p.Name == HeartbeatRequest.PARTITION_OWNERSHIP_LEVEL_KEY)).IsEqualTo(1);
   }
 }

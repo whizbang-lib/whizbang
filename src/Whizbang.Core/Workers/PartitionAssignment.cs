@@ -178,6 +178,20 @@ public interface IPartitionAssignmentStore {
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>True when the lease was extended.</returns>
   Task<bool> RenewAsync(Guid instanceId, long epoch, CancellationToken cancellationToken);
+
+  /// <summary>
+  /// Asks for the service's ownership-by-map switch (#2555), fenced by the role epoch: it turns on, one way, once a map
+  /// is published at <paramref name="epoch"/> and every live instance of the service supports the mode.
+  /// </summary>
+  /// <param name="instanceId">The assigner.</param>
+  /// <param name="epoch">Its role epoch.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>
+  /// <c>open</c> (it was already on), <c>opened</c> (this call turned it on), a <c>closed (...)</c> reason, or null when the
+  /// caller no longer holds the role at that epoch.
+  /// </returns>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
+  Task<string?> OpenOwnershipByMapAsync(Guid instanceId, long epoch, CancellationToken cancellationToken);
 }
 
 /// <summary>

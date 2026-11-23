@@ -893,6 +893,12 @@ public partial class PerspectiveWorker(
   /// </summary>
   /// <remarks>
   /// <para>
+  /// The release ends this instance's ownership of the streams, owner included (#2545), so each goes to
+  /// the live instance its partition is assigned to: a sibling when the partition is assigned to one (a
+  /// stream this instance kept across a change of assignment), and this instance again when it is assigned
+  /// to it, which then claims it at its next poll with the attempt refunded rather than waiting out the lease.
+  /// </para>
+  /// <para>
   /// Best effort by design: a store that does not implement the release, and a release that fails
   /// against the same database that just failed, both leave the rows to their leases, which is what
   /// happened before this existed. Neither may raise out of the recovery path, because the recovery

@@ -955,8 +955,13 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
     await Assert.That(sw.ElapsedMilliseconds).IsLessThan(10_000);
   }
 
+  /// <summary>
+  /// A schema with no tables takes the slow path, and the pass it runs completes. Waited on the initializer's own
+  /// signals: its observer hears each committed slow-path step (<see cref="ISchemaInitializationObserver.OnSchemaStepCommittedAsync"/>),
+  /// which the fast path never commits, and the call's task completes when the pass is done. It used to race a
+  /// 30-second wall clock against a whole install, which the full suite's load could outrun.
+  /// </summary>
   [Test]
-  [Timeout(30000)]
   public async Task FastPath_WhenTableNotExists_FallsToSlowPathAsync(CancellationToken cancellationToken) {
     // Arrange — create a fresh database without any WhizBang tables.
     await using var adminConn = new NpgsqlConnection(ConnectionString);
@@ -972,18 +977,38 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
     await using var dropCmd = adminConn.CreateCommand();
     dropCmd.CommandText = "DROP SCHEMA public CASCADE; CREATE SCHEMA public;";
     await dropCmd.ExecuteNonQueryAsync(cancellationToken);
+    var steps = new CommittedSteps();
+    var services = new ServiceCollection();
+    services.AddSingleton<ISchemaInitializationObserver>(steps);
+    await using var provider = services.BuildServiceProvider();
 
-    // Act — run initialization (should fall to slow path since table doesn't exist)
+    // Act: run initialization (it falls to the slow path, since no table exists) to completion.
     await using var context = CreateDbContext();
-    await Assert.That(async () =>
-        await context.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken))
-      .ThrowsNothing();
+    await context.EnsureWhizbangDatabaseInitializedAsync(serviceProvider: provider, cancellationToken: cancellationToken);
 
-    // Assert — schema_migrations table should exist now
+    // Assert: the slow path ran (it committed steps, the migrations among them), and the ledger exists now.
+    await Assert.That(steps.Entered.IsCompletedSuccessfully).IsTrue()
+      .Because("the fast path commits no step; a step committed is the slow path's entry");
+    await Assert.That(steps.Names.Any(n => n.EndsWith(".sql", StringComparison.Ordinal))).IsTrue()
+      .Because("a schema with no tables is migrated file by file");
     await using var checkCmd = adminConn.CreateCommand();
     checkCmd.CommandText = "SELECT COUNT(*) FROM wh_schema_migrations";
     var count = await checkCmd.ExecuteScalarAsync(cancellationToken);
     await Assert.That(count is long c && c > 0).IsTrue();
+  }
+
+  /// <summary>Hears every committed slow-path step; <see cref="Entered"/> completes at the first.</summary>
+  private sealed class CommittedSteps : ISchemaInitializationObserver {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _names = new();
+    public Task Entered => _entered.Task;
+    public IReadOnlyCollection<string> Names => _names;
+
+    public ValueTask OnSchemaStepCommittedAsync(string schema, string stepName, CancellationToken cancellationToken) {
+      _names.Enqueue(stepName);
+      _entered.TrySetResult();
+      return ValueTask.CompletedTask;
+    }
   }
 
   [Test]

@@ -147,6 +147,7 @@ public static class OperationalTableRegistry {
     _state("wh_notify_state", "instances and notification keys"),
     _state("wh_offload_claims", "offloaded bodies; expire after MessageBodyOffloadOptions.PassiveExpiry"),
     _state("wh_outbox", WORK_IN_FLIGHT_REMOVED_ON_COMPLETION),
+    _state("wh_partition_ownership", "partitions: one row per partition (10,000)"),
     _rolling("wh_perspective_applied", OperationalCategory.Deliveries, "own retention: one hour"),
     _state("wh_perspective_cursors", "streams and perspectives"),
     _state("wh_perspective_events", WORK_IN_FLIGHT_REMOVED_ON_COMPLETION),
