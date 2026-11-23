@@ -1,6 +1,6 @@
 # Plan: the partition assignment is the only owner of a stream
 
-Status: DRAFT for owner review (2026-11-23). Issues: #2540 (umbrella), #2545 (first slice, in progress).
+Status: APPROVED by the owner (2026-11-23); open questions answered (section 6). Issues: #2540 (umbrella), #2545 (first slice, wave 11), phase issues listed in section 5.
 Evidence: survey of develop @ b274d8843 (file:line references below; SQL paths are under
 `src/Whizbang.Data.Postgres/Migrations/`, C# under `src/Whizbang.Core/Workers/` unless named).
 
@@ -168,8 +168,9 @@ that moves mid-run hands its streams over like any other work.
 
 During a rolling deploy, old instances still use the owner path. The two rules must not run at once.
 - Each instance registers the ownership mode it supports.
-- Ownership by map turns on cluster-wide (one row in `wh_settings`, flipped by the assigner) only when every
-  live instance supports it. Until then everything runs as today.
+- Ownership by map turns on **per service** (one row in that service's `wh_settings`, flipped by its assigner) only
+  when every live instance of that service supports it. A service's instances share one schema and one map, so the
+  switch is scoped to them; other services switch on their own schedule. Until then everything runs as today.
 - After the flip, an old instance that joins is ineligible for work and logs why.
 - This connects to #2053 (the minimum release a rolling deploy can upgrade from). That decision should name
   the release that ships this mode.
@@ -211,12 +212,11 @@ behind the mode gate until phase 5 lands, then the gate defaults on.
 Rough size: 2 to 3 weeks of work in total, most of it phases 3 to 5. Hot-path SQL in each phase gets an
 EXPLAIN before and after.
 
-## 6. Open questions for the owner
+## 6. Decisions (owner, 2026-11-23)
 
-1. **Settle window and handover deadline defaults**: 5 seconds and 30 seconds proposed. Measure on a
-   deployed environment during phase 6?
-2. **Mixed-version gate (3.9) vs a minimum release (#2053)**: gate cluster-wide as proposed, or require a
-   minimum release and skip the gate? Recommendation: the gate, because it makes the rollout safe without a
-   coordinated upgrade.
-3. **Partition count**: keep 10,000 fixed, or make it settable? Recommendation: keep it fixed. Changing it
-   later re-partitions every stream, which is a migration on its own.
+1. **Settle window and handover deadline defaults**: 5 seconds and 30 seconds, bound from configuration; measured on
+   a deployed environment during phase 6.
+2. **Mixed-version gate (3.9)**: the gate, scoped to one service (its instances share a schema and a map), not a
+   minimum release.
+3. **Partition count**: fixed at 10,000. Changing it later re-partitions every stream, which is a migration on its
+   own.
