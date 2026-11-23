@@ -50,6 +50,8 @@ public class EagerLogTypeNameAnalyzerTests {
       [TypeNameAuthority]
       static class TypeNameFormatter {
         public static string ForLog(Type type) => "";
+        public static string? NamespaceOf(Type type) => null;
+        public static string AssemblyQualifiedName(Type type) => "";
         public static string GetSimpleName(string name) => name;
       }
       static partial class Log {
@@ -119,6 +121,8 @@ public class EagerLogTypeNameAnalyzerTests {
   [Arguments("bool debug; debug = logger.IsEnabled(LogLevel.Debug); if (debug) { Log.Debug(logger, TypeNameFormatter.ForLog(t)); }")]
   [Arguments("if (Check<int>()) { Log.Debug(logger, TypeNameFormatter.ForLog(t)); }")]
   [Arguments("if (t?.IsAbstract == true) { Log.Debug(logger, TypeNameFormatter.ForLog(t)); }")]
+  [Arguments("Log.Debug(logger, TypeNameFormatter.NamespaceOf(t) ?? \"\");")]
+  [Arguments("logger.LogInformation(\"{T}\", TypeNameFormatter.AssemblyQualifiedName(t));")]
   public async Task UnguardedLogArgument_IsReportedAsync(string statement) {
     var diagnostics = await _analyzeAsync(statement);
 
@@ -159,6 +163,7 @@ public class EagerLogTypeNameAnalyzerTests {
   [Arguments("try { Use(\"\"); } catch (InvalidOperationException) { var name = TypeNameFormatter.ForLog(t); Log.Debug(logger, name); }")]
   [Arguments("if (IsEnabled(LogLevel.Debug)) { Log.Debug(logger, TypeNameFormatter.ForLog(t)); }")]
   [Arguments("var name = TypeNameFormatter.ForLog(t);")]
+  [Arguments("if (logger.IsEnabled(LogLevel.Debug)) { Log.Debug(logger, TypeNameFormatter.NamespaceOf(t) ?? \"\"); }")]
   public async Task GuardedOrNotALowLevelLogArgument_IsNotReportedAsync(string statement) {
     var diagnostics = await _analyzeAsync(statement);
 

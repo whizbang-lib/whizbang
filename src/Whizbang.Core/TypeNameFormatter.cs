@@ -112,12 +112,26 @@ public static class TypeNameFormatter {
   }
 
   /// <summary>The type's namespace, or null for a type in the global namespace (#2267).</summary>
+  /// <remarks>
+  /// Resolved once per type and kept with it: the owned-domain filter asks on every PreOutbox stage, and the runtime
+  /// keeps <see cref="Type.Namespace"/> in a cache it holds weakly, so reading it there allocated again after every
+  /// garbage collection (#2548). The table holds the type weakly, so a collectible type is still unloaded.
+  /// </remarks>
   /// <param name="type">The type.</param>
   /// <returns>The namespace, or null.</returns>
   /// <tests>tests/Whizbang.Core.Tests/TypeNameWireFormTests.cs:SimpleNames_AreTheTypesOwnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/TypeNameLookupAllocationTests.cs:NamespaceOf_AfterCollections_AllocatesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/TypeNameLookupAllocationTests.cs:NamespaceOf_IsTheTypesOwnNamespace_EveryTimeAsync</tests>
   public static string? NamespaceOf(Type type) {
     ArgumentNullException.ThrowIfNull(type);
-    return type.Namespace;
+    return _namespaces.GetValue(type, static t => new ResolvedNamespace(t.Namespace)).Value;
+  }
+
+  private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Type, ResolvedNamespace> _namespaces = [];
+
+  /// <summary>A type's namespace as resolved once; a box, since the namespace may be null.</summary>
+  private sealed class ResolvedNamespace(string? value) {
+    public string? Value { get; } = value;
   }
 
   /// <summary>The assembly's simple name (<c>Whizbang.Core</c>), the prefix of its embedded resource names (#2267).</summary>
