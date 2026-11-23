@@ -28,9 +28,25 @@ public class WhizbangIdFormsTests {
     await Assert.That(form.Accept(new IdTypeName())).IsEqualTo(nameof(StrictVersionTestId));
   }
 
+  /// <summary>An id written by hand: no generator registers its form, so running its module's initializer finds none.</summary>
+  private readonly struct HandWrittenId : IWhizbangId {
+    public Guid ToGuid() => Guid.Empty;
+    public bool IsTimeOrdered => false;
+    public bool SubMillisecondPrecision => false;
+    public DateTimeOffset Timestamp => DateTimeOffset.MinValue;
+    public bool Equals(IWhizbangId? other) => other is HandWrittenId;
+    public int CompareTo(IWhizbangId? other) => 0;
+  }
+
   [Test]
   public async Task UnregisteredType_HasNoFormAsync() {
     await Assert.That(WhizbangIdForms.TryGet(typeof(Guid), out _)).IsFalse();
+  }
+
+  [Test]
+  public async Task UnregisteredId_HasNoFormAfterItsModuleInitializerRunsAsync() {
+    await Assert.That(WhizbangIdForms.TryGet(typeof(HandWrittenId), out var form)).IsFalse();
+    await Assert.That(form).IsNull();
   }
 
   /// <summary>The load is the unchecked constructor: a stored v4 or empty Guid loads on a strict id.</summary>

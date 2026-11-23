@@ -3,6 +3,7 @@
 
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 
 namespace Whizbang.Core;
 
@@ -99,8 +100,21 @@ public static class WhizbangIdForms {
   /// <param name="idType">The id type.</param>
   /// <param name="form">The form, when registered.</param>
   /// <returns>Whether a form is registered for the type.</returns>
+  /// <remarks>
+  /// A module initializer runs the first time its module is used, not when a type of it is loaded: a model can be built
+  /// from a type in hand before any code of the id's assembly has run. A strongly-typed id missing from the registry
+  /// runs its module's initializer and is looked up again, so the answer never depends on what ran first. The
+  /// initializer runs at most once.
+  /// </remarks>
   public static bool TryGet(Type idType, [NotNullWhen(true)] out WhizbangIdForm? form) {
     ArgumentNullException.ThrowIfNull(idType);
+    if (_byIdType.TryGetValue(idType, out form)) {
+      return true;
+    }
+    if (!typeof(IWhizbangId).IsAssignableFrom(idType)) {
+      return false;
+    }
+    RuntimeHelpers.RunModuleConstructor(idType.Module.ModuleHandle);
     return _byIdType.TryGetValue(idType, out form);
   }
 }

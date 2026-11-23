@@ -772,6 +772,12 @@
       "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres.Generators": {
         "type": "Project"
       },
+      "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres.Ids.Fixtures": {
+        "type": "Project",
+        "dependencies": {
+          "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )"
+        }
+      },
       "SoftwareExtravaganza.Whizbang.Data.Postgres": {
         "type": "Project",
         "dependencies": {
@@ -1706,6 +1712,12 @@
       },
       "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres.Generators": {
         "type": "Project"
+      },
+      "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres.Ids.Fixtures": {
+        "type": "Project",
+        "dependencies": {
+          "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )"
+        }
       },
       "SoftwareExtravaganza.Whizbang.Data.Postgres": {
         "type": "Project",

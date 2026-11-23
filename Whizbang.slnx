@@ -90,6 +90,7 @@
     <Project Path="tests/Whizbang.Core.Unit.Messaging.Tests/Whizbang.Core.Unit.Messaging.Tests.csproj" />
     <Project Path="tests/Whizbang.Core.Unit.Perspectives.Tests/Whizbang.Core.Unit.Perspectives.Tests.csproj" />
     <Project Path="tests/Whizbang.Core.Unit.Workers.Tests/Whizbang.Core.Unit.Workers.Tests.csproj" />
+    <Project Path="tests/Whizbang.Data.EFCore.Postgres.Ids.Fixtures/Whizbang.Data.EFCore.Postgres.Ids.Fixtures.csproj" />
     <Project Path="tests/Whizbang.Data.EFCore.Postgres.Tests/Whizbang.Data.EFCore.Postgres.Tests.csproj" />
     <Project Path="tests/Whizbang.Data.Dapper.Postgres.Tests/Whizbang.Data.Dapper.Postgres.Tests.csproj" />
     <Project Path="tests/Whizbang.Data.Schema.Tests/Whizbang.Data.Schema.Tests.csproj" />
