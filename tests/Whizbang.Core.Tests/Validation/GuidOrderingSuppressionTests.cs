@@ -228,6 +228,90 @@ public class GuidOrderingSuppressionTests {
     }
   }
 
+  // ---- The suppressed tag on the count -----------------------------------------------------------------------------
+
+  public static IEnumerable<Func<(GuidOrderingSeverity Severity, bool ByName, bool Attributed)>> CountedCombinations() {
+    // Accepted because the type opted out: at Error (lowered to Warning) and at Info, by type and by stored name
+    yield return () => (GuidOrderingSeverity.Error, false, true);
+    yield return () => (GuidOrderingSeverity.Error, true, true);
+    yield return () => (GuidOrderingSeverity.Warning, false, true);
+    yield return () => (GuidOrderingSeverity.Info, false, true);
+    yield return () => (GuidOrderingSeverity.Info, true, true);
+    // Accepted because the severity is lowered, with no opt-out
+    yield return () => (GuidOrderingSeverity.Warning, false, false);
+    yield return () => (GuidOrderingSeverity.Warning, true, false);
+    yield return () => (GuidOrderingSeverity.Info, false, false);
+    yield return () => (GuidOrderingSeverity.Info, true, false);
+  }
+
+  [Test]
+  [MethodDataSource(nameof(CountedCombinations))]
+  public async Task ValidateMessageId_TheCount_CarriesTheSuppressedTagAsync(GuidOrderingSeverity severity, bool byName, bool attributed) {
+    var (validator, _, meter, factory) = _validator(severity);
+    using (factory) {
+      var type = attributed ? typeof(SuppressedOrderingProbe) : typeof(UnsuppressedOrderingProbe);
+      if (byName) {
+        validator.ValidateMessageId(_v4, TypeNameFormatter.Format(type), ENTRY_POINT);
+      } else {
+        validator.ValidateMessageId(_v4, type, ENTRY_POINT);
+      }
+
+      var series = ProbeMeterReader.ReadSeries(meter, GuidOrderingMetrics.NON_V7_MESSAGE_IDS).Where(s => s.Value > 0).ToList();
+      await Assert.That(series).Count().IsEqualTo(1);
+      await Assert.That(series[0].Tags.GetValueOrDefault(GuidOrderingMetrics.SUPPRESSED_TAG)).IsEqualTo(attributed)
+        .Because("the tag is true exactly when the id was accepted because its type carries [SuppressGuidOrderingValidation], and false (never omitted) otherwise");
+      await Assert.That(series[0].Tags.GetValueOrDefault(GuidOrderingMetrics.ENTRY_POINT_TAG)).IsEqualTo(ENTRY_POINT);
+      await Assert.That(series[0].Tags.GetValueOrDefault(GuidOrderingMetrics.VERSION_TAG)).IsEqualTo("4");
+    }
+  }
+
+  [Test]
+  public async Task ValidateMessageId_SuppressedAndNot_AreSeparateSeriesAsync() {
+    var (validator, _, meter, factory) = _validator(GuidOrderingSeverity.Warning);
+    using (factory) {
+      validator.ValidateMessageId(NonTimeOrderedGuidShapes.V4, typeof(SuppressedOrderingProbe), ENTRY_POINT);
+      validator.ValidateMessageId(NonTimeOrderedGuidShapes.V5, typeof(UnsuppressedOrderingProbe), ENTRY_POINT);
+
+      var series = ProbeMeterReader.ReadSeries(meter, GuidOrderingMetrics.NON_V7_MESSAGE_IDS).Where(s => s.Value > 0).ToList();
+      await Assert.That(series.Count(s => Equals(s.Tags[GuidOrderingMetrics.SUPPRESSED_TAG], true))).IsEqualTo(1);
+      await Assert.That(series.Count(s => Equals(s.Tags[GuidOrderingMetrics.SUPPRESSED_TAG], false))).IsEqualTo(1);
+    }
+  }
+
+  [Test]
+  [Arguments(true, false)]
+  [Arguments(true, true)]
+  [Arguments(false, false)]
+  [Arguments(false, true)]
+  public async Task ValidateMessageId_AtNone_IsSilentAndUncountedWhetherSuppressedOrNotAsync(bool attributed, bool byName) {
+    var (validator, logger, meter, factory) = _validator(GuidOrderingSeverity.None);
+    using (factory) {
+      var type = attributed ? typeof(SuppressedOrderingProbe) : typeof(UnsuppressedOrderingProbe);
+      if (byName) {
+        validator.ValidateMessageId(_v4, TypeNameFormatter.Format(type), ENTRY_POINT);
+      } else {
+        validator.ValidateMessageId(_v4, type, ENTRY_POINT);
+      }
+
+      await Assert.That(logger.Entries).IsEmpty();
+      await Assert.That(ProbeMeterReader.ReadSeries(meter, GuidOrderingMetrics.NON_V7_MESSAGE_IDS).Where(s => s.Value > 0)).IsEmpty()
+        .Because("severity None is completely silent, with or without the attribute: no log and no count");
+    }
+  }
+
+  [Test]
+  public async Task ReportStreamId_TheStreamCount_CarriesNoSuppressedTagAsync() {
+    var (validator, _, meter, factory) = _validator(GuidOrderingSeverity.Error);
+    using (factory) {
+      validator.ReportStreamId(_v4, streamIdType: null, nameof(SuppressedOrderingProbe), ENTRY_POINT);
+
+      var series = ProbeMeterReader.ReadSeries(meter, GuidOrderingMetrics.NON_V7_STREAM_IDS).Where(s => s.Value > 0).ToList();
+      await Assert.That(series).Count().IsEqualTo(1);
+      await Assert.That(series[0].Tags.ContainsKey(GuidOrderingMetrics.SUPPRESSED_TAG)).IsFalse()
+        .Because("the attribute never applies to stream ids, so their count has no suppressed tag");
+    }
+  }
+
   [Test]
   public async Task ValidateMessageId_ANullType_ThrowsAsync() {
     await Assert.That(() => GuidOrderingValidator.Default.ValidateMessageId(_v4, (Type)null!, ENTRY_POINT))

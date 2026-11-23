@@ -28,6 +28,14 @@ public sealed class GuidOrderingMetrics {
 
   /// <summary>The tag carrying the id's version.</summary>
   public const string VERSION_TAG = "version";
+
+  /// <summary>
+  /// The tag on <see cref="NON_V7_MESSAGE_IDS"/> saying why the id was accepted: the boolean <see langword="true"/> when
+  /// its message type carries <see cref="SuppressGuidOrderingValidationAttribute"/>, <see langword="false"/> when the
+  /// configured severity alone let it through. Always present on that counter, never omitted; never on
+  /// <see cref="NON_V7_STREAM_IDS"/>, which the attribute does not affect.
+  /// </summary>
+  public const string SUPPRESSED_TAG = "suppressed";
 #pragma warning restore CA1707
 
   /// <summary>Initializes the meters on the shared Whizbang meter factory.</summary>
