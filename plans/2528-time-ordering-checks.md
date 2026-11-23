@@ -138,3 +138,22 @@ when a new minting site appears without an entry.
 - **F7. Dead-letter stores are checked too.** `Store*DeadLettersAsync` funnels through the same serializer, so a non-v7
   id is refused there as well, rather than parked in `wh_dead_letters` to re-enter later inside SQL. The broker's own
   dead-letter queue still holds such a message.
+
+## Verification (build servers)
+
+- Full solution build, Release and Debug: no errors.
+- AiUnit: 24,101 passed, 0 failed, 8 skipped. AiComponent: 6,139 passed.
+- EF Core Postgres integration: 11,240 run, all passing after the ledger test fix (the one failure was a test that
+  stored an untimed id on purpose). Dapper Postgres integration: 1,696 passed.
+- Core, Migrate, RabbitMQ, Testing, HotChocolate and FastEndpoints integration: all passing.
+- Azure Service Bus integration: failures all "SQL DB Unhealthy" from the emulator's SQL container on the build server,
+  not from this change; to be confirmed on CI.
+
+## Left for the parent session
+
+- Docs site: `fundamentals/identity/whizbang-ids#time-ordering-checks`, `#stream-id-versions`,
+  `#framework-ids-that-are-not-time-ordered`; `operations/diagnostics/whiz037` (new page); WHIZ055/056/058 pages
+  (interception replaces the call and is on by default; turning it off is strongly advised against);
+  `operations/observability/metrics#time-ordering-checks` (meter `Whizbang.GuidOrdering`).
+- CI coverage gate: the `guidOrdering ?? Default` arms on each strategy and coordinator need a run with the coverage
+  collector to confirm both arms are reached.
