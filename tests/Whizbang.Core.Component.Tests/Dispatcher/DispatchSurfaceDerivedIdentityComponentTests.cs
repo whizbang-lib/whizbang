@@ -8,6 +8,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Component.Tests.DerivedSurface.Owned;
+using Whizbang.Core.Component.Tests.DerivedSurface.Unowned;
 using Whizbang.Core.Component.Tests.Generated;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
@@ -144,6 +145,12 @@ public class DispatchSurfaceDerivedIdentityComponentTests {
   /// <summary>The probes, one test case each.</summary>
   public static IEnumerable<Func<Row>> Rows() => _rows.Select(static row => (Func<Row>)(() => row));
 
+  /// <summary>The probes of the batch calls that return a receipt per item, one test case each.</summary>
+  public static IEnumerable<Func<Row>> BatchRows() => _rows
+    .Where(static row => row.Signature.Contains("ManyAsync(", StringComparison.Ordinal) || row.Signature.Contains("ManyAsync<TMessage>(", StringComparison.Ordinal)
+      || row.Signature.Contains("ManyAsync<TEvent>(", StringComparison.Ordinal))
+    .Select(static row => (Func<Row>)(() => row));
+
   // ---- the design lock ----
 
   [Test]
@@ -195,13 +202,10 @@ public class DispatchSurfaceDerivedIdentityComponentTests {
   }
 
   [Test]
-  [MethodDataSource(nameof(Rows))]
+  [MethodDataSource(nameof(BatchRows))]
   public async Task InsideAHandling_ABatchGivesEachItemAnIdOfItsOwnAsync(Row row) {
-    if (!row.Signature.Contains("Many", StringComparison.Ordinal) || row.Signature.StartsWith("LocalInvokeMany", StringComparison.Ordinal)) {
-      return;
-    }
     var dispatcher = _build(row.WithOutbox, out _);
-    var keys = new[] { (Guid)TrackedGuid.New(), (Guid)TrackedGuid.New(), (Guid)TrackedGuid.New() };
+    Guid[] keys = [(Guid)TrackedGuid.New(), (Guid)TrackedGuid.New(), (Guid)TrackedGuid.New()];
 
     IEnumerable<Guid> receipts;
     using (ReceptorHandling.Enter(_handling((Guid)TrackedGuid.New()))) {
@@ -212,11 +216,23 @@ public class DispatchSurfaceDerivedIdentityComponentTests {
       .Because($"{row}: three items are three messages, each at its own position in the handling");
   }
 
+  [Test]
+  public async Task CascadeMessageAsync_ACommandWithASourceEnvelope_StoresItsCopyUnderAnIdDerivedFromThatSourceAsync() {
+    var dispatcher = _build(withOutbox: true, out var outbox, out var serviceName);
+    var source = (Guid)TrackedGuid.New();
+
+    await dispatcher.CascadeMessageAsync(new DsCascadedCommand((Guid)TrackedGuid.New()), _handling(source), DispatchModes.Outbox);
+
+    var stored = outbox!.QueuedOf(typeof(DsCascadedCommand)).Select(static m => m.MessageId).ToList();
+    await Assert.That(stored).IsEquivalentTo([SentMessageIdentity.Derive(source, serviceName, HANDLER, TypeNameFormatter.Format(typeof(DsCascadedCommand)), 0)])
+      .Because("a cascaded command derives its id from the envelope it was cascaded from, even with no receptor body running");
+  }
+
   // ---- helpers ----
 
   private static async Task<List<Guid>> _runAsync(Row row, IMessageEnvelope? handling) {
     var dispatcher = _build(row.WithOutbox, out var outbox);
-    var keys = new[] { (Guid)TrackedGuid.New(), (Guid)TrackedGuid.New(), (Guid)TrackedGuid.New() };
+    Guid[] keys = [(Guid)TrackedGuid.New(), (Guid)TrackedGuid.New(), (Guid)TrackedGuid.New()];
     IEnumerable<Guid> returned;
     if (handling is null) {
       returned = await row.Call(dispatcher, keys);
@@ -236,11 +252,15 @@ public class DispatchSurfaceDerivedIdentityComponentTests {
     return ids;
   }
 
-  private static IDispatcher _build(bool withOutbox, out PolicyRecordingOutbox? outbox) {
+  private static IDispatcher _build(bool withOutbox, out PolicyRecordingOutbox? outbox) => _build(withOutbox, out outbox, out _);
+
+  private static IDispatcher _build(bool withOutbox, out PolicyRecordingOutbox? outbox, out string serviceName) {
     outbox = withOutbox ? new PolicyRecordingOutbox() : null;
+    var instance = new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build());
+    serviceName = instance.ServiceName;
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
-    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
+    services.AddSingleton<IServiceInstanceProvider>(instance);
     if (outbox is not null) {
       var strategy = outbox;
       services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
