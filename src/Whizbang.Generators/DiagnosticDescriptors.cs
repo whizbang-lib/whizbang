@@ -517,11 +517,11 @@ public static class DiagnosticDescriptors {
   public static readonly DiagnosticDescriptor GuidNewGuidUsage = new(
       id: "WHIZ055",
       title: "Guid.NewGuid() Usage",
-      messageFormat: "Use TrackedGuid.New() or a [WhizbangId] type instead of Guid.NewGuid(). UUIDv4 is not time-ordered; with interception on (the default) this call is replaced with TrackedGuid.New().",
+      messageFormat: "Use TrackedGuid.New() or a [WhizbangId] type instead of Guid.NewGuid(). UUIDv4 is not time-ordered; with interception on (the default) this call is replaced with TrackedGuid.New().", // review-checks:allow (the message names the call; it does not make one)
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "Guid.NewGuid() creates UUIDv4, which is not time-ordered. With Guid interception on (the default) the call is replaced with TrackedGuid.New(), a UUIDv7 with sub-millisecond precision; write TrackedGuid.New() or a [WhizbangId] type so the code says what it gets. [SuppressGuidInterception] keeps a deliberate v4."
+      description: "Guid.NewGuid() creates UUIDv4, which is not time-ordered. With Guid interception on (the default) the call is replaced with TrackedGuid.New(), a UUIDv7 with sub-millisecond precision; write TrackedGuid.New() or a [WhizbangId] type so the code says what it gets. [SuppressGuidInterception] keeps a deliberate v4." // review-checks:allow (the description names the call; it does not make one)
   );
 
   /// <summary>

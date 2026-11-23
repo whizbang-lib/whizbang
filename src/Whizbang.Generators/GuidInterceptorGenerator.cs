@@ -21,7 +21,7 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/GuidInterceptorGeneratorTests.cs:Generator_SuppressOnMethod_NoInterceptionAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/GuidInterceptorGeneratorTests.cs:Generator_SuppressOnClass_NoInterceptionAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/GuidInterceptorRuntimeTests.cs</tests>
-/// Source generator that replaces <c>Guid.NewGuid()</c> and <c>Guid.CreateVersion7()</c> calls with the framework's
+/// Source generator that replaces calls to <see cref="System.Guid.NewGuid"/> and <c>System.Guid.CreateVersion7</c> with the framework's
 /// UUIDv7 (<c>TrackedGuid.New()</c>, time-ordered with counter precision), through C# interceptors.
 /// </summary>
 /// <remarks>

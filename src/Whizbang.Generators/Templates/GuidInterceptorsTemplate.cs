@@ -30,7 +30,7 @@ namespace System.Runtime.CompilerServices {
 
 namespace Whizbang.Generators.Generated {
   /// <summary>
-  /// Auto-generated interceptors for GUID creation calls. Each replaces a Guid.NewGuid() or Guid.CreateVersion7()
+  /// Auto-generated interceptors for GUID creation calls. Each replaces a System.Guid NewGuid or CreateVersion7
   /// call with a framework UUIDv7 (TrackedGuid.New()), which is time-ordered with counter precision.
   /// </summary>
   file static class GuidInterceptors {
