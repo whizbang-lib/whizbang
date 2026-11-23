@@ -234,6 +234,26 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>
+  /// Records on this instance's row that its application schema is served as it is by its own override (#2553), with
+  /// the reason the verdict would otherwise have stood it down; the W! migrations ran before it. Nothing without an
+  /// instance identity, which has no row.
+  /// </summary>
+  /// <param name="overriddenReason">The overridden verdict's reason.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes once the override is recorded.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs:TheApplicationsOwnOverride_ServesItAsItIs_WhileTheWMigrationsStillRun_AndRecordsItAsync</tests>
+  internal async Task RecordIncompatibilityOverrideAsync(string overriddenReason, CancellationToken cancellationToken) {
+    if (Instance is not { } instance) {
+      return;
+    }
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    await SchemaBootstrapPhase.RecordIncompatibilityOverrideAsync(
+      () => new NpgsqlConnection(_connectionString), await _targetSchemaAsync(connection, cancellationToken), instance.InstanceId,
+      overriddenReason, cancellationToken);
+  }
+
+  /// <summary>
   /// Rolls the schema back to this binary's version (#2122): the rollback <c>Assess</c> decided on, run before the schema
   /// pass, under the schema lock, in one transaction, from the reverse scripts the newer version stored in the ledger
   /// (<see cref="SchemaRollback"/>). This driver holds no election, so the schema lock alone keeps it to one instance; it
@@ -355,6 +375,9 @@ public sealed class PostgresSchemaInitializer {
   /// settings. Neither takes the schema lock to wait.
   /// </summary>
   private async Task _convergeAsync(NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
+    if (ApplicationHeld) {
+      return;   // #2553: the managed objects and storage settings are the application's tables', left as they are
+    }
     // The managed-object reconcile, after the lock is released (it takes the same lock itself, with a try). Never
     // fatal, as on the EF Core driver: a reconcile that cannot finish leaves every object where it is, and the next
     // start tries again.
@@ -416,6 +439,23 @@ public sealed class PostgresSchemaInitializer {
     // Execute migration SQL files with hash-based change detection
     await _executeMigrationsWithHashDetectionAsync(connection, schema, cancellationToken);
 
+    // #2553: W! first. A held application schema is left as it is: none of what follows runs, and this instance joins
+    // the registry, as on every start.
+    if (!ApplicationHeld) {
+      await _migrateApplicationAsync(connection, schema, cancellationToken);
+    }
+
+    // This instance joins the registry while the lock is still held: an instance that starts after it, and
+    // reconciles, sees it running. The registration function exists now that the migrations have run.
+    if (Instance is { } instance) {
+      await SchemaBootstrapPhase.RegisterInstanceAsync(
+        () => new NpgsqlConnection(_connectionString), schema, instance, liveness: RegistrationLiveness,
+        cancellationToken: cancellationToken);
+    }
+  }
+
+  /// <summary>The application's share of the pass: its objects, its perspective tables, their registry and stored keys.</summary>
+  private async Task _migrateApplicationAsync(NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
     // An application's own objects, before anything of its perspectives exists. This is the slot an
     // immutable function behind an expression index needs: the function has to be there before the
     // index that calls it is created, and the index is created by the perspective pass below.
@@ -453,14 +493,6 @@ public sealed class PostgresSchemaInitializer {
     // tables are there.
     await _executeApplicationObjectsAsync(
       connection, _applicationObjects?.AfterPerspectives, "after", cancellationToken);
-
-    // This instance joins the registry while the lock is still held: an instance that starts after it, and
-    // reconciles, sees it running. The registration function exists now that the migrations have run.
-    if (Instance is { } instance) {
-      await SchemaBootstrapPhase.RegisterInstanceAsync(
-        () => new NpgsqlConnection(_connectionString), schema, instance, liveness: RegistrationLiveness,
-        cancellationToken: cancellationToken);
-    }
   }
 
   /// <summary>

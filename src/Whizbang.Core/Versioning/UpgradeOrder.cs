@@ -212,9 +212,18 @@ public static class UpgradeOrder {
   /// <exception cref="InvalidOperationException">A key holds something that is not a boolean.</exception>
   /// <tests>tests/Whizbang.Core.Tests/Versioning/UpgradeOrderTests.cs:TheOverrides_AreScopedPerSide_AndTheSharedKeysStillMeanBothAsync</tests>
   public static SchemaGateOverrides ReadOverrides(IConfiguration? configuration) {
-    // RED (#2553): the side keys are not read yet.
-    return SchemaGateOverrides.Both(IsIncompatibilityOverridden(configuration), IsLossyRollbackAllowed(configuration));
+    var overrideBoth = IsIncompatibilityOverridden(configuration);
+    var lossyBoth = IsLossyRollbackAllowed(configuration);
+    return new SchemaGateOverrides(
+      _sideOr(configuration, PLATFORM_OVERRIDE_INCOMPATIBILITY_KEY, overrideBoth),
+      _sideOr(configuration, APPLICATION_OVERRIDE_INCOMPATIBILITY_KEY, overrideBoth),
+      _sideOr(configuration, PLATFORM_ALLOW_LOSSY_ROLLBACK_KEY, lossyBoth),
+      _sideOr(configuration, APPLICATION_ALLOW_LOSSY_ROLLBACK_KEY, lossyBoth));
   }
+
+  /// <summary>A side's own key when it is set, else the shared key's value.</summary>
+  private static bool _sideOr(IConfiguration? configuration, string key, bool shared) =>
+    string.IsNullOrWhiteSpace(configuration?[key]) ? shared : _isOn(configuration, key);
 
   /// <summary>The incompatibility override key that serves <paramref name="side"/> as it is.</summary>
   /// <param name="side">The side.</param>

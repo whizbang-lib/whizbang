@@ -149,18 +149,33 @@ public class StartupAssessorTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  public async Task WhatThisBuildDefines_IsAskedOnlyWhenANewerVersionAppliedSomethingAsync(CancellationToken cancellationToken) {
+    // #2553: judging by content only ever clears a change the version rule found, so a ledger nothing newer applied is
+    // judged without asking the build, and a driver that cannot say what it defines fails no start it would not fail.
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    var verdict = await PostgresStartupAssessment.AssessAsync(connection, "public",
+      new StartupGateInput(new VersionSighting("999.0.0", null), () => throw new InvalidOperationException("asked"), SchemaGateOverrides.None),
+      _ => Task.FromResult(false), cancellationToken);
+
+    await Assert.That(verdict.Verdict).IsEqualTo(StartupVerdict.Serve).Because(verdict.Reason);
+  }
+
+  [Test]
+  [Timeout(60000)]
   public async Task ACurrencyCheckThatCannotAnswer_IsServe_NeverCurrent_AndACancellationPropagatesAsync(
       CancellationToken cancellationToken) {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync(cancellationToken);
 
-    var unanswered = await PostgresStartupAssessment.AssessAsync(connection, "public", new StartupGateInput(new Whizbang.Core.Versioning.VersionSighting("999.0.0", null), new Dictionary<string, string>(), SchemaGateOverrides.None),
+    var unanswered = await PostgresStartupAssessment.AssessAsync(connection, "public", new StartupGateInput(new Whizbang.Core.Versioning.VersionSighting("999.0.0", null), () => new Dictionary<string, string>(), SchemaGateOverrides.None),
       _ => throw new InvalidOperationException("the catalog could not be read"), cancellationToken);
 
     await Assert.That(unanswered.Verdict).IsEqualTo(StartupVerdict.Serve)
       .Because("a schema that cannot be shown current takes the full path, which finds out for itself");
     await Assert.That(unanswered.Reason).Contains("could not be shown current");
-    await Assert.That(async () => await PostgresStartupAssessment.AssessAsync(connection, "public", new StartupGateInput(new Whizbang.Core.Versioning.VersionSighting("999.0.0", null), new Dictionary<string, string>(), SchemaGateOverrides.None),
+    await Assert.That(async () => await PostgresStartupAssessment.AssessAsync(connection, "public", new StartupGateInput(new Whizbang.Core.Versioning.VersionSighting("999.0.0", null), () => new Dictionary<string, string>(), SchemaGateOverrides.None),
         _ => throw new OperationCanceledException(), cancellationToken))
       .Throws<OperationCanceledException>();
   }

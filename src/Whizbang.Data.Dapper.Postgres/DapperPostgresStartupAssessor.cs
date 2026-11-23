@@ -34,7 +34,7 @@ internal sealed class DapperPostgresStartupAssessor(
       connection, schema,
       new StartupGateInput(
         new VersionSighting(new PostgresMigrationProvider().Version, applicationVersion, instanceId),
-        createInitializer().DefinedContent(schema), overrides ?? SchemaGateOverrides.None),
+        () => createInitializer().DefinedContent(schema), overrides ?? SchemaGateOverrides.None),
       ct => createInitializer().IsCurrentAsync(ct), cancellationToken).ConfigureAwait(false);
   }
 

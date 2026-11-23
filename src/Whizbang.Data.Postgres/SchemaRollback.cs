@@ -76,17 +76,27 @@ public static partial class SchemaRollback {
     var probe = await PostgresStartupAssessment.ProbeAsync(connection, prefix, cancellationToken).ConfigureAwait(false);
     var changes = await PostgresStartupAssessment.ReadChangesAsync(connection, prefix, probe, withScripts: true, cancellationToken)
       .ConfigureAwait(false);
-    var since = UpgradeOrder.AppliedSince(request.Own, [.. changes.Select(c => c.Change)], request.Defined);
-    if (since.Count == 0) {
+    // #2553: decided side by side, as Assess decided: only the sides this start runs, each with its own lossy setting.
+    var recorded = changes.Select(c => c.Change).ToList();
+    var sides = new[] { SchemaChangeKind.Platform, SchemaChangeKind.Application }
+      .Select(side => (Side: side, Runs: request.Plan.Reverses(side, out var lossy), AllowLossy: lossy))
+      .Where(s => s.Runs)
+      .Select(s => (s.Side, s.AllowLossy, Since: UpgradeOrder.AppliedSince(request.Own, recorded.Where(c => c.Kind == s.Side), request.Defined)))
+      .Where(s => s.Since.Count > 0)
+      .ToList();
+    if (sides.Count == 0) {
       return 0;
     }
     var online = await PostgresStartupAssessment.ReadOnlineAsync(connection, schema, cancellationToken).ConfigureAwait(false);
     if (UpgradeOrder.FindNewer(request.Own, online) is { } newer) {
       throw new InvalidOperationException($"The schema {schema} is not rolled back: {newer.Describe()}.");
     }
-    if (UpgradeOrder.WhyNotReversible(request.Own, since, request.Plan.AllowLossy) is { } refusal) {
-      throw new InvalidOperationException($"The schema {schema} is not rolled back: {refusal}.");
+    foreach (var (side, allowLossy, sideSince) in sides) {
+      if (UpgradeOrder.WhyNotReversible(request.Own, sideSince, allowLossy) is { } refusal) {
+        throw new InvalidOperationException($"The schema {schema} is not rolled back: {Whizbang.Core.Startup.SchemaSideVerdict.NameOf(side)}: {refusal}.");
+      }
     }
+    var since = sides.SelectMany(s => s.Since).ToList();
 
     var plan = changes.Where(c => since.Contains(c.Change))
       .OrderByDescending(c => c.AppliedVersionId.GetValueOrDefault())

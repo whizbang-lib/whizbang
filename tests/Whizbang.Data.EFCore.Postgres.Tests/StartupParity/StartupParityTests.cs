@@ -494,7 +494,7 @@ public class StartupParityTests {
   /// <returns>The W! migration owed.</returns>
   private async Task<string> _oweWorkOnBothSidesAsync(StartupDriver driver) {
     var owed = await _scalarAsync<string>("SELECT max(file_name) FROM wh_schema_migrations WHERE file_name ~ '^[0-9]'");
-    await _execAsync($"DELETE FROM wh_schema_migrations WHERE file_name = '{owed}' OR file_name LIKE 'perspective:%'; DROP TABLE {driver.Table}");
+    await _execAsync($"DELETE FROM wh_schema_migrations WHERE file_name = '{owed}' OR file_name LIKE 'perspective:%'; DROP TABLE {driver.Table} CASCADE");
     return owed;
   }
 

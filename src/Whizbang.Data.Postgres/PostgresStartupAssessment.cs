@@ -12,10 +12,12 @@ namespace Whizbang.Data.Postgres;
 
 /// <summary>What an instance brings to the rollback gate (#2022, #2122, #2553).</summary>
 /// <param name="Own">This instance's versions and id; a null library version means no provider says.</param>
-/// <param name="Defined">What this build defines (#2553): each change its schema pass records, by the ledger's name, with
+/// <param name="Defined">What this build defines (#2553), produced only when a change applied by a newer version has to be
+/// judged by its content: each change its schema pass records, by the ledger's name, with
 /// the content hash it records; a recorded change this build defines identically is current, whoever applied it.</param>
 /// <param name="Overrides">The operator's overrides, for each side (#2022, #2122, #2553; <see cref="UpgradeOrder.ReadOverrides"/>).</param>
-internal sealed record StartupGateInput(VersionSighting Own, IReadOnlyDictionary<string, string> Defined, SchemaGateOverrides Overrides);
+internal sealed record StartupGateInput(
+  VersionSighting Own, Func<IReadOnlyDictionary<string, string>> Defined, SchemaGateOverrides Overrides);
 
 /// <summary>
 /// The <c>Assess</c> verdict both Postgres drivers produce (#1992): this instance's versions against every version the
@@ -92,7 +94,7 @@ internal static class PostgresStartupAssessment {
     var online = probe.Online
       ? await _readOnlineAsync(connection, prefix, cancellationToken).ConfigureAwait(false)
       : [];
-    var verdict = ComputeVerdict(gate.Own, ledger, online, gate.Overrides, gate.Defined);
+    var verdict = _computeVerdict(gate.Own, ledger, online, gate.Overrides, gate.Defined);
     if (verdict.Verdict != StartupVerdict.Serve) {
       return verdict;
     }
@@ -105,7 +107,7 @@ internal static class PostgresStartupAssessment {
       return verdict with { Reason = verdict.Reason + "; the schema could not be shown current (" + TypeNameFormatter.SimpleName(ex.GetType()) + ")" };
     }
     return current
-      ? new StartupAssessment(StartupVerdict.Current, verdict.Reason + "; the schema is current: nothing to apply or convert")
+      ? verdict with { Verdict = StartupVerdict.Current, Reason = verdict.Reason + "; the schema is current: nothing to apply or convert" }
       : verdict;
   }
 
@@ -153,10 +155,17 @@ internal static class PostgresStartupAssessment {
   /// incompatible instance start.</returns>
   internal static StartupAssessment ComputeVerdict(
       VersionSighting own, IReadOnlyList<AppliedSchemaChange> ledger, IReadOnlyList<VersionSighting> online,
-      SchemaGateOverrides? overrides = null, IReadOnlyDictionary<string, string>? defined = null) {
-    // RED (#2553): the sides are not judged apart yet.
-    var overrideIncompatibility = overrides is { OverridePlatform: true } or { OverrideApplication: true };
-    var allowLossyRollback = overrides is { AllowLossyPlatform: true } or { AllowLossyApplication: true };
+      SchemaGateOverrides? overrides = null, IReadOnlyDictionary<string, string>? defined = null) =>
+    _computeVerdict(own, ledger, online, overrides, () => defined);
+
+  /// <summary>
+  /// The verdict, with what this build defines produced only when some change applied by a newer version has to be
+  /// judged by its content (#2553): judging by content only ever clears a change, so a ledger nothing newer applied
+  /// needs no definitions at all, and a driver whose definitions cannot be produced fails no start it would not fail.
+  /// </summary>
+  private static StartupAssessment _computeVerdict(
+      VersionSighting own, IReadOnlyList<AppliedSchemaChange> ledger, IReadOnlyList<VersionSighting> online,
+      SchemaGateOverrides? overrides, Func<IReadOnlyDictionary<string, string>?> defined) {
     var mine = own.LibraryVersion;
     if (mine is null) {
       // Absent and unreadable are different facts (issue #619): nobody registered a provider, which the Postgres
@@ -175,31 +184,136 @@ internal static class PostgresStartupAssessment {
       return new StartupAssessment(StartupVerdict.Migrate, "fresh database: nothing recorded in the ledger");
     }
 
-    const string STANDING_DOWN = "; standing down: never apply anything, hold the data plane, report not-ready-while-alive";
     // A newer version online is the cluster-wide stand-down, not an incompatibility: no override lifts it.
     if (UpgradeOrder.FindNewer(own, online) is { } newer) {
       return new StartupAssessment(StartupVerdict.StandDown, newer.Describe() + STANDING_DOWN);
     }
-    if (UpgradeOrder.AppliedSince(own, ledger, defined) is { Count: > 0 } since) {
-      // #2122: every change since can be reversed, so this instance's start rolls the schema back to its version.
-      if (UpgradeOrder.WhyNotReversible(own, since, allowLossyRollback) is not { } refusal) {
-        return new StartupAssessment(StartupVerdict.Migrate, UpgradeOrder.DescribeRollback(own, since)) {
-          Rollback = new RollbackPlan(since, allowLossyRollback),
+
+    // #2553, owner decision 2: the W! migrations and the application's schema are judged apart, each with its own verdict.
+    var gate = overrides ?? SchemaGateOverrides.None;
+    var definitions = new Lazy<IReadOnlyDictionary<string, string>?>(defined);
+    var platform = JudgeSide(SchemaChangeKind.Platform, own, ledger, () => definitions.Value, gate);
+    var application = JudgeSide(SchemaChangeKind.Application, own, ledger, () => definitions.Value, gate);
+    if (platform.OverriddenReason is not null && application.Verdict == StartupVerdict.Migrate) {
+      // The W! migrations are served as they are, so nothing is applied, and the application's rollback cannot run.
+      application = new SchemaSideVerdict(SchemaChangeKind.Application, StartupVerdict.StandDown,
+        $"{application.Reason}, which does not run while the W! migrations are served as they are; set "
+        + $"{UpgradeOrder.APPLICATION_OVERRIDE_INCOMPATIBILITY_KEY} to true to serve the application schema as it is too");
+    }
+    return _combine(own, ledger, platform, application, gate);
+  }
+
+  private const string STANDING_DOWN = "; standing down: never apply anything, hold the data plane, report not-ready-while-alive";
+
+  /// <summary>
+  /// One side's verdict (#2553): the changes of that side applied since this version (judged by content, #2553 owner
+  /// decision 1), rolled back when every one can be reversed, else served as it is when the side's own override is on,
+  /// else a stand-down naming the side's changes.
+  /// </summary>
+  /// <param name="side">The side judged.</param>
+  /// <param name="own">This instance's versions.</param>
+  /// <param name="ledger">Every change the ledger records; only the side's own are judged.</param>
+  /// <param name="defined">Produces what this build defines, asked only when a change of the side was applied by a newer
+  /// version; null when nothing is known.</param>
+  /// <param name="overrides">The operator's overrides.</param>
+  /// <returns>Serve (nothing applied since), Migrate with the rollback owed, Current when overridden, or StandDown.</returns>
+  internal static SchemaSideVerdict JudgeSide(
+      SchemaChangeKind side, VersionSighting own, IReadOnlyList<AppliedSchemaChange> ledger,
+      Func<IReadOnlyDictionary<string, string>?> defined, SchemaGateOverrides overrides) {
+    // By who applied each change first: the content rule only clears changes from that set, so nothing in it means
+    // nothing to ask the build about.
+    var byVersion = UpgradeOrder.AppliedSince(own, ledger.Where(c => c.Kind == side), null);
+    var since = byVersion.Count == 0 ? byVersion : UpgradeOrder.AppliedSince(own, byVersion, defined());
+    if (since.Count == 0) {
+      return new SchemaSideVerdict(side, StartupVerdict.Serve, "nothing applied since this version");
+    }
+    var allowLossy = overrides.AllowsLossy(side);
+    if (UpgradeOrder.WhyNotReversible(own, since, allowLossy) is not { } refusal) {
+      return new SchemaSideVerdict(side, StartupVerdict.Migrate, UpgradeOrder.DescribeRollback(own, since)) {
+        Rollback = new RollbackPlan(since, allowLossy),
+      };
+    }
+    return overrides.Overrides(side)
+      ? new SchemaSideVerdict(side, StartupVerdict.Current,
+          $"served as it is, with nothing applied to it, because {UpgradeOrder.OverrideKeyFor(side)} (or "
+          + $"{UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY} for both sides) is on: {refusal}") { OverriddenReason = refusal }
+      : new SchemaSideVerdict(side, StartupVerdict.StandDown, refusal);
+  }
+
+  /// <summary>
+  /// The instance's verdict from the two sides' (#2553): it serves only when both can. W! first: a W! stand-down (or W!
+  /// served as it is) runs nothing; an application stand-down lets the W! migrations run, then stands the instance down.
+  /// </summary>
+  private static StartupAssessment _combine(
+      VersionSighting own, IReadOnlyList<AppliedSchemaChange> ledger, SchemaSideVerdict platform, SchemaSideVerdict application,
+      SchemaGateOverrides overrides) {
+    SchemaSideVerdict[] sides = [platform, application];
+    var rollback = _rollback(platform, application, overrides);
+    if (sides.Any(s => s.Verdict == StartupVerdict.StandDown)) {
+      return new StartupAssessment(StartupVerdict.StandDown, _reason(sides, s => s.Reason) + STANDING_DOWN) {
+        Platform = platform,
+        Application = application,
+        Rollback = rollback,
+      };
+    }
+    if (sides.Any(s => s.OverriddenReason is not null)) {
+      // The same reason the stand-down would have given, recorded on the instance's row and logged at every start.
+      var wouldStandDown = _reason(sides, s => s.OverriddenReason ?? s.Reason) + STANDING_DOWN;
+      // W! served as it is applies nothing at all (Current); the application's schema served as it is leaves the W!
+      // migrations to run, with the rollback they owe.
+      if (platform.OverriddenReason is not null) {
+        return new StartupAssessment(StartupVerdict.Current, _reason(sides, s => s.Reason)) {
+          OverriddenReason = wouldStandDown,
+          Platform = platform,
+          Application = application,
         };
       }
-      var incompatible = refusal + STANDING_DOWN;
-      return overrideIncompatibility
-        ? new StartupAssessment(StartupVerdict.Current,
-            $"running past an incompatibility verdict because {UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY} is on: the schema is "
-            + "served as it is, with nothing applied and no migration run") { OverriddenReason = incompatible }
-        : new StartupAssessment(StartupVerdict.StandDown, incompatible);
+      return new StartupAssessment(rollback is null ? StartupVerdict.Serve : StartupVerdict.Migrate, _reason(sides, s => s.Reason)) {
+        OverriddenReason = wouldStandDown,
+        Platform = platform,
+        Application = application,
+        Rollback = rollback,
+      };
     }
-
+    if (rollback is not null) {
+      return new StartupAssessment(StartupVerdict.Migrate, _reason(sides, s => s.Reason)) {
+        Platform = platform,
+        Application = application,
+        Rollback = rollback,
+      };
+    }
     var newest = UpgradeOrder.NewestLibrary(ledger.Select(v => v.LibraryVersion));
     return new StartupAssessment(StartupVerdict.Serve,
       newest is not null
-        ? $"schema recorded at {newest}; this binary runs {mine}; nothing applied since this version, and nothing newer online"
-        : $"only unreadable versions recorded; this binary runs {mine}; unreadable history does not block");
+        ? $"schema recorded at {newest}; this binary runs {own.LibraryVersion}; nothing applied since this version, and nothing newer online"
+        : $"only unreadable versions recorded; this binary runs {own.LibraryVersion}; unreadable history does not block") {
+      Platform = platform,
+      Application = application,
+    };
+  }
+
+  /// <summary>Each side with something to say, by name: <c>W! migrations: ...; application schema: ...</c>.</summary>
+  private static string _reason(IEnumerable<SchemaSideVerdict> sides, Func<SchemaSideVerdict, string> text) =>
+    string.Join("; ", sides.Where(s => s.Verdict != StartupVerdict.Serve).Select(s => $"{s.Name}: {text(s)}"));
+
+  /// <summary>
+  /// The rollback this start runs (#2122, #2553): the changes of each side that runs, each side with its own lossy
+  /// setting. Nothing when the W! migrations do not run (they stood down, or are served as they are), and the
+  /// application's changes only when its schema runs too.
+  /// </summary>
+  private static RollbackPlan? _rollback(SchemaSideVerdict platform, SchemaSideVerdict application, SchemaGateOverrides overrides) {
+    if (platform.Verdict is not (StartupVerdict.Migrate or StartupVerdict.Serve)) {
+      return null;
+    }
+    var sides = new Dictionary<SchemaChangeKind, bool> { [SchemaChangeKind.Platform] = overrides.AllowLossyPlatform };
+    List<AppliedSchemaChange> changes = [.. platform.Rollback?.Changes ?? []];
+    if (application.Verdict is StartupVerdict.Migrate or StartupVerdict.Serve) {
+      sides[SchemaChangeKind.Application] = overrides.AllowLossyApplication;
+      changes.AddRange(application.Rollback?.Changes ?? []);
+    }
+    return changes.Count == 0
+      ? null
+      : new RollbackPlan(changes, sides.Values.Any(lossy => lossy)) { Sides = sides };
   }
 
   /// <summary>What the database has: the ledger, its version table and owner column, and what reading who is online needs.</summary>

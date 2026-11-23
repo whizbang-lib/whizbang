@@ -68,7 +68,7 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor, IOnlineVer
       new StartupGateInput(
         new VersionSighting(_versionProvider?.LibraryVersion, _applicationVersion?.ApplicationVersion.Recorded, _instance?.InstanceId),
         // #2553: what this context's pass records, so a change it defines identically is current, whoever applied it.
-        DbContextInitializationRegistry.SchemaContentOf(dbContext, services),
+        () => DbContextInitializationRegistry.SchemaContentOf(dbContext, services),
         _overrides),
       ct => DbContextInitializationRegistry.IsSchemaCurrentAsync(services, ct),
       cancellationToken), cancellationToken);

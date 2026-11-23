@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -71,14 +72,15 @@ public sealed record StartupAssessment(StartupVerdict Verdict, string Reason) {
   /// the application's schema alone, with the W! migrations to serve or migrate, still lets them run first.
   /// </summary>
   /// <docs>operations/startup/rolling-upgrades#two-verdicts</docs>
-  public bool StandsDownWithoutMigrating => Verdict == StartupVerdict.StandDown;
+  public bool StandsDownWithoutMigrating =>
+    Verdict == StartupVerdict.StandDown && Platform is not { Verdict: StartupVerdict.Migrate or StartupVerdict.Serve };
 
   /// <summary>
   /// Whether this start leaves the application's schema as it is (#2553): it stood down, or runs past its incompatibility
   /// as it is. The schema pass then applies the W! migrations alone.
   /// </summary>
   /// <docs>operations/startup/rolling-upgrades#two-verdicts</docs>
-  public bool HoldsApplication => Application?.OverriddenReason is not null;   // RED (#2553): a stand-down is not held yet
+  public bool HoldsApplication => Application is { Verdict: StartupVerdict.StandDown } or { OverriddenReason: not null };
 }
 
 /// <summary>One side's verdict (#2553, owner decision 2): the W! migrations or the application's schema, judged apart.</summary>
@@ -95,7 +97,13 @@ public sealed record SchemaSideVerdict(Versioning.SchemaChangeKind Side, Startup
   public RollbackPlan? Rollback { get; init; }
 
   /// <summary>The side as the verdict's reasons name it.</summary>
-  public string Name => Side == Versioning.SchemaChangeKind.Platform ? "W! migrations" : "application schema";
+  public string Name => NameOf(Side);
+
+  /// <summary>A side as the verdict's reasons name it: <c>W! migrations</c> or <c>application schema</c>.</summary>
+  /// <param name="side">The side.</param>
+  /// <returns>Its name.</returns>
+  public static string NameOf(Versioning.SchemaChangeKind side) =>
+    side == Versioning.SchemaChangeKind.Platform ? "W! migrations" : "application schema";
 }
 
 /// <summary>A rollback <c>Assess</c> decided on (#2122): the changes applied since this version, and whether the operator
@@ -116,9 +124,11 @@ public sealed record RollbackPlan(IReadOnlyList<Versioning.AppliedSchemaChange> 
   /// <param name="allowLossy">Whether a reversal of that side may discard data.</param>
   /// <returns><see langword="true"/> when the side is this rollback's to reverse.</returns>
   public bool Reverses(Versioning.SchemaChangeKind side, out bool allowLossy) {
-    _ = side;
-    allowLossy = AllowLossy;   // RED (#2553): every side, alike
-    return true;
+    if (Sides is null) {
+      allowLossy = AllowLossy;
+      return true;
+    }
+    return Sides.TryGetValue(side, out allowLossy);
   }
 }
 
@@ -180,6 +190,10 @@ public sealed partial class AssessStartupStep(IStartupAssessor assessor, ILogger
 
     var assessment = await _assessor.AssessAsync(cancellationToken).ConfigureAwait(false);
     LogVerdict(_logger, assessment.Verdict, assessment.Reason);
+    // #2553: each side's verdict is logged on its own, naming its side.
+    foreach (var side in new[] { assessment.Platform, assessment.Application }.OfType<SchemaSideVerdict>()) {
+      LogSideVerdict(_logger, side.Name, side.Verdict, side.Reason);
+    }
 
     return assessment.Verdict switch {
       // Standing down is fail-closed by construction: a failed blocking step keeps readiness
@@ -192,6 +206,10 @@ public sealed partial class AssessStartupStep(IStartupAssessor assessor, ILogger
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "Assess verdict: {Verdict} — {Reason}")]
   static partial void LogVerdict(ILogger logger, StartupVerdict verdict, string reason);
+
+  [LoggerMessage(EventId = 2, Level = LogLevel.Information,
+    Message = "Assess verdict for the {Side}: {Verdict}: {Reason}")]
+  static partial void LogSideVerdict(ILogger logger, string side, StartupVerdict verdict, string reason);
 }
 
 /// <summary>

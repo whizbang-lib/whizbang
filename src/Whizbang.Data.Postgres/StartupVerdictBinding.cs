@@ -18,11 +18,12 @@ namespace Whizbang.Data.Postgres;
 public static class StartupVerdictBinding {
   /// <summary>
   /// The verdict, or <see langword="null"/> when the host has no assessor (no host, or no driver supplied one): the
-  /// pass then runs as it always has. A stand-down is refused here, so a pass never begins on it.
+  /// pass then runs as it always has. A stand-down that applies nothing is refused here, so a pass never begins on it;
+  /// a stand-down of the application's schema alone is handed to the pass, which applies the W! migrations first (#2553).
   /// </summary>
   /// <param name="services">The host's services; null for a call made outside a host.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <returns>Migrate, Serve or Current; null when unassessed.</returns>
+  /// <returns>Migrate, Serve or Current, or StandDown with the application's schema held; null when unassessed.</returns>
   /// <exception cref="SchemaStandDownException">The schema is newer than this binary; nothing may be applied.</exception>
   /// <exception cref="StartupAssessmentException">The version record could not be read.</exception>
   public static async Task<StartupAssessment?> ReadAsync(IServiceProvider? services, CancellationToken cancellationToken) {
@@ -30,7 +31,9 @@ public static class StartupVerdictBinding {
       return null;
     }
     var assessment = await source.AssessAsync(cancellationToken).ConfigureAwait(false);
-    return assessment.Verdict == StartupVerdict.StandDown ? throw new SchemaStandDownException(assessment.Reason) : assessment;
+    // #2553: W! first. A stand-down of the application's schema alone still lets the W! migrations run (the pass reads
+    // HoldsApplication and leaves the application's schema as it is); the instance stands down after them.
+    return assessment.StandsDownWithoutMigrating ? throw new SchemaStandDownException(assessment.Reason) : assessment;
   }
 
   /// <summary>Whether the verdict lets the pass skip the election and the migration: only <see cref="StartupVerdict.Current"/>.</summary>

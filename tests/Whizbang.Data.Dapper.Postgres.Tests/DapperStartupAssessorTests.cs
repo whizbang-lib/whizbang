@@ -339,4 +339,14 @@ public class DapperStartupAssessorTests {
 
     await Assert.That(async () => await initializer.ServeAsItIsAsync(" ", CancellationToken.None)).Throws<ArgumentException>();
   }
+
+  [Test]
+  public async Task RecordingAnApplicationOverride_WithNoInstanceIdentity_TouchesNothingAsync() {
+    // #2553: no identity, no row to record the application schema's override on (this connection goes nowhere).
+    var initializer = new PostgresSchemaInitializer("Host=203.0.113.1;Port=1;Database=none;Timeout=1");
+
+    await initializer.RecordIncompatibilityOverrideAsync("the reason", CancellationToken.None);
+
+    await Assert.That(initializer.ApplicationHeld).IsFalse().Because("a pass applies the application's schema unless told to hold it");
+  }
 }

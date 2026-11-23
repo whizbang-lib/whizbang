@@ -134,6 +134,25 @@ public class SchemaRollbackTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
+  public async Task ASideTheRollbackDoesNotRun_IsLeftAsItIs_UnderTheLockAsync(CancellationToken ct) {
+    // #2553: a held application schema (it stood down, or is served as it is) is never reversed, even by a rollback the
+    // W! migrations owe; the re-check under the lock judges only the sides the plan runs.
+    var library = await _libraryAsync(ct);
+    var newer = await _versionAsync(library, "2.0.0", ct);
+    await _execAsync("CREATE TABLE rb_held (id int)", ct);
+    await _recordAsync("wh_per_rb_held", "perspective", newer, "reversible", "DROP TABLE rb_held;", ct);
+    var platformOnly = new Whizbang.Core.Startup.RollbackPlan([], AllowLossy: false) {
+      Sides = new Dictionary<SchemaChangeKind, bool> { [SchemaChangeKind.Platform] = false },
+    };
+
+    var reversed = await SchemaRollback.ApplyAsync(_request(library, "1.9.0") with { Plan = platformOnly }, new FakeTimeProvider(), null, ct);
+
+    await Assert.That(reversed).IsEqualTo(0);
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM pg_class WHERE relname = 'rb_held'", ct)).IsEqualTo(1L);
+  }
+
+  [Test]
+  [Timeout(60000)]
   public async Task NothingAppliedSince_ReversesNothingAsync(CancellationToken ct) {
     var library = await _libraryAsync(ct);
 
