@@ -87,9 +87,10 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
 
   /// <inheritdoc />
   public async Task<PartitionAssignment?> PublishAsync(
-      string role, Guid instanceId, long epoch, IReadOnlyList<Guid> members, TimeSpan lease, CancellationToken cancellationToken) {
+      string role, Guid instanceId, long epoch, PartitionMap map, TimeSpan lease, CancellationToken cancellationToken) {
     ArgumentException.ThrowIfNullOrEmpty(role);
-    ArgumentNullException.ThrowIfNull(members);
+    ArgumentNullException.ThrowIfNull(map);
+    var members = map.Members;
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
       await using var cmd = connection.CreateWhizbangCommand();

@@ -176,11 +176,11 @@ public sealed partial class PartitionAssignerWorker : BackgroundService {
     var members = PartitionAssigner.LiveMembers(candidates, self);
     var published = LastPublished;
     var sincePublished = published is null ? TimeSpan.MaxValue : _time.GetElapsedTime(Volatile.Read(ref _publishedAtTimestamp));
-    var evaluation = PartitionAssigner.Evaluate(members, published, epoch, sincePublished, _options);
+    var evaluation = PartitionAssigner.Evaluate(members, published, epoch, sincePublished, TimeSpan.MaxValue, _options);
 
     if (evaluation.Publishes) {
       var assignment = await _store.PublishAsync(
-        PartitionAssignerOptions.ROLE, self, epoch, members, _options.AssignmentLease, cancellationToken).ConfigureAwait(false);
+        PartitionAssignerOptions.ROLE, self, epoch, PartitionMap.Initial(members), _options.AssignmentLease, cancellationToken).ConfigureAwait(false);
       if (assignment is null) {
         LogFenced(_logger, epoch);
         _raiseEvaluated(evaluation);

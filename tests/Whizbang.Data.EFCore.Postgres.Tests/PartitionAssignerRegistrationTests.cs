@@ -22,9 +22,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Shard3")]
 public class PartitionAssignerRegistrationTests {
-  private static ServiceProvider _build(Action<IServiceCollection>? extra = null) {
+  private static ServiceProvider _build(Action<IServiceCollection>? extra = null, Dictionary<string, string?>? settings = null) {
     var services = new ServiceCollection();
-    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection([]).Build());
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(settings ?? []).Build());
     services.AddLogging();
     services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>();
     services.AddSingleton<IWorkNotificationListener, NoOpWorkNotificationListener>();
@@ -54,5 +54,46 @@ public class PartitionAssignerRegistrationTests {
     await using var sp = _build(services => services.Configure<PartitionAssignerOptions>(o => o.Enabled = false));
 
     await Assert.That(sp.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value.Roles).DoesNotContain(PartitionAssignerOptions.ROLE);
+  }
+
+  [Test]
+  public async Task AddWhizbangPostgresNotifications_BindsEveryAssignerKeyFromConfigurationAsync() {
+    await using var sp = _build(settings: new() {
+      ["Whizbang:Database:PartitionAssigner:SettleWindow"] = "00:00:09",
+      ["Whizbang:Database:PartitionAssigner:AssignmentLease"] = "00:02:00",
+      ["Whizbang:Database:PartitionAssigner:RepublishInterval"] = "00:07:00",
+      ["Whizbang:Database:PartitionAssigner:Enabled"] = "false",
+    });
+
+    var options = sp.GetRequiredService<IOptions<PartitionAssignerOptions>>().Value;
+
+    await Assert.That(options.SettleWindow).IsEqualTo(TimeSpan.FromSeconds(9))
+      .Because("#2558: the settle window is measured on a deployed environment, so an operator must be able to set it");
+    await Assert.That(options.AssignmentLease).IsEqualTo(TimeSpan.FromMinutes(2));
+    await Assert.That(options.RepublishInterval).IsEqualTo(TimeSpan.FromMinutes(7));
+    await Assert.That(options.Enabled).IsFalse();
+  }
+
+  [Test]
+  public async Task AddWhizbangPostgresNotifications_WithNoAssignerKeys_KeepsTheDefaultsAsync() {
+    await using var sp = _build(settings: new() {
+      ["Whizbang:Database:PartitionAssigner:SettleWindow"] = "not a duration",
+    });
+
+    var options = sp.GetRequiredService<IOptions<PartitionAssignerOptions>>().Value;
+
+    await Assert.That(options.SettleWindow).IsEqualTo(TimeSpan.FromSeconds(5));
+    await Assert.That(options.AssignmentLease).IsEqualTo(TimeSpan.FromSeconds(90));
+    await Assert.That(options.RepublishInterval).IsEqualTo(TimeSpan.FromMinutes(5));
+    await Assert.That(options.Enabled).IsTrue();
+  }
+
+  [Test]
+  public async Task AddWhizbangPostgresNotifications_AHostsOwnConfigureOfTheAssigner_StillWinsAsync() {
+    await using var sp = _build(
+      services => services.Configure<PartitionAssignerOptions>(o => o.SettleWindow = TimeSpan.FromSeconds(1)),
+      new() { ["Whizbang:Database:PartitionAssigner:SettleWindow"] = "00:00:09" });
+
+    await Assert.That(sp.GetRequiredService<IOptions<PartitionAssignerOptions>>().Value.SettleWindow).IsEqualTo(TimeSpan.FromSeconds(1));
   }
 }

@@ -28,6 +28,9 @@ public sealed class PartitionAssignerOptions {
   /// </summary>
   public TimeSpan RepublishInterval { get; set; } = TimeSpan.FromMinutes(5);
 
+  /// <summary>RED stub (#2558).</summary>
+  public TimeSpan SettleWindow { get; set; }
+
   /// <summary>Throws when the options cannot work together.</summary>
   /// <exception cref="InvalidOperationException">The backstop is not positive, or the lease is too short.</exception>
   public void Validate() {
@@ -56,6 +59,9 @@ public enum PartitionAssignerReason {
 
   /// <summary>Nothing changed, and the backstop cadence came due.</summary>
   Backstop = 3,
+
+  /// <summary>RED stub (#2558).</summary>
+  Settling = 4,
 }
 
 /// <summary>One evaluation by the assigner: the live members it found and whether that calls for a publish.</summary>
@@ -110,11 +116,13 @@ public static class PartitionAssigner {
   /// <param name="published">What this tenure last published, or null.</param>
   /// <param name="epoch">This tenure's role epoch.</param>
   /// <param name="sincePublished">How long ago, by the assigner's own clock, it last published.</param>
+  /// <param name="unsettledFor">RED stub (#2558).</param>
   /// <param name="options">The backstop cadence.</param>
   /// <returns>The evaluation.</returns>
   public static PartitionAssignerEvaluation Evaluate(
       IReadOnlyList<Guid> members, PartitionAssignment? published, long epoch, TimeSpan sincePublished,
-      PartitionAssignerOptions options) {
+      TimeSpan unsettledFor, PartitionAssignerOptions options) {
+    _ = unsettledFor;
     ArgumentNullException.ThrowIfNull(members);
     ArgumentNullException.ThrowIfNull(options);
     return new PartitionAssignerEvaluation(members, _reason(members, published, epoch, sincePublished, options));

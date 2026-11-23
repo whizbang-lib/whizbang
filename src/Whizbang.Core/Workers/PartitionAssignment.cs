@@ -179,12 +179,12 @@ public interface IPartitionAssignmentStore {
   /// <param name="role">The assigner role.</param>
   /// <param name="instanceId">The publishing instance.</param>
   /// <param name="epoch">Its role epoch.</param>
-  /// <param name="members">The live instances, in rank order.</param>
+  /// <param name="map">The members and the partition map (#2558); <see cref="PartitionMap.Empty"/> publishes no members.</param>
   /// <param name="lease">How long the assignment holds without renewal.</param>
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>The assignment as published, or null when the caller no longer holds the role at that epoch.</returns>
   Task<PartitionAssignment?> PublishAsync(
-    string role, Guid instanceId, long epoch, IReadOnlyList<Guid> members, TimeSpan lease, CancellationToken cancellationToken);
+    string role, Guid instanceId, long epoch, PartitionMap map, TimeSpan lease, CancellationToken cancellationToken);
 
   /// <summary>Extends the lease of the assignment the caller published at <paramref name="epoch"/>, while it holds the role.</summary>
   /// <param name="instanceId">The assigner.</param>

@@ -12,7 +12,7 @@ internal sealed class FakePartitionAssignmentStore : IPartitionAssignmentStore {
   public List<PartitionAssignmentCandidate> Candidates { get; } = [];
   public int Reads { get; private set; }
   public List<(Guid Instance, long Epoch)> Renewals { get; } = [];
-  public List<IReadOnlyList<Guid>> Publishes { get; } = [];
+  public List<PartitionMap> Publishes { get; } = [];
   public Exception? FailReadsWith { get; set; }
   public bool RefusePublish { get; set; }
   public TimeSpan LeaseRemaining { get; set; } = TimeSpan.FromSeconds(90);
@@ -26,13 +26,15 @@ internal sealed class FakePartitionAssignmentStore : IPartitionAssignmentStore {
     Task.FromResult<IReadOnlyList<PartitionAssignmentCandidate>>([.. Candidates]);
 
   public Task<PartitionAssignment?> PublishAsync(
-      string role, Guid instanceId, long epoch, IReadOnlyList<Guid> members, TimeSpan lease, CancellationToken cancellationToken) {
+      string role, Guid instanceId, long epoch, PartitionMap map, TimeSpan lease, CancellationToken cancellationToken) {
     if (RefusePublish) {
       return Task.FromResult<PartitionAssignment?>(null);
     }
-    Publishes.Add(members);
+    Publishes.Add(map);
     var revision = Published?.Assignment.Epoch == epoch ? Published.Assignment.Revision + 1 : 1;
-    var assignment = new PartitionAssignment(epoch, revision, instanceId, [.. members], DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch + lease);
+    var assignment = new PartitionAssignment(
+      epoch, revision, instanceId, [.. map.Members], DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch + lease,
+      map.Owners.Count == 0 ? null : [.. map.Owners]);
     Published = new PartitionAssignmentRead(assignment, LeaseRemaining);
     return Task.FromResult<PartitionAssignment?>(assignment);
   }
