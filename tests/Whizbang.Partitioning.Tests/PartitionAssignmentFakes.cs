@@ -16,6 +16,8 @@ internal sealed class FakePartitionAssignmentStore : IPartitionAssignmentStore {
   public Exception? FailReadsWith { get; set; }
   public bool RefusePublish { get; set; }
   public TimeSpan LeaseRemaining { get; set; } = TimeSpan.FromSeconds(90);
+  public List<(Guid Instance, long Epoch)> SwitchRequests { get; } = [];
+  public string? SwitchAnswer { get; set; } = "opened";
 
   public Task<PartitionAssignmentRead?> ReadAsync(CancellationToken cancellationToken) {
     Reads++;
@@ -40,6 +42,11 @@ internal sealed class FakePartitionAssignmentStore : IPartitionAssignmentStore {
   public Task<bool> RenewAsync(Guid instanceId, long epoch, CancellationToken cancellationToken) {
     Renewals.Add((instanceId, epoch));
     return Task.FromResult(true);
+  }
+
+  public Task<string?> OpenOwnershipByMapAsync(Guid instanceId, long epoch, CancellationToken cancellationToken) {
+    SwitchRequests.Add((instanceId, epoch));
+    return Task.FromResult(SwitchAnswer);
   }
 }
 

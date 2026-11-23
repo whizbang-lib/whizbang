@@ -358,6 +358,24 @@ public class PartitionAssignmentSqlTests : EFCoreTestBase {
       .Because("the renewal moved the lease on from the publish");
   }
 
+  [Test]
+  public async Task Store_OpenOwnershipByMap_TurnsTheSwitchOn_AndAnswersNullToADeposedAssignerAsync() {
+    var assigner = Guid.CreateVersion7();
+    await using var conn = await _openAsync();
+    var epoch = await _electAsync(conn, assigner);
+    await _execAsync(conn,
+      $"UPDATE wh_service_instances SET metadata = '{{\"partition_ownership_level\":1}}'::jsonb WHERE instance_id = '{assigner}'");
+    var store = _store();
+    _ = await store.PublishAsync(ROLE, assigner, epoch, [assigner], TimeSpan.FromSeconds(90), CancellationToken.None);
+
+    var refused = await store.OpenOwnershipByMapAsync(assigner, epoch + 1, CancellationToken.None);
+    var opened = await store.OpenOwnershipByMapAsync(assigner, epoch, CancellationToken.None);
+
+    await Assert.That(refused).IsNull().Because("the fence refuses an epoch the caller does not hold");
+    await Assert.That(opened).IsEqualTo("opened");
+    await Assert.That(await _scalarAsync<bool>(conn, "SELECT wh_partition_ownership_by_map()")).IsTrue();
+  }
+
   // --- helpers --------------------------------------------------------------------------------
 
   private async Task<NpgsqlConnection> _openAsync() {

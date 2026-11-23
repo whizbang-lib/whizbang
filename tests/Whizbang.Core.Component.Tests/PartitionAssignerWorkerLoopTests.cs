@@ -81,6 +81,8 @@ public class PartitionAssignerWorkerLoopTests {
         string role, Guid instanceId, long epoch, IReadOnlyList<Guid> members, TimeSpan lease, CancellationToken cancellationToken) =>
       Task.FromResult<PartitionAssignment?>(new PartitionAssignment(epoch, 1, instanceId, [.. members], DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch + lease));
     public Task<bool> RenewAsync(Guid instanceId, long epoch, CancellationToken cancellationToken) => Task.FromResult(true);
+    public Task<string?> OpenOwnershipByMapAsync(Guid instanceId, long epoch, CancellationToken cancellationToken) =>
+      Task.FromResult<string?>("open");
   }
 
   private sealed class FailingElector : IDutyElector {

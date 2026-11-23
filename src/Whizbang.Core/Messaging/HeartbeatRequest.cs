@@ -64,8 +64,26 @@ public sealed record HeartbeatRequest(
   public const int STORED_FORM_LEVEL = 1;
 
   /// <summary>
+  /// The key in the registry row's metadata (<c>wh_service_instances.metadata</c>) that says which partition ownership
+  /// modes this instance supports (#2555). A release before it writes none, which the ownership switch reads as "claims
+  /// only by the stored owner and its rank".
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/HeartbeatRequestStoredFormLevelTests.cs:PartitionOwnershipLevel_IsOne_TheLevelThatSupportsOwnershipByMapAsync</tests>
+  public const string PARTITION_OWNERSHIP_LEVEL_KEY = "partition_ownership_level";
+
+  /// <summary>
+  /// The partition ownership level this build supports: 1 claims through the partition ownership table when the
+  /// service's switch is on (#2555). Monotonic: a later ownership protocol raises it, never this one.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/HeartbeatRequestStoredFormLevelTests.cs:PartitionOwnershipLevel_IsOne_TheLevelThatSupportsOwnershipByMapAsync</tests>
+  public const int PARTITION_OWNERSHIP_LEVEL = 1;
+
+  /// <summary>
   /// The metadata the heartbeat records for this instance: <see cref="Metadata"/>'s keys, with
-  /// <see cref="STORED_FORM_LEVEL_KEY"/> set to <see cref="STORED_FORM_LEVEL"/> (#2323). Every driver writes this, so no
+  /// <see cref="STORED_FORM_LEVEL_KEY"/> set to <see cref="STORED_FORM_LEVEL"/> (#2323) and
+  /// <see cref="PARTITION_OWNERSHIP_LEVEL_KEY"/> set to <see cref="PARTITION_OWNERSHIP_LEVEL"/> (#2555). Every driver writes this, so no
   /// caller can leave the marker out. Metadata that is not a JSON object is replaced by the marker alone.
   /// </summary>
   /// <returns>The metadata as JSON text.</returns>

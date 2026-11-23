@@ -13,7 +13,8 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <summary>
 /// The Postgres store behind the partition assigner (#1254): migration 203's
 /// <c>wh_read_partition_assignment</c>, <c>wh_partition_assignment_candidates</c>,
-/// <c>wh_publish_partition_assignment</c> and <c>wh_renew_partition_assignment</c>. Each call is one statement on a
+/// <c>wh_publish_partition_assignment</c> and <c>wh_renew_partition_assignment</c>, and migration 560's
+/// <c>wh_open_partition_ownership_by_map</c>. Each call is one statement on a
 /// connection of its own, so it works through a transaction pooler.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
@@ -121,6 +122,10 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
     cmd.Parameters.AddWithValue(nameof(epoch), epoch);
     return ScalarResult.IsTrue(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
   }
+
+  /// <inheritdoc />
+  public Task<string?> OpenOwnershipByMapAsync(Guid instanceId, long epoch, CancellationToken cancellationToken) =>
+    throw new NotImplementedException();
 
   private async ValueTask<NpgsqlConnection> _openAsync(CancellationToken cancellationToken) {
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
