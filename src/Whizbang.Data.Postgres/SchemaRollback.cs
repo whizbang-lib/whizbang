@@ -71,7 +71,7 @@ public static partial class SchemaRollback {
     var probe = await PostgresStartupAssessment.ProbeAsync(connection, prefix, cancellationToken).ConfigureAwait(false);
     var changes = await PostgresStartupAssessment.ReadChangesAsync(connection, prefix, probe, withScripts: true, cancellationToken)
       .ConfigureAwait(false);
-    var since = UpgradeOrder.AppliedSince(request.Own, [.. changes.Select(c => c.Change)]);
+    var since = UpgradeOrder.AppliedSince(request.Own, [.. changes.Select(c => c.Change)], defined: null);
     if (since.Count == 0) {
       return 0;
     }

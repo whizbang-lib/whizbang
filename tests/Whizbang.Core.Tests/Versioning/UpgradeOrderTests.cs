@@ -265,10 +265,14 @@ public class UpgradeOrderTests {
   private static AppliedSchemaChange _application(string name, string library, string? application) =>
     new(name, SchemaChangeKind.Application, library, application);
 
+  /// <summary>The gate when this build defines nothing the ledger records: who applied each change decides alone.</summary>
+  private static IReadOnlyList<AppliedSchemaChange> _versionsOnly(VersionSighting own, IEnumerable<AppliedSchemaChange> changes) =>
+    UpgradeOrder.AppliedSince(own, changes, defined: null);
+
   [Test]
   public async Task NothingAppliedSinceThisVersion_AnApplicationRollbackHasNothingToFearAsync() {
     // An application rolled back from 2.0.0 to 1.9.0: every change was applied by 1.9.0 or before, so it serves.
-    var since = UpgradeOrder.AppliedSince(_own("1.0.0", "1.9.0"), [
+    var since = _versionsOnly(_own("1.0.0", "1.9.0"), [
       _platform("150_Something.sql", "1.0.0", "1.2.0"),
       _application("perspective:wh_per_orders", "1.0.0", "1.9.0"),
       _application("perspective:wh_per_lines", "0.9.0", "1.0.0"),
@@ -281,7 +285,7 @@ public class UpgradeOrderTests {
   public async Task AnApplicationSchemaChange_AppliedByANewerApplication_IsFoundAsync() {
     var change = _application("perspective:wh_per_orders", "1.0.0", "2.0.0");
 
-    var since = UpgradeOrder.AppliedSince(_own("1.0.0", "1.9.0"), [change]);
+    var since = _versionsOnly(_own("1.0.0", "1.9.0"), [change]);
 
     await Assert.That(since).IsEquivalentTo([change]);
   }
@@ -291,7 +295,7 @@ public class UpgradeOrderTests {
     // The library generates the application's tables: a newer library's DDL is not this binary's to serve.
     var change = _application("perspective:wh_per_orders", "2.0.0", "1.0.0");
 
-    await Assert.That(UpgradeOrder.AppliedSince(_own("1.0.0", "3.0.0"), [change])).IsEquivalentTo([change]);
+    await Assert.That(_versionsOnly(_own("1.0.0", "3.0.0"), [change])).IsEquivalentTo([change]);
   }
 
   [Test]
@@ -299,7 +303,7 @@ public class UpgradeOrderTests {
     var newer = _platform("351_X.sql", "2.0.0", "1.0.0");
     var sameLibraryNewerApplication = _platform("150_Y.sql", "1.0.0", "9.0.0");
 
-    var since = UpgradeOrder.AppliedSince(_own("1.0.0", "1.0.0"), [newer, sameLibraryNewerApplication]);
+    var since = _versionsOnly(_own("1.0.0", "1.0.0"), [newer, sameLibraryNewerApplication]);
 
     await Assert.That(since).IsEquivalentTo([newer])
       .Because("a W! migration is the library's: a newer application on the same library applied nothing of its own");
@@ -309,7 +313,7 @@ public class UpgradeOrderTests {
   [Arguments(null, null)]
   [Arguments("garbage", "unknown")]
   public async Task AChangeWithNoReadableApplier_NeverStandsAnInstanceDownAsync(string? library, string? application) {
-    var since = UpgradeOrder.AppliedSince(_own(), [
+    var since = _versionsOnly(_own(), [
       new AppliedSchemaChange("200_Z.sql", SchemaChangeKind.Platform, library, application),
       new AppliedSchemaChange("perspective:wh_per_z", SchemaChangeKind.Application, library, application),
     ]);
@@ -319,10 +323,60 @@ public class UpgradeOrderTests {
 
   [Test]
   public async Task EqualVersions_FindNothingAppliedSinceAsync() {
-    var since = UpgradeOrder.AppliedSince(_own("1.0.0", "1.0.0"), [
+    var since = _versionsOnly(_own("1.0.0", "1.0.0"), [
       _platform("351_X.sql", "1.0.0", "1.0.0"), _application("perspective:wh_per_x", "1.0.0", "1.0.0")]);
 
     await Assert.That(since).IsEmpty();
+  }
+
+  // ── #2553: judged by what was applied, not who applied it ───────────
+
+  private static AppliedSchemaChange _hashed(AppliedSchemaChange change, string? hash) => change with { ContentHash = hash };
+
+  [Test]
+  public async Task AChangeThisBuildDefinesIdentically_IsCurrent_WhateverVersionAppliedItAsync() {
+    // A database restored from another environment: its ledger records that environment's versions, here a SemVer-higher
+    // application and library than this preview build's, over the very changes this build makes.
+    var own = _own("1.0.0", "0.0.0-preview.restored");
+    AppliedSchemaChange[] ledger = [
+      _hashed(_application("perspective:wh_per_orders", "2.0.0", "1.63.0-rc.3"), "aa11"),
+      _hashed(_platform("351_X.sql", "2.0.0", "1.63.0-rc.3"), "bb22"),
+    ];
+
+    var since = UpgradeOrder.AppliedSince(own, ledger, new Dictionary<string, string>(StringComparer.Ordinal) {
+      ["perspective:wh_per_orders"] = "aa11",
+      ["351_X.sql"] = "bb22",
+    });
+
+    await Assert.That(since).IsEmpty()
+      .Because("a change this build defines with the same hash is current, whatever version string applied it");
+  }
+
+  [Test]
+  public async Task AChangeThisBuildDefinesDifferently_OrDoesNotDefine_IsJudgedByWhoAppliedItAsync() {
+    var own = _own("1.0.0", "1.0.0");
+    var changed = _hashed(_application("perspective:wh_per_orders", "1.0.0", "2.0.0"), "newer-columns");
+    var unknown = _hashed(_platform("900_Future.sql", "2.0.0", null), "cc33");
+    var olderUnknown = _hashed(_platform("100_Retired.sql", "0.9.0", null), "dd44");
+
+    var since = UpgradeOrder.AppliedSince(own, [changed, unknown, olderUnknown], new Dictionary<string, string>(StringComparer.Ordinal) {
+      ["perspective:wh_per_orders"] = "this-builds-columns",
+    });
+
+    await Assert.That(since).IsEquivalentTo([changed, unknown])
+      .Because("a hash this build does not produce under that name is judged by the version rule, as before #2553");
+  }
+
+  [Test]
+  public async Task AChangeWithNoRecordedHash_IsJudgedByWhoAppliedIt_EvenWhenThisBuildDefinesItsNameAsync() {
+    // A stored-form or temporal-form conversion: its journal records who applied it, and no hash.
+    var conversion = _application("stored-form:orders-v2", "1.0.0", "2.0.0");
+
+    var since = UpgradeOrder.AppliedSince(_own("1.0.0", "1.0.0"), [conversion], new Dictionary<string, string>(StringComparer.Ordinal) {
+      ["stored-form:orders-v2"] = "aa11",
+    });
+
+    await Assert.That(since).IsEquivalentTo([conversion]);
   }
 
   // ── #2122: what can be rolled back ──────────────────────────────────
@@ -403,8 +457,8 @@ public class UpgradeOrderTests {
 
   [Test]
   public async Task TheGate_RefusesNullArgumentsAsync() {
-    await Assert.That(() => UpgradeOrder.AppliedSince(null!, [])).Throws<ArgumentNullException>();
-    await Assert.That(() => UpgradeOrder.AppliedSince(_own(), null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => UpgradeOrder.AppliedSince(null!, [], null)).Throws<ArgumentNullException>();
+    await Assert.That(() => UpgradeOrder.AppliedSince(_own(), null!, null)).Throws<ArgumentNullException>();
     await Assert.That(() => UpgradeOrder.WhyNotReversible(null!, [], false)).Throws<ArgumentNullException>();
     await Assert.That(() => UpgradeOrder.WhyNotReversible(_own(), null!, false)).Throws<ArgumentNullException>();
     await Assert.That(() => UpgradeOrder.DescribeRollback(null!, [])).Throws<ArgumentNullException>();

@@ -81,6 +81,14 @@ public sealed record AppliedSchemaChange(string Name, SchemaChangeKind Kind, str
   /// <summary>How the change is reversed, as recorded when it was applied (#2122); irreversible when nothing says.</summary>
   /// <docs>operations/infrastructure/migrations#how-a-migration-is-reversed</docs>
   public SchemaChangeReversal Reversal { get; init; }
+
+  /// <summary>
+  /// The content hash the ledger recorded for the change (#2553): what was applied, which the rollback gate compares
+  /// with what this build defines under the same name. Null when the ledger recorded none (a stored-form or temporal-form
+  /// conversion, which its journal records without one), and the change is then judged by who applied it.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#the-rollback-gate</docs>
+  public string? ContentHash { get; init; }
 }
 
 /// <summary>
@@ -223,10 +231,14 @@ public static class UpgradeOrder {
   /// </summary>
   /// <param name="own">This instance's versions.</param>
   /// <param name="changes">The changes the ledger records, with who applied each.</param>
+  /// <param name="defined">What this build defines (#2553): each change it produces, by the ledger's name for it, with
+  /// its content hash; null when nothing is known.</param>
   /// <returns>The changes applied since, in the order given.</returns>
-  public static IReadOnlyList<AppliedSchemaChange> AppliedSince(VersionSighting own, IEnumerable<AppliedSchemaChange> changes) {
+  public static IReadOnlyList<AppliedSchemaChange> AppliedSince(
+      VersionSighting own, IEnumerable<AppliedSchemaChange> changes, IReadOnlyDictionary<string, string>? defined) {
     ArgumentNullException.ThrowIfNull(own);
     ArgumentNullException.ThrowIfNull(changes);
+    _ = defined;   // RED (#2553): not yet consulted
     return [.. changes.Where(change => CompareLibrary(change.LibraryVersion, own.LibraryVersion) > 0
       || (change.Kind == SchemaChangeKind.Application
           && CompareApplication(change.ApplicationVersion, own.ApplicationVersion) > 0))];

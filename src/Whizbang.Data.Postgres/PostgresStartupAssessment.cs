@@ -144,11 +144,13 @@ internal static class PostgresStartupAssessment {
   /// have stood down in <see cref="StartupAssessment.OverriddenReason"/>. It never lifts the stand-down for a newer
   /// version online, nor the refusal of a build that cannot say what it is.</param>
   /// <param name="allowLossyRollback">Whether a rollback may discard data the newer version wrote (#2122).</param>
+  /// <param name="defined">What this build defines (#2553), by the ledger's name, with each content hash; null when
+  /// nothing is known.</param>
   /// <returns>Migrate (with the rollback owed, when one is), Serve or StandDown; Current only when the override let an
   /// incompatible instance start.</returns>
   internal static StartupAssessment ComputeVerdict(
       VersionSighting own, IReadOnlyList<AppliedSchemaChange> ledger, IReadOnlyList<VersionSighting> online,
-      bool overrideIncompatibility = false, bool allowLossyRollback = false) {
+      bool overrideIncompatibility = false, bool allowLossyRollback = false, IReadOnlyDictionary<string, string>? defined = null) {
     var mine = own.LibraryVersion;
     if (mine is null) {
       // Absent and unreadable are different facts (issue #619): nobody registered a provider, which the Postgres
@@ -172,7 +174,7 @@ internal static class PostgresStartupAssessment {
     if (UpgradeOrder.FindNewer(own, online) is { } newer) {
       return new StartupAssessment(StartupVerdict.StandDown, newer.Describe() + STANDING_DOWN);
     }
-    if (UpgradeOrder.AppliedSince(own, ledger) is { Count: > 0 } since) {
+    if (UpgradeOrder.AppliedSince(own, ledger, defined) is { Count: > 0 } since) {
       // #2122: every change since can be reversed, so this instance's start rolls the schema back to its version.
       if (UpgradeOrder.WhyNotReversible(own, since, allowLossyRollback) is not { } refusal) {
         return new StartupAssessment(StartupVerdict.Migrate, UpgradeOrder.DescribeRollback(own, since)) {

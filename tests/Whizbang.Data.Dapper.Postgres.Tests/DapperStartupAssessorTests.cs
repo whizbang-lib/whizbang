@@ -271,6 +271,44 @@ public class DapperStartupAssessorTests {
     await Assert.That(assessment.Reason).Contains($"(applied by library {_newerThanThisBinary()}, application unknown)");
   }
 
+  // ── #2553: a restored database is judged by what was applied ──
+
+  /// <summary>
+  /// A database restored from another environment: every change was applied by that environment's release, whose
+  /// application version is SemVer-higher than a preview build's, over the hashes this build writes.
+  /// </summary>
+  private async Task _restoreFromAnotherEnvironmentAsync() {
+    var restored = await _versionAsync(BuildInfo.Version, "1.63.0-rc.3");
+    await _execAsync("ALTER TABLE wh_schema_migrations DISABLE TRIGGER wh_schema_migrations_applied_by");
+    await _execAsync($"UPDATE wh_schema_migrations SET version_id = {restored}, applied_version_id = {restored} WHERE file_name NOT LIKE 'step:%'");
+    await _execAsync("ALTER TABLE wh_schema_migrations ENABLE TRIGGER wh_schema_migrations_applied_by");
+  }
+
+  [Test]
+  public async Task ARestoredDatabase_WhoseChangesThisBuildDefinesIdentically_ServesWhateverVersionAppliedThemAsync() {
+    await _startAsync();
+    await _restoreFromAnotherEnvironmentAsync();
+
+    var assessment = await _assessAtAsync("0.0.0-preview.restored");
+
+    await Assert.That(assessment.Verdict).IsNotEqualTo(StartupVerdict.StandDown).Because(assessment.Reason);
+    await Assert.That(assessment.Rollback).IsNull().Because(assessment.Reason);
+  }
+
+  [Test]
+  public async Task ARestoredDatabase_WithAChangeThisBuildDoesNotDefine_StillStandsDown_NamingOnlyThatChangeAsync() {
+    await _startAsync();
+    await _restoreFromAnotherEnvironmentAsync();
+    await _execAsync("UPDATE wh_schema_migrations SET content_hash = 'the-other-environments-columns', status = 2 WHERE file_name = 'perspective:AssessProbe'");
+
+    var assessment = await _assessAtAsync("0.0.0-preview.restored");
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(assessment.Reason).Contains(
+      "1 schema change(s) were applied by a newer version that this version did not make, and 1 cannot be reversed: "
+      + $"perspective:AssessProbe (applied by library {BuildInfo.Version}, application 1.63.0-rc.3)");
+  }
+
   [Test]
   public async Task ServingAsItIs_RegistersTheInstance_WithItsConnectionModeAndLivenessWindow_AndTheOverrideAsync() {
     // The start the override allowed joins the registry like any other (#2022), so it records what the one liveness

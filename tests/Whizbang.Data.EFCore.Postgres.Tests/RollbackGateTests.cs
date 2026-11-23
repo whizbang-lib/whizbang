@@ -257,6 +257,63 @@ public class RollbackGateTests : EFCoreTestBase {
     await Assert.That(assessment.Reason).Contains("(applied by library 1000.0.0, application unknown)");
   }
 
+  // ── #2553: a restored database is judged by what was applied ────────
+
+  /// <summary>
+  /// A database restored from another environment: every change its ledger records was applied by that environment's
+  /// release, whose application version (here <c>1.63.0-rc.3</c>) is SemVer-higher than a preview build's, over the hashes
+  /// the pass writes. Who applied each row is rewritten as the restore would leave it, with the trigger off.
+  /// </summary>
+  private async Task _restoreFromAnotherEnvironmentAsync(string library, CancellationToken ct) {
+    var restored = await _versionAsync(library, "1.63.0-rc.3", ct);
+    await _execAsync("ALTER TABLE wh_schema_migrations DISABLE TRIGGER wh_schema_migrations_applied_by", ct);
+    await _execAsync("UPDATE wh_schema_migrations SET version_id = @v, applied_version_id = @v WHERE owner <> 'step'", ct, ("v", restored));
+    await _execAsync("ALTER TABLE wh_schema_migrations ENABLE TRIGGER wh_schema_migrations_applied_by", ct);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task ARestoredDatabase_WhoseChangesThisBuildDefinesIdentically_ServesWhateverVersionAppliedThemAsync(CancellationToken ct) {
+    var library = await _ledgerLibraryAsync(ct);
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_schema_migrations WHERE owner = 'perspective'", ct))
+      .IsGreaterThan(0).Because("the scenario needs the application's own schema changes in the ledger");
+    await _restoreFromAnotherEnvironmentAsync(library, ct);
+
+    var assessment = await _assessor(library, "0.0.0-preview.restored").AssessAsync(ct);
+
+    await Assert.That(assessment.Verdict).IsNotEqualTo(StartupVerdict.StandDown).Because(assessment.Reason);
+    await Assert.That(assessment.Rollback).IsNull()
+      .Because("nothing this build defines identically is rolled back, whoever applied it: " + assessment.Reason);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task ARestoredDatabase_WithAChangeThisBuildDoesNotDefine_StillGoesThroughTheGate_NamingOnlyThatChangeAsync(CancellationToken ct) {
+    var library = await _ledgerLibraryAsync(ct);
+    await _restoreFromAnotherEnvironmentAsync(library, ct);
+    var restored = await _versionAsync(library, "1.63.0-rc.3", ct);
+    await _execAsync("""
+      INSERT INTO wh_schema_migrations (file_name, content_hash, version_id, status, owner)
+      VALUES ('perspective:wh_per_only_the_other_environment_has', 'its-columns', @v, 1, 'perspective')
+      """, ct, ("v", restored));
+
+    var assessment = await _assessor(library, "0.0.0-preview.restored").AssessAsync(ct);
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(assessment.Reason).Contains(
+      $"1 {SINCE}: perspective:wh_per_only_the_other_environment_has (applied by library {library}, application 1.63.0-rc.3)");
+  }
+
+  [Test]
+  public async Task TheVerdict_JudgesAChangeThisBuildDefinesIdentically_AsCurrentAsync() {
+    var restored = _appliedSince with { ContentHash = "this-builds-hash" };
+
+    var verdict = PostgresStartupAssessment.ComputeVerdict(_me, [restored], [],
+      defined: new Dictionary<string, string>(StringComparer.Ordinal) { [restored.Name] = "this-builds-hash" });
+
+    await Assert.That(verdict.Verdict).IsEqualTo(StartupVerdict.Serve).Because(verdict.Reason);
+  }
+
   // ── the incompatibility override (owner decision, #2022) ─────────────
 
   private static readonly VersionSighting _me = new("1.0.0", "1.9.0", Guid.Parse("0199dddd-0000-0000-0000-000000000001"));
