@@ -22,4 +22,10 @@ internal static class ScalarResult {
   /// <summary>The <see cref="long"/> the scalar carries, else zero.</summary>
   /// <param name="value">The scalar.</param>
   internal static long LongOrZero(object? value) => value is long n ? n : 0L;
+
+  /// <summary>The UTC instant a <c>timestamptz</c> scalar carries, else null.</summary>
+  /// <param name="value">The scalar.</param>
+#pragma warning disable RCS1163, IDE0060 // RED stub (#2542)
+  internal static DateTimeOffset? InstantOrNull(object? value) => null;
+#pragma warning restore RCS1163, IDE0060
 }
