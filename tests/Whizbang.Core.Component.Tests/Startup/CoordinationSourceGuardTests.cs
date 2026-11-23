@@ -113,6 +113,8 @@ public partial class CoordinationSourceGuardTests {
     ["claim_work"] = "the partition assignment's lease: which partitions an instance owns, published by the assigner, whose role "
       + "is judged by the rule",
     ["wh_claim_multi_stream_work"] = "the partition assignment's lease, as claim_work reads it",
+    ["wh_partition_map_is_valid"] = "the published map's lease, and past it every member judged by the one liveness rule "
+      + "(wh_live_instance_ids, #2554)",
   };
 
   /// <summary>SQL functions (by their last definition) that may take a SESSION advisory lock.</summary>
