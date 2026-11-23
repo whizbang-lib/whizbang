@@ -25,7 +25,25 @@ namespace Whizbang.RepoAnalyzers.Tests;
 /// exceptions there carry a <c>[SuppressMessage]</c> or <c>#pragma</c> with the reason, as they did before.
 /// </remarks>
 public class SonarQueueRulesTests {
-  private static readonly string _root = _findRepositoryRoot();
+  /// <summary>
+  /// Where the probes are compiled. The repository's .editorconfig files are embedded in this assembly under their
+  /// repository-relative paths (the project file), and placed under this root as they sit under the repository's.
+  /// </summary>
+  private const string ROOT = "/repo";
+
+  /// <summary>The embedded .editorconfig files' resource names start with this, followed by the repository-relative path.</summary>
+  private const string EDITORCONFIG_RESOURCE_PREFIX = "editorconfig:";
+
+  private static readonly AnalyzerConfigSet _editorConfigs = _loadEditorConfigs();
+
+  [Test]
+  public async Task TheRepositoryEditorConfigs_AreEmbeddedAsync() {
+    var embedded = typeof(SonarQueueRulesTests).Assembly.GetManifestResourceNames()
+      .Where(n => n.StartsWith(EDITORCONFIG_RESOURCE_PREFIX, StringComparison.Ordinal))
+      .ToList();
+
+    await Assert.That(embedded).IsEquivalentTo(["editorconfig:.editorconfig", "editorconfig:tests/.editorconfig"]);
+  }
 
   [Test]
   [RequiresAssemblyFiles()]
@@ -78,9 +96,9 @@ public class SonarQueueRulesTests {
       .AppendJoin(", ", Enumerable.Range(0, parameters).Select(i => $"int p{i}"))
       .Append(") => p0;\n}\n");
 
-    var fullPath = Path.Combine(_root, path);
+    var fullPath = $"{ROOT}/{path}";
     var tree = CSharpSyntaxTree.ParseText(source.ToString(), path: fullPath);
-    var severities = _editorConfigSeverities(fullPath);
+    var severities = _editorConfigs.GetOptionsForSourcePath(fullPath).TreeOptions;
     var compilation = RepoAnalyzerTestHelper.CreateCompilation("");
     compilation = compilation
       .ReplaceSyntaxTree(compilation.SyntaxTrees.Single(), tree)
@@ -96,24 +114,17 @@ public class SonarQueueRulesTests {
     return [.. diagnostics.Where(d => d.Id is "S3776" or "S107")];
   }
 
-  /// <summary>The rule severities the .editorconfig files from the repository root down to its folder give <paramref name="fullPath"/>.</summary>
-  private static ImmutableDictionary<string, ReportDiagnostic> _editorConfigSeverities(string fullPath) {
-    var configs = new List<AnalyzerConfig>();
-    for (var directory = Path.GetDirectoryName(fullPath); directory?.StartsWith(_root, StringComparison.Ordinal) == true; directory = Path.GetDirectoryName(directory)) {
-      var file = Path.Combine(directory, ".editorconfig");
-      if (File.Exists(file)) {
-        configs.Add(AnalyzerConfig.Parse(File.ReadAllText(file), file));
-      }
-    }
-    return AnalyzerConfigSet.Create(configs).GetOptionsForSourcePath(fullPath).TreeOptions;
-  }
-
-  private static string _findRepositoryRoot() {
-    var directory = new DirectoryInfo(AppContext.BaseDirectory);
-    while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Whizbang.slnx"))) {
-      directory = directory.Parent;
-    }
-    return directory?.FullName ?? throw new InvalidOperationException("The repository root (Whizbang.slnx) was not found above the test output.");
+  /// <summary>The repository's .editorconfig files, embedded in this assembly, as they sit under <see cref="ROOT"/>.</summary>
+  private static AnalyzerConfigSet _loadEditorConfigs() {
+    var assembly = typeof(SonarQueueRulesTests).Assembly;
+    var configs = assembly.GetManifestResourceNames()
+      .Where(n => n.StartsWith(EDITORCONFIG_RESOURCE_PREFIX, StringComparison.Ordinal))
+      .Select(n => {
+        using var reader = new StreamReader(assembly.GetManifestResourceStream(n)!);
+        return AnalyzerConfig.Parse(reader.ReadToEnd(), $"{ROOT}/{n[EDITORCONFIG_RESOURCE_PREFIX.Length..]}");
+      })
+      .ToArray();
+    return AnalyzerConfigSet.Create(configs);
   }
 
   /// <summary>Hands the compiler a tree's .editorconfig severities the way the build does, so warnings-as-errors applies.</summary>

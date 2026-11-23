@@ -24,4 +24,11 @@
     <PackageReference Update="SonarAnalyzer.CSharp" GeneratePathProperty="true" />
     <None Include="$(PkgSonarAnalyzer_CSharp)/analyzers/SonarAnalyzer.CSharp.dll" Link="sonar/SonarAnalyzer.CSharp.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
+  <!-- The repository's .editorconfig files that apply to C# under src/, tests/, samples/, benchmarks/ and tools/,
+       embedded under their repository-relative paths so SonarQueueRulesTests reads the real settings without touching
+       the file system (a Unit project stays unit-pure). A change to either file rebuilds this project. -->
+  <ItemGroup>
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)../../.editorconfig" LogicalName="editorconfig:.editorconfig" Visible="false" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)../.editorconfig" LogicalName="editorconfig:tests/.editorconfig" Visible="false" />
+  </ItemGroup>
 </Project>
