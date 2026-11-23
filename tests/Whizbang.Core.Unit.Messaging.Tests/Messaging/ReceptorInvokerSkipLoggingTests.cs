@@ -57,15 +57,10 @@ public class ReceptorInvokerSkipLoggingTests {
     var probe = _probe(skip, Logging.DebugOff);
 
     var extra = WeakNameCacheProbe.ExtraBytesAfterCollections(probe.Run);
-    // The owned-domain filter decides by the type's namespace, which the runtime keeps in the same weakly held cache as
-    // the name: that read is the filter's, not its log's, so it is measured alone and taken off
-    var filtersOwnRead = skip == Skip.OwnedDomainFilter
-      ? WeakNameCacheProbe.ExtraBytesAfterCollections(() => _ = TypeNameFormatter.NamespaceOf(typeof(SkipLoggingProbeEvent)))
-      : 0L;
 
     await Assert.That(probe.Fired).IsEqualTo(0).Because("the measured path must be the skip");
-    await Assert.That(extra - filtersOwnRead).IsEqualTo(0L)
-      .Because("with debug off the skip must not read the message type's name, which a collection drops");
+    await Assert.That(extra).IsEqualTo(0L)
+      .Because("with debug off the skip must read neither the message type's name nor, for the owned-domain filter, its namespace from the runtime's weakly held cache");
   }
 
   [Test]
