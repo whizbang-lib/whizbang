@@ -28,12 +28,26 @@ public sealed class PartitionAssignerOptions {
   /// </summary>
   public TimeSpan RepublishInterval { get; set; } = TimeSpan.FromMinutes(5);
 
-  /// <summary>RED stub (#2558).</summary>
-  public TimeSpan SettleWindow { get; set; }
+  /// <summary>
+  /// How long a membership change is collected before one new map is published (#2558): the window runs from the first
+  /// change the assigner sees, every join and leave inside it lands in the same publish, and a change that reverts
+  /// inside it publishes nothing. A rolling deploy of K instances then causes K small moves, not a reshuffle per
+  /// heartbeat. A new tenure publishes at once, and the published map stays valid (and is renewed) while a change
+  /// settles. Default 5 seconds; zero publishes every change at once. Bound from
+  /// <c>Whizbang:Database:PartitionAssigner:SettleWindow</c>.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#settle-window</docs>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerWorkerTests.cs:Tick_KJoinsInsideTheSettleWindow_PublishOnceAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignerRegistrationTests.cs:AddWhizbangPostgresNotifications_BindsEveryAssignerKeyFromConfigurationAsync</tests>
+  public TimeSpan SettleWindow { get; set; } = TimeSpan.FromSeconds(5);
 
   /// <summary>Throws when the options cannot work together.</summary>
-  /// <exception cref="InvalidOperationException">The backstop is not positive, or the lease is too short.</exception>
+  /// <exception cref="InvalidOperationException">The backstop is not positive, the lease is too short, or the settle
+  /// window is negative.</exception>
   public void Validate() {
+    if (SettleWindow < TimeSpan.Zero) {
+      throw new InvalidOperationException("PartitionAssigner.SettleWindow must not be negative.");
+    }
     if (RepublishInterval <= TimeSpan.Zero) {
       throw new InvalidOperationException("PartitionAssigner.RepublishInterval must be positive.");
     }
@@ -54,13 +68,18 @@ public enum PartitionAssignerReason {
   /// <summary>No assignment had been published, or it is another tenure's.</summary>
   NewTenure = 1,
 
-  /// <summary>An instance became live or stopped being live: an alive-lock gained or lost, a heartbeat fresh or stale.</summary>
+  /// <summary>
+  /// An instance became live or stopped being live (an alive-lock gained or lost, a heartbeat fresh or stale), and the
+  /// settle window since the first such change has run out.
+  /// </summary>
   MembershipChanged = 2,
 
   /// <summary>Nothing changed, and the backstop cadence came due.</summary>
   Backstop = 3,
 
-  /// <summary>RED stub (#2558).</summary>
+  /// <summary>
+  /// The membership changed, and the settle window since the first change seen has not run out: no publish yet (#2558).
+  /// </summary>
   Settling = 4,
 }
 
@@ -69,8 +88,8 @@ public enum PartitionAssignerReason {
 /// <param name="Reason">Why it publishes, or <see cref="PartitionAssignerReason.Unchanged"/>.</param>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 public sealed record PartitionAssignerEvaluation(IReadOnlyList<Guid> Members, PartitionAssignerReason Reason) {
-  /// <summary>Whether this evaluation publishes.</summary>
-  public bool Publishes => Reason != PartitionAssignerReason.Unchanged;
+  /// <summary>Whether this evaluation publishes: not while nothing changed, nor while a change settles (#2558).</summary>
+  public bool Publishes => Reason is not (PartitionAssignerReason.Unchanged or PartitionAssignerReason.Settling);
 }
 
 /// <summary>
@@ -80,6 +99,7 @@ public sealed record PartitionAssignerEvaluation(IReadOnlyList<Guid> Members, Pa
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerTests.cs:IsLive_IsTheRulesAnswer_WhateverTheLockOrTheHeartbeatAsync</tests>
 /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerTests.cs:Evaluate_AMemberGoingStale_PublishesAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerTests.cs:Evaluate_AChangeInsideTheSettleWindow_SettlesWithoutPublishingAsync</tests>
 public static class PartitionAssigner {
   /// <summary>
   /// Whether a candidate is live: the answer of the database's one liveness rule (#2027, <c>wh_instance_liveness</c>),
@@ -109,33 +129,34 @@ public static class PartitionAssigner {
   }
 
   /// <summary>
-  /// Whether the live members call for a publish: no assignment of this tenure yet, a change in membership, or the
-  /// backstop come due.
+  /// Whether the live members call for a publish: no assignment of this tenure yet, a change in membership that has
+  /// settled (#2558), or the backstop come due.
   /// </summary>
   /// <param name="members">The live members, in rank order.</param>
   /// <param name="published">What this tenure last published, or null.</param>
   /// <param name="epoch">This tenure's role epoch.</param>
   /// <param name="sincePublished">How long ago, by the assigner's own clock, it last published.</param>
-  /// <param name="unsettledFor">RED stub (#2558).</param>
+  /// <param name="unsettledFor">How long, by the assigner's own clock, the members have differed from the published ones
+  /// (#2558): since the first change seen, zero when they have just started to differ.</param>
   /// <param name="options">The backstop cadence.</param>
   /// <returns>The evaluation.</returns>
   public static PartitionAssignerEvaluation Evaluate(
       IReadOnlyList<Guid> members, PartitionAssignment? published, long epoch, TimeSpan sincePublished,
       TimeSpan unsettledFor, PartitionAssignerOptions options) {
-    _ = unsettledFor;
     ArgumentNullException.ThrowIfNull(members);
     ArgumentNullException.ThrowIfNull(options);
-    return new PartitionAssignerEvaluation(members, _reason(members, published, epoch, sincePublished, options));
+    return new PartitionAssignerEvaluation(members, _reason(members, published, epoch, sincePublished, unsettledFor, options));
   }
 
   private static PartitionAssignerReason _reason(
       IReadOnlyList<Guid> members, PartitionAssignment? published, long epoch, TimeSpan sincePublished,
-      PartitionAssignerOptions options) {
+      TimeSpan unsettledFor, PartitionAssignerOptions options) {
     if (published is null || published.Epoch != epoch) {
       return PartitionAssignerReason.NewTenure;
     }
     if (!published.Members.SequenceEqual(members)) {
-      return PartitionAssignerReason.MembershipChanged;
+      // #2558: the change waits out the settle window, so the joins and leaves inside it land in one publish.
+      return unsettledFor >= options.SettleWindow ? PartitionAssignerReason.MembershipChanged : PartitionAssignerReason.Settling;
     }
     return sincePublished >= options.RepublishInterval ? PartitionAssignerReason.Backstop : PartitionAssignerReason.Unchanged;
   }

@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Globalization;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -20,8 +22,15 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignerRegistrationTests.cs:AddWhizbangPostgresNotifications_WiresThePartitionAssignerAsync</tests>
 internal static class PartitionAssignerRegistration {
+  /// <summary>The configuration section the assigner's options bind from (#2558).</summary>
+  internal const string CONFIGURATION_SECTION = PostgresNotificationsServiceCollectionExtensions.CONFIGURATION_SECTION + ":PartitionAssigner";
+
   internal static IServiceCollection AddWhizbangPartitionAssigner(this IServiceCollection services) {
     services.AddOptions<PartitionAssignerOptions>();
+    // #2558: bound from configuration, so an operator can set the settle window measured on a deployed environment. A
+    // host's own Configure registered after this still has the last word.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      IConfigureOptions<PartitionAssignerOptions>, ConfigurePartitionAssignerOptionsFromConfiguration>());
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       IPostConfigureOptions<RoleAssignmentOptions>, PartitionAssignerRoleOptions>());
 
@@ -40,6 +49,33 @@ internal static class PartitionAssignerRegistration {
     // migration was altering and, on a fresh database, before they existed.
     services.AddHostedServiceAtStage(StartupStage.Coordinate, sp => sp.GetRequiredService<PartitionAssignerWorker>());
     return services;
+  }
+}
+
+/// <summary>
+/// Binds <see cref="PartitionAssignerOptions"/> from <c>Whizbang:Database:PartitionAssigner</c> (#2558): <c>Enabled</c>,
+/// <c>AssignmentLease</c>, <c>RepublishInterval</c> and <c>SettleWindow</c>. A key that is absent or does not parse leaves
+/// the default. Parsed by hand, as the role assignment's options are, so the binding needs no reflection.
+/// </summary>
+/// <docs>operations/configuration/configuration-reference#partition-assigner</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignerRegistrationTests.cs:AddWhizbangPostgresNotifications_BindsEveryAssignerKeyFromConfigurationAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignerRegistrationTests.cs:AddWhizbangPostgresNotifications_WithNoAssignerKeys_KeepsTheDefaultsAsync</tests>
+internal sealed class ConfigurePartitionAssignerOptionsFromConfiguration(IConfiguration configuration)
+  : IConfigureOptions<PartitionAssignerOptions> {
+  public void Configure(PartitionAssignerOptions options) {
+    var section = configuration.GetSection(PartitionAssignerRegistration.CONFIGURATION_SECTION);
+    if (bool.TryParse(section[nameof(PartitionAssignerOptions.Enabled)], out var enabled)) {
+      options.Enabled = enabled;
+    }
+    if (TimeSpan.TryParse(section[nameof(PartitionAssignerOptions.AssignmentLease)], CultureInfo.InvariantCulture, out var lease)) {
+      options.AssignmentLease = lease;
+    }
+    if (TimeSpan.TryParse(section[nameof(PartitionAssignerOptions.RepublishInterval)], CultureInfo.InvariantCulture, out var backstop)) {
+      options.RepublishInterval = backstop;
+    }
+    if (TimeSpan.TryParse(section[nameof(PartitionAssignerOptions.SettleWindow)], CultureInfo.InvariantCulture, out var settle)) {
+      options.SettleWindow = settle;
+    }
   }
 }
 

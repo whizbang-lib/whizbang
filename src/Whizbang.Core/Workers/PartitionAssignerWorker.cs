@@ -19,9 +19,18 @@ namespace Whizbang.Core.Workers;
 /// Every instance runs this worker and votes for <see cref="PartitionAssignerOptions.ROLE"/>; the holder leads. Each
 /// tick of its tenure, one per role renewal interval, it reads the registered instances with the database's one liveness
 /// rule's answer for each (<see cref="PartitionAssigner.IsLive"/>, #2027). It publishes when that changes the membership (an
-/// alive-lock gained or lost, a heartbeat gone stale or fresh), when its tenure has not published yet, and on the slow
+/// alive-lock gained or lost, a heartbeat gone stale or fresh) and the change has settled
+/// (<see cref="PartitionAssignerOptions.SettleWindow"/>), when its tenure has not published yet, and on the slow
 /// backstop cadence; otherwise it renews the published assignment's lease while it holds its alive-lock. Its heartbeat
 /// renews the lease as well, so the lease runs out exactly when the assigner stops being seen.
+/// </para>
+/// <para>
+/// What it publishes is a <see cref="PartitionMap"/> (#2558), changed from the published one as little as balance
+/// allows: a join takes about 1/(N+1) of the partitions evenly from the members, a leave spreads its share evenly over
+/// the rest, and nothing else moves. A tenure starts from the map already published, whoever published it, so a
+/// failover alone moves nothing. Only instances whose startup reports ready are candidates
+/// (<c>wh_partition_assignment_candidates</c>, #1638), so a joining instance is given partitions only once it can claim
+/// them.
 /// </para>
 /// <para>
 /// Every publish is fenced by the role epoch, and a refused publish, a lost role or a drain request ends the tenure.
@@ -31,6 +40,9 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerWorkerTests.cs:Tick_TheFirstOfATenure_PublishesTheLiveMembersAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerWorkerTests.cs:Tick_KJoinsInsideTheSettleWindow_PublishOnceAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerWorkerTests.cs:Tick_ANewTenure_StartsFromThePublishedMap_SoItMovesNothingAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignerWorkerPostgresTests.cs:AJoiningInstance_GetsPartitions_OnlyOnceItsStartupReportsReadyAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignerWorkerPostgresTests.cs:TwoInstances_OneIsElected_AndPublishesBothAsync</tests>
 public sealed partial class PartitionAssignerWorker : BackgroundService {
   private readonly IDutyElector _elector;
@@ -45,6 +57,12 @@ public sealed partial class PartitionAssignerWorker : BackgroundService {
   private long _publishedAtTimestamp;
   // The tenure's role epoch; zero when this instance is not the assigner (role epochs start at 1).
   private long _epoch;
+  // #2558: the map this tenure changes incrementally: the published one when the tenure began, then each it publishes.
+  // Null until the tenure's first tick reads it. Read and written only by the tenure's ticks, which run one at a time.
+  private PartitionMap? _map;
+  // #2558: when (by this clock's timestamp) the members were first seen to differ from the published ones; null while
+  // they match. The settle window runs from here.
+  private long? _unsettledSince;
 
   /// <summary>Creates the worker.</summary>
   /// <param name="elector">The role election.</param>
@@ -174,21 +192,27 @@ public sealed partial class PartitionAssignerWorker : BackgroundService {
     var self = _instance.InstanceId;
     var candidates = await _store.ReadCandidatesAsync(cancellationToken).ConfigureAwait(false);
     var members = PartitionAssigner.LiveMembers(candidates, self);
+    // #2558: a tenure continues from the published map, whoever published it, so a failover alone moves nothing.
+    _map ??= PartitionMap.FromPublished((await _store.ReadAsync(cancellationToken).ConfigureAwait(false))?.Assignment);
     var published = LastPublished;
     var sincePublished = published is null ? TimeSpan.MaxValue : _time.GetElapsedTime(Volatile.Read(ref _publishedAtTimestamp));
-    var evaluation = PartitionAssigner.Evaluate(members, published, epoch, sincePublished, TimeSpan.MaxValue, _options);
+    var evaluation = PartitionAssigner.Evaluate(members, published, epoch, sincePublished, _unsettledFor(members, published), _options);
 
     if (evaluation.Publishes) {
+      var map = _map.Rebalance(members);
       var assignment = await _store.PublishAsync(
-        PartitionAssignerOptions.ROLE, self, epoch, PartitionMap.Initial(members), _options.AssignmentLease, cancellationToken).ConfigureAwait(false);
+        PartitionAssignerOptions.ROLE, self, epoch, map, _options.AssignmentLease, cancellationToken).ConfigureAwait(false);
       if (assignment is null) {
         LogFenced(_logger, epoch);
         _raiseEvaluated(evaluation);
         return false;
       }
+      var moved = _map.MovesTo(map);
+      _map = map;
+      _unsettledSince = null;
       Volatile.Write(ref _published, assignment);
       Volatile.Write(ref _publishedAtTimestamp, _time.GetTimestamp());
-      LogPublished(_logger, assignment.Epoch, assignment.Revision, assignment.Members.Count, evaluation.Reason);
+      LogPublished(_logger, assignment.Epoch, assignment.Revision, assignment.Members.Count, moved, evaluation.Reason);
       OnPublished?.Invoke(assignment);
     } else if (_aliveLock.IsAliveLockHeld) {
       // The alive-lock is this assigner's liveness, so its tick renews the lease; the heartbeat renews it as well.
@@ -200,9 +224,25 @@ public sealed partial class PartitionAssignerWorker : BackgroundService {
 
   private void _raiseEvaluated(PartitionAssignerEvaluation evaluation) => OnEvaluated?.Invoke(evaluation);
 
+  /// <summary>
+  /// How long the members have differed from the published ones (#2558): measured from the first tick that saw them
+  /// differ, and cleared as soon as they match again, so a change that reverts inside the window publishes nothing.
+  /// </summary>
+  private TimeSpan _unsettledFor(IReadOnlyList<Guid> members, PartitionAssignment? published) {
+    // Nothing published yet, or the members match it: nothing is settling.
+    if (published?.Members.SequenceEqual(members) != false) {
+      _unsettledSince = null;
+      return TimeSpan.Zero;
+    }
+    _unsettledSince ??= _time.GetTimestamp();
+    return _time.GetElapsedTime(_unsettledSince.Value);
+  }
+
   private void _begin(long epoch) {
     _ = Interlocked.Exchange(ref _epoch, epoch);
     Volatile.Write(ref _published, null);
+    _map = null;
+    _unsettledSince = null;
     LogBecameAssigner(_logger, epoch);
     OnBecameAssigner?.Invoke(epoch);
   }
@@ -220,8 +260,8 @@ public sealed partial class PartitionAssignerWorker : BackgroundService {
   static partial void LogStoppedAssigning(ILogger logger, long epoch);
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Information,
-    Message = "Published partition assignment {Epoch}:{Revision} with {MemberCount} members ({Reason}).")]
-  static partial void LogPublished(ILogger logger, long epoch, long revision, int memberCount, PartitionAssignerReason reason);
+    Message = "Published partition assignment {Epoch}:{Revision} with {MemberCount} members, moving {MovedPartitions} partitions ({Reason}).")]
+  static partial void LogPublished(ILogger logger, long epoch, long revision, int memberCount, int movedPartitions, PartitionAssignerReason reason);
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Warning,
     Message = "The partition assignment publish at epoch {Epoch} was refused: this instance no longer holds the role. The tenure ends.")]
