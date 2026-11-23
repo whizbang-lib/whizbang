@@ -206,7 +206,7 @@ public interface IPerspectiveRunner {
   /// <param name="physicalStreamId">The stored stream whose events are replayed</param>
   /// <param name="perspectiveName">Name of the perspective to run</param>
   /// <param name="cancellationToken">Cancellation token</param>
-  /// <returns>One cursor completion per materialised target stream</returns>
+  /// <returns>One cursor completion per materialized target stream</returns>
   async Task<IReadOnlyList<PerspectiveCursorCompletion>> RunRebuildAsync(
     Guid physicalStreamId,
     string perspectiveName,
@@ -249,7 +249,7 @@ public interface IPerspectiveRunner {
   /// read them per stream.
   /// </param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <returns>One cursor completion per materialised target stream.</returns>
+  /// <returns>One cursor completion per materialized target stream.</returns>
   /// <docs>fundamentals/perspectives/rebuild#batched-reads</docs>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/IPerspectiveRunnerDefaultsTests.cs:RunRebuildWithEventsAsync_Default_RunsTheRebuildThatReadsItsOwnEventsAsync</tests>
   Task<IReadOnlyList<PerspectiveCursorCompletion>> RunRebuildWithEventsAsync(

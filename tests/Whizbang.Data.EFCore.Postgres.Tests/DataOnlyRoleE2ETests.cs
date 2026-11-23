@@ -101,7 +101,7 @@ public class DataOnlyRoleE2ETests {
   }
 
   // #2508: each phase waits on its own signal for as long as it takes; one deadline for the whole test names a hang.
-  private readonly StartupPhases _phases = new(TimeProvider.System);
+  private readonly StartupPhases _phases = new(TimeProvider.System); // review-checks:allow: a hang detector for the whole test; every phase waits on its own signal, and nothing passes or fails on elapsed time unless the test hangs
 
   /// <summary>Runs one phase, so a hang names where it happened instead of running into the test's timeout.</summary>
   private Task _phaseAsync(string phase, Func<Task> work, IHost? host = null, ErrorLog? errors = null) =>

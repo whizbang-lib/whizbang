@@ -29,7 +29,7 @@ internal sealed class StartupPhases(TimeProvider time) {
   /// <returns>A task that completes when the phase does, as the phase did.</returns>
   /// <exception cref="TimeoutException">The test ran past its deadline in this phase.</exception>
   public async Task RunAsync(string phase, Func<Task> work, Func<string>? describe = null) {
-    _deadline ??= Task.Delay(TestDeadline, time);
+    _deadline ??= Task.Delay(TestDeadline, time); // review-checks:allow: the delay runs on the injected TimeProvider (a FakeTimeProvider in StartupPhasesTests); it only reports a hang
     var running = work();
     if (await Task.WhenAny(running, _deadline) != running) {
       throw new TimeoutException(
