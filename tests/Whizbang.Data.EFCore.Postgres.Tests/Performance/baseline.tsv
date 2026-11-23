@@ -95,13 +95,25 @@ store.wh_perspective_events.tuples_read_per_call	0	tuples/call	100
 # Measured before the fix: 3,730.5 blocks a call shallow, 54,914 deep, 1,766.7 rows leased a call
 # at depth, a 14.7x multiple. Three deployed services reported 4,575, 12,022 and 29,018 blocks a
 # call on this same code, which is one code path at three data shapes.
-claim.blocks_per_call.depth_12	1352.8	blocks/call	8000	
-claim.blocks_per_call.depth_200	1313.3	blocks/call	8000	was 54914 before the row bound
-claim.blocks_per_call.depth_50	8563.2	blocks/call	10000	fixed workload, the dearest id set measured (6,897 to 8,563 across sets, #2521); 8000 until a mid-depth poll reading 5-6x a deep one is fixed (#2523)
-claim.depth_cost_multiple	0.971	x		recorded, not gated: 14.7 before the row bound, and the deepest fixture holds 16x the rows
+#
+# #2523: each depth is the dearest of six fixed id layouts, and 25 and 100 are measured as well as 12, 50
+# and 200. Before #2523 a stream's walk was planned as a read of its whole pending tail, sorted, with the
+# ordering probe on every row, wherever a stream looked too short for an ordered walk to stop early: the
+# dearest layouts cost 2,998 at depth 25, 8,561 at 50 and 3,541 at 100, against 1,441 at 12 and 1,428
+# at 200. One ceiling holds at every depth, low enough that the mid-depth plan fails it at all three.
+# Migration 557 keeps the walk an ordered scan that stops at its bound: 1,347 at 25, 1,397 at 50, 1,111
+# at 100. Rows leased is the dearest layout's too; one layout leases 8.3 a call at 50 and 200, before and after.
+claim.blocks_per_call.depth_100	1111	blocks/call	2000	was 3,541 before #2523
+claim.blocks_per_call.depth_12	1439	blocks/call	2000	
+claim.blocks_per_call.depth_200	1424	blocks/call	2000	was 54914 before the row bound
+claim.blocks_per_call.depth_25	1347.3	blocks/call	2000	was 2,998 before #2523
+claim.blocks_per_call.depth_50	1396.8	blocks/call	2000	was 8,561 before #2523, the dearest of six fixed layouts (6,897 to 8,563 across id sets drawn at random, #2521)
+claim.depth_cost_multiple	0.99	x		recorded, not gated: 14.7 before the row bound, and the deepest fixture holds 16x the rows
+claim.rows_leased_per_call.depth_100	6.667	rows/call		
 claim.rows_leased_per_call.depth_12	6.667	rows/call		
-claim.rows_leased_per_call.depth_200	6.667	rows/call	50	was 1766.7 before the row bound
-claim.rows_leased_per_call.depth_50	6.667	rows/call		
+claim.rows_leased_per_call.depth_200	8.333	rows/call	50	was 1766.7 before the row bound
+claim.rows_leased_per_call.depth_25	6.667	rows/call		
+claim.rows_leased_per_call.depth_50	8.333	rows/call		
 
 # --- Store perspective emptiness probe, by stream state ---------------------------------------
 # 200 streams holding 100 pending perspective events each, plus one stream carrying 400 PROCESSED
