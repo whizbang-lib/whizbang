@@ -454,6 +454,7 @@ public partial class PerspectiveWorkerDrainModeTests {
     private readonly MeterListener _listener = new();
     private readonly DrainModeEventStore _store = new();
     private readonly ConcurrentDictionary<(string Name, string? Tag), long> _measured = new();
+    private readonly List<ServiceProvider> _owned = [];
     private int _holds;
     private CancellationTokenSource? _running;
     private PerspectiveWorker? _worker;
@@ -523,7 +524,20 @@ public partial class PerspectiveWorkerDrainModeTests {
 
     public List<Guid> EventsOf(Guid stream) => _events[stream];
 
+    /// <summary>Every stream the rig has committed events on.</summary>
+    public IReadOnlyList<Guid> HeldStreams() => [.. _events.Keys];
+
+    /// <summary>A provider a test built around the rig's worker, disposed with the rig.</summary>
+    public void Owns(ServiceProvider provider) => _owned.Add(provider);
+
     public async Task StartAsync(CancellationToken ct) {
+      Build();
+      _running = CancellationTokenSource.CreateLinkedTokenSource(ct);
+      await _worker!.StartAsync(_running.Token);
+    }
+
+    /// <summary>Builds the worker without starting it, so it has read no perspectives and holds no cache yet.</summary>
+    public void Build() {
       var options = new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 50,
         MaxConcurrentDrainConsumers = 1,
@@ -568,8 +582,6 @@ public partial class PerspectiveWorkerDrainModeTests {
           _signal(Interlocked.Increment(ref _holds)).TrySetResult();
         }
       };
-      _running = CancellationTokenSource.CreateLinkedTokenSource(ct);
-      await _worker.StartAsync(_running.Token);
     }
 
     /// <summary>
@@ -647,6 +659,9 @@ public partial class PerspectiveWorkerDrainModeTests {
         _running.Dispose();
       }
       _listener.Dispose();
+      foreach (var owned in _owned) {
+        await owned.DisposeAsync();
+      }
       await _provider.DisposeAsync();
     }
   }
@@ -701,6 +716,9 @@ public partial class PerspectiveWorkerDrainModeTests {
     public ConcurrentQueue<(Guid StreamId, PerspectiveWriteStatus? Status)> Completed { get; } = new();
     public ConcurrentDictionary<Guid, List<Guid>> ClaimedEvents { get; } = new();
 
+    /// <summary>Called as a full replay reads a stream's row (a rebuild's, for one), before it folds anything.</summary>
+    public Action<Guid>? OnRowRead { get; set; }
+
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) =>
       perspectiveName == _name ? new Runner(this) : null;
 
@@ -754,8 +772,10 @@ public partial class PerspectiveWorkerDrainModeTests {
         return Task.FromResult(owner._completion(prepared.StreamId, prepared.Events[^1].MessageId.Value));
       }
 
-      public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) =>
-        Task.FromResult(owner._completion(streamId, owner.ClaimedEvents.GetValueOrDefault(streamId, [Guid.Empty])[^1]));
+      public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) {
+        owner.OnRowRead?.Invoke(streamId);
+        return Task.FromResult(owner._completion(streamId, owner.ClaimedEvents.GetValueOrDefault(streamId, [Guid.Empty])[^1]));
+      }
 
       public Task<PerspectiveCursorCompletion> RunWithEventsAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId,
           IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {

@@ -43,6 +43,43 @@ public class DispatcherDerivedIdentityInHandlingTests {
     public Guid StreamId { get; set; }
   }
 
+  /// <summary>A command that starts a stream of its own (#2537).</summary>
+  public class DerivedStreamProbeCommand : ICommand, IHasStreamId {
+    /// <inheritdoc />
+    [StreamId]
+    [GenerateStreamId]
+    public Guid StreamId { get; set; }
+
+    /// <summary>The stream the command's receptor saw.</summary>
+    public Guid SeenByReceptor { get; set; }
+  }
+
+  /// <summary>An event that starts a stream of its own and is invoked locally (#2537).</summary>
+  public class DerivedStreamLocalEvent : IEvent, IHasStreamId {
+    /// <inheritdoc />
+    [StreamId]
+    [GenerateStreamId]
+    public Guid StreamId { get; set; }
+  }
+
+  /// <summary>Records the stream the command carries when its receptor runs.</summary>
+  public class DerivedStreamProbeCommandReceptor : IReceptor<DerivedStreamProbeCommand, DerivedStreamProbeAck> {
+    /// <inheritdoc />
+    public ValueTask<DerivedStreamProbeAck> HandleAsync(DerivedStreamProbeCommand message, CancellationToken cancellationToken = default) {
+      message.SeenByReceptor = message.StreamId;
+      return ValueTask.FromResult(new DerivedStreamProbeAck(message.StreamId));
+    }
+  }
+
+  /// <summary>Handles the locally invoked event.</summary>
+  public class DerivedStreamLocalEventReceptor : IReceptor<DerivedStreamLocalEvent> {
+    /// <inheritdoc />
+    public ValueTask HandleAsync(DerivedStreamLocalEvent message, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+  }
+
+  /// <summary>The command receptor's answer.</summary>
+  public record DerivedStreamProbeAck(Guid StreamId);
+
   private const string HANDLER = "OrderPlacedHandler";
 
   // ---- explicit publishes ----
@@ -203,6 +240,137 @@ public class DispatcherDerivedIdentityInHandlingTests {
     await Assert.That(retry.StreamId).IsEqualTo(firstRun.StreamId);
   }
 
+  // ---- [GenerateStreamId] on a command sent inside a handling (#2537) ----
+
+  [Test]
+  public async Task SendAsync_GenerateStreamId_InsideAHandling_ARedeliveryStartsTheSameStreamAsync() {
+    var (dispatcher, serviceName) = _createDispatcher();
+    var source = (Guid)TrackedGuid.New();
+
+    var firstRun = new DerivedStreamProbeCommand();
+    IDeliveryReceipt receipt;
+    using (ReceptorHandling.Enter(_handling(source, HANDLER))) {
+      receipt = await dispatcher.SendAsync(firstRun);
+    }
+    var redelivery = new DerivedStreamProbeCommand();
+    using (ReceptorHandling.Enter(_handling(source, HANDLER))) {
+      await dispatcher.SendAsync(redelivery);
+    }
+
+    await Assert.That(redelivery.StreamId).IsEqualTo(firstRun.StreamId)
+      .Because("a redelivered handling sends the command again; it must address the stream the first run started");
+    await Assert.That(firstRun.StreamId).IsEqualTo(GeneratedStreamIdentity.DeriveInHandling(
+      source, serviceName, HANDLER, TypeNameFormatter.Format(typeof(DerivedStreamProbeCommand)), ordinal: 0))
+      .Because("the command's own id is still minted, so its stream derives from the handling that sent it");
+    await Assert.That(receipt.StreamId).IsEqualTo(firstRun.StreamId);
+    await Assert.That(firstRun.SeenByReceptor).IsEqualTo(firstRun.StreamId)
+      .Because("the command's receptor sees the stream the send recorded, not a second one");
+  }
+
+  [Test]
+  public async Task SendAsync_GenerateStreamId_TwoCommandsInOneHandling_StartTwoStreamsInSendOrderAsync() {
+    var (dispatcher, serviceName) = _createDispatcher();
+    var source = (Guid)TrackedGuid.New();
+
+    var first = new DerivedStreamProbeCommand();
+    var second = new DerivedStreamProbeCommand();
+    using (ReceptorHandling.Enter(_handling(source, HANDLER))) {
+      await dispatcher.SendAsync(first);
+      await dispatcher.SendAsync(second);
+    }
+
+    var type = TypeNameFormatter.Format(typeof(DerivedStreamProbeCommand));
+    await Assert.That(first.StreamId).IsEqualTo(GeneratedStreamIdentity.DeriveInHandling(source, serviceName, HANDLER, type, ordinal: 0));
+    await Assert.That(second.StreamId).IsEqualTo(GeneratedStreamIdentity.DeriveInHandling(source, serviceName, HANDLER, type, ordinal: 1))
+      .Because("each send in a handling takes the next ordinal once, however often the send path generates the stream");
+  }
+
+  [Test]
+  public async Task SendAsync_GenerateStreamId_DoesNotShiftTheHandlingsEmissionIdsAsync() {
+    var (dispatcher, serviceName) = _createDispatcher();
+    var source = (Guid)TrackedGuid.New();
+
+    Guid published;
+    using (ReceptorHandling.Enter(_handling(source, HANDLER))) {
+      await dispatcher.SendAsync(new DerivedStreamProbeCommand());
+      published = (await dispatcher.PublishAsync(new DerivedPublishProbeEvent((Guid)TrackedGuid.New()))).MessageId.Value;
+    }
+
+    await Assert.That(published).IsEqualTo(
+      EmissionIdentity.Derive(source, serviceName, HANDLER, TypeNameFormatter.Format(typeof(DerivedPublishProbeEvent)), ordinal: 0))
+      .Because("a command's stream has ordinals of its own, so a handling's event ids are what they were before it sent the command");
+  }
+
+  [Test]
+  public async Task LocalInvokeAsync_GenerateStreamId_InsideAHandling_ARedeliveryStartsTheSameStreamAsync() {
+    var (dispatcher, _) = _createDispatcher();
+    var source = (Guid)TrackedGuid.New();
+
+    var firstRun = new DerivedStreamProbeCommand();
+    DerivedStreamProbeAck ack;
+    using (ReceptorHandling.Enter(_handling(source, HANDLER))) {
+      ack = await dispatcher.LocalInvokeAsync<DerivedStreamProbeAck>(firstRun);
+    }
+    var redelivery = new DerivedStreamProbeCommand();
+    using (ReceptorHandling.Enter(_handling(source, HANDLER))) {
+      await dispatcher.LocalInvokeAsync<DerivedStreamProbeAck>(redelivery);
+    }
+
+    await Assert.That(redelivery.StreamId).IsEqualTo(firstRun.StreamId);
+    await Assert.That(ack.StreamId).IsEqualTo(firstRun.StreamId)
+      .Because("the receptor ran on the stream the invoke settled on");
+  }
+
+  [Test]
+  public async Task SendAsync_GenerateStreamId_OutsideAHandling_MintsAFreshStreamEachTimeAsync() {
+    var (dispatcher, _) = _createDispatcher();
+
+    var first = new DerivedStreamProbeCommand();
+    await dispatcher.SendAsync(first);
+    var second = new DerivedStreamProbeCommand();
+    await dispatcher.SendAsync(second);
+
+    await Assert.That(second.StreamId).IsNotEqualTo(first.StreamId)
+      .Because("with no handling there is nothing to derive from: each send starts a new stream, as before");
+    await Assert.That(first.StreamId.Version).IsEqualTo(7);
+  }
+
+  [Test]
+  public async Task SendAsync_GenerateStreamId_AHandlingWithNoMessageId_MintsAsync() {
+    var (dispatcher, _) = _createDispatcher();
+
+    var first = new DerivedStreamProbeCommand();
+    var second = new DerivedStreamProbeCommand();
+    using (ReceptorHandling.Enter(_anonymousHandling())) {
+      await dispatcher.SendAsync(first);
+    }
+    using (ReceptorHandling.Enter(_anonymousHandling())) {
+      await dispatcher.SendAsync(second);
+    }
+
+    await Assert.That(second.StreamId).IsNotEqualTo(first.StreamId)
+      .Because("a handling with no message id has no cause to derive from, as an emission of it has none");
+    await Assert.That(first.StreamId).IsNotEqualTo(Guid.Empty);
+  }
+
+  [Test]
+  public async Task LocalInvokeAsync_GenerateStreamIdEvent_InsideAHandling_StillMintsAsync() {
+    var (dispatcher, _) = _createDispatcher();
+    var source = (Guid)TrackedGuid.New();
+
+    var first = new DerivedStreamLocalEvent();
+    using (ReceptorHandling.Enter(_handling(source, HANDLER))) {
+      await dispatcher.LocalInvokeAsync(first);
+    }
+    var second = new DerivedStreamLocalEvent();
+    using (ReceptorHandling.Enter(_handling(source, HANDLER))) {
+      await dispatcher.LocalInvokeAsync(second);
+    }
+
+    await Assert.That(second.StreamId).IsNotEqualTo(first.StreamId)
+      .Because("an event's stream derives from the event's own id; until a locally invoked event's id derives, it mints");
+  }
+
   // ---- helpers ----
 
   private static async Task<Guid[]> _publishTwiceAsync(IDispatcher dispatcher, IMessageEnvelope handling, Guid stream) {
@@ -221,6 +389,14 @@ public class DispatcherDerivedIdentityInHandlingTests {
     Payload = new DerivedSourceCommand("origin"),
     Hops = [],
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local, HandlerName = handlerName },
+  };
+
+  /// <summary>A handling whose envelope carries no message id: a default-initialized id has an empty value.</summary>
+  private static MessageEnvelope<object> _anonymousHandling() => new() {
+    MessageId = default,
+    Payload = new DerivedSourceCommand("origin"),
+    Hops = [],
+    DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local, HandlerName = HANDLER },
   };
 
   private static (IDispatcher Dispatcher, string ServiceName) _createDispatcher() {
