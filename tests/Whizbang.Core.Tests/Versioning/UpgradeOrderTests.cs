@@ -496,6 +496,41 @@ public class UpgradeOrderTests {
     .Build();
 
   [Test]
+  public async Task TheOverrides_AreScopedPerSide_AndTheSharedKeysStillMeanBothAsync() {
+    static IConfiguration config(params (string Key, string Value)[] values) => new ConfigurationBuilder()
+      .AddInMemoryCollection(values.Select(v => new KeyValuePair<string, string?>(v.Key, v.Value))).Build();
+
+    await Assert.That(UpgradeOrder.ReadOverrides(null)).IsEqualTo(SchemaGateOverrides.None);
+    await Assert.That(UpgradeOrder.ReadOverrides(config(
+        (UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY, "true"), (UpgradeOrder.ALLOW_LOSSY_ROLLBACK_KEY, "true"))))
+      .IsEqualTo(SchemaGateOverrides.Both(overrideIncompatibility: true, allowLossyRollback: true))
+      .Because("the shared keys keep meaning both sides");
+    await Assert.That(UpgradeOrder.ReadOverrides(config(
+        (UpgradeOrder.APPLICATION_OVERRIDE_INCOMPATIBILITY_KEY, "true"), (UpgradeOrder.PLATFORM_ALLOW_LOSSY_ROLLBACK_KEY, "true"))))
+      .IsEqualTo(new SchemaGateOverrides(OverridePlatform: false, OverrideApplication: true, AllowLossyPlatform: true, AllowLossyApplication: false))
+      .Because("an operator gets past an application change without skipping the W! migrations");
+    await Assert.That(UpgradeOrder.ReadOverrides(config(
+        (UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY, "true"), (UpgradeOrder.PLATFORM_OVERRIDE_INCOMPATIBILITY_KEY, "false"),
+        (UpgradeOrder.ALLOW_LOSSY_ROLLBACK_KEY, "true"), (UpgradeOrder.APPLICATION_ALLOW_LOSSY_ROLLBACK_KEY, " "))))
+      .IsEqualTo(new SchemaGateOverrides(OverridePlatform: false, OverrideApplication: true, AllowLossyPlatform: true, AllowLossyApplication: true))
+      .Because("a side's own key wins over the shared one, and a blank one is unset");
+    await Assert.That(() => UpgradeOrder.ReadOverrides(config((UpgradeOrder.APPLICATION_OVERRIDE_INCOMPATIBILITY_KEY, "sometimes"))))
+      .Throws<InvalidOperationException>().WithMessageContaining(UpgradeOrder.APPLICATION_OVERRIDE_INCOMPATIBILITY_KEY);
+  }
+
+  [Test]
+  public async Task EachSide_KnowsItsOwnOverrides_AndItsOwnKeyAsync() {
+    var overrides = new SchemaGateOverrides(OverridePlatform: true, OverrideApplication: false, AllowLossyPlatform: false, AllowLossyApplication: true);
+
+    await Assert.That(overrides.Overrides(SchemaChangeKind.Platform)).IsTrue();
+    await Assert.That(overrides.Overrides(SchemaChangeKind.Application)).IsFalse();
+    await Assert.That(overrides.AllowsLossy(SchemaChangeKind.Platform)).IsFalse();
+    await Assert.That(overrides.AllowsLossy(SchemaChangeKind.Application)).IsTrue();
+    await Assert.That(UpgradeOrder.OverrideKeyFor(SchemaChangeKind.Platform)).IsEqualTo("Whizbang:Startup:Platform:OverrideIncompatibility");
+    await Assert.That(UpgradeOrder.OverrideKeyFor(SchemaChangeKind.Application)).IsEqualTo("Whizbang:Startup:Application:OverrideIncompatibility");
+  }
+
+  [Test]
   public async Task TheOverride_IsOffUnlessTheHostTurnsItOnAsync() {
     // Owner decision (#2022): off by default. A host that configures nothing never runs past an incompatibility.
     var key = UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY;

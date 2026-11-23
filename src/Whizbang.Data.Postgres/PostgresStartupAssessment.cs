@@ -14,11 +14,8 @@ namespace Whizbang.Data.Postgres;
 /// <param name="Own">This instance's versions and id; a null library version means no provider says.</param>
 /// <param name="Defined">What this build defines (#2553): each change its schema pass records, by the ledger's name, with
 /// the content hash it records; a recorded change this build defines identically is current, whoever applied it.</param>
-/// <param name="OverrideIncompatibility">Whether the host turned the incompatibility override on (#2022,
-/// <see cref="UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY"/>).</param>
-/// <param name="AllowLossyRollback">Whether a rollback may discard data (#2122, <see cref="UpgradeOrder.ALLOW_LOSSY_ROLLBACK_KEY"/>).</param>
-internal sealed record StartupGateInput(
-  VersionSighting Own, IReadOnlyDictionary<string, string> Defined, bool OverrideIncompatibility, bool AllowLossyRollback);
+/// <param name="Overrides">The operator's overrides, for each side (#2022, #2122, #2553; <see cref="UpgradeOrder.ReadOverrides"/>).</param>
+internal sealed record StartupGateInput(VersionSighting Own, IReadOnlyDictionary<string, string> Defined, SchemaGateOverrides Overrides);
 
 /// <summary>
 /// The <c>Assess</c> verdict both Postgres drivers produce (#1992): this instance's versions against every version the
@@ -95,7 +92,7 @@ internal static class PostgresStartupAssessment {
     var online = probe.Online
       ? await _readOnlineAsync(connection, prefix, cancellationToken).ConfigureAwait(false)
       : [];
-    var verdict = ComputeVerdict(gate.Own, ledger, online, gate.OverrideIncompatibility, gate.AllowLossyRollback, gate.Defined);
+    var verdict = ComputeVerdict(gate.Own, ledger, online, gate.Overrides, gate.Defined);
     if (verdict.Verdict != StartupVerdict.Serve) {
       return verdict;
     }
@@ -146,18 +143,20 @@ internal static class PostgresStartupAssessment {
   /// <param name="own">This instance's versions and id.</param>
   /// <param name="ledger">Every change the ledger records, with who applied it (null versions when unknown).</param>
   /// <param name="online">Every instance online.</param>
-  /// <param name="overrideIncompatibility">Whether the incompatibility override is on (#2022): a change applied since
-  /// this version then starts the instance as Current (no election, no pass, nothing applied), with the reason it would
-  /// have stood down in <see cref="StartupAssessment.OverriddenReason"/>. It never lifts the stand-down for a newer
-  /// version online, nor the refusal of a build that cannot say what it is.</param>
-  /// <param name="allowLossyRollback">Whether a rollback may discard data the newer version wrote (#2122).</param>
+  /// <param name="overrides">The operator's overrides, for each side (#2022, #2122, #2553); none when null. An
+  /// incompatibility override serves its side as it is, with the reason it would have stood down in
+  /// <see cref="StartupAssessment.OverriddenReason"/>. It never lifts the stand-down for a newer version online, nor the
+  /// refusal of a build that cannot say what it is.</param>
   /// <param name="defined">What this build defines (#2553), by the ledger's name, with each content hash; null when
   /// nothing is known.</param>
   /// <returns>Migrate (with the rollback owed, when one is), Serve or StandDown; Current only when the override let an
   /// incompatible instance start.</returns>
   internal static StartupAssessment ComputeVerdict(
       VersionSighting own, IReadOnlyList<AppliedSchemaChange> ledger, IReadOnlyList<VersionSighting> online,
-      bool overrideIncompatibility = false, bool allowLossyRollback = false, IReadOnlyDictionary<string, string>? defined = null) {
+      SchemaGateOverrides? overrides = null, IReadOnlyDictionary<string, string>? defined = null) {
+    // RED (#2553): the sides are not judged apart yet.
+    var overrideIncompatibility = overrides is { OverridePlatform: true } or { OverrideApplication: true };
+    var allowLossyRollback = overrides is { AllowLossyPlatform: true } or { AllowLossyApplication: true };
     var mine = own.LibraryVersion;
     if (mine is null) {
       // Absent and unreadable are different facts (issue #619): nobody registered a provider, which the Postgres

@@ -63,7 +63,8 @@ public class SchemaRollbackTests : EFCoreTestBase {
 
   private SchemaRollbackRequest _request(
       string library, string application, bool allowLossy = false, IReadOnlyDictionary<string, string>? defined = null) =>
-    new(_open, "public", SchemaInitializationLockKey.Compute("public"), new VersionSighting(library, application), allowLossy, TIMEOUT_SECONDS,
+    new(_open, "public", SchemaInitializationLockKey.Compute("public"), new VersionSighting(library, application),
+      new Whizbang.Core.Startup.RollbackPlan([], allowLossy), TIMEOUT_SECONDS,
       defined ?? new Dictionary<string, string>(StringComparer.Ordinal));
 
   [Test]

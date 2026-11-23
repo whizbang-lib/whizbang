@@ -14,13 +14,15 @@ namespace Whizbang.Data.Postgres;
 /// <param name="Schema">The schema, unquoted; empty for the connection's own.</param>
 /// <param name="LockId">The schema initialization lock (<see cref="SchemaInitializationLockKey"/>).</param>
 /// <param name="Own">This instance's versions and id.</param>
-/// <param name="AllowLossy">Whether a reversal that discards data may run.</param>
+/// <param name="Plan">The rollback Assess decided on (#2122): which sides it may reverse, and whether each may discard data
+/// (#2553). Under the lock it is decided again from the ledger, side by side, by the same rule.</param>
 /// <param name="CommandTimeoutSeconds">How long any one reverse script may run.</param>
 /// <param name="Defined">What this build defines (#2553), by the ledger's name, with each content hash: a change it defines
 /// identically is never rolled back, whoever applied it, exactly as Assess judged it.</param>
 /// <docs>operations/startup/rolling-upgrades#rolling-back</docs>
 public sealed record SchemaRollbackRequest(
-  Func<NpgsqlConnection> ConnectionFactory, string Schema, long LockId, VersionSighting Own, bool AllowLossy, int CommandTimeoutSeconds,
+  Func<NpgsqlConnection> ConnectionFactory, string Schema, long LockId, VersionSighting Own, Whizbang.Core.Startup.RollbackPlan Plan,
+  int CommandTimeoutSeconds,
   IReadOnlyDictionary<string, string> Defined);
 
 /// <summary>
@@ -82,7 +84,7 @@ public static partial class SchemaRollback {
     if (UpgradeOrder.FindNewer(request.Own, online) is { } newer) {
       throw new InvalidOperationException($"The schema {schema} is not rolled back: {newer.Describe()}.");
     }
-    if (UpgradeOrder.WhyNotReversible(request.Own, since, request.AllowLossy) is { } refusal) {
+    if (UpgradeOrder.WhyNotReversible(request.Own, since, request.Plan.AllowLossy) is { } refusal) {
       throw new InvalidOperationException($"The schema {schema} is not rolled back: {refusal}.");
     }
 

@@ -32,8 +32,7 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor, IOnlineVer
   private readonly ILibraryVersionProvider? _versionProvider;
   private readonly IApplicationVersionProvider? _applicationVersion;
   private readonly IServiceInstanceProvider? _instance;
-  private readonly bool _overrideIncompatibility;
-  private readonly bool _allowLossyRollback;
+  private readonly SchemaGateOverrides _overrides;
 
   /// <summary>Creates the assessor over the consumer's DbContext type, resolved per call.</summary>
   /// <param name="scopeFactory">Scopes the DbContext each read is made through.</param>
@@ -41,14 +40,12 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor, IOnlineVer
   /// <param name="versionProvider">This binary's library version; none means it is unknown, which stands down.</param>
   /// <param name="applicationVersion">This instance's application version (#2022); none means it is unknown.</param>
   /// <param name="instance">This instance's identity (#2022): its own row is never a newer instance.</param>
-  /// <param name="overrideIncompatibility">Whether the incompatibility override is on (#2022): read by the driver's
-  /// registration from <see cref="UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY"/>.</param>
-  /// <param name="allowLossyRollback">Whether a rollback may discard data a newer version wrote (#2122): read by the
-  /// driver's registration from <see cref="UpgradeOrder.ALLOW_LOSSY_ROLLBACK_KEY"/>.</param>
+  /// <param name="overrides">The operator's overrides of the rollback gate, for each side (#2022, #2122, #2553): read by
+  /// the driver's registration through <see cref="UpgradeOrder.ReadOverrides"/>; none when null.</param>
   public EFCorePostgresStartupAssessor(
       IServiceScopeFactory scopeFactory, Type dbContextType, ILibraryVersionProvider? versionProvider = null,
       IApplicationVersionProvider? applicationVersion = null, IServiceInstanceProvider? instance = null,
-      bool overrideIncompatibility = false, bool allowLossyRollback = false) {
+      SchemaGateOverrides? overrides = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     ArgumentNullException.ThrowIfNull(dbContextType);
     _scopeFactory = scopeFactory;
@@ -56,8 +53,7 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor, IOnlineVer
     _versionProvider = versionProvider;
     _applicationVersion = applicationVersion;
     _instance = instance;
-    _overrideIncompatibility = overrideIncompatibility;
-    _allowLossyRollback = allowLossyRollback;
+    _overrides = overrides ?? SchemaGateOverrides.None;
   }
 
   /// <inheritdoc />
@@ -73,8 +69,7 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor, IOnlineVer
         new VersionSighting(_versionProvider?.LibraryVersion, _applicationVersion?.ApplicationVersion.Recorded, _instance?.InstanceId),
         // #2553: what this context's pass records, so a change it defines identically is current, whoever applied it.
         DbContextInitializationRegistry.SchemaContentOf(dbContext, services),
-        _overrideIncompatibility,
-        _allowLossyRollback),
+        _overrides),
       ct => DbContextInitializationRegistry.IsSchemaCurrentAsync(services, ct),
       cancellationToken), cancellationToken);
 

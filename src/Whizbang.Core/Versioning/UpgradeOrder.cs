@@ -92,6 +92,40 @@ public sealed record AppliedSchemaChange(string Name, SchemaChangeKind Kind, str
 }
 
 /// <summary>
+/// The operator's overrides of the rollback gate for each side (#2553, owner decision 2): the W! migrations and the
+/// application's schema are judged apart, so an operator can serve one side as it is, or let one side's rollback discard
+/// data, without doing the same to the other. Read by <see cref="UpgradeOrder.ReadOverrides"/>, where the shared keys
+/// still mean both sides.
+/// </summary>
+/// <param name="OverridePlatform">Serve the W! migrations as they are when they would stand down.</param>
+/// <param name="OverrideApplication">Serve the application's schema as it is when it would stand down.</param>
+/// <param name="AllowLossyPlatform">Let a rollback of the W! migrations discard data a newer version wrote.</param>
+/// <param name="AllowLossyApplication">Let a rollback of the application's schema discard data a newer version wrote.</param>
+/// <docs>operations/startup/rolling-upgrades#the-incompatibility-override</docs>
+/// <tests>tests/Whizbang.Core.Tests/Versioning/UpgradeOrderTests.cs:TheOverrides_AreScopedPerSide_AndTheSharedKeysStillMeanBothAsync</tests>
+public sealed record SchemaGateOverrides(bool OverridePlatform, bool OverrideApplication, bool AllowLossyPlatform, bool AllowLossyApplication) {
+  /// <summary>No override on either side: the default.</summary>
+  public static SchemaGateOverrides None { get; } = new(false, false, false, false);
+
+  /// <summary>The same overrides on both sides, as the shared keys set them.</summary>
+  /// <param name="overrideIncompatibility">Serve each side as it is when it would stand down.</param>
+  /// <param name="allowLossyRollback">Let each side's rollback discard data.</param>
+  /// <returns>The overrides.</returns>
+  public static SchemaGateOverrides Both(bool overrideIncompatibility, bool allowLossyRollback) =>
+    new(overrideIncompatibility, overrideIncompatibility, allowLossyRollback, allowLossyRollback);
+
+  /// <summary>Whether <paramref name="side"/> is served as it is when it would stand down.</summary>
+  /// <param name="side">The side.</param>
+  /// <returns>The side's override.</returns>
+  public bool Overrides(SchemaChangeKind side) => side == SchemaChangeKind.Platform ? OverridePlatform : OverrideApplication;
+
+  /// <summary>Whether a rollback of <paramref name="side"/> may discard data.</summary>
+  /// <param name="side">The side.</param>
+  /// <returns>The side's setting.</returns>
+  public bool AllowsLossy(SchemaChangeKind side) => side == SchemaChangeKind.Platform ? AllowLossyPlatform : AllowLossyApplication;
+}
+
+/// <summary>
 /// The one rule that orders versions (#2022). It decides whether a newer version is recorded (in the migration ledger) or
 /// online (on a live, serving instance), and it is the only place a version is compared: startup's Assess and the
 /// running instance's re-assessment (the same verdict), the newer instance's announcement, the standby handshake and the
@@ -138,6 +172,55 @@ public static class UpgradeOrder {
   /// down with an error naming each change; it never lets an irreversible change be rolled back.
   /// </summary>
   public const string ALLOW_LOSSY_ROLLBACK_KEY = "Whizbang:Startup:AllowLossyRollback";
+
+  /// <summary>
+  /// The incompatibility override for the W! migrations alone (#2553): <c>true</c> serves the schema as it is when the
+  /// W! migrations would stand down, <c>false</c> refuses even when <see cref="OVERRIDE_INCOMPATIBILITY_KEY"/> is on.
+  /// Unset, the shared key decides for both sides.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#the-incompatibility-override</docs>
+  public const string PLATFORM_OVERRIDE_INCOMPATIBILITY_KEY = "Whizbang:Startup:Platform:OverrideIncompatibility";
+
+  /// <summary>
+  /// The incompatibility override for the application's schema alone (#2553): <c>true</c> serves the application's schema
+  /// as it is when it would stand down, while the W! migrations are still judged and run on their own. Unset, the
+  /// shared key (<see cref="OVERRIDE_INCOMPATIBILITY_KEY"/>) decides.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#the-incompatibility-override</docs>
+  public const string APPLICATION_OVERRIDE_INCOMPATIBILITY_KEY = "Whizbang:Startup:Application:OverrideIncompatibility";
+
+  /// <summary>
+  /// Whether a rollback of the W! migrations may discard data (#2553). Unset, the shared key
+  /// (<see cref="ALLOW_LOSSY_ROLLBACK_KEY"/>) decides for both sides.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#rolling-back</docs>
+  public const string PLATFORM_ALLOW_LOSSY_ROLLBACK_KEY = "Whizbang:Startup:Platform:AllowLossyRollback";
+
+  /// <summary>
+  /// Whether a rollback of the application's schema may discard data (#2553). Unset, the shared key
+  /// (<see cref="ALLOW_LOSSY_ROLLBACK_KEY"/>) decides for both sides.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#rolling-back</docs>
+  public const string APPLICATION_ALLOW_LOSSY_ROLLBACK_KEY = "Whizbang:Startup:Application:AllowLossyRollback";
+
+  /// <summary>
+  /// The operator's overrides of the gate, for each side (#2553): a side's own key when it is set, else the shared key,
+  /// so the shared keys keep meaning both sides.
+  /// </summary>
+  /// <param name="configuration">The host's configuration; null reads none.</param>
+  /// <returns>The overrides.</returns>
+  /// <exception cref="InvalidOperationException">A key holds something that is not a boolean.</exception>
+  /// <tests>tests/Whizbang.Core.Tests/Versioning/UpgradeOrderTests.cs:TheOverrides_AreScopedPerSide_AndTheSharedKeysStillMeanBothAsync</tests>
+  public static SchemaGateOverrides ReadOverrides(IConfiguration? configuration) {
+    // RED (#2553): the side keys are not read yet.
+    return SchemaGateOverrides.Both(IsIncompatibilityOverridden(configuration), IsLossyRollbackAllowed(configuration));
+  }
+
+  /// <summary>The incompatibility override key that serves <paramref name="side"/> as it is.</summary>
+  /// <param name="side">The side.</param>
+  /// <returns>The side's own key.</returns>
+  public static string OverrideKeyFor(SchemaChangeKind side) =>
+    side == SchemaChangeKind.Platform ? PLATFORM_OVERRIDE_INCOMPATIBILITY_KEY : APPLICATION_OVERRIDE_INCOMPATIBILITY_KEY;
 
   /// <summary>Whether the host turned the incompatibility override on (#2022).</summary>
   /// <param name="configuration">The host's configuration; null reads none.</param>

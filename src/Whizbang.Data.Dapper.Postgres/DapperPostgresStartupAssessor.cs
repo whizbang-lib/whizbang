@@ -18,13 +18,12 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// <param name="createInitializer">Builds the schema initializer whose check says whether the schema is current.</param>
 /// <param name="applicationVersion">This instance's application version, as recorded (#2022); null when unknown.</param>
 /// <param name="instanceId">This instance's id (#2022): its own row is never a newer instance; null when it has none.</param>
-/// <param name="overrideIncompatibility">Whether the incompatibility override is on (#2022).</param>
-/// <param name="allowLossyRollback">Whether a rollback may discard data a newer version wrote (#2122).</param>
+/// <param name="overrides">The operator's overrides of the rollback gate, for each side (#2022, #2122, #2553); none when null.</param>
 /// <docs>operations/startup/rolling-upgrades#one-verdict</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStartupAssessorTests.cs</tests>
 internal sealed class DapperPostgresStartupAssessor(
     string connectionString, Func<PostgresSchemaInitializer> createInitializer, string? applicationVersion = null, Guid? instanceId = null,
-    bool overrideIncompatibility = false, bool allowLossyRollback = false)
+    SchemaGateOverrides? overrides = null)
     : IStartupAssessor, IOnlineVersionReader {
   /// <inheritdoc />
   public async Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken) {
@@ -35,7 +34,7 @@ internal sealed class DapperPostgresStartupAssessor(
       connection, schema,
       new StartupGateInput(
         new VersionSighting(new PostgresMigrationProvider().Version, applicationVersion, instanceId),
-        createInitializer().DefinedContent(schema), overrideIncompatibility, allowLossyRollback),
+        createInitializer().DefinedContent(schema), overrides ?? SchemaGateOverrides.None),
       ct => createInitializer().IsCurrentAsync(ct), cancellationToken).ConfigureAwait(false);
   }
 

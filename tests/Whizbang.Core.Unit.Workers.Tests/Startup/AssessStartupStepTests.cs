@@ -74,6 +74,22 @@ public class AssessStartupStepTests {
   }
 
   [Test]
+  public async Task EachSidesVerdict_IsLoggedOnItsOwn_NamingItsSideAsync() {
+    // #2553: the W! migrations and the application's schema are judged apart, and each verdict is logged with its reason.
+    var logger = new Microsoft.Extensions.Logging.Testing.FakeLogger<AssessStartupStep>();
+    var step = new AssessStartupStep(assessor: new FixedAssessor(new StartupAssessment(StartupVerdict.StandDown, "both") {
+      Platform = new SchemaSideVerdict(Whizbang.Core.Versioning.SchemaChangeKind.Platform, StartupVerdict.Migrate, "rolling back 380_X.sql"),
+      Application = new SchemaSideVerdict(Whizbang.Core.Versioning.SchemaChangeKind.Application, StartupVerdict.StandDown, "perspective:wh_per_orders cannot be reversed"),
+    }), logger: logger);
+
+    await step.ExecuteAsync(CancellationToken.None);
+
+    var lines = logger.Collector.GetSnapshot().Select(r => r.Message).ToList();
+    await Assert.That(lines).Contains("Assess verdict for the W! migrations: Migrate: rolling back 380_X.sql");
+    await Assert.That(lines).Contains("Assess verdict for the application schema: StandDown: perspective:wh_per_orders cannot be reversed");
+  }
+
+  [Test]
   public async Task StandDownVerdict_FailsTheBlockingStep_WhichIsNotReadyWhileAliveAsync() {
     var step = new AssessStartupStep(assessor: new FixedAssessor(
       new StartupAssessment(StartupVerdict.StandDown, "the ledger records a newer version")), logger: NullLogger<AssessStartupStep>.Instance);

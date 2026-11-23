@@ -150,6 +150,32 @@ public class SchemaInitializationRunnersTests {
   }
 
   [Test]
+  public async Task AnApplicationStandDown_RunsTheRunnersForTheWMigrations_ThenStandsDown_WithTheGateClosedAsync() {
+    // #2553: W! first, and an application stand-down never blocks it: the runners run (each applies the W! migrations
+    // alone, reading HoldsApplication), then the instance stands down, recording the application's reason.
+    var gate = new SchemaReadyGate();
+    var order = new List<string>();
+    var coordinator = new BeatingCoordinator();
+    var stages = new StageLog();
+    var service = _standingDown(gate, new StartupAssessment(StartupVerdict.StandDown, "application schema: newer columns") {
+      Platform = new SchemaSideVerdict(Whizbang.Core.Versioning.SchemaChangeKind.Platform, StartupVerdict.Serve, "nothing applied since"),
+      Application = new SchemaSideVerdict(Whizbang.Core.Versioning.SchemaChangeKind.Application, StartupVerdict.StandDown, "newer columns"),
+    }, coordinator, stages, new RecordingRunner("runner", order, gate));
+
+    await service.StartAsync(CancellationToken.None);
+    await coordinator.FirstBeat.Task;
+    await service.StopAsync(CancellationToken.None);
+    await service.StandDownTask!;
+
+    await Assert.That(order).IsEquivalentTo(["runner"]).Because("the W! migrations run first, whatever the application's verdict");
+    await Assert.That(gate.IsReady).IsFalse().Because("the instance serves only when both sides can");
+    await Assert.That(stages.Calls).Contains("Enter Preflight: standing down: application schema: newer columns");
+    await Assert.That(stages.Calls).Contains("Phase StandingBy");
+    await Assert.That(stages.Calls.Any(c => c.StartsWith("Enter Coordinate", StringComparison.Ordinal))).IsFalse()
+      .Because("a stood-down instance does not coordinate");
+  }
+
+  [Test]
   public async Task StandDown_WithNoInstanceIdentity_StillAppliesNothingAsync() {
     var gate = new SchemaReadyGate();
     var order = new List<string>();

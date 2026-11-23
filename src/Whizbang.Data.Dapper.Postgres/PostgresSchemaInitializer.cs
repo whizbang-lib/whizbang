@@ -150,6 +150,14 @@ public sealed class PostgresSchemaInitializer {
   public IReadOnlyList<ISchemaInitializationObserver> Observers { get; init; } = [];
 
   /// <summary>
+  /// Whether this start leaves the application's schema as it is (#2553): its verdict stood it down, or its override
+  /// serves it as it is. The pass then applies the W! migrations alone: no application object, perspective table,
+  /// perspective registry, declared-key pass, managed-object reconcile or storage settings. Set by the driver's runner
+  /// from the one verdict (<see cref="Whizbang.Core.Startup.StartupAssessment.HoldsApplication"/>).
+  /// </summary>
+  internal bool ApplicationHeld { get; set; }
+
+  /// <summary>
   /// Initializes the Whizbang schema by generating SQL from C# schema definitions.
   /// Optionally executes perspective schema SQL if provided.
   /// Uses hash-based change detection to skip unchanged migrations.
@@ -244,7 +252,7 @@ public sealed class PostgresSchemaInitializer {
     return await SchemaRollback.ApplyAsync(
       new SchemaRollbackRequest(
         () => new NpgsqlConnection(_connectionString), schema, SchemaInitializationLockKey.Compute(schema),
-        new Whizbang.Core.Versioning.VersionSighting(_migrationProvider.Version, _recordedApplicationVersion), plan.AllowLossy,
+        new Whizbang.Core.Versioning.VersionSighting(_migrationProvider.Version, _recordedApplicationVersion), plan,
         SchemaCommandTimeout.Resolve(_connectionString), DefinedContent(schema)),
       TimeProvider.System, Logger, cancellationToken);
   }

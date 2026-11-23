@@ -41,7 +41,7 @@ public class RollbackGateTests : EFCoreTestBase {
     return new EFCorePostgresStartupAssessor(
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), typeof(WorkCoordinationDbContext),
       new LibraryVersionProvider(library), new ApplicationVersionProvider(ApplicationVersion.FromRecorded(application)),
-      overrideIncompatibility: overrideIncompatibility);
+      overrides: SchemaGateOverrides.Both(overrideIncompatibility, allowLossyRollback: false));
   }
 
   private async Task<T> _scalarAsync<T>(string sql, CancellationToken ct, params (string Name, object Value)[] args) {
@@ -189,7 +189,7 @@ public class RollbackGateTests : EFCoreTestBase {
 
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(assessment.Reason).IsEqualTo(
-      $"since this instance's version (library {library}, application 1.9.0), 1 {SINCE}: wh_per_rollback_probe (applied by "
+      $"application schema: since this instance's version (library {library}, application 1.9.0), 1 {SINCE}: wh_per_rollback_probe (applied by "
       + $"library {library}, application 2.0.0); a rollback runs only when every change since this version can be "
       + "reversed; standing down: never apply anything, hold the data plane, report not-ready-while-alive");
   }
@@ -323,16 +323,19 @@ public class RollbackGateTests : EFCoreTestBase {
 
   private static readonly VersionSighting _me = new("1.0.0", "1.9.0", Guid.Parse("0199dddd-0000-0000-0000-000000000001"));
   private static readonly AppliedSchemaChange _appliedSince = new("perspective:wh_per_orders", SchemaChangeKind.Application, "1.0.0", "2.0.0");
+  private static readonly SchemaGateOverrides _overrideBoth = SchemaGateOverrides.Both(overrideIncompatibility: true, allowLossyRollback: false);
+  private static readonly SchemaGateOverrides _lossyBoth = SchemaGateOverrides.Both(overrideIncompatibility: false, allowLossyRollback: true);
 
   [Test]
   public async Task TheOverride_LetsAnIncompatibleInstanceServe_WithoutAMigration_AndCarriesTheFullReasonAsync() {
     var refused = PostgresStartupAssessment.ComputeVerdict(_me, [_appliedSince], []);
-    var overridden = PostgresStartupAssessment.ComputeVerdict(_me, [_appliedSince], [], overrideIncompatibility: true);
+    var overridden = PostgresStartupAssessment.ComputeVerdict(_me, [_appliedSince], [], overrides: _overrideBoth);
 
     await Assert.That(refused.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(refused.OverriddenReason).IsNull();
-    await Assert.That(overridden.Verdict).IsEqualTo(StartupVerdict.Current)
-      .Because("Current skips the election and the pass: the override only lets this build serve, it never migrates backward");
+    await Assert.That(overridden.Verdict).IsEqualTo(StartupVerdict.Serve)
+      .Because("#2553: the application's schema is served as it is, and the W! migrations, with nothing applied since, still run");
+    await Assert.That(overridden.HoldsApplication).IsTrue().Because("the override never migrates the application backward");
     await Assert.That(overridden.OverriddenReason).IsEqualTo(refused.Reason)
       .Because("the same detail the stand-down error carries");
     await Assert.That(overridden.Reason).Contains(UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY);
@@ -342,9 +345,9 @@ public class RollbackGateTests : EFCoreTestBase {
   public async Task TheOverride_NeverOverridesANewerVersionOnlineAsync() {
     VersionSighting[] online = [new("1.0.0", "2.0.0", Guid.Parse("0199dddd-0000-0000-0000-000000000002"))];
 
-    var withAppliedSince = PostgresStartupAssessment.ComputeVerdict(_me, [_appliedSince], online, overrideIncompatibility: true);
+    var withAppliedSince = PostgresStartupAssessment.ComputeVerdict(_me, [_appliedSince], online, overrides: _overrideBoth);
     var alone = PostgresStartupAssessment.ComputeVerdict(_me, [new AppliedSchemaChange("100_X.sql", SchemaChangeKind.Platform, "1.0.0", null)],
-      online, overrideIncompatibility: true);
+      online, overrides: _overrideBoth);
 
     await Assert.That(withAppliedSince.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(withAppliedSince.Reason).Contains("is online with application version 2.0.0");
@@ -355,7 +358,7 @@ public class RollbackGateTests : EFCoreTestBase {
   [Test]
   public async Task TheOverride_OnACompatibleInstance_ChangesNothingAsync() {
     var verdict = PostgresStartupAssessment.ComputeVerdict(_me,
-      [new AppliedSchemaChange("100_X.sql", SchemaChangeKind.Platform, "1.0.0", null)], [], overrideIncompatibility: true);
+      [new AppliedSchemaChange("100_X.sql", SchemaChangeKind.Platform, "1.0.0", null)], [], overrides: _overrideBoth);
 
     await Assert.That(verdict.Verdict).IsEqualTo(StartupVerdict.Serve);
     await Assert.That(verdict.OverriddenReason).IsNull();
@@ -365,7 +368,7 @@ public class RollbackGateTests : EFCoreTestBase {
   [Arguments(null)]
   [Arguments("not-a-version")]
   public async Task TheOverride_NeverServesABuildThatCannotSayWhatItIsAsync(string? library) {
-    var verdict = PostgresStartupAssessment.ComputeVerdict(new VersionSighting(library, null), [_appliedSince], [], overrideIncompatibility: true);
+    var verdict = PostgresStartupAssessment.ComputeVerdict(new VersionSighting(library, null), [_appliedSince], [], overrides: _overrideBoth);
 
     await Assert.That(verdict.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(verdict.OverriddenReason).IsNull();
@@ -428,7 +431,7 @@ public class RollbackGateTests : EFCoreTestBase {
   [Test]
   public async Task ALossyChange_StandsDown_UnlessTheOperatorAllowsItAsync() {
     var refused = PostgresStartupAssessment.ComputeVerdict(_me, [_lossy], []);
-    var allowed = PostgresStartupAssessment.ComputeVerdict(_me, [_lossy], [], allowLossyRollback: true);
+    var allowed = PostgresStartupAssessment.ComputeVerdict(_me, [_lossy], [], overrides: _lossyBoth);
 
     await Assert.That(refused.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(refused.Reason).Contains(UpgradeOrder.ALLOW_LOSSY_ROLLBACK_KEY);

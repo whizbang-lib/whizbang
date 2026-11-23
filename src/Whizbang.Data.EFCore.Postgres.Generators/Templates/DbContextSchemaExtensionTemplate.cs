@@ -404,7 +404,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         new Whizbang.Data.Postgres.SchemaRollbackRequest(
           rollbackConnectionFactory, "__SCHEMA__", lockId,
           new Whizbang.Core.Versioning.VersionSighting("__LIBRARY_VERSION__", _ledgerApplicationVersion.Value, rollingInstance),
-          rollback.AllowLossy, _schemaCommandTimeoutSeconds, GetWhizbangSchemaContent(dbContext, serviceProvider)),
+          rollback, _schemaCommandTimeoutSeconds, GetWhizbangSchemaContent(dbContext, serviceProvider)),
         startupClock, logger, cancellationToken);
     }
 
