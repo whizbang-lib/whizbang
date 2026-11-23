@@ -465,6 +465,11 @@ public partial class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
     services.AddSingleton<IPerspectivePurgeMarkerStore>(_ =>
       new Whizbang.Data.Postgres.PostgresPerspectivePurgeMarkerStore(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync));
     services.AddSingleton<IPerspectiveStateSource, BatchedPerspectiveStateSource>();
+    // The write sinks the driver registers (#2246), unkeyed and under the context, which a rebuild in place writes each
+    // batch's rows through (#2522).
+    services.AddScoped<IPerspectiveWriteSink>(s => new EFCorePostgresPerspectiveWriteSink(s.GetRequiredService<WorkCoordinationDbContext>()));
+    services.AddKeyedScoped<IPerspectiveWriteSink>(typeof(WorkCoordinationDbContext), (s, _) =>
+      new EFCorePostgresPerspectiveWriteSink(s.GetRequiredService<WorkCoordinationDbContext>()));
     services.AddScoped<IPerspectiveCheckpointCompleter>(s =>
       new EFCorePostgresPerspectiveCheckpointCompleter(s.GetRequiredService<WorkCoordinationDbContext>()));
     services.AddSingleton<IPerspectiveTableSwapper>(s =>
