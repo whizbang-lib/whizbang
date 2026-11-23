@@ -60,7 +60,7 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
   /// 25 and 100 sit either side of 50 because the mid-depth cost was never a property of 50 alone (#2523): the claim's
   /// per-stream walk was planned as a read of the stream's whole pending tail, sorted, with the ordering probe run on
   /// every row of it, wherever the planner judged a stream too short for an ordered walk to stop early. That made 25,
-  /// 50 and 100 cost 2.2, 6.3 and 2.6 times what 12 and 200 cost.
+  /// 50 and 100 cost about 2, 6 and 2.5 times what 12 and 200 cost.
   /// </remarks>
   private static readonly int[] DEPTHS = [12, 25, 50, 100, 200];
   /// <summary>
