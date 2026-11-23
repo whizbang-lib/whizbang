@@ -16,6 +16,8 @@ not touched.
 | Analyzer for `new Guid(...)` / `Guid.Parse` into ids (item 6) | done: WHIZ037 |
 | Guards (validator has callers; every entry point wired; exemption list complete) | done |
 | PostgreSQL refusal matrix (EF Core and Dapper), no partial state | done |
+| `[SuppressGuidOrderingValidation]` wired (owner-approved follow-up) | done: generator registry by stored name, validator honors it at every entry point, WHIZ037 quiet in attributed scopes |
+| Flaky `LifecycleStageMode_WithDebugOff_AllocatesNothingAsync` | done: root cause in the code under test (weakly cached `Type.Name`), fixed; test collects inside its window |
 | Docs site pages (`whizbang-ids#time-ordering-checks`, `#stream-id-versions`, `#framework-ids-that-are-not-time-ordered`, `operations/diagnostics/whiz037`, metrics anchor, WHIZ055/056/058 pages) | todo, docs repo |
 
 ## Two facts every entry point depends on
@@ -138,6 +140,35 @@ when a new minting site appears without an entry.
 - **F7. Dead-letter stores are checked too.** `Store*DeadLettersAsync` funnels through the same serializer, so a non-v7
   id is refused there as well, rather than parked in `wh_dead_letters` to re-enter later inside SQL. The broker's own
   dead-letter queue still holds such a message.
+
+## `[SuppressGuidOrderingValidation]` (follow-up, owner-approved)
+
+The attribute existed on develop and nothing read it. Decided semantics:
+
+- **On a message type** (class, record, struct): a non-v7 event or message id of exactly that type is checked as if the
+  severity were at most `Warning`. At the default `Error` it is accepted, logged once with a message naming the attribute,
+  and counted in `non_v7_message_ids` (same tags). `Info` stays `Info`, `None` stays silent: the attribute lowers, never
+  raises. `Guid.Empty` is refused regardless. Not inherited. Stream id reporting and the strict `From`/JSON converter (F2)
+  are unchanged.
+- **On a method** (or a type, for code inside it): WHIZ037 is not reported there. No run-time effect: a runtime cannot
+  know which method produced an id without stack inspection.
+- **Resolution without reflection**: `GuidOrderingSuppressionRegistryGenerator` emits a module initializer calling
+  `GuidOrderingSuppressions.Register("Ns.Type, Assembly")` per attributed type (by name, so private nested types work; a
+  generic type registers its definition and lookups strip type arguments). The validator gained a
+  `ValidateMessageId(Guid, Type, string)` overload used by the dispatcher sites and `ValidateAppend`; the string overload
+  (strategies, coordinators) looks the stored name up. Only the non-v7 path consults the registry; answers by type are
+  cached and the cache is cleared on every registration.
+- Docs follow-up (parent): a section `fundamentals/identity/whizbang-ids#suppressing-the-time-ordering-check`.
+
+## Flaky allocation test (follow-up)
+
+`DispatcherTagProcessingLoggingTests.*_WithDebugOff_AllocatesNothingAsync` failed under load. Cause: `ProcessTagsIfEnabledAsync`
+evaluated `TypeNameFormatter.ForLog(messageType)` (reads `Type.Name`) before the log level check. The runtime keeps the
+cache behind `Type.Name` behind a weak GC handle, so after any collection the next read rebuilds it on the reading
+thread (232 bytes). Another test's allocations triggering a GC inside the measured window decided the result. Fix: the
+read sits behind `logger.IsEnabled(LogLevel.Debug)`; the test now runs `GC.Collect()` inside its window (it allocates
+nothing on the caller), so a path leaning on such a cache fails every run. Other eager `ForLog` calls on hot paths
+have the same per-collection cost (follow-up candidate).
 
 ## Verification (build servers)
 
