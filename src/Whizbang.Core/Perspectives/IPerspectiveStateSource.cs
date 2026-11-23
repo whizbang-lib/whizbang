@@ -75,6 +75,15 @@ public readonly record struct PerspectiveStateRequest(
 /// <docs>fundamentals/perspectives/write-modes#state-source</docs>
 /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/BatchedPerspectiveStateSourceTests.cs</tests>
 public interface IPerspectiveBatchState {
+  /// <summary>
+  /// Whether the pair's folded model is kept for the write-behind mode (#2247), so its prepared apply carries a
+  /// <see cref="PreparedPerspectiveApply.WriteBehindRow"/>. False by default: keeping a model costs a serialization.
+  /// </summary>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="perspectiveName">The perspective.</param>
+  /// <returns>True when the pair's perspective writes behind.</returns>
+  bool KeepsModels(Guid streamId, string perspectiveName) => false;
+
   /// <summary>Whether the batch knows the pair's stream is new, so its row, purge marker and history need no read.</summary>
   /// <param name="streamId">The stream.</param>
   /// <param name="perspectiveName">The perspective.</param>

@@ -334,7 +334,12 @@ public partial class SetBasedPerspectiveWorkerIntegrationTests : EFCoreTestBase 
       signalBus: NullSignalBus.Instance);
 
     // One consumer loop, so the first batch the worker reads is everything the claim loop handed it.
-    var workerOptions = new PerspectiveWorkerOptions { MaxConcurrentDrainConsumers = consumers, WriteMode = mode };
+    var workerOptions = new PerspectiveWorkerOptions {
+      MaxConcurrentDrainConsumers = consumers,
+      WriteMode = mode,
+      // Read only in the write-behind mode (#2247), which needs its bounds.
+      WriteBehind = { MaxModels = 10_000, MaxBytes = 64L * 1024 * 1024, MaxFlushIntervalMilliseconds = 1000 },
+    };
     var perspectiveWorker = new PerspectiveWorker(
       instanceProvider: instanceProvider,
       scopeFactory: scopeFactory,
