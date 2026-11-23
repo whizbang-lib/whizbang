@@ -1,5 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
+#pragma warning disable RCS1163, S2325, S108, CS0649, IDE0060, CS9113, S1172, CA1822, CS1998, RCS1213, IDE0052, S4487, CS0067 // RED stub
 
 using System.Collections.Concurrent;
 using Whizbang.Core.ValueObjects;
@@ -40,7 +41,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/Sync/SyncEventTrackerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/SyncEventTrackerStaleSweepTests.cs:CleanupStaleEntries_RemovesAnEntryOnlyOnceTheInjectedClockPassesItsAgeAsync</tests>
 /// <param name="timeProvider">The clock entries are aged by; the system clock when omitted.</param>
-public sealed class SyncEventTracker(TimeProvider? timeProvider = null) : ISyncEventTracker {
+public sealed class SyncEventTracker(TimeProvider? timeProvider = null) : ISyncEventTracker, ISyncWaitAnnouncer {
   // Event id -> perspective name -> entry, so the same event is tracked once per perspective. Guarded by _gate.
   private readonly Dictionary<Guid, Dictionary<string, TrackedSyncEvent>> _trackedEvents = [];
   private readonly Lock _gate = new();
@@ -107,6 +108,9 @@ public sealed class SyncEventTracker(TimeProvider? timeProvider = null) : ISyncE
       }
     }
   }
+
+  /// <inheritdoc />
+  public event Action<IReadOnlyList<Guid>>? WaitStarted { add { } remove { } }
 
   /// <inheritdoc />
   public Task WhenAppliedAsync(Guid eventId, string perspectiveName, CancellationToken cancellationToken) {

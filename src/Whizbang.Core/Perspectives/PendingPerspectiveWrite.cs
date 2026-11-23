@@ -1,5 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
+#pragma warning disable RCS1163, S2325, S108, CS0649, IDE0060, CS9113, S1172, CA1822, CS1998, RCS1213, IDE0052, S4487, CS0067 // RED stub
 
 namespace Whizbang.Core.Perspectives;
 
@@ -122,6 +123,24 @@ public sealed class PendingPerspectiveWrite {
     ArgumentNullException.ThrowIfNull(sinkKey);
     return new PendingPerspectiveWrite(Table, StreamId, Operation, ExpectedVersion, Row) { SinkKey = sinkKey };
   }
+
+  /// <summary>
+  /// The one write that has the effect of this write followed by <paramref name="later"/>, which was prepared on the
+  /// model this write holds: the write-behind mode (#2247) writes a model that several batches folded with one write.
+  /// </summary>
+  /// <remarks>
+  /// The result keeps this write's operation and expected version (the row as it is in the database), its sink and,
+  /// for an insert, its creation time; it writes <paramref name="later"/>'s document, metadata, scope, physical values
+  /// and expiry. The scope is replaced when either write replaced it, the version column moves when either moved it, and
+  /// the business time is the last one a write stamped.
+  /// </remarks>
+  /// <param name="later">The write prepared after this one, on the model this one writes.</param>
+  /// <returns>The merged write.</returns>
+  /// <exception cref="ArgumentException">Either write is a purge, or the two are for different rows.</exception>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PendingPerspectiveWriteTests.cs:FollowedBy_WritesTheLaterValuesOnTheEarlierRowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PendingPerspectiveWriteTests.cs:FollowedBy_KeepsTheLastStampedActivity_AndAnyScopeOrVersionMoveAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PendingPerspectiveWriteTests.cs:FollowedBy_RefusesAPurgeOrAnotherRowAsync</tests>
+  public PendingPerspectiveWrite FollowedBy(PendingPerspectiveWrite later) => throw new NotImplementedException();
 
   /// <summary>An upsert, insert or update of a row, decided by the version the apply read.</summary>
   /// <param name="table">The schema-qualified, quoted perspective table.</param>

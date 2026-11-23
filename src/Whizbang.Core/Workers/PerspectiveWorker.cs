@@ -6029,6 +6029,15 @@ public class PerspectiveWorkerOptions {
   public PerspectiveWriteMode WriteMode { get; set; } = PerspectiveWriteMode.SetBased;
 
   /// <summary>
+  /// The bounds of the write-behind model cache (#2247), bound from <c>Whizbang:Workers:Perspective:WriteBehind</c>.
+  /// Required (<see cref="PerspectiveWriteBehindOptions.MaxModels"/> and <see cref="PerspectiveWriteBehindOptions.MaxBytes"/>)
+  /// whenever any perspective writes behind; the worker does not start without them.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#write-behind</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveWriteBehindOptionsTests.cs</tests>
+  public PerspectiveWriteBehindOptions WriteBehind { get; set; } = new();
+
+  /// <summary>
   /// Slice 17: number of parallel consumer loops running on the channel reader. Each loop
   /// independently waits for work, builds a batch, and runs <c>ProcessChannelBatchAsync</c>
   /// (which itself parallelizes per-stream-perspective up to <see cref="MaxConcurrentPerspectives"/>).

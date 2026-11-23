@@ -106,6 +106,14 @@ public class PreparedPerspectiveApply {
   /// <summary>Why the pair runs the per-pair path, or <see cref="PerspectivePerPairReason.None"/>.</summary>
   public PerspectivePerPairReason PerPairReason { get; }
 
+  /// <summary>
+  /// The model this pair's <see cref="Write"/> writes, held for the write-behind mode (#2247): null unless the batch
+  /// asked the runner to keep its models (<see cref="IPerspectiveBatchState.KeepsModels"/>) and the pair has a write that
+  /// is not a purge. The default keeps none, so a hand-written runner is never held.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#write-behind</docs>
+  public virtual PerspectiveWriteBehindRow? WriteBehindRow => null;
+
   /// <summary>Whether the pair runs the per-pair path when it is completed.</summary>
   public bool RunsPerPair => PerPairReason != PerspectivePerPairReason.None;
 

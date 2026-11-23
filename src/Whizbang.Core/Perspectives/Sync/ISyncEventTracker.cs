@@ -205,3 +205,14 @@ public interface ISyncEventTracker {
   Task WhenAppliedAsync(Guid eventId, string perspectiveName, CancellationToken cancellationToken) =>
     Task.Delay(Timeout.Infinite, cancellationToken);
 }
+
+/// <summary>
+/// A sync tracker that announces each wait it begins, with the events it waits on. The perspective worker listens so a
+/// write-behind model holding one of them is flushed at once (#2247): a sync wait never waits out the flush interval.
+/// </summary>
+/// <docs>fundamentals/perspectives/write-modes#write-behind</docs>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/SyncEventTrackerWaitStartedTests.cs</tests>
+public interface ISyncWaitAnnouncer {
+  /// <summary>Raised when a wait begins, with the events it waits on.</summary>
+  event Action<IReadOnlyList<Guid>>? WaitStarted;
+}
