@@ -36,7 +36,7 @@ namespace Whizbang.Core.Messaging;
 /// <para>
 /// Used by <see cref="EmissionIdentity"/> (a handler's emissions), <see cref="CompositeChildIdentity"/> (a
 /// composite's children) and <see cref="GeneratedStreamIdentity"/> (the stream a message starts, at the message's
-/// own position). Each caller owns its canonical prefix, so the derivations never collide.
+/// own position, or at its handling's when the message's id is minted). Each caller owns its canonical prefix, so the derivations never collide.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>

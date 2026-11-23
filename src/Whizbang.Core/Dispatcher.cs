@@ -3412,12 +3412,7 @@ public abstract partial class Dispatcher(
     if (sourceEnvelope is null) {
       return ValueObjects.TrackedGuid.New();
     }
-    // A nested local cascade hands receptors a wrapper that reports the inbound message's id and handler.
-    // Their emissions anchor on the cascaded message that caused them (carried by the wrapper) so they
-    // cannot collide with the top-level handler's emissions of the same type.
-    var anchor = sourceEnvelope is CascadeEnvelopeWrapper { EmissionAnchor: { } nestedAnchor }
-      ? nestedAnchor
-      : sourceEnvelope.MessageId.Value;
+    var anchor = _emissionAnchor(sourceEnvelope);
     if (anchor == Guid.Empty) {
       return ValueObjects.TrackedGuid.New();
     }
@@ -3435,6 +3430,40 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore CA1848
     return eventId;
+  }
+
+  /// <summary>
+  /// The message a handling's derived ids anchor on. A nested local cascade hands receptors a wrapper that reports the
+  /// inbound message's id and handler; their emissions anchor on the cascaded message that caused them (carried by the
+  /// wrapper) so they cannot collide with the top-level handler's emissions of the same type. Empty when the handling's
+  /// envelope carries no id.
+  /// </summary>
+  private static Guid _emissionAnchor(IMessageEnvelope handling) =>
+    handling is CascadeEnvelopeWrapper { EmissionAnchor: { } nestedAnchor } ? nestedAnchor : handling.MessageId.Value;
+
+  /// <summary>
+  /// The stream a <c>[GenerateStreamId]</c> message starts when nothing it carries derives one. Inside a receptor's
+  /// handling (<see cref="ReceptorHandling"/>) a message other than an event, a command sent from the body, derives it
+  /// from the handling (<see cref="GeneratedStreamIdentity.DeriveInHandling"/>) at the handling's next ordinal for this
+  /// purpose, once per message (<see cref="GeneratedStreamAssignments"/>), so a redelivered handling sends on the
+  /// streams its first run started (#2537). Outside a handling, for a handling with no message id, and for an event,
+  /// whose stream derives from the event's own id once that id derives, a fresh stream is minted as before.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDerivedIdentityInHandlingTests.cs</tests>
+  private Guid _generatedStreamOf(object message, Type messageType) {
+    if (message is IEvent || ReceptorHandling.Current is not { } handling) {
+      return ValueObjects.TrackedGuid.New();
+    }
+    var cause = _emissionAnchor(handling);
+    if (cause == Guid.Empty) {
+      return ValueObjects.TrackedGuid.New();
+    }
+    var serviceName = _instanceProvider.ServiceName;
+    var handlerName = handling.DispatchContext.HandlerName;
+    var typeName = TypeNameFormatter.Format(messageType);
+    return GeneratedStreamAssignments.GetOrAdd(handling, message,
+      ordinal => GeneratedStreamIdentity.DeriveInHandling(cause, serviceName, handlerName, typeName, ordinal));
   }
 
   /// <summary>
@@ -3483,7 +3512,8 @@ public abstract partial class Dispatcher(
   /// This ensures commands (and any IMessage) get their StreamId populated before dispatch,
   /// using the same plumbing as [Populate*] attributes.
   /// Events cascaded from receptors are handled separately in the cascade path. With <paramref name="startedBy"/>,
-  /// the id of the message that starts the stream, the stream id derives from it (#2274); without it one is minted.
+  /// the id of the message that starts the stream, the stream id derives from it (#2274); without it the stream comes
+  /// from <see cref="_generatedStreamOf"/>, derived from the handling for a command sent inside one (#2537).
   /// </summary>
   private void _autoGenerateStreamIdIfNeeded(object message, Type messageType, Guid? startedBy = null) {
     if (_streamIdExtractor is null) {
@@ -3497,7 +3527,7 @@ public abstract partial class Dispatcher(
 
     var streamId = _streamIdExtractor.ExtractStreamId(message, messageType) ?? Guid.Empty;
     if (!onlyIfEmpty || streamId == Guid.Empty) {
-      var newStreamId = startedBy is { } messageId ? GeneratedStreamIdentity.Derive(messageId) : (Guid)ValueObjects.TrackedGuid.New();
+      var newStreamId = startedBy is { } messageId ? GeneratedStreamIdentity.Derive(messageId) : _generatedStreamOf(message, messageType);
 
       // Try IHasStreamId first (direct interface), then fall back to generated setter
       if (message is IHasStreamId hasStreamId) {
