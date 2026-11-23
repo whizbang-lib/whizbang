@@ -184,11 +184,10 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
       ));
     }
 
-    // The compiler's own encoding of the call's location; the file-path form is deprecated.
-    var interceptable = context.SemanticModel.GetInterceptableLocation(invocation, ct);
-    if (interceptable is null) {
-      return (null, null);
-    }
+    // The compiler's own encoding of the call's location; the file-path form is deprecated. Roslyn answers null only
+    // for an invocation whose callee is not a simple name, a member access or a member binding, and IsGuidCallCandidate
+    // admits member-access calls alone, so there is no null outcome to handle here.
+    var interceptable = context.SemanticModel.GetInterceptableLocation(invocation, ct)!;
 
     // Generate unique interceptor method name
     var safeFileName = _sanitizeFileName(filePath);

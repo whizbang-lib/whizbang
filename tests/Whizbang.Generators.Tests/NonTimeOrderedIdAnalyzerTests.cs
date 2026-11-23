@@ -31,6 +31,10 @@ public class NonTimeOrderedIdAnalyzerTests {
       public Guid EventId { get; set; }
       public Guid Other { get; set; }
     }
+
+    public sealed class FieldEnvelope {
+      public Guid MessageId;
+    }
     """;
 
   [RequiresAssemblyFiles]
@@ -59,6 +63,10 @@ public class NonTimeOrderedIdAnalyzerTests {
     yield return () => "public static void Run(Envelope e, string s) { if (Guid.TryParse(s, out var id)) { e.MessageId = id; } }";
     // new Guid(bytes) into the EventId constructor
     yield return () => "public static EventId Run(byte[] b) => new EventId(new Guid(b));";
+    // new Guid(bytes) into a message id field
+    yield return () => "public static void Run(FieldEnvelope e, byte[] b) { e.MessageId = new Guid(b); }";
+    // a constant that is not a Guid at all carries no version
+    yield return () => "public static void Run(Envelope e) { e.MessageId = Guid.Parse(\"not-a-guid\"); }";
   }
 
   [Test]
@@ -88,6 +96,12 @@ public class NonTimeOrderedIdAnalyzerTests {
     yield return () => "public static void Run(Envelope e, int n) { e.EventId = Guid.Parse($\"0199b000-0000-7000-8000-{n:D12}\"); }";
     // A local initialized from TrackedGuid.New() is quiet
     yield return () => "public static void Run(Envelope e) { var id = (Guid)TrackedGuid.New(); e.MessageId = id; }";
+    // An assignment to a local is no id member
+    yield return () => "public static Guid Run(string s) { Guid id; id = Guid.Parse(s); return id; }";
+    // A local assigned after its declaration is beyond the short flow followed
+    yield return () => "public static void Run(Envelope e, string s) { Guid id; id = Guid.Parse(s); e.MessageId = id; }";
+    // A local that is the out argument of a method other than Guid.TryParse
+    yield return () => "public static void Run(Envelope e) { Fill(out var id); e.MessageId = id; }\nprivate static void Fill(out Guid g) => g = TrackedGuid.New();";
   }
 
   [Test]

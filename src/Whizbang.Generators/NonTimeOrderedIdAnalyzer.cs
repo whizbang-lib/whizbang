@@ -76,7 +76,9 @@ public class NonTimeOrderedIdAnalyzer : DiagnosticAnalyzer {
   private static void _reportIfNonTimeOrdered(OperationAnalysisContext context, IOperation value, string target) {
     var source = _unwrap(value);
     if (source is ILocalReferenceOperation local) {
-      source = _localSource(local.Local, context.Operation.SemanticModel, context.CancellationToken);
+      // An operation the compiler hands an operation action always carries its semantic model (only an operation a
+      // caller builds through the operation factories has none), so the model is never null here.
+      source = _localSource(local.Local, context.Operation.SemanticModel!, context.CancellationToken);
     }
     if (source is not null && _shape(source) is { } shape) {
       context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.NonTimeOrderedIdFlowsIntoId, value.Syntax.GetLocation(), shape, target));
@@ -91,14 +93,14 @@ public class NonTimeOrderedIdAnalyzer : DiagnosticAnalyzer {
   }
 
   // The operation a local's value comes from: its initializer, or the Guid.TryParse call it is the out argument of.
-  private static IOperation? _localSource(ILocalSymbol local, SemanticModel? model, System.Threading.CancellationToken ct) {
-    if (model is null) {
-      return null;
-    }
+  private static IOperation? _localSource(ILocalSymbol local, SemanticModel model, System.Threading.CancellationToken ct) {
     foreach (var reference in local.DeclaringSyntaxReferences) {
       var syntax = reference.GetSyntax(ct);
       if (syntax is VariableDeclaratorSyntax { Initializer.Value: { } initializer }) {
-        return model.GetOperation(initializer, ct) is { } init ? _unwrap(init) : null;
+        // The compiler binds every initializer of a method it analyzes, so GetOperation answers with an operation (an
+        // invalid one for code in error), never null; _unwrap would pass a null through and the caller's null check
+        // stays the guard all the same.
+        return _unwrap(model.GetOperation(initializer, ct)!);
       }
       if (syntax.FirstAncestorOrSelf<InvocationExpressionSyntax>() is { } invocation
           && model.GetOperation(invocation, ct) is IInvocationOperation call && _isGuidMethod(call.TargetMethod, "TryParse")) {
