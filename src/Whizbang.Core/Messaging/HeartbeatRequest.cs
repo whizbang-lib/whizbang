@@ -95,12 +95,13 @@ public sealed record HeartbeatRequest(
       writer.WriteStartObject();
       if (Metadata is { ValueKind: JsonValueKind.Object } given) {
         foreach (var property in given.EnumerateObject()) {
-          if (property.Name != STORED_FORM_LEVEL_KEY) {
+          if (property.Name != STORED_FORM_LEVEL_KEY && property.Name != PARTITION_OWNERSHIP_LEVEL_KEY) {
             property.WriteTo(writer);
           }
         }
       }
       writer.WriteNumber(STORED_FORM_LEVEL_KEY, STORED_FORM_LEVEL);
+      writer.WriteNumber(PARTITION_OWNERSHIP_LEVEL_KEY, PARTITION_OWNERSHIP_LEVEL);
       writer.WriteEndObject();
     }
     return System.Text.Encoding.UTF8.GetString(buffer.ToArray());

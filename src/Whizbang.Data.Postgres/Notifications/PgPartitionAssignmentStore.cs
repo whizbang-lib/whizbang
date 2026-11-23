@@ -124,8 +124,21 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
   }
 
   /// <inheritdoc />
-  public Task<string?> OpenOwnershipByMapAsync(Guid instanceId, long epoch, CancellationToken cancellationToken) =>
-    throw new NotImplementedException();
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignmentSqlTests.cs:Store_OpenOwnershipByMap_TurnsTheSwitchOn_AndAnswersNullToADeposedAssignerAsync</tests>
+  public async Task<string?> OpenOwnershipByMapAsync(Guid instanceId, long epoch, CancellationToken cancellationToken) {
+    var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
+    await using var connectionScope = connection.ConfigureAwait(false);
+    await using var cmd = connection.CreateWhizbangCommand();
+    cmd.CommandText = "SELECT wh_open_partition_ownership_by_map(@role, @instance, @epoch)";
+    cmd.Parameters.AddWithValue("role", PartitionAssignerOptions.ROLE);
+    cmd.Parameters.AddWithValue("instance", instanceId);
+    cmd.Parameters.AddWithValue(nameof(epoch), epoch);
+    try {
+      return (string?)await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    } catch (PostgresException ex) when (ex.SqlState == FENCE_SQLSTATE) {
+      return null;
+    }
+  }
 
   private async ValueTask<NpgsqlConnection> _openAsync(CancellationToken cancellationToken) {
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();

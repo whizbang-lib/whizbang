@@ -43,6 +43,10 @@ public sealed partial class PartitionAssignerWorker : BackgroundService {
   private readonly TimeProvider _time;
   private PartitionAssignment? _published;
   private long _publishedAtTimestamp;
+  // #2555: whether this tenure has seen the service's ownership-by-map switch on; it is one-way, so it is asked for no more.
+  private bool _ownershipByMapOn;
+  private const string OWNERSHIP_BY_MAP_OPEN = "open";
+  private const string OWNERSHIP_BY_MAP_OPENED = "opened";
   // The tenure's role epoch; zero when this instance is not the assigner (role epochs start at 1).
   private long _epoch;
 
@@ -194,7 +198,34 @@ public sealed partial class PartitionAssignerWorker : BackgroundService {
       // The alive-lock is this assigner's liveness, so its tick renews the lease; the heartbeat renews it as well.
       _ = await _store.RenewAsync(self, epoch, cancellationToken).ConfigureAwait(false);
     }
+    if (!await _openOwnershipByMapAsync(self, epoch, cancellationToken).ConfigureAwait(false)) {
+      LogFenced(_logger, epoch);
+      _raiseEvaluated(evaluation);
+      return false;
+    }
     _raiseEvaluated(evaluation);
+    return true;
+  }
+
+  /// <summary>
+  /// #2555: while ownership by map is wanted and not yet on, asks the database for the service's switch after the
+  /// publish. The switch is one-way, so once the answer says it is on, this tenure asks no more. Returns false when the
+  /// fence refused the request (the tenure has ended).
+  /// </summary>
+  private async Task<bool> _openOwnershipByMapAsync(Guid self, long epoch, CancellationToken cancellationToken) {
+    if (!_options.OwnershipByMap || Volatile.Read(ref _ownershipByMapOn)) {
+      return true;
+    }
+    var answer = await _store.OpenOwnershipByMapAsync(self, epoch, cancellationToken).ConfigureAwait(false);
+    if (answer is null) {
+      return false;
+    }
+    if (answer is OWNERSHIP_BY_MAP_OPEN or OWNERSHIP_BY_MAP_OPENED) {
+      Volatile.Write(ref _ownershipByMapOn, true);
+      LogOwnershipByMap(_logger, answer);
+    } else {
+      LogOwnershipByMapClosed(_logger, answer);
+    }
     return true;
   }
 
@@ -203,6 +234,7 @@ public sealed partial class PartitionAssignerWorker : BackgroundService {
   private void _begin(long epoch) {
     _ = Interlocked.Exchange(ref _epoch, epoch);
     Volatile.Write(ref _published, null);
+    Volatile.Write(ref _ownershipByMapOn, false);
     LogBecameAssigner(_logger, epoch);
     OnBecameAssigner?.Invoke(epoch);
   }
@@ -233,6 +265,13 @@ public sealed partial class PartitionAssignerWorker : BackgroundService {
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "A partition assigner iteration failed; it votes again after the renew interval.")]
   static partial void LogIterationFailed(ILogger logger, Exception exception);
+
+  [LoggerMessage(EventId = 8, Level = LogLevel.Information,
+    Message = "Ownership by map is on for this service ({Answer}): every claim decides through the partition ownership table.")]
+  static partial void LogOwnershipByMap(ILogger logger, string answer);
+
+  [LoggerMessage(EventId = 9, Level = LogLevel.Debug, Message = "Ownership by map stays off for now: {Reason}.")]
+  static partial void LogOwnershipByMapClosed(ILogger logger, string reason);
 
   [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
     Message = "A partition assigner evaluation failed; the published assignment stands and the next tick tries again.")]
