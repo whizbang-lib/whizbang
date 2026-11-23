@@ -97,6 +97,7 @@ public class GuidOrderingSuppressionTests {
   [Arguments("Probe.Registry.NeverRegistered, Probe.Assembly")]
   [Arguments("Probe.Registry.NotGeneric`1, Probe.Assembly")]
   [Arguments("Probe.Registry.Unbalanced`1[[System.Int32, System.Private.CoreLib], Probe.Assembly")]
+  [Arguments("Probe.Registry.OtherGeneric`1[[System.Int32, System.Private.CoreLib]], Probe.Assembly")]
   public async Task IsSuppressed_ANameNotRegistered_IsFalseAsync(string? name) {
     GuidOrderingSuppressions.Register("Probe.Registry.Unbalanced`1, Probe.Assembly");
 
@@ -237,7 +238,7 @@ public class GuidOrderingSuppressionTests {
   public async Task ValidateAppend_ASuppressedPayload_IsAcceptedAsync() {
     var (validator, logger, _, factory) = _validator(GuidOrderingSeverity.Error);
     using (factory) {
-      validator.ValidateAppend(TrackedGuid.New(), _envelope(_v4, new SuppressedOrderingProbe(1)), ENTRY_POINT);
+      validator.ValidateAppend(TrackedGuid.New(), _envelope(_v4, new SuppressedOrderingProbe(TrackedGuid.New())), ENTRY_POINT);
 
       await Assert.That(logger.Entries.Single().Message).Contains("[SuppressGuidOrderingValidation]");
     }
@@ -248,7 +249,7 @@ public class GuidOrderingSuppressionTests {
     var store = new InMemoryEventStore();
     var stream = (Guid)TrackedGuid.New();
 
-    await store.AppendAsync(stream, _envelope(_v4, new SuppressedOrderingProbe(1)));
+    await store.AppendAsync(stream, _envelope(_v4, new SuppressedOrderingProbe(TrackedGuid.New())));
 
     await Assert.That(await store.GetLastSequenceAsync(stream)).IsGreaterThanOrEqualTo(0L);
   }
@@ -258,7 +259,7 @@ public class GuidOrderingSuppressionTests {
     var store = new InMemoryEventStore();
     var stream = (Guid)TrackedGuid.New();
 
-    await Assert.That(async () => await store.AppendAsync(stream, _envelope(_v4, new UnsuppressedOrderingProbe(1))))
+    await Assert.That(async () => await store.AppendAsync(stream, _envelope(_v4, new UnsuppressedOrderingProbe(TrackedGuid.New()))))
       .Throws<GuidOrderingException>();
     await Assert.That(await store.GetLastSequenceAsync(stream)).IsEqualTo(-1L);
   }
@@ -268,7 +269,7 @@ public class GuidOrderingSuppressionTests {
     var store = new InMemoryEventStore();
     var stream = (Guid)TrackedGuid.New();
 
-    await Assert.That(async () => await store.AppendAsync(stream, _envelope(Guid.Empty, new SuppressedOrderingProbe(1))))
+    await Assert.That(async () => await store.AppendAsync(stream, _envelope(Guid.Empty, new SuppressedOrderingProbe(TrackedGuid.New()))))
       .Throws<GuidOrderingException>();
     await Assert.That(await store.GetLastSequenceAsync(stream)).IsEqualTo(-1L);
   }
@@ -281,9 +282,9 @@ public class GuidOrderingSuppressionTests {
   };
 
   [SuppressGuidOrderingValidation]
-  private sealed record HiddenSuppressedProbe(int Value) : IEvent;
+  private sealed record HiddenSuppressedProbe([property: StreamId] Guid Id) : IEvent;
 
-  private sealed record LateRegisteredProbe(int Value) : IEvent;
+  private sealed record LateRegisteredProbe([property: StreamId] Guid Id) : IEvent;
 
   private sealed class CollectingLogger : ILogger {
     public List<(LogLevel Level, string Message)> Entries { get; } = [];
@@ -299,13 +300,13 @@ public class GuidOrderingSuppressionTests {
 
 /// <summary>A message type that opts out of the time-ordering check (#2528).</summary>
 [SuppressGuidOrderingValidation]
-public record SuppressedOrderingProbe(int Value) : IEvent;
+public record SuppressedOrderingProbe([property: StreamId] Guid Id) : IEvent;
 
 /// <summary>Derives from an opted-out type without opting out itself.</summary>
-public sealed record DerivedFromSuppressedOrderingProbe(int Value) : SuppressedOrderingProbe(Value);
+public sealed record DerivedFromSuppressedOrderingProbe(Guid Id) : SuppressedOrderingProbe(Id);
 
 /// <summary>A message type that does not opt out.</summary>
-public sealed record UnsuppressedOrderingProbe(int Value) : IEvent;
+public sealed record UnsuppressedOrderingProbe([property: StreamId] Guid Id) : IEvent;
 
 /// <summary>An opted-out record struct.</summary>
 [SuppressGuidOrderingValidation]

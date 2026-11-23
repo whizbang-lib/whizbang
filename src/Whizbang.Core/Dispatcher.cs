@@ -4380,7 +4380,7 @@ public abstract partial class Dispatcher(
     // The source's id anchors every id derived for what the cascade emits, and a derived id is stamped v7 whatever its
     // anchor, so the anchor is checked here (#2528). A source without an id anchors nothing: fresh ids are minted.
     if (sourceEnvelope is not null && sourceEnvelope.MessageId.Value != Guid.Empty) {
-      _guidOrdering.ValidateMessageId(sourceEnvelope.MessageId.Value, TypeNameFormatter.SimpleName(message.GetType()), "Dispatcher.Cascade");
+      _guidOrdering.ValidateMessageId(sourceEnvelope.MessageId.Value, message.GetType(), "Dispatcher.Cascade");
     }
     return _cascadeMessageAsync(message, sourceEnvelope, mode, presetEventId: null, cancellationToken);
   }
@@ -4766,7 +4766,7 @@ public abstract partial class Dispatcher(
         ? carriedIds[ordinal]
         : CompositeChildIdentity.ForChild(messageId.Value, ordinal, inner.GetType());
       // A composite that carries its children's ids hands them in as plain Guids (#2528).
-      _guidOrdering.ValidateMessageId(childId, TypeNameFormatter.SimpleName(inner.GetType()), "Dispatcher.CompositeFanOut");
+      _guidOrdering.ValidateMessageId(childId, inner.GetType(), "Dispatcher.CompositeFanOut");
       try {
         await _cascadeMessageAsync(inner, sourceEnvelope, DispatchModes.Local, childId, CancellationToken.None).ConfigureAwait(false);
       } catch (Exception ex) when (!atomic) {
@@ -5198,7 +5198,7 @@ public abstract partial class Dispatcher(
   protected Task CascadeByRuntimeTypeAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope, Guid? eventId,
       bool eventStoreOnly) {
     if (eventId is Guid preset) {
-      _guidOrdering.ValidateMessageId(preset, TypeNameFormatter.SimpleName(messageType), "Dispatcher.CascadeByRuntimeType");
+      _guidOrdering.ValidateMessageId(preset, messageType, "Dispatcher.CascadeByRuntimeType");
     }
     var messageId = eventId.HasValue ? new MessageId(eventId.Value) : MessageId.New();
     return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope, eventStoreOnly);

@@ -23,7 +23,8 @@ namespace Whizbang.Generators;
 /// <c>EventId</c>, a member marked <c>[StreamId]</c>, and the argument of <c>MessageId</c>/<c>EventId</c>'s unchecked
 /// constructor (their <c>From</c> already refuses a non-v7 Guid at run time). A string literal that is itself a UUIDv7 is
 /// not reported. The framework's own minting (<c>TrackedGuid.New()</c>, a strong id's <c>New()</c>, a derived id) is
-/// never one of the shapes.
+/// never one of the shapes. Code inside a method or type carrying <c>[SuppressGuidOrderingValidation]</c> is a deliberate
+/// opt-out and is not reported.
 /// </remarks>
 /// <docs>operations/diagnostics/whiz037</docs>
 /// <tests>tests/Whizbang.Generators.Tests/NonTimeOrderedIdAnalyzerTests.cs</tests>
@@ -33,6 +34,7 @@ public class NonTimeOrderedIdAnalyzer : DiagnosticAnalyzer {
   private const string STREAM_ID_ATTRIBUTE = "Whizbang.Core.StreamIdAttribute";
   private const string MESSAGE_ID_TYPE = "Whizbang.Core.ValueObjects.MessageId";
   private const string EVENT_ID_TYPE = "Whizbang.Core.ValueObjects.EventId";
+  private const string SUPPRESS_ATTRIBUTE = "Whizbang.Core.SuppressGuidOrderingValidationAttribute";
 
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => [DiagnosticDescriptors.NonTimeOrderedIdFlowsIntoId];
@@ -74,6 +76,9 @@ public class NonTimeOrderedIdAnalyzer : DiagnosticAnalyzer {
     || member.GetAttributes().Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, STREAM_ID_ATTRIBUTE));
 
   private static void _reportIfNonTimeOrdered(OperationAnalysisContext context, IOperation value, string target) {
+    if (_inSuppressedScope(context.ContainingSymbol)) {
+      return;
+    }
     var source = _unwrap(value);
     if (source is ILocalReferenceOperation local) {
       // An operation the compiler hands an operation action always carries its semantic model (only an operation a
@@ -83,6 +88,17 @@ public class NonTimeOrderedIdAnalyzer : DiagnosticAnalyzer {
     if (source is not null && _shape(source) is { } shape) {
       context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.NonTimeOrderedIdFlowsIntoId, value.Syntax.GetLocation(), shape, target));
     }
+  }
+
+  // A method, or a type containing it at any depth, that carries [SuppressGuidOrderingValidation]: a deliberate opt-out.
+  private static bool _inSuppressedScope(ISymbol symbol) {
+    // Every chain ends at a namespace (the global one at least), so ContainingSymbol is never null before it does.
+    for (var current = symbol; current is not INamespaceSymbol; current = current.ContainingSymbol!) {
+      if (current.GetAttributes().Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, SUPPRESS_ATTRIBUTE))) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static IOperation _unwrap(IOperation operation) {

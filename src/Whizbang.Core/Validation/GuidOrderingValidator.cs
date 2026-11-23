@@ -20,7 +20,10 @@ namespace Whizbang.Core.Validation;
 /// and <c>wh_lifecycle_completions</c> is partitioned by the time in the event id. An event or message id that is not a
 /// UUIDv7 is therefore refused where it enters (<see cref="ValidateMessageId"/>) at
 /// <see cref="GuidOrderingSeverity.Error"/>, the default. Below that it is logged once and counted, so the count can be
-/// driven to zero. The empty id is refused at every severity.
+/// driven to zero. The empty id is refused at every severity. A message type carrying
+/// <see cref="SuppressGuidOrderingValidationAttribute"/> (registered in <see cref="GuidOrderingSuppressions"/> by the
+/// generator) is a deliberate opt-out: its non-v7 ids are accepted at Error and logged and counted as at
+/// <see cref="GuidOrderingSeverity.Warning"/>.
 /// </para>
 /// <para>
 /// A stream id is hashed and sorted for a total order, never read for its time, so a non-v7 stream id costs only index
@@ -31,6 +34,7 @@ namespace Whizbang.Core.Validation;
 /// <docs>fundamentals/identity/whizbang-ids#time-ordering-checks</docs>
 /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingEntryPointValidationTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingValidatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingSuppressionTests.cs</tests>
 /// <param name="options">Whizbang configuration options.</param>
 /// <param name="logger">Logger for reporting violations.</param>
 /// <param name="metrics">The counters for what is accepted below <see cref="GuidOrderingSeverity.Error"/>, or null for none.</param>
@@ -64,21 +68,51 @@ public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logg
 
   /// <summary>
   /// Checks an event or message id where it enters the framework. A UUIDv7 passes at once; the empty id always throws;
-  /// any other version throws at <see cref="GuidOrderingSeverity.Error"/> and is otherwise logged and counted once.
+  /// any other version throws at <see cref="GuidOrderingSeverity.Error"/> and is otherwise logged and counted once. A
+  /// type carrying <see cref="SuppressGuidOrderingValidationAttribute"/> is checked as if the severity were at most
+  /// <see cref="GuidOrderingSeverity.Warning"/>: its id is accepted, logged and counted, never silently unless the
+  /// severity is <see cref="GuidOrderingSeverity.None"/>.
   /// </summary>
   /// <param name="id">The event or message id.</param>
-  /// <param name="messageType">The type of the message the id belongs to, for the report.</param>
+  /// <param name="messageType">The stored name of the message's type (<c>Namespace.Type, Assembly</c>), for the opt-out
+  /// lookup and the report.</param>
   /// <param name="entryPoint">The entry point checking it, for the report.</param>
   /// <exception cref="GuidOrderingException">The id is empty, or not v7 at <see cref="GuidOrderingSeverity.Error"/>.</exception>
+  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingSuppressionTests.cs:ValidateMessageId_ASuppressedTypeByNameAtError_IsAcceptedAndLoggedAsync</tests>
   public void ValidateMessageId(Guid id, string messageType, string entryPoint) {
-    if (id.Version == 7) {
-      return;
+    if (id.Version != 7) {
+      _checkNonV7(id, messageType, entryPoint, GuidOrderingSuppressions.IsSuppressed(messageType));
     }
+  }
+
+  /// <summary>
+  /// Checks an event or message id whose message type is known, as <see cref="ValidateMessageId(Guid, string, string)"/>
+  /// does; the report names the type by its simple name.
+  /// </summary>
+  /// <param name="id">The event or message id.</param>
+  /// <param name="messageType">The message's type, for the opt-out lookup and the report.</param>
+  /// <param name="entryPoint">The entry point checking it, for the report.</param>
+  /// <exception cref="ArgumentNullException">The type is null.</exception>
+  /// <exception cref="GuidOrderingException">The id is empty, or not v7 at <see cref="GuidOrderingSeverity.Error"/>.</exception>
+  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingSuppressionTests.cs:ValidateMessageId_ASuppressedTypeAtError_IsAcceptedLoggedAsAWarningAndCountedOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingSuppressionTests.cs:ValidateMessageId_ANullType_ThrowsAsync</tests>
+  public void ValidateMessageId(Guid id, Type messageType, string entryPoint) {
+    ArgumentNullException.ThrowIfNull(messageType);
+    if (id.Version != 7) {
+      _checkNonV7(id, TypeNameFormatter.SimpleName(messageType), entryPoint, GuidOrderingSuppressions.IsSuppressed(messageType));
+    }
+  }
+
+  private void _checkNonV7(Guid id, string messageType, string entryPoint, bool suppressed) {
     if (id == Guid.Empty) {
       throw new GuidOrderingException(id, messageType, entryPoint,
         $"{entryPoint} refused the empty message id {id} for {messageType} (version 0). Event and message ids must be UUIDv7 (time-ordered).");
     }
     var severity = _options.GuidOrderingViolationSeverity;
+    if (suppressed && severity == GuidOrderingSeverity.Error) {
+      // The type opted out deliberately: accepted, but logged and counted as Warning would, so it stays visible
+      severity = GuidOrderingSeverity.Warning;
+    }
     if (severity == GuidOrderingSeverity.Error) {
       throw new GuidOrderingException(id, messageType, entryPoint,
         $"{entryPoint} refused message id {id} for {messageType}: version {id.Version}, but event and message ids must be UUIDv7 "
@@ -87,12 +121,25 @@ public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logg
     if (severity == GuidOrderingSeverity.None || !_firstSighting(_reportedMessageIds, id)) {
       return;
     }
-    if (severity == GuidOrderingSeverity.Warning) {
-      LogMessageIdWarning(_logger, entryPoint, id, messageType, id.Version);
-    } else {
-      LogMessageIdInfo(_logger, entryPoint, id, messageType, id.Version);
-    }
+    _logAcceptedMessageId(severity, suppressed, entryPoint, id, messageType);
     _metrics?.NonV7MessageIds.Add(1, _entryPointTag(entryPoint), _versionTag(id));
+  }
+
+  private void _logAcceptedMessageId(GuidOrderingSeverity severity, bool suppressed, string entryPoint, Guid id, string messageType) {
+    switch (severity, suppressed) {
+      case (GuidOrderingSeverity.Warning, true):
+        LogSuppressedMessageIdWarning(_logger, entryPoint, id, messageType, id.Version);
+        break;
+      case (GuidOrderingSeverity.Warning, false):
+        LogMessageIdWarning(_logger, entryPoint, id, messageType, id.Version);
+        break;
+      case (_, true):
+        LogSuppressedMessageIdInfo(_logger, entryPoint, id, messageType, id.Version);
+        break;
+      default:
+        LogMessageIdInfo(_logger, entryPoint, id, messageType, id.Version);
+        break;
+    }
   }
 
   /// <summary>
@@ -138,9 +185,9 @@ public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logg
   /// <exception cref="GuidOrderingException">The event id is refused, or the stream id is and stream ids are raised to Error.</exception>
   public void ValidateAppend<TMessage>(Guid streamId, Observability.MessageEnvelope<TMessage> envelope, string entryPoint) {
     ArgumentNullException.ThrowIfNull(envelope);
-    var messageType = TypeNameFormatter.SimpleName(envelope.Payload is { } payload ? payload.GetType() : typeof(TMessage));
+    var messageType = envelope.Payload is { } payload ? payload.GetType() : typeof(TMessage);
     ValidateMessageId(envelope.MessageId.Value, messageType, entryPoint);
-    ReportStreamId(streamId, streamIdType: null, messageType, entryPoint);
+    ReportStreamId(streamId, streamIdType: null, TypeNameFormatter.SimpleName(messageType), entryPoint);
   }
 
   /// <summary>
@@ -207,6 +254,16 @@ public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logg
       Level = LogLevel.Information,
       Message = "{EntryPoint} accepted message id {MessageId} for {MessageType}: version {Version}, not UUIDv7. Version assignment, apply order and replay read the time in event and message ids; mint them with TrackedGuid.New() or a [WhizbangId] type.")]
   private static partial void LogMessageIdInfo(ILogger logger, string entryPoint, Guid messageId, string messageType, int version);
+
+  [LoggerMessage(
+      Level = LogLevel.Warning,
+      Message = "{EntryPoint} accepted message id {MessageId} for {MessageType}: version {Version}, not UUIDv7, because the type carries [SuppressGuidOrderingValidation]. Version assignment, apply order and replay read the time in event and message ids, so this type's ids are ordered by their bytes, not by when they were minted.")]
+  private static partial void LogSuppressedMessageIdWarning(ILogger logger, string entryPoint, Guid messageId, string messageType, int version);
+
+  [LoggerMessage(
+      Level = LogLevel.Information,
+      Message = "{EntryPoint} accepted message id {MessageId} for {MessageType}: version {Version}, not UUIDv7, because the type carries [SuppressGuidOrderingValidation]. Version assignment, apply order and replay read the time in event and message ids, so this type's ids are ordered by their bytes, not by when they were minted.")]
+  private static partial void LogSuppressedMessageIdInfo(ILogger logger, string entryPoint, Guid messageId, string messageType, int version);
 
   [LoggerMessage(
       Level = LogLevel.Warning,
