@@ -40,6 +40,8 @@ public sealed class PartitionAssignerOptions {
   /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerWorkerTests.cs:Tick_WithOwnershipByMapOff_NeverAsksForTheSwitchAsync</tests>
   /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerWorkerTests.cs:Tick_WithOwnershipByMapOn_AsksForTheSwitchAfterPublishing_AtItsEpochAsync</tests>
   public bool OwnershipByMap { get; set; }
+
+  /// <summary>
   /// How long a membership change is collected before one new map is published (#2558): the window runs from the first
   /// change the assigner sees, every join and leave inside it lands in the same publish, and a change that reverts
   /// inside it publishes nothing. A rolling deploy of K instances then causes K small moves, not a reshuffle per
