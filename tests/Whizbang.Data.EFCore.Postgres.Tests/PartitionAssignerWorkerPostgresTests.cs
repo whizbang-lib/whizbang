@@ -77,6 +77,61 @@ public class PartitionAssignerWorkerPostgresTests : EFCoreTestBase {
     return signal.Task;
   }
 
+  /// <summary>Registers an instance in a startup phase, as its own registration records it.</summary>
+  private async Task _registerInPhaseAsync(Guid instance, string phase) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      INSERT INTO wh_service_instances
+        (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, connection_mode, lifecycle_phase)
+      VALUES (@id, 'test', 'test-host', 1, NOW(), NOW(), 'pooled', @phase)
+      """;
+    cmd.Parameters.AddWithValue("id", instance);
+    cmd.Parameters.AddWithValue(nameof(phase), phase);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  private async Task _recordPhaseAsync(Guid instance, string phase) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT record_instance_state('{instance}'::uuid, '{phase}')";
+    if (await cmd.ExecuteScalarAsync() is not true) {
+      throw new InvalidOperationException($"the phase of {instance} was not recorded");
+    }
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task AJoiningInstance_GetsPartitions_OnlyOnceItsStartupReportsReadyAsync(CancellationToken cancellationToken) {
+    // #2558, ready before assigned: the assigner's candidates are the instances eligible for work, so an instance still
+    // migrating is no member and the map gives it nothing; the transition into AcceptingCommands makes it one.
+    var pod = new Pod(Guid.CreateVersion7());
+    var joiner = Guid.CreateVersion7();
+    await _registerAsync(pod.InstanceId);
+    await _registerInPhaseAsync(joiner, nameof(Whizbang.Core.RunControl.LifecyclePhase.Migrating));
+    var worker = _workerFor(pod, new PartitionAssignerOptions { SettleWindow = TimeSpan.Zero });
+    var first = _signal<PartitionAssignment>(handler => worker.OnPublished += handler);
+    var withJoiner = _signal<PartitionAssignment>(handler => worker.OnPublished += handler, a => a.Members.Contains(joiner));
+
+    await worker.StartAsync(cancellationToken);
+    try {
+      var whileStarting = await first.WaitAsync(_signalDeadline, cancellationToken);
+      await _recordPhaseAsync(joiner, nameof(Whizbang.Core.RunControl.LifecyclePhase.AcceptingCommands));
+      var onceReady = await withJoiner.WaitAsync(_signalDeadline, cancellationToken);
+
+      await Assert.That(whileStarting.Members).DoesNotContain(joiner);
+      await Assert.That(PartitionMap.FromPublished(whileStarting).CountOf(joiner)).IsEqualTo(0);
+      var map = PartitionMap.FromPublished(onceReady);
+      await Assert.That(map.CountOf(joiner)).IsEqualTo(PartitionMap.PARTITION_COUNT / 2);
+      await Assert.That(map.MovesTo(PartitionMap.FromPublished(whileStarting))).IsEqualTo(PartitionMap.PARTITION_COUNT / 2)
+        .Because("only the joiner's share moves");
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
   [Test]
   [Timeout(120000)]
   public async Task TwoInstances_OneIsElected_AndPublishesBothAsync(CancellationToken cancellationToken) {

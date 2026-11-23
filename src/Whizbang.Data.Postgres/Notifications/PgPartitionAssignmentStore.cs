@@ -13,12 +13,15 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <summary>
 /// The Postgres store behind the partition assigner (#1254): migration 203's
 /// <c>wh_read_partition_assignment</c>, <c>wh_partition_assignment_candidates</c>,
-/// <c>wh_publish_partition_assignment</c> and <c>wh_renew_partition_assignment</c>, and migration 560's
-/// <c>wh_open_partition_ownership_by_map</c>. Each call is one statement on a
+/// <c>wh_publish_partition_assignment</c> and <c>wh_renew_partition_assignment</c>, with the partition map added by
+/// migration 564 (#2558) and migration 565's <c>wh_open_partition_ownership_by_map</c> (#2555). Each call is one
+/// statement on a
 /// connection of its own, so it works through a transaction pooler.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignmentSqlTests.cs:Store_PublishReadAndRenew_RoundTripAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionMapClaimSqlTests.cs:Publish_WithAMap_StoresIt_AndTheReadReturnsItAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionMapClaimSqlTests.cs:Publish_OfTheEmptyMap_StoresNoMembersAndNoMapAsync</tests>
 public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
   private const string FENCE_SQLSTATE = "WHF01";
 
@@ -50,8 +53,8 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using var connectionScope = connection.ConfigureAwait(false);
     await using var cmd = connection.CreateWhizbangCommand();
-    cmd.CommandText = "SELECT epoch, revision, assigner_instance_id, members, published_at, lease_expires_at, lease_remaining "
-      + "FROM wh_read_partition_assignment()";
+    cmd.CommandText = "SELECT epoch, revision, assigner_instance_id, members, published_at, lease_expires_at, lease_remaining, "
+      + "partition_owners FROM wh_read_partition_assignment()";
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       return null;
@@ -62,7 +65,9 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
       AssignerInstanceId: reader.GetGuid(2),
       Members: reader.GetFieldValue<Guid[]>(3),
       PublishedAt: reader.GetFieldValue<DateTimeOffset>(4),
-      LeaseExpiresAt: reader.GetFieldValue<DateTimeOffset>(5));
+      LeaseExpiresAt: reader.GetFieldValue<DateTimeOffset>(5),
+      // #2558: the partition map; null for an assignment of the older shape, whose claimers rank by modulo.
+      Owners: await reader.IsDBNullAsync(7, cancellationToken).ConfigureAwait(false) ? null : reader.GetFieldValue<short[]>(7));
     return new PartitionAssignmentRead(assignment, reader.GetTimeSpan(6));
   }
 
@@ -88,18 +93,22 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
 
   /// <inheritdoc />
   public async Task<PartitionAssignment?> PublishAsync(
-      string role, Guid instanceId, long epoch, IReadOnlyList<Guid> members, TimeSpan lease, CancellationToken cancellationToken) {
+      string role, Guid instanceId, long epoch, PartitionMap map, TimeSpan lease, CancellationToken cancellationToken) {
     ArgumentException.ThrowIfNullOrEmpty(role);
-    ArgumentNullException.ThrowIfNull(members);
+    ArgumentNullException.ThrowIfNull(map);
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
       await using var cmd = connection.CreateWhizbangCommand();
-      cmd.CommandText = "SELECT wh_publish_partition_assignment(@role, @instance, @epoch, @members, @lease)";
+      cmd.CommandText = "SELECT wh_publish_partition_assignment(@role, @instance, @epoch, @members, @lease, @owners)";
       cmd.Parameters.AddWithValue(nameof(role), role);
       cmd.Parameters.AddWithValue("instance", instanceId);
       cmd.Parameters.AddWithValue(nameof(epoch), epoch);
-      cmd.Parameters.Add(new NpgsqlParameter(nameof(members), NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = members.ToArray() });
+      cmd.Parameters.Add(new NpgsqlParameter("members", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = map.Members.ToArray() });
       cmd.Parameters.Add(new NpgsqlParameter(nameof(lease), NpgsqlDbType.Interval) { Value = lease });
+      // #2558: the map, one member index per partition; the empty map (no members) publishes none.
+      cmd.Parameters.Add(new NpgsqlParameter("owners", NpgsqlDbType.Array | NpgsqlDbType.Smallint) {
+        Value = map.Owners.Count == 0 ? DBNull.Value : (object)map.Owners.ToArray(),
+      });
       try {
         _ = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
       } catch (PostgresException ex) when (ex.SqlState == FENCE_SQLSTATE) {

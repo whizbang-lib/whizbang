@@ -346,9 +346,10 @@ public class PartitionAssignmentSqlTests : EFCoreTestBase {
     var epoch = await _electAsync(conn, assigner);
     var store = _store();
 
-    var published = await store.PublishAsync(ROLE, assigner, epoch, [assigner], TimeSpan.FromSeconds(90), CancellationToken.None);
+    var map = PartitionMap.Initial([assigner]);
+    var published = await store.PublishAsync(ROLE, assigner, epoch, map, TimeSpan.FromSeconds(90), CancellationToken.None);
     var renewed = await store.RenewAsync(assigner, epoch, CancellationToken.None);
-    var refused = await store.PublishAsync(ROLE, assigner, epoch + 1, [assigner], TimeSpan.FromSeconds(90), CancellationToken.None);
+    var refused = await store.PublishAsync(ROLE, assigner, epoch + 1, map, TimeSpan.FromSeconds(90), CancellationToken.None);
     var read = await store.ReadAsync(CancellationToken.None);
 
     await Assert.That(published!.Revision).IsEqualTo(1);
@@ -356,6 +357,8 @@ public class PartitionAssignmentSqlTests : EFCoreTestBase {
     await Assert.That(refused).IsNull().Because("the fence refuses an epoch the caller does not hold");
     await Assert.That(read!.Assignment.Version).IsEqualTo(published.Version);
     await Assert.That(read.Assignment.Members).IsEquivalentTo(published.Members);
+    await Assert.That(read.Assignment.Owners).IsEquivalentTo(map.Owners, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("#2558: the published assignment carries the map, and the read returns it");
     await Assert.That(read.Assignment.LeaseExpiresAt).IsGreaterThan(published.LeaseExpiresAt)
       .Because("the renewal moved the lease on from the publish");
   }
