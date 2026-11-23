@@ -52,6 +52,12 @@ internal static partial class PerspectiveApplyBatch {
     internal PreparedPerspectiveApply? Prepared { get; set; }
     internal PerspectiveWriteOutcome? Outcome { get; set; }
 
+    /// <summary>
+    /// Whether the write-behind mode (#2247) holds the pair: prepared, neither written nor completed, until its model is
+    /// flushed. Its result or failure is recorded then, by the flush.
+    /// </summary>
+    public bool Held { get; internal set; }
+
     /// <summary>Whether the pair's apply has ended, with a result or a failure; a batch cut short leaves the rest open.</summary>
     /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveApplyBatchTests.cs:APair_HasEnded_OnceItHasAResultOrAFailureAsync</tests>
     internal bool Ended => Result is not null || Failure is not null;
@@ -64,13 +70,35 @@ internal static partial class PerspectiveApplyBatch {
   /// <param name="FlushPolicy">The flush policy.</param>
   /// <param name="Width">How many pairs are prepared or completed at once.</param>
   /// <param name="Logger">Logs a sink that is missing or failed as a whole.</param>
+  /// <param name="WriteBehind">The write-behind mode's hooks (#2247), or null when nothing in the batch writes behind.</param>
   internal readonly record struct Services(
       IServiceScopeFactory ScopeFactory,
       IPerspectiveApplyCoordinator? Coordinator,
       IPerspectiveStateSource? StateSource,
       IApplyBatchStrategy FlushPolicy,
       int Width,
-      ILogger Logger);
+      ILogger Logger,
+      IWriteBehindHooks? WriteBehind = null);
+
+  /// <summary>
+  /// How the write-behind mode (#2247) takes part in a batch: the state its pairs read (a held model before the
+  /// database), which prepared pairs it holds instead of writing, and the held models it flushes before the batch writes
+  /// a pair of the same key that it does not hold.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#write-behind</docs>
+  internal interface IWriteBehindHooks {
+    /// <summary>The batch state the batch's pairs prepare with, given the state source's.</summary>
+    IPerspectiveBatchState? Wrap(IPerspectiveBatchState? inner);
+
+    /// <summary>Holds a prepared pair that kept its model, or returns false to write it with the batch.</summary>
+    bool TryHold(Pair pair);
+
+    /// <summary>
+    /// Flushes the held models of the pairs the batch is about to write or complete itself, under the locks the batch
+    /// holds, so each of them meets its row current.
+    /// </summary>
+    Task FlushBeforeWriteAsync(IReadOnlyList<Pair> written, CancellationToken cancellationToken);
+  }
 
   /// <summary>Applies the batch. Each pair ends with a <see cref="Pair.Result"/> or a <see cref="Pair.Failure"/>.</summary>
   /// <param name="pairs">The pairs, each with at least one event.</param>
@@ -87,6 +115,10 @@ internal static partial class PerspectiveApplyBatch {
     var batchState = services.StateSource?.BeginBatch([.. pairs.Select(p => new PerspectiveStateRequest(
       p.StreamId, p.PerspectiveName, p.Events[0].MessageId.Value,
       PerspectiveStateRequest.IsKnownNew(p.LastProcessedEventId, p.Events), [.. p.Events.Select(e => e.MessageId.Value)]))]);
+    var writeBehind = services.WriteBehind;
+    if (writeBehind is not null) {
+      batchState = writeBehind.Wrap(batchState);
+    }
     var parallel = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, services.Width), CancellationToken = cancellationToken };
 
     await Parallel.ForEachAsync(pairs, parallel, async (pair, ct) => {
@@ -97,6 +129,15 @@ internal static partial class PerspectiveApplyBatch {
         pair.Failure = ex;
       }
     }).ConfigureAwait(false);
+
+    if (writeBehind is not null) {
+      // In batch order, one at a time: the cache's bounds are checked as each model is held.
+      foreach (var pair in pairs) {
+        pair.Held = pair.Failure is null && pair.Prepared!.WriteBehindRow is not null && writeBehind.TryHold(pair);
+      }
+      pairs = [.. pairs.Where(p => !p.Held)];
+      await writeBehind.FlushBeforeWriteAsync(pairs, cancellationToken).ConfigureAwait(false);
+    }
 
     await _flushAsync(pairs, services, cancellationToken).ConfigureAwait(false);
 
@@ -114,13 +155,26 @@ internal static partial class PerspectiveApplyBatch {
 
   /// <summary>Writes the prepared rows, one sink per DbContext, and records each pair's outcome.</summary>
   private static async Task _flushAsync(IReadOnlyList<Pair> pairs, Services services, CancellationToken cancellationToken) {
-    var bySink = pairs
-      // A pair whose prepare did not throw has its prepared apply.
-      .Where(p => p.Failure is null && p.Prepared!.Write is not null)
-      .GroupBy(p => p.Prepared!.Write!.SinkKey ?? _defaultSink);
+    // A pair whose prepare did not throw has its prepared apply.
+    var members = pairs.Where(p => p.Failure is null && p.Prepared!.Write is not null).ToList();
+    var outcomes = await WriteAsync(members.ConvertAll(p => p.Prepared!.Write!), services, cancellationToken).ConfigureAwait(false);
+    for (var i = 0; i < members.Count; i++) {
+      members[i].Outcome = outcomes[i];
+    }
+  }
+
+  /// <summary>
+  /// Writes <paramref name="writes"/>, each DbContext's through its own sink and the flush policy, and returns one outcome
+  /// per write at its index. The write-behind flush (#2247) writes its merged writes through it, so the two modes share
+  /// one writer.
+  /// </summary>
+  internal static async Task<PerspectiveWriteOutcome[]> WriteAsync(
+      IReadOnlyList<PendingPerspectiveWrite> writes, Services services, CancellationToken cancellationToken) {
+    var answers = new PerspectiveWriteOutcome[writes.Count];
+    var bySink = writes.Select((write, index) => (write, index)).GroupBy(w => w.write.SinkKey ?? _defaultSink);
     foreach (var group in bySink) {
-      var members = group.ToList();
-      var writes = members.ConvertAll(p => p.Prepared!.Write!);
+      var indexes = group.Select(w => w.index).ToList();
+      var groupWrites = group.Select(w => w.write).ToList();
       IReadOnlyList<PerspectiveWriteOutcome> outcomes;
       var scope = services.ScopeFactory.CreateAsyncScope();
       await using (scope.ConfigureAwait(false)) {
@@ -130,16 +184,17 @@ internal static partial class PerspectiveApplyBatch {
         if (sink is null) {
           var missing = new InvalidOperationException(
             $"No {nameof(IPerspectiveWriteSink)} is registered for {_describe(group.Key)}, so its rows are written per stream.");
-          LogSinkUnavailable(services.Logger, missing, _describe(group.Key), writes.Count);
-          outcomes = [.. writes.Select(_ => PerspectiveWriteOutcome.Failed(missing))];
+          LogSinkUnavailable(services.Logger, missing, _describe(group.Key), groupWrites.Count);
+          outcomes = [.. groupWrites.Select(_ => PerspectiveWriteOutcome.Failed(missing))];
         } else {
-          outcomes = await _writeAsync(sink, writes, group.Key, services, cancellationToken).ConfigureAwait(false);
+          outcomes = await _writeAsync(sink, groupWrites, group.Key, services, cancellationToken).ConfigureAwait(false);
         }
       }
-      for (var i = 0; i < members.Count; i++) {
-        members[i].Outcome = outcomes[i];
+      for (var i = 0; i < indexes.Count; i++) {
+        answers[indexes[i]] = outcomes[i];
       }
     }
+    return answers;
   }
 
   private static async Task<IReadOnlyList<PerspectiveWriteOutcome>> _writeAsync(

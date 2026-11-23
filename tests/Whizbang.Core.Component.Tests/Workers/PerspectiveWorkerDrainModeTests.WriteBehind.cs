@@ -45,14 +45,25 @@ public partial class PerspectiveWorkerDrainModeTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task WriteBehind_StartWithoutBounds_FailsNamingThemAsync(CancellationToken cancellationToken) {
+  public async Task WriteBehind_ADeclaredPerspectiveWithoutBounds_StopsTheWorkerBeforeItAppliesAnythingAsync(CancellationToken cancellationToken) {
     await using var rig = new WriteBehindRig { Bounded = false };
+    await rig.StartAsync(cancellationToken);
+
+    var stopped = await Assert.That(async () => await rig.Worker.ExecuteTask!.WaitAsync(cancellationToken)).Throws<InvalidOperationException>();
+
+    await Assert.That(stopped!.Message).Contains("MaxModels is not set");
+    await Assert.That(stopped.Message).Contains("MaxBytes is not set");
+    await Assert.That(stopped.Message).Contains(BEHIND);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task WriteBehind_TheServiceModeWithoutBounds_FailsToStartAsync(CancellationToken cancellationToken) {
+    await using var rig = new WriteBehindRig { Bounded = false, ServiceMode = PerspectiveWriteMode.WriteBehind };
 
     var start = await Assert.That(async () => await rig.StartAsync(cancellationToken)).Throws<InvalidOperationException>();
 
-    await Assert.That(start!.Message).Contains("MaxModels is not set");
-    await Assert.That(start.Message).Contains("MaxBytes is not set");
-    await Assert.That(start.Message).Contains(BEHIND);
+    await Assert.That(start!.Message).Contains("the service's perspective write mode is WriteBehind");
   }
 
   [Test]
@@ -313,6 +324,7 @@ public partial class PerspectiveWorkerDrainModeTests {
     private PerspectiveWorker? _worker;
 
     public bool Bounded { get; init; } = true;
+    public PerspectiveWriteMode ServiceMode { get; init; } = PerspectiveWriteMode.SetBased;
     public int MaxModels { get; init; } = 100;
     public int MaxBatches { get; init; } = 32;
     public FakeTimeProvider Time { get; } = new(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
@@ -374,7 +386,7 @@ public partial class PerspectiveWorkerDrainModeTests {
       var options = new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 50,
         MaxConcurrentDrainConsumers = 1,
-        WriteMode = PerspectiveWriteMode.SetBased,
+        WriteMode = ServiceMode,
         DrainBatcher = new SlidingWindowBatcherOptions { SlidingWindow = TimeSpan.Zero, MaxWait = TimeSpan.Zero, MaxSize = 1000 },
         WriteBehind = Bounded
           ? new PerspectiveWriteBehindOptions { MaxModels = MaxModels, MaxBytes = 1_000_000, MaxBatchesPerModel = MaxBatches, MaxFlushIntervalMilliseconds = INTERVAL_MS }

@@ -675,6 +675,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     try {
       await _foldAsync(state, firePreLifecycle: true, cancellationToken);
       global::Whizbang.Core.Perspectives.PendingPerspectiveWrite? write = null;
+      HeldRow? heldRow = null;
       if (state.EventsProcessed > 0) {
         await _beginRowWriteAsync(state, cancellationToken);
         if (state.RowWrite == RowWriteKind.Purge) {
@@ -684,7 +685,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
             await _markPurgedAsync(streamId, perspectiveName, state.PurgeEventId, cancellationToken);
           }
         } else if (state.RowWrite == RowWriteKind.Upsert) {
-          write = await _prepareRowWriteAsync(state, cancellationToken);
+          (write, heldRow) = await _prepareUpsertAsync(state, cancellationToken);
         }
         if (write is null && state.RowWrite != RowWriteKind.None) {
           // The store cannot write this row set-based: the per-pair path writes it, re-reading the row, so nothing
@@ -697,7 +698,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       }
       return new Prepared(
           this, streamId, perspectiveName, lastProcessedEventId, events, write,
-          global::Whizbang.Core.Perspectives.PerspectivePerPairReason.None, state, null);
+          global::Whizbang.Core.Perspectives.PerspectivePerPairReason.None, state, null) { Held = heldRow };
     } catch (Exception ex) when (ex is not global::Whizbang.Core.Perspectives.PerspectiveRowConflictException) {
       await _savePartialProgressAsync(state, ex, cancellationToken);
       throw;
@@ -786,6 +787,54 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     public PerspectiveRunnerBase<TPerspective, TModel> Runner { get; } = runner;
     public ApplyState? State { get; } = state;
     public PerspectiveCursorCompletion? Decided { get; } = decided;
+    public HeldRow? Held { get; init; }
+
+    /// <inheritdoc/>
+    public override global::Whizbang.Core.Perspectives.PerspectiveWriteBehindRow? WriteBehindRow => Held;
+  }
+
+  /// <summary>
+  /// The row a write-behind batch holds for a prepared pair (#2247): the folded model, serialized, on the database
+  /// version its write was prepared on, with the metadata and scope that write records.
+  /// </summary>
+  private sealed class HeldRow(
+      global::Whizbang.Core.Perspectives.PerspectiveApplyRead applyRead, Guid lastEventId, byte[] model)
+      : global::Whizbang.Core.Perspectives.PerspectiveWriteBehindRow(applyRead, lastEventId, model.Length) {
+    public override global::Whizbang.Core.Perspectives.PerspectiveStoredRow<T>? ReadAs<T>() where T : class =>
+        new global::Whizbang.Core.Perspectives.PerspectiveStoredRow<TModel>(
+            ApplyRead, global::System.Text.Json.JsonSerializer.Deserialize(model, _snapshotTypeInfo))
+          as global::Whizbang.Core.Perspectives.PerspectiveStoredRow<T>;
+  }
+
+  /// <summary>
+  /// Prepares an upsert, and for a write-behind batch (#2247) the row it holds: the folded model, serialized before the
+  /// write strips a Split class model's promoted fields in place.
+  /// </summary>
+  private async Task<(global::Whizbang.Core.Perspectives.PendingPerspectiveWrite? Write, HeldRow? Held)> _prepareUpsertAsync(
+      ApplyState state, CancellationToken cancellationToken) {
+    var kept = state.BatchState?.KeepsModels(state.StreamId, state.PerspectiveName) == true
+        ? global::System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(state.UpdatedModel!, _snapshotTypeInfo)
+        : null;
+    var write = await _prepareRowWriteAsync(state, cancellationToken);
+    return (write, write is not null && kept is not null ? _heldRowOf(state, kept) : null);
+  }
+
+  /// <summary>The row a write-behind batch holds once <paramref name="state"/>'s write is prepared (#2247).</summary>
+  private static HeldRow _heldRowOf(ApplyState state, byte[] model) {
+    var checkpoint = _checkpointOf(state);
+    var metadata = new global::Whizbang.Core.Lenses.PerspectiveMetadata {
+      EventId = checkpoint.EventId.ToString("D"),
+      EventType = checkpoint.EventType,
+      Timestamp = checkpoint.EventAt,
+      CommitSequence = checkpoint.CommitSequence
+    };
+    // The row's scope once the write lands: the scope written on an insert or a scope change, else the stored one.
+    var scope = state.RowVersion.State == global::Whizbang.Core.Perspectives.PerspectiveRowVersionState.Absent
+        || state.ScopeWrite.ForceUpdate
+        ? state.ScopeWrite.Scope
+        : state.ApplyRead.Scope;
+    return new HeldRow(
+        new global::Whizbang.Core.Perspectives.PerspectiveApplyRead(state.RowVersion, metadata, scope), checkpoint.EventId, model);
   }
 
   /// <summary>What a batch's row write does.</summary>

@@ -124,6 +124,10 @@ public class PerspectiveWriteBehindCacheTests {
     await Assert.That(due.Expired).IsEquivalentTo([key])
       .Because("its rows may already be another instance's: it is never flushed by this one");
     await Assert.That(due.Flush).IsEmpty();
+    var entry = cache.Get(key)!;
+    await Assert.That(cache.HasOutlivedLease(entry, _t0 + _lease - TimeSpan.FromTicks(1))).IsFalse();
+    await Assert.That(cache.HasOutlivedLease(entry, _t0 + _lease)).IsTrue();
+    await Assert.That(() => cache.HasOutlivedLease(null!, _t0)).Throws<ArgumentNullException>();
   }
 
   [Test]

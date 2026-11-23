@@ -25,6 +25,9 @@ internal enum WriteBehindFlushReason {
 
   /// <summary>The worker is stopping.</summary>
   Stop = 5,
+
+  /// <summary>A caller asked for every held model to be flushed.</summary>
+  Requested = 6,
 }
 
 /// <summary>One batch a write-behind model holds: what the flush writes and completes for it.</summary>
@@ -185,6 +188,12 @@ internal sealed class PerspectiveWriteBehindCache<THeld> where THeld : class {
     }
   }
 
+  /// <summary>Whether a held model's rows may no longer be this instance's at <paramref name="now"/>, so it must not be written.</summary>
+  public bool HasOutlivedLease(WriteBehindEntry<THeld> entry, DateTimeOffset now) {
+    ArgumentNullException.ThrowIfNull(entry);
+    return now - entry.FirstHeldAt >= _leaseLimit;
+  }
+
   /// <summary>
   /// What is due at <paramref name="now"/>: the models past the flush interval or the batch cap, the oldest models
   /// while the cache is over a bound, and apart from them the models past the lease, which are dropped, not flushed.
@@ -196,7 +205,7 @@ internal sealed class PerspectiveWriteBehindCache<THeld> where THeld : class {
       var count = _entries.Count;
       var bytes = _bytes;
       foreach (var (key, entry) in _entries.OrderBy(e => e.Value.FirstHeldAt)) {
-        if (now - entry.FirstHeldAt >= _leaseLimit) {
+        if (HasOutlivedLease(entry, now)) {
           expired.Add(key);
         } else if (count > _maxModels || bytes > _maxBytes) {
           flush.Add((key, WriteBehindFlushReason.Bounds));
