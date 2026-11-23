@@ -21,6 +21,7 @@ namespace Whizbang.Core.Attributes;
 /// </param>
 /// <docs>fundamentals/messaging/sequence-integrity#on-the-event-type</docs>
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SequenceIntegrityPolicyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Attributes/SequenceIntegrityAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, Inherited = true, AllowMultiple = false)]
 public sealed class SequenceIntegrityAttribute(SequenceIntegrity mode, int holdMilliseconds = 0) : Attribute {
   /// <summary>The type's sequence integrity.</summary>
