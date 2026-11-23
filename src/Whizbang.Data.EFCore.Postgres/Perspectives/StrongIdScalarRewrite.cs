@@ -11,6 +11,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
 using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Perspectives;
@@ -44,17 +45,33 @@ public sealed record StrongIdScalarTable(string Name, string Table, string Sql);
 /// <para>
 /// The paths come from the readers, as the dictionary rewrite's do (<see cref="DictionaryPairsRewrite"/>): Entity
 /// Framework's model for a document it maps (a property mapped by <see cref="WhizbangIdTypeMapping"/>) and the
-/// serializer's metadata for a column stored as one value. One statement per table, journaled in
-/// <c>wh_stored_form_migrations</c> under a name that carries a hash of the paths, so a model that gains an id is
-/// scanned again. Settled by the first pass that converts nothing; a table that does not exist yet is settled at once.
+/// serializer's metadata for a column stored as one value, through nested objects, collections and both the key and the
+/// value of a dictionary. One statement per table, journaled in <c>wh_stored_form_migrations</c> under a name that
+/// carries a hash of the paths, so a model that gains an id is scanned again.
+/// </para>
+/// <para>
+/// The statement walks the table in primary-key order, a batch at a time, and updates each row that needs it once, for
+/// all of its paths. It stops when the phase's budget (<see cref="BUDGET_SETTING"/>, set by the phase from its command
+/// timeout) is spent, leaving the journal unsettled: what it converted commits with the phase, and the next startup
+/// carries on. Settled by the first complete pass that converts nothing; a table that does not exist yet is settled at
+/// once. A row it has not reached yet, or one an instance of an earlier release writes after it settled, is still
+/// queried correctly, because an id read in SQL takes either form (<c>StrongIdToleranceRewriter</c>).
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/identity/whizbang-ids#stored-form</docs>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/StrongIdScalarRewriteTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/StrongIdScalarRewriteIntegrationTests.cs</tests>
 public static class StrongIdScalarRewrite {
   /// <summary>The journal name's prefix and the journal row's kind.</summary>
   public const string KIND = "strong-id-scalar";
+
+  /// <summary>
+  /// The transaction setting that bounds one table's statement, in milliseconds. Unset, a statement runs to the end of
+  /// its table.
+  /// </summary>
+  public const string BUDGET_SETTING = CanonicalTemporalRewritePhase.BUDGET_SETTING;
+
+  /// <summary>The rows one batch reads.</summary>
+  public const int BATCH_SIZE = 1000;
 
   private const string JSONB = "jsonb";
   private const string END_IF = "  END IF;\n";
@@ -77,7 +94,9 @@ public static class StrongIdScalarRewrite {
       }
       var paths = PathsOf(entityType, documentOptions);
       if (!paths.IsEmpty) {
-        tables.Add(new StrongIdScalarTable(JournalName(table, paths), table, StatementFor(schema, table, paths)));
+        var key = entityType.FindPrimaryKey()!.Properties[0];
+        tables.Add(new StrongIdScalarTable(
+          JournalName(table, paths), table, StatementFor(schema, table, paths, key.GetColumnName(), key.GetColumnType())));
       }
     }
 
@@ -96,7 +115,7 @@ public static class StrongIdScalarRewrite {
     var found = new List<StrongIdPath>();
     foreach (var complex in rowType.GetComplexProperties()) {
       if (complex.ComplexType.GetContainerColumnName() is { } column) {
-        _walkMapped(complex, column, [], found, topLevel: true);
+        _walkMapped(complex, column, [], found, documentOptions, topLevel: true);
       }
     }
 
@@ -118,20 +137,34 @@ public static class StrongIdScalarRewrite {
     return $"{KIND}:{table}:{hash}";
   }
 
-  /// <summary>The statement that converts one table, as one transaction.</summary>
+  /// <summary>The statement that converts one table, a batch at a time, within the phase's budget.</summary>
   /// <param name="schema">The schema the table lives in.</param>
   /// <param name="table">The table.</param>
   /// <param name="paths">Its id paths.</param>
+  /// <param name="keyColumn">The table's primary key column, the order the batches walk.</param>
+  /// <param name="keyType">That column's store type.</param>
   /// <returns>A <c>DO</c> block.</returns>
-  public static string StatementFor(string schema, string table, ImmutableArray<StrongIdPath> paths) {
+  public static string StatementFor(
+      string schema, string table, ImmutableArray<StrongIdPath> paths, string keyColumn, string keyType) {
     ArgumentNullException.ThrowIfNull(schema);
     ArgumentNullException.ThrowIfNull(table);
+    ArgumentNullException.ThrowIfNull(keyColumn);
+    ArgumentNullException.ThrowIfNull(keyType);
 
     var quotedSchema = SqlText.Identifier(schema);
     var qualifiedTable = $"{quotedSchema}.{SqlText.Identifier(table)}";
     var journal = $"{quotedSchema}.{StoredFormMigrationSql.JOURNAL}";
     var tableLiteral = SqlText.Literal(table);
     var name = SqlText.Literal(JournalName(table, paths));
+    var key = SqlText.Identifier(keyColumn);
+
+    // Each column once, with every path of it applied in turn: one update per row however many ids it holds.
+    var rewrites = paths.GroupBy(p => p.Column).Select(column => {
+      var quoted = SqlText.Identifier(column.Key);
+      var rewritten = column.Aggregate(quoted, (inner, path) =>
+        $"{quotedSchema}.wh_strong_id_scalar_at({inner}, ARRAY[{string.Join(",", path.Segments.Select(SqlText.Literal))}]::text[])");
+      return (Column: quoted, Rewritten: rewritten);
+    }).ToList();
 
     var sb = new StringBuilder();
     sb.Append("DO $wb$\n");
@@ -139,6 +172,12 @@ public static class StrongIdScalarRewrite {
     sb.Append("  v_settled timestamptz;\n");
     sb.Append("  v_count bigint;\n");
     sb.Append("  v_touched bigint := 0;\n");
+    sb.Append("  v_finished boolean := true;\n");
+    sb.Append(CultureInfo.InvariantCulture, $"  v_last {keyType};\n");
+    sb.Append(CultureInfo.InvariantCulture, $"  v_next {keyType};\n");
+    sb.Append("  v_started timestamptz := clock_timestamp();\n");
+    sb.Append(CultureInfo.InvariantCulture,
+      $"  v_budget_ms bigint := nullif(current_setting({SqlText.Literal(BUDGET_SETTING)}, true), '')::bigint;\n");
     sb.Append("BEGIN\n");
     sb.Append(CultureInfo.InvariantCulture, $"  IF to_regclass({SqlText.Literal(journal)}) IS NULL THEN\n");
     sb.Append(CultureInfo.InvariantCulture,
@@ -153,22 +192,30 @@ public static class StrongIdScalarRewrite {
     sb.Append(END_IF);
     // A table this release has not created yet holds no row in the old form: it is settled at once below.
     sb.Append(CultureInfo.InvariantCulture, $"  IF to_regclass({SqlText.Literal(qualifiedTable)}) IS NOT NULL THEN\n");
-
-    foreach (var path in paths) {
-      var column = SqlText.Identifier(path.Column);
-      var segments = "ARRAY[" + string.Join(",", path.Segments.Select(SqlText.Literal)) + "]::text[]";
-      var rewritten = $"{quotedSchema}.wh_strong_id_scalar_at({column}, {segments})";
-      sb.Append(CultureInfo.InvariantCulture, $"    UPDATE {qualifiedTable} SET {column} = {rewritten}\n");
-      sb.Append(CultureInfo.InvariantCulture, $"      WHERE {column} IS DISTINCT FROM {rewritten};\n");
-      sb.Append("    GET DIAGNOSTICS v_count = ROW_COUNT;\n");
-      sb.Append("    v_touched := v_touched + v_count;\n");
-    }
-
+    sb.Append("    LOOP\n");
+    sb.Append(CultureInfo.InvariantCulture,
+      // The batch's last key: ORDER BY rather than max(), which has no uuid overload before PostgreSQL 18.
+      $"      SELECT b.{key} INTO v_next FROM (SELECT {key} FROM {qualifiedTable} WHERE v_last IS NULL OR {key} > v_last ORDER BY {key} LIMIT {BATCH_SIZE}) b ORDER BY b.{key} DESC LIMIT 1;\n");
+    sb.Append("      EXIT WHEN v_next IS NULL;\n");
+    sb.Append(CultureInfo.InvariantCulture,
+      $"      UPDATE {qualifiedTable} SET {string.Join(", ", rewrites.Select(r => $"{r.Column} = {r.Rewritten}"))}\n");
+    sb.Append(CultureInfo.InvariantCulture,
+      $"        WHERE (v_last IS NULL OR {key} > v_last) AND {key} <= v_next\n");
+    sb.Append(CultureInfo.InvariantCulture,
+      $"          AND ({string.Join(" OR ", rewrites.Select(r => $"{r.Column} IS DISTINCT FROM {r.Rewritten}"))});\n");
+    sb.Append("      GET DIAGNOSTICS v_count = ROW_COUNT;\n");
+    sb.Append("      v_touched := v_touched + v_count;\n");
+    sb.Append("      v_last := v_next;\n");
+    sb.Append("      IF v_budget_ms IS NOT NULL AND clock_timestamp() - v_started > v_budget_ms * interval '1 millisecond' THEN\n");
+    sb.Append("        v_finished := false;\n");
+    sb.Append("        EXIT;\n");
+    sb.Append("      END IF;\n");
+    sb.Append("    END LOOP;\n");
     sb.Append(END_IF);
     sb.Append(CultureInfo.InvariantCulture,
       $"  INSERT INTO {journal} (name, table_name, kind, first_applied_at, last_applied_at, rows_converted, settled_at)\n");
     sb.Append(CultureInfo.InvariantCulture,
-      $"  VALUES ({name}, {tableLiteral}, {SqlText.Literal(KIND)}, now(), now(), v_touched, CASE WHEN v_touched = 0 THEN now() END)\n");
+      $"  VALUES ({name}, {tableLiteral}, {SqlText.Literal(KIND)}, now(), now(), v_touched, CASE WHEN v_touched = 0 AND v_finished THEN now() END)\n");
     sb.Append("  ON CONFLICT (name) DO UPDATE SET last_applied_at = now(),\n");
     sb.Append(CultureInfo.InvariantCulture,
       $"    rows_converted = {journal}.rows_converted + EXCLUDED.rows_converted, settled_at = EXCLUDED.settled_at;\n");
@@ -176,6 +223,11 @@ public static class StrongIdScalarRewrite {
     sb.Append(CultureInfo.InvariantCulture,
       $"    {IndexStatistics.MarkRewrittenSql(SqlText.Literal(schema), tableLiteral)}\n");
     sb.Append(StoredFormApplier.RecordSql(journal, "name", name, "    "));
+    sb.Append(END_IF);
+    sb.Append("  IF NOT v_finished THEN\n");
+    sb.Append(CultureInfo.InvariantCulture,
+      $"    RAISE NOTICE USING MESSAGE = format('%s: strong ids: budget spent after %s row update(s); the next startup carries on', {tableLiteral}, v_touched);\n");
+    sb.Append("    RETURN;\n");
     sb.Append(END_IF);
     sb.Append(CultureInfo.InvariantCulture,
       $"  RAISE NOTICE USING MESSAGE = format('%s: strong ids: converted, %s row update(s)', {tableLiteral}, v_touched);\n");
@@ -186,7 +238,8 @@ public static class StrongIdScalarRewrite {
 
   /// <summary>Walks a JSON-mapped complex property the way Entity Framework reads it.</summary>
   private static void _walkMapped(
-      IComplexProperty complex, string column, ImmutableArray<string> prefix, List<StrongIdPath> found, bool topLevel) {
+      IComplexProperty complex, string column, ImmutableArray<string> prefix, List<StrongIdPath> found,
+      JsonSerializerOptions options, bool topLevel) {
     var here = topLevel ? prefix : prefix.Add(complex.GetJsonPropertyName()!);
     if (complex.IsCollection) {
       here = here.Add(TemporalPath.COLLECTION);
@@ -198,12 +251,26 @@ public static class StrongIdScalarRewrite {
       } else if (property.GetTypeMapping().ElementTypeMapping is WhizbangIdTypeMapping) {
         // A primitive collection of ids: every element.
         found.Add(new StrongIdPath(column, here.Add(property.GetJsonPropertyName()!).Add(TemporalPath.COLLECTION)));
+      } else if (property.GetTypeMapping() is DictionaryMemberTypeMapping dictionary) {
+        _walkDictionary(options, dictionary.Form, column, here.Add(property.GetJsonPropertyName()!), found, []);
       }
     }
 
     foreach (var nested in complex.ComplexType.GetComplexProperties()) {
-      _walkMapped(nested, column, here, found, topLevel: false);
+      _walkMapped(nested, column, here, found, options, topLevel: false);
     }
+  }
+
+  /// <summary>
+  /// Walks a dictionary's keys and values, stored as the pairs <c>[{"Key": .., "Value": ..}]</c> (#1911): an id is the
+  /// key or the value of every pair, or sits below the value.
+  /// </summary>
+  private static void _walkDictionary(
+      JsonSerializerOptions options, DictionaryMemberForm form, string column, ImmutableArray<string> path,
+      List<StrongIdPath> found, HashSet<Type> visiting) {
+    var pairs = path.Add(TemporalPath.COLLECTION);
+    _walkSerialized(options, form.KeyType, column, pairs.Add(DictionaryMemberForm.KEY), found, visiting);
+    _walkSerialized(options, form.ValueType, column, pairs.Add(DictionaryMemberForm.VALUE), found, visiting);
   }
 
   /// <summary>Walks a type the way the serializer reads it, through its own metadata.</summary>
@@ -212,6 +279,11 @@ public static class StrongIdScalarRewrite {
       List<StrongIdPath> found, HashSet<Type> visiting) {
     if (WhizbangIdForms.TryGet(Nullable.GetUnderlyingType(type) ?? type, out _)) {
       found.Add(new StrongIdPath(column, prefix));
+      return;
+    }
+
+    if (DictionaryMemberForms.TryGet(type, out var dictionary)) {
+      _walkDictionary(options, dictionary, column, prefix, found, visiting);
       return;
     }
 

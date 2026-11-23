@@ -68,6 +68,17 @@ public static class CanonicalTemporalRewritePhase {
   private const string SAVEPOINT = "wh_rewrite";
 
   /// <summary>
+  /// The transaction setting that bounds one batched rewrite statement, in milliseconds (#2518). Unset, a statement runs
+  /// to the end of its table.
+  /// </summary>
+  public const string BUDGET_SETTING = "whizbang.stored_form_budget_ms";
+
+  /// <summary>The budget a batched rewrite stops at: four fifths of the command timeout, leaving room to record it.</summary>
+  /// <param name="commandTimeoutSeconds">The timeout for one rewrite statement.</param>
+  /// <returns>The budget in milliseconds.</returns>
+  public static long BudgetMilliseconds(int commandTimeoutSeconds) => commandTimeoutSeconds * 800L;
+
+  /// <summary>
   /// Takes the schema lock, waiting up to the command timeout for it, and applies every rewrite
   /// under it.
   /// </summary>
@@ -144,11 +155,15 @@ public static class CanonicalTemporalRewritePhase {
     // #2131: who applies what this transaction converts, carried as transaction settings so every conversion records it
     // without being handed it. Empty outside any scope: a conversion then records nobody.
     var applier = StoredFormApplier.Current;
+    // #2518: and the budget a rewrite that converts a batch at a time stops at, short of the command timeout, so what it
+    // converted commits with the phase and the next startup carries on, where a timeout would have rolled it all back.
     await using (var stamp = new NpgsqlCommand(
-        $"SELECT set_config('{StoredFormApplier.LIBRARY_SETTING}', $1, true), set_config('{StoredFormApplier.APPLICATION_SETTING}', $2, true)",
+        $"SELECT set_config('{StoredFormApplier.LIBRARY_SETTING}', $1, true), set_config('{StoredFormApplier.APPLICATION_SETTING}', $2, true), " +
+        $"set_config('{BUDGET_SETTING}', $3, true)",
         connection, transaction)) {
       stamp.Parameters.AddWithValue(applier?.LibraryVersion ?? string.Empty);
       stamp.Parameters.AddWithValue(applier?.ApplicationVersion ?? string.Empty);
+      stamp.Parameters.AddWithValue(BudgetMilliseconds(commandTimeoutSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture));
       await stamp.ExecuteNonQueryAsync(cancellationToken);
     }
 

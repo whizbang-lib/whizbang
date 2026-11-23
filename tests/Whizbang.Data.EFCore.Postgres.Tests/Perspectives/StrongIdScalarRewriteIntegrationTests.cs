@@ -26,7 +26,31 @@ public class StrongIdRewriteLine {
   public int Quantity { get; set; }
 }
 
-/// <summary>A model holding a strongly-typed id at the top level, nullable, nested and inside a collection.</summary>
+/// <summary>The carrier of a shipment: an id two levels down, outside any collection.</summary>
+public class StrongIdRewriteCarrier {
+  public TestOrderId CarrierId { get; set; }
+}
+
+/// <summary>A shipment: a nested object holding a nested object.</summary>
+public class StrongIdRewriteShipment {
+  public StrongIdRewriteCarrier Carrier { get; set; } = new();
+}
+
+/// <summary>A value promoted to a jsonb column of its own: read by the serializer, not by Entity Framework.</summary>
+public class StrongIdRewritePromoted {
+  public TestOrderId CarrierId { get; set; }
+  public List<TestOrderId> Ids { get; set; } = [];
+}
+
+/// <summary>
+/// A model holding a strongly-typed id at the top level, nullable, nested, inside a collection, as a collection of its
+/// own, and as a dictionary's key and value.
+/// </summary>
+/// <remarks>
+/// Not a perspective: the generator would configure it on every context in this assembly, and most are built without
+/// the Whizbang options extension, which a collection of ids needs. The tests build their own context and register
+/// the dictionaries' stored forms the generated registry would.
+/// </remarks>
 [SuppressIndexAdvisory("rewrite fixture; rows are seeded in the old form and read back raw")]
 public class StrongIdRewriteModel {
   [StreamId]
@@ -35,13 +59,10 @@ public class StrongIdRewriteModel {
   public TestOrderId OrderId { get; set; }
   public TestOrderId? ParentId { get; set; }
   public List<StrongIdRewriteLine> Lines { get; set; } = [];
-}
-
-public record StrongIdRewriteNoted([property: StreamId] Guid Id) : IEvent;
-
-[WhizbangPerspective("strong-id-rewrite")]
-public class StrongIdRewriteProjection : IPerspectiveFor<StrongIdRewriteModel, StrongIdRewriteNoted> {
-  public StrongIdRewriteModel Apply(StrongIdRewriteModel currentData, StrongIdRewriteNoted eventData) => currentData;
+  public StrongIdRewriteShipment Shipment { get; set; } = new();
+  public List<TestOrderId> RelatedIds { get; set; } = [];
+  public Dictionary<string, TestOrderId> ByName { get; set; } = [];
+  public Dictionary<TestOrderId, int> Counts { get; set; } = [];
 }
 
 /// <summary>
@@ -68,7 +89,10 @@ public class StrongIdScalarRewriteIntegrationTests {
         entity.ComplexProperty(e => e.Data, d => {
           d.ToJson("data");
           d.ComplexCollection(x => x.Lines);
+          d.ComplexProperty(x => x.Shipment, shipment => shipment.ComplexProperty(x => x.Carrier));
         });
+        entity.Property<StrongIdRewritePromoted>("promoted").HasColumnName("promoted").HasColumnType("jsonb")
+          .HasConversion(PerspectiveDocumentSerialization.ConverterFor<StrongIdRewritePromoted>());
         entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
         entity.ComplexProperty(e => e.Scope, s => {
           s.ToJson("scope");
@@ -85,6 +109,11 @@ public class StrongIdScalarRewriteIntegrationTests {
 
   [Before(Test)]
   public async Task SetupAsync() {
+    // What the generated registry does for a perspective's dictionaries; the model is not one (see its remarks).
+    DictionaryMemberForms.Register<string, TestOrderId>();
+    DictionaryMemberForms.Register<TestOrderId, int>();
+    DictionaryMemberForms.RegisterMember(typeof(StrongIdRewriteModel), nameof(StrongIdRewriteModel.ByName), typeof(Dictionary<string, TestOrderId>));
+    DictionaryMemberForms.RegisterMember(typeof(StrongIdRewriteModel), nameof(StrongIdRewriteModel.Counts), typeof(Dictionary<TestOrderId, int>));
     await SharedPostgresContainer.InitializeAsync();
     _databaseName = (await PerTestDatabaseFactory.CreateAsync("id_rewrite")).Name;
     _connectionString = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
@@ -93,6 +122,8 @@ public class StrongIdScalarRewriteIntegrationTests {
     }.ConnectionString;
 
     var migrations = new PostgresMigrationProvider(typeof(PostgresMigrationProvider).Assembly, "public");
+    // 000 first: 557 drops its containment function's overloads through drop_all_overloads.
+    await _executeAsync(migrations.GetMigration("000_MigrationTracking")!.Sql);
     await _executeAsync(migrations.GetMigration("176_StoredFormMigrations")!.Sql);
     await _executeAsync(migrations.GetMigration("557_StrongIdsStoredAsUuidStrings")!.Sql);
   }
@@ -121,16 +152,18 @@ public class StrongIdScalarRewriteIntegrationTests {
   private async Task _createTableAsync() => await _executeAsync($$"""
     CREATE TABLE {{TABLE}} (
       id uuid PRIMARY KEY, data jsonb NOT NULL, metadata jsonb NOT NULL DEFAULT '{}', scope jsonb NOT NULL DEFAULT '{}',
-      created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), version int NOT NULL DEFAULT 1)
+      created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), version int NOT NULL DEFAULT 1,
+      promoted jsonb)
     """);
 
-  private async Task<Guid> _seedAsync(string data) {
+  private async Task<Guid> _seedAsync(string data, string? promoted = null) {
     var id = (Guid)TrackedGuid.New();
     await using var db = new NpgsqlConnection(_connectionString);
     await db.OpenAsync();
-    await using var command = new NpgsqlCommand($"INSERT INTO {TABLE} (id, data) VALUES ($1, $2::jsonb)", db);
+    await using var command = new NpgsqlCommand($"INSERT INTO {TABLE} (id, data, promoted) VALUES ($1, $2::jsonb, $3::jsonb)", db);
     command.Parameters.AddWithValue(id);
     command.Parameters.AddWithValue(data);
+    command.Parameters.AddWithValue((object?)promoted ?? DBNull.Value);
     await command.ExecuteNonQueryAsync();
     return id;
   }
@@ -159,9 +192,17 @@ public class StrongIdScalarRewriteIntegrationTests {
   private static readonly Guid _order = Guid.Parse("01a203cc-54ef-7441-8295-5a6cdae706e6");
   private static readonly Guid _parent = Guid.Parse("01a203cc-54ef-7441-82a2-a1d1e91a4852");
   private static readonly Guid _line = Guid.Parse("01a203cc-54ef-7441-82c4-c06ddf3e5876");
+  private static readonly Guid _carrier = Guid.Parse("01a203cc-54ef-7441-82d6-0a7f5b1c2e3d");
 
   private static string _oldForm(string parent) =>
-    $$"""{"OrderId":{"Value":"{{_order}}"},"ParentId":{{parent}},"Lines":[{"LineId":{"Value":"{{_line}}"},"Quantity":2}]}""";
+    $$$$"""
+    {"OrderId":{"Value":"{{{{_order}}}}"},"ParentId":{{{{parent}}}},"Lines":[{"LineId":{"Value":"{{{{_line}}}}"},"Quantity":2}],
+     "Shipment":{"Carrier":{"CarrierId":{"Value":"{{{{_carrier}}}}"}}},"RelatedIds":[{"Value":"{{{{_line}}}}"}],
+     "ByName":[{"Key":"first","Value":{"Value":"{{{{_order}}}}"}}],"Counts":[{"Key":{"Value":"{{{{_order}}}}"},"Value":3}]}
+    """;
+
+  private static string _oldPromoted() =>
+    $$$"""{"CarrierId":{"Value":"{{{_carrier}}}"},"Ids":[{"Value":"{{{_order}}}"}]}""";
 
   [Test]
   public async Task ThePaths_AreEveryIdTheModelHoldsAsync() {
@@ -171,13 +212,15 @@ public class StrongIdScalarRewriteIntegrationTests {
     var paths = StrongIdScalarRewrite.PathsOf(rowType, PerspectiveDocumentSerialization.Options);
 
     await Assert.That(string.Join(" ", paths.Select(p => p.ToString()).Order(StringComparer.Ordinal)))
-      .IsEqualTo("data:Lines.[].LineId data:OrderId data:ParentId");
+      .IsEqualTo(
+        "data:ByName.[].Value data:Counts.[].Key data:Lines.[].LineId data:OrderId data:ParentId data:RelatedIds.[] " +
+        "data:Shipment.Carrier.CarrierId promoted:CarrierId promoted:Ids.[]");
   }
 
   [Test]
   public async Task AnObjectFormId_IsRewrittenToTheUuidString_AndTheTableSettlesAsync() {
     await _createTableAsync();
-    var old = await _seedAsync(_oldForm($$"""{"Value":"{{_parent}}"}"""));
+    var old = await _seedAsync(_oldForm($$"""{"Value":"{{_parent}}"}"""), _oldPromoted());
     var nullParent = await _seedAsync(_oldForm("null"));
     var alreadyScalar = await _seedAsync($$"""{"OrderId":"{{_order}}","ParentId":null,"Lines":[]}""");
 
@@ -188,9 +231,17 @@ public class StrongIdScalarRewriteIntegrationTests {
     await Assert.That(data.GetProperty("ParentId").GetString()).IsEqualTo(_parent.ToString());
     await Assert.That(data.GetProperty("Lines")[0].GetProperty("LineId").GetString()).IsEqualTo(_line.ToString());
     await Assert.That(data.GetProperty("Lines")[0].GetProperty("Quantity").GetInt32()).IsEqualTo(2);
+    await Assert.That(data.GetProperty("Shipment").GetProperty("Carrier").GetProperty("CarrierId").GetString()).IsEqualTo(_carrier.ToString());
+    await Assert.That(data.GetProperty("RelatedIds")[0].GetString()).IsEqualTo(_line.ToString());
+    await Assert.That(data.GetProperty("ByName")[0].GetProperty("Value").GetString()).IsEqualTo(_order.ToString());
+    await Assert.That(data.GetProperty("Counts")[0].GetProperty("Key").GetString()).IsEqualTo(_order.ToString());
+    await Assert.That(data.GetProperty("Counts")[0].GetProperty("Value").GetInt32()).IsEqualTo(3);
+    var promoted = JsonElement.Parse(await _scalarAsync($"SELECT promoted::text FROM {TABLE} WHERE id = '{old}'"));
+    await Assert.That(promoted.GetProperty("CarrierId").GetString()).IsEqualTo(_carrier.ToString());
+    await Assert.That(promoted.GetProperty("Ids")[0].GetString()).IsEqualTo(_order.ToString());
     await Assert.That((await _dataAsync(nullParent)).GetProperty("ParentId").ValueKind).IsEqualTo(JsonValueKind.Null);
-    await Assert.That(await _journalAsync("rows_converted")).IsEqualTo("5")
-      .Because("the old row is updated once per path (three), the null-parent row twice, and the row already in the scalar form not at all");
+    await Assert.That(await _journalAsync("rows_converted")).IsEqualTo("2")
+      .Because("each row in the old form is updated once for all of its paths, and the row already in the scalar form not at all");
     await Assert.That((await _dataAsync(alreadyScalar)).GetProperty("OrderId").GetString()).IsEqualTo(_order.ToString());
     await Assert.That(await _journalAsync("settled_at")).IsEqualTo("<null>");
 
@@ -200,20 +251,32 @@ public class StrongIdScalarRewriteIntegrationTests {
       .Because("the second pass converted nothing, so the table is settled and never scanned again");
   }
 
-  /// <summary>Once rewritten, an id predicate's uuid cast reads every row, where before it failed on the object form.</summary>
+  /// <summary>
+  /// An id predicate finds a row in the object form before the rewrite reaches it, and one an instance of an earlier
+  /// release writes during a rolling deploy after the journal settled, which no later pass rescans (#2518).
+  /// </summary>
   [Test]
-  public async Task AfterTheRewrite_AnIdPredicateReadsEveryRowAsync() {
+  public async Task AnIdPredicate_FindsObjectFormRows_BeforeTheRewriteAndFromAnOldWriterAfterItSettlesAsync() {
     await _createTableAsync();
-    await _seedAsync(_oldForm("null"));
+    var unconverted = await _seedAsync(_oldForm("null"));
     await using var context = _context(_connectionString);
     var orderId = new TestOrderId(_order);
-    var query = context.Set<PerspectiveRow<StrongIdRewriteModel>>().AsNoTracking().Where(r => r.Data.OrderId == orderId);
+    var carrierId = new TestOrderId(_carrier);
+    var rows = context.Set<PerspectiveRow<StrongIdRewriteModel>>().AsNoTracking();
 
-    await Assert.That(async () => await query.CountAsync()).Throws<PostgresException>();
+    await Assert.That(await rows.Where(r => r.Data.OrderId == orderId).Select(r => r.Id).ToListAsync()).IsEquivalentTo([unconverted]);
 
     await _runAsync();
+    await _runAsync();
+    await Assert.That(await _journalAsync("settled_at")).IsNotEqualTo("<null>");
+    var lateOldWrite = await _seedAsync(_oldForm("null"));
 
-    await Assert.That(await query.CountAsync()).IsEqualTo(1);
+    await Assert.That(await rows.Where(r => r.Data.OrderId == orderId).Select(r => r.Id).ToListAsync())
+      .IsEquivalentTo([unconverted, lateOldWrite]);
+    await Assert.That(await rows.Where(r => r.Data.Shipment.Carrier.CarrierId == carrierId).CountAsync()).IsEqualTo(2);
+    await Assert.That(await rows.Where(r => r.Data.RelatedIds.Contains(new TestOrderId(_line))).CountAsync()).IsEqualTo(2);
+    await Assert.That((await _dataAsync(lateOldWrite)).GetProperty("OrderId").ValueKind).IsEqualTo(JsonValueKind.Object)
+      .Because("a settled table is not scanned again; the row is read in either form until it is next written");
   }
 
   [Test]
@@ -221,5 +284,58 @@ public class StrongIdScalarRewriteIntegrationTests {
     await Assert.That(await _runAsync()).IsTrue();
 
     await Assert.That(await _journalAsync("settled_at")).IsNotEqualTo("<null>");
+  }
+
+  /// <summary>
+  /// A statement whose budget is spent stops after the batch it is in and leaves the journal unsettled; what it converted
+  /// stays converted, and the next run carries on from there (#2518).
+  /// </summary>
+  [Test]
+  public async Task ABudgetSpent_StopsAfterABatch_AndTheNextRunCarriesOnAsync() {
+    await _createTableAsync();
+    await _executeAsync($$"""
+      INSERT INTO {{TABLE}} (id, data)
+      SELECT gen_random_uuid(), '{"OrderId":{"Value":"{{_order}}"},"Lines":[]}'::jsonb
+      FROM generate_series(1, {{StrongIdScalarRewrite.BATCH_SIZE + 1}})
+      """);
+    var statement = _rewrites().Single().Sql;
+
+    // A budget already spent: the first batch runs, then the statement stops.
+    await _runWithBudgetAsync(statement, "-1");
+
+    await Assert.That(await _journalAsync("rows_converted")).IsEqualTo(StrongIdScalarRewrite.BATCH_SIZE.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    await Assert.That(await _journalAsync("settled_at")).IsEqualTo("<null>");
+    await Assert.That(await _scalarAsync($"SELECT count(*) FROM {TABLE} WHERE jsonb_typeof(data -> 'OrderId') = 'object'")).IsEqualTo("1");
+
+    await _runWithBudgetAsync(statement, null);
+
+    await Assert.That(await _journalAsync("rows_converted")).IsEqualTo((StrongIdScalarRewrite.BATCH_SIZE + 1).ToString(System.Globalization.CultureInfo.InvariantCulture));
+    await Assert.That(await _journalAsync("settled_at")).IsEqualTo("<null>")
+      .Because("that pass still converted a row");
+
+    await _runWithBudgetAsync(statement, null);
+
+    await Assert.That(await _journalAsync("settled_at")).IsNotEqualTo("<null>");
+  }
+
+  /// <summary>The phase hands a batched statement a budget short of its command timeout.</summary>
+  [Test]
+  public async Task ThePhase_SetsABudgetShortOfTheCommandTimeoutAsync() {
+    await Assert.That(CanonicalTemporalRewritePhase.BudgetMilliseconds(60)).IsEqualTo(48_000L);
+  }
+
+  private async Task _runWithBudgetAsync(string statement, string? budgetMilliseconds) {
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync();
+    await using var transaction = await db.BeginTransactionAsync();
+    if (budgetMilliseconds is not null) {
+      await using var budget = new NpgsqlCommand($"SELECT set_config('{CanonicalTemporalRewritePhase.BUDGET_SETTING}', $1, true)", db, transaction);
+      budget.Parameters.AddWithValue(budgetMilliseconds);
+      await budget.ExecuteNonQueryAsync();
+    }
+    await using (var run = new NpgsqlCommand(statement, db, transaction)) {
+      await run.ExecuteNonQueryAsync();
+    }
+    await transaction.CommitAsync();
   }
 }
