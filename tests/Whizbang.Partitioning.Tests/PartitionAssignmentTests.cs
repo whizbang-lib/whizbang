@@ -82,6 +82,31 @@ public class PartitionAssignmentTests {
   }
 
   [Test]
+  public async Task OwnerOf_WithAMap_IsTheMapsMember_NotTheResidueAsync() {
+    // #2558: the published map decides. Partition 0's residue is member 0, but the map gives it to member 2.
+    var owners = new short[PartitionMap.PARTITION_COUNT];
+    owners[0] = 2;
+    owners[4] = 1;
+    var assignment = _assignment(_a, _b, _c) with { Owners = owners };
+
+    await Assert.That(assignment.OwnerOf(0)).IsEqualTo(_c);
+    await Assert.That(assignment.OwnerOf(4)).IsEqualTo(_b);
+    await Assert.That(assignment.OwnerOf(PartitionMap.PARTITION_COUNT)).IsEqualTo(_c)
+      .Because("a partition past the map wraps, as the claim's predicate does");
+  }
+
+  [Test]
+  public async Task Equality_ComparesTheMapEntryByEntryAsync() {
+    var owners = new short[] { 0, 1, 0 };
+    var one = _assignment(_a, _b) with { Owners = owners };
+
+    await Assert.That(one).IsEqualTo(_assignment(_a, _b) with { Owners = [.. owners] });
+    await Assert.That(one).IsNotEqualTo(_assignment(_a, _b) with { Owners = [1, 1, 0] });
+    await Assert.That(one).IsNotEqualTo(_assignment(_a, _b)).Because("a map and the older shape are different assignments");
+    await Assert.That(_assignment(_a, _b)).IsNotEqualTo(one);
+  }
+
+  [Test]
   public async Task Version_IsTheEpochAndRevisionAsync() {
     await Assert.That(_assignment(_a).Version).IsEqualTo(new PartitionAssignmentVersion(4, 2));
   }

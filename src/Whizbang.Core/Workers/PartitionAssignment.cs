@@ -26,6 +26,8 @@ namespace Whizbang.Core.Workers;
 /// <param name="Members">The live instances, in rank order.</param>
 /// <param name="PublishedAt">When it was published, by the database clock.</param>
 /// <param name="LeaseExpiresAt">When it stops being valid unless the assigner renews it, by the database clock.</param>
+/// <param name="Owners">The explicit map (#2558): entry <c>p</c> is the index in <paramref name="Members"/> of the member
+/// partition <c>p</c> belongs to. Null for an assignment published in the older shape, whose claimers rank by modulo.</param>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentTests.cs:RankOf_AMember_IsItsPositionAsync</tests>
 /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentTests.cs:OwnerOf_APartition_IsTheMemberAtItsResidueAsync</tests>
@@ -35,7 +37,8 @@ public sealed record PartitionAssignment(
   Guid AssignerInstanceId,
   IReadOnlyList<Guid> Members,
   DateTimeOffset PublishedAt,
-  DateTimeOffset LeaseExpiresAt) {
+  DateTimeOffset LeaseExpiresAt,
+  IReadOnlyList<short>? Owners = null) {
 
   /// <summary>Two assignments are equal when every field is, the members compared in order.</summary>
   /// <param name="other">The other assignment.</param>
