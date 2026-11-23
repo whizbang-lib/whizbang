@@ -387,6 +387,28 @@ public static class JsonbContainment {
 
 
   /// <summary>
+  /// A strongly-typed id's value as the id itself, carrying the member's id mapping, rather than the conversion to
+  /// <see cref="Guid"/> the rewriter wrapped it in to reach the Guid overload (#2518).
+  /// </summary>
+  /// <remarks>
+  /// The rewriter runs after the query's parameters are extracted, so its conversion stays in the tree around a
+  /// parameter typed by the id, which no mapping describes as a Guid. Given the member's mapping, the parameter is sent
+  /// through the id's converter as a uuid, which <c>jsonb_build_object</c> renders as the UUID string the row holds.
+  /// </remarks>
+  private static SqlExpression _withoutStrongIdConversion(SqlExpression value, JsonScalarExpression member) {
+    if (member.TypeMapping is not Perspectives.WhizbangIdTypeMapping mapping
+        || value is not SqlUnaryExpression { OperatorType: ExpressionType.Convert } conversion) {
+      return value;
+    }
+
+    return conversion.Operand switch {
+      SqlParameterExpression parameter => parameter.ApplyTypeMapping(mapping),
+      SqlConstantExpression constant => constant.ApplyTypeMapping(mapping),
+      _ => value,
+    };
+  }
+
+  /// <summary>
   /// The compared value, cast to the member's own store type when that is what makes the built
   /// document agree with the stored one.
   /// </summary>
@@ -416,28 +438,6 @@ public static class JsonbContainment {
   /// decimal written with a different number of trailing zeros still matches.
   /// </para>
   /// </remarks>
-  /// <summary>
-  /// A strongly-typed id's value as the id itself, carrying the member's id mapping, rather than the conversion to
-  /// <see cref="Guid"/> the rewriter wrapped it in to reach the Guid overload (#2518).
-  /// </summary>
-  /// <remarks>
-  /// The rewriter runs after the query's parameters are extracted, so its conversion stays in the tree around a
-  /// parameter typed by the id, which no mapping describes as a Guid. Given the member's mapping, the parameter is sent
-  /// through the id's converter as a uuid, which <c>jsonb_build_object</c> renders as the UUID string the row holds.
-  /// </remarks>
-  private static SqlExpression _withoutStrongIdConversion(SqlExpression value, JsonScalarExpression member) {
-    if (member.TypeMapping is not Perspectives.WhizbangIdTypeMapping mapping
-        || value is not SqlUnaryExpression { OperatorType: ExpressionType.Convert } conversion) {
-      return value;
-    }
-
-    return conversion.Operand switch {
-      SqlParameterExpression parameter => parameter.ApplyTypeMapping(mapping),
-      SqlConstantExpression constant => constant.ApplyTypeMapping(mapping),
-      _ => value,
-    };
-  }
-
   private static SqlExpression _normalized(
     SqlExpression value, JsonScalarExpression member, RelationalTypeMapping jsonb) {
     var clrType = Nullable.GetUnderlyingType(member.Type) ?? member.Type;

@@ -50,7 +50,7 @@ public class PerspectivePersistenceJsonContextTests {
     // Act
     var json = JsonSerializer.Serialize(order, typeInfo);
 
-    // Assert — OrderId appears as the UUID string, not the object {"Value": ...} a release before
+    // Assert: OrderId appears as the UUID string, not the object {"Value": ...} a release before
     // #2518 stored. This is what Entity Framework writes under WhizbangIdTypeMapping.
     await Assert.That(json).Contains("\"OrderId\":\"019e244a-6bda-78a9-a08f-a1011c9c31dd\"");
     await Assert.That(json).DoesNotContain("\"Value\"");

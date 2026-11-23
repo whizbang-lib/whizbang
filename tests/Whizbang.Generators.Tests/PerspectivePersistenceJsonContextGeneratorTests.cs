@@ -8,7 +8,7 @@ namespace Whizbang.Generators.Tests;
 
 /// <summary>
 /// Tests for <see cref="PerspectivePersistenceJsonContextGenerator"/>.
-/// Verifies discovery of [WhizbangId] structs, the emitted object-mode
+/// Verifies discovery of [WhizbangId] structs, the emitted document-form
 /// PerspectivePersistenceJsonContext resolver, and the ModuleInitializer that joins it to
 /// the registry's persistence profile when perspectives are present in the consuming assembly.
 /// </summary>
@@ -47,14 +47,12 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
       """;
 
   /// <summary>
-  /// Test that a [WhizbangId] struct produces an object-mode type info: written as
-  /// {"Value":"guid"}, read from that shape or from the scalar string an older row may hold.
+  /// Test that a [WhizbangId] struct produces a converter type info: written as the UUID string,
+  /// read from that or from the object {"Value":"guid"} a release before #2518 stored (#2518).
   /// </summary>
   /// <remarks>
-  /// A document stored as one value once took its identifiers in the scalar form when the atomic
-  /// path was unavailable and Entity Framework wrote it under the default profile. A converter can
-  /// read both; object metadata could read only the object. The scalar read is counted, so the
-  /// tolerance can be removed once nothing needs it.
+  /// Object metadata could read only the object form. The object read is counted, so the tolerance
+  /// can be removed once the stored-form rewrite has reached every row.
   /// </remarks>
   [Test]
   [RequiresAssemblyFiles()]
@@ -409,7 +407,7 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
 
   /// <summary>
   /// Test that the generated resolver compiles without errors when the [WhizbangId] struct
-  /// supplies the Value property and Guid constructor the object-mode metadata references.
+  /// supplies the Value property and Guid constructor the document converter references.
   /// No perspectives are present, so only the resolver file is compiled (the callback
   /// initializer requires MessageJsonContext + Whizbang.Data.EFCore.Postgres, which
   /// only exist in a full consumer build).
