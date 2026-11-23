@@ -50,8 +50,8 @@ public class PartitionAssignerWorkerPostgresTests : EFCoreTestBase {
 
   private PgPartitionAssignmentStore _store() => new(Options.Create(_notification()), _config());
 
-  private PartitionAssignerWorker _workerFor(Pod pod, PartitionAssignerOptions? options = null) {
-    var roles = _roles();
+  private PartitionAssignerWorker _workerFor(Pod pod, PartitionAssignerOptions? options = null, RoleAssignmentOptions? roleOptions = null) {
+    var roles = roleOptions ?? _roles();
     var elector = new PgRoleElector(Options.Create(_notification()), Options.Create(roles), _config(), pod,
       NullLogger<PgRoleElector>.Instance, null);
     return new PartitionAssignerWorker(elector, _store(), NullInstanceConnectionModeSource.Instance, pod,
@@ -198,9 +198,11 @@ public class PartitionAssignerWorkerPostgresTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
-  public async Task Disabled_TheWorkerNeverVotesAsync(CancellationToken cancellationToken) {
+  public async Task WithoutTheRoleInTheDutyLoop_TheWorkerNeverVotesAsync(CancellationToken cancellationToken) {
+    // #2559: nothing turns the assigner off; the driver always adds its role. A host that builds the worker over role
+    // options without it (no duty loop holds the role) still gets a worker that stands aside rather than vote.
     var pod = new Pod(Guid.CreateVersion7());
-    var worker = _workerFor(pod, new PartitionAssignerOptions { Enabled = false });
+    var worker = _workerFor(pod, roleOptions: new RoleAssignmentOptions { RenewInterval = TimeSpan.FromMilliseconds(250) });
 
     await worker.StartAsync(cancellationToken);
     // The signal for this transition: the worker's own task completes when it decides not to run.

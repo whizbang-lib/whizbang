@@ -43,14 +43,9 @@ internal static class PartitionAssignerRegistration {
   }
 }
 
-/// <summary>The assigner's role is one of the roles held by assignment while the assigner is enabled.</summary>
-internal sealed class PartitionAssignerRoleOptions(IOptions<PartitionAssignerOptions> assignerOptions)
-  : IPostConfigureOptions<RoleAssignmentOptions> {
-  public void PostConfigure(string? name, RoleAssignmentOptions options) {
-    if (assignerOptions.Value.Enabled) {
-      _ = options.Roles.Add(PartitionAssignerOptions.ROLE);
-    }
-  }
+/// <summary>The assigner's role is always one of the roles held by assignment (#2559): nothing turns the assigner off.</summary>
+internal sealed class PartitionAssignerRoleOptions : IPostConfigureOptions<RoleAssignmentOptions> {
+  public void PostConfigure(string? name, RoleAssignmentOptions options) => _ = options.Roles.Add(PartitionAssignerOptions.ROLE);
 }
 
 /// <summary>

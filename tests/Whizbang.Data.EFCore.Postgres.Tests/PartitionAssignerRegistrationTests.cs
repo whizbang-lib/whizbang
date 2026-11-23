@@ -22,9 +22,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Shard3")]
 public class PartitionAssignerRegistrationTests {
-  private static ServiceProvider _build(Action<IServiceCollection>? extra = null) {
+  private static ServiceProvider _build(Action<IServiceCollection>? extra = null, Dictionary<string, string?>? settings = null) {
     var services = new ServiceCollection();
-    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection([]).Build());
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(settings ?? []).Build());
     services.AddLogging();
     services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>();
     services.AddSingleton<IWorkNotificationListener, NoOpWorkNotificationListener>();
@@ -50,9 +50,11 @@ public class PartitionAssignerRegistrationTests {
   }
 
   [Test]
-  public async Task AddWhizbangPostgresNotifications_WithTheAssignerDisabled_LeavesItsRoleOutAsync() {
-    await using var sp = _build(services => services.Configure<PartitionAssignerOptions>(o => o.Enabled = false));
+  public async Task TheRemovedEnabledKey_SetToFalse_TurnsNothingOffAsync() {
+    // #2559: the assigner always runs. The removed key is reported at startup as removed, and the role is still held.
+    await using var sp = _build(settings: new Dictionary<string, string?> { ["Whizbang:Database:PartitionAssigner:Enabled"] = "false" });
 
-    await Assert.That(sp.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value.Roles).DoesNotContain(PartitionAssignerOptions.ROLE);
+    await Assert.That(sp.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value.Roles).Contains(PartitionAssignerOptions.ROLE)
+      .Because("the published assignment is the one source of stream ownership, so nothing turns its assigner off");
   }
 }
