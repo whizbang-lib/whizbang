@@ -125,6 +125,7 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     services.TryAddSingleton<SystemEvents.AuditTypeResolver>();
     // The payload limit reads the options, the catalog and every registered hook once, at first use.
     services.TryAddSingleton(Messaging.MessagePayloadLimits.Create);
+    services.TryAddSingleton(Messaging.SequenceIntegrityPolicy.Create);
     services.AddMetrics();
     services.TryAddEmptyConfiguration();
     // Named circuit breakers read Whizbang:CircuitBreakers:<name> over their code values (#1012).

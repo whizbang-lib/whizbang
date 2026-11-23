@@ -231,8 +231,13 @@ public sealed class DispatchOptions {
   /// <exception cref="ArgumentOutOfRangeException"><paramref name="holdTime"/> is negative.</exception>
   /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsSequenceIntegrityTests.cs</tests>
   public DispatchOptions WithSequenceIntegrity(Messaging.SequenceIntegrity mode, TimeSpan? holdTime = null) {
+    if (holdTime is { } time) {
+      if (time < TimeSpan.Zero) {
+        throw new ArgumentOutOfRangeException(nameof(holdTime), time, "A hold time cannot be negative.");
+      }
+      SequenceHoldTime = time;
+    }
     SequenceIntegrity = mode;
-    SequenceHoldTime = holdTime;
     return this;
   }
 
@@ -325,6 +330,12 @@ public sealed class DispatchOptions {
     }
     if (MaxPayloadBytes is not null) {
       return nameof(MaxPayloadBytes);
+    }
+    if (SequenceIntegrity is not null) {
+      return nameof(SequenceIntegrity);
+    }
+    if (SequenceHoldTime is not null) {
+      return nameof(SequenceHoldTime);
     }
     if (Policy is not null) {
       return nameof(Policy);

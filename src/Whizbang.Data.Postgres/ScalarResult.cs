@@ -25,7 +25,9 @@ internal static class ScalarResult {
 
   /// <summary>The UTC instant a <c>timestamptz</c> scalar carries, else null.</summary>
   /// <param name="value">The scalar.</param>
-#pragma warning disable RCS1163, IDE0060 // RED stub (#2542)
-  internal static DateTimeOffset? InstantOrNull(object? value) => null;
-#pragma warning restore RCS1163, IDE0060
+  internal static DateTimeOffset? InstantOrNull(object? value) => value switch {
+    DateTimeOffset instant => instant,
+    DateTime time => new DateTimeOffset(DateTime.SpecifyKind(time, DateTimeKind.Utc)),
+    _ => null,
+  };
 }

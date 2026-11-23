@@ -22,7 +22,12 @@ public readonly record struct SequenceHold(SequenceIntegrity Mode, TimeSpan Hold
   /// no deadline, and otherwise the bounded hold in whole milliseconds, rounded up. A bounded hold of zero or less is no
   /// hold.
   /// </summary>
-  public int HoldMilliseconds => (int)Mode;
+  public int HoldMilliseconds => Mode switch {
+    SequenceIntegrity.UntilStamped => UNTIL_STAMPED_MILLISECONDS,
+    SequenceIntegrity.Bounded when HoldTime > TimeSpan.Zero =>
+      (int)Math.Min(Math.Ceiling(HoldTime.TotalMilliseconds), int.MaxValue),
+    _ => 0,
+  };
 }
 
 /// <summary>
@@ -38,20 +43,37 @@ public readonly record struct SequenceHold(SequenceIntegrity Mode, TimeSpan Hold
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SequenceIntegrityPolicyTests.cs</tests>
 public sealed class SequenceIntegrityPolicy {
   private readonly WhizbangCoreOptions _options;
+  private readonly Dictionary<Type, (SequenceIntegrity Mode, int HoldMilliseconds)> _byType = [];
 
   /// <summary>Indexes every catalog entry that declares its own sequence integrity.</summary>
+  /// <param name="options">The configured default mode and hold time.</param>
+  /// <param name="catalog">The generated catalog, carrying each type's <c>[SequenceIntegrity]</c>.</param>
   public SequenceIntegrityPolicy(WhizbangCoreOptions options, IMessageTypeCatalog catalog) {
+    ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(catalog);
     _options = options;
+    foreach (var entry in catalog.GetAll()) {
+      if (entry.SequenceIntegrity is { } mode) {
+        _byType[entry.Type] = (mode, entry.SequenceHoldMilliseconds);
+      }
+    }
   }
 
   /// <summary>
   /// The registered instance, or one built from the host's options and catalog when the host did not register it.
   /// </summary>
-  public static SequenceIntegrityPolicy Resolve(IServiceProvider services) => throw new NotImplementedException();
+  public static SequenceIntegrityPolicy Resolve(IServiceProvider services) {
+    ArgumentNullException.ThrowIfNull(services);
+    return services.GetService<SequenceIntegrityPolicy>() ?? Create(services);
+  }
 
   /// <summary>Builds an instance from what the container holds, with the framework defaults for anything it lacks.</summary>
-  public static SequenceIntegrityPolicy Create(IServiceProvider services) => throw new NotImplementedException();
+  public static SequenceIntegrityPolicy Create(IServiceProvider services) {
+    ArgumentNullException.ThrowIfNull(services);
+    return new SequenceIntegrityPolicy(
+      services.GetService<WhizbangCoreOptions>() ?? new WhizbangCoreOptions(),
+      services.GetService<IMessageTypeCatalog>() ?? NullMessageTypeCatalog.Instance);
+  }
 
   /// <summary>The hold for an event of <paramref name="messageType"/>, given the dispatch's own settings.</summary>
   /// <param name="messageType">The event's type.</param>
@@ -59,6 +81,10 @@ public sealed class SequenceIntegrityPolicy {
   /// <param name="callHoldTime">The dispatch's own hold time, or null.</param>
   public SequenceHold For(Type messageType, SequenceIntegrity? callMode = null, TimeSpan? callHoldTime = null) {
     ArgumentNullException.ThrowIfNull(messageType);
-    return new SequenceHold(callMode ?? _options.SequenceIntegrity, callHoldTime ?? _options.SequenceHoldTime);
+    var declared = _byType.TryGetValue(messageType, out var type) ? type : ((SequenceIntegrity Mode, int HoldMilliseconds)?)null;
+    var mode = callMode ?? declared?.Mode ?? _options.SequenceIntegrity;
+    var holdTime = callHoldTime
+      ?? (declared is { HoldMilliseconds: > 0 } named ? TimeSpan.FromMilliseconds(named.HoldMilliseconds) : _options.SequenceHoldTime);
+    return new SequenceHold(mode, holdTime);
   }
 }

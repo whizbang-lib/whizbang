@@ -277,12 +277,18 @@ public class SequenceIntegritySqlTests : EFCoreTestBase {
     var at = new DateTimeOffset(2026, 11, 23, 12, 0, 0, TimeSpan.Zero);
     IWorkCoordinator coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
       dbContext, JsonContextRegistry.CreateCombinedOptions());
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 1,
+      logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorGate>.Instance);
+    IWorkCoordinator gated = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      dbContext, JsonContextRegistry.CreateCombinedOptions(), gate: gate);
 
     await Assert.That(await coordinator.GetOldestSequenceHeldOutboxAsync(instance, 10)).IsNull();
 
     _ = await _rowAsync(conn, instance, (Guid)TrackedGuid.New(), UNTIL_STAMPED, stored: true, stamped: false, createdAt: at);
 
     await Assert.That(await coordinator.GetOldestSequenceHeldOutboxAsync(instance, 10)).IsEqualTo(at);
+    await Assert.That(await gated.GetOldestSequenceHeldOutboxAsync(instance, 10)).IsEqualTo(at)
+      .Because("a coordinator with a gate takes a permit for the reading, as for every other statement");
   }
 
   // ============================================================================

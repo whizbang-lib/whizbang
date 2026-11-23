@@ -148,6 +148,11 @@ public static class OutboxSchema {
         DataType: WhizbangDataType.INTEGER,
         Nullable: false,
         DefaultValue: DefaultValue.Integer(150)
+      ),
+      new ColumnDefinition(
+        Name: Columns.SEQUENCE_HOLD_UNTIL,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
+        Nullable: true
       )
     ),
     // Nothing partial on a status bitmask. The outbox discriminates claimable and completed rows

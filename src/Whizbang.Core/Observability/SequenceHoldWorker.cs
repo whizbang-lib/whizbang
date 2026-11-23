@@ -23,7 +23,6 @@ namespace Whizbang.Core.Observability;
 /// </remarks>
 /// <docs>fundamentals/messaging/sequence-integrity#watching-held-messages</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Observability/SequenceHoldWorkerTests.cs</tests>
-#pragma warning disable IDE0052, S4487, RCS1163, IDE0060, CS0067, S1144, RCS1213, CA1823, S2589 // RED stub (#2542)
 public sealed partial class SequenceHoldWorker : BackgroundService, IDbMechanismOwner {
   /// <summary>The most pending rows one reading walks.</summary>
   public const int MAX_ROWS = 1000;
@@ -70,16 +69,51 @@ public sealed partial class SequenceHoldWorker : BackgroundService, IDbMechanism
   public event Action<TimeSpan?>? Sampled;
 
   /// <inheritdoc />
-  protected override Task ExecuteAsync(CancellationToken stoppingToken) => Task.CompletedTask;
+  protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+    var interval = _options.SequenceHoldSampleInterval;
+    if (interval <= TimeSpan.Zero) {
+      return;
+    }
+    try {
+      while (!stoppingToken.IsCancellationRequested) {
+        await Task.Delay(interval, _time, stoppingToken).ConfigureAwait(false);
+        await SampleOnceAsync(stoppingToken).ConfigureAwait(false);
+      }
+    } catch (OperationCanceledException) {
+      // Graceful shutdown: a reading lets a cancellation through only when its token was canceled.
+    }
+  }
 
   /// <summary>
   /// Takes one reading and publishes it. Public so a test drives a single reading instead of racing the timer.
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The oldest held event's age, zero when none is held, or null when it could not be read.</returns>
-  public Task<TimeSpan?> SampleOnceAsync(CancellationToken cancellationToken) {
-    Sampled?.Invoke(null);
-    return Task.FromResult<TimeSpan?>(null);
+  public async Task<TimeSpan?> SampleOnceAsync(CancellationToken cancellationToken) {
+    var age = await _readAsync(cancellationToken).ConfigureAwait(false);
+    _metrics.Record(age);
+    if (age > _options.SequenceHoldWarningAge) {
+      LogHeldTooLong(_logger, age.Value.TotalSeconds, _options.SequenceHoldWarningAge.TotalSeconds);
+    }
+    Sampled?.Invoke(age);
+    return age;
+  }
+
+  private async Task<TimeSpan?> _readAsync(CancellationToken cancellationToken) {
+    try {
+      using var scope = _scopeFactory.CreateScope();
+      if (scope.ServiceProvider.GetService<IWorkCoordinator>() is not { } coordinator) {
+        return null;
+      }
+      var oldest = await coordinator.GetOldestSequenceHeldOutboxAsync(_instanceProvider.InstanceId, MAX_ROWS, cancellationToken)
+        .ConfigureAwait(false);
+      // An event stored after this reading's clock was read is no older than zero.
+      return oldest is { } at ? TimeSpan.FromTicks(Math.Max(0, (_time.GetUtcNow() - at).Ticks)) : TimeSpan.Zero;
+    } catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested) {
+      // A failure, or a cancellation that is not ours (a command timeout), is an unknown age; the next interval retries.
+      LogReadFailed(_logger, ex);
+      return null;
+    }
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
@@ -90,4 +124,3 @@ public sealed partial class SequenceHoldWorker : BackgroundService, IDbMechanism
     Message = "Could not read the age of the oldest outbox event held for its commit-order stamp; the next interval retries")]
   private static partial void LogReadFailed(ILogger logger, Exception exception);
 }
-#pragma warning restore IDE0052, S4487, RCS1163, IDE0060, CS0067, S1144, RCS1213, CA1823, S2589

@@ -119,6 +119,46 @@ public class SequenceHoldWorkerTests {
   }
 
   [Test]
+  public async Task ACancellationThatIsNotOurs_IsAnUnknownAge_AndOursIsLetThroughAsync() {
+    await using var host = new WorkerHost(new WhizbangCoreOptions());
+    host.Coordinator.Failure = new OperationCanceledException("a command timeout");
+
+    await Assert.That(await host.Worker.SampleOnceAsync(CancellationToken.None)).IsNull()
+      .Because("a cancellation the worker did not ask for is a failed reading, not a shutdown");
+
+    using var canceled = new CancellationTokenSource();
+    await canceled.CancelAsync();
+    await Assert.That(async () => await host.Worker.SampleOnceAsync(canceled.Token)).Throws<OperationCanceledException>();
+  }
+
+  [Test]
+  public async Task StoppingWhileAReadingRuns_EndsTheLoopWhenTheReadingReturnsAsync() {
+    await using var host = new WorkerHost(new WhizbangCoreOptions());
+    host.Coordinator.OnRead = host.CancelStopping;
+    host.Coordinator.Oldest = host.Clock.GetUtcNow();
+
+    await host.StartAsync();
+    await host.Clock.WaitForArmedAsync(TimeSpan.FromSeconds(15), _wait);
+    host.Clock.Advance(TimeSpan.FromSeconds(15));
+    await host.Worker.ExecuteTask!.WaitAsync(_wait);
+
+    await Assert.That(host.Coordinator.AskedFor).Count().IsEqualTo(1)
+      .Because("the reading in flight finishes, and the loop ends before waiting again");
+  }
+
+  [Test]
+  public async Task AReadingWithNoListener_StillPublishesAsync() {
+    using var factory = new TestMeterFactory();
+    var coordinator = new HeldAgeCoordinator();
+    await using var services = new ServiceCollection().AddSingleton<IWorkCoordinator>(coordinator).BuildServiceProvider();
+    using var worker = new SequenceHoldWorker(
+      services.GetRequiredService<IServiceScopeFactory>(), new FixedInstance(Guid.CreateVersion7()), new WhizbangCoreOptions(),
+      new SequenceHoldMetrics(new WhizbangMetrics(factory)), new FakeLogger<SequenceHoldWorker>());
+
+    await Assert.That(await worker.SampleOnceAsync(CancellationToken.None)).IsEqualTo(TimeSpan.Zero);
+  }
+
+  [Test]
   public async Task MissingDependencies_AreRefusedAsync() {
     using var factory = new TestMeterFactory();
     var metrics = new SequenceHoldMetrics(new WhizbangMetrics(factory));
@@ -141,11 +181,13 @@ public class SequenceHoldWorkerTests {
     public DateTimeOffset? Oldest { get; set; }
     public Exception? Failure { get; set; }
     public List<(Guid InstanceId, int MaxRows)> AskedFor { get; } = [];
+    public Action? OnRead { get; set; }
 
     public Task<DateTimeOffset?> GetOldestSequenceHeldOutboxAsync(Guid instanceId, int maxRows, CancellationToken cancellationToken = default) {
       lock (AskedFor) {
         AskedFor.Add((instanceId, maxRows));
       }
+      OnRead?.Invoke();
       return Failure is { } failure ? Task.FromException<DateTimeOffset?>(failure) : Task.FromResult(Oldest);
     }
   }
@@ -205,6 +247,8 @@ public class SequenceHoldWorkerTests {
     }
 
     public Task StartAsync() => Worker.StartAsync(_stopping.Token);
+
+    public void CancelStopping() => _stopping.Cancel();
 
     public async Task StopAsync() {
       await _stopping.CancelAsync();
