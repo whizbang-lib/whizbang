@@ -36,6 +36,21 @@ public static class StartupVerdictBinding {
     return assessment.StandsDownWithoutMigrating ? throw new SchemaStandDownException(assessment.Reason) : assessment;
   }
 
+  /// <summary>
+  /// Refuses a turnkey initialization that ran on an instance whose application schema stood down (#2553): the W!
+  /// migrations were applied, and the instance does not serve. A call that returned success there would be the wrong
+  /// easy path, since the host's data plane stays held. Nothing when the host has no verdict, or one that serves.
+  /// </summary>
+  /// <param name="services">The host's services.</param>
+  /// <exception cref="SchemaStandDownException">The instance stood down, naming the side and its reason.</exception>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangHostExtensionsTests.cs:EnsureWhizbangInitializedAsync_WhenTheApplicationSchemaStoodDown_RunsTheWMigrations_ThenThrowsNamingItAsync</tests>
+  public static void ThrowIfStoodDown(IServiceProvider services) {
+    ArgumentNullException.ThrowIfNull(services);
+    if (services.GetService<StartupAssessmentSource>()?.Verdict is { Verdict: StartupVerdict.StandDown } stood) {
+      throw SchemaStandDownException.AfterTheWMigrations(stood.Reason);
+    }
+  }
+
   /// <summary>Whether the verdict lets the pass skip the election and the migration: only <see cref="StartupVerdict.Current"/>.</summary>
   /// <param name="assessment">The verdict, or null when unassessed.</param>
   /// <returns><see langword="true"/> for Current.</returns>
@@ -57,6 +72,17 @@ public sealed class SchemaStandDownException : InvalidOperationException {
   /// <param name="reason">Why the instance stood down: the schema's version against the binary's.</param>
   public SchemaStandDownException(string reason)
     : base($"This instance stood down, so no schema initialization runs on it and nothing is applied: {reason}") { }
+
+  /// <summary>
+  /// The refusal of a stand-down that came after the W! migrations ran (#2553): the application's schema stood down, so
+  /// the instance does not serve.
+  /// </summary>
+  /// <param name="reason">The verdict's reason, which names the side and its changes.</param>
+  /// <returns>The refusal.</returns>
+  public static SchemaStandDownException AfterTheWMigrations(string reason) =>
+    new(reason, verbatimPrefix: "This instance applied the W! migrations, then stood down because its application schema cannot be served: ");
+
+  private SchemaStandDownException(string reason, string verbatimPrefix) : base(verbatimPrefix + reason) { }
 
   /// <summary>Creates the refusal naming the reason, over a cause.</summary>
   /// <param name="reason">Why the instance stood down.</param>

@@ -73,8 +73,9 @@ public sealed record StoredFormApplier(string LibraryVersion, string Application
 
   /// <summary>
   /// The PL/pgSQL statement a conversion runs when it applied something: records the applier the rewrite phase
-  /// carried on <paramref name="journal"/>'s row where <paramref name="keyColumn"/> is <paramref name="keyLiteral"/>.
-  /// Nothing on a journal older than 385.
+  /// carried on <paramref name="journal"/>'s row where <paramref name="keyColumn"/> is <paramref name="keyLiteral"/>,
+  /// and what it applied (#2553, the statement's content hash). Nothing on a journal older than 385, and no hash on one
+  /// older than 570: the hash is written dynamically, so a statement planned against an older journal still runs.
   /// </summary>
   /// <param name="journal">The journal, schema-qualified.</param>
   /// <param name="keyColumn">Its key column.</param>
@@ -88,6 +89,11 @@ public sealed record StoredFormApplier(string LibraryVersion, string Application
     {indent}  UPDATE {journal} SET applied_library_version = nullif(current_setting('{LIBRARY_SETTING}', true), ''),
     {indent}    applied_application_version = nullif(current_setting('{APPLICATION_SETTING}', true), '')
     {indent}  WHERE {keyColumn} = {keyLiteral};
+    {indent}  IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass({SqlText.Literal(journal)})
+    {indent}             AND attname = 'content_hash' AND NOT attisdropped) THEN
+    {indent}    EXECUTE format('UPDATE %s SET content_hash = $1 WHERE %I = $2', {SqlText.Literal(journal)}, {SqlText.Literal(keyColumn)})
+    {indent}      USING nullif(current_setting('{CONTENT_SETTING}', true), ''), {keyLiteral};
+    {indent}  END IF;
     {indent}END IF;
 
     """;

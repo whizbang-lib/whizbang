@@ -319,7 +319,7 @@ internal static class PostgresStartupAssessment {
   /// <summary>What the database has: the ledger, its version table and owner column, and what reading who is online needs.</summary>
   internal readonly record struct Probe(
     bool Ledger, bool Versions, bool Owner, bool LedgerApplication, bool Online, bool AppliedBy, bool StoredForms, bool TemporalForms,
-    bool Reversals);
+    bool Reversals, bool StoredFormHashes, bool TemporalFormHashes);
 
   internal static async Task<Probe> ProbeAsync(NpgsqlConnection connection, string prefix, CancellationToken cancellationToken) {
     await using var probe = connection.CreateCommand();
@@ -333,7 +333,9 @@ internal static class PostgresStartupAssessment {
              EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($1) AND attname = 'applied_version_id' AND NOT attisdropped),
              EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($5) AND attname = 'applied_library_version' AND NOT attisdropped),
              EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($6) AND attname = 'applied_library_version' AND NOT attisdropped),
-             EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($1) AND attname = 'reversal' AND NOT attisdropped)
+             EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($1) AND attname = 'reversal' AND NOT attisdropped),
+             EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($5) AND attname = 'content_hash' AND NOT attisdropped),
+             EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($6) AND attname = 'content_hash' AND NOT attisdropped)
       """;
     probe.Parameters.AddWithValue(prefix + "wh_schema_migrations");
     probe.Parameters.AddWithValue(prefix + "wh_schema_versions");
@@ -344,7 +346,7 @@ internal static class PostgresStartupAssessment {
     await using var reader = await probe.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
     return new Probe(reader.GetBoolean(0), reader.GetBoolean(1), reader.GetBoolean(2), reader.GetBoolean(3), reader.GetBoolean(4),
-      reader.GetBoolean(5), reader.GetBoolean(6), reader.GetBoolean(7), reader.GetBoolean(8));
+      reader.GetBoolean(5), reader.GetBoolean(6), reader.GetBoolean(7), reader.GetBoolean(8), reader.GetBoolean(9), reader.GetBoolean(10));
   }
 
   /// <summary>One change the ledger records: the change, the version row that applied it, and its reverse script.</summary>
@@ -378,7 +380,7 @@ internal static class PostgresStartupAssessment {
 #pragma warning disable S2077 // the prefix is quoted by PgIdentifier; the fragments are this method's own literals
     command.CommandText = $"""
       SELECT m.file_name AS name, {kind} AS application, v.library_version, {application} AS application_version,
-             {reversal} AS reversal, v.id AS applied_version_id, {script} AS down_sql, m.content_hash
+             {reversal} AS reversal, v.id AS applied_version_id, {script} AS down_sql, m.content_hash, false AS by_name
       FROM {prefix}wh_schema_migrations m
       LEFT JOIN {prefix}wh_schema_versions v ON v.id = {applier}
       WHERE {notStep}
@@ -394,8 +396,10 @@ internal static class PostgresStartupAssessment {
         reader.GetBoolean(1) ? SchemaChangeKind.Application : SchemaChangeKind.Platform,
         reader.GetValue(2) as string, reader.GetValue(3) as string) {
         Reversal = MigrationReversal.FromLedgerText(reader.GetValue(4) as string),
-        // #2553: what was applied, which the gate compares with what this build defines under the same name.
+        // #2553: what was applied, which the gate compares with what this build defines under the same name; a conversion
+        // recorded before its journal held hashes is identified by its name.
         ContentHash = reader.GetValue(7) as string,
+        NameIdentifiesContent = reader.GetBoolean(8),
       };
       changes.Add(new LedgerChange(change, reader.GetValue(5) as int?, reader.GetValue(6) as string));
     }
@@ -405,15 +409,16 @@ internal static class PostgresStartupAssessment {
   /// <summary>
   /// The stored-form conversions as changes (#2131): each conversion a known version applied, from the journal that records
   /// it (385). An application schema change, since the library converts what the application's model declares. Nothing
-  /// on a journal older than the record, and a conversion nobody known applied is not read. A journal records no content
-  /// hash, so a conversion is judged by who applied it (#2553).
+  /// on a journal older than the record, and a conversion nobody known applied is not read. Each carries the content hash
+  /// its journal recorded (570), and is identified by its name when it has none (#2553).
   /// </summary>
   private static string _conversions(string prefix, Probe probe) {
     var union = new StringBuilder();
     if (probe.StoredForms) {
       union.Append(CultureInfo.InvariantCulture, $"""
         UNION ALL
-        SELECT 'stored-form:' || j.name, true, j.applied_library_version, j.applied_application_version, NULL, NULL::int, NULL, NULL
+        SELECT 'stored-form:' || j.name, true, j.applied_library_version, j.applied_application_version, NULL, NULL::int, NULL,
+               {(probe.StoredFormHashes ? "j.content_hash" : "NULL")}, true
         FROM {prefix}{StoredFormMigrationSql.JOURNAL} j WHERE j.applied_library_version IS NOT NULL
 
         """);
@@ -421,7 +426,8 @@ internal static class PostgresStartupAssessment {
     if (probe.TemporalForms) {
       union.Append(CultureInfo.InvariantCulture, $"""
         UNION ALL
-        SELECT 'temporal-form:' || f.table_name, true, f.applied_library_version, f.applied_application_version, NULL, NULL::int, NULL, NULL
+        SELECT 'temporal-form:' || f.table_name, true, f.applied_library_version, f.applied_application_version, NULL, NULL::int, NULL,
+               {(probe.TemporalFormHashes ? "f.content_hash" : "NULL")}, true
         FROM {prefix}wh_perspective_forms f WHERE f.applied_library_version IS NOT NULL
 
         """);

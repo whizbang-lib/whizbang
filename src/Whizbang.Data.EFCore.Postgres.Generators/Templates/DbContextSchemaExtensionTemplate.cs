@@ -1031,8 +1031,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   }
 
   /// <summary>
-  /// What this context's schema pass records (#2553): every migration file, perspective table and the associations set, by
-  /// the ledger's name for each, with the content hash the pass records for it. The rollback gate judges a recorded
+  /// What this context's schema pass records (#2553): every migration file, perspective table, the associations set and
+  /// every stored-form and temporal-form conversion, by the gate's name for each, with the content hash recorded for it. The rollback gate judges a recorded
   /// change this build defines identically as current, whatever version applied it.
   /// </summary>
   /// <param name="dbContext">The __DBCONTEXT_CLASS__ instance.</param>
@@ -1053,6 +1053,21 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       _perspectiveAssociationsHash, Whizbang.Data.EFCore.Postgres.SchemaCollectiveHandlers.Resolve(dbContext, serviceProvider));
     if (associations.Length > 0) {
       content[_associationsHashKey] = associations;
+    }
+    // The stored-form conversions, by the gate's name for each, with the hash each records (#2553): the statement the
+    // rewrite phase runs, or what a declared-key check declares. The same lists rewriteStoredFormsAsync builds.
+    var documentOptions = Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options;
+    foreach (var (name, sql) in global::Whizbang.Data.Postgres.StoredFormMigrationSql.ForPhase("__SCHEMA__", GetStoredFormMigrations())) {
+      content["stored-form:" + name] = global::Whizbang.Data.Postgres.StoredFormApplier.ContentHash(sql);
+    }
+    foreach (var pairs in Whizbang.Data.EFCore.Postgres.Perspectives.DictionaryPairsRewrite.ForModel(dbContext.Model, documentOptions, "__SCHEMA__")) {
+      content["stored-form:" + pairs.Name] = global::Whizbang.Data.Postgres.StoredFormApplier.ContentHash(pairs.Sql);
+    }
+    foreach (var declared in Whizbang.Data.EFCore.Postgres.Perspectives.DeclaredKeyShapes.ForModel(dbContext.Model, documentOptions)) {
+      content["stored-form:" + declared.JournalName] = declared.ContentHash;
+    }
+    foreach (var (table, sql) in Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalRewrite.ForModel(dbContext.Model, documentOptions, "__SCHEMA__")) {
+      content["temporal-form:" + table] = global::Whizbang.Data.Postgres.StoredFormApplier.ContentHash(sql);
     }
     return content;
   }

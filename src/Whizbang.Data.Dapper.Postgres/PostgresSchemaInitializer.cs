@@ -322,8 +322,8 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>
-  /// What this build's schema pass records (#2553): every migration it carries, every perspective table and every
-  /// application object, by the ledger's name for it, with the content hash the pass records. The rollback gate judges a
+  /// What this build's schema pass records (#2553): every migration it carries, every perspective table, every
+  /// application object and every declared-key check, by the gate's name for it, with the content hash recorded. The rollback gate judges a
   /// recorded change this build defines identically as current, whoever applied it.
   /// </summary>
   /// <param name="schema">The schema the ledger lives in: the migrations are rendered for it, as the pass renders them.</param>
@@ -340,6 +340,10 @@ public sealed class PostgresSchemaInitializer {
     foreach (var (name, hash, _) in (_perspectiveEntries ?? []).Select(e => ($"perspective:{e.Key}", _sha256(e.Value), (string?)null))
         .Concat(_applicationObjectHashes())) {
       defined[name] = hash;
+    }
+    // The declared-key checks, this driver's conversions: a journal row is judged by its hash, or by its name (#2553).
+    foreach (var table in DeclaredKeyTables ?? []) {
+      defined["stored-form:" + table.JournalName] = table.ContentHash;
     }
     return defined;
   }

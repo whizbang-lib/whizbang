@@ -351,7 +351,8 @@ public static class UpgradeOrder {
 
   /// <summary>
   /// Whether this build makes exactly the change the ledger recorded (#2553): the same name, with the same content hash.
-  /// A row with no recorded hash is never matched, so it is judged by who applied it, as before.
+  /// A row with no recorded hash matches only when its name identifies its content (a conversion recorded before its
+  /// journal held hashes) and this build declares that name; any other is judged by who applied it, as before.
   /// </summary>
   /// <param name="change">The recorded change.</param>
   /// <param name="defined">What this build defines, by name, with each content hash; null when nothing is known.</param>
@@ -359,10 +360,13 @@ public static class UpgradeOrder {
   /// <tests>tests/Whizbang.Core.Tests/Versioning/UpgradeOrderTests.cs:AChangeThisBuildDefinesIdentically_IsCurrent_WhateverVersionAppliedItAsync</tests>
   public static bool IsDefinedIdentically(AppliedSchemaChange change, IReadOnlyDictionary<string, string>? defined) {
     ArgumentNullException.ThrowIfNull(change);
+    if (defined is null || !defined.TryGetValue(change.Name, out var mine)) {
+      return false;
+    }
+    // A recorded hash decides; a conversion recorded before its journal held one is identified by its name.
     return change.ContentHash is { } recorded
-      && defined is not null
-      && defined.TryGetValue(change.Name, out var mine)
-      && string.Equals(mine, recorded, StringComparison.Ordinal);
+      ? string.Equals(mine, recorded, StringComparison.Ordinal)
+      : change.NameIdentifiesContent;
   }
 
   /// <summary>

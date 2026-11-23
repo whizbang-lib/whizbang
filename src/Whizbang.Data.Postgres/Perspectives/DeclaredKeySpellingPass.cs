@@ -446,6 +446,16 @@ public static class DeclaredKeySpellingPass {
           stamp.Parameters.AddWithValue(applier.LibraryVersion);
           stamp.Parameters.AddWithValue(applier.ApplicationVersion);
           await stamp.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+          // #2553: and what it applied, on a journal that records it (570).
+          await using var hashed = _command(
+            "SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($1) AND attname = 'content_hash' AND NOT attisdropped)");
+          hashed.Parameters.AddWithValue(_journal);
+          if (await hashed.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true) {
+            await using var content = _command($"UPDATE {_journal} SET content_hash = $2 WHERE name = $1");
+            content.Parameters.AddWithValue(table.JournalName);
+            content.Parameters.AddWithValue(table.ContentHash);
+            await content.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+          }
         }
       }
     }
