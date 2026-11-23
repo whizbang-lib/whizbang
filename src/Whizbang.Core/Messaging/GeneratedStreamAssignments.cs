@@ -19,12 +19,30 @@ namespace Whizbang.Core.Messaging;
 /// (#1464). Without the memo each call would take an ordinal and, without <c>OnlyIfEmpty</c>, replace the stream, so the
 /// stored copy and the local run would name different streams. The memo makes every call for one message in one
 /// handling return the stream the first call derived.
+/// <para>
+/// Outside a handling a stream is minted rather than derived, still once per message instance (<see cref="GetOrMint"/>,
+/// #2539), so every envelope one send builds names one stream.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/GeneratedStreamAssignmentsTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDerivedIdentityInHandlingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchTangentialParityComponentTests.cs</tests>
 internal static class GeneratedStreamAssignments {
   private static readonly ConditionalWeakTable<IMessageEnvelope, Handling> _handlings = [];
+  private static readonly ConditionalWeakTable<object, StrongBox<Guid>> _minted = [];
+
+  /// <summary>
+  /// Returns the stream minted for <paramref name="message"/> outside a handling: the one an earlier call for the same
+  /// instance minted, otherwise a fresh time-ordered one (#2539). One send builds several envelopes for one message (the
+  /// local run's, the stored copy's, the one the copy's local run is registered under), and each used to mint again,
+  /// so the stored copy and the local run named different streams.
+  /// </summary>
+  /// <exception cref="ArgumentNullException"><paramref name="message"/> is null.</exception>
+  internal static Guid GetOrMint(object message) {
+    ArgumentNullException.ThrowIfNull(message);
+    return _minted.GetValue(message, static _ => new StrongBox<Guid>(ValueObjects.TrackedGuid.New())).Value;
+  }
 
   /// <summary>
   /// Returns the stream <paramref name="message"/> starts in <paramref name="handling"/>: the one an earlier call for

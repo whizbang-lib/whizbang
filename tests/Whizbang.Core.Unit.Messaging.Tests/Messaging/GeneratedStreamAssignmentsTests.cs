@@ -68,6 +68,34 @@ public class GeneratedStreamAssignmentsTests {
     await Assert.That(() => GeneratedStreamAssignments.GetOrAdd(_handling(), new Probe("a"), null!)).Throws<ArgumentNullException>();
   }
 
+  // ---- outside a handling: minted once per message instance (#2539) ----
+
+  [Test]
+  public async Task GetOrMint_TheSameMessageTwice_MintsOnceAsync() {
+    var message = new Probe("a");
+
+    var first = GeneratedStreamAssignments.GetOrMint(message);
+    var again = GeneratedStreamAssignments.GetOrMint(message);
+
+    await Assert.That(again).IsEqualTo(first)
+      .Because("the envelopes one send builds for one message must name one stream");
+    await Assert.That(first.Version).IsEqualTo(7);
+  }
+
+  [Test]
+  public async Task GetOrMint_AnotherMessage_MintsAnotherStreamAsync() {
+    var first = GeneratedStreamAssignments.GetOrMint(new Probe("a"));
+    var second = GeneratedStreamAssignments.GetOrMint(new Probe("a"));
+
+    await Assert.That(second).IsNotEqualTo(first)
+      .Because("outside a handling each message still starts a fresh stream: identity is the instance");
+  }
+
+  [Test]
+  public async Task GetOrMint_ANullMessage_IsRefusedAsync() {
+    await Assert.That(() => GeneratedStreamAssignments.GetOrMint(null!)).Throws<ArgumentNullException>();
+  }
+
   private static Guid _streamFor(int ordinal) => new(ordinal + 1, 0, 0, new byte[8]);
 
   private static MessageEnvelope<object> _handling(MessageId? id = null) => new() {

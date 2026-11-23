@@ -3447,17 +3447,20 @@ public abstract partial class Dispatcher(
   /// from the handling (<see cref="GeneratedStreamIdentity.DeriveInHandling"/>) at the handling's next ordinal for this
   /// purpose, once per message (<see cref="GeneratedStreamAssignments"/>), so a redelivered handling sends on the
   /// streams its first run started (#2537). Outside a handling, for a handling with no message id, and for an event,
-  /// whose stream derives from the event's own id once that id derives, a fresh stream is minted as before.
+  /// whose stream derives from the event's own id once that id derives, a fresh stream is minted, once per message
+  /// instance: the envelopes one send builds (the local run's, the stored copy's, the one a local run of the copy is
+  /// registered under) all name the stream the first of them minted (#2539).
   /// </summary>
   /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
   /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDerivedIdentityInHandlingTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchTangentialParityComponentTests.cs</tests>
   private Guid _generatedStreamOf(object message, Type messageType) {
     if (message is IEvent || ReceptorHandling.Current is not { } handling) {
-      return ValueObjects.TrackedGuid.New();
+      return GeneratedStreamAssignments.GetOrMint(message);
     }
     var cause = _emissionAnchor(handling);
     if (cause == Guid.Empty) {
-      return ValueObjects.TrackedGuid.New();
+      return GeneratedStreamAssignments.GetOrMint(message);
     }
     var serviceName = _instanceProvider.ServiceName;
     var handlerName = handling.DispatchContext.HandlerName;
