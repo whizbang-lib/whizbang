@@ -149,7 +149,9 @@ public class RollbackGateTests : EFCoreTestBase {
     var file = await _lastWhizbangMigrationAsync(ct);
     var newer = await _versionAsync("1000.0.0", "unknown", ct);
     await _execAsync("ALTER TABLE wh_schema_migrations DISABLE TRIGGER wh_schema_migrations_applied_by", ct);
-    await _execAsync("UPDATE wh_schema_migrations SET version_id = @v, status = 2, applied_version_id = NULL WHERE file_name = @f",
+    // A content this build does not define (#2553): a change it defines identically is current, whoever applied it.
+    await _execAsync(
+      "UPDATE wh_schema_migrations SET version_id = @v, status = 2, applied_version_id = NULL, content_hash = 'applied-by-a-newer-version' WHERE file_name = @f",
       ct, ("v", newer), ("f", file));
     await _execAsync("ALTER TABLE wh_schema_migrations ENABLE TRIGGER wh_schema_migrations_applied_by", ct);
 
@@ -250,6 +252,9 @@ public class RollbackGateTests : EFCoreTestBase {
     await _execAsync("ALTER TABLE wh_schema_migrations DROP COLUMN applied_version_id CASCADE", ct);
     await _execAsync("DROP TRIGGER IF EXISTS wh_schema_migrations_applied_by ON wh_schema_migrations", ct);
     await _restampAsync(await _versionAsync("1000.0.0", "unknown", ct), ct);
+    // One change this build does not define (#2553): the rest it defines identically, and they are current.
+    await _execAsync("UPDATE wh_schema_migrations SET content_hash = 'applied-by-a-newer-version' WHERE file_name = @f",
+      ct, ("f", await _lastWhizbangMigrationAsync(ct)));
 
     var assessment = await _assessor(library, null).AssessAsync(ct);
 

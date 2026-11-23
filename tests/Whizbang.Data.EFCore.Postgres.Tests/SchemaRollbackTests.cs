@@ -61,8 +61,10 @@ public class SchemaRollbackTests : EFCoreTestBase {
       VALUES (@name, 'h', @v, 1, @owner, @reversal, @down)
       """, ct, ("name", name), ("v", versionId), ("owner", owner), ("reversal", reversal), ("down", (object?)down ?? DBNull.Value));
 
-  private SchemaRollbackRequest _request(string library, string application, bool allowLossy = false) =>
-    new(_open, "public", SchemaInitializationLockKey.Compute("public"), new VersionSighting(library, application), allowLossy, TIMEOUT_SECONDS);
+  private SchemaRollbackRequest _request(
+      string library, string application, bool allowLossy = false, IReadOnlyDictionary<string, string>? defined = null) =>
+    new(_open, "public", SchemaInitializationLockKey.Compute("public"), new VersionSighting(library, application), allowLossy, TIMEOUT_SECONDS,
+      defined ?? new Dictionary<string, string>(StringComparer.Ordinal));
 
   [Test]
   [Timeout(60000)]
@@ -107,6 +109,26 @@ public class SchemaRollbackTests : EFCoreTestBase {
       .Because("one transaction: a rollback that cannot finish changes nothing");
     await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_schema_migrations WHERE file_name LIKE 'wh_per_rb_%'", ct))
       .IsEqualTo(2L);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task AChangeThisBuildDefinesIdentically_IsNeverReversedUnderTheLock_WhoeverAppliedItAsync(CancellationToken ct) {
+    // #2553: the rollback decides again under the lock by the same rule Assess used, so a change this build makes with the
+    // same hash is never dropped, even when a SemVer-higher version is recorded as having applied it.
+    var library = await _libraryAsync(ct);
+    var restored = await _versionAsync(library, "1.63.0-rc.3", ct);
+    await _execAsync("CREATE TABLE rb_restored (id int); CREATE TABLE rb_other (id int)", ct);
+    await _recordAsync("wh_per_rb_restored", "perspective", restored, "lossy", "DROP TABLE rb_restored;", ct);
+    await _recordAsync("wh_per_rb_other", "perspective", restored, "reversible", "DROP TABLE rb_other;", ct);
+
+    var reversed = await SchemaRollback.ApplyAsync(
+      _request(library, "0.0.0-preview.restored", defined: new Dictionary<string, string>(StringComparer.Ordinal) { ["wh_per_rb_restored"] = "h" }),
+      new FakeTimeProvider(), null, ct);
+
+    await Assert.That(reversed).IsEqualTo(1).Because("only the change this build does not define is reversed");
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM pg_class WHERE relname = 'rb_restored'", ct)).IsEqualTo(1L);
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM pg_class WHERE relname = 'rb_other'", ct)).IsEqualTo(0L);
   }
 
   [Test]

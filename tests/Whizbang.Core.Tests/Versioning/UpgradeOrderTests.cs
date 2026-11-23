@@ -379,6 +379,15 @@ public class UpgradeOrderTests {
     await Assert.That(since).IsEquivalentTo([conversion]);
   }
 
+  [Test]
+  public async Task WhenThisBuildDefinesNothingKnown_EveryChangeIsJudgedByWhoAppliedItAsync() {
+    var change = _hashed(_application("perspective:wh_per_orders", "1.0.0", "2.0.0"), "aa11");
+
+    await Assert.That(UpgradeOrder.AppliedSince(_own("1.0.0", "1.0.0"), [change], defined: null)).IsEquivalentTo([change]);
+    await Assert.That(UpgradeOrder.IsDefinedIdentically(change, defined: null)).IsFalse();
+    await Assert.That(() => UpgradeOrder.IsDefinedIdentically(null!, defined: null)).Throws<ArgumentNullException>();
+  }
+
   // ── #2122: what can be rolled back ──────────────────────────────────
 
   private static AppliedSchemaChange _as(AppliedSchemaChange change, SchemaChangeReversal reversal) => change with { Reversal = reversal };

@@ -10,6 +10,16 @@ using Whizbang.Core.Versioning;
 
 namespace Whizbang.Data.Postgres;
 
+/// <summary>What an instance brings to the rollback gate (#2022, #2122, #2553).</summary>
+/// <param name="Own">This instance's versions and id; a null library version means no provider says.</param>
+/// <param name="Defined">What this build defines (#2553): each change its schema pass records, by the ledger's name, with
+/// the content hash it records; a recorded change this build defines identically is current, whoever applied it.</param>
+/// <param name="OverrideIncompatibility">Whether the host turned the incompatibility override on (#2022,
+/// <see cref="UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY"/>).</param>
+/// <param name="AllowLossyRollback">Whether a rollback may discard data (#2122, <see cref="UpgradeOrder.ALLOW_LOSSY_ROLLBACK_KEY"/>).</param>
+internal sealed record StartupGateInput(
+  VersionSighting Own, IReadOnlyDictionary<string, string> Defined, bool OverrideIncompatibility, bool AllowLossyRollback);
+
 /// <summary>
 /// The <c>Assess</c> verdict both Postgres drivers produce (#1992): this instance's versions against every version the
 /// migration ledger records and every instance online (#2022), and, when nothing newer is recorded or online, whether the
@@ -62,17 +72,14 @@ internal static class PostgresStartupAssessment {
   /// <summary>Reads the ledger and the instances online, and produces the verdict.</summary>
   /// <param name="connection">An open connection.</param>
   /// <param name="schema">The schema the ledger lives in; null or empty for the connection's own.</param>
-  /// <param name="own">This instance's versions and id; a null library version means no provider says.</param>
-  /// <param name="overrideIncompatibility">Whether the host turned the incompatibility override on (#2022,
-  /// <see cref="UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY"/>).</param>
-  /// <param name="allowLossyRollback">Whether a rollback may discard data (#2122, <see cref="UpgradeOrder.ALLOW_LOSSY_ROLLBACK_KEY"/>).</param>
+  /// <param name="gate">This instance's versions, what its build defines, and the operator's overrides.</param>
   /// <param name="isCurrent">Whether the schema needs nothing applied, asked only when nothing newer is recorded or
   /// online. A throw is read as "could not be shown current".</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The verdict.</returns>
   internal static async Task<StartupAssessment> AssessAsync(
-      NpgsqlConnection connection, string? schema, VersionSighting own, bool overrideIncompatibility, bool allowLossyRollback,
-      Func<CancellationToken, Task<bool>> isCurrent, CancellationToken cancellationToken) {
+      NpgsqlConnection connection, string? schema, StartupGateInput gate, Func<CancellationToken, Task<bool>> isCurrent,
+      CancellationToken cancellationToken) {
     var prefix = PgIdentifier.QualifyPrefix(schema);
     var probe = await ProbeAsync(connection, prefix, cancellationToken).ConfigureAwait(false);
     if (!probe.Ledger) {
@@ -88,7 +95,7 @@ internal static class PostgresStartupAssessment {
     var online = probe.Online
       ? await _readOnlineAsync(connection, prefix, cancellationToken).ConfigureAwait(false)
       : [];
-    var verdict = ComputeVerdict(own, ledger, online, overrideIncompatibility, allowLossyRollback);
+    var verdict = ComputeVerdict(gate.Own, ledger, online, gate.OverrideIncompatibility, gate.AllowLossyRollback, gate.Defined);
     if (verdict.Verdict != StartupVerdict.Serve) {
       return verdict;
     }
@@ -258,7 +265,7 @@ internal static class PostgresStartupAssessment {
 #pragma warning disable S2077 // the prefix is quoted by PgIdentifier; the fragments are this method's own literals
     command.CommandText = $"""
       SELECT m.file_name AS name, {kind} AS application, v.library_version, {application} AS application_version,
-             {reversal} AS reversal, v.id AS applied_version_id, {script} AS down_sql
+             {reversal} AS reversal, v.id AS applied_version_id, {script} AS down_sql, m.content_hash
       FROM {prefix}wh_schema_migrations m
       LEFT JOIN {prefix}wh_schema_versions v ON v.id = {applier}
       WHERE {notStep}
@@ -274,6 +281,8 @@ internal static class PostgresStartupAssessment {
         reader.GetBoolean(1) ? SchemaChangeKind.Application : SchemaChangeKind.Platform,
         reader.GetValue(2) as string, reader.GetValue(3) as string) {
         Reversal = MigrationReversal.FromLedgerText(reader.GetValue(4) as string),
+        // #2553: what was applied, which the gate compares with what this build defines under the same name.
+        ContentHash = reader.GetValue(7) as string,
       };
       changes.Add(new LedgerChange(change, reader.GetValue(5) as int?, reader.GetValue(6) as string));
     }
@@ -283,14 +292,15 @@ internal static class PostgresStartupAssessment {
   /// <summary>
   /// The stored-form conversions as changes (#2131): each conversion a known version applied, from the journal that records
   /// it (385). An application schema change, since the library converts what the application's model declares. Nothing
-  /// on a journal older than the record, and a conversion nobody known applied is not read.
+  /// on a journal older than the record, and a conversion nobody known applied is not read. A journal records no content
+  /// hash, so a conversion is judged by who applied it (#2553).
   /// </summary>
   private static string _conversions(string prefix, Probe probe) {
     var union = new StringBuilder();
     if (probe.StoredForms) {
       union.Append(CultureInfo.InvariantCulture, $"""
         UNION ALL
-        SELECT 'stored-form:' || j.name, true, j.applied_library_version, j.applied_application_version, NULL, NULL::int, NULL
+        SELECT 'stored-form:' || j.name, true, j.applied_library_version, j.applied_application_version, NULL, NULL::int, NULL, NULL
         FROM {prefix}{StoredFormMigrationSql.JOURNAL} j WHERE j.applied_library_version IS NOT NULL
 
         """);
@@ -298,7 +308,7 @@ internal static class PostgresStartupAssessment {
     if (probe.TemporalForms) {
       union.Append(CultureInfo.InvariantCulture, $"""
         UNION ALL
-        SELECT 'temporal-form:' || f.table_name, true, f.applied_library_version, f.applied_application_version, NULL, NULL::int, NULL
+        SELECT 'temporal-form:' || f.table_name, true, f.applied_library_version, f.applied_application_version, NULL, NULL::int, NULL, NULL
         FROM {prefix}wh_perspective_forms f WHERE f.applied_library_version IS NOT NULL
 
         """);

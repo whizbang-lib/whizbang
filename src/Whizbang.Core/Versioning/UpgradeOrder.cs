@@ -225,9 +225,13 @@ public static class UpgradeOrder {
   }
 
   /// <summary>
-  /// The rollback gate (#2022): every schema change applied after this instance's version. A W! migration counts when
-  /// a newer library applied it; an application schema change counts when a newer application or a newer library did.
-  /// A change whose applier is unknown never counts.
+  /// The rollback gate (#2022): every schema change applied after this instance's version, judged by what was applied
+  /// (#2553, owner decision 1). A change this build defines identically (the same name, recorded with the same content
+  /// hash) is current, whatever version applied it: a database restored from another environment records that
+  /// environment's versions, which say nothing about whether this build makes the same change. Only a change this build
+  /// does not define that way (a different hash, a name it does not produce, or no recorded hash) is judged by who
+  /// applied it: a W! migration counts when a newer library applied it; an application schema change counts when a newer
+  /// application or a newer library did. A change whose applier is unknown never counts.
   /// </summary>
   /// <param name="own">This instance's versions.</param>
   /// <param name="changes">The changes the ledger records, with who applied each.</param>
@@ -238,10 +242,26 @@ public static class UpgradeOrder {
       VersionSighting own, IEnumerable<AppliedSchemaChange> changes, IReadOnlyDictionary<string, string>? defined) {
     ArgumentNullException.ThrowIfNull(own);
     ArgumentNullException.ThrowIfNull(changes);
-    _ = defined;   // RED (#2553): not yet consulted
-    return [.. changes.Where(change => CompareLibrary(change.LibraryVersion, own.LibraryVersion) > 0
+    return [.. changes.Where(change => !IsDefinedIdentically(change, defined)
+      && (CompareLibrary(change.LibraryVersion, own.LibraryVersion) > 0
       || (change.Kind == SchemaChangeKind.Application
-          && CompareApplication(change.ApplicationVersion, own.ApplicationVersion) > 0))];
+          && CompareApplication(change.ApplicationVersion, own.ApplicationVersion) > 0)))];
+  }
+
+  /// <summary>
+  /// Whether this build makes exactly the change the ledger recorded (#2553): the same name, with the same content hash.
+  /// A row with no recorded hash is never matched, so it is judged by who applied it, as before.
+  /// </summary>
+  /// <param name="change">The recorded change.</param>
+  /// <param name="defined">What this build defines, by name, with each content hash; null when nothing is known.</param>
+  /// <returns><see langword="true"/> when the recorded hash is the one this build produces under that name.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Versioning/UpgradeOrderTests.cs:AChangeThisBuildDefinesIdentically_IsCurrent_WhateverVersionAppliedItAsync</tests>
+  public static bool IsDefinedIdentically(AppliedSchemaChange change, IReadOnlyDictionary<string, string>? defined) {
+    ArgumentNullException.ThrowIfNull(change);
+    return change.ContentHash is { } recorded
+      && defined is not null
+      && defined.TryGetValue(change.Name, out var mine)
+      && string.Equals(mine, recorded, StringComparison.Ordinal);
   }
 
   /// <summary>

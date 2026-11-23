@@ -245,7 +245,7 @@ public sealed class PostgresSchemaInitializer {
       new SchemaRollbackRequest(
         () => new NpgsqlConnection(_connectionString), schema, SchemaInitializationLockKey.Compute(schema),
         new Whizbang.Core.Versioning.VersionSighting(_migrationProvider.Version, _recordedApplicationVersion), plan.AllowLossy,
-        SchemaCommandTimeout.Resolve(_connectionString)),
+        SchemaCommandTimeout.Resolve(_connectionString), DefinedContent(schema)),
       TimeProvider.System, Logger, cancellationToken);
   }
 
@@ -291,6 +291,29 @@ public sealed class PostgresSchemaInitializer {
     }
     return ManagedObjects is not { } declared
       || (await ManagedSchemaReconciler.TablesMissingDeclaredObjectsAsync(connection, schema, declared, cancellationToken)).Count == 0;
+  }
+
+  /// <summary>
+  /// What this build's schema pass records (#2553): every migration it carries, every perspective table and every
+  /// application object, by the ledger's name for it, with the content hash the pass records. The rollback gate judges a
+  /// recorded change this build defines identically as current, whoever applied it.
+  /// </summary>
+  /// <param name="schema">The schema the ledger lives in: the migrations are rendered for it, as the pass renders them.</param>
+  /// <returns>The definitions.</returns>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStartupAssessorTests.cs:ARestoredDatabase_WhoseChangesThisBuildDefinesIdentically_ServesWhateverVersionAppliedThemAsync</tests>
+  internal IReadOnlyDictionary<string, string> DefinedContent(string schema) {
+    var provider = _rendersForTargetSchema
+      ? new PostgresMigrationProvider(typeof(PostgresMigrationProvider).Assembly, schema)
+      : _migrationProvider;
+    var defined = new Dictionary<string, string>(StringComparer.Ordinal);
+    foreach (var migration in provider.GetMigrations()) {
+      defined[migration.Name] = MigrationSqlNormalizer.ContentHash(migration.Sql);
+    }
+    foreach (var (name, hash, _) in (_perspectiveEntries ?? []).Select(e => ($"perspective:{e.Key}", _sha256(e.Value), (string?)null))
+        .Concat(_applicationObjectHashes())) {
+      defined[name] = hash;
+    }
+    return defined;
   }
 
   /// <summary>The migration ledger, as this driver names it: unqualified, on the session's search path.</summary>

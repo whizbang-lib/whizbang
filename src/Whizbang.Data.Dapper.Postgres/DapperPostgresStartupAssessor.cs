@@ -30,10 +30,12 @@ internal sealed class DapperPostgresStartupAssessor(
   public async Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken) {
     await using var connection = new NpgsqlConnection(connectionString);
     await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+    var schema = await _schemaAsync(connection, cancellationToken).ConfigureAwait(false);
     return await PostgresStartupAssessment.AssessAsync(
-      connection, await _schemaAsync(connection, cancellationToken).ConfigureAwait(false),
-      new VersionSighting(new PostgresMigrationProvider().Version, applicationVersion, instanceId), overrideIncompatibility,
-      allowLossyRollback,
+      connection, schema,
+      new StartupGateInput(
+        new VersionSighting(new PostgresMigrationProvider().Version, applicationVersion, instanceId),
+        createInitializer().DefinedContent(schema), overrideIncompatibility, allowLossyRollback),
       ct => createInitializer().IsCurrentAsync(ct), cancellationToken).ConfigureAwait(false);
   }
 
@@ -45,7 +47,7 @@ internal sealed class DapperPostgresStartupAssessor(
       connection, await _schemaAsync(connection, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
   }
 
-  private async Task<string?> _schemaAsync(NpgsqlConnection connection, CancellationToken cancellationToken) =>
+  private async Task<string> _schemaAsync(NpgsqlConnection connection, CancellationToken cancellationToken) =>
     DapperCoordinatorSchema.FromConnectionString(connectionString)
       ?? await DapperCoordinatorSchema.CurrentAsync(connection, cancellationToken).ConfigureAwait(false);
 }

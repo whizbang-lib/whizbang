@@ -16,9 +16,12 @@ namespace Whizbang.Data.Postgres;
 /// <param name="Own">This instance's versions and id.</param>
 /// <param name="AllowLossy">Whether a reversal that discards data may run.</param>
 /// <param name="CommandTimeoutSeconds">How long any one reverse script may run.</param>
+/// <param name="Defined">What this build defines (#2553), by the ledger's name, with each content hash: a change it defines
+/// identically is never rolled back, whoever applied it, exactly as Assess judged it.</param>
 /// <docs>operations/startup/rolling-upgrades#rolling-back</docs>
 public sealed record SchemaRollbackRequest(
-  Func<NpgsqlConnection> ConnectionFactory, string Schema, long LockId, VersionSighting Own, bool AllowLossy, int CommandTimeoutSeconds);
+  Func<NpgsqlConnection> ConnectionFactory, string Schema, long LockId, VersionSighting Own, bool AllowLossy, int CommandTimeoutSeconds,
+  IReadOnlyDictionary<string, string> Defined);
 
 /// <summary>
 /// Rolls a schema back to this instance's version (#2122, owner decision 4): runs the reverse scripts the newer version
@@ -71,7 +74,7 @@ public static partial class SchemaRollback {
     var probe = await PostgresStartupAssessment.ProbeAsync(connection, prefix, cancellationToken).ConfigureAwait(false);
     var changes = await PostgresStartupAssessment.ReadChangesAsync(connection, prefix, probe, withScripts: true, cancellationToken)
       .ConfigureAwait(false);
-    var since = UpgradeOrder.AppliedSince(request.Own, [.. changes.Select(c => c.Change)], defined: null);
+    var since = UpgradeOrder.AppliedSince(request.Own, [.. changes.Select(c => c.Change)], request.Defined);
     if (since.Count == 0) {
       return 0;
     }

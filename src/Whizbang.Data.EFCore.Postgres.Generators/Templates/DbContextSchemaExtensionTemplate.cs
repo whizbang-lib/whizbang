@@ -404,7 +404,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         new Whizbang.Data.Postgres.SchemaRollbackRequest(
           rollbackConnectionFactory, "__SCHEMA__", lockId,
           new Whizbang.Core.Versioning.VersionSighting("__LIBRARY_VERSION__", _ledgerApplicationVersion.Value, rollingInstance),
-          rollback.AllowLossy, _schemaCommandTimeoutSeconds),
+          rollback.AllowLossy, _schemaCommandTimeoutSeconds, GetWhizbangSchemaContent(dbContext, serviceProvider)),
         startupClock, logger, cancellationToken);
     }
 
@@ -1009,6 +1009,33 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             t => (t.Name, t.Table)))),
       global::System.Linq.Enumerable.Select(GetPhysicalColumnRewrites(), r => r.Name),
       cancellationToken);
+  }
+
+  /// <summary>
+  /// What this context's schema pass records (#2553): every migration file, perspective table and the associations set, by
+  /// the ledger's name for each, with the content hash the pass records for it. The rollback gate judges a recorded
+  /// change this build defines identically as current, whatever version applied it.
+  /// </summary>
+  /// <param name="dbContext">The __DBCONTEXT_CLASS__ instance.</param>
+  /// <param name="serviceProvider">The host's services, for the collective event types its handlers apply (#2145),
+  /// which the associations hash covers; null reads them from the host the context was built from.</param>
+  /// <returns>Each change by ledger name, with its content hash.</returns>
+  public static global::System.Collections.Generic.IReadOnlyDictionary<string, string> GetWhizbangSchemaContent(
+      this __DBCONTEXT_FQN__ dbContext, IServiceProvider? serviceProvider = null) {
+    var content = new global::System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal);
+    foreach (var (name, sql) in GetMigrationScripts()) {
+      content[name] = _migrationHash(_transformMigrationSql(sql, "__SCHEMA__"));
+    }
+    foreach (var (name, sql) in GetPerspectiveEntries()) {
+      content[$"perspective:{name}"] = _contentHash(sql);
+    }
+    // The hash the associations step records, over this host's collective handlers, without setting the pass's own.
+    var associations = global::Whizbang.Core.Perspectives.CollectiveRoutingAssociations.AssociationsHash(
+      _perspectiveAssociationsHash, Whizbang.Data.EFCore.Postgres.SchemaCollectiveHandlers.Resolve(dbContext, serviceProvider));
+    if (associations.Length > 0) {
+      content[_associationsHashKey] = associations;
+    }
+    return content;
   }
 
   /// <summary>

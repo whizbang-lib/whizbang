@@ -211,6 +211,10 @@ public class UpgradeStandDownE2ETests : EFCoreTestBase {
     var library = await _ledgerLibraryAsync(ct);
 
     await Assert.That((await _assessor(new Pod(), library).AssessAsync(ct)).Verdict).IsNotEqualTo(StartupVerdict.StandDown);
+    // A change the older binary does not make (#2553): one it defines identically would be current, whoever applied it.
+    await _execAsync(
+      "UPDATE wh_schema_migrations SET content_hash = 'applied-by-a-newer-version', status = 2 WHERE file_name = (SELECT max(file_name) FROM wh_schema_migrations WHERE owner = 'whizbang')",
+      ct);
     await Assert.That((await _assessor(new Pod(), "0.0.0-0").AssessAsync(ct)).Verdict).IsEqualTo(StartupVerdict.StandDown);
   }
 

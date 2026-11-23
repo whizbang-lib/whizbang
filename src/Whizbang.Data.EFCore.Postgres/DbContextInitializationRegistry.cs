@@ -20,6 +20,8 @@ public static class DbContextInitializationRegistry {
   private static readonly List<DbContextInitializer> _initializers = [];
   // #1992: whether each DbContext's schema needs nothing applied, keyed by its type, registered beside its initializer.
   private static readonly Dictionary<Type, Func<IServiceProvider, CancellationToken, Task<bool?>>> _currencyChecks = [];
+  // #2553: what each DbContext's schema pass records, by ledger name with each content hash, keyed by its type.
+  private static readonly Dictionary<Type, Func<object, IServiceProvider?, IReadOnlyDictionary<string, string>>> _schemaContent = [];
   private static readonly Lock _lock = new();
 
   /// <summary>
@@ -92,6 +94,40 @@ public static class DbContextInitializationRegistry {
     lock (_lock) {
       _currencyChecks[typeof(TDbContext)] = check;
     }
+  }
+
+  /// <summary>
+  /// Registers what a DbContext's schema pass records (#2553): every change by the ledger's name for it, with the content
+  /// hash the pass records. Called by the source-generated module initializer beside <see cref="Register{TDbContext}"/>;
+  /// a later registration for the same type replaces the earlier one.
+  /// </summary>
+  /// <typeparam name="TDbContext">The DbContext type.</typeparam>
+  /// <param name="content">Produces the definitions for one context instance, with the host's services (null when none).</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DbContextInitializationRegistryTests.cs:SchemaContent_IsWhatTheContextsPassRecords_AndNothingForAnUnregisteredContextAsync</tests>
+  public static void RegisterSchemaContent<TDbContext>(Func<TDbContext, IServiceProvider?, IReadOnlyDictionary<string, string>> content)
+      where TDbContext : class {
+    ArgumentNullException.ThrowIfNull(content);
+    lock (_lock) {
+      _schemaContent[typeof(TDbContext)] = (dbContext, services) => content((TDbContext)dbContext, services);
+    }
+  }
+
+  /// <summary>
+  /// What a DbContext's schema pass records (#2553), which the rollback gate compares with the ledger: a recorded change
+  /// this build defines identically is current, whoever applied it. Empty for a context nothing registered, whose changes
+  /// are then judged by who applied them, as before.
+  /// </summary>
+  /// <param name="dbContext">The context the ledger is read through.</param>
+  /// <param name="services">The host's services; null when there are none.</param>
+  /// <returns>Each change by name, with its content hash.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DbContextInitializationRegistryTests.cs:SchemaContent_IsWhatTheContextsPassRecords_AndNothingForAnUnregisteredContextAsync</tests>
+  public static IReadOnlyDictionary<string, string> SchemaContentOf(object dbContext, IServiceProvider? services) {
+    ArgumentNullException.ThrowIfNull(dbContext);
+    Func<object, IServiceProvider?, IReadOnlyDictionary<string, string>>? content;
+    lock (_lock) {
+      _schemaContent.TryGetValue(dbContext.GetType(), out content);
+    }
+    return content is null ? new Dictionary<string, string>(StringComparer.Ordinal) : content(dbContext, services);
   }
 
   /// <summary>

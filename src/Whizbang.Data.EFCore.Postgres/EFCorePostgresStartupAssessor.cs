@@ -67,27 +67,30 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor, IOnlineVer
   /// that it needs nothing applied and nothing converted (#1992), read without a lock.
   /// </remarks>
   public Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken) =>
-    _readAsync((connection, schema, services) => PostgresStartupAssessment.AssessAsync(
+    _readAsync((connection, schema, dbContext, services) => PostgresStartupAssessment.AssessAsync(
       connection, schema,
-      new VersionSighting(_versionProvider?.LibraryVersion, _applicationVersion?.ApplicationVersion.Recorded, _instance?.InstanceId),
-      _overrideIncompatibility,
-      _allowLossyRollback,
+      new StartupGateInput(
+        new VersionSighting(_versionProvider?.LibraryVersion, _applicationVersion?.ApplicationVersion.Recorded, _instance?.InstanceId),
+        // #2553: what this context's pass records, so a change it defines identically is current, whoever applied it.
+        DbContextInitializationRegistry.SchemaContentOf(dbContext, services),
+        _overrideIncompatibility,
+        _allowLossyRollback),
       ct => DbContextInitializationRegistry.IsSchemaCurrentAsync(services, ct),
       cancellationToken), cancellationToken);
 
   /// <inheritdoc />
   public Task<IReadOnlyList<VersionSighting>> ReadOnlineAsync(CancellationToken cancellationToken) =>
-    _readAsync((connection, schema, _) => PostgresStartupAssessment.ReadOnlineAsync(connection, schema, cancellationToken),
+    _readAsync((connection, schema, _, _) => PostgresStartupAssessment.ReadOnlineAsync(connection, schema, cancellationToken),
       cancellationToken);
 
   private async Task<T> _readAsync<T>(
-      Func<NpgsqlConnection, string?, IServiceProvider, Task<T>> read, CancellationToken cancellationToken) {
+      Func<NpgsqlConnection, string?, DbContext, IServiceProvider, Task<T>> read, CancellationToken cancellationToken) {
     using var scope = _scopeFactory.CreateScope();
     var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
     var schema = dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
 
     await using var connectionScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
       (NpgsqlConnection)dbContext.Database.GetDbConnection(), cancellationToken).ConfigureAwait(false);
-    return await read(connectionScope.Connection, schema, scope.ServiceProvider).ConfigureAwait(false);
+    return await read(connectionScope.Connection, schema, dbContext, scope.ServiceProvider).ConfigureAwait(false);
   }
 }
