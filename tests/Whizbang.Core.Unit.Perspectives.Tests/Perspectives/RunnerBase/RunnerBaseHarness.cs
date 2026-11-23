@@ -530,12 +530,35 @@ internal sealed class RbRows : IPerspectiveStore<RbModel> {
       return null;
     }
     Prepared.Add((streamId, model, scope, forceUpdateScope, physicalFieldValues));
+    _preparedRows[streamId] = (model, scope, forceUpdateScope, metadata);
     return PendingPerspectiveWrite.Write("\"rb\"", streamId, expectedVersion, new PerspectiveRowValues(
       "{}", "{}", "{}", forceUpdateScope, false, DateTime.UnixEpoch, DateTime.UnixEpoch, false, true, null, []));
   }
 
   public PendingPerspectiveWrite? PreparePurge(Guid streamId) =>
     Prepares ? PendingPerspectiveWrite.Purge("\"rb\"", streamId) : null;
+
+  private readonly Dictionary<Guid, (RbModel Model, PerspectiveScope Scope, bool Force, PerspectiveMetadata Metadata)> _preparedRows = [];
+
+  /// <summary>
+  /// Writes a prepared write as a write sink would, with the same checks as the per-row write: a purge removes the row, a
+  /// write lands only on the version it read (a conflict otherwise) and is refused below the row's stamp.
+  /// </summary>
+  public PerspectiveWriteOutcome ApplyPrepared(PendingPerspectiveWrite write) {
+    if (write.Operation == PerspectiveWriteOperation.Purge) {
+      Purged.Add(write.StreamId);
+      _rows.Remove(write.StreamId);
+      return PerspectiveWriteOutcome.Written;
+    }
+    var (model, scope, force, metadata) = _preparedRows[write.StreamId];
+    try {
+      return _write(write.StreamId, model, scope, force, metadata, write.ExpectedVersion)
+        ? PerspectiveWriteOutcome.Written
+        : PerspectiveWriteOutcome.Refused;
+    } catch (PerspectiveRowConflictException conflict) {
+      return PerspectiveWriteOutcome.Conflict(conflict.ActualVersion);
+    }
+  }
 
   public Task UpsertAsync(Guid streamId, RbModel model, CancellationToken cancellationToken = default) =>
     throw new InvalidOperationException("the runner writes through the versioned overloads");

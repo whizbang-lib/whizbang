@@ -69,10 +69,11 @@ public partial class BlueGreenRebuildIntegrationTests {
   /// the rows' versions and models, the purge markers of the missing rows, the commit sequences, and one cursor write for
   /// the flush. Which of the row reads a batch needs depends on its rows (a batch whose rows all exist asks no purge
   /// marker, one whose rows are all new reads no model), never on how many streams it holds. A blue-green rebuild writes
-  /// its rows to the empty shadow table through the staging load, so every run sends exactly the same statements; a
-  /// rebuild in place still writes each row with its own statement, which is counted apart and locked here, one per
-  /// stream, so the day it is batched too this test says so.
+  /// its rows to the empty shadow table through the staging load, so every run sends exactly the same statements. A
+  /// rebuild in place writes each batch's rows through the write sink (#2522): one statement for the batch's new rows and
+  /// one for its existing ones, at most two per batch whatever the batch holds, where it used to write one per stream.
   /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#batched-writes</docs>
   [Test]
   [Arguments(true)]
   [Arguments(false)]
@@ -122,8 +123,12 @@ public partial class BlueGreenRebuildIntegrationTests {
         statement.Contains("wh_per_rebuild_balance", StringComparison.Ordinal)
         && (statement.TrimStart().StartsWith("INSERT", StringComparison.OrdinalIgnoreCase)
           || statement.TrimStart().StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase)));
-      await Assert.That(rowWrites).IsEqualTo(blueGreen ? 0 : streamCount)
-        .Because("blue-green stages its rows; in place each row is still written on its own");
+      if (blueGreen) {
+        await Assert.That(rowWrites).IsEqualTo(0).Because("blue-green stages its rows");
+      } else {
+        await Assert.That(rowWrites).IsBetween(BATCHES, 2 * BATCHES)
+          .Because($"in place each batch writes its rows with one statement per write shape, never one per row ({streamCount} streams)");
+      }
       counts.Add(log.Statements.Count - rowWrites);
     }
 
