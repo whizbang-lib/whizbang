@@ -12,7 +12,7 @@ namespace Whizbang.Core.Serialization;
 /// Providers can register for a specific profile; those registered without one apply to all profiles.
 /// </summary>
 public enum SerializationProfile {
-  /// <summary>Transport / event-store profile — the historical default (scalar WhizbangId via converters).</summary>
+  /// <summary>Transport / event-store profile: the historical default (scalar WhizbangId via converters).</summary>
   Default = 0,
 
   /// <summary>Perspective-persistence profile: WhizbangId as stored in a document, read unchecked in either form.</summary>

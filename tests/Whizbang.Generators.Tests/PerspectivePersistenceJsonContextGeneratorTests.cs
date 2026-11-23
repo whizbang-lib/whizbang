@@ -76,7 +76,7 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
       .Because("the UUID string is what Entity Framework writes for the same property under the id's scalar mapping, and the two writers must agree");
     await Assert.That(generated).DoesNotContain("writer.WriteString(\"Value\", value.Value);");
     await Assert.That(generated).Contains("if (reader.TokenType == JsonTokenType.String) {");
-    await Assert.That(generated).Contains("global::Whizbang.Core.Perspectives.StoredFormFallbacks.ObjectFormIdentifierRead(\"ProductId\");")
+    await Assert.That(generated).Contains("global::Whizbang.Core.Perspectives.StoredFormFallbacks.ObjectFormIdentifierRead(global::Whizbang.Core.TypeNameFormatter.SimpleName(typeof(global::MyApp.Domain.ProductId)));")
       .Because("an object read is a row the stored-form rewrite did not reach, and the count decides when the tolerance goes");
     await Assert.That(generated).Contains("return new global::MyApp.Domain.ProductId(reader.GetGuid());");
     await Assert.That(generated).DoesNotContain("JsonObjectInfoValues<global::MyApp.Domain.ProductId>")

@@ -341,7 +341,8 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     sb.AppendLine("      if (reader.TokenType != JsonTokenType.StartObject) {");
     sb.AppendLine($"        throw new JsonException($\"A stored {info.TypeName} must be a UUID string or an object holding a Value, but the document holds {{reader.TokenType}}\");");
     sb.AppendLine(CLOSE_BRACE_INDENT_6);
-    sb.AppendLine($"      global::Whizbang.Core.Perspectives.StoredFormFallbacks.ObjectFormIdentifierRead(\"{info.TypeName}\");");
+    // Tagged as the type mapping's reader tags it, so one id type is one series whichever reader met the row.
+    sb.AppendLine($"      global::Whizbang.Core.Perspectives.StoredFormFallbacks.ObjectFormIdentifierRead(global::Whizbang.Core.TypeNameFormatter.SimpleName(typeof({fqn})));");
     sb.AppendLine("      global::System.Guid value = default;");
     sb.AppendLine("      var found = false;");
     sb.AppendLine("      while (reader.Read() && reader.TokenType != JsonTokenType.EndObject) {");

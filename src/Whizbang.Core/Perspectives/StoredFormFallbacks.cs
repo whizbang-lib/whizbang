@@ -9,8 +9,8 @@ namespace Whizbang.Core.Perspectives;
 
 /// <summary>
 /// The count of stored values read in a form other than the one the persistence profile writes: a
-/// temporal read as a rendering rather than the canonical number, an identifier read as a scalar
-/// rather than an object.
+/// temporal read as a rendering rather than the canonical number, an identifier read as the object
+/// <c>{"Value": ...}</c> rather than its UUID string, a dictionary read as an object rather than its pairs.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -41,7 +41,7 @@ public static class StoredFormFallbacks {
   /// <summary>The counter of renderings read where a canonical number was expected. Tagged by <c>kind</c>.</summary>
   public const string INSTRUMENT_NAME = "whizbang.perspective.temporal_form_fallbacks";
 
-  /// <summary>The counter of identifiers read in the scalar form where the object form was expected. Tagged by <c>type</c>.</summary>
+  /// <summary>The counter of identifiers read in the object form where the UUID string was expected. Tagged by <c>type</c>.</summary>
   public const string IDENTIFIER_INSTRUMENT_NAME = "whizbang.perspective.identifier_form_fallbacks";
 
   /// <summary>The counter of dictionaries read as a JSON object where the array of pairs was expected. Tagged by <c>type</c>.</summary>
@@ -67,7 +67,7 @@ public static class StoredFormFallbacks {
   /// <summary>One bit per kind, set once that kind has been announced.</summary>
   private static int _announced;
 
-  /// <summary>The identifier types announced so far, so each is announced once.</summary>
+  /// <summary>The identifier and dictionary types announced so far, so each is announced once.</summary>
   private static readonly HashSet<string> _announcedTypes = [];
 
   static StoredFormFallbacks() => _createCounters(null);
