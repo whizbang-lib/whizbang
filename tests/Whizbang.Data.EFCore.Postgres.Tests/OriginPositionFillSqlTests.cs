@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using NpgsqlTypes;
 using TUnit.Assertions;
@@ -592,7 +593,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     var services = new ServiceCollection()
       .AddSingleton(_connection())
       .AddSingleton(Options.Create(options))
-      .AddSingleton(TimeProvider.System);
+      .AddSingleton<TimeProvider>(new FakeTimeProvider(new DateTimeOffset(2026, 11, 23, 12, 0, 0, TimeSpan.Zero)));
     if (transport is not null) {
       services.AddSingleton<ITransport>(transport);
       services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions()));

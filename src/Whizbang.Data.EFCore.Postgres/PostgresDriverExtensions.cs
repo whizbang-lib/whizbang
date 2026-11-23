@@ -284,7 +284,7 @@ public static class PostgresDriverExtensions {
         // TURNKEY: stream-integrity Phase A — runtime-register the manifest receptors so the deep
         // audit's request/response exchange works out of the box. Same rationale as above.
         selector.Services.AddHostedService<IntegrityManifestReceptorRegistrar>();
-        // TURNKEY: #2544 — runtime-register the origin-position receptors, so a service can answer for the positions its
+        // TURNKEY: #2544: runtime-register the origin-position receptors, so a service can answer for the positions its
         // consumers lack and fill the ones it lacks itself. Same rationale as above.
         selector.Services.AddHostedService<OriginPositionReceptorRegistrar>();
 
