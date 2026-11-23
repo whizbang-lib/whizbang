@@ -32,7 +32,7 @@
 -- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('cleanup_completed_streams');
 
--- <docs>fundamentals/work-coordinator/overview</docs>
+-- <docs>fundamentals/work-coordinator/claim-loop#eviction-outbox-probe</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorDeepPathTests.cs:CleanupCompletedStreamsAsync_NullStreamList_ReturnsZeroAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveWorkQueueBacklogCostSqlTests.cs:CleanupCompletedStreams_ReadsWhatItsBatchHolds_NotTheBacklogAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveWorkQueueBacklogCostSqlTests.cs:CleanupCompletedStreams_EvictsOnlyStreamsWithNoPendingWorkAsync</tests>
