@@ -65,9 +65,9 @@ public class GuidOrderingValidatorTests {
   /// Test that v4 GUIDs (non-time-ordered) trigger warning by default.
   /// </summary>
   [Test]
-  public async Task ValidateForTimeOrdering_WithV4Guid_LogsWarningByDefaultAsync() {
+  public async Task ValidateForTimeOrdering_WithV4Guid_LogsWarningAtWarningAsync() {
     // Arrange
-    var options = new WhizbangOptions(); // Default severity is Warning
+    var options = new WhizbangOptions { GuidOrderingViolationSeverity = GuidOrderingSeverity.Warning };
     var logger = new TestLogger();
     var validator = new GuidOrderingValidator(options, logger);
     var trackedGuid = TrackedGuid.NewRandom(); // v4 GUID
@@ -88,7 +88,7 @@ public class GuidOrderingValidatorTests {
   [Test]
   public async Task ValidateForTimeOrdering_WithExternalGuid_LogsWarningAsync() {
     // Arrange
-    var options = new WhizbangOptions();
+    var options = new WhizbangOptions { GuidOrderingViolationSeverity = GuidOrderingSeverity.Warning };
     var logger = new TestLogger();
     var validator = new GuidOrderingValidator(options, logger);
     var trackedGuid = TrackedGuid.FromExternal(Guid.NewGuid());
@@ -258,7 +258,7 @@ public class GuidOrderingValidatorTests {
 
     // Assert
     await Assert.That(options.DisableGuidTracking).IsFalse();
-    await Assert.That(options.GuidOrderingViolationSeverity).IsEqualTo(GuidOrderingSeverity.Warning);
+    await Assert.That(options.GuidOrderingViolationSeverity).IsEqualTo(GuidOrderingSeverity.Error);
   }
 
   // ========================================

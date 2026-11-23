@@ -528,6 +528,48 @@ public static class GeneratorTestHelper {
   }
 
   /// <summary>
+  /// Compiles <paramref name="source"/> with <paramref name="generator"/> the way a consumer build does, with the
+  /// interceptors feature turned on for <paramref name="interceptorsNamespace"/> and the given MSBuild global options
+  /// (null: none set, the default configuration), emits the result and loads it.
+  /// </summary>
+  /// <param name="generator">The generator to run.</param>
+  /// <param name="source">The compilation's only source file.</param>
+  /// <param name="interceptorsNamespace">The namespace the build enables interceptors in.</param>
+  /// <param name="globalOptions">MSBuild global options, or null for none.</param>
+  /// <returns>The loaded assembly.</returns>
+  /// <exception cref="InvalidOperationException">The compilation, generated code included, does not compile.</exception>
+  [RequiresAssemblyFiles()]
+  public static System.Reflection.Assembly CompileAndLoadWithInterceptors(
+      IIncrementalGenerator generator,
+      string source,
+      string interceptorsNamespace,
+      Dictionary<string, string>? globalOptions = null) {
+    ArgumentNullException.ThrowIfNull(generator);
+    var parseOptions = CSharpParseOptions.Default
+      .WithLanguageVersion(LanguageVersion.Preview)
+      .WithFeatures([new KeyValuePair<string, string>("InterceptorsNamespaces", interceptorsNamespace)]);
+    var compilation = CSharpCompilation.Create(
+        assemblyName: "InterceptedProbe" + Guid.CreateVersion7().ToString("N"),
+        syntaxTrees: [CSharpSyntaxTree.ParseText(source, parseOptions, path: "/probe/Probe.cs")],
+        references: _fullFrameworkReferences(),
+        options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+    var driver = CSharpGeneratorDriver.Create(
+        generators: [generator.AsSourceGenerator()],
+        parseOptions: parseOptions,
+        optionsProvider: new TestAnalyzerConfigOptionsProvider(globalOptions ?? []));
+    var ran = driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out _);
+    _throwIfAnyGeneratorFailed(ran.GetRunResult());
+    using var image = new MemoryStream();
+    var emitted = output.Emit(image);
+    if (!emitted.Success) {
+      throw new InvalidOperationException(
+        "The intercepted probe does not compile: "
+        + string.Join(Environment.NewLine, emitted.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)));
+    }
+    return System.Reflection.Assembly.Load(image.ToArray());
+  }
+
+  /// <summary>
   /// Builds a reference set covering the entire shared framework (via the trusted-platform-assemblies list)
   /// plus Whizbang.Core, so a snippet + its generated code can be compiled without hunting facade assemblies.
   /// </summary>

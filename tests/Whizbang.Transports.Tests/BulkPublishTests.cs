@@ -42,7 +42,7 @@ public class BulkPublishTests {
     var item = new BulkPublishItem {
       Envelope = _createTestEnvelope(),
       EnvelopeType = "TestType, TestAssembly",
-      MessageId = Guid.NewGuid(),
+      MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
       RoutingKey = "orders.created"
     };
 
@@ -56,7 +56,7 @@ public class BulkPublishTests {
     var item = new BulkPublishItem {
       Envelope = _createTestEnvelope(),
       EnvelopeType = null,
-      MessageId = Guid.NewGuid(),
+      MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
     };
 
     // Assert
@@ -135,7 +135,7 @@ public class BulkPublishTests {
     var item = new BulkPublishItem {
       Envelope = _createTestEnvelope(),
       EnvelopeType = "TestType, TestAssembly",
-      MessageId = Guid.NewGuid(),
+      MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
       StreamId = streamId
     };
 
@@ -149,7 +149,7 @@ public class BulkPublishTests {
     var item = new BulkPublishItem {
       Envelope = _createTestEnvelope(),
       EnvelopeType = "TestType, TestAssembly",
-      MessageId = Guid.NewGuid(),
+      MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
     };
 
     // Assert

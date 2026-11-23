@@ -164,7 +164,7 @@ public sealed class ServiceBusBatchFixture(int batchIndex) : IAsyncDisposable {
 
     try {
       var message = new ServiceBusMessage($"{{\"warmup\":true,\"topic\":\"{topicName}\"}}") {
-        MessageId = Guid.NewGuid().ToString(),
+        MessageId = Whizbang.Core.ValueObjects.TrackedGuid.New().Value.ToString(),
         ContentType = "application/json"
       };
 

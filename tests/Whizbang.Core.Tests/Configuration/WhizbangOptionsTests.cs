@@ -29,7 +29,7 @@ public class WhizbangOptionsTests {
     var options = new WhizbangOptions();
 
     // Assert
-    await Assert.That(options.GuidOrderingViolationSeverity).IsEqualTo(GuidOrderingSeverity.Warning);
+    await Assert.That(options.GuidOrderingViolationSeverity).IsEqualTo(GuidOrderingSeverity.Error);
   }
 
   [Test]

@@ -28,11 +28,29 @@ public abstract class DapperEventStoreBase : IEventStore {
   protected IDbExecutor Executor { get; }
   protected JsonSerializerOptions JsonOptions { get; }
 
+  /// <summary>The time-ordering check every append runs before anything is stored (#2528).</summary>
+  protected Whizbang.Core.Validation.GuidOrderingValidator GuidOrdering { get; }
+
   protected DapperEventStoreBase(
     IDbConnectionFactory connectionFactory,
     IDbExecutor executor,
     JsonSerializerOptions jsonOptions
+  ) : this(connectionFactory, executor, jsonOptions, guidOrdering: null) { }
+
+  /// <summary>
+  /// Initializes the store with the time-ordering check its appends run (#2528).
+  /// </summary>
+  /// <param name="connectionFactory">The connection factory.</param>
+  /// <param name="executor">The executor.</param>
+  /// <param name="jsonOptions">The JSON options.</param>
+  /// <param name="guidOrdering">The time-ordering check, or null for the default validator.</param>
+  protected DapperEventStoreBase(
+    IDbConnectionFactory connectionFactory,
+    IDbExecutor executor,
+    JsonSerializerOptions jsonOptions,
+    Whizbang.Core.Validation.GuidOrderingValidator? guidOrdering
   ) {
+    GuidOrdering = guidOrdering ?? Whizbang.Core.Validation.GuidOrderingValidator.Default;
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(executor);
     ArgumentNullException.ThrowIfNull(jsonOptions);

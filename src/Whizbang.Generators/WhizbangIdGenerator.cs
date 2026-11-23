@@ -905,6 +905,11 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterValueMember<global::{id.FullyQualifiedName}>(" +
         "static id => id.Value);"
       );
+      // An id that takes any version is never reported as a stream id that is not time-ordered (#2528).
+      if (id.AcceptAnyVersion) {
+        guidConversions.AppendLine(
+          $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterAcceptsAnyVersion<global::{id.FullyQualifiedName}>();");
+      }
     }
     template = TemplateUtilities.ReplaceRegion(
       template,

@@ -13,7 +13,7 @@ public class MessagePublishResultTests {
   public async Task MessagePublishResult_Success_HasReasonNoneAsync() {
     // Arrange & Act
     var result = new MessagePublishResult {
-      MessageId = Guid.NewGuid(),
+      MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
       Success = true,
       CompletedStatus = MessageProcessingStatus.Published,
       Reason = MessageFailureReason.None
@@ -28,7 +28,7 @@ public class MessagePublishResultTests {
   public async Task MessagePublishResult_Failure_HasReasonAsync() {
     // Arrange & Act
     var result = new MessagePublishResult {
-      MessageId = Guid.NewGuid(),
+      MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
       Success = false,
       CompletedStatus = MessageProcessingStatus.Stored,
       Error = "Transport not ready",
@@ -44,7 +44,7 @@ public class MessagePublishResultTests {
   public async Task MessagePublishResult_WithoutReason_DefaultsToUnknownAsync() {
     // Arrange & Act
     var result = new MessagePublishResult {
-      MessageId = Guid.NewGuid(),
+      MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
       Success = false,
       CompletedStatus = MessageProcessingStatus.Stored,
       Error = "Some error"

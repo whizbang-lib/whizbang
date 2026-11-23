@@ -15,10 +15,29 @@ public class WhizbangOptions {
   public bool DisableGuidTracking { get; set; }
 
   /// <summary>
-  /// Severity level for time-ordering violations in IDs.
+  /// What happens when an event or message id that is not a UUIDv7 enters the framework (#2528): at a dispatch, a
+  /// transport receive, an outbox or inbox write, or an event store append. Version assignment, apply order, replay and
+  /// lifecycle partitioning read the time in these ids, so the default is <see cref="GuidOrderingSeverity.Error"/>: the id
+  /// is refused with a <see cref="Validation.GuidOrderingException"/>. At <see cref="GuidOrderingSeverity.Warning"/> or
+  /// <see cref="GuidOrderingSeverity.Info"/> each such id is logged once and counted, so the count can be driven to
+  /// zero. <see cref="Guid.Empty"/> is refused at every severity.
+  /// Default: Error
+  /// </summary>
+  /// <docs>fundamentals/identity/whizbang-ids#time-ordering-checks</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingEntryPointValidationTests.cs:Default_SeverityIsError_AndTheStreamSeverityIsWarningAsync</tests>
+  public GuidOrderingSeverity GuidOrderingViolationSeverity { get; set; } = GuidOrderingSeverity.Error;
+
+  /// <summary>
+  /// What happens when a stream id that is not a UUIDv7 enters the framework (#2528). A stream id is hashed and sorted
+  /// for a total order, never read for its time, so a non-v7 stream id costs only index locality: by default it is
+  /// reported (<see cref="GuidOrderingSeverity.Warning"/>: logged once per stream and counted), not refused. Raise it to
+  /// <see cref="GuidOrderingSeverity.Error"/> for strict stream ids. A strong id declared with
+  /// <c>[WhizbangId(AcceptAnyVersion = true)]</c> is never reported.
   /// Default: Warning
   /// </summary>
-  public GuidOrderingSeverity GuidOrderingViolationSeverity { get; set; } = GuidOrderingSeverity.Warning;
+  /// <docs>fundamentals/identity/whizbang-ids#stream-id-versions</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingEntryPointValidationTests.cs:Default_SeverityIsError_AndTheStreamSeverityIsWarningAsync</tests>
+  public GuidOrderingSeverity StreamIdOrderingViolationSeverity { get; set; } = GuidOrderingSeverity.Warning;
 
   /// <summary>
   /// When true, the Whizbang ASCII art banner is displayed on service startup.
@@ -149,12 +168,12 @@ public enum GuidOrderingSeverity {
   Info,
 
   /// <summary>
-  /// Log at Warning level (default).
+  /// Log at Warning level and count (the default for stream ids).
   /// </summary>
   Warning,
 
   /// <summary>
-  /// Log at Error level and throw exception.
+  /// Log at Error level and throw exception (the default for event and message ids).
   /// </summary>
   Error
 }

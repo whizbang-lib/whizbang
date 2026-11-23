@@ -35,8 +35,11 @@ public sealed class EFCoreEventStore<TDbContext>(
   TDbContext context,
   JsonSerializerOptions? jsonOptions = null,
   ILogger<EFCoreEventStore<TDbContext>>? logger = null,
-  Whizbang.Core.IEphemeralModeResolver? ephemeralModeResolver = null) : IEventStore
+  Whizbang.Core.IEphemeralModeResolver? ephemeralModeResolver = null,
+  Whizbang.Core.Validation.GuidOrderingValidator? guidOrdering = null) : IEventStore
   where TDbContext : DbContext {
+  // #2528: an appended event id must be a UUIDv7; checked before anything is stored.
+  private readonly Whizbang.Core.Validation.GuidOrderingValidator _guidOrdering = guidOrdering ?? Whizbang.Core.Validation.GuidOrderingValidator.Default;
 
   private const string APPEND_EVENT_FUNCTION = "wh_append_event";
 
@@ -125,6 +128,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(envelope);
+    _guidOrdering.ValidateAppend(streamId, envelope, "EFCoreEventStore.Append");
     return _appendCoreAsync(streamId, envelope, cancellationToken);
   }
 

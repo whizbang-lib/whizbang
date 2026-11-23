@@ -335,6 +335,7 @@ Whizbang:Storage:AzureBlob:Offloads:MaxDownloadBytes
 Whizbang:Storage:AzureBlob:Offloads:ProviderName
 Whizbang:Storage:AzureBlob:Offloads:ServiceUri
 Whizbang:Storage:AzureBlob:ServiceUri
+Whizbang:StreamIdOrderingViolationSeverity
 Whizbang:StreamIntegrity:AuditEnabled
 Whizbang:StreamIntegrity:AuditIntervalMinutes
 Whizbang:StreamIntegrity:AuditOnStartup

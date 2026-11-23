@@ -232,12 +232,21 @@ public class DispatcherTagProcessingLoggingTests {
   /// current thread allocates across <see cref="ITERATIONS"/> calls. Every call must complete synchronously, so
   /// the whole loop stays on this thread.
   /// </summary>
+  /// <remarks>
+  /// A full collection runs inside the measured window, every time. The runtime keeps some per-type caches (the one
+  /// behind <c>Type.Name</c>, for one) behind weak handles, so a collection drops them and the next read rebuilds
+  /// them on the reading thread. Whether another test's allocations happened to trigger a collection during the
+  /// window used to decide the result; collecting here means a path that leans on such a cache is caught on every
+  /// run, and a path that does not is measured at zero on every run. <c>GC.Collect</c> itself allocates nothing on
+  /// the calling thread.
+  /// </remarks>
   private static long _measure(global::Whizbang.Core.Dispatcher dispatcher) {
     var message = new LoggingProbeCommand(Guid.CreateVersion7());
     var messageType = typeof(LoggingProbeCommand);
     _runSynchronously(dispatcher.ProcessTagsIfEnabledAsync(message, messageType));
 
     var before = GC.GetAllocatedBytesForCurrentThread();
+    GC.Collect();
     for (var i = 0; i < ITERATIONS; i++) {
       _runSynchronously(dispatcher.ProcessTagsIfEnabledAsync(message, messageType));
     }

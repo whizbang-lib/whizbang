@@ -51,7 +51,7 @@ public partial class PoisonAdmissionWiringTests {
   }
 
   private static InboxBatchRow _row(int attempts) => new() {
-    MessageId = Guid.NewGuid(),
+    MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
     StreamId = Guid.NewGuid(),
     HandlerName = "H",
     MessageType = "T",

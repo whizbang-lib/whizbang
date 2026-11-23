@@ -57,9 +57,9 @@ public class CommitHandlerResultSqlTests : EFCoreTestBase {
     }
 
     var instanceId = Guid.NewGuid();
-    var inboxMessageId = Guid.NewGuid();
+    var inboxMessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     var streamId = Guid.NewGuid();
-    var emittedOutboxMessageId = Guid.NewGuid();
+    var emittedOutboxMessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
 
     // Pre-insert the inbox row that the handler is "completing" (claimed by this instance).
     await using (var ins = connection.CreateCommand()) {
@@ -143,7 +143,7 @@ public class CommitHandlerResultSqlTests : EFCoreTestBase {
     }
 
     var instanceId = Guid.NewGuid();
-    var inboxMessageId = Guid.NewGuid();
+    var inboxMessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     var streamId = Guid.NewGuid();
 
     // Pre-insert with EventStored bit (2) already set — production would DELETE on commit.
@@ -207,7 +207,7 @@ public class CommitHandlerResultSqlTests : EFCoreTestBase {
     }
 
     var instanceId = Guid.NewGuid();
-    var inboxMessageId = Guid.NewGuid();
+    var inboxMessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     var streamId = Guid.NewGuid();
 
     // Pre-insert with EventStored bit (2) set + Stored bit (1).

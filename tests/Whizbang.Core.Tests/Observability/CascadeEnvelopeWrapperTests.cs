@@ -192,7 +192,7 @@ public class CascadeEnvelopeWrapperTests {
     DispatchModes mode = DispatchModes.Local,
     MessageSource source = MessageSource.Local) =>
     new() {
-      MessageId = new MessageId(Guid.NewGuid()),
+      MessageId = Whizbang.Core.ValueObjects.MessageId.New(),
       Payload = JsonSerializer.SerializeToElement(new { Name = "test" }),
       Hops = [],
       DispatchContext = new MessageDispatchContext {

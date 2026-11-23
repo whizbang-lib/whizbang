@@ -31,6 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1845:Use span-based 'string.Concat'", Justification = "Debug logging with substring truncation - span-based operations not worth complexity for diagnostic output")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "Schema-qualified identifiers cannot be parameterized, so the schema is interpolated. It is escaped through PgIdentifier, which doubles any embedded quote, so an identifier cannot be terminated early no matter where the schema came from. All values are bound parameters. Previously this justification rested on the schema being a developer constant, which does not hold under per-schema multi-tenancy.")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3265:Non-flags enums should not be used in bitwise operations", Justification = "NpgsqlDbType intentionally supports `Array | Uuid`, `Array | Integer`, etc. per the Npgsql API design — the Array bit is combined with the element type. The enum is not marked [Flags] upstream but the API expects bitwise composition.")]
+#pragma warning disable S107 // Optional collaborators, each defaulted; DI supplies what is registered.
 public class EFCoreWorkCoordinator<TDbContext>(
   TDbContext dbContext,
   JsonSerializerOptions jsonOptions,
@@ -38,9 +39,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
   WorkCoordinatorMetrics? metrics = null,
   WorkCoordinatorGate? gate = null,
   IServiceInstanceProvider? instanceProvider = null,
-  Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.WhizbangCoreOptions>? coreOptions = null
+  Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.WhizbangCoreOptions>? coreOptions = null,
+  Whizbang.Core.Validation.GuidOrderingValidator? guidOrdering = null
 ) : IWorkCoordinator
   where TDbContext : DbContext {
+#pragma warning restore S107
+  // #2528: every outbox and inbox write checks its message ids before any SQL runs.
+  private readonly Whizbang.Core.Validation.GuidOrderingValidator _guidOrdering =
+    guidOrdering ?? Whizbang.Core.Validation.GuidOrderingValidator.Default;
+  private const string OUTBOX_ENTRY_POINT = "EFCoreWorkCoordinator.OutboxWrite";
+  private const string INBOX_ENTRY_POINT = "EFCoreWorkCoordinator.InboxWrite";
   private const string DEFAULT_SCHEMA = "public";
   private const string PERSPECTIVE_CURSORS_TABLE = "wh_perspective_cursors";
   // #1734: each perspective's live cursor, else the one a whole-stream archive parked (migration 280).
@@ -193,14 +201,23 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return JsonSerializer.Serialize(failures, typeInfo);
   }
 
+  // Every outbox write funnels through here, so the time-ordering check refuses a non-v7 message id before any SQL runs
+  // and nothing of the batch is written (#2528).
   private string _serializeNewOutboxMessages(OutboxMessage[] messages) {
     if (messages.Length == 0) { return "[]"; }
+    foreach (var message in messages) {
+      _guidOrdering.ValidateMessageId(message.MessageId, message.MessageType, OUTBOX_ENTRY_POINT);
+    }
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(OutboxMessage[]));
     return JsonSerializer.Serialize(messages, typeInfo);
   }
 
+  // Every inbox write funnels through here; the same check, before any SQL runs (#2528).
   private string _serializeNewInboxMessages(InboxMessage[] messages) {
     if (messages.Length == 0) { return "[]"; }
+    foreach (var message in messages) {
+      _guidOrdering.ValidateMessageId(message.MessageId, message.MessageType, INBOX_ENTRY_POINT);
+    }
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(InboxMessage[]));
     return JsonSerializer.Serialize(messages, typeInfo);
   }
