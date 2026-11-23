@@ -107,6 +107,11 @@ public class CutsCarryTheirDigestSqlTests : EFCoreTestBase {
     await _setAsync(conn, "integrity_cut_waits_for_seal", "true", "boolean");
     await _executeAsync(conn,
       "INSERT INTO wh_integrity_seals (origin_service_id, sealed_through, updated_at) VALUES (@o, 1, NOW())", ("o", origin));
+    // #2544: the seal holds a cut only for an origin this service audits: known, with a request address.
+    await _executeAsync(conn, """
+      INSERT INTO wh_integrity_known_origins (origin_service_id, origin_service_name, request_topic, last_checkpoint_at)
+      VALUES (@o, 'origin-svc', 'origin.requests', NOW())
+      """, ("o", origin));
     var through = await _versionOfAsync(conn, ids[1]);
 
     await Assert.That(await _truncateAsync(conn, stream, through)).IsEqualTo(Whizbang.Core.Archival.ArchiveStatus.AWAITING_SEAL)
