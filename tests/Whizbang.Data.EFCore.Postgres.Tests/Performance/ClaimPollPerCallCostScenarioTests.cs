@@ -56,7 +56,20 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
   /// having is that per-call cost is bounded by a number declared here rather than by a consumer's
   /// data shape, and a ceiling that holds only at the shallow end does not say that.
   /// </summary>
-  private static readonly int[] DEPTHS = [12, 50, 200];
+  /// <remarks>
+  /// 25 and 100 sit either side of 50 because the mid-depth cost was never a property of 50 alone (#2523): the claim's
+  /// per-stream walk was planned as a read of the stream's whole pending tail, sorted, with the ordering probe run on
+  /// every row of it, wherever the planner judged a stream too short for an ordered walk to stop early. That made 25,
+  /// 50 and 100 cost 2.2, 6.3 and 2.6 times what 12 and 200 cost.
+  /// </remarks>
+  private static readonly int[] DEPTHS = [12, 25, 50, 100, 200];
+  /// <summary>
+  /// The id layouts each depth is measured over, as the seed of the stream and event ids. Every layout is fixed, so a run
+  /// measures the same workloads every time (#2521), and the ceiling holds against the dearest of them rather than against
+  /// one draw a cheaper layout happens to keep (#2523). The empty seed is the workload #2521 fixed, the dearest measured
+  /// before #2523; the others are five more, chosen before measuring and kept whatever they cost.
+  /// </summary>
+  private static readonly string[] LAYOUTS = ["", "a", "b", "c", "d", "e"];
 
   private static readonly string[] MEASURED_TABLES =
     ["wh_outbox", "wh_inbox", "wh_perspective_events", "wh_event_store"];
@@ -76,10 +89,19 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
 
     var measures = new List<DepthMeasure>();
     foreach (var depth in DEPTHS) {
-      var measured = await _measureAtDepthAsync(conn, recorder, depth, cancellationToken);
-      measures.Add(measured);
-      report.Measure($"claim.blocks_per_call.depth_{depth}", measured.BlocksPerCall, "blocks/call");
-      report.Measure($"claim.rows_leased_per_call.depth_{depth}", measured.RowsLeasedPerCall, "rows/call");
+      // The dearest layout is the depth's cost: a ceiling is a bound on every workload of that shape, not on an average.
+      var dearest = new DepthMeasure(0, 0);
+      foreach (var layout in LAYOUTS) {
+        var measured = await _measureAtDepthAsync(conn, recorder, depth, layout, cancellationToken);
+        Console.WriteLine($"depth {depth}, layout '{layout}': {measured.BlocksPerCall:F1} blocks/call, "
+          + $"{measured.RowsLeasedPerCall:F1} rows leased/call");
+        dearest = new DepthMeasure(
+          Math.Max(dearest.BlocksPerCall, measured.BlocksPerCall),
+          Math.Max(dearest.RowsLeasedPerCall, measured.RowsLeasedPerCall));
+      }
+      measures.Add(dearest);
+      report.Measure($"claim.blocks_per_call.depth_{depth}", dearest.BlocksPerCall, "blocks/call");
+      report.Measure($"claim.rows_leased_per_call.depth_{depth}", dearest.RowsLeasedPerCall, "rows/call");
     }
     // Recorded, not gated. It says how much more a poll costs purely because the streams it found
     // are deeper, and it is the number that fell from near-linear to sublinear when the row bound
@@ -123,9 +145,9 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
     var recorder = new WorkCostRecorder(ConnectionString);
     const int depth = 50;
 
-    var first = await _measureAtDepthAsync(conn, recorder, depth, cancellationToken);
+    var first = await _measureAtDepthAsync(conn, recorder, depth, LAYOUTS[0], cancellationToken);
     var firstWorkload = await _workloadAsync(conn);
-    var second = await _measureAtDepthAsync(conn, recorder, depth, cancellationToken);
+    var second = await _measureAtDepthAsync(conn, recorder, depth, LAYOUTS[0], cancellationToken);
     var secondWorkload = await _workloadAsync(conn);
 
     await Assert.That(secondWorkload).IsEqualTo(firstWorkload)
@@ -151,12 +173,12 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
   private readonly record struct DepthMeasure(double BlocksPerCall, double RowsLeasedPerCall);
 
   /// <summary>
-  /// Fills to one stream depth and measures the polls. Each depth gets its own fill, so the
-  /// measurements differ in depth and in nothing else.
+  /// Fills to one stream depth in one id layout and measures the polls. Each depth and layout gets its own fill, so the
+  /// measurements differ in depth and ids and in nothing else.
   /// </summary>
   private static async Task<DepthMeasure> _measureAtDepthAsync(
-      NpgsqlConnection conn, WorkCostRecorder recorder, int depth, CancellationToken cancellationToken) {
-    var poller = await _fillAtDepthAsync(conn, depth);
+      NpgsqlConnection conn, WorkCostRecorder recorder, int depth, string layout, CancellationToken cancellationToken) {
+    var poller = await _fillAtDepthAsync(conn, depth, layout);
     // The first poll after a fill does the one-time bookkeeping a steady state does not repeat.
     _ = await _claimAsync(conn, poller, cancellationToken);
 
@@ -202,12 +224,10 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
   /// A fresh workload at one stream depth: unowned perspective events over many streams, at mixed
   /// priorities, with autovacuum off and nothing vacuumed.
   /// </summary>
-  private static async Task<Guid> _fillAtDepthAsync(NpgsqlConnection conn, int depth) {
-    // The poller and every id are fixed (#2521): the ids decide the partitions, so which streams a poll takes and which
-    // pages it reads, and ids drawn at random made the cost a draw. Measured at depth 50 across id sets: 6,897 to 8,563
-    // blocks a call; at depth 200, 1,300 to 1,600 (a mid-depth poll reading five to six times a deep one is #2523). This
-    // set is the dearest measured, 8,563 at depth 50, so the ceiling it is held to is not one a cheaper draw happens to
-    // keep: the depth-50 ceiling in baseline.tsv is 10,000 until #2523 lowers the cost.
+  private static async Task<Guid> _fillAtDepthAsync(NpgsqlConnection conn, int depth, string layout) {
+    // The poller and every id are fixed (#2521): the ids decide which rows a stream walk meets first and so which pages
+    // it reads, and ids drawn at random made the cost a draw. The layout seeds the ids, so each layout is one fixed
+    // workload and the scenario holds the ceiling against the dearest of several (#2523).
     var poller = _poller;
     await using var fill = conn.CreateCommand();
     fill.CommandText = @"
@@ -225,18 +245,19 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
 
       INSERT INTO wh_perspective_events
         (stream_id, perspective_name, event_id, status, attempts, created_at, partition_number, priority)
-      SELECT st.stream_id, 'TestPerspective', md5('claim-cost-event-' || st.ordinal || '-' || r)::uuid, 0, 0,
+      SELECT st.stream_id, 'TestPerspective', md5(@layout || 'claim-cost-event-' || st.ordinal || '-' || r)::uuid, 0, 0,
              NOW() - (st.ordinal * INTERVAL '1 millisecond') + (r * INTERVAL '1 microsecond'),
              compute_partition(st.stream_id),
              CASE st.ordinal % 3 WHEN 0 THEN 50 WHEN 1 THEN 150 ELSE 250 END
       FROM (
-        SELECT md5('claim-cost-stream-' || s)::uuid AS stream_id, s AS ordinal FROM generate_series(1, @streams) s
+        SELECT md5(@layout || 'claim-cost-stream-' || s)::uuid AS stream_id, s AS ordinal FROM generate_series(1, @streams) s
       ) st CROSS JOIN generate_series(1, @depth) r;
 
       ANALYZE wh_perspective_events;";
     fill.Parameters.AddWithValue("poller", poller);
     fill.Parameters.AddWithValue("streams", STREAMS);
     fill.Parameters.AddWithValue(nameof(depth), depth);
+    fill.Parameters.AddWithValue(nameof(layout), layout);
     fill.CommandTimeout = 900;
     await fill.ExecuteNonQueryAsync();
     return poller;
