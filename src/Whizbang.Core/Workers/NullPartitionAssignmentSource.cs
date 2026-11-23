@@ -4,13 +4,14 @@
 namespace Whizbang.Core.Workers;
 
 /// <summary>
-/// The partition assignment source for a host without the elected partition assigner (a driver that does not register
-/// it). It never has an assignment, so a claim made with it ranks the live instances itself: exactly what a claim with no
-/// source registered has always done. The assigner's registration replaces it.
+/// The core's placeholder partition assignment source, for a host with no storage driver. It never has an assignment, so
+/// a claim made with it ranks the live instances itself: exactly what a claim with no source registered has always done.
+/// Every Postgres driver runs the elected assigner and registers its cache over this (#2559).
 /// </summary>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/NullPartitionAssignmentSourceTests.cs:ForClaimAsync_NeverHasAnAssignmentAsync</tests>
 /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/NullPartitionAssignmentSourceTests.cs:MarkStaleAndSubscribing_ChangeNothingAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/MultiStream/NullPartitionAssignmentSourceTests.cs:TheCoreDefaults_RegisterIt_AsTheNullDefaultADriverDisplacesAsync</tests>
 public sealed class NullPartitionAssignmentSource : IPartitionAssignmentSource, INullDefault {
   /// <summary>The single instance.</summary>
   public static NullPartitionAssignmentSource Instance { get; } = new();

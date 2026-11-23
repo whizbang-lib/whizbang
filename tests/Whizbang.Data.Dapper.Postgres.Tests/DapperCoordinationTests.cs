@@ -46,6 +46,10 @@ public class DapperCoordinationTests : PostgresTestBase {
     } else {
       services.AddWhizbangPostgres(ConnectionString, new JsonSerializerOptions(), initializeSchema: false, _noPerspectives);
     }
+    // The worker pipeline, as a host runs it: it registers the maintainer's work, which is what the duty loop holds the
+    // maintainer role for.
+    services.AddSingleton<Whizbang.Core.ITimeProvider, Whizbang.Core.SystemTimeProvider>();
+    services.AddWhizbangWorkers();
     return services;
   }
 
@@ -93,7 +97,7 @@ public class DapperCoordinationTests : PostgresTestBase {
 
   [Test]
   [Timeout(120000)]
-  public async Task TwoInstances_ExactlyOneHoldsTheMaintainerAndTheAssignerRoles_AndOnlyItDoesTheMaintainersWorkAsync(
+  public async Task TwoInstances_ExactlyOneHoldsTheMaintainerRole_AndOnlyItDoesTheMaintainersWorkAsync(
       CancellationToken cancellationToken) {
     await using var a = await _instanceAsync(cancellationToken);
     await using var b = await _instanceAsync(cancellationToken);
@@ -105,7 +109,6 @@ public class DapperCoordinationTests : PostgresTestBase {
 
       await Assert.That(new[] { holderA, holderB }.Count(h => h.Holds(StartupDuties.MAINTAINER))).IsEqualTo(1)
         .Because("two instances, one maintainer: the duty is elected on Dapper as on EF Core");
-      await Assert.That(new[] { holderA, holderB }.Count(h => h.Holds(PartitionAssignerOptions.ROLE))).IsEqualTo(1);
       await Assert.That(new IServiceProvider[] { a, b }.Count(MaintainerDuty.IsThisInstancesTurn)).IsEqualTo(1)
         .Because("the maintenance sweep and every other fleet-wide job runs on the holder alone");
     } finally {

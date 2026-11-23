@@ -29,7 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PostgresCoordinationRegistration.cs</code-under-test>
 [Category("Shard3")]
 public class DriverCoordinationParityTests {
-  private const string DAPPER_CONNECTION = "Host=localhost;Database=parity;Username=parity;Password=parity";
+  private const string DAPPER_CONNECTION = "Host=localhost;Database=parity";
   private static readonly KeyValuePair<string, string>[] _noPerspectives = [];
 
   /// <summary>The EF Core driver's coordination, as its registration calls it (the Postgres notifications).</summary>
@@ -68,14 +68,10 @@ public class DriverCoordinationParityTests {
     .Select(_signature)];
 
   private static List<string> _missingFrom(IServiceCollection driver) {
+    // A multiset: each shared registration is matched against one of the driver's, so a piece the shared method adds
+    // twice must be there twice.
     var remaining = driver.Select(_signature).ToList();
-    var missing = new List<string>();
-    foreach (var piece in _sharedPieces()) {
-      if (!remaining.Remove(piece)) {
-        missing.Add(piece);
-      }
-    }
-    return missing;
+    return [.. _sharedPieces().Where(piece => !remaining.Remove(piece))];
   }
 
   [Test]

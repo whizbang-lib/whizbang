@@ -114,6 +114,8 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     services.TryAddSingleton<Minting.ICompositeFactory, Minting.CompositeFactory>();
     services.TryAddSingleton<Workers.IInstanceAliveLockSource>(Workers.NullInstanceAliveLockSource.Instance);
     services.TryAddSingleton<Workers.IInstanceConnectionModeSource>(Workers.NullInstanceConnectionModeSource.Instance);
+    // #2559: no assignment for a host with no storage driver; every Postgres driver registers the assigner's cache over it.
+    services.TryAddSingleton<Workers.IPartitionAssignmentSource>(Workers.NullPartitionAssignmentSource.Instance);
     services.TryAddSingleton<Workers.IOccurrencePublishGate, Workers.NoOpOccurrencePublishGate>();
     // The resolvers read the message-type catalog; over the null catalog they resolve nothing, which is
     // what "no resolver" meant before. Generated registrations supply the same types over a real catalog.
