@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 558_EventsWaitForTheirCommitOrderStamp.sql (#2542): store_outbox_messages, fetch_outbox_batch,
+-- The reverse of 559_EventsWaitForTheirCommitOrderStamp.sql (#2542): store_outbox_messages, fetch_outbox_batch,
 -- wh_continue_outbox_streams and stamp_pending_commit_sequences go back to their previous definitions (271, 151, 172,
 -- 248), and the held-age function and wh_outbox.sequence_hold_until are dropped. A held event is published at the next
 -- fetch.

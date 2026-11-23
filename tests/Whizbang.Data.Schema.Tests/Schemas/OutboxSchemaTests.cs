@@ -32,9 +32,9 @@ public class OutboxSchemaTests {
     // Assert - Verify column count
     // 20 base columns + flags (Slice 2' — EventFlags bitmask replaces the W3-slice-9 is_composite + Slice-2 is_collective booleans)
     // + coalesce_group (tag-bound coalescing: the group a pending single belongs to; NULL = normal shippable row).
-    await Assert.That(columns).Count().IsEqualTo(24);   // 149: + priority; 558: + sequence_hold_until
+    await Assert.That(columns).Count().IsEqualTo(24);   // 149: + priority; 559: + sequence_hold_until
 
-    // 558 (#2542): until when the drain holds an event for its commit-order stamp; NULL = no hold.
+    // 559 (#2542): until when the drain holds an event for its commit-order stamp; NULL = no hold.
     var holdUntil = columns.First(c => c.Name == OutboxSchema.Columns.SEQUENCE_HOLD_UNTIL);
     await Assert.That(OutboxSchema.Columns.SEQUENCE_HOLD_UNTIL).IsEqualTo("sequence_hold_until");
     await Assert.That(holdUntil.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);

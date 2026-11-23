@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 558_EventsWaitForTheirCommitOrderStamp.sql
+-- Migration: 559_EventsWaitForTheirCommitOrderStamp.sql
 -- Date: 2026-11-23
 -- Description: Sequence integrity (#2542): the outbox can hold an event until the commit-order stamper has given it a
 --              commit sequence, so it reaches its receivers with its origin position.
@@ -28,7 +28,7 @@
 --                  for the held-age metric. Walks the instance's holdings through idx_outbox_held_arrival in arrival
 --                  order and stops at a bound, so it costs at most the bound whatever the outbox holds.
 --
---              Number 558: the next free number after 557.
+--              Number 559: the next free number after 558.
 --
 -- Reversal: reversible (the down file restores each function's previous definition and drops the column and the new
 --           function; events held when it runs are published at the next fetch)
@@ -40,7 +40,7 @@
 
 ALTER TABLE __SCHEMA__.wh_outbox ADD COLUMN IF NOT EXISTS sequence_hold_until TIMESTAMPTZ;
 COMMENT ON COLUMN __SCHEMA__.wh_outbox.sequence_hold_until IS
-  'Sequence integrity (558, #2542): until when the drain holds this event for its commit-order stamp. NULL: no hold; '
+  'Sequence integrity (559, #2542): until when the drain holds this event for its commit-order stamp. NULL: no hold; '
   '''infinity'': until stamped; otherwise a bounded hold that runs out at this instant. Ignored once the event is stamped.';
 
 -- ---------------------------------------------------------------------------------------------
@@ -119,7 +119,7 @@ BEGIN
       (elem->>'IsEvent')::BOOLEAN as is_event,
       -- 149: the priority the producer declared; zero (undeclared) and an absent field read as standard.
       COALESCE(NULLIF((elem->>'Priority')::INTEGER, 0), 150) as priority,
-      -- 558 (#2542): the hold the origin decided for the event, in milliseconds: 0 none, -1 until stamped.
+      -- 559 (#2542): the hold the origin decided for the event, in milliseconds: 0 none, -1 until stamped.
       COALESCE((elem->>'SequenceHoldMilliseconds')::INTEGER, 0) as sequence_hold_ms,
       -- EventFlags (062): persisted so migration 061's collective routing can see (flags & 1). 232 (#1612): the
       -- number (what the framework writes) is read here; a name list is read bit by bit by _wh_event_flags_from_names,
@@ -269,7 +269,7 @@ BEGIN
       v_msg.coalesce_group,
       v_msg.priority,
       v_msg.recovered_from,  -- 241: NULL for every arrival but a recovery
-      -- 558 (#2542): only an event that is published is stamped and held. The deadline is taken from the store's own
+      -- 559 (#2542): only an event that is published is stamped and held. The deadline is taken from the store's own
       -- clock, the one created_at is, so a bounded hold lasts what the origin asked for however late the row is fetched.
       CASE
         WHEN NOT COALESCE(v_msg.is_event, false) OR v_msg.destination IS NULL OR v_msg.sequence_hold_ms = 0 THEN NULL
@@ -426,7 +426,7 @@ COMMENT ON FUNCTION __SCHEMA__.store_outbox_messages(JSONB, UUID, TIMESTAMPTZ, T
   'recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead '
   'letter and its row names it for complete_outbox_published to settle. 266: raises SQLSTATE WHS01 '
   '(StreamSealedException) for an event the caller awaits on a sealed stream (#1733). 271: and SQLSTATE WHA01 or WHA02 '
-  '(StreamArchivedException) for one on an archived stream, by its type''s AppendToArchived policy (#1738). 558: writes '
+  '(StreamArchivedException) for one on an archived stream, by its type''s AppendToArchived policy (#1738). 559: writes '
   'the hold the origin decided for a published event (SequenceHoldMilliseconds) as sequence_hold_until (#2542).';
 
 -- ---------------------------------------------------------------------------------------------
@@ -490,7 +490,7 @@ BEGIN
       es.commit_sequence AS es_commit_sequence,
       es.origin_service_id AS es_origin_service_id,
       es.origin_commit_sequence AS es_origin_commit_sequence,
-      -- 558 (#2542): an event held for its commit-order stamp: it has a hold that has not run out, and its stored
+      -- 559 (#2542): an event held for its commit-order stamp: it has a hold that has not run out, and its stored
       -- event has no commit sequence yet. A row with no stored event is never held, since nothing would stamp it.
       (o.sequence_hold_until IS NOT NULL AND o.sequence_hold_until > NOW()
         AND es.event_id IS NOT NULL AND es.commit_sequence IS NULL) AS sequence_held,
@@ -528,7 +528,7 @@ BEGIN
   budgeted AS (
     SELECT
       r.*,
-      -- 558 (#2542): true from a stream's first held row on. That row and every row after it stay where they are,
+      -- 559 (#2542): true from a stream's first held row on. That row and every row after it stay where they are,
       -- whatever their own setting, so a receiver never sees the stream out of order.
       bool_or(r.sequence_held)
         OVER (PARTITION BY r.stream_id
@@ -570,7 +570,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.fetch_outbox_batch(UUID[], UUID, INTEGER, BIGINT) IS
-'Per-stream-id payload fetch for OutboxDrainWorker, bounded by row count (p_max_per_stream) and payload bytes (p_max_bytes, NULL = unbounded). Returns every column the drain publishes from, including the row''s priority (151) so the wire envelope carries the number the producer declared. The byte budget trims the tail of a slice, never the head. 558 (#2542): a stream is cut at its first event held for its commit-order stamp (sequence_hold_until not yet passed and no commit sequence), so that row and every row after it wait for the stamp or the hold''s end.';
+'Per-stream-id payload fetch for OutboxDrainWorker, bounded by row count (p_max_per_stream) and payload bytes (p_max_bytes, NULL = unbounded). Returns every column the drain publishes from, including the row''s priority (151) so the wire envelope carries the number the producer declared. The byte budget trims the tail of a slice, never the head. 559 (#2542): a stream is cut at its first event held for its commit-order stamp (sequence_hold_until not yet passed and no commit sequence), so that row and every row after it wait for the stamp or the hold''s end.';
 
 SELECT __SCHEMA__.drop_all_overloads('wh_continue_outbox_streams');
 
@@ -757,7 +757,7 @@ BEGIN
       es.commit_sequence AS es_commit_sequence,
       es.origin_service_id AS es_origin_service_id,
       es.origin_commit_sequence AS es_origin_commit_sequence,
-      -- 558 (#2542): an event held for its commit-order stamp: it has a hold that has not run out, and its stored
+      -- 559 (#2542): an event held for its commit-order stamp: it has a hold that has not run out, and its stored
       -- event has no commit sequence yet. A row with no stored event is never held, since nothing would stamp it.
       (o.sequence_hold_until IS NOT NULL AND o.sequence_hold_until > v_now
         AND es.event_id IS NOT NULL AND es.commit_sequence IS NULL) AS sequence_held,
@@ -777,7 +777,7 @@ BEGIN
   budgeted AS (
     SELECT
       r.*,
-      -- 558 (#2542): true from a stream's first held row on. That row and every row after it stay where they are,
+      -- 559 (#2542): true from a stream's first held row on. That row and every row after it stay where they are,
       -- whatever their own setting, so a receiver never sees the stream out of order.
       bool_or(r.sequence_held)
         OVER (PARTITION BY r.stream_id
@@ -822,7 +822,7 @@ COMMENT ON FUNCTION __SCHEMA__.wh_continue_outbox_streams(UUID, UUID[], UUID[], 
   'up to p_run_length of the stream''s next consecutive rows as a prefix (stopping at a row it may not take), '
   'and returns the rows it holds after the last one the drain published, in fetch_outbox_batch''s shape and '
   'order. Lets the drain move a long stream on without waiting for the next claim cycle. 172: it never waits for a '
-  'lock: run rows and ledger rows another session holds are skipped. 558 (#2542): cuts each stream at its first event '
+  'lock: run rows and ledger rows another session holds are skipped. 559 (#2542): cuts each stream at its first event '
   'held for its commit-order stamp, as fetch_outbox_batch does.';
 
 -- ---------------------------------------------------------------------------------------------
@@ -1015,7 +1015,7 @@ BEGIN
   IF v_stamped_count > 0 THEN
     PERFORM __SCHEMA__.notify_instance_owners(__CATEGORY_PERSPECTIVE__, v_stream_ids);
 
-    -- 558 (#2542): the outbox holds an event until it is stamped, so the stamp is what releases it. The owners of the
+    -- 559 (#2542): the outbox holds an event until it is stamped, so the stamp is what releases it. The owners of the
     -- stamped streams that still have pending outbox rows are rung on the outbox doorbell, and a held event goes out as
     -- soon as its stamp lands instead of when its hold runs out. One probe per stamped stream, the first entry of
     -- idx_outbox_stream_run (the ORDER BY is the index's own key, which is what keeps the probe on the index).
@@ -1040,7 +1040,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.stamp_pending_commit_sequences(INTEGER, BOOLEAN) IS
-'248 supersedes 205. Stamps rows past the visibility horizon (unchanged): the walk, its own statement with sort off, range-scans insert_xid past the horizon, earliest transaction first and insertion order within one, and stops at the batch; each stream it reaches is stamped from its lowest unstamped version and stops at the first that is not yet eligible or is held elsewhere; values go out in insertion order across the batch and version order within each stream. No step joins the batch with itself and the update reaches each row by its key, so a call costs what it stamps under any statistics or plan. The post-stamp ring is 132''s; 558 (#2542) also rings the outbox owners of stamped streams with pending outbox rows, which releases the events held for their stamp. p_notify_owners is retained for signature compatibility and ignored. Returns count of rows stamped.';
+'248 supersedes 205. Stamps rows past the visibility horizon (unchanged): the walk, its own statement with sort off, range-scans insert_xid past the horizon, earliest transaction first and insertion order within one, and stops at the batch; each stream it reaches is stamped from its lowest unstamped version and stops at the first that is not yet eligible or is held elsewhere; values go out in insertion order across the batch and version order within each stream. No step joins the batch with itself and the update reaches each row by its key, so a call costs what it stamps under any statistics or plan. The post-stamp ring is 132''s; 559 (#2542) also rings the outbox owners of stamped streams with pending outbox rows, which releases the events held for their stamp. p_notify_owners is retained for signature compatibility and ignored. Returns count of rows stamped.';
 
 -- ---------------------------------------------------------------------------------------------
 -- wh_oldest_sequence_held_outbox: the held-age metric's reading.
@@ -1076,4 +1076,4 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.wh_oldest_sequence_held_outbox(
 $$ LANGUAGE sql STABLE;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_oldest_sequence_held_outbox(UUID, INTEGER) IS
-'558 (#2542): the arrival time of the oldest outbox event the instance holds for its commit-order stamp, or NULL when it holds none among its p_max_rows oldest pending rows. Reads at most that many rows, so the held-age metric costs the same whatever the instance holds.';
+'559 (#2542): the arrival time of the oldest outbox event the instance holds for its commit-order stamp, or NULL when it holds none among its p_max_rows oldest pending rows. Reads at most that many rows, so the held-age metric costs the same whatever the instance holds.';
