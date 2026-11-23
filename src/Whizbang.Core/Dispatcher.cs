@@ -5244,11 +5244,21 @@ public abstract partial class Dispatcher(
     return shared ?? _resolveEventTopic(compositeType);
   }
 
-  /// <summary>RED stub (#2543).</summary>
-#pragma warning disable RCS1163, IDE0060, CA1822, S2325 // RED stub (#2543)
+  /// <summary>
+  /// The id generated cascade code writes a cascaded message's copy under (#2543): <paramref name="eventId"/> when the
+  /// dispatcher gave one, which it always does on its own paths; otherwise the id <see cref="_newMessageIdFor"/>
+  /// creates, derived from <paramref name="sourceEnvelope"/> or the receptor handling the cascade runs in, so generated
+  /// code never mints a message id of its own.
+  /// </summary>
+  /// <param name="message">The cascaded message.</param>
+  /// <param name="sourceEnvelope">The cascade's source envelope, or null.</param>
+  /// <param name="eventId">The id the dispatcher gave the cascade, or null.</param>
+  /// <returns>The id to write the copy under.</returns>
+  /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCoverageSweepOutboxTests.cs:CascadeMessageIdFor_TakesTheGivenIdOrDerivesFromTheSourceOrTheHandlingAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_CascadeToOutbox_CallsPublishToOutboxWithMessageIdAsync</tests>
   protected MessageId CascadeMessageIdFor(IMessage message, IMessageEnvelope? sourceEnvelope, Guid? eventId) =>
-    eventId.HasValue ? new MessageId(eventId.Value) : MessageId.New();
-#pragma warning restore RCS1163, IDE0060, CA1822, S2325
+    eventId.HasValue ? new MessageId(eventId.Value) : _newMessageIdFor(message, sourceEnvelope);
 
   /// <summary>
   /// Writes a cascaded message whose type no generated cascade arm names to the outbox by its runtime
@@ -5266,7 +5276,7 @@ public abstract partial class Dispatcher(
     if (eventId is Guid preset) {
       _guidOrdering.ValidateMessageId(preset, messageType, "Dispatcher.CascadeByRuntimeType");
     }
-    var messageId = eventId.HasValue ? new MessageId(eventId.Value) : _newMessageIdFor(message, sourceEnvelope);
+    var messageId = CascadeMessageIdFor(message, sourceEnvelope, eventId);
     return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope, eventStoreOnly);
   }
 
