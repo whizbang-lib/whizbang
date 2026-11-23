@@ -357,7 +357,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         ? null
         : await _applyCoordinator.AcquireAsync(streamId, perspectiveName, cancellationToken).ConfigureAwait(false);
     return await _runWithEventsLockedAsync(
-        streamId, perspectiveName, null, events, firePreLifecycle: true, [], batchState, cancellationToken);
+        streamId, perspectiveName, null, events, new ApplyPass(FirePreLifecycle: true, [], batchState), cancellationToken);
   }
 
   /// <summary>
@@ -502,25 +502,21 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         : await _applyCoordinator.AcquireAsync(streamId, perspectiveName, cancellationToken).ConfigureAwait(false);
 
     return await _runWithEventsLockedAsync(
-        streamId, perspectiveName, lastProcessedEventId, events, firePreLifecycle: true, [], batchState: null, cancellationToken);
+        streamId, perspectiveName, lastProcessedEventId, events, new ApplyPass(FirePreLifecycle: true, [], BatchState: null), cancellationToken);
   }
 
   /// <summary>
   /// The per-pair path, ASSUMING the apply lock is already held. Two callers: <see cref="RunWithEventsAsync"/>, which
   /// takes the lock, and <see cref="CompleteAsync"/>, whose caller holds the locks of its whole batch (#2246).
   /// </summary>
-  /// <param name="firePreLifecycle">
-  /// Whether the pre-perspective stages fire. False when a prepare already fired them for this batch, which hands its
-  /// pending detached stages in <paramref name="backgroundTasks"/>.
-  /// </param>
+  /// <param name="pass">How the apply runs: whether the pre-perspective stages fire, the detached stages already started,
+  /// and the batch's reads (<see cref="ApplyPass"/>).</param>
   private async Task<PerspectiveCursorCompletion> _runWithEventsLockedAsync(
       Guid streamId,
       string perspectiveName,
       Guid? lastProcessedEventId,
       IReadOnlyList<MessageEnvelope<IEvent>> events,
-      bool firePreLifecycle,
-      List<Task> backgroundTasks,
-      global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState,
+      ApplyPass pass,
       CancellationToken cancellationToken) {
 
     events = _orderForApply(events);
@@ -541,8 +537,8 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       try {
         // Only the first attempt reads from a batch's reads (#2513): a retry follows a row that moved after them.
         return await _runWithEventsAttemptAsync(
-            streamId, perspectiveName, lastProcessedEventId, events, firePreLifecycle && attempt == 1, backgroundTasks,
-            attempt == 1 ? batchState : null, cancellationToken);
+            streamId, perspectiveName, lastProcessedEventId, events,
+            attempt == 1 ? pass : pass with { FirePreLifecycle = false, BatchState = null }, cancellationToken);
       } catch (global::Whizbang.Core.Perspectives.PerspectiveRowConflictException conflict)
           when (_retriesApplyConflict(conflict, perspectiveName, streamId, attempt)) {
         // Re-read and re-apply onto the moved row.
@@ -619,13 +615,11 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       string perspectiveName,
       Guid? lastProcessedEventId,
       IReadOnlyList<MessageEnvelope<IEvent>> events,
-      bool firePreLifecycle,
-      List<Task> backgroundTasks,
-      global::Whizbang.Core.Perspectives.IPerspectiveBatchState? batchState,
+      ApplyPass pass,
       CancellationToken cancellationToken) {
 
     var read = await _readBatchAsync(
-        new BatchRequest(streamId, perspectiveName, lastProcessedEventId, events, backgroundTasks, Preparing: false, batchState),
+        new BatchRequest(streamId, perspectiveName, lastProcessedEventId, events, pass.BackgroundTasks, Preparing: false, pass.BatchState),
         cancellationToken);
     if (read.Completion is { } decided) {
       return decided;
@@ -633,7 +627,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     var state = read.State!;
 
     try {
-      await _foldAsync(state, firePreLifecycle, cancellationToken);
+      await _foldAsync(state, pass.FirePreLifecycle, cancellationToken);
       var rowChanged = false;  // True once this batch actually wrote or purged the row
       if (state.EventsProcessed > 0) {
         await _beginRowWriteAsync(state, cancellationToken);
@@ -740,7 +734,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       // pre-perspective stages, and its detached ones are still to be awaited.
       return await _runWithEventsLockedAsync(
           mine.StreamId, mine.PerspectiveName, mine.LastProcessedEventId, mine.Events,
-          firePreLifecycle: state is null, state?.BackgroundTasks ?? [], batchState: null, cancellationToken);
+          new ApplyPass(FirePreLifecycle: state is null, state?.BackgroundTasks ?? [], BatchState: null), cancellationToken);
     }
     if (mine.Write is not null && outcome is null) {
       throw new ArgumentNullException(nameof(outcome), "A prepared write is completed with the outcome of its write.");
@@ -763,7 +757,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       }
       return await _runWithEventsLockedAsync(
           mine.StreamId, mine.PerspectiveName, mine.LastProcessedEventId, mine.Events,
-          firePreLifecycle: false, state.BackgroundTasks, batchState: null, cancellationToken);
+          new ApplyPass(FirePreLifecycle: false, state.BackgroundTasks, BatchState: null), cancellationToken);
     }
 
     try {
@@ -940,6 +934,17 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         : await _perspectiveStore.GetMetadataByStreamIdAsync(streamId, cancellationToken);
     return new RowLoad(applyRead, currentModel, existingMetadata);
   }
+
+  /// <summary>
+  /// How one per-pair apply runs, carried through its attempts as a value: whether the pre-perspective stages fire (false
+  /// when a prepare already fired them), the detached stages the apply awaits before it returns, and the reads a
+  /// rebuild's batch planned for it (#2513), null to read per stream. A retry after a conflict runs with neither: the
+  /// stages announced the batch once, and the batch's reads are older than the row that moved.
+  /// </summary>
+  private readonly record struct ApplyPass(
+      bool FirePreLifecycle,
+      List<Task> BackgroundTasks,
+      global::Whizbang.Core.Perspectives.IPerspectiveBatchState? BatchState);
 
   /// <summary>What a batch read reads: the pair, its events, and how the read is made.</summary>
   /// <param name="StreamId">The stream the batch belongs to.</param>
