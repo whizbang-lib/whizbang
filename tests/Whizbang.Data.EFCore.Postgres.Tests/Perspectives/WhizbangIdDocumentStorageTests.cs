@@ -35,11 +35,29 @@ public class WhizbangIdDocumentStorageTests {
     public int Quantity { get; set; }
   }
 
+  public sealed class ProbeCarrier {
+    public TestOrderId CarrierId { get; set; }
+  }
+
+  public sealed class ProbeShipment {
+    public ProbeCarrier Carrier { get; set; } = new();
+  }
+
   public sealed class ProbeDocument {
     public TestOrderId OrderId { get; set; }
     public TestOrderId? ParentId { get; set; }
     public string Name { get; set; } = "";
     public List<ProbeLine> Lines { get; set; } = [];
+    public ProbeShipment Shipment { get; set; } = new();
+  }
+
+  public sealed class ListDocument {
+    public List<TestOrderId> OrderIds { get; set; } = [];
+  }
+
+  public sealed class ListRow {
+    public Guid Id { get; set; }
+    public ListDocument Data { get; set; } = new();
   }
 
   public sealed class ProbeRow {
@@ -60,8 +78,35 @@ public class WhizbangIdDocumentStorageTests {
         entity.ComplexProperty(e => e.Data, d => {
           d.ToJson("data");
           d.ComplexCollection(x => x.Lines);
+          d.ComplexProperty(x => x.Shipment, shipment => shipment.ComplexProperty(x => x.Carrier));
         });
       });
+  }
+
+  /// <summary>A document holding a collection of ids, on a model of its own.</summary>
+  private abstract class ListContext(DbContextOptions options) : DbContext(options) {
+    public DbSet<ListRow> Rows => Set<ListRow>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder) => _configure(modelBuilder);
+
+    protected static void _configure(ModelBuilder modelBuilder) =>
+      modelBuilder.Entity<ListRow>(entity => {
+        entity.ToTable("wh_per_probe_list");
+        entity.HasKey(e => e.Id);
+        entity.Property(e => e.Id).HasColumnName("id");
+        entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
+      });
+  }
+
+  /// <summary>The list model on a context carrying the Whizbang options extension.</summary>
+  private sealed class WhizbangListContext(DbContextOptions options) : ListContext(options);
+
+  /// <summary>The list model on a context without the extension that calls <see cref="WhizbangIdConvention.Apply"/>.</summary>
+  private sealed class ConventionListContext(DbContextOptions options) : ListContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+      _configure(modelBuilder);
+      WhizbangIdConvention.Apply(modelBuilder);
+    }
   }
 
   private sealed class StructuralContext(DbContextOptions options) : ProbeContext(options);
@@ -151,7 +196,9 @@ public class WhizbangIdDocumentStorageTests {
     _dataSource = new NpgsqlDataSourceBuilder(connectionString).Build();
 
     await using var connection = await _dataSource.OpenConnectionAsync();
-    await using var create = new NpgsqlCommand("CREATE TABLE wh_per_probe (id uuid PRIMARY KEY, data jsonb NOT NULL)", connection);
+    await using var create = new NpgsqlCommand(
+      "CREATE TABLE wh_per_probe (id uuid PRIMARY KEY, data jsonb NOT NULL); CREATE TABLE wh_per_probe_list (id uuid PRIMARY KEY, data jsonb NOT NULL)",
+      connection);
     await create.ExecuteNonQueryAsync();
   }
 
@@ -168,7 +215,7 @@ public class WhizbangIdDocumentStorageTests {
   }
 
   private T _context<T>(Func<DbContextOptions, T> create) where T : DbContext {
-    var whizbang = typeof(T) == typeof(WhizbangContext);
+    var whizbang = typeof(T) == typeof(WhizbangContext) || typeof(T) == typeof(WhizbangListContext);
     var options = new DbContextOptionsBuilder()
       .UseNpgsql(_dataSource!, npgsql => {
         if (whizbang) {
@@ -180,13 +227,14 @@ public class WhizbangIdDocumentStorageTests {
     return create(options);
   }
 
-  private static ProbeRow _row(TestOrderId orderId, TestOrderId? parentId, TestOrderId lineId) => new() {
+  private static ProbeRow _row(TestOrderId orderId, TestOrderId? parentId, TestOrderId lineId, TestOrderId? carrierId = null) => new() {
     Id = Guid.CreateVersion7(),
     Data = new ProbeDocument {
       OrderId = orderId,
       ParentId = parentId,
       Name = "probe",
       Lines = [new ProbeLine { LineId = lineId, Quantity = 2 }],
+      Shipment = new ProbeShipment { Carrier = new ProbeCarrier { CarrierId = carrierId ?? TestOrderId.New() } },
     },
   };
 
@@ -304,5 +352,119 @@ public class WhizbangIdDocumentStorageTests {
     var query = db.Rows.AsNoTracking().Where(r => wanted.Contains(r.Data.OrderId));
 
     await Assert.That(() => query.ToQueryString()).Throws<InvalidOperationException>();
+  }
+
+  /// <summary>
+  /// A query on the id's <c>Value</c> no longer translates: inside a document the id is a scalar, so <c>Value</c> is not
+  /// a mapped member. Compare the id itself (#2518, breaking).
+  /// </summary>
+  [Test]
+  public async Task Whizbang_QueryOnTheIdsValueDoesNotTranslateAsync() {
+    await using var db = _context(o => new WhizbangContext(o));
+    var wanted = TestOrderId.New().Value;
+
+    var query = db.Rows.AsNoTracking().Where(r => r.Data.OrderId.Value == wanted);
+
+    await Assert.That(() => query.ToQueryString()).Throws<InvalidOperationException>();
+  }
+
+  [Test]
+  public async Task Whizbang_NullableIdComparedWithNullTranslatesAndMatchesAsync() {
+    var parentId = TestOrderId.New();
+    await using var db = _context(o => new WhizbangContext(o));
+    var withParent = _row(TestOrderId.New(), parentId, TestOrderId.New());
+    var withoutParent = _row(TestOrderId.New(), null, TestOrderId.New());
+    db.Rows.AddRange(withParent, withoutParent);
+    await db.SaveChangesAsync();
+    TestOrderId? none = null;
+    TestOrderId? some = parentId;
+
+    var isNull = await db.Rows.AsNoTracking().Where(r => r.Data.ParentId == null).Select(r => r.Id).ToListAsync();
+    var isNotNull = await db.Rows.AsNoTracking().Where(r => r.Data.ParentId != null).Select(r => r.Id).ToListAsync();
+    var equalsNullVariable = await db.Rows.AsNoTracking().Where(r => r.Data.ParentId == none).Select(r => r.Id).ToListAsync();
+    var equalsVariable = await db.Rows.AsNoTracking().Where(r => r.Data.ParentId == some).Select(r => r.Id).ToListAsync();
+
+    await Assert.That(isNull).IsEquivalentTo([withoutParent.Id]);
+    await Assert.That(isNotNull).IsEquivalentTo([withParent.Id]);
+    await Assert.That(equalsNullVariable).IsEquivalentTo([withoutParent.Id]);
+    await Assert.That(equalsVariable).IsEquivalentTo([withParent.Id]);
+  }
+
+  /// <summary>
+  /// A context without the extension, mapped by the convention alone, reads and queries a row the atomic upsert wrote,
+  /// including an id two levels down, and writes the same document itself.
+  /// </summary>
+  [Test]
+  [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "A test serializes its probe document by reflection; only the id's type info comes from the generated context.")]
+  [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050", Justification = "As above.")]
+  public async Task Convention_ReadsQueriesAndWritesTheAtomicUpsertsBytesAsync() {
+    var carrierId = TestOrderId.New();
+    var row = _row(TestOrderId.New(), TestOrderId.New(), TestOrderId.New(), carrierId);
+    var upsertOptions = Whizbang.Data.EFCore.Postgres.Tests.Generated.PerspectivePersistenceJsonContext.CreateOptions(
+      new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver());
+    var upsertJson = System.Text.Json.JsonSerializer.Serialize(row.Data, upsertOptions);
+    await using (var connection = await _dataSource!.OpenConnectionAsync())
+    await using (var insert = new NpgsqlCommand("INSERT INTO wh_per_probe (id, data) VALUES (@id, CAST(@data AS jsonb))", connection)) {
+      insert.Parameters.AddWithValue("id", row.Id);
+      insert.Parameters.AddWithValue("data", upsertJson);
+      await insert.ExecuteNonQueryAsync();
+    }
+
+    await using var db = _context(o => new ConventionContext(o));
+    var loaded = await db.Rows.AsNoTracking().SingleAsync(r => r.Id == row.Id);
+    var query = db.Rows.AsNoTracking().Where(r => r.Data.Shipment.Carrier.CarrierId == carrierId);
+
+    await Assert.That(upsertJson).Contains($"\"CarrierId\":\"{carrierId.Value}\"");
+    await Assert.That(loaded.Data.OrderId).IsEqualTo(row.Data.OrderId);
+    await Assert.That(loaded.Data.ParentId).IsEqualTo(row.Data.ParentId);
+    await Assert.That(loaded.Data.Lines[0].LineId).IsEqualTo(row.Data.Lines[0].LineId);
+    await Assert.That(loaded.Data.Shipment.Carrier.CarrierId).IsEqualTo(carrierId);
+    await Assert.That(query.ToQueryString()).Contains("AS uuid)");
+    await Assert.That(await query.Select(r => r.Id).ToListAsync()).IsEquivalentTo([row.Id]);
+
+    // Every id set: the upsert's options leave a null member out, where Entity Framework writes it as null.
+    var written = _row(TestOrderId.New(), TestOrderId.New(), TestOrderId.New(), TestOrderId.New());
+    db.Rows.Add(written);
+    await db.SaveChangesAsync();
+    await using var compare = await _dataSource!.OpenConnectionAsync();
+    await using var same = new NpgsqlCommand("SELECT data = CAST(@upsert AS jsonb) FROM wh_per_probe WHERE id = @id", compare);
+    same.Parameters.AddWithValue("id", written.Id);
+    same.Parameters.AddWithValue("upsert", System.Text.Json.JsonSerializer.Serialize(written.Data, upsertOptions));
+    await Assert.That((bool)(await same.ExecuteScalarAsync())!).IsTrue()
+      .Because("the convention's writer and the atomic upsert must store the same document");
+  }
+
+  /// <summary>
+  /// A collection of ids with the extension is a JSON array of UUID strings, and <c>Contains</c> over it translates.
+  /// </summary>
+  [Test]
+  public async Task Whizbang_ListOfIdsIsAnArrayOfUuidStringsAndContainsTranslatesAsync() {
+    var first = TestOrderId.New();
+    var second = TestOrderId.New();
+    await using var db = _context(o => new WhizbangListContext(o));
+    var row = new ListRow { Id = Guid.CreateVersion7(), Data = new ListDocument { OrderIds = [first, second] } };
+    db.Rows.Add(row);
+    db.Rows.Add(new ListRow { Id = Guid.CreateVersion7(), Data = new ListDocument { OrderIds = [TestOrderId.New()] } });
+    await db.SaveChangesAsync();
+
+    await using var connection = await _dataSource!.OpenConnectionAsync();
+    await using var select = new NpgsqlCommand("SELECT data::text FROM wh_per_probe_list WHERE id = @id", connection);
+    select.Parameters.AddWithValue("id", row.Id);
+    var stored = (string)(await select.ExecuteScalarAsync())!;
+    var matched = await db.Rows.AsNoTracking().Where(r => r.Data.OrderIds.Contains(second)).Select(r => r.Id).ToListAsync();
+
+    await Assert.That(stored).Contains($"\"OrderIds\": [\"{first.Value}\", \"{second.Value}\"]");
+    await Assert.That(matched).IsEquivalentTo([row.Id]);
+  }
+
+  /// <summary>
+  /// The convention leaves a collection of ids as Entity Framework discovers it, and on a context without the extension
+  /// Entity Framework cannot build that model: a collection of ids needs the extension.
+  /// </summary>
+  [Test]
+  public async Task Convention_ListOfIdsCannotBuildTheModelAsync() {
+    await using var db = _context(o => new ConventionListContext(o));
+
+    await Assert.That(() => db.Model).Throws<InvalidOperationException>();
   }
 }

@@ -899,12 +899,6 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterGuidConversion<global::{id.FullyQualifiedName}>(" +
         $"global::{id.FullyQualifiedName}.From);"
       );
-      // The id's Value as a member read the compiler builds, so a query over the id can compare its Guid without a
-      // lookup by name (#2073).
-      guidConversions.AppendLine(
-        $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterValueMember<global::{id.FullyQualifiedName}>(" +
-        "static id => id.Value);"
-      );
       // The id's stored form, loaded through its unchecked constructor, so a storage integration can map the id as a
       // Guid without reflection (#2518).
       guidConversions.AppendLine(
@@ -1055,9 +1049,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("    // This allows InfrastructureJsonContext's TryGetTypeInfoForRuntimeCustomConverter");
     sb.AppendLine("    // to find them when deserializing MessageHop properties (MessageId?, CorrelationId?).");
     sb.AppendLine("    // Scoped to the Default (transport / event-store) profile: these write WhizbangId as a");
-    sb.AppendLine("    // scalar string. The Persistence profile uses object-mode JsonTypeInfo instead (EF Core 10");
-    sb.AppendLine("    // jsonb byte format), and STJ consults options.Converters before the resolver chain — so a");
-    sb.AppendLine("    // scalar converter in scope would shadow the object-mode resolver. Default-scoping keeps them apart.");
+    sb.AppendLine("    // scalar string, read through the id's version rule. The Persistence profile reads a stored row");
+    sb.AppendLine("    // unchecked and in either form instead, and STJ consults options.Converters before the resolver");
+    sb.AppendLine("    // chain, so a transport converter in scope would shadow it. Default-scoping keeps them apart.");
     foreach (var id in ids) {
       sb.AppendLine($"    JsonContextRegistry.RegisterConverter(new {id.FullyQualifiedName}JsonConverter(), priority: 0, profile: global::Whizbang.Core.Serialization.SerializationProfile.Default);");
     }
