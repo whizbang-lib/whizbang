@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
-#pragma warning disable RCS1163, S2325, S108, CS0649, IDE0060, CS9113, S1172, CA1822, CS1998, RCS1213, IDE0052, S4487, CS0067 // RED stub
+
+using System.Globalization;
 
 namespace Whizbang.Core.Perspectives;
 
@@ -61,6 +62,34 @@ public sealed class PerspectiveWriteBehindOptions {
       IReadOnlyList<string> writeBehindPerspectives,
       int leaseSeconds,
       int leaseGraceSeconds) {
-    return null;
+    ArgumentNullException.ThrowIfNull(options);
+    ArgumentNullException.ThrowIfNull(writeBehindPerspectives);
+    if (serviceMode != PerspectiveWriteMode.WriteBehind && writeBehindPerspectives.Count == 0) {
+      return null;
+    }
+    var who = serviceMode == PerspectiveWriteMode.WriteBehind
+      ? "the service's perspective write mode is WriteBehind"
+      : $"perspective(s) {string.Join(", ", writeBehindPerspectives)} declare [PerspectiveWriteMode(WriteBehind)]";
+    var problems = new List<string>();
+    if (options.MaxModels is not > 0) {
+      problems.Add("MaxModels is not set to a positive number");
+    }
+    if (options.MaxBytes is not > 0) {
+      problems.Add("MaxBytes is not set to a positive number");
+    }
+    if (options.MaxBatchesPerModel < 1) {
+      problems.Add("MaxBatchesPerModel is below 1");
+    }
+    var holdLimitMs = Math.Max(0, leaseSeconds - leaseGraceSeconds) * 1000L / 2;
+    if (options.MaxFlushIntervalMilliseconds < 1 || options.MaxFlushIntervalMilliseconds > holdLimitMs) {
+      problems.Add(string.Create(CultureInfo.InvariantCulture,
+        $"MaxFlushIntervalMilliseconds ({options.MaxFlushIntervalMilliseconds}) is not between 1 and {holdLimitMs}, half of the lease ({leaseSeconds} s) less its grace ({leaseGraceSeconds} s)"));
+    }
+    if (problems.Count == 0) {
+      return null;
+    }
+    return $"Write-behind perspective writes hold models in memory, so they need bounds: {who}, but "
+      + $"{string.Join("; ", problems)}. Set Whizbang:Workers:Perspective:WriteBehind:MaxModels and MaxBytes "
+      + "(PerspectiveWorkerOptions.WriteBehind), or choose the SetBased write mode.";
   }
 }

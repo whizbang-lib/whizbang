@@ -1,6 +1,5 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
-#pragma warning disable RCS1163, S2325, S108, CS0649, IDE0060, CS9113, S1172, CA1822, CS1998, RCS1213, IDE0052, S4487, CS0067 // RED stub
 
 using System.Collections.Concurrent;
 
@@ -75,7 +74,7 @@ public static class PerspectiveWriteModes {
   /// <returns>Their names.</returns>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveWriteModesTests.cs:DeclaredWith_NamesThePerspectivesThatDeclareTheModeAsync</tests>
   public static IReadOnlyList<string> DeclaredWith(PerspectiveWriteMode mode) =>
-    [];
+    [.. _declared.Where(d => d.Value == mode).Select(d => d.Key).Order(StringComparer.Ordinal)];
 
   /// <summary>The perspective's write mode: its declared one, else the service's, and per stream for a perspective with no generated runner.</summary>
   /// <param name="perspectiveName">The perspective's name.</param>

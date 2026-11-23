@@ -1,6 +1,5 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
-#pragma warning disable RCS1163, S2325, S108, CS0649, IDE0060, CS9113, S1172, CA1822, CS1998, RCS1213, IDE0052, S4487, CS0067, S3459 // RED stub
 
 using Whizbang.Core.Perspectives;
 
@@ -142,12 +141,33 @@ internal sealed class PerspectiveWriteBehindCache<THeld> where THeld : class {
   /// </summary>
   /// <returns>False when a new model does not fit, and the batch is to be written now.</returns>
   public bool TryHold((Guid StreamId, string PerspectiveName) key, WriteBehindHold<THeld> hold, DateTimeOffset now) {
-    return false;
+    ArgumentNullException.ThrowIfNull(hold);
+    lock (_lock) {
+      if (_entries.TryGetValue(key, out var entry)) {
+        _bytes += hold.Row.Bytes - entry.Row.Bytes;
+        entry.Add(hold);
+        return true;
+      }
+      if (_entries.Count + 1 > _maxModels || _bytes + hold.Row.Bytes > _maxBytes) {
+        return false;
+      }
+      entry = new WriteBehindEntry<THeld>(now);
+      entry.Add(hold);
+      _entries[key] = entry;
+      _bytes += hold.Row.Bytes;
+      return true;
+    }
   }
 
   /// <summary>Removes and returns the key's model, or null when none is held.</summary>
   public WriteBehindEntry<THeld>? Take((Guid StreamId, string PerspectiveName) key) {
-    return null;
+    lock (_lock) {
+      if (!_entries.Remove(key, out var entry)) {
+        return null;
+      }
+      _bytes -= entry.Row.Bytes;
+      return entry;
+    }
   }
 
   /// <summary>Every held key.</summary>
@@ -159,7 +179,10 @@ internal sealed class PerspectiveWriteBehindCache<THeld> where THeld : class {
 
   /// <summary>The held keys whose models folded any of <paramref name="eventIds"/>.</summary>
   public IReadOnlyList<(Guid StreamId, string PerspectiveName)> KeysHolding(IReadOnlyCollection<Guid> eventIds) {
-    return [];
+    ArgumentNullException.ThrowIfNull(eventIds);
+    lock (_lock) {
+      return [.. _entries.Where(e => eventIds.Any(e.Value.EventIds.Contains)).Select(e => e.Key)];
+    }
   }
 
   /// <summary>
@@ -167,7 +190,28 @@ internal sealed class PerspectiveWriteBehindCache<THeld> where THeld : class {
   /// while the cache is over a bound, and apart from them the models past the lease, which are dropped, not flushed.
   /// </summary>
   public WriteBehindDue Due(DateTimeOffset now) {
-    return new WriteBehindDue([], []);
+    lock (_lock) {
+      var expired = new List<(Guid StreamId, string PerspectiveName)>();
+      var flush = new List<((Guid StreamId, string PerspectiveName) Key, WriteBehindFlushReason Reason)>();
+      var count = _entries.Count;
+      var bytes = _bytes;
+      foreach (var (key, entry) in _entries.OrderBy(e => e.Value.FirstHeldAt)) {
+        if (now - entry.FirstHeldAt >= _leaseLimit) {
+          expired.Add(key);
+        } else if (count > _maxModels || bytes > _maxBytes) {
+          flush.Add((key, WriteBehindFlushReason.Bounds));
+        } else if (entry.Holds.Count >= _maxBatches) {
+          flush.Add((key, WriteBehindFlushReason.Batches));
+        } else if (now - entry.FirstHeldAt >= _interval) {
+          flush.Add((key, WriteBehindFlushReason.Interval));
+        } else {
+          continue;
+        }
+        count--;
+        bytes -= entry.Row.Bytes;
+      }
+      return new WriteBehindDue(flush, expired);
+    }
   }
 }
 

@@ -1,6 +1,5 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
-#pragma warning disable RCS1163, S2325, S108, CS0649, IDE0060, CS9113, S1172, CA1822, CS1998, RCS1213, IDE0052, S4487, CS0067 // RED stub
 
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
@@ -27,16 +26,23 @@ internal sealed class WriteBehindBatchState(
     Func<string, bool> writesBehind,
     Action<string, bool> onLookup) : IPerspectiveBatchState {
   /// <inheritdoc/>
-  public bool KeepsModels(Guid streamId, string perspectiveName) => false;
+  public bool KeepsModels(Guid streamId, string perspectiveName) => writesBehind(perspectiveName);
 
   /// <inheritdoc/>
   public bool IsKnownNew(Guid streamId, string perspectiveName) =>
-    inner?.IsKnownNew(streamId, perspectiveName) == true;
+    heldRow(streamId, perspectiveName) is null && inner?.IsKnownNew(streamId, perspectiveName) == true;
 
   /// <inheritdoc/>
   public async Task<PerspectiveStoredRow<TModel>?> ReadRowAsync<TModel>(
       IPerspectiveStore<TModel> store, Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       where TModel : class {
+    var held = heldRow(streamId, perspectiveName);
+    if (writesBehind(perspectiveName)) {
+      onLookup(perspectiveName, held is not null);
+    }
+    if (held?.ReadAs<TModel>() is { } row) {
+      return row;
+    }
     return inner is null ? null : await inner.ReadRowAsync(store, streamId, perspectiveName, cancellationToken).ConfigureAwait(false);
   }
 

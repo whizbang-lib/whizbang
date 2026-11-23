@@ -1,6 +1,5 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
-#pragma warning disable RCS1163, S2325, S108, CS0649, IDE0060, CS9113, S1172, CA1822, CS1998, RCS1213, IDE0052, S4487, CS0067 // RED stub
 
 namespace Whizbang.Core.Perspectives;
 
@@ -140,7 +139,25 @@ public sealed class PendingPerspectiveWrite {
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PendingPerspectiveWriteTests.cs:FollowedBy_WritesTheLaterValuesOnTheEarlierRowAsync</tests>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PendingPerspectiveWriteTests.cs:FollowedBy_KeepsTheLastStampedActivity_AndAnyScopeOrVersionMoveAsync</tests>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PendingPerspectiveWriteTests.cs:FollowedBy_RefusesAPurgeOrAnotherRowAsync</tests>
-  public PendingPerspectiveWrite FollowedBy(PendingPerspectiveWrite later) => throw new NotImplementedException();
+  public PendingPerspectiveWrite FollowedBy(PendingPerspectiveWrite later) {
+    ArgumentNullException.ThrowIfNull(later);
+    if (Row is null || later.Row is null) {
+      throw new ArgumentException("A purge is never merged with another write.", nameof(later));
+    }
+    if (later.StreamId != StreamId || !string.Equals(later.Table, Table, StringComparison.Ordinal)) {
+      throw new ArgumentException("Only two writes of the same row are merged.", nameof(later));
+    }
+    var earlier = Row;
+    var next = later.Row;
+    var merged = next with {
+      CreatedAt = earlier.CreatedAt,
+      ForceUpdateScope = earlier.ForceUpdateScope || next.ForceUpdateScope,
+      BumpVersion = earlier.BumpVersion || next.BumpVersion,
+      UpdatedAt = next.SuppressActivity ? earlier.UpdatedAt : next.UpdatedAt,
+      SuppressActivity = next.SuppressActivity && earlier.SuppressActivity,
+    };
+    return new PendingPerspectiveWrite(Table, StreamId, Operation, ExpectedVersion, merged) { SinkKey = SinkKey };
+  }
 
   /// <summary>An upsert, insert or update of a row, decided by the version the apply read.</summary>
   /// <param name="table">The schema-qualified, quoted perspective table.</param>

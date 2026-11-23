@@ -1,6 +1,5 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
-#pragma warning disable RCS1163, S2325, S108, CS0649, IDE0060, CS9113, S1172, CA1822, CS1998, RCS1213, IDE0052, S4487, CS0067 // RED stub
 
 using System.Collections.Concurrent;
 using Whizbang.Core.ValueObjects;
@@ -110,7 +109,7 @@ public sealed class SyncEventTracker(TimeProvider? timeProvider = null) : ISyncE
   }
 
   /// <inheritdoc />
-  public event Action<IReadOnlyList<Guid>>? WaitStarted { add { } remove { } }
+  public event Action<IReadOnlyList<Guid>>? WaitStarted;
 
   /// <inheritdoc />
   public Task WhenAppliedAsync(Guid eventId, string perspectiveName, CancellationToken cancellationToken) {
@@ -118,6 +117,7 @@ public sealed class SyncEventTracker(TimeProvider? timeProvider = null) : ISyncE
     if (cancellationToken.IsCancellationRequested) {
       return Task.FromCanceled(cancellationToken);
     }
+    WaitStarted?.Invoke([eventId]);
 
     var key = (eventId, perspectiveName);
     var waiterId = TrackedGuid.New().Value;
@@ -240,6 +240,7 @@ public sealed class SyncEventTracker(TimeProvider? timeProvider = null) : ISyncE
     if (eventIds is null || eventIds.Count == 0) {
       return Task.FromResult(true);
     }
+    WaitStarted?.Invoke(eventIds);
 
     var resolvedAwaiterId = awaiterId ?? TrackedGuid.New();
     var pendingKeys = eventIds.Where(_isEventPending).ToList();
@@ -291,6 +292,7 @@ public sealed class SyncEventTracker(TimeProvider? timeProvider = null) : ISyncE
     if (eventIds is null || eventIds.Count == 0) {
       return Task.FromResult(true);
     }
+    WaitStarted?.Invoke(eventIds);
 
     var resolvedAwaiterId = awaiterId ?? TrackedGuid.New();
     var pendingKeys = eventIds
@@ -316,6 +318,7 @@ public sealed class SyncEventTracker(TimeProvider? timeProvider = null) : ISyncE
     if (eventIds is null || eventIds.Count == 0) {
       return Task.FromResult(true);
     }
+    WaitStarted?.Invoke(eventIds);
 
     var resolvedAwaiterId = awaiterId ?? TrackedGuid.New();
     var pendingKeys = eventIds.Where(_isEventPending).ToList();
