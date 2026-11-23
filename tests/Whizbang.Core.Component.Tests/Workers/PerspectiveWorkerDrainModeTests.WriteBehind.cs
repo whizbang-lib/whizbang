@@ -99,6 +99,22 @@ public partial class PerspectiveWorkerDrainModeTests {
 
   [Test]
   [Timeout(30000)]
+  public async Task WriteBehind_ALaterLapOfTheSameDrain_HoldsOntoTheModelItsFirstLapHeldAsync(CancellationToken cancellationToken) {
+    await using var rig = new WriteBehindRig();
+    var stream = Guid.NewGuid();
+    await rig.StartAsync(cancellationToken);
+    // An event arrives while the first lap applies, so the drain's refetch finds it and runs a second lap.
+    rig.Runners.OnFirstPrepare = () => rig.Serve(stream, 1);
+
+    await rig.DrainAsync(stream, events: 2, heldCount: 2, cancellationToken);
+
+    await Assert.That(rig.Runners.PreparedOnHeld).IsEqualTo(1).Because("the second lap folds onto the model the first held");
+    await Assert.That(rig.Sink.Calls).IsEqualTo(0).Because("a later lap holds as the first does, rather than flushing it");
+    await Assert.That(rig.Worker.WriteBehindModels).IsEqualTo(1);
+  }
+
+  [Test]
+  [Timeout(30000)]
   public async Task WriteBehind_ASyncWaitOnAHeldEvent_FlushesItsModelAtOnceAsync(CancellationToken cancellationToken) {
     await using var rig = new WriteBehindRig();
     var stream = Guid.NewGuid();
@@ -435,11 +451,23 @@ public partial class PerspectiveWorkerDrainModeTests {
     /// Commits one more event on the stream and drains it, then waits until <paramref name="heldCount"/> batches have
     /// been held in all (or, for zero, until the drain's batch has ended).
     /// </summary>
-    public async Task DrainAsync(Guid stream, int heldCount, CancellationToken ct) {
-      var eventId = Guid.CreateVersion7(Time.GetUtcNow().AddSeconds(_events.GetValueOrDefault(stream)?.Count ?? 0));
-      _events.AddOrUpdate(stream, _ => [eventId], (_, list) => [.. list, eventId]);
-      _serve(stream, [eventId]);
+    public Task DrainAsync(Guid stream, int heldCount, CancellationToken ct) => DrainAsync(stream, 1, heldCount, ct);
+
+    /// <summary>Commits <paramref name="events"/> more events on the stream and drains them, then waits as above.</summary>
+    public async Task DrainAsync(Guid stream, int events, int heldCount, CancellationToken ct) {
+      Serve(stream, events);
       await _drainAndWaitAsync(stream, heldCount, ct);
+    }
+
+    /// <summary>Commits <paramref name="events"/> more events on the stream, served by the drain's next fetch.</summary>
+    public void Serve(Guid stream, int events) {
+      var fresh = new List<Guid>();
+      for (var i = 0; i < events; i++) {
+        var eventId = Guid.CreateVersion7(Time.GetUtcNow().AddSeconds((_events.GetValueOrDefault(stream)?.Count ?? 0) + i));
+        fresh.Add(eventId);
+      }
+      _events.AddOrUpdate(stream, _ => fresh, (_, list) => [.. list, .. fresh]);
+      _serve(stream, fresh);
     }
 
     /// <summary>Drains the stream again with only its held events pending, as the claim emits it while they are.</summary>
@@ -521,6 +549,7 @@ public partial class PerspectiveWorkerDrainModeTests {
     private int _prepareCalls;
     public int PreparedOnHeld => Volatile.Read(ref _preparedOnHeld);
     public int PrepareCalls => Volatile.Read(ref _prepareCalls);
+    public Action? OnFirstPrepare { get; set; }
     public bool Unchecked { get; set; }
     public bool CompleteThrows { get; set; }
     public ConcurrentQueue<(Guid StreamId, PerspectiveWriteStatus? Status)> Completed { get; } = new();
@@ -554,7 +583,9 @@ public partial class PerspectiveWorkerDrainModeTests {
 
       public async Task<PreparedPerspectiveApply> PrepareAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId,
           IReadOnlyList<MessageEnvelope<IEvent>> events, IPerspectiveBatchState? batchState, CancellationToken cancellationToken = default) {
-        Interlocked.Increment(ref owner._prepareCalls);
+        if (Interlocked.Increment(ref owner._prepareCalls) == 1) {
+          owner.OnFirstPrepare?.Invoke();
+        }
         var row = batchState is null ? null : await batchState.ReadRowAsync<CounterModel>(null!, streamId, perspectiveName, cancellationToken);
         if (row?.Model is not null) {
           Interlocked.Increment(ref owner._preparedOnHeld);
