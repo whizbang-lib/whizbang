@@ -1056,26 +1056,52 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   // Command timeout tests
   // ═══════════════════════════════════════════════════════════════════════════
 
+  /// <summary>
+  /// The pass raises the context's command timeout to the schema budget while its steps run, and puts it back when it
+  /// is done. Waited on the initializer's own signals: its observer hears each committed step
+  /// (<see cref="ISchemaInitializationObserver.OnSchemaStepCommittedAsync"/>), which runs inside the pass and reads the
+  /// timeout there, and the call's task completes when the pass is done. One recorded step is made stale, so the pass
+  /// runs that one step and not a whole install. It used to race a 30-second wall clock against a whole start on a
+  /// loaded server, and asserted only that a query worked afterwards, which it would with any timeout.
+  /// </summary>
   [Test]
-  [Timeout(30000)]
   public async Task Initialization_ResetCommandTimeout_AfterCompletionAsync(CancellationToken cancellationToken) {
-    // Arrange
+    // Arrange: the associations hash goes missing, so the pass runs (the only place the timeout is raised) for that step.
+    await using (var adminConn = new NpgsqlConnection(ConnectionString)) {
+      await adminConn.OpenAsync(cancellationToken);
+      await using var staleCmd = adminConn.CreateCommand();
+      staleCmd.CommandText = "DELETE FROM wh_schema_migrations WHERE file_name = 'associations:WorkCoordinationDbContext'";
+      await Assert.That(await staleCmd.ExecuteNonQueryAsync(cancellationToken)).IsEqualTo(1)
+        .Because("the arrangement has to bite: a schema with every hash current never enters the pass");
+    }
     await using var context = CreateDbContext();
+    var before = context.Database.GetCommandTimeout();
+    var during = new CommandTimeoutAtEachStep(context);
+    var services = new ServiceCollection();
+    services.AddSingleton<ISchemaInitializationObserver>(during);
+    await using var provider = services.BuildServiceProvider();
 
-    // Get the default timeout before initialization
-    _ = context.Database.GetDbConnection().ConnectionTimeout;
+    // Act: run initialization to completion.
+    await context.EnsureWhizbangDatabaseInitializedAsync(serviceProvider: provider, cancellationToken: cancellationToken);
 
-    // Act — run initialization (sets 600s timeout internally, should reset after)
-    await context.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken);
+    // Assert: raised to the schema budget inside the pass, and back to what it was once the pass is done.
+    await Assert.That(before).IsNull().Because("the context starts on the provider's default");
+    await Assert.That(during.Seen).IsNotEmpty().Because("the stale step is committed inside the pass");
+    await Assert.That(during.Seen.All(t => t == SchemaCommandTimeout.DEFAULT_SECONDS)).IsTrue()
+      .Because("every step runs under the schema budget, not the context's default");
+    await Assert.That(context.Database.GetCommandTimeout()).IsEqualTo(before)
+      .Because("the pass puts the context's command timeout back when it completes");
+  }
 
-    // Assert — the DbContext should still work normally after init (timeout was reset)
-    // Verify by running a simple query that would fail with an unreasonable timeout
-    await Assert.That(async () => {
-      await using var cmd = context.Database.GetDbConnection().CreateCommand();
-      cmd.CommandText = "SELECT 1";
-      await context.Database.OpenConnectionAsync(cancellationToken);
-      await cmd.ExecuteScalarAsync(cancellationToken);
-    }).ThrowsNothing();
+  /// <summary>Reads the context's command timeout at every committed step of the pass.</summary>
+  private sealed class CommandTimeoutAtEachStep(DbContext context) : ISchemaInitializationObserver {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<int?> _seen = new();
+    public IReadOnlyCollection<int?> Seen => _seen;
+
+    public ValueTask OnSchemaStepCommittedAsync(string schema, string stepName, CancellationToken cancellationToken) {
+      _seen.Enqueue(context.Database.GetCommandTimeout());
+      return ValueTask.CompletedTask;
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
