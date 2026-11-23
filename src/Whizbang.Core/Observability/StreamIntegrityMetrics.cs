@@ -268,6 +268,23 @@ public sealed class StreamIntegrityMetrics {
   /// <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
   public PassiveCounter<long> MisattributedOriginsCorrected { get; }
 
+  /// <summary>#2544: events named in position requests sent to their origins, tagged by <c>origin</c>.</summary>
+  /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+  public PassiveCounter<long> OriginPositionsRequested { get; }
+
+  /// <summary>#2544: received events whose missing origin position an origin's answer filled, tagged by <c>origin</c>.</summary>
+  /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+  public PassiveCounter<long> OriginPositionsFilled { get; }
+
+  /// <summary>#2544: position answers that did not fill, tagged by <c>origin</c> and <c>answer</c>: <c>not_yet_stamped</c>
+  /// (asked again on the next lap) or <c>unknown</c> (never asked again).</summary>
+  /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+  public PassiveCounter<long> OriginPositionsUnfilled { get; }
+
+  /// <summary>#2544: perspective cursors rewound because a filled position changed the order of a stream they applied.</summary>
+  /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+  public PassiveCounter<long> OriginPositionRewinds { get; }
+
   /// <summary>Stored events received before origins were recorded that re-attribution gave their owner as origin.</summary>
   /// <docs>resilience/stream-integrity#re-attribution</docs>
   public PassiveCounter<long> OriginsReattributed { get; }
@@ -521,6 +538,30 @@ public sealed class StreamIntegrityMetrics {
     MisattributedOriginsCorrected = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.misattributed_origins_corrected",
       description: "Stored events recorded under an origin that does not own their type, re-attributed to the owner");
+    OriginPositionsRequested = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.origin_positions_requested",
+      description: "Received events named in position requests sent to their origins; tagged by origin");
+    OriginPositionsFilled = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.origin_positions_filled",
+      description: "Received events whose missing origin position an origin's answer filled; tagged by origin");
+    OriginPositionsUnfilled = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.origin_positions_not_filled",
+      description: "Position answers that filled nothing; tagged by origin and answer (not_yet_stamped | unknown)");
+    OriginPositionRewinds = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.origin_position_rewinds",
+      description: "Perspective cursors rewound because a filled origin position changed a stream's order");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.origin_positions_unfilled",
+      () => {
+        var unfilled = _unfilledPositions;
+        var measurements = new Measurement<long>[unfilled.Count];
+        for (var i = 0; i < unfilled.Count; i++) {
+          measurements[i] = new Measurement<long>(unfilled[i].Unfilled,
+            new KeyValuePair<string, object?>("origin_service_id", unfilled[i].OriginServiceId.ToString()));
+        }
+        return measurements;
+      },
+      description: "Received events still held without their origin's commit sequence, per origin (digest-eligible events)");
     OriginsReattributed = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.origins_reattributed",
       description: "Stored events received before origins were recorded that re-attribution gave their owner as origin");
@@ -798,6 +839,18 @@ public sealed class StreamIntegrityMetrics {
   private volatile BackfillGaugeSnapshot _backfill = BackfillGaugeSnapshot.Empty;
 
   private long _unauditedSeals;
+
+  private volatile IReadOnlyList<(Guid OriginServiceId, long Unfilled)> _unfilledPositions = [];
+
+  /// <summary>
+  /// Publishes, per origin, how many received events this service still holds without the origin's commit sequence
+  /// (#2544), read each maintenance cycle by the position fill.
+  /// </summary>
+  /// <param name="unfilled">The count per origin; null resets to none.</param>
+  /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginPositionFillSqlTests.cs:Step_AsksEachOriginInBoundedBatches_CountsAndLogsEachAsync</tests>
+  public void UpdateUnfilledOriginPositions(IReadOnlyList<(Guid OriginServiceId, long Unfilled)>? unfilled) =>
+    _unfilledPositions = unfilled ?? [];
 
   /// <summary>
   /// Publishes how many seals this service holds for origins it does not audit (#2544): no checkpoint from the origin was
