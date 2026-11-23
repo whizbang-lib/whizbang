@@ -891,7 +891,8 @@ public sealed partial class PerspectiveRebuilder(
       null,
       sp.GetService<IApplyBatchStrategy>() ?? new FlushEveryBatchStrategy(),
       Width: 1,
-      logger);
+      logger,
+      Workers.PerspectiveApplyBatch.NoWriteBehind.Instance);
   }
 
   /// <summary>

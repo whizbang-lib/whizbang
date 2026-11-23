@@ -70,7 +70,9 @@ internal static partial class PerspectiveApplyBatch {
   /// <param name="FlushPolicy">The flush policy.</param>
   /// <param name="Width">How many pairs are prepared or completed at once.</param>
   /// <param name="Logger">Logs a sink that is missing or failed as a whole.</param>
-  /// <param name="WriteBehind">The write-behind mode's hooks (#2247), or null when nothing in the batch writes behind.</param>
+  /// <param name="WriteBehind">
+  /// The write-behind mode's hooks (#2247); <see cref="NoWriteBehind.Instance"/> for a batch in which nothing writes behind.
+  /// </param>
   internal readonly record struct Services(
       IServiceScopeFactory ScopeFactory,
       IPerspectiveApplyCoordinator? Coordinator,
@@ -78,7 +80,29 @@ internal static partial class PerspectiveApplyBatch {
       IApplyBatchStrategy FlushPolicy,
       int Width,
       ILogger Logger,
-      IWriteBehindHooks? WriteBehind = null);
+      IWriteBehindHooks WriteBehind);
+
+  /// <summary>
+  /// The hooks of a batch in which nothing writes behind: the state source's batch as it is, nothing held, nothing to
+  /// flush first. A set-based batch runs exactly as it did before write-behind existed.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#write-behind</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveApplyBatchTests.cs:NoWriteBehind_PassesTheStateThrough_HoldsNothing_AndFlushesNothingAsync</tests>
+  internal sealed class NoWriteBehind : IWriteBehindHooks {
+    /// <summary>The one instance.</summary>
+    public static NoWriteBehind Instance { get; } = new();
+
+    private NoWriteBehind() { }
+
+    /// <inheritdoc/>
+    public IPerspectiveBatchState? Wrap(IPerspectiveBatchState? inner) => inner;
+
+    /// <inheritdoc/>
+    public bool TryHold(Pair pair) => false;
+
+    /// <inheritdoc/>
+    public Task FlushBeforeWriteAsync(IReadOnlyList<Pair> written, CancellationToken cancellationToken) => Task.CompletedTask;
+  }
 
   /// <summary>
   /// How the write-behind mode (#2247) takes part in a batch: the state its pairs read (a held model before the
@@ -130,9 +154,7 @@ internal static partial class PerspectiveApplyBatch {
       p.StreamId, p.PerspectiveName, p.Events[0].MessageId.Value,
       PerspectiveStateRequest.IsKnownNew(p.LastProcessedEventId, p.Events), [.. p.Events.Select(e => e.MessageId.Value)]))]);
     var writeBehind = services.WriteBehind;
-    if (writeBehind is not null) {
-      batchState = writeBehind.Wrap(batchState);
-    }
+    batchState = writeBehind.Wrap(batchState);
     var parallel = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, services.Width), CancellationToken = cancellationToken };
 
     await Parallel.ForEachAsync(pairs, parallel, async (pair, ct) => {
@@ -144,14 +166,12 @@ internal static partial class PerspectiveApplyBatch {
       }
     }).ConfigureAwait(false);
 
-    if (writeBehind is not null) {
-      // In batch order, one at a time: the cache's bounds are checked as each model is held.
-      foreach (var pair in pairs) {
-        pair.Held = pair.Failure is null && pair.Prepared!.WriteBehindRow is not null && writeBehind.TryHold(pair);
-      }
-      pairs = [.. pairs.Where(p => !p.Held)];
-      await writeBehind.FlushBeforeWriteAsync(pairs, cancellationToken).ConfigureAwait(false);
+    // In batch order, one at a time: the cache's bounds are checked as each model is held.
+    foreach (var pair in pairs) {
+      pair.Held = pair.Failure is null && pair.Prepared!.WriteBehindRow is not null && writeBehind.TryHold(pair);
     }
+    pairs = [.. pairs.Where(p => !p.Held)];
+    await writeBehind.FlushBeforeWriteAsync(pairs, cancellationToken).ConfigureAwait(false);
 
     await _flushAsync(pairs, services, cancellationToken).ConfigureAwait(false);
 

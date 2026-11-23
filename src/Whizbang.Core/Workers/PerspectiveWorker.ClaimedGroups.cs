@@ -487,7 +487,8 @@ public partial class PerspectiveWorker {
         provider.GetService<IPerspectiveStateSource>(),
         provider.GetService<IApplyBatchStrategy>() ?? _defaultFlushPolicy,
         _effectiveWidth(),
-        _logger);
+        _logger,
+        PerspectiveApplyBatch.NoWriteBehind.Instance);
     } finally {
       root.Dispose();
     }
