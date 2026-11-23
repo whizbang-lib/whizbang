@@ -271,8 +271,11 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   public async Task<IReadOnlyDictionary<Guid, PerspectiveStoredRow<TModel>>?> ReadForApplyManyAsync(
       IReadOnlyCollection<Guid> streamIds, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(streamIds);
-    if (!PerspectiveRowVersionSql.Supports(_context) || PerspectiveTableRedirect.IsActive) {
+    if (!PerspectiveRowVersionSql.Supports(_context)) {
       return null;
+    }
+    if (PerspectiveTableRedirect.IsActive) {
+      return _absentFromStaging(streamIds);
     }
     var rows = new Dictionary<Guid, PerspectiveStoredRow<TModel>>(streamIds.Count);
     var ids = streamIds.Distinct().ToArray();
@@ -291,6 +294,19 @@ public class EFCorePostgresPerspectiveStore<TModel>(
     }
     return rows;
   }
+
+  /// <summary>
+  /// The batched read of rows a blue-green rebuild's staging load answers without a statement (#2513): every row absent
+  /// when the load has written none of them, as the per-stream read answers each. Null, so each row is read on its own,
+  /// when there is no staging load (a catch-up pass) or it holds one of the rows.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/BlueGreenRebuildIntegrationTests.BatchedReads.cs:Rebuild_SendsTheSameStatementsForTheSameBatches_WhateverTheirStreamCountAsync</tests>
+  private Dictionary<Guid, PerspectiveStoredRow<TModel>>? _absentFromStaging(IReadOnlyCollection<Guid> streamIds) =>
+    PerspectiveRowVersionSql.RedirectedTable<TModel>(_context) is { } shadow
+      && PerspectiveStagingLoad.For(shadow) is { } load
+      && streamIds.All(id => load.StateOf(id) == PerspectiveStagedRowState.Absent)
+        ? []
+        : null;
 
   /// <summary>
   /// Reads the models of many rows in one query, each as <see cref="_loadAsync"/> reads one.

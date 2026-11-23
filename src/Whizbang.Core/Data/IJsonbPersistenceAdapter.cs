@@ -85,6 +85,24 @@ public record JsonbPersistenceModel {
   public Guid? EventId { get; init; }
 
   /// <summary>
+  /// The service the row's event was received from (<c>wh_event_store.origin_service_id</c>), when the read selected it;
+  /// null for a local event. The envelope rebuilt from the row carries it as its
+  /// <see cref="Observability.MessageEnvelope{TMessage}.SourceServiceId"/>, as the EF Core store's reads do (#2509).
+  /// </summary>
+  /// <docs>fundamentals/events/event-store#read-order</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventOriginReadTests.cs:EveryReader_CarriesEachEventsOrigin_OntoItsEnvelopeAsync</tests>
+  public Guid? OriginServiceId { get; init; }
+
+  /// <summary>
+  /// The row's event's position at the service it was received from (<c>wh_event_store.origin_commit_sequence</c>), when
+  /// the read selected it; null for a local event. The envelope rebuilt from the row carries it as its
+  /// <see cref="Observability.MessageEnvelope{TMessage}.SourceCommitSequence"/> (#2509).
+  /// </summary>
+  /// <docs>fundamentals/events/event-store#read-order</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventOriginReadTests.cs:EveryReader_CarriesEachEventsOrigin_OntoItsEnvelopeAsync</tests>
+  public long? OriginCommitSequence { get; init; }
+
+  /// <summary>
   /// Event data or model data (3-6 KiB typical).
   /// </summary>
   public string DataJson { get; init; } = string.Empty;

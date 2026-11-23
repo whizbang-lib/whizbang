@@ -33,7 +33,7 @@ internal enum TwoServiceAudit {
 }
 
 /// <summary>An event the origin emits: its stream, type, flags, superseding key and payload (JSON).</summary>
-internal readonly record struct TwoServiceEmit(Guid Stream, string Type, int Flags, string? Key, string Payload);
+internal readonly record struct TwoServiceEmit(Guid Stream, string Type, int Flags, string? Key, string Payload, Guid? Id = null);
 
 /// <summary>One side's store.</summary>
 internal sealed record TwoServiceStore(string Name, string ConnectionString, DbContextOptions<WorkCoordinationDbContext> Options);
@@ -173,9 +173,11 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   // ----- writing -----
 
   /// <summary>Emits the events on the origin through the outbox emit chain, as one batch, then stamps their commit
-  /// sequences. Ids are ordered, so a later event is also the newer one by id and by the origin's sequence.</summary>
+  /// sequences. Ids are ordered, so a later event is also the newer one by id and by the origin's sequence, unless an
+  /// event names its own id (a derived one, which sorts at its cause).</summary>
   public async Task<Guid[]> EmitAsync(params TwoServiceEmit[] events) {
-    Guid[] ids = [.. Enumerable.Range(0, events.Length).Select(_ => (Guid)TrackedGuid.New()).Order()];
+    Guid[] minted = [.. Enumerable.Range(0, events.Length).Select(_ => (Guid)TrackedGuid.New()).Order()];
+    Guid[] ids = [.. events.Select((e, i) => e.Id ?? minted[i])];
     _clock = _clock.AddMinutes(1);
     await using var conn = await _openAsync(Origin);
     var instanceId = (Guid)TrackedGuid.New();

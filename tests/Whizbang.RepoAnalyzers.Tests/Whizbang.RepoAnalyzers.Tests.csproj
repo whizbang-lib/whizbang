@@ -18,4 +18,17 @@
     <PackageReference Include="TUnit" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
   </ItemGroup>
+  <!-- SonarQueueRulesTests runs the SonarAnalyzer.CSharp every project builds with (Directory.Build.props), the
+       same version, so a version that changes the S3776 or S107 thresholds fails a test here first (#2515). -->
+  <ItemGroup>
+    <PackageReference Update="SonarAnalyzer.CSharp" GeneratePathProperty="true" />
+    <None Include="$(PkgSonarAnalyzer_CSharp)/analyzers/SonarAnalyzer.CSharp.dll" Link="sonar/SonarAnalyzer.CSharp.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+  <!-- The repository's .editorconfig files that apply to C# under src/, tests/, samples/, benchmarks/ and tools/,
+       embedded under their repository-relative paths so SonarQueueRulesTests reads the real settings without touching
+       the file system (a Unit project stays unit-pure). A change to either file rebuilds this project. -->
+  <ItemGroup>
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)../../.editorconfig" LogicalName="editorconfig:.editorconfig" Visible="false" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)../.editorconfig" LogicalName="editorconfig:tests/.editorconfig" Visible="false" />
+  </ItemGroup>
 </Project>
