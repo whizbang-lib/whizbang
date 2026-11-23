@@ -2425,8 +2425,8 @@ public interface IWorkCoordinator {
 
   /// <summary>
   /// #2365: records a stream whose cut the seal gate holds (<paramref name="task"/> names the cut: <c>truncate</c> or
-  /// <c>archive</c>), or forgets it (null) once its cut answers otherwise, for <c>eligible_not_yet_deleted</c>. No-op =
-  /// unsupported.
+  /// <c>archive</c>), or forgets it (null) once its cut answers otherwise, for <c>eligible_not_yet_deleted</c>. Called by
+  /// the prefix truncator and, since #2529, by the end-of-life step for a whole-stream archive. No-op = unsupported.
   /// </summary>
   /// <param name="streamId">The stream.</param>
   /// <param name="task">The cut the seal holds, or null to forget the stream.</param>
@@ -2434,6 +2434,7 @@ public interface IWorkCoordinator {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>resilience/stream-integrity#integrity-instruments</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsAwaitingSealSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/StreamDispositionStepTests.cs:AWholeStreamArchiveTheSealHolds_IsRecordedAsAwaitingIt_ForEligibleNotYetDeletedAsync</tests>
   Task RecordCutAwaitingSealAsync(Guid streamId, string? task, DateTimeOffset now, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
 
