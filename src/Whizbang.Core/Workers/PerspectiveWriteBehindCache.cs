@@ -28,13 +28,16 @@ internal enum WriteBehindFlushReason {
 
   /// <summary>A caller asked for every held model to be flushed.</summary>
   Requested = 6,
+
+  /// <summary>A rebuild of the model's perspective, or of its stream, is starting (#2533).</summary>
+  Rebuild = 7,
 }
 
 /// <summary>The metric tag of each <see cref="WriteBehindFlushReason"/>.</summary>
 /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveWriteBehindCacheTests.cs:EveryFlushReason_HasItsOwnMetricTagAsync</tests>
 internal static class WriteBehindFlushReasons {
   // At each reason's value.
-  private static readonly string[] _tags = ["interval", "batches", "bounds", "bypass", "sync", "stop", "requested"];
+  private static readonly string[] _tags = ["interval", "batches", "bounds", "bypass", "sync", "stop", "requested", "rebuild"];
 
   /// <summary>The tag a flush for <paramref name="reason"/> is measured with.</summary>
   /// <param name="reason">The flush reason.</param>

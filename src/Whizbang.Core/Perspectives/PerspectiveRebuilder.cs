@@ -318,6 +318,8 @@ public sealed partial class PerspectiveRebuilder(
       run.StreamsRefused = resolved - streamIds.Count;
       run.StreamsToReplay = streamIds.Count;
 
+      await _flushWriteBehindAsync(sp, perspectiveName, requested > 0 ? streamIds : null, ct);
+
       // Blue-green needs a driver that can build and swap a shadow table. Without one the rebuild
       // replays in place, as it always did, and says so rather than claiming a swap it never made.
       var swapper = mode == RebuildMode.BlueGreen ? sp.GetService<IPerspectiveTableSwapper>() : null;
@@ -433,6 +435,19 @@ public sealed partial class PerspectiveRebuilder(
       _activeRebuilds.TryRemove(perspectiveName, out _);
     }
   }
+
+  /// <summary>
+  /// Flushes the write-behind models held for the perspective before the rebuild reads a row (#2533), so a model held
+  /// before the rebuild is written now rather than over the rebuild later, where only the version check of its merged
+  /// write would meet it: every model of the perspective for a rebuild of every stream (<paramref name="streamIds"/>
+  /// null), the named streams' models otherwise. A host whose worker holds nothing, or runs no worker, has nothing to flush.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeTests.WriteBehindRebuild.cs</tests>
+  private static Task _flushWriteBehindAsync(
+      IServiceProvider sp, string perspectiveName, IReadOnlyCollection<Guid>? streamIds, CancellationToken ct) =>
+    sp.GetService<Workers.PerspectiveWorker>() is { } worker
+      ? worker.FlushWriteBehindForRebuildAsync(perspectiveName, streamIds, ct)
+      : Task.CompletedTask;
 
   /// <summary>Why a rebuild of named streams rebuilt none of them, in words an operator can act on.</summary>
   private static string _nothingRebuiltError(int requested, RebuildRun run) =>
