@@ -52,7 +52,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <docs>fundamentals/perspectives/write-modes#conformance-suite</docs>
 [Category("Integration")]
 [Category("Shard5")]
-public class PerspectiveWriteModeConformanceTests : EFCoreTestBase {
+public partial class PerspectiveWriteModeConformanceTests : EFCoreTestBase {
   private const string LEDGER = "wh_per_conformance_ledger";
   private const string SPLIT_LEDGER = "wh_per_conformance_split_ledger";
   private static readonly TimeSpan _signalDeadline = TimeSpan.FromSeconds(60);
@@ -62,6 +62,7 @@ public class PerspectiveWriteModeConformanceTests : EFCoreTestBase {
   [Test]
   [Arguments(PerspectiveWriteMode.SetBased)]
   [Arguments(PerspectiveWriteMode.PerStream)]
+  [Arguments(PerspectiveWriteMode.WriteBehind)]
   public async Task NewAndExistingStreams_FoldEveryEventOnce_IntoTheDocumentAndBothPhysicalFieldFormsAsync(PerspectiveWriteMode mode) {
     var ct = CancellationToken.None;
     await using var conn = await _openAsync(ct);
@@ -99,6 +100,7 @@ public class PerspectiveWriteModeConformanceTests : EFCoreTestBase {
   [Test]
   [Arguments(PerspectiveWriteMode.SetBased)]
   [Arguments(PerspectiveWriteMode.PerStream)]
+  [Arguments(PerspectiveWriteMode.WriteBehind)]
   public async Task AStreamWhoseFirstEventFindsARowAlready_FoldsOntoThatRowAsync(PerspectiveWriteMode mode) {
     // A stream known to be new can still have a row (one written by something other than its own events): the batch
     // inserts only where no row is, and the conflict reruns the pair onto the row it finds.
@@ -121,6 +123,7 @@ public class PerspectiveWriteModeConformanceTests : EFCoreTestBase {
   [Test]
   [Arguments(PerspectiveWriteMode.SetBased)]
   [Arguments(PerspectiveWriteMode.PerStream)]
+  [Arguments(PerspectiveWriteMode.WriteBehind)]
   public async Task ARowAnotherWriterChangesAfterTheRead_KeepsBothWritesAsync(PerspectiveWriteMode mode) {
     // The row version conflict: another writer (a collective, another instance) changes the row between the batch's read
     // and its write. Neither write may be lost.
@@ -146,7 +149,7 @@ public class PerspectiveWriteModeConformanceTests : EFCoreTestBase {
 
     await pipeline.RunAsync([stream], work, ct);
 
-    await Assert.That(injected).IsEqualTo(mode == PerspectiveWriteMode.SetBased)
+    await Assert.That(injected).IsEqualTo(mode != PerspectiveWriteMode.PerStream)
       .Because("the flush policy runs between a set-based batch's prepare and its write, and only there");
     await _assertLedgerAsync(conn, stream, balance: 15 + (injected ? 1000 : 0), postings: 2, owner: "a", ct);
   }
@@ -154,6 +157,7 @@ public class PerspectiveWriteModeConformanceTests : EFCoreTestBase {
   [Test]
   [Arguments(PerspectiveWriteMode.SetBased)]
   [Arguments(PerspectiveWriteMode.PerStream)]
+  [Arguments(PerspectiveWriteMode.WriteBehind)]
   public async Task ARowAnotherWriterMovesPastTheBatch_IsRefoldedWithEveryEvent_AndTheLaterDeliveryIsNotAppliedTwiceAsync(PerspectiveWriteMode mode) {
     // The ordering guard and the rewind: between the batch's read and its write another worker commits a later event on
     // the stream and folds it into the row first. The batch's event now sits below the row's position, so the stream is
@@ -190,13 +194,14 @@ public class PerspectiveWriteModeConformanceTests : EFCoreTestBase {
     await pipeline.Completion.WaitForAllAsync(later);
 
     var moved = later.Count > 0;
-    await Assert.That(moved).IsEqualTo(mode == PerspectiveWriteMode.SetBased);
+    await Assert.That(moved).IsEqualTo(mode != PerspectiveWriteMode.PerStream);
     await _assertLedgerAsync(conn, stream, balance: 15 + (moved ? 100 : 0), postings: moved ? 3 : 2, owner: "a", ct);
   }
 
   [Test]
   [Arguments(PerspectiveWriteMode.SetBased)]
   [Arguments(PerspectiveWriteMode.PerStream)]
+  [Arguments(PerspectiveWriteMode.WriteBehind)]
   public async Task APurgedStream_LosesItsRow_AndStaysPurgedAsync(PerspectiveWriteMode mode) {
     var ct = CancellationToken.None;
     await using var conn = await _openAsync(ct);
@@ -230,6 +235,7 @@ public class PerspectiveWriteModeConformanceTests : EFCoreTestBase {
   [Test]
   [Arguments(PerspectiveWriteMode.SetBased)]
   [Arguments(PerspectiveWriteMode.PerStream)]
+  [Arguments(PerspectiveWriteMode.WriteBehind)]
   public async Task AnApplyThatThrows_SkipsItsEvent_AndARowTheDatabaseRejects_FailsOnlyItsOwnStreamAsync(PerspectiveWriteMode mode) {
     var ct = CancellationToken.None;
     await using var conn = await _openAsync(ct);
@@ -266,6 +272,7 @@ public class PerspectiveWriteModeConformanceTests : EFCoreTestBase {
   [Test]
   [Arguments(PerspectiveWriteMode.SetBased)]
   [Arguments(PerspectiveWriteMode.PerStream)]
+  [Arguments(PerspectiveWriteMode.WriteBehind)]
   public async Task ASyncWaiter_IsReleasedOnlyOnceTheRowIsDurableAsync(PerspectiveWriteMode mode) {
     var ct = CancellationToken.None;
     await using var conn = await _openAsync(ct);
@@ -348,7 +355,10 @@ public class PerspectiveWriteModeConformanceTests : EFCoreTestBase {
     return (T)(await command.ExecuteScalarAsync(ct))!;
   }
 
-  private Pipeline _compose(PerspectiveWriteMode mode, ServiceInstanceProvider? instance = null) {
+  /// <summary>The write-behind flush interval of the suite: short, so a held model is flushed soon after its batch.</summary>
+  private const int SUITE_FLUSH_INTERVAL_MS = 50;
+
+  private Pipeline _compose(PerspectiveWriteMode mode, ServiceInstanceProvider? instance = null, int flushIntervalMs = SUITE_FLUSH_INTERVAL_MS) {
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
     var dataSource = NpgsqlDataSource.Create(ConnectionString);
     var policy = new InjectingFlushPolicy();
@@ -408,7 +418,11 @@ public class PerspectiveWriteModeConformanceTests : EFCoreTestBase {
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       signalBus: NullSignalBus.Instance);
 
-    var workerOptions = new PerspectiveWorkerOptions { MaxConcurrentDrainConsumers = 1, WriteMode = mode };
+    var workerOptions = new PerspectiveWorkerOptions {
+      MaxConcurrentDrainConsumers = 1,
+      WriteMode = mode,
+      WriteBehind = { MaxModels = 1000, MaxBytes = 10_000_000, MaxFlushIntervalMilliseconds = flushIntervalMs },
+    };
     var perspectiveWorker = new PerspectiveWorker(
       instanceProvider: instanceProvider,
       scopeFactory: scopeFactory,
@@ -605,8 +619,14 @@ public class PerspectiveWriteModeConformanceTests : EFCoreTestBase {
   private sealed class InjectingFlushPolicy : IApplyBatchStrategy {
     public Func<IReadOnlyList<PendingPerspectiveWrite>, Task>? BeforeFlush { get; set; }
 
+    /// <summary>Every write the policy was handed, in the order it was handed them.</summary>
+    public ConcurrentQueue<PendingPerspectiveWrite> Written { get; } = new();
+
     public async Task<IReadOnlyList<PerspectiveWriteOutcome>> FlushAsync(
         IPerspectiveWriteSink sink, IReadOnlyList<PendingPerspectiveWrite> writes, CancellationToken cancellationToken = default) {
+      foreach (var write in writes) {
+        Written.Enqueue(write);
+      }
       if (BeforeFlush is { } before) {
         await before(writes);
       }

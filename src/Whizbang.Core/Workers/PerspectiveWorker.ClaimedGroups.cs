@@ -316,9 +316,11 @@ public partial class PerspectiveWorker {
     var candidates = new ConcurrentQueue<ClaimedGroup>();
     try {
       try {
+        // #2247: a claimed pair meets its row current, so a model the drain holds for it is flushed first.
+        await _flushWriteBehindHeldAsync(groupedWork.Select(g => g.Key), takeApplyLocks: true, cancellationToken).ConfigureAwait(false);
         // Under the gates, as each pair's own reads would be: one cursor read and one event read for every set-based pair.
         var prefetched = await _prefetchClaimedAsync(
-          [.. groupedWork.Select(g => g.Key).Where(k => _writeModeOf(k.PerspectiveName) == PerspectiveWriteMode.SetBased)],
+          [.. groupedWork.Select(g => g.Key).Where(k => _isBatched(_writeModeOf(k.PerspectiveName)))],
           cancellationToken).ConfigureAwait(false);
         await Parallel.ForEachAsync(groupedWork, parallel, (work, ct) =>
           new ValueTask(_beginClaimedForBatchAsync(batch, work, prefetched?.GetValueOrDefault(work.Key), candidates, ct))).ConfigureAwait(false);
@@ -352,7 +354,7 @@ public partial class PerspectiveWorker {
       ClaimedPrefetch? prefetched,
       ConcurrentQueue<ClaimedGroup> candidates,
       CancellationToken ct) {
-    if (_writeModeOf(work.Key.PerspectiveName) != PerspectiveWriteMode.SetBased) {
+    if (!_isBatched(_writeModeOf(work.Key.PerspectiveName))) {
       await _runClaimedGroupAsync(batch, work, ct).ConfigureAwait(false);
       return;
     }
@@ -485,7 +487,8 @@ public partial class PerspectiveWorker {
         provider.GetService<IPerspectiveStateSource>(),
         provider.GetService<IApplyBatchStrategy>() ?? _defaultFlushPolicy,
         _effectiveWidth(),
-        _logger);
+        _logger,
+        PerspectiveApplyBatch.NoWriteBehind.Instance);
     } finally {
       root.Dispose();
     }

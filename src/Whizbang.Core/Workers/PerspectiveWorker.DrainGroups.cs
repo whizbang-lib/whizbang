@@ -25,7 +25,7 @@ public partial class PerspectiveWorker {
       AsyncServiceScope scope) {
     public Guid StreamId { get; } = streamId;
     public string PerspectiveName { get; } = perspectiveName;
-    public DrainBatchContext BatchContext { get; } = batchContext;
+    public DrainBatchContext BatchContext { get; set; } = batchContext;
     public DrainGroupScopeLifetime ScopeLifetime { get; } = scopeLifetime;
     public AsyncServiceScope Scope { get; } = scope;
     public IWorkCoordinator WorkCoordinator { get; init; } = null!;
@@ -41,6 +41,9 @@ public partial class PerspectiveWorker {
 
     /// <summary>The pair this drain pair applies in a set-based batch.</summary>
     public PerspectiveApplyBatch.Pair? BatchPair { get; set; }
+
+    /// <summary>Whether a write-behind hold of this pair has ended (#2247), so its scope is released once.</summary>
+    public bool Released { get; set; }
   }
 
   /// <summary>The events of a drain lap that one perspective applies, in id order (the collective sink takes the collective events).</summary>
@@ -65,6 +68,13 @@ public partial class PerspectiveWorker {
       if (filteredEvents.Count == 0) {
         continue;
       }
+      if (_writeBehind is not null && _writeModeOf(perspectiveName) == PerspectiveWriteMode.WriteBehind) {
+        // #2247: a write-behind pair's later laps hold too, as its first lap does; a lap run per pair would flush the
+        // model it just held.
+        var parallel = new ParallelOptions { MaxDegreeOfParallelism = 1, CancellationToken = ct };
+        await _drainSetBasedLapAsync([(streamId, perspectiveName, filteredEvents)], currentContext, parallel, ct).ConfigureAwait(false);
+        continue;
+      }
       await _drainPerspectiveGatedAsync(streamId, perspectiveName, filteredEvents, currentContext, ct).ConfigureAwait(false);
     }
   }
@@ -83,8 +93,16 @@ public partial class PerspectiveWorker {
       // Intra-pod stream-affinity gate, serialize apply for this (stream, perspective) across
       // the parallel consumer loops AND against the standard path, closing the same-pod
       // double-apply window the standard path already gated. See WithStreamAffinityGateAsync.
-      await WithStreamAffinityGateAsync(streamId, perspectiveName, keepGateHeldUntil =>
-        _runDrainModePerspectiveAsync(streamId, perspectiveName, filteredEvents, context, keepGateHeldUntil, ct), ct).ConfigureAwait(false);
+      await WithStreamAffinityGateAsync(streamId, perspectiveName, async keepGateHeldUntil => {
+        // #2247: a held batch's events are not applied again; anything else meets its row current, so the held model is
+        // flushed first.
+        var fresh = _withoutHeldEvents(streamId, perspectiveName, filteredEvents);
+        if (fresh.Count == 0) {
+          return;
+        }
+        await _flushWriteBehindHeldAsync([(streamId, perspectiveName)], takeApplyLocks: true, ct).ConfigureAwait(false);
+        await _runDrainModePerspectiveAsync(streamId, perspectiveName, fresh, context, keepGateHeldUntil, ct).ConfigureAwait(false);
+      }, ct).ConfigureAwait(false);
     } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
       // Worker shutdown, propagate out of the loop, Parallel.ForEachAsync handles it.
       throw;
@@ -341,6 +359,11 @@ public partial class PerspectiveWorker {
         _hydrateReplayState(_cursorCache, persisted);
       }
     }
+    // #2247: a held model is the stream's position until it is flushed; the pair continues after it.
+    if (_writeBehind?.Get((streamId, perspectiveName)) is { } held) {
+      pair.LastProcessedEventId = held.Row.LastEventId;
+      pair.LastProcessedCommitSequence = held.Row.ApplyRead.Metadata?.CommitSequence;
+    }
   }
 
   /// <summary>The rewind a drain pair's inversion asks for, counted and traced like every rewind.</summary>
@@ -553,7 +576,8 @@ public partial class PerspectiveWorker {
         if (filtered.Count == 0) {
           continue;
         }
-        if (_writeModeOf(perspectiveName) == PerspectiveWriteMode.SetBased) {
+        if (_isBatched(_writeModeOf(perspectiveName))) {
+          // A write-behind perspective's drain writes its batch at once, as set-based writes it (#2247).
           setBased.Add((streamId, perspectiveName, filtered));
         } else {
           if (!perPair.TryGetValue(streamId, out var list)) {
@@ -598,20 +622,55 @@ public partial class PerspectiveWorker {
     var candidates = new ConcurrentQueue<DrainPair>();
     try {
       try {
+        // #2247: a held batch's events are not drained again, and a pair that cannot continue a held model (its
+        // perspective no longer writes behind) meets its row current, so the model is flushed first.
+        pairs = _withoutHeldEvents(pairs);
+        await _flushWriteBehindHeldAsync(
+          pairs.Where(p => _writeModeOf(p.PerspectiveName) != PerspectiveWriteMode.WriteBehind).Select(p => (p.StreamId, p.PerspectiveName)),
+          takeApplyLocks: true, cancellationToken).ConfigureAwait(false);
         await Parallel.ForEachAsync(pairs, parallel, (work, ct) =>
           new ValueTask(_beginDrainForBatchAsync(work, context, candidates, ct))).ConfigureAwait(false);
         if (!candidates.IsEmpty) {
           await _applyDrainBatchAsync(candidates, parallel, cancellationToken).ConfigureAwait(false);
         }
       } finally {
-        foreach (var pair in candidates) {
+        // A held pair is finished by its model's flush, which releases its scope then. A candidate is queued with its
+        // batch pair.
+        foreach (var pair in candidates.Where(p => !p.BatchPair!.Held)) {
           await pair.ScopeLifetime.DisposeAsync().ConfigureAwait(false);
         }
       }
     } finally {
       gates.Dispose();
     }
+    await FlushWriteBehindDueAsync(cancellationToken).ConfigureAwait(false);
   }
+
+  /// <summary>
+  /// The pairs of a drain lap without the events their held models already folded (#2247): those events' rows are still
+  /// pending, so every drain of the stream fetches them again until the flush completes them. A pair with nothing else is
+  /// left out.
+  /// </summary>
+  private List<(Guid StreamId, string PerspectiveName, List<MessageEnvelope<IEvent>> Events)> _withoutHeldEvents(
+      List<(Guid StreamId, string PerspectiveName, List<MessageEnvelope<IEvent>> Events)> pairs) {
+    if (_writeBehind is null) {
+      return pairs;
+    }
+    var remaining = new List<(Guid StreamId, string PerspectiveName, List<MessageEnvelope<IEvent>> Events)>(pairs.Count);
+    foreach (var (streamId, perspectiveName, events) in pairs) {
+      var fresh = _withoutHeldEvents(streamId, perspectiveName, events);
+      if (fresh.Count > 0) {
+        remaining.Add((streamId, perspectiveName, fresh));
+      }
+    }
+    return remaining;
+  }
+
+  /// <summary>One pair's events without those its held model already folded (#2247).</summary>
+  private List<MessageEnvelope<IEvent>> _withoutHeldEvents(Guid streamId, string perspectiveName, List<MessageEnvelope<IEvent>> events) =>
+    _writeBehind?.Get((streamId, perspectiveName)) is { } held
+      ? [.. events.Where(e => !held.EventIds.Contains(e.MessageId.Value))]
+      : events;
 
   /// <summary>
   /// One pair of a drain lap up to the batch: begun, and queued as a candidate unless it needs a rewind, which replays
@@ -634,6 +693,8 @@ public partial class PerspectiveWorker {
       return;
     }
     await using (pair.ScopeLifetime.ConfigureAwait(false)) {
+      // #2247: a rewind replays the stream from its row, so a model held for it is flushed first.
+      await _flushWriteBehindHeldAsync([(pair.StreamId, pair.PerspectiveName)], takeApplyLocks: true, ct).ConfigureAwait(false);
       using var lease = _drainLease(pair.StreamId, ct);
       pair.StartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
       _markAffinityPhase(pair.StreamId, pair.PerspectiveName, APPLY_PHASE);
@@ -660,11 +721,16 @@ public partial class PerspectiveWorker {
       foreach (var pair in candidates) {
         _markAffinityPhase(pair.StreamId, pair.PerspectiveName, APPLY_PHASE);
       }
-      await PerspectiveApplyBatch.RunAsync([.. candidates.Select(p => p.BatchPair!)], _batchServices(), lease.Token).ConfigureAwait(false);
-      await Parallel.ForEachAsync(candidates, parallel, (pair, _) =>
+      var services = _batchServices();
+      if (_writeBehind is not null) {
+        services = services with { WriteBehind = new WriteBehindHooks(this, candidates.ToDictionary(p => p.BatchPair!)) };
+      }
+      await PerspectiveApplyBatch.RunAsync([.. candidates.Select(p => p.BatchPair!)], services, lease.Token).ConfigureAwait(false);
+      // A held pair is finished by its model's flush (#2247).
+      await Parallel.ForEachAsync(candidates.Where(p => !p.BatchPair!.Held), parallel, (pair, _) =>
         new ValueTask(_endDrainBatchPairAsync(pair, lease.Token, cancellationToken))).ConfigureAwait(false);
     } catch (OperationCanceledException leaseExpired) when (IsLeaseExpiry(lease.Token, cancellationToken)) {
-      foreach (var pair in candidates.Where(p => !p.BatchPair!.Ended)) {
+      foreach (var pair in candidates.Where(p => !p.BatchPair!.Ended && !p.BatchPair.Held)) {
         await _failDrainPairOnLeaseExpiryAsync(pair, leaseExpired, cancellationToken).ConfigureAwait(false);
       }
     }
