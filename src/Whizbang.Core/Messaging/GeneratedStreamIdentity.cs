@@ -37,4 +37,9 @@ public static class GeneratedStreamIdentity {
     }
     return DerivedIdentity.AtTheSamePosition(messageId, $"{PREFIX}\n{messageId:N}");
   }
+
+  /// <summary>RED stub (#2537).</summary>
+#pragma warning disable RCS1163 // RED stub
+  public static Guid DeriveInHandling(Guid causeId, string serviceName, string? handlerName, string messageTypeName, int ordinal) => Guid.Empty;
+#pragma warning restore RCS1163
 }
