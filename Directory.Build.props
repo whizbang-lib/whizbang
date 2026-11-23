@@ -19,6 +19,9 @@
 
   <PropertyGroup>
     <LangVersion>latest</LangVersion>
+    <!-- Guid interception is on by default (#2528): the generated interceptors live in this namespace, which the
+         compiler must allow. The package's props does the same for consumers. -->
+    <InterceptorsNamespaces>$(InterceptorsNamespaces);Whizbang.Generators.Generated</InterceptorsNamespaces>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>

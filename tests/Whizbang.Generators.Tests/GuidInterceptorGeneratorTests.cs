@@ -10,7 +10,7 @@ namespace Whizbang.Generators.Tests;
 /// <summary>
 /// Tests for GuidInterceptorGenerator - compile-time interception of Guid creation.
 /// Verifies that Guid.NewGuid() and Guid.CreateVersion7() calls are intercepted
-/// and wrapped with TrackedGuid for metadata tracking.
+/// and replaced with TrackedGuid.New() (#2528).
 /// </summary>
 [Category("Generators")]
 [Category("Interceptors")]
@@ -87,8 +87,7 @@ public class GuidInterceptorGeneratorTests {
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
     await Assert.That(generatedSource).Contains("InterceptsLocation");
-    await Assert.That(generatedSource).Contains("TrackedGuid");
-    await Assert.That(generatedSource).Contains("Version7");
+    await Assert.That(generatedSource).Contains("TrackedGuid.New()");
   }
 
   /// <summary>
@@ -230,16 +229,16 @@ public class GuidInterceptorGeneratorTests {
 
     // Should use global:: for all type references
     await Assert.That(generatedSource).Contains("global::System.Guid");
-    await Assert.That(generatedSource).Contains("global::Whizbang.Core.ValueObjects.TrackedGuid");
-    await Assert.That(generatedSource).Contains("global::Whizbang.Core.ValueObjects.GuidMetadatas");
+    await Assert.That(generatedSource).Contains("global::Whizbang.Core.ValueObjects.TrackedGuid.New()");
   }
 
   /// <summary>
-  /// Test that generated code includes correct metadata for v4 GUIDs.
+  /// An intercepted Guid.NewGuid() is replaced, not wrapped: the interceptor returns a Guid (the intercepted method's
+  /// signature) from TrackedGuid.New(), and never calls the original (#2528).
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
-  public async Task Generator_NewGuid_IncludesV4MetadataAsync() {
+  public async Task Generator_NewGuid_IsReplacedWithTrackedGuidNewAsync() {
     // Arrange
     const string source = """
             using System;
@@ -259,16 +258,18 @@ public class GuidInterceptorGeneratorTests {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource).Contains("Version4");
-    await Assert.That(generatedSource).Contains("SourceMicrosoft");
+    await Assert.That(generatedSource).Contains("internal static global::System.Guid Intercept_");
+    await Assert.That(generatedSource).Contains("=> global::Whizbang.Core.ValueObjects.TrackedGuid.New();");
+    await Assert.That(generatedSource).DoesNotContain("global::System.Guid.NewGuid()");
+    await Assert.That(generatedSource).DoesNotContain("FromIntercepted");
   }
 
   /// <summary>
-  /// Test that generated code includes correct metadata for v7 GUIDs.
+  /// An intercepted Guid.CreateVersion7() is replaced the same way (#2528).
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
-  public async Task Generator_CreateVersion7_IncludesV7MetadataAsync() {
+  public async Task Generator_CreateVersion7_IsReplacedWithTrackedGuidNewAsync() {
     // Arrange
     const string source = """
             using System;
@@ -288,8 +289,8 @@ public class GuidInterceptorGeneratorTests {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource).Contains("Version7");
-    await Assert.That(generatedSource).Contains("SourceMicrosoft");
+    await Assert.That(generatedSource).Contains("=> global::Whizbang.Core.ValueObjects.TrackedGuid.New();");
+    await Assert.That(generatedSource).DoesNotContain("global::System.Guid.CreateVersion7()");
   }
 
   // ========================================
@@ -543,62 +544,70 @@ public class GuidInterceptorGeneratorTests {
   // ========================================
 
   /// <summary>
-  /// Test that with interception disabled (default), diagnostics are still reported
-  /// but no interceptor code is generated.
+  /// Interception is on by default (#2528): with no option set, the call is replaced and reported.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
-  public async Task Generator_InterceptionDisabled_ReportsDiagnosticWithoutGeneratingCodeAsync() {
-    // Arrange
-    const string source = """
-            using System;
+  public async Task Generator_NoOptionSet_InterceptsByDefaultAsync() {
+    var result = GeneratorTestHelper.RunGenerator<GuidInterceptorGenerator>(NEW_GUID_SOURCE);
 
-            namespace TestApp;
-
-            public class MyService {
-              public Guid CreateId() {
-                return Guid.NewGuid();
-              }
-            }
-            """;
-
-    // Act - run WITHOUT the WhizbangGuidInterceptionEnabled option
-    var result = GeneratorTestHelper.RunGenerator<GuidInterceptorGenerator>(source);
-
-    // Assert - WHIZ058 still reported even when disabled
-    var diagnostics = result.Diagnostics.Where(d => d.Id == "WHIZ058").ToList();
-    await Assert.That(diagnostics).Count().IsEqualTo(1);
-
-    // But no interceptor source is generated
-    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
-    await Assert.That(generatedSource).IsNull();
+    await Assert.That(result.Diagnostics.Count(d => d.Id == "WHIZ058")).IsEqualTo(1);
+    await Assert.That(GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs")).IsNotNull();
   }
 
   /// <summary>
-  /// The package declares the property, so a project that never sets it hands the generator an empty value (#1660),
-  /// and a whitespace value is no setting either. Both are the default: interception stays off.
+  /// A project that sets the property to false turns interception off: nothing is generated and nothing is reported as
+  /// intercepted, since nothing was replaced.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
-  [Arguments("")]
-  [Arguments("   ")]
-  public async Task Generator_BlankInterceptionProperty_KeepsInterceptionOffAsync(string raw) {
+  [Arguments("false")]
+  [Arguments("False")]
+  [Arguments(" FALSE ")]
+  public async Task Generator_InterceptionSetToFalse_GeneratesAndReportsNothingAsync(string raw) {
     var result = GeneratorTestHelper.RunGenerator<GuidInterceptorGenerator>(NEW_GUID_SOURCE, new Dictionary<string, string> {
       ["build_property.WhizbangGuidInterceptionEnabled"] = raw
     });
 
     await Assert.That(GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs")).IsNull();
-    await Assert.That(result.Diagnostics.Count(d => d.Id == "WHIZ058")).IsEqualTo(1)
-      .Because("the call is still discovered and reported; only the interceptor is withheld");
+    await Assert.That(result.Diagnostics.Count(d => d.Id == "WHIZ058")).IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// The package declares the property, so a project that never sets it hands the generator an empty value (#1660),
+  /// and a whitespace value is no setting either. Both are the default: interception is on (#2528).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("")]
+  [Arguments("   ")]
+  public async Task Generator_BlankInterceptionProperty_KeepsInterceptionOnAsync(string raw) {
+    var result = GeneratorTestHelper.RunGenerator<GuidInterceptorGenerator>(NEW_GUID_SOURCE, new Dictionary<string, string> {
+      ["build_property.WhizbangGuidInterceptionEnabled"] = raw
+    });
+
+    await Assert.That(GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs")).IsNotNull();
   }
 
   /// <summary>The same through the options a real build delivers: every declared property present, none set.</summary>
   [Test]
   [RequiresAssemblyFiles]
-  public async Task Generator_DeclaredButUnsetInterceptionProperty_KeepsInterceptionOffAsync() {
+  public async Task Generator_DeclaredButUnsetInterceptionProperty_KeepsInterceptionOnAsync() {
     var result = GeneratorTestHelper.RunGenerator<GuidInterceptorGenerator>(NEW_GUID_SOURCE, MSBuildGlobalOptions.For());
 
-    await Assert.That(GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs")).IsNull();
+    await Assert.That(GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs")).IsNotNull();
+  }
+
+  /// <summary>Only <c>false</c>, in any case and with surrounding whitespace, turns interception off (#2528).</summary>
+  [Test]
+  [Arguments(null, true)]
+  [Arguments("", true)]
+  [Arguments("true", true)]
+  [Arguments("yes", true)]
+  [Arguments("false", false)]
+  [Arguments(" False ", false)]
+  public async Task IsInterceptionEnabled_OnlyFalseTurnsItOffAsync(string? value, bool expected) {
+    await Assert.That(GuidInterceptorGenerator.IsInterceptionEnabled(value)).IsEqualTo(expected);
   }
 
   /// <summary>And a project that sets it gets interception through the same delivered options.</summary>

@@ -20,10 +20,23 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/GuidInterceptorGeneratorTests.cs:Generator_MultipleGuidCalls_GeneratesMultipleInterceptorsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/GuidInterceptorGeneratorTests.cs:Generator_SuppressOnMethod_NoInterceptionAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/GuidInterceptorGeneratorTests.cs:Generator_SuppressOnClass_NoInterceptionAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/ThirdPartyGuidInterceptionTests.cs:Generator_MartenCombGuid_InterceptsAndAddsSourceMartenMetadataAsync</tests>
-/// Source generator that intercepts GUID creation calls and wraps them with TrackedGuid.
-/// Uses C# 12 interceptors feature for zero-overhead compile-time interception.
+/// <tests>tests/Whizbang.Generators.Tests/GuidInterceptorRuntimeTests.cs</tests>
+/// Source generator that replaces <c>Guid.NewGuid()</c> and <c>Guid.CreateVersion7()</c> calls with the framework's
+/// UUIDv7 (<c>TrackedGuid.New()</c>, time-ordered with counter precision), through C# interceptors.
 /// </summary>
+/// <remarks>
+/// <para>
+/// Interception is on by default: a project that does not set <c>WhizbangGuidInterceptionEnabled</c> gets it, and only
+/// <c>false</c> turns it off (#2528). <c>[SuppressGuidInterception]</c> keeps the original call where a v4 is
+/// deliberate.
+/// </para>
+/// <para>
+/// An interceptor has the intercepted method's signature, so it returns a <see cref="Guid"/>: it cannot attach metadata
+/// to the value, only replace it. Third-party time-ordered generators (Marten, UUIDNext, Medo) are therefore not
+/// intercepted: they already return time-ordered ids, and a pass-through interceptor would change nothing.
+/// </para>
+/// </remarks>
+/// <docs>operations/diagnostics/whiz058</docs>
 [Generator]
 public class GuidInterceptorGenerator : IIncrementalGenerator {
   // Method signatures to intercept
@@ -34,21 +47,14 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
   private const string METHOD_NEW_GUID = "NewGuid";
   private const string METHOD_CREATE_VERSION_7 = "CreateVersion7";
   private const string GUID_VERSION_7 = "Version7";
+  private const string TEMPLATE_FILE = "GuidInterceptorsTemplate.cs";
+  private const string SNIPPETS_FILE = "GuidInterceptorSnippets.cs";
 
-  // Third-party library patterns
-  private static readonly (string TypePattern, string MethodName, string Version, string Source)[] _thirdPartyMethods = [
-    ("Marten.Schema.Identity.CombGuidIdGeneration", METHOD_NEW_GUID, GUID_VERSION_7, "SourceMarten"),
-    ("UUIDNext.Uuid", "NewDatabaseFriendly", GUID_VERSION_7, "SourceUuidNext"),
-    ("UUIDNext.Uuid", "NewSequential", GUID_VERSION_7, "SourceUuidNext"),
-    ("Medo.Uuid7", "NewUuid7", GUID_VERSION_7, "SourceMedo"),
-  ];
-
-  // Every method name _resolveGuidVersionAndSource can match, derived from the same constants and table so
-  // the predicate cannot drift from the transform.
+  // Every method name _resolveGuidVersionAndSource can match, derived from the same constants so the predicate
+  // cannot drift from the transform.
   private static readonly HashSet<string> _interceptableMethodNames = [
     METHOD_NEW_GUID,
     METHOD_CREATE_VERSION_7,
-    .. _thirdPartyMethods.Select(static m => m.MethodName),
   ];
 
   /// <inheritdoc/>
@@ -57,7 +63,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     var interceptionEnabled = context.AnalyzerConfigOptionsProvider.Select(
         static (provider, _) => {
           provider.GlobalOptions.TryGetValue("build_property.WhizbangGuidInterceptionEnabled", out var value);
-          return string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+          return IsInterceptionEnabled(value);
         }
     );
 
@@ -92,6 +98,16 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
         }
     );
   }
+
+  /// <summary>
+  /// Whether a project's <c>WhizbangGuidInterceptionEnabled</c> value turns interception on. On by default (#2528): an
+  /// unset, blank or unrecognized value is on, and only <c>false</c> turns it off.
+  /// </summary>
+  /// <param name="value">The property's value as the build delivers it, or null when absent.</param>
+  /// <returns><see langword="false"/> only for <c>false</c>, in any case and surrounding whitespace.</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/GuidInterceptorGeneratorTests.cs:IsInterceptionEnabled_OnlyFalseTurnsItOffAsync</tests>
+  public static bool IsInterceptionEnabled(string? value) =>
+      !string.Equals(value?.Trim(), "false", StringComparison.OrdinalIgnoreCase);
 
   /// <summary>
   /// The syntax-only test that decides which nodes reach the semantic transform. Runs on every node of every
@@ -168,6 +184,12 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
       ));
     }
 
+    // The compiler's own encoding of the call's location; the file-path form is deprecated.
+    var interceptable = context.SemanticModel.GetInterceptableLocation(invocation, ct);
+    if (interceptable is null) {
+      return (null, null);
+    }
+
     // Generate unique interceptor method name
     var safeFileName = _sanitizeFileName(filePath);
     var interceptorName = $"Intercept_{safeFileName}_{lineNumber}_{columnNumber}";
@@ -180,13 +202,15 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
         FullyQualifiedTypeName: $"global::{containingType}",
         GuidVersion: guidVersion,
         GuidSource: guidSource,
-        InterceptorMethodName: interceptorName
+        InterceptorMethodName: interceptorName,
+        LocationVersion: interceptable.Version,
+        LocationData: interceptable.Data
     ), null);
   }
 
   /// <summary>
   /// Resolves the GUID version and source metadata for a given containing type and method name.
-  /// Checks System.Guid methods first, then third-party library methods.
+  /// Only System.Guid's NewGuid and CreateVersion7 are interceptable.
   /// </summary>
   private static (string? Version, string? Source) _resolveGuidVersionAndSource(string? containingType, string methodName) {
     // Check for System.Guid methods
@@ -196,13 +220,6 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
       }
       if (methodName == METHOD_CREATE_VERSION_7) {
         return (GUID_VERSION_7, "SourceMicrosoft");
-      }
-    }
-
-    // Check for third-party methods
-    foreach (var (typePattern, method, version, source) in _thirdPartyMethods) {
-      if (containingType == typePattern && methodName == method) {
-        return (version, source);
       }
     }
 
@@ -360,17 +377,6 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
       bool enabled) {
 #pragma warning restore S3776, S1144
 
-    // Report diagnostics for intercepted calls (always, even when disabled)
-    foreach (var info in intercepted) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.GuidCallIntercepted,
-          Location.None,
-          $"{info.FullyQualifiedTypeName.Replace("global::", "")}.{info.OriginalMethod}()",
-          info.FilePath,
-          info.LineNumber.ToString(CultureInfo.InvariantCulture)
-      ));
-    }
-
     // Report diagnostics for suppressed calls (always, even when disabled)
     foreach (var info in suppressed) {
       context.ReportDiagnostic(Diagnostic.Create(
@@ -383,9 +389,21 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
       ));
     }
 
-    // Skip code generation if interception is disabled via MSBuild property
+    // Skip code generation if interception is turned off via MSBuild property: nothing is replaced, so nothing is
+    // reported as intercepted.
     if (!enabled) {
       return;
+    }
+
+    // Report each replaced call
+    foreach (var info in intercepted) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.GuidCallIntercepted,
+          Location.None,
+          $"{info.FullyQualifiedTypeName.Replace("global::", "")}.{info.OriginalMethod}()",
+          info.FilePath,
+          info.LineNumber.ToString(CultureInfo.InvariantCulture)
+      ));
     }
 
     // Generate interceptors if there are any calls to intercept
@@ -393,60 +411,24 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
       return;
     }
 
-    var sb = new StringBuilder();
-    sb.AppendLine("// <auto-generated/>");
-    sb.AppendLine($"// Generated by Whizbang.Generators.GuidInterceptorGenerator at {Whizbang.Generators.Shared.Utilities.TemplateUtilities.DeterministicBuildStamp}");
-    sb.AppendLine("// DO NOT EDIT - Changes will be overwritten");
-    sb.AppendLine("#nullable enable");
-    sb.AppendLine();
-    sb.AppendLine("namespace System.Runtime.CompilerServices {");
-    sb.AppendLine("  /// <summary>");
-    sb.AppendLine("  /// Specifies the location where an interceptor method intercepts a call.");
-    sb.AppendLine("  /// </summary>");
-    sb.AppendLine("  [global::System.AttributeUsage(");
-    sb.AppendLine("      global::System.AttributeTargets.Method,");
-    sb.AppendLine("      AllowMultiple = true,");
-    sb.AppendLine("      Inherited = false)]");
-    sb.AppendLine("  file sealed class InterceptsLocationAttribute : global::System.Attribute {");
-    sb.AppendLine("    public InterceptsLocationAttribute(string filePath, int line, int column) { }");
-    sb.AppendLine("  }");
-    sb.AppendLine("}");
-    sb.AppendLine();
-    sb.AppendLine("namespace Whizbang.Generators.Generated {");
-    sb.AppendLine("  /// <summary>");
-    sb.AppendLine("  /// Auto-generated interceptors for GUID creation calls.");
-    sb.AppendLine("  /// </summary>");
-    sb.AppendLine("  file static class GuidInterceptors {");
-
+    var assembly = typeof(GuidInterceptorGenerator).Assembly;
+    var snippet = TemplateUtilities.ExtractSnippet(assembly, SNIPPETS_FILE, "INTERCEPTOR_REPLACE");
+    var methods = new StringBuilder();
     foreach (var info in intercepted) {
-      sb.AppendLine();
-      sb.AppendLine("    /// <summary>");
-      sb.AppendLine($"    /// Intercepts {info.FullyQualifiedTypeName.Replace("global::", "")}.{info.OriginalMethod}() at {info.FilePath}:{info.LineNumber}");
-      sb.AppendLine("    /// </summary>");
-      sb.AppendLine($"    [global::System.Runtime.CompilerServices.InterceptsLocation(\"{_escapeString(info.FilePath)}\", {info.LineNumber}, {info.ColumnNumber})]");
-      sb.AppendLine($"    internal static global::Whizbang.Core.ValueObjects.TrackedGuid {info.InterceptorMethodName}() {{");
-
-      // Generate the actual call based on the original method
-      // Only the two calls that are not a plain no-argument invocation need an arm of their own:
-      // NewDatabaseFriendly takes a database argument and NewUuid7 needs .ToGuid(). Every other
-      // interceptable method — Guid.NewGuid, Guid.CreateVersion7, Marten's NewGuid, UUIDNext's
-      // NewSequential — rendered as "{type}.{method}()" before and renders identically here.
-      var originalCall = info.OriginalMethod switch {
-        "NewDatabaseFriendly" => $"{info.FullyQualifiedTypeName}.NewDatabaseFriendly(global::UUIDNext.Database.PostgreSql)",
-        "NewUuid7" => $"{info.FullyQualifiedTypeName}.NewUuid7().ToGuid()",
-        _ => $"{info.FullyQualifiedTypeName}.{info.OriginalMethod}()"
-      };
-
-      sb.AppendLine("      return global::Whizbang.Core.ValueObjects.TrackedGuid.FromIntercepted(");
-      sb.AppendLine($"          {originalCall},");
-      sb.AppendLine($"          global::Whizbang.Core.ValueObjects.GuidMetadatas.{info.GuidVersion} | global::Whizbang.Core.ValueObjects.GuidMetadatas.{info.GuidSource});");
-      sb.AppendLine("    }");
+      methods.AppendLine();
+      methods.Append(snippet
+        .Replace("__ORIGINAL_CALL__", $"{info.FullyQualifiedTypeName.Replace("global::", "")}.{info.OriginalMethod}()")
+        .Replace("__FILE_PATH__", info.FilePath)
+        .Replace("__LINE__", info.LineNumber.ToString(CultureInfo.InvariantCulture))
+        .Replace("__LOCATION_VERSION__", info.LocationVersion.ToString(CultureInfo.InvariantCulture))
+        .Replace("__LOCATION_DATA__", _escapeString(info.LocationData))
+        .Replace("__INTERCEPTOR_NAME__", info.InterceptorMethodName));
     }
 
-    sb.AppendLine("  }");
-    sb.AppendLine("}");
-
-    context.AddSource("GuidInterceptors.g.cs", sb.ToString());
+    var source = TemplateUtilities.GetEmbeddedTemplate(assembly, TEMPLATE_FILE);
+    source = TemplateUtilities.ReplaceHeaderRegion(assembly, source);
+    source = TemplateUtilities.ReplaceRegion(source, "INTERCEPTOR_METHODS", methods.ToString());
+    context.AddSource("GuidInterceptors.g.cs", source);
   }
 
   private static string _escapeString(string s) {
