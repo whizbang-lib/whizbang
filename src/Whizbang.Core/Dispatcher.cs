@@ -3806,11 +3806,15 @@ public abstract partial class Dispatcher(
   internal ValueTask ProcessTagsIfEnabledAsync(object message, Type messageType, CancellationToken ct = default) {
     // Runs after every dispatch, so it allocates nothing while debug is off (#1756): the log calls are
     // source-generated and check the level before building anything, and the step completes synchronously unless
-    // the processor does not, so no async state machine is created on the common paths
+    // the processor does not, so no async state machine is created on the common paths. The type's name is read
+    // only when debug is on: the runtime caches Type.Name behind a weak handle, so after a collection the read
+    // allocates again (#2528)
     var logger = DispatcherLogger;
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
-    Log.TagProcessingEntered(logger, TypeNameFormatter.ForLog(messageType));
+    if (logger.IsEnabled(LogLevel.Debug)) {
+#pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through
+      Log.TagProcessingEntered(logger, TypeNameFormatter.ForLog(messageType));
 #pragma warning restore CA1873
+    }
 
     // Skip if tag processing is disabled
     if (!_coreOptions.EnableTagProcessing) {
