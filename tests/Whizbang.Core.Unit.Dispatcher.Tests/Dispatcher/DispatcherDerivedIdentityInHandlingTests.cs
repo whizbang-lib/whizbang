@@ -26,7 +26,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// <code-under-test>src/Whizbang.Core/Dispatcher.cs</code-under-test>
 [Category("Dispatcher")]
 [Category("Messaging")]
-[NotInParallel("StreamIdExtractorRegistry")]
+[NotInParallel("StreamIdExtractorRegistry")] // the process-wide stream id extractor registry these tests register into
 public class DispatcherDerivedIdentityInHandlingTests {
 
   /// <summary>An event a receptor publishes explicitly, on a stream it names.</summary>

@@ -141,7 +141,7 @@ public partial class BlueGreenRebuildIntegrationTests {
   /// </summary>
   [Test]
   [Explicit]
-  [NotInParallel("rebuild-measurement")]
+  [NotInParallel("rebuild-measurement")] // the database: a measurement beside it would load the same server and skew its plan and timings
   [Timeout(60 * 60 * 1000)]
   public async Task Measure_TheBatchedReadsPlanAsync(CancellationToken cancellationToken) {
     var count = int.TryParse(Environment.GetEnvironmentVariable("WHIZBANG_REBUILD_STREAMS"), out var configured) ? configured : 5_000;
@@ -193,7 +193,7 @@ public partial class BlueGreenRebuildIntegrationTests {
   /// </summary>
   [Test]
   [Explicit]
-  [NotInParallel("rebuild-measurement")]
+  [NotInParallel("rebuild-measurement")] // the database: a measurement beside it would load the same server and skew its plan and timings
   [Timeout(60 * 60 * 1000)]
   public async Task Measure_TheBatchedCursorWritesPlanAsync(CancellationToken cancellationToken) {
     var count = int.TryParse(Environment.GetEnvironmentVariable("WHIZBANG_REBUILD_STREAMS"), out var configured) ? configured : 5_000;

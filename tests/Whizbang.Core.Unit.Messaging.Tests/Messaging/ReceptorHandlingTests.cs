@@ -21,7 +21,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <code-under-test>src/Whizbang.Core/Messaging/ReceptorHandling.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Messaging/ReceptorInvoker.cs</code-under-test>
 [Category("Messaging")]
-[NotInParallel("ReceptorHandlingProbe")]
+[NotInParallel("ReceptorHandlingProbe")] // the probe event's receptor registration: a test beside it registering the same event type would see these handlings
 public class ReceptorHandlingTests {
   [Test]
   public async Task InvokeAsync_TheReceptorBody_RunsInTheHandlingOfItsEnvelopeAsync() {
