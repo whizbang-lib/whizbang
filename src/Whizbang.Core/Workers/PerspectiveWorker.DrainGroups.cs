@@ -68,6 +68,13 @@ public partial class PerspectiveWorker {
       if (filteredEvents.Count == 0) {
         continue;
       }
+      if (_writeBehind is not null && _writeModeOf(perspectiveName) == PerspectiveWriteMode.WriteBehind) {
+        // #2247: a write-behind pair's later laps hold too, as its first lap does; a lap run per pair would flush the
+        // model it just held.
+        var parallel = new ParallelOptions { MaxDegreeOfParallelism = 1, CancellationToken = ct };
+        await _drainSetBasedLapAsync([(streamId, perspectiveName, filteredEvents)], currentContext, parallel, ct).ConfigureAwait(false);
+        continue;
+      }
       await _drainPerspectiveGatedAsync(streamId, perspectiveName, filteredEvents, currentContext, ct).ConfigureAwait(false);
     }
   }
