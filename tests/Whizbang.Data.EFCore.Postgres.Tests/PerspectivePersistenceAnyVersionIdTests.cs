@@ -13,7 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
 /// A <c>[WhizbangId(AcceptAnyVersion = true)]</c> id stored in a perspective document reads back whatever its
-/// Guid version, as the UUID string both writers store (#2518). A row whose
+/// Guid version, in both stored forms (the object form EF writes and the scalar form older rows hold). A row whose
 /// id field was never set holds an empty id; it loads, because the load path (the constructor and the
 /// <c>Value</c> initializer) stays unchecked on every id.
 /// </summary>
@@ -32,17 +32,19 @@ public class PerspectivePersistenceAnyVersionIdTests {
     var typeInfo = _options().GetTypeInfo(typeof(TestAnyVersionId));
 
     var json = JsonSerializer.Serialize(id, typeInfo);
-    var read = (TestAnyVersionId)JsonSerializer.Deserialize(json, typeInfo)!;
+    var fromScalar = (TestAnyVersionId)JsonSerializer.Deserialize(json, typeInfo)!;
+    var fromObject = (TestAnyVersionId)JsonSerializer.Deserialize($"{{\"Value\":\"{text}\"}}", typeInfo)!;
 
-    // The UUID string, the form Entity Framework writes under the id's scalar mapping (#2518).
+    // The UUID string since #2518; the object form an earlier release stored still reads.
     await Assert.That(json).IsEqualTo($"\"{text}\"");
-    await Assert.That(read).IsEqualTo(id);
+    await Assert.That(fromObject).IsEqualTo(id);
+    await Assert.That(fromScalar).IsEqualTo(id);
   }
 
   [Test]
   public async Task AnyVersionId_NeverSetStoredValue_LoadsAsync() {
     var typeInfo = _options().GetTypeInfo(typeof(TestAnyVersionId));
-    var json = $"\"{Guid.Empty}\"";
+    var json = $"{{\"Value\":\"{Guid.Empty}\"}}";
 
     var loaded = (TestAnyVersionId)JsonSerializer.Deserialize(json, typeInfo)!;
 

@@ -15,11 +15,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <summary>
 /// A strongly-typed id inside a perspective document is stored as a UUID string on every context that carries the
 /// Whizbang options extension (#2518): top level, nullable and inside a complex collection. Id equality translates to
-/// a uuid comparison, and <c>Contains</c> over ids to <c>= ANY</c>.
+/// a uuid comparison, <c>Contains</c> over ids to <c>= ANY</c>, and a row an earlier release stored in the object form
+/// <c>{"Value": ...}</c> still loads.
 /// </summary>
 /// <remarks>
-/// <see cref="StructuralContext"/> is a context without the extension or the convention, Entity Framework's own
-/// discovery: the object form <c>{"Value": ...}</c>, which the id mapping refuses to read.
+/// <see cref="StructuralContext"/> is a context without the extension, Entity Framework's own discovery: the object
+/// form, used here as the earlier release's writer.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/Perspectives/WhizbangIdTypeMapping.cs</code-under-test>
 [Category("Integration")]
@@ -80,45 +81,63 @@ public class WhizbangIdDocumentStorageTests {
   }
 
   [Test]
-  public async Task Convention_WithoutTheExtension_WritesScalarsRoundTripsAndTranslatesAsync() {
-    var row = _row(TestOrderId.New(), TestOrderId.New(), TestOrderId.New());
-    await using (var write = _context(o => new ConventionContext(o))) {
-      write.Rows.Add(row);
+  public async Task Convention_WithoutTheExtension_WritesScalarsReadsBothFormsAndTranslatesAsync() {
+    var orderId = TestOrderId.New();
+    var parentId = TestOrderId.New();
+    var lineId = TestOrderId.New();
+    var old = _row(orderId, parentId, lineId);
+    await using (var write = _context(o => new StructuralContext(o))) {
+      write.Rows.Add(old);
       await write.SaveChangesAsync();
     }
 
-    var stored = await _storedTextAsync(row.Id);
-    await Assert.That(stored).Contains($"\"OrderId\": \"{row.Data.OrderId.Value}\"");
-    await Assert.That(stored).Contains($"\"ParentId\": \"{row.Data.ParentId!.Value.Value}\"");
-    await Assert.That(stored).Contains($"\"LineId\": \"{row.Data.Lines[0].LineId.Value}\"");
-
     await using var db = _context(o => new ConventionContext(o));
-    var loaded = await db.Rows.AsNoTracking().SingleAsync(r => r.Id == row.Id);
-    await Assert.That(loaded.Data.OrderId).IsEqualTo(row.Data.OrderId);
-    await Assert.That(loaded.Data.ParentId).IsEqualTo(row.Data.ParentId);
-    await Assert.That(loaded.Data.Lines[0].LineId).IsEqualTo(row.Data.Lines[0].LineId);
+    var loaded = await db.Rows.AsNoTracking().SingleAsync(r => r.Id == old.Id);
+    await Assert.That(loaded.Data.OrderId).IsEqualTo(orderId);
+    await Assert.That(loaded.Data.ParentId).IsEqualTo(parentId);
+    await Assert.That(loaded.Data.Lines[0].LineId).IsEqualTo(lineId);
 
-    var wanted = new[] { row.Data.OrderId };
+    var fresh = _row(TestOrderId.New(), null, TestOrderId.New());
+    db.Rows.Add(fresh);
+    await db.SaveChangesAsync();
+    var stored = await _storedTextAsync(fresh.Id);
+    await Assert.That(stored).Contains($"\"OrderId\": \"{fresh.Data.OrderId.Value}\"");
+    await Assert.That(stored).Contains($"\"LineId\": \"{fresh.Data.Lines[0].LineId.Value}\"");
+    await Assert.That(stored).Contains("\"ParentId\": null");
+
+    var wanted = new[] { fresh.Data.OrderId };
     await Assert.That(db.Rows.Where(r => wanted.Contains(r.Data.OrderId)).ToQueryString()).Contains("= ANY (@wanted)");
   }
 
-  /// <summary>
-  /// The object form is not a stored form the id mapping reads: a row holding one is refused, naming the id type,
-  /// rather than read as something it is not.
-  /// </summary>
   [Test]
-  public async Task Whizbang_RefusesAnObjectFormIdNamingTheTypeAsync() {
-    var row = _row(TestOrderId.New(), null, TestOrderId.New());
+  public async Task Whizbang_ReadsTheObjectFormAndWritesTheScalarAsync() {
+    var orderId = TestOrderId.New();
+    var lineId = TestOrderId.New();
+    var parentId = TestOrderId.New();
+    var old = _row(orderId, parentId, lineId);
     await using (var write = _context(o => new StructuralContext(o))) {
-      write.Rows.Add(row);
+      write.Rows.Add(old);
       await write.SaveChangesAsync();
     }
 
     await using var db = _context(o => new WhizbangContext(o));
+    var loaded = await db.Rows.SingleAsync(r => r.Id == old.Id);
+    await Assert.That(loaded.Data.OrderId).IsEqualTo(orderId);
+    await Assert.That(loaded.Data.ParentId).IsEqualTo(parentId);
+    await Assert.That(loaded.Data.Lines[0].LineId).IsEqualTo(lineId);
 
-    await Assert.That(async () => await db.Rows.AsNoTracking().SingleAsync(r => r.Id == row.Id))
-      .Throws<Exception>()
-      .WithMessageContaining("TestOrderId must be a UUID string");
+    var fresh = _row(TestOrderId.New(), null, TestOrderId.New());
+    db.Rows.Add(fresh);
+    await db.SaveChangesAsync();
+    var stored = await _storedTextAsync(fresh.Id);
+    await Assert.That(stored).DoesNotContain("\"Value\"");
+
+    // A query that compares the id casts the stored text to uuid, which an object-form row cannot pass: rows must be
+    // rewritten to the scalar form before any id predicate runs over them.
+    var query = db.Rows.AsNoTracking().Where(r => r.Data.OrderId == orderId);
+    await Assert.That(async () => await query.CountAsync())
+      .Throws<PostgresException>()
+      .WithMessageContaining("invalid input syntax for type uuid");
   }
 
   [Before(Test)]
