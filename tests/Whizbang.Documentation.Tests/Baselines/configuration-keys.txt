@@ -782,6 +782,10 @@ Whizbang:Workers:Perspective:RetryOptions:BackoffMultiplier
 Whizbang:Workers:Perspective:RetryOptions:EnableExponentialBackoff
 Whizbang:Workers:Perspective:RetryOptions:MaxBackoffSeconds
 Whizbang:Workers:Perspective:RetryOptions:RetryTimeoutSeconds
+Whizbang:Workers:Perspective:WriteBehind:MaxBatchesPerModel
+Whizbang:Workers:Perspective:WriteBehind:MaxBytes
+Whizbang:Workers:Perspective:WriteBehind:MaxFlushIntervalMilliseconds
+Whizbang:Workers:Perspective:WriteBehind:MaxModels
 Whizbang:Workers:Perspective:WriteMode
 Whizbang:Workers:PerspectiveAffinity:IdleEvictionWindow
 Whizbang:Workers:PerspectiveAffinity:LongHoldWarning
