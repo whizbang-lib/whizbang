@@ -148,6 +148,11 @@ public static class OutboxSchema {
         DataType: WhizbangDataType.INTEGER,
         Nullable: false,
         DefaultValue: DefaultValue.Integer(150)
+      ),
+      new ColumnDefinition(
+        Name: Columns.SEQUENCE_HOLD_UNTIL,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
+        Nullable: true
       )
     ),
     // Nothing partial on a status bitmask. The outbox discriminates claimable and completed rows
@@ -231,5 +236,10 @@ public static class OutboxSchema {
     /// band a row nothing classified lands in. The claim orders streams by it.
     /// </summary>
     public const string PRIORITY = "priority";
+    /// <summary>
+    /// Sequence integrity (#2542): until when the drain holds an event for its commit-order stamp. NULL for no hold,
+    /// infinity for a hold until stamped, otherwise the instant a bounded hold runs out.
+    /// </summary>
+    public const string SEQUENCE_HOLD_UNTIL = "sequence_hold_until";
   }
 }

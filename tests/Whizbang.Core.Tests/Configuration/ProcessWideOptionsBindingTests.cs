@@ -481,6 +481,10 @@ public sealed class ProcessWideOptionsBindingTests {
     ["Whizbang:Core:EmptyStreamIdPolicy"] = "DeadLetter",
     ["Whizbang:Core:MaxMessagePayloadBytes"] = "1024",
     ["Whizbang:Core:MessagePayloadWarningRatio"] = "0.5",
+    ["Whizbang:Core:SequenceIntegrity"] = "UntilStamped",
+    ["Whizbang:Core:SequenceHoldTime"] = "00:00:02.500",
+    ["Whizbang:Core:SequenceHoldWarningAge"] = "00:05:00",
+    ["Whizbang:Core:SequenceHoldSampleInterval"] = "00:00:30",
     ["Whizbang:ShowBanner"] = "false",
   };
 
@@ -492,6 +496,10 @@ public sealed class ProcessWideOptionsBindingTests {
     await Assert.That(options.EmptyStreamIdPolicy).IsEqualTo(EmptyStreamIdPolicy.DeadLetter);
     await Assert.That(options.MaxMessagePayloadBytes).IsEqualTo(1024L);
     await Assert.That(options.MessagePayloadWarningRatio).IsEqualTo(0.5);
+    await Assert.That(options.SequenceIntegrity).IsEqualTo(Whizbang.Core.Messaging.SequenceIntegrity.UntilStamped);
+    await Assert.That(options.SequenceHoldTime).IsEqualTo(TimeSpan.FromMilliseconds(2500));
+    await Assert.That(options.SequenceHoldWarningAge).IsEqualTo(TimeSpan.FromMinutes(5));
+    await Assert.That(options.SequenceHoldSampleInterval).IsEqualTo(TimeSpan.FromSeconds(30));
     await Assert.That(options.ShowBanner).IsFalse();
   }
 

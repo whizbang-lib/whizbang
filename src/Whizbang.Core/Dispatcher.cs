@@ -911,6 +911,8 @@ public abstract partial class Dispatcher(
   // The message payload limit, checked where each message is serialized for the outbox. Built from the host's
   // options when the host did not register it, so the limit holds either way.
   private readonly MessagePayloadLimits _payloadLimits = MessagePayloadLimits.Resolve(serviceProvider);
+  // Sequence integrity (#2542): how long each outgoing event is held for its commit-order stamp, decided here at the origin.
+  private readonly SequenceIntegrityPolicy _sequenceIntegrity = SequenceIntegrityPolicy.Resolve(serviceProvider);
   // Message tag processor - invoked after successful receptor completion
   private readonly IMessageTagProcessor? _messageTagProcessor = serviceProvider.GetService<IMessageTagProcessor>();
 
@@ -4628,6 +4630,8 @@ public abstract partial class Dispatcher(
       var envelope = _createOutboxEnvelopeWithHop(eventData, eventType, messageId, sourceEnvelope, destination);
       _stampExplicitPriority(envelope, priority);   // an explicit number on the options is the caller's declaration
       envelope.PayloadLimitOverride = options?.MaxPayloadBytes;
+      envelope.SequenceIntegrityOverride = options?.SequenceIntegrity;
+      envelope.SequenceHoldTimeOverride = options?.SequenceHoldTime;
       // A copy marked handled here (a cascade that ran the event's receptors, which reaches this through
       // the generated outbox cascade) records it as a publish does (#1410 follow-up)
       if (recordLocalDispatch || _outboxCopyMark.Value == OutboxCopyMark.HandledLocally) {
@@ -5057,7 +5061,8 @@ public abstract partial class Dispatcher(
       var streamId = StreamIdentity.Of(jsonEnvelope);
       _payloadLimits.Enforce(jsonEnvelope.Payload, eventType, messageId.Value, streamId);
 
-      var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId, _ephemeralModeResolver);
+      var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId, _ephemeralModeResolver)
+        with { SequenceHoldMilliseconds = _sequenceHoldMilliseconds(eventData, eventType, destination, null, null) };
       // An effect is queued after its cause (#1410 follow-up)
       await _afterCauseCopyWriteAsync().ConfigureAwait(false);
       // Composite pre-fanout hook (Phase B): divert into the ambient collector when one is open.
@@ -5163,6 +5168,17 @@ public abstract partial class Dispatcher(
       envelope, messageTypeName, envelope.DispatchContext, scheduledFor is not null,
       Whizbang.Core.Priority.PriorityContext.CurrentParent, envelope.Priority));
   }
+
+  /// <summary>
+  /// Sequence integrity (#2542): how long the outbox holds an outgoing message for its commit-order stamp, in the stored
+  /// form. Only an event that is published is stamped and held; a command, and an event that is only stored, never is.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DispatcherSequenceIntegrityTests.cs</tests>
+  private int _sequenceHoldMilliseconds(object? payload, Type payloadType, string? destination,
+      SequenceIntegrity? callMode, TimeSpan? callHoldTime) =>
+    payload is IEvent && destination is not null
+      ? _sequenceIntegrity.For(payloadType, callMode, callHoldTime).HoldMilliseconds
+      : 0;
 
   /// <summary>
   /// Builds an OutboxMessage from the serialized envelope and metadata.
@@ -5424,6 +5440,8 @@ public abstract partial class Dispatcher(
       var envelope = _createSendEnvelope(message, context, new MessageDispatchContext { Mode = _outboxModeFor(handledLocallyReceipt), Source = MessageSource.Local, LocalDeferred = localDeferred }, callerMemberName, callerFilePath, callerLineNumber, copyId);
       _stampExplicitPriority(envelope, options?.Priority ?? Whizbang.Core.Priority.WorkPriority.UNDECLARED);
       envelope.PayloadLimitOverride = options?.MaxPayloadBytes;
+      envelope.SequenceIntegrityOverride = options?.SequenceIntegrity;
+      envelope.SequenceHoldTimeOverride = options?.SequenceHoldTime;
 
       // Start dispatch activity to serve as parent for handler traces (on receiving end)
       // The activity context will be propagated through the outbox message
@@ -5560,6 +5578,8 @@ public abstract partial class Dispatcher(
     var destination = decision.WriteOutbox ? _resolveDestination(message, messageType) : null;
     _stampExplicitPriority(envelope, options.Priority);
     envelope.PayloadLimitOverride = options.MaxPayloadBytes;
+    envelope.SequenceIntegrityOverride = options.SequenceIntegrity;
+    envelope.SequenceHoldTimeOverride = options.SequenceHoldTime;
     var copy = _serializeToNewOutboxMessage(envelope, message, messageType, destination, decision.DeferUntil);
     var receipt = DeliveryReceipt.Accepted(envelope.MessageId, destination ?? TypeNameFormatter.SimpleName(messageType), context.CorrelationId, context.CausationId,
       _streamIdExtractor?.ExtractStreamId(message, messageType));
@@ -6533,6 +6553,8 @@ public abstract partial class Dispatcher(
       MessageType = serialized.MessageType,
       ScheduledFor = scheduledFor,
       Priority = declaredPriority,
+      SequenceHoldMilliseconds = _sequenceHoldMilliseconds(payload, payloadType, destination,
+        envelope.SequenceIntegrityOverride, envelope.SequenceHoldTimeOverride),
       CollectiveLinkType = CollectivePredecessorLink.TypeFor(payload)
     };
 

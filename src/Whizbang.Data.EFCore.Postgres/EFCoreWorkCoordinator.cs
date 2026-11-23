@@ -441,6 +441,27 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<DateTimeOffset?> GetOldestSequenceHeldOutboxAsync(
+    Guid instanceId,
+    int maxRows,
+    CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    var functionName = BuildSchemaQualifiedName(schema, "wh_oldest_sequence_held_outbox");
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCoordinatorCommand();
+#pragma warning disable S2077 // the function name is schema-qualified from the resolved schema, never user input
+    cmd.CommandText = $"SELECT {functionName}(@instance_id, @max_rows)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("instance_id", instanceId);
+    cmd.Parameters.AddWithValue("max_rows", maxRows);
+    return ScalarResult.InstantOrNull(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
+  }
+
+  /// <inheritdoc />
   public async Task<int> NotifyScheduledRetryDueAsync(CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 

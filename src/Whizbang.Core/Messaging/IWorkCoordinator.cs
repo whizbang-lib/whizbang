@@ -797,6 +797,24 @@ public interface IWorkCoordinator {
     => Task.FromResult(false);
 
   /// <summary>
+  /// The arrival time of the oldest outbox event <paramref name="instanceId"/> holds for its commit-order stamp
+  /// (sequence integrity, #2542), read through <c>wh_oldest_sequence_held_outbox</c> from at most
+  /// <paramref name="maxRows"/> of the instance's oldest pending rows. Null when it holds none there, and from a
+  /// coordinator with no outbox (the default).
+  /// </summary>
+  /// <param name="instanceId">The instance whose holdings are read.</param>
+  /// <param name="maxRows">The most pending rows the reading walks.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/messaging/sequence-integrity#watching-held-messages</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SequenceIntegritySqlTests.cs:Coordinator_ReadsTheOldestHeldThroughTheFunctionAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSequenceHoldTests.cs</tests>
+  Task<DateTimeOffset?> GetOldestSequenceHeldOutboxAsync(
+    Guid instanceId,
+    int maxRows,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<DateTimeOffset?>(null);
+
+  /// <summary>
   /// Writes inbox messages the inbox batcher accepted and never stored to the dead-letter table, through the
   /// <c>wh_store_inbox_dead_letters</c> SQL function, as <c>wh_inbox</c> dead letters in the shape a stored inbox
   /// row's dead letter takes, so dead-letter recovery re-enters them through <c>store_inbox_messages</c> (#1885). The
@@ -4636,6 +4654,15 @@ public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// </summary>
   /// <docs>fundamentals/messaging/message-priority#declaration</docs>
   public int Priority { get; init; }
+
+  /// <summary>
+  /// How long the outbox holds this event for its commit-order stamp before publishing it: zero for no hold,
+  /// <see cref="SequenceHold.UNTIL_STAMPED_MILLISECONDS"/> to hold until stamped, otherwise the most it is held, in
+  /// milliseconds. Decided by the dispatcher (<see cref="SequenceIntegrityPolicy"/>) and stored by
+  /// <c>store_outbox_messages</c> as the row's <c>sequence_hold_until</c>. Ignored on a message that is not an event.
+  /// </summary>
+  /// <docs>fundamentals/messaging/sequence-integrity</docs>
+  public int SequenceHoldMilliseconds { get; init; }
 
   /// <summary>
   /// Whether this message is a composite event (implements

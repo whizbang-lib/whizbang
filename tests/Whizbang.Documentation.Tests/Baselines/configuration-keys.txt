@@ -74,6 +74,10 @@ Whizbang:Core:EmptyStreamIdPolicy
 Whizbang:Core:EnableTagProcessing
 Whizbang:Core:MaxMessagePayloadBytes
 Whizbang:Core:MessagePayloadWarningRatio
+Whizbang:Core:SequenceHoldSampleInterval
+Whizbang:Core:SequenceHoldTime
+Whizbang:Core:SequenceHoldWarningAge
+Whizbang:Core:SequenceIntegrity
 Whizbang:Core:ShutdownDeregistrationTimeout
 Whizbang:Core:TagProcessingMode
 Whizbang:Database
