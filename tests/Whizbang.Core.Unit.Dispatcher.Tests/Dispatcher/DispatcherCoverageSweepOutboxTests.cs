@@ -30,6 +30,12 @@ namespace Whizbang.Core.Tests.Dispatcher;
 public sealed record SweepDynamicRegisteredEvent([property: StreamId] Guid Id, string Name) : IEvent;
 
 /// <summary>
+/// Opts out of the event and message id time-ordering check (#2528), so a cascade may carry a non-v7 id for it.
+/// </summary>
+[SuppressGuidOrderingValidation]
+public sealed record SweepSuppressedOrderingEvent([property: StreamId] Guid Id, string Name) : IEvent;
+
+/// <summary>
 /// Registered variant carrying a settable StreamId so the dynamic-path IHasStreamId
 /// inheritance branch can be observed.
 /// </summary>
@@ -951,6 +957,31 @@ public class DispatcherCoverageSweepOutboxTests {
     } else {
       await Assert.That(strategy.Queued[0].MessageId).IsNotEqualTo(Guid.Empty);
     }
+  }
+
+  /// <summary>
+  /// The cascade's preset id is checked by the message's type (#2528): a type carrying
+  /// [SuppressGuidOrderingValidation] is written under a non-v7 id, an unattributed type is refused, and the empty
+  /// id is refused even for the opted-out type.
+  /// </summary>
+  [Test]
+  public async Task CascadeByRuntimeType_ASuppressedTypeTakesANonV7Id_OthersAndTheEmptyIdAreRefusedAsync() {
+    var strategy = new SweepWorkStrategy();
+    var dispatcher = new SweepOutboxDispatcher(_buildProvider(strategy: strategy));
+    var v4 = Guid.Parse("919108f7-52d1-4320-9bac-f847db4148a8");
+
+    await dispatcher.CallCascadeByRuntimeTypeAsync(new SweepSuppressedOrderingEvent(Guid.CreateVersion7(), "opted-out"), v4);
+
+    await Assert.That(strategy.Queued).Count().IsEqualTo(1);
+    await Assert.That(strategy.Queued[0].MessageId).IsEqualTo(v4);
+
+    await Assert.That(async () => await dispatcher.CallCascadeByRuntimeTypeAsync(
+        new SweepDynamicRegisteredEvent(Guid.CreateVersion7(), "not opted out"), v4))
+      .Throws<GuidOrderingException>();
+    await Assert.That(async () => await dispatcher.CallCascadeByRuntimeTypeAsync(
+        new SweepSuppressedOrderingEvent(Guid.CreateVersion7(), "empty"), Guid.Empty))
+      .Throws<GuidOrderingException>();
+    await Assert.That(strategy.Queued).Count().IsEqualTo(1).Because("nothing refused was queued");
   }
 
   /// <summary>

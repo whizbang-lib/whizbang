@@ -122,4 +122,43 @@ public class NonTimeOrderedIdAnalyzerTests {
 
     await Assert.That(diagnostics).IsEmpty();
   }
+
+  /// <summary>
+  /// A method or type carrying <c>[SuppressGuidOrderingValidation]</c> is a deliberate opt-out: WHIZ037 is quiet
+  /// inside it (in a local function or lambda within it too), and still reports in the code beside it.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AMethodCarryingTheSuppression_IsQuiet_AndItsNeighborStillReportsAsync() {
+    var diagnostics = await _diagnosticsAsync("""
+      [SuppressGuidOrderingValidation]
+      public static void Legacy(Envelope e, string s) { e.MessageId = Guid.Parse(s); }
+      [SuppressGuidOrderingValidation]
+      public static void LegacyLocal(Envelope e, string s) { void Set() => e.EventId = Guid.Parse(s); Set(); }
+      public static void Unmarked(Envelope e, string s) { e.MessageId = Guid.Parse(s); }
+      """);
+
+    await Assert.That(diagnostics).Count().IsEqualTo(1)
+      .Because("only the unmarked method reports");
+    await Assert.That(diagnostics[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("MessageId");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task ATypeCarryingTheSuppression_IsQuietInEveryMemberAsync() {
+    var source = PRELUDE + """
+
+      [SuppressGuidOrderingValidation]
+      public sealed class LegacyImporter {
+        public void Run(Envelope e, string s) { e.MessageId = Guid.Parse(s); }
+        public sealed class Nested {
+          public static MessageId Run(byte[] b) => new MessageId(new Guid(b));
+        }
+      }
+      """;
+    var diagnostics = (await AnalyzerTestHelper.GetDiagnosticsAsync<NonTimeOrderedIdAnalyzer>(source))
+      .Where(d => d.Id == "WHIZ037").ToArray();
+
+    await Assert.That(diagnostics).IsEmpty();
+  }
 }

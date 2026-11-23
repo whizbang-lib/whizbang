@@ -225,6 +225,91 @@ public class ImmediateWorkCoordinatorStrategyTests {
   }
 
   // ========================================
+  // Time-ordering opt-out (#2528)
+  // ========================================
+
+  /// <summary>Opts out of the event and message id time-ordering check.</summary>
+  [SuppressGuidOrderingValidation]
+  public record SuppressedOrderingEvent([StreamId] string Data) : IEvent;
+
+  private static readonly Guid _v4 = Guid.Parse("919108f7-52d1-4320-9bac-f847db4148a8");
+
+  private static ImmediateWorkCoordinatorStrategy _orderingStrategy(FakeWorkCoordinator coordinator) => new(
+    coordinator: coordinator,
+    instanceProvider: new FakeServiceInstanceProvider(),
+    options: new WorkCoordinatorOptions { PartitionCount = 10000, DebugMode = false },
+    logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+    scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+    lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+    tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+    deferredChannel: new DeferredOutboxChannel(),
+    systemEventOptions: Options.Create(new SystemEventOptions()),
+    workChannelWriter: new WorkChannelWriter(),
+    auditDecisionHook: null, detachedWork: new DetachedLifecycleWork());
+
+  // The unchecked constructor: the strict From would refuse a non-v7 id before the entry point is reached
+  private static MessageEnvelope<JsonElement> _orderingEnvelope(Guid id) => new() {
+    MessageId = new MessageId(id),
+    Payload = JsonElement.Parse("{}"),
+    Hops = [],
+    DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
+  };
+
+  private static OutboxMessage _orderingOutbox(Guid id, Type messageType) => new() {
+    MessageId = id,
+    Destination = "test-topic",
+    Envelope = _orderingEnvelope(id),
+    EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
+    StreamId = (Guid)TrackedGuid.New(),
+    IsEvent = true,
+    MessageType = Whizbang.Core.TypeNameFormatter.Format(messageType),
+    Metadata = new EnvelopeMetadata { MessageId = new MessageId(id), Hops = [] }
+  };
+
+  private static InboxMessage _orderingInbox(Guid id, Type messageType) => new() {
+    MessageId = id,
+    HandlerName = "TestHandler",
+    Envelope = _orderingEnvelope(id),
+    EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
+    StreamId = (Guid)TrackedGuid.New(),
+    IsEvent = true,
+    MessageType = Whizbang.Core.TypeNameFormatter.Format(messageType)
+  };
+
+  [Test]
+  public async Task QueueOutboxAndInbox_ASuppressedTypeWithANonV7Id_IsQueuedAndFlushedAsync() {
+    var coordinator = new FakeWorkCoordinator();
+    var sut = _orderingStrategy(coordinator);
+
+    sut.QueueOutboxMessage(_orderingOutbox(_v4, typeof(SuppressedOrderingEvent)));
+    sut.QueueInboxMessage(_orderingInbox(_v4, typeof(SuppressedOrderingEvent)));
+    await sut.FlushAsync(WorkBatchOptions.None);
+
+    await Assert.That(coordinator.LastNewOutboxMessages.Single().MessageId).IsEqualTo(_v4);
+    await Assert.That(coordinator.LastNewInboxMessages.Single().MessageId).IsEqualTo(_v4);
+  }
+
+  [Test]
+  public async Task QueueOutboxAndInbox_AnUnattributedTypeWithANonV7Id_IsRefusedAsync() {
+    var sut = _orderingStrategy(new FakeWorkCoordinator());
+
+    await Assert.That(() => sut.QueueOutboxMessage(_orderingOutbox(_v4, typeof(TestEvent))))
+      .Throws<Whizbang.Core.Validation.GuidOrderingException>();
+    await Assert.That(() => sut.QueueInboxMessage(_orderingInbox(_v4, typeof(TestEvent))))
+      .Throws<Whizbang.Core.Validation.GuidOrderingException>();
+  }
+
+  [Test]
+  public async Task QueueOutboxAndInbox_ASuppressedTypeWithTheEmptyId_IsRefusedAsync() {
+    var sut = _orderingStrategy(new FakeWorkCoordinator());
+
+    await Assert.That(() => sut.QueueOutboxMessage(_orderingOutbox(Guid.Empty, typeof(SuppressedOrderingEvent))))
+      .Throws<Whizbang.Core.Validation.GuidOrderingException>();
+    await Assert.That(() => sut.QueueInboxMessage(_orderingInbox(Guid.Empty, typeof(SuppressedOrderingEvent))))
+      .Throws<Whizbang.Core.Validation.GuidOrderingException>();
+  }
+
+  // ========================================
   // Constructor Tests
   // ========================================
 

@@ -149,6 +149,43 @@ public class GuidOrderingRefusalMatrixTests : EFCoreTestBase {
     await Assert.That(await _countAsync(context, "SELECT count(*) FROM wh_event_store WHERE stream_id = @stream", refused, refused)).IsEqualTo(0L);
   }
 
+  /// <summary>
+  /// A type carrying [SuppressGuidOrderingValidation] opts out (#2528): its non-v7 event id is appended and its outbox
+  /// and inbox rows written, while the empty id is refused for it with nothing stored, and the control above shows an
+  /// unattributed type is refused.
+  /// </summary>
+  [Test]
+  public async Task ASuppressedType_IsStoredUnderANonV7Id_ButNeverUnderTheEmptyIdAsync() {
+    await using var context = CreateDbContext();
+    var coordinator = _coordinator(context);
+    var v4 = Guid.Parse("919108f7-52d1-4320-9bac-f847db4148a8");
+    var v5 = Guid.Parse("886313e1-3b8a-5372-9b90-0c9aee199e5d");
+    var v8 = Guid.Parse("320c3d4d-cc00-875b-8ec9-32d5f69181c0");
+    var appendStream = (Guid)TrackedGuid.New();
+    var suppressedName = Whizbang.Core.TypeNameFormatter.Format(typeof(SuppressedOrderingProbeNoted));
+
+    await new EFCoreEventStore<WorkCoordinationDbContext>(context).AppendAsync(appendStream, _suppressedEnvelope(v4, appendStream));
+    await coordinator.StoreOutboxMessagesAsync([_outbox(v5, (Guid)TrackedGuid.New()) with { MessageType = suppressedName }], partitionCount: 100);
+    await coordinator.StoreInboxMessagesAsync([_inbox(v8, (Guid)TrackedGuid.New()) with { MessageType = suppressedName }], partitionCount: 100);
+
+    await Assert.That(await _countAsync(context, "SELECT count(*) FROM wh_event_store WHERE event_id = @id", v4)).IsEqualTo(1L);
+    await Assert.That(await _countAsync(context, "SELECT count(*) FROM wh_outbox WHERE message_id = @id", v5)).IsEqualTo(1L);
+    await Assert.That(await _countAsync(context, "SELECT count(*) FROM wh_inbox WHERE message_id = @id", v8)).IsEqualTo(1L);
+
+    var emptyStream = (Guid)TrackedGuid.New();
+    await Assert.That(async () => await new EFCoreEventStore<WorkCoordinationDbContext>(context)
+        .AppendAsync(emptyStream, _suppressedEnvelope(Guid.Empty, emptyStream)))
+      .Throws<GuidOrderingException>();
+    await _assertNothingStoredAsync(context, emptyStream, Guid.Empty);
+  }
+
+  private static MessageEnvelope<SuppressedOrderingProbeNoted> _suppressedEnvelope(Guid id, Guid stream) => new() {
+    MessageId = new MessageId(id),
+    Payload = new SuppressedOrderingProbeNoted { StreamId = stream },
+    Hops = [],
+    DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+  };
+
   /// <summary>A batch holding one refused id writes none of its rows: the check runs before any SQL.</summary>
   [Test]
   public async Task ABatchWithOneRefusedId_StoresNoneOfItsRowsAsync() {
@@ -229,4 +266,12 @@ public class GuidOrderingRefusalMatrixTests : EFCoreTestBase {
     Hops = [],
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
   };
+}
+
+/// <summary>An event type that opts out of the event and message id time-ordering check (#2528).</summary>
+[Whizbang.Core.SuppressGuidOrderingValidation]
+public sealed record SuppressedOrderingProbeNoted : Whizbang.Core.IEvent {
+  /// <summary>The stream.</summary>
+  [Whizbang.Core.StreamId]
+  public required Guid StreamId { get; init; }
 }
