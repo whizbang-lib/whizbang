@@ -145,6 +145,10 @@ public class CutOfUnauditedOriginSqlTests : EFCoreTestBase {
     await _executeAsync(conn,
       "INSERT INTO wh_integrity_seals (origin_service_id, sealed_through, updated_at) VALUES (@o, 5, NOW())", ("o", audited));
     await _knowAsync(conn, audited, "origin.requests");
+    var noAddress = (Guid)TrackedGuid.New();
+    await _executeAsync(conn,
+      "INSERT INTO wh_integrity_seals (origin_service_id, sealed_through, updated_at) VALUES (@o, 2, NOW())", ("o", noAddress));
+    await _knowAsync(conn, noAddress, null);
     await using var meters = new ServiceCollection().AddMetrics().BuildServiceProvider();
     var measured = new List<long>();
     using var listener = _listen(meters, measured);
@@ -155,16 +159,21 @@ public class CutOfUnauditedOriginSqlTests : EFCoreTestBase {
 
     var found = await step.ReportAsync(services, CancellationToken.None);
 
-    await Assert.That(found.Select(s => s.OriginServiceId).ToList()).IsEquivalentTo(new[] { unaudited }.ToList());
+    await Assert.That(found.Select(s => s.OriginServiceId).ToList()).IsEquivalentTo(new[] { unaudited, noAddress }.ToList());
+    await Assert.That(logger.Entries.Count(e => e.Level == LogLevel.Warning
+        && e.Message.Contains(noAddress.ToString(), StringComparison.Ordinal)
+        && e.Message.Contains("announce no request address", StringComparison.Ordinal))).IsEqualTo(1);
     await Assert.That(logger.Entries.Count(e => e.Level == LogLevel.Warning
         && e.Message.Contains(unaudited.ToString(), StringComparison.Ordinal))).IsEqualTo(1)
       .Because("the origin with a seal nothing audits is named, so its missing checkpoint route can be found");
     await Assert.That(logger.Entries.Any(e => e.Message.Contains(audited.ToString(), StringComparison.Ordinal))).IsFalse();
     listener.RecordObservableInstruments();
-    await Assert.That(measured).IsEquivalentTo([1L]).Because("the gauge counts the seals nothing audits");
+    await Assert.That(measured).IsEquivalentTo([2L]).Because("the gauge counts the seals nothing audits");
     await Assert.That(step.Name).IsEqualTo("unaudited-seal-report");
 
     await _knowAsync(conn, unaudited, "origin.requests");
+    await _executeAsync(conn, "UPDATE wh_integrity_known_origins SET request_topic = 'origin.requests' WHERE origin_service_id = @o",
+      ("o", noAddress));
     await step.RunAsync(services, CancellationToken.None);
     measured.Clear();
     listener.RecordObservableInstruments();

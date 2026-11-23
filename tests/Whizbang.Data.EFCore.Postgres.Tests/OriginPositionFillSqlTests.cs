@@ -445,6 +445,129 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     await Assert.That(services.Any(d => d.ImplementationType == typeof(OriginPositionReceptorRegistrar))).IsTrue();
   }
 
+  [Test]
+  public async Task Step_ABatchOfOnlyUnknownRows_SendsNothing_AndAnOriginWithNoAddressIsNotAskedAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var unknown = await _seedAsync(conn, origin, null, minutesAgo: 10);
+    await _fillAsync(conn, origin, [], [], unknown: [unknown]);
+    var transport = new IntegrityWireTransport();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(origin, "origin-svc", _t0, "origin.requests");
+    tracker.RecordCheckpoint(TrackedGuid.New().Value, "silent-svc", _t0);
+    await using var services = _services(new StreamIntegrityOptions(), transport, tracker, metrics: null);
+
+    var cycle = await new OriginPositionFillStep(NullLogger.Instance).FillAsync(services, CancellationToken.None);
+
+    await Assert.That(cycle).IsEqualTo(new OriginPositionFillCycle(1, 0, "caught-up"))
+      .Because("the batch read its row and advanced the walk, but the origin already answered that it cannot place it");
+    await Assert.That(transport.Published).IsEmpty();
+  }
+
+  [Test]
+  public async Task AnswerReceptor_FillsAndCountsEachOutcome_AndAnswersWithoutADatabaseAreIgnoredAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var held = await _seedAsync(conn, origin, null, minutesAgo: 10);
+    await using var meters = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    var filled = new List<long>();
+    var notFilled = new List<long>();
+    using var listener = _listen(meters, ("whizbang.stream_integrity.origin_positions_filled", filled),
+      ("whizbang.stream_integrity.origin_positions_not_filled", notFilled));
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: meters.GetRequiredService<IMeterFactory>()));
+    await using var services = _services(new StreamIntegrityOptions(), null, null, metrics);
+    var receptor = new OriginPositionsAnswerReceptor(services.GetRequiredService<IServiceScopeFactory>(),
+      NullLogger<OriginPositionsAnswerReceptor>.Instance);
+
+    await receptor.HandleAsync(new OriginPositionsAnswer {
+      OriginServiceId = origin,
+      Positions = [new(held, 12)],
+      NotYetStamped = [TrackedGuid.New().Value],
+      Unknown = [TrackedGuid.New().Value, TrackedGuid.New().Value],
+    });
+
+    await Assert.That(await _originSeqAsync(conn, held)).IsEqualTo(12L);
+    await receptor.HandleAsync(new OriginPositionsAnswer { OriginServiceId = origin, OriginServiceName = "origin-svc" });
+    listener.RecordObservableInstruments();
+    await Assert.That(filled.Sum()).IsEqualTo(1L);
+    await Assert.That(notFilled.Sum()).IsEqualTo(3L).Because("one not stamped yet and two unknown, counted apart by answer");
+    await using var bare = new ServiceCollection().BuildServiceProvider();
+    await new OriginPositionsAnswerReceptor(bare.GetRequiredService<IServiceScopeFactory>(),
+      NullLogger<OriginPositionsAnswerReceptor>.Instance).HandleAsync(new OriginPositionsAnswer { OriginServiceId = origin });
+    await new RequestOriginPositionsReceptor(bare.GetRequiredService<IServiceScopeFactory>(),
+      NullLogger<RequestOriginPositionsReceptor>.Instance).HandleAsync(
+        new RequestOriginPositions { RequesterService = "consumer-svc", Topic = "consumer.inbox", EventIds = [held] });
+    await using var databaseOnly = new ServiceCollection().AddSingleton(_connection()).BuildServiceProvider();
+    await new RequestOriginPositionsReceptor(databaseOnly.GetRequiredService<IServiceScopeFactory>(),
+      NullLogger<RequestOriginPositionsReceptor>.Instance).HandleAsync(
+        new RequestOriginPositions { RequesterService = "consumer-svc", Topic = "consumer.inbox", EventIds = [held] });
+    await Assert.That(async () => await receptor.HandleAsync(null!)).Throws<ArgumentNullException>();
+    await Assert.That(async () => await new RequestOriginPositionsReceptor(bare.GetRequiredService<IServiceScopeFactory>(),
+      NullLogger<RequestOriginPositionsReceptor>.Instance).HandleAsync(null!)).Throws<ArgumentNullException>();
+    metrics.UpdateUnfilledOriginPositions(null);
+    var unfilled = new List<long>();
+    using var gauge = _listen(meters, ("whizbang.stream_integrity.origin_positions_unfilled", unfilled));
+    gauge.RecordObservableInstruments();
+    await Assert.That(unfilled).IsEmpty().Because("a null reading reports no series");
+  }
+
+  [Test]
+  public async Task RequestReceptor_AnswersEachAskedEventInExactlyOneList_ToTheAskersAddressAsync() {
+    await using var conn = await _openAsync();
+    var stamped = await _seedAsync(conn, null, null, minutesAgo: 10);
+    var unstamped = await _seedAsync(conn, null, null, minutesAgo: 10);
+    await _execAsync(conn, $"UPDATE wh_event_store SET commit_sequence = NULL WHERE event_id = '{unstamped}'");
+    var archived = TrackedGuid.New().Value;
+    await _execAsync(conn, $"INSERT INTO wh_event_archive (event_id, stream_id, event_type, version, commit_sequence) VALUES ('{archived}', '{archived}', '{TYPE}', 1, 77)");
+    var never = TrackedGuid.New().Value;
+    var transport = new IntegrityWireTransport();
+    var json = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    await using var services = new ServiceCollection()
+      .AddSingleton(_connection())
+      .AddSingleton<ITransport>(transport)
+      .AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(json))
+      .AddScoped<IWorkCoordinator>(_ => new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), json))
+      .BuildServiceProvider();
+    var receptor = new RequestOriginPositionsReceptor(services.GetRequiredService<IServiceScopeFactory>(),
+      NullLogger<RequestOriginPositionsReceptor>.Instance);
+
+    await receptor.HandleAsync(new RequestOriginPositions {
+      RequesterService = "consumer-svc",
+      Topic = "consumer.inbox",
+      EventIds = [stamped, unstamped, archived, never],
+      RequestId = TrackedGuid.New().Value,
+    });
+
+    var (envelope, destination, _) = transport.Published.Single();
+    var answer = (OriginPositionsAnswer)JsonSerializer.Deserialize(
+      ((Whizbang.Core.Observability.MessageEnvelope<JsonElement>)envelope).Payload.GetRawText(), json.GetTypeInfo(typeof(OriginPositionsAnswer)))!;
+    await Assert.That(destination.Address).IsEqualTo("consumer.inbox");
+    await Assert.That(answer.Positions.Select(p => p.EventId).ToList()).IsEquivalentTo(new[] { stamped, archived }.ToList());
+    await Assert.That(answer.Positions.Single(p => p.EventId == archived).CommitSequence).IsEqualTo(77L);
+    await Assert.That(answer.NotYetStamped).IsEquivalentTo([unstamped]);
+    await Assert.That(answer.Unknown).IsEquivalentTo([never]);
+    await Assert.That(answer.OriginServiceName).IsNull().Because("a host with no service identity answers without a name");
+  }
+
+  [Test]
+  public async Task TheStoreAndTheReport_ReachTheTablesThroughTheSearchPath_WhenNoSchemaIsNamedAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    _ = await _seedAsync(conn, origin, null, minutesAgo: 10);
+    var searchPath = new PostgresArchiveConnection(async ct => {
+      var connection = new NpgsqlConnection(ConnectionString);
+      await connection.OpenAsync(ct);
+      return connection;
+    }, Schema: null);
+
+    var unfilled = await new OriginPositionStore(searchPath).UnfilledAsync(CancellationToken.None);
+    await using var services = new ServiceCollection().AddSingleton(searchPath).BuildServiceProvider();
+    var unaudited = await new UnauditedSealReportStep(NullLogger.Instance).ReportAsync(services, CancellationToken.None);
+
+    await Assert.That(unfilled.Single().OriginServiceId).IsEqualTo(origin).Because("the Dapper driver names no schema");
+    await Assert.That(unaudited).IsEmpty();
+  }
+
   // ── fixture ──────────────────────────────────────────────────────────
 
   private sealed class ListLogger : ILogger {

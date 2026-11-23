@@ -93,8 +93,8 @@ public sealed class RunPermitAuditTests {
     "WhizbangStartupLogger", "UnsealedOffloadStartupWarning", "TagPolicyStartupValidator", "NoTransportConfiguredNotice",
     "UnobservedExceptionDiagnosticsWarmUp", "PerspectiveRowRetentionConfigurator", "ArchivedStreamRowsConfigurator",
     "CapabilityVerdictEnforcer", "MultiStreamCommandReceptorRegistrar", "IntegrityCheckpointReceptorRegistrar",
-    "IntegrityManifestReceptorRegistrar", "RebuildCommandReceptorRegistrar", "RedeliveryRequestReceptorRegistrar",
-    "ScheduledPrefixTruncateReceptorRegistrar", "ScheduledIntegritySweepReceptorRegistrar", "SagaWatchdogTickRouterRegistrar",
+    "IntegrityManifestReceptorRegistrar", "OriginPositionReceptorRegistrar", "RebuildCommandReceptorRegistrar",
+    "RedeliveryRequestReceptorRegistrar", "ScheduledPrefixTruncateReceptorRegistrar", "ScheduledIntegritySweepReceptorRegistrar", "SagaWatchdogTickRouterRegistrar",
     "DefaultBackupTickRegistrar", "IdleActivityTouchHookBinder", "IntegritySweepScheduler",
     // Operator-driven or fleet-wide recovery: it returns dead letters to the queues for every instance; this instance
     // takes them back only through the claim worker and the consumer, which obey the permit.

@@ -14,8 +14,11 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginPositionFillE2ETests.cs</tests>
+/// <remarks>
+/// Not in the control class (no <c>SystemControlTag</c>): each request names different events, so a later one must never
+/// supersede an earlier one still in flight, as a paced backfill's window answer is not superseded either.
+/// </remarks>
 [PinnedId("12b2fde7-d290-4f8a-9e0a-c41133a047c9")]
-[SystemControlTag(Tag = Tags.SystemTags.CONTROL, Properties = [])]
 public sealed record RequestOriginPositions : ICommand, IControlPlaneMessage {
   /// <summary>The asking service's logical name: the answer's Target.</summary>
   public required string RequesterService { get; init; }
@@ -44,8 +47,8 @@ public sealed record OriginPosition(Guid EventId, long CommitSequence);
 /// </summary>
 /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginPositionFillE2ETests.cs</tests>
+/// <remarks>Not in the control class, for the same reason as the request: every answer carries different events.</remarks>
 [PinnedId("49f7cffc-8bb0-41dd-8b43-273b3dc651b2")]
-[SystemControlTag(Tag = Tags.SystemTags.CONTROL, Properties = [])]
 public sealed record OriginPositionsAnswer : ICommand, IControlPlaneMessage {
   /// <summary>The answering origin's service id: the asker fills only events it holds from this origin.</summary>
   public required Guid OriginServiceId { get; init; }

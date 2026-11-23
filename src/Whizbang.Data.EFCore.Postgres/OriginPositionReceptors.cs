@@ -48,7 +48,8 @@ public sealed partial class RequestOriginPositionsReceptor(
       OriginServiceId = originServiceId,
       OriginServiceName = instanceProvider?.ServiceName,
       RequestId = message.RequestId,
-      Positions = [.. lookups.Where(l => l.CommitSequence is > 0 && l.State is "positioned" or "archived")
+      // The lookup gives a positioned or archived event its sequence, always.
+      Positions = [.. lookups.Where(l => l.State is "positioned" or "archived")
         .Select(l => new OriginPosition(l.EventId, l.CommitSequence!.Value))],
       NotYetStamped = [.. lookups.Where(l => l.State == "unstamped").Select(l => l.EventId)],
       Unknown = [.. lookups.Where(l => l.State == "unknown").Select(l => l.EventId)],
