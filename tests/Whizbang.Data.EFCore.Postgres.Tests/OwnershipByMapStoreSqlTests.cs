@@ -18,7 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// stream stayed wherever it was first written whatever the map said.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/562_StoresNameNoOwnerInMapMode.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/567_StoresNameNoOwnerInMapMode.sql</code-under-test>
 [Category("Shard5")]
 public class OwnershipByMapStoreSqlTests : EFCoreTestBase {
   private const string SUPPORTS_MAP = """{"partition_ownership_level":1}""";

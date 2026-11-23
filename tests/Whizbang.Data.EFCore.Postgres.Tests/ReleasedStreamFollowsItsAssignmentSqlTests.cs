@@ -27,7 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// stream it acquired before the assignment changed.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/claim-loop#releasing-unstarted-work</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/559_ReleasedStreamsLeaveTheirLedgerOwner.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/563_ReleasedStreamsLeaveTheirLedgerOwner.sql</code-under-test>
 [Category("Shard3")]
 public class ReleasedStreamFollowsItsAssignmentSqlTests : EFCoreTestBase {
   private const string PERSPECTIVE = "Release.Perspective";

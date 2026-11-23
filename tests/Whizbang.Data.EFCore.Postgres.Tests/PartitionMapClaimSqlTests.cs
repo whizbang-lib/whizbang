@@ -16,13 +16,13 @@ using Whizbang.Data.Postgres.Notifications;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Migration 565 (#2558): the published assignment carries an explicit partition map, and every claim reads it through
+/// Migrations 564 and 566 (#2558): the published assignment carries an explicit partition map, and every claim reads it through
 /// one predicate. Each claim test publishes the map that inverts the modulo (the claimer, member 1 of 2, gets the even
 /// partitions where the modulo gives it the odd ones) over work on partitions 0 and 1, so the map and the modulo give
 /// opposite answers and the test tells them apart.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/partition-assignment#incremental-map</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/565_ThePublishedAssignmentCarriesThePartitionMap.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/564_ThePublishedAssignmentCarriesThePartitionMap.sql</code-under-test>
 [Category("Shard3")]
 public class PartitionMapClaimSqlTests : EFCoreTestBase {
   private const string ROLE = PartitionAssignerOptions.ROLE;

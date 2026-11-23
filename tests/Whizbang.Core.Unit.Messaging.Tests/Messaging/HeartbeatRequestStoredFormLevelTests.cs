@@ -68,7 +68,7 @@ public class HeartbeatRequestStoredFormLevelTests {
     using var json = JsonDocument.Parse(new HeartbeatRequest(_instance, "svc", "host", 1, Metadata: given.RootElement).MetadataJson());
 
     await Assert.That(json.RootElement.GetProperty("partition_ownership_level").GetInt32()).IsEqualTo(1)
-      .Because("migration 560's switch turns ownership by map on only once every live instance says level 1 or higher under this key (#2555)");
+      .Because("migration 565's switch turns ownership by map on only once every live instance says level 1 or higher under this key (#2555)");
     await Assert.That(json.RootElement.EnumerateObject().Count(p => p.Name == HeartbeatRequest.PARTITION_OWNERSHIP_LEVEL_KEY)).IsEqualTo(1);
   }
 }

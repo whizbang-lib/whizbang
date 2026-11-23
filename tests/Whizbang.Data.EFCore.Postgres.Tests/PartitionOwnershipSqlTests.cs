@@ -19,7 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// it supports the mode.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/560_PartitionsAreOwnedByThePublishedMap.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/565_PartitionsAreOwnedByThePublishedMap.sql</code-under-test>
 [Category("Shard4")]
 public class PartitionOwnershipSqlTests : EFCoreTestBase {
   private const int PARTITIONS = 10_000;

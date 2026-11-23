@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 565_ThePublishedAssignmentCarriesThePartitionMap.sql
+-- Migration: 564_ThePublishedAssignmentCarriesThePartitionMap.sql
 -- Date: 2026-11-23
 -- Description: The published partition assignment carries an explicit partition-to-member map, and every claim reads
 --              it, so a join or leave moves about 1/N of the partitions instead of nearly all of them (#2558).
@@ -54,7 +54,7 @@
 ALTER TABLE __SCHEMA__.wh_published_partition_assignment ADD COLUMN IF NOT EXISTS partition_owners SMALLINT[] NULL;
 
 COMMENT ON COLUMN __SCHEMA__.wh_published_partition_assignment.partition_owners IS
-  '565 (#2558): the explicit partition map. Entry p + 1 is the zero-based index in members of the member partition p '
+  '564 (#2558): the explicit partition map. Entry p + 1 is the zero-based index in members of the member partition p '
   'belongs to; 10,000 entries. NULL for an assignment published without one, whose claimers rank by modulo '
   '(members[(p % cardinality(members)) + 1]).';
 
@@ -85,7 +85,7 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_partition_in_share(INTEGER, INTEGER, INTEGER, SMALLINT[]) IS
-  '565 (#2558): whether partition p_partition is in the share of the member at p_rank: the published map''s answer when '
+  '564 (#2558): whether partition p_partition is in the share of the member at p_rank: the published map''s answer when '
   'p_owners is given (owners[(p % cardinality) + 1] = p_rank), otherwise p_partition % p_count = p_rank. The only '
   'partition test in the claim functions. Inlined by the planner.';
 
@@ -110,7 +110,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.wh_publish_partition_assignment(
   p_epoch BIGINT,
   p_members UUID[],
   p_lease INTERVAL,
-  -- 565 (#2558): the partition map, 10,000 member indexes. NULL publishes the older shape, whose claimers rank by modulo.
+  -- 564 (#2558): the partition map, 10,000 member indexes. NULL publishes the older shape, whose claimers rank by modulo.
   p_owners SMALLINT[] DEFAULT NULL
 ) RETURNS BIGINT
 LANGUAGE plpgsql
@@ -124,7 +124,7 @@ BEGIN
   -- vote cannot hand the role on between the check and the write below.
   PERFORM __SCHEMA__.wh_assert_role_epoch(p_role, p_instance_id, p_epoch);
 
-  -- 565 (#2558): a map must give every one of the 10,000 partitions to a listed member, or some partition would be
+  -- 564 (#2558): a map must give every one of the 10,000 partitions to a listed member, or some partition would be
   -- claimed by nobody. Refused before anything is written. One pass over the map, on a publish, never on a claim.
   IF p_owners IS NOT NULL AND (
        cardinality(p_owners) <> 10000
@@ -172,7 +172,7 @@ COMMENT ON FUNCTION __SCHEMA__.wh_publish_partition_assignment(TEXT, UUID, BIGIN
   '203 (#1254): publishes the partition assignment. Fenced by wh_assert_role_epoch (WHF01 for a deposed assigner); '
   'the revision advances within an epoch and restarts at 1 for a new one; an older epoch is refused. Returns the '
   'revision. 330 (#2046): announces epoch:revision on the signal bus (wh_partition_assignment), recorded durably. '
-  '565 (#2558): stores the partition map (p_owners), refused with 22023 unless it gives each of the 10,000 partitions '
+  '564 (#2558): stores the partition map (p_owners), refused with 22023 unless it gives each of the 10,000 partitions '
   'to a listed member; NULL publishes the older shape, whose claimers rank by modulo.';
 
 -- ---------------------------------------------------------------------------------------------
@@ -194,7 +194,7 @@ RETURNS TABLE(
   lease_expires_at TIMESTAMPTZ,
   -- The lease left, by the database's clock, so a reader never compares the expiry with a clock of its own.
   lease_remaining INTERVAL,
-  -- 565 (#2558): the partition map, or NULL for an assignment of the older shape. Last, so a reader that names its
+  -- 564 (#2558): the partition map, or NULL for an assignment of the older shape. Last, so a reader that names its
   -- columns reads what it read before.
   partition_owners SMALLINT[]
 )
@@ -210,7 +210,7 @@ $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_read_partition_assignment() IS
   '203 (#1254): the published partition assignment, one primary-key read, with the lease left by the database clock. '
-  'Also the operator''s view of the current assignment, its epoch and its assigner. 565 (#2558): and its partition '
+  'Also the operator''s view of the current assignment, its epoch and its assigner. 564 (#2558): and its partition '
   'map (partition_owners), NULL for the older shape.';
 
 -- ---------------------------------------------------------------------------------------------
@@ -257,7 +257,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_outbox(
   -- after the last acquisition (wh_lease_claimed_streams). A direct caller keeps the default and gets
   -- the same one-pass write here, inside this statement.
   p_ledger_deferred BOOLEAN DEFAULT FALSE,
-  -- 565 (#2558): the published partition map, when the caller's assignment carries one: entry p + 1 is the index in
+  -- 564 (#2558): the published partition map, when the caller's assignment carries one: entry p + 1 is the index in
   -- the assignment's members of the member partition p belongs to. NULL ranks by modulo, as before. Every ownership
   -- test in this function reads it through wh_partition_in_share.
   p_partition_owners SMALLINT[] DEFAULT NULL
@@ -623,7 +623,7 @@ COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_outbox(UUID, INTEGER, INTEGER, TIM
   'are refreshed or taken over, and streams with no row are inserted after that pass in the same order. 202: '
   'p_ledger_deferred leaves the ledger to the caller (claim_work writes it once for all its acquisitions), and each '
   'row carries its partition number for that write. '
-  '565 (#2558): every partition test reads the published map through wh_partition_in_share (p_partition_owners); '
+  '564 (#2558): every partition test reads the published map through wh_partition_in_share (p_partition_owners); '
   'a NULL map ranks by modulo as before.';
 
 -- ---------------------------------------------------------------------------------------------
@@ -673,7 +673,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_inbox(
   -- after the last acquisition (wh_lease_claimed_streams). A direct caller keeps the default and gets
   -- the same one-pass write here, inside this statement.
   p_ledger_deferred BOOLEAN DEFAULT FALSE,
-  -- 565 (#2558): the published partition map, when the caller's assignment carries one: entry p + 1 is the index in
+  -- 564 (#2558): the published partition map, when the caller's assignment carries one: entry p + 1 is the index in
   -- the assignment's members of the member partition p belongs to. NULL ranks by modulo, as before. Every ownership
   -- test in this function reads it through wh_partition_in_share.
   p_partition_owners SMALLINT[] DEFAULT NULL
@@ -1451,7 +1451,7 @@ COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_inbox(UUID, INTEGER, INTEGER, TIME
   'the claimed streams are locked in one stream_id pass, whoever owns them, before they are refreshed or taken over, '
   'and streams with no row are inserted after that pass in the same order; p_ledger_deferred leaves the ledger to the '
   'caller (claim_work), and each row carries its partition number for that write. '
-  '565 (#2558): every partition test reads the published map through wh_partition_in_share (p_partition_owners); '
+  '564 (#2558): every partition test reads the published map through wh_partition_in_share (p_partition_owners); '
   'a NULL map ranks by modulo as before.';
 
 -- ---------------------------------------------------------------------------------------------
@@ -1489,7 +1489,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_perspective_events(
   -- after the last acquisition (wh_lease_claimed_streams). A direct caller keeps the default and gets
   -- the same one-pass write here, inside this statement.
   p_ledger_deferred BOOLEAN DEFAULT FALSE,
-  -- 565 (#2558): the published partition map, when the caller's assignment carries one: entry p + 1 is the index in
+  -- 564 (#2558): the published partition map, when the caller's assignment carries one: entry p + 1 is the index in
   -- the assignment's members of the member partition p belongs to. NULL ranks by modulo, as before. Every ownership
   -- test in this function reads it through wh_partition_in_share.
   p_partition_owners SMALLINT[] DEFAULT NULL
@@ -1767,7 +1767,7 @@ COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_perspective_events(UUID, TIMESTAMP
   'ledger pass reach their rows by key, so an acquisition reads in proportion to what it leases, never the queue or '
   'the ledger. 557 (#2523): the per-stream walk''s ordering probe is a boolean the planner expects to pass, so each '
   'selected stream is walked in event order and stops at the row bound at every depth, never read whole and sorted. '
-  '565 (#2558): every partition test reads the published map through wh_partition_in_share (p_partition_owners); '
+  '564 (#2558): every partition test reads the published map through wh_partition_in_share (p_partition_owners); '
   'a NULL map ranks by modulo as before.';
 
 -- ---------------------------------------------------------------------------------------------
@@ -1960,7 +1960,7 @@ BEGIN
     v_caller __SCHEMA__.wh_service_instances%ROWTYPE;
     v_caller_found BOOLEAN;
     v_count INTEGER;
-    -- 565 (#2558): the published partition map, read with the rank when the caller's assignment passes the fence; NULL
+    -- 564 (#2558): the published partition map, read with the rank when the caller's assignment passes the fence; NULL
     -- otherwise, so a claim that ranks itself ranks by modulo as before.
     v_owners SMALLINT[];
     -- v0.661: track per-category RETURN QUERY rowcount so the drain-mode hint
@@ -2101,7 +2101,7 @@ BEGIN
     END IF;
 
     IF NOT v_assigned THEN
-    -- 565 (#2558): a claim that ranks itself ranks by modulo, never by a map it is not a member of.
+    -- 564 (#2558): a claim that ranks itself ranks by modulo, never by a map it is not a member of.
     v_owners := NULL;
     SELECT ranked.instance_rank, ranked.active_instance_count INTO v_rank, v_count
     FROM (
@@ -2848,7 +2848,7 @@ COMMENT ON FUNCTION __SCHEMA__.claim_work(UUID, TEXT, TEXT, INTEGER, INTEGER, IN
   'receptor-processing table, which nothing writes, is no longer read. 545: both re-offer walks test the lease as a '
   'filter on their held-lanes entry ((lease_expiry > now) IS TRUE), never as an index condition, so a walk is one '
   'probe per held stream on any statistics. '
-  '565 (#2558): reads the published partition map with the rank (NULL when it ranks itself) and passes it to '
+  '564 (#2558): reads the published partition map with the rank (NULL when it ranks itself) and passes it to '
   'every acquisition; its own partition tests read it through wh_partition_in_share.';
 
 -- ---------------------------------------------------------------------------------------------
@@ -2888,7 +2888,7 @@ DECLARE
   v_stale_cutoff TIMESTAMPTZ := v_now - INTERVAL '30 seconds';
   v_rank INTEGER;
   v_count INTEGER;
-  -- 565 (#2558): the published partition map, when the caller is a member of the current assignment; NULL otherwise.
+  -- 564 (#2558): the published partition map, when the caller is a member of the current assignment; NULL otherwise.
   v_owners SMALLINT[];
 BEGIN
   -- 300 (#1636): a caller whose own row says it may not claim gets nothing, as claim_work refuses it. One primary-key
@@ -2913,7 +2913,7 @@ BEGIN
   END IF;
 
   IF v_rank IS NULL THEN
-    -- 565 (#2558): a claim that ranks itself ranks by modulo, never by a map it is not a member of.
+    -- 564 (#2558): a claim that ranks itself ranks by modulo, never by a map it is not a member of.
     v_owners := NULL;
     SELECT ranked.instance_rank, ranked.active_instance_count INTO v_rank, v_count
     FROM (
@@ -2987,5 +2987,5 @@ COMMENT ON FUNCTION __SCHEMA__.wh_claim_multi_stream_work(UUID, INTEGER, INTEGER
   '229: ranks only the instances eligible for work (wh_instance_is_eligible_for_work); a sibling that holds a stream''s '
   'lease keeps it while it is alive, eligible or not. 300: a caller whose own row may not claim '
   '(wh_instance_may_claim) gets nothing. '
-  '565 (#2558): reads the published partition map with the rank and tests the partition through '
+  '564 (#2558): reads the published partition map with the rank and tests the partition through '
   'wh_partition_in_share.';

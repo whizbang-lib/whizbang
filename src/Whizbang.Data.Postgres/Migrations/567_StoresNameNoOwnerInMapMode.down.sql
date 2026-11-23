@@ -1,33 +1,12 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 562_StoresNameNoOwnerInMapMode.sql
--- Date: 2026-11-23
--- Description: With the service's switch on, storing work never makes the storing instance a stream's owner, and new
---              perspective work is leased by partition (#2555; phase 3 of #2540).
---
---              * store_outbox_messages and store_inbox_messages still record a stream they see for the first time in
---                the stream ledger, with its partition, but name no owner: the first writer is not the owner, and the
---                partition's owner is named when it claims (561's ledger pass).
---              * store_perspective_events, _emit_event_store_chain and _emit_event_store_chain_for_inbox lease a new
---                perspective row to the instance storing it only when that instance owns the stream's partition
---                (wh_i_own); otherwise the row is left unleased for the owner to claim. The stream's stored owner is
---                not read: a row is never leased to it.
---              A caller that passes no lease (the strategy-flush path) leaves every row unleased, as before.
---
---              Off, every function is exactly as before: each change is the switch's other arm.
---
--- Reversal: reversible (the down file restores each function's previous last word)
--- Dependencies: 560 (wh_i_own, wh_partition_ownership_by_map), 271 (store_outbox_messages), 460 (store_inbox_messages),
---               241 (store_perspective_events), 537 (_emit_event_store_chain), 551 (_emit_event_store_chain_for_inbox)
--- Objects: store_outbox_messages, store_inbox_messages, store_perspective_events, _emit_event_store_chain,
---          _emit_event_store_chain_for_inbox
--- Constants: the double-underscore tokens in this file (for example __CATEGORY_OUTBOX__) are substituted from
---            Migrations/constants.txt at apply time (README rule 12).
+-- The reverse of 567_StoresNameNoOwnerInMapMode.sql (#2555): each function as its previous last word defined it, copied
+-- whole. The first writer of a stream is pinned as its owner again, and new perspective work is leased to it.
 
 
 -- ---------------------------------------------------------------------------------------------
--- store_outbox_messages: copied from its last word (271), with the 562 delta: the switch's map branch.
+-- store_outbox_messages: 271's definition, copied whole.
 -- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('store_outbox_messages');
 
@@ -43,9 +22,6 @@ SELECT __SCHEMA__.drop_all_overloads('store_outbox_messages');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:StoreOutboxMessages_TheSameWriteNotAwaited_IsDeadLettered_AndAnAwaitedWriteToAnOpenStreamIsStoredAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:StoreOutboxMessages_AnAwaitedWrite_Refuse_ThrowsStreamArchivedException_AndStoresNothingAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:StoreOutboxMessages_AnAwaitedWrite_AutoRestore_RaisesTheRestoreStateAsync</tests>
--- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapStoreSqlTests.cs:StoreOutbox_InMapMode_RecordsTheStreamWithoutAnOwnerAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapStoreSqlTests.cs:StoreOutbox_SwitchOff_PinsTheFirstWriter_AsBeforeAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.store_outbox_messages(
   p_messages JSONB,
   p_instance_id UUID,
@@ -89,8 +65,6 @@ DECLARE
   v_raise_event_ids UUID[] := ARRAY[]::UUID[];
   v_refused_event_ids UUID[];
   v_claimed INTEGER;          -- 241: rows the recovery claim touched
-  -- 561 (#2554, #2555): the service's switch, read once: on, the partition ownership table alone decides.
-  v_map BOOLEAN := __SCHEMA__.wh_partition_ownership_by_map();
 BEGIN
   IF jsonb_array_length(p_messages) = 0 THEN RETURN; END IF;
 
@@ -380,9 +354,7 @@ BEGIN
   IF cardinality(v_pin_streams) > 0 THEN
     INSERT INTO __SCHEMA__.wh_active_streams
       (stream_id, partition_number, assigned_instance_id, last_activity_at)
-    -- 562 (#2555): in map mode the first writer is not the stream's owner; the row records the stream and its
-    -- partition, and the partition's owner is named when it claims.
-    SELECT DISTINCT ON (p.stream_id) p.stream_id, p.partition_number, CASE WHEN v_map THEN NULL ELSE p_instance_id END, p_now
+    SELECT DISTINCT ON (p.stream_id) p.stream_id, p.partition_number, p_instance_id, p_now
     FROM unnest(v_pin_streams, v_pin_partitions) WITH ORDINALITY AS p(stream_id, partition_number, ord)
     ORDER BY p.stream_id, p.ord
     ON CONFLICT (stream_id) DO NOTHING;
@@ -406,10 +378,10 @@ COMMENT ON FUNCTION __SCHEMA__.store_outbox_messages(JSONB, UUID, TIMESTAMPTZ, T
   'recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead '
   'letter and its row names it for complete_outbox_published to settle. 266: raises SQLSTATE WHS01 '
   '(StreamSealedException) for an event the caller awaits on a sealed stream (#1733). 271: and SQLSTATE WHA01 or WHA02 '
-  '(StreamArchivedException) for one on an archived stream, by its type''s AppendToArchived policy (#1738). 562 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own).';
+  '(StreamArchivedException) for one on an archived stream, by its type''s AppendToArchived policy (#1738).';
 
 -- ---------------------------------------------------------------------------------------------
--- store_inbox_messages: copied from its last word (460), with the 562 delta: the switch's map branch.
+-- store_inbox_messages: 460's definition, copied whole.
 -- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('store_inbox_messages');
 
@@ -439,8 +411,6 @@ SELECT __SCHEMA__.drop_all_overloads('store_inbox_messages');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxDiscardedOnReceiveKeepsNoBodySqlTests.cs:ADiscardedRedelivery_OfAProcessedMessage_LeavesItsStoredBodyAloneAsync</tests>
 -- <docs>resilience/stream-integrity#cuts-carry-their-digest</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestSqlTests.cs:Purge_KeepsTheBucketCarried_AndARedeliveryOfThePurgedStreamIsRefusedAsync</tests>
--- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapStoreSqlTests.cs:StoreInbox_InMapMode_RecordsTheStreamWithoutAnOwnerAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.store_inbox_messages(
   p_messages JSONB,
   p_instance_id UUID,
@@ -469,8 +439,6 @@ DECLARE
   c_flags_never_repaired CONSTANT INTEGER := 8 | 32;  -- EventFlags.Ephemeral (1 << 3) | EventFlags.AtMostOnce (1 << 5)
   v_restore BOOLEAN;          -- 252: repair traffic deduplication remembers and the store lost, stored again as state only
   v_refusal TEXT;             -- 252: why such a child is refused instead, stored settled with the reason
-  -- 561 (#2554, #2555): the service's switch, read once: on, the partition ownership table alone decides.
-  v_map BOOLEAN := __SCHEMA__.wh_partition_ownership_by_map();
 BEGIN
   IF jsonb_array_length(p_messages) = 0 THEN RETURN; END IF;
 
@@ -748,9 +716,7 @@ BEGIN
         INSERT INTO __SCHEMA__.wh_active_streams
           (stream_id, partition_number, assigned_instance_id, last_activity_at)
         VALUES
-          -- 562 (#2555): in map mode the first writer is not the stream's owner; the partition's owner is named when
-          -- it claims.
-          (v_msg.stream_id, COALESCE(v_partition, 0), CASE WHEN v_map THEN NULL ELSE p_instance_id END, p_now)
+          (v_msg.stream_id, COALESCE(v_partition, 0), p_instance_id, p_now)
         ON CONFLICT (stream_id) DO NOTHING;
       END IF;
       RETURN QUERY SELECT v_msg.msg_id AS message_id, v_msg.stream_id AS stream_id, TRUE AS was_newly_created;
@@ -764,10 +730,10 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.store_inbox_messages(JSONB, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-  'Stores received inbox messages with deduplication (121: every arrival counted), priority (149), the work-state row (162). 236 (#1664): a message recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead letter, is stored even though its id was seen, and its work-state row names the dead letter for the completion to settle. 242 (#1720): a message the consumer skipped on receive (DiscardedOnReceive) is stored settled: processed, Stored and Published, the reason in error, never claimed, copied or returned as new work. 368: and without its body (event_data and metadata stored empty), since nothing reads a settled row''s body and deduplication does not need it. 252 (#1843): a repair child (RestoreIfMissing) whose id was seen but which neither the event store nor the inbox holds is stored again as state only, or stored settled as refused when its stream had earlier history truncated. 460 (#2363): refuses a redelivered event of a purged stream, recording why in wh_inbox_state.error. 562 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own).';
+  'Stores received inbox messages with deduplication (121: every arrival counted), priority (149), the work-state row (162). 236 (#1664): a message recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead letter, is stored even though its id was seen, and its work-state row names the dead letter for the completion to settle. 242 (#1720): a message the consumer skipped on receive (DiscardedOnReceive) is stored settled: processed, Stored and Published, the reason in error, never claimed, copied or returned as new work. 368: and without its body (event_data and metadata stored empty), since nothing reads a settled row''s body and deduplication does not need it. 252 (#1843): a repair child (RestoreIfMissing) whose id was seen but which neither the event store nor the inbox holds is stored again as state only, or stored settled as refused when its stream had earlier history truncated. 460 (#2363): refuses a redelivered event of a purged stream, recording why in wh_inbox_state.error.';
 
 -- ---------------------------------------------------------------------------------------------
--- store_perspective_events: copied from its last word (241), with the 562 delta: the switch's map branch.
+-- store_perspective_events: 241's definition, copied whole.
 -- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('store_perspective_events');
 
@@ -779,8 +745,6 @@ SELECT __SCHEMA__.drop_all_overloads('store_perspective_events');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredWorkReentrySqlTests.cs:ARecoveredPerspectiveWorkRow_IsStoredInTheShapeTheEventStoreChainStoresItInAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredWorkReentrySqlTests.cs:ARecoveredPerspectiveEvent_BehindItsCursor_FlagsTheCursorForRewindAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredPerspectiveDeadLetterApplyTests.cs:ARecoveredPerspectiveWorkRow_IsApplied_AndReadsRecoveredOnceAppliedAsync</tests>
--- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapStoreSqlTests.cs:StorePerspectiveEvents_InMapMode_LeasesToTheCallerOnlyOnAPartitionItOwnsAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.store_perspective_events(
   p_events JSONB,
   p_instance_id UUID,
@@ -798,8 +762,6 @@ DECLARE
   v_was_new BOOLEAN;
   v_work_id UUID;
   v_lease_instance UUID;
-  -- 561 (#2554, #2555): the service's switch, read once: on, the partition ownership table alone decides.
-  v_map BOOLEAN := __SCHEMA__.wh_partition_ownership_by_map();
   v_claimed INTEGER;
   -- The doorbell, as store_outbox_messages rings it: streams probed once per call before this call inserts for them,
   -- the probed-empty ones, and those this call gave new work.
@@ -865,13 +827,7 @@ BEGIN
     -- The chain's lease routing (Slice 26.14): a leasing caller leases to the stream's live pinned owner, falling back
     -- to itself; a caller passing no lease expiry leaves the row for the claim.
     v_lease_instance := NULL;
-    -- 562 (#2555): in map mode the row is leased to the caller only when it owns the stream's partition; otherwise it is
-    -- left unleased for the partition's owner to claim. Never to a stored owner.
-    IF p_lease_expiry IS NOT NULL AND v_map THEN
-      IF __SCHEMA__.wh_i_own(__SCHEMA__.compute_partition(v_event.ev_stream_id, p_partition_count), p_instance_id) IS NOT NULL THEN
-        v_lease_instance := p_instance_id;
-      END IF;
-    ELSIF p_lease_expiry IS NOT NULL THEN
+    IF p_lease_expiry IS NOT NULL THEN
       SELECT ast.assigned_instance_id INTO v_lease_instance
       FROM __SCHEMA__.wh_active_streams ast
       WHERE ast.stream_id = v_event.ev_stream_id
@@ -897,7 +853,7 @@ BEGIN
       0,                  -- Initial attempts
       p_now,
       v_lease_instance,
-      CASE WHEN v_map AND v_lease_instance IS NULL THEN NULL ELSE p_lease_expiry END,
+      p_lease_expiry,
       v_event.ev_priority,
       v_event.ev_recovered_from  -- 241: NULL for every arrival but a recovery
     )
@@ -957,10 +913,10 @@ COMMENT ON FUNCTION __SCHEMA__.store_perspective_events(JSONB, UUID, TIMESTAMPTZ
   'given priority, leased to the stream''s live owner (or the caller) when a lease expiry is given, the cursor flagged '
   'RewindRequired for an event behind it, and the perspective doorbell rung for a stream that had no pending work. '
   'Unique on (stream, perspective, event). 241 (#1722): work recovered from a dead letter (RecoveredFromDeadLetterId) '
-  're-enters here: it claims its dead letter and its row names it for process_perspective_event_completions to settle. 562 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own).';
+  're-enters here: it claims its dead letter and its row names it for process_perspective_event_completions to settle.';
 
 -- ---------------------------------------------------------------------------------------------
--- _emit_event_store_chain: copied from its last word (537), with the 562 delta: the switch's map branch.
+-- _emit_event_store_chain: 537's definition, copied whole.
 -- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('_emit_event_store_chain');
 
@@ -1013,8 +969,6 @@ SELECT __SCHEMA__.drop_all_overloads('_emit_event_store_chain');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataRowValuesSqlTests.cs:OutboxChain_KeepsWhatTheRowDoesNotHoldAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataRowValuesSqlTests.cs:FullRows_KeepEverythingAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataRowValuesReadTests.cs:EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync</tests>
--- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapStoreSqlTests.cs:EmitChain_InMapMode_LeasesByPartition_NeverToTheStoredOwnerAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain(
   p_outbox_message_ids UUID[],
   p_instance_id UUID,
@@ -1045,8 +999,6 @@ DECLARE
   v_full_for TEXT[];                       -- 285: the type names and namespaces kept full
   v_trim BOOLEAN;                          -- 537: the trim gate is open (wh_settings metadata_trim_row_values)
   v_keep_all BOOLEAN;                      -- 285: debug mode or the Full form keeps every row full
-  -- 561 (#2554, #2555): the service's switch, read once: on, the partition ownership table alone decides.
-  v_map BOOLEAN := __SCHEMA__.wh_partition_ownership_by_map();
 BEGIN
   IF p_outbox_message_ids IS NULL OR cardinality(p_outbox_message_ids) = 0 THEN
     RETURN 0;
@@ -1363,12 +1315,8 @@ BEGIN
     -- NULL p_lease_expiry / NULL p_instance_id (strategy-flush path, "leave unleased so
     -- claim_orphaned picks it up"), preserve that contract; otherwise we'd land in
     -- instance_id-set-but-lease-NULL purgatory that claim_orphaned's filter excludes.
-    -- 562 (#2555): in map mode the row is leased to the committing instance only when it owns the stream's
-    -- partition; otherwise it is left unleased for the partition's owner to claim. Never to a stored owner.
-    CASE WHEN p_lease_expiry IS NULL THEN NULL
-         WHEN v_map THEN CASE WHEN __SCHEMA__.wh_i_own(__SCHEMA__.compute_partition(es.stream_id, p_partition_count), p_instance_id) IS NOT NULL THEN p_instance_id END
-         ELSE COALESCE(owner.assigned_instance_id, p_instance_id) END,
-    CASE WHEN v_map AND NOT __SCHEMA__.wh_i_own(__SCHEMA__.compute_partition(es.stream_id, p_partition_count), p_instance_id) IS NOT NULL THEN NULL ELSE p_lease_expiry END,
+    CASE WHEN p_lease_expiry IS NOT NULL THEN COALESCE(owner.assigned_instance_id, p_instance_id) ELSE NULL END,
+    p_lease_expiry,
     COALESCE(src.priority, 150)   -- 149: the projection is scheduled with the source row's number
   FROM __SCHEMA__.wh_event_store es
   LEFT JOIN __SCHEMA__.wh_outbox src ON src.message_id = es.event_id
@@ -1384,8 +1332,6 @@ BEGIN
         SELECT 1 FROM __SCHEMA__.wh_service_instances si
         WHERE si.instance_id = ast.assigned_instance_id
       )
-      -- 562: the stored owner decides nothing in map mode, so the ledger is not read.
-      AND NOT v_map
   ) owner ON TRUE
   WHERE es.event_id = ANY(v_stored_event_ids)
     AND NOT EXISTS (
@@ -1415,12 +1361,8 @@ BEGIN
     1,                  -- Stored flag
     0,
     p_now,
-    -- 562 (#2555): in map mode the row is leased to the committing instance only when it owns the stream's
-    -- partition; otherwise it is left unleased for the partition's owner to claim. Never to a stored owner.
-    CASE WHEN p_lease_expiry IS NULL THEN NULL
-         WHEN v_map THEN CASE WHEN __SCHEMA__.wh_i_own(__SCHEMA__.compute_partition(es.stream_id, p_partition_count), p_instance_id) IS NOT NULL THEN p_instance_id END
-         ELSE COALESCE(owner.assigned_instance_id, p_instance_id) END,
-    CASE WHEN v_map AND NOT __SCHEMA__.wh_i_own(__SCHEMA__.compute_partition(es.stream_id, p_partition_count), p_instance_id) IS NOT NULL THEN NULL ELSE p_lease_expiry END,
+    CASE WHEN p_lease_expiry IS NOT NULL THEN COALESCE(owner.assigned_instance_id, p_instance_id) ELSE NULL END,
+    p_lease_expiry,
     COALESCE(src.priority, 150)   -- 149: the projection is scheduled with the source row's number
   FROM __SCHEMA__.wh_event_store es
   LEFT JOIN __SCHEMA__.wh_outbox src ON src.message_id = es.event_id
@@ -1433,8 +1375,6 @@ BEGIN
         SELECT 1 FROM __SCHEMA__.wh_service_instances si
         WHERE si.instance_id = ast.assigned_instance_id
       )
-      -- 562: the stored owner decides nothing in map mode, so the ledger is not read.
-      AND NOT v_map
   ) owner ON TRUE
   WHERE es.event_id = ANY(v_stored_event_ids)
     AND (es.flags & c_flag_collective) = c_flag_collective
@@ -1460,10 +1400,10 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain(UUID[], UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-  'Copies committed outbox events into the event store and creates their perspective work (146). 149: the perspective rows inherit the outbox row''s priority. 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 260: keeps each stored stream''s wh_stream_lifecycle row, one upsert per batch (#1732). 266: dead-letters each event a sealed stream refuses and stores the rest; a terminal event seals its stream in the same statement (#1733). 271: and each event an archived stream refuses, by its type''s AppendToArchived policy, queuing the stream''s restore under AutoRestore (#1738). 285: each row keeps the slim form unless kept full, carries its route id, and under the Linked form stages its full form (#1725). 295: stamps a superseding event''s key (wh_event_store.supersede_key) and queues the older events of its key for the reaper (#1729). 296: starts the new generation of an archived stream whose type declares NewGeneration, numbered on from its last version (#1734). 352: and its superseding group (wh_event_store.supersede_group, #2124), so the older events of its group, not only its type, are queued. 391: a collective event of a type no handler on this service applies gets no __collective__ row once every service registered in the schema has written its collective_gate marker (_wh_collective_row_wanted, #2145). 537 (#2323): the slim row leaves out its message id when it is the event id, and its hop scope when it is the scope column alone. 562 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own).';
+  'Copies committed outbox events into the event store and creates their perspective work (146). 149: the perspective rows inherit the outbox row''s priority. 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 260: keeps each stored stream''s wh_stream_lifecycle row, one upsert per batch (#1732). 266: dead-letters each event a sealed stream refuses and stores the rest; a terminal event seals its stream in the same statement (#1733). 271: and each event an archived stream refuses, by its type''s AppendToArchived policy, queuing the stream''s restore under AutoRestore (#1738). 285: each row keeps the slim form unless kept full, carries its route id, and under the Linked form stages its full form (#1725). 295: stamps a superseding event''s key (wh_event_store.supersede_key) and queues the older events of its key for the reaper (#1729). 296: starts the new generation of an archived stream whose type declares NewGeneration, numbered on from its last version (#1734). 352: and its superseding group (wh_event_store.supersede_group, #2124), so the older events of its group, not only its type, are queued. 391: a collective event of a type no handler on this service applies gets no __collective__ row once every service registered in the schema has written its collective_gate marker (_wh_collective_row_wanted, #2145). 537 (#2323): the slim row leaves out its message id when it is the event id, and its hop scope when it is the scope column alone.';
 
 -- ---------------------------------------------------------------------------------------------
--- _emit_event_store_chain_for_inbox: copied from its last word (551), with the 562 delta: the switch's map branch.
+-- _emit_event_store_chain_for_inbox: 551's definition, copied whole.
 -- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('_emit_event_store_chain_for_inbox');
 
@@ -1511,7 +1451,6 @@ SELECT __SCHEMA__.drop_all_overloads('_emit_event_store_chain_for_inbox');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AwaitingStreamHeadSqlTests.cs:Claim_OnceTheHeadIsHeld_TheWaitingRowIsStored_AndNoLongerShowsItWaitsAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AwaitingStreamHeadSqlTests.cs:Claim_AHeldBackRowCarryingAnEarlierLeaseExpiry_ShowsItAwaitsTheHeadInsteadAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AwaitingStreamHeadSqlTests.cs:Claim_AHeldBackRowCarryingAnotherRecordedFailure_KeepsItAsync</tests>
--- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
 CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,
@@ -1552,8 +1491,6 @@ DECLARE
   c_reason_awaiting_stream_head CONSTANT INTEGER := 30;  -- AwaitingStreamHead
   c_reason_lease_expired CONSTANT INTEGER := 6;          -- LeaseExpired, as the claim's lapsed-lease branch records it
   c_reason_unknown CONSTANT INTEGER := 99;               -- Unknown, the column's default: a row that has not failed
-  -- 561 (#2554, #2555): the service's switch, read once: on, the partition ownership table alone decides.
-  v_map BOOLEAN := __SCHEMA__.wh_partition_ownership_by_map();
 BEGIN
   -- Migration 087: resolve the LOCAL service id once. store_inbox_messages (062) COALESCEs a
   -- missing envelope SourceServiceId to the local id, so a wh_inbox row attributed to SELF (or
@@ -2075,12 +2012,8 @@ BEGIN
     -- NULL p_lease_expiry / NULL p_instance_id (strategy-flush path, "leave unleased so
     -- claim_orphaned picks it up"), preserve that contract; otherwise we'd land in
     -- instance_id-set-but-lease-NULL purgatory that claim_orphaned's filter excludes.
-    -- 562 (#2555): in map mode the row is leased to the committing instance only when it owns the stream's
-    -- partition; otherwise it is left unleased for the partition's owner to claim. Never to a stored owner.
-    CASE WHEN p_lease_expiry IS NULL THEN NULL
-         WHEN v_map THEN CASE WHEN __SCHEMA__.wh_i_own(__SCHEMA__.compute_partition(es.stream_id, p_partition_count), p_instance_id) IS NOT NULL THEN p_instance_id END
-         ELSE COALESCE(owner.assigned_instance_id, p_instance_id) END,
-    CASE WHEN v_map AND NOT __SCHEMA__.wh_i_own(__SCHEMA__.compute_partition(es.stream_id, p_partition_count), p_instance_id) IS NOT NULL THEN NULL ELSE p_lease_expiry END,
+    CASE WHEN p_lease_expiry IS NOT NULL THEN COALESCE(owner.assigned_instance_id, p_instance_id) ELSE NULL END,
+    p_lease_expiry,
     COALESCE(src.priority, 150)   -- 149: the projection is scheduled with the source row's number
   FROM __SCHEMA__.wh_event_store es
   LEFT JOIN __SCHEMA__.wh_inbox src ON src.message_id = es.event_id
@@ -2096,8 +2029,6 @@ BEGIN
         SELECT 1 FROM __SCHEMA__.wh_service_instances si
         WHERE si.instance_id = ast.assigned_instance_id
       )
-      -- 562: the stored owner decides nothing in map mode, so the ledger is not read.
-      AND NOT v_map
   ) owner ON TRUE
   WHERE es.event_id = ANY(v_stored_event_ids)
     AND NOT EXISTS (
@@ -2154,12 +2085,8 @@ BEGIN
       1,                  -- Stored flag
       0,
       p_now,
-      -- 562 (#2555): in map mode the row is leased to the committing instance only when it owns the stream's
-      -- partition; otherwise it is left unleased for the partition's owner to claim. Never to a stored owner.
-      CASE WHEN p_lease_expiry IS NULL THEN NULL
-           WHEN v_map THEN CASE WHEN __SCHEMA__.wh_i_own(__SCHEMA__.compute_partition(es.stream_id, p_partition_count), p_instance_id) IS NOT NULL THEN p_instance_id END
-           ELSE COALESCE(owner.assigned_instance_id, p_instance_id) END,
-      CASE WHEN v_map AND NOT __SCHEMA__.wh_i_own(__SCHEMA__.compute_partition(es.stream_id, p_partition_count), p_instance_id) IS NOT NULL THEN NULL ELSE p_lease_expiry END,
+      CASE WHEN p_lease_expiry IS NOT NULL THEN COALESCE(owner.assigned_instance_id, p_instance_id) ELSE NULL END,
+      p_lease_expiry,
       COALESCE(src.priority, 150)   -- 149: the projection is scheduled with the source row's number
     FROM __SCHEMA__.wh_event_store es
     LEFT JOIN __SCHEMA__.wh_inbox src ON src.message_id = es.event_id
@@ -2172,8 +2099,6 @@ BEGIN
           SELECT 1 FROM __SCHEMA__.wh_service_instances si
           WHERE si.instance_id = ast.assigned_instance_id
         )
-        -- 562: the stored owner decides nothing in map mode, so the ledger is not read.
-        AND NOT v_map
     ) owner ON TRUE
     WHERE es.event_id = ANY(v_stored_event_ids)
       AND (es.flags & c_flag_collective) = c_flag_collective
@@ -2199,4 +2124,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-  '551 (#1630): a row this pass held back shows it waits for its stream''s head (failure_reason 30, AwaitingStreamHead, and an error naming the stream and when the wait began), replacing only a lapsed-lease record, and the stamp clears it once the row is stored. 411 (#2120): a row the calling claim leased (lease_expiry = p_lease_expiry) that this pass held back is refunded the attempt the claim counted. Copies leased inbox events into the event store, stamps their origin and creates their perspective work (162). 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 228: an event that would make its stream hold both ephemeral and Sourced events is dead-lettered instead (WHIZ133, #1546). 230: a row waits behind an earlier pending row of its stream that this pass does not hold, so a received stream is stored in the producer''s order (#1607). 260: keeps each stored stream''s wh_stream_lifecycle row, one upsert per batch (#1732). 266: dead-letters each received event a sealed stream refuses and stores the rest; a terminal event seals its stream in the same statement (#1733). 271: and each received event an archived stream refuses, by its type''s AppendToArchived policy, queuing the stream''s restore under AutoRestore (#1738). 285: each row keeps the slim form unless kept full, carries its route id, and under the Linked form stages its full form (#1725). 295: stamps a superseding event''s key (wh_event_store.supersede_key) and queues the older events of its key for the reaper (#1729). 296: starts the new generation of an archived stream whose type declares NewGeneration, numbered on from its last version (#1734). 352: and its superseding group (wh_event_store.supersede_group, #2124), so the older events of its group, not only its type, are queued. 367: a pass whose lock pass finds no candidate only stamps, and the collective routing runs only when a stored event is collective. 391: a collective event of a type no handler on this service applies gets no __collective__ row once every service registered in the schema has written its collective_gate marker (_wh_collective_row_wanted, #2145). 537 (#2323): the slim row leaves out its message id when it is the event id, and its hop scope when it is the scope column alone. 562 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own).';
+  '551 (#1630): a row this pass held back shows it waits for its stream''s head (failure_reason 30, AwaitingStreamHead, and an error naming the stream and when the wait began), replacing only a lapsed-lease record, and the stamp clears it once the row is stored. 411 (#2120): a row the calling claim leased (lease_expiry = p_lease_expiry) that this pass held back is refunded the attempt the claim counted. Copies leased inbox events into the event store, stamps their origin and creates their perspective work (162). 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 228: an event that would make its stream hold both ephemeral and Sourced events is dead-lettered instead (WHIZ133, #1546). 230: a row waits behind an earlier pending row of its stream that this pass does not hold, so a received stream is stored in the producer''s order (#1607). 260: keeps each stored stream''s wh_stream_lifecycle row, one upsert per batch (#1732). 266: dead-letters each received event a sealed stream refuses and stores the rest; a terminal event seals its stream in the same statement (#1733). 271: and each received event an archived stream refuses, by its type''s AppendToArchived policy, queuing the stream''s restore under AutoRestore (#1738). 285: each row keeps the slim form unless kept full, carries its route id, and under the Linked form stages its full form (#1725). 295: stamps a superseding event''s key (wh_event_store.supersede_key) and queues the older events of its key for the reaper (#1729). 296: starts the new generation of an archived stream whose type declares NewGeneration, numbered on from its last version (#1734). 352: and its superseding group (wh_event_store.supersede_group, #2124), so the older events of its group, not only its type, are queued. 367: a pass whose lock pass finds no candidate only stamps, and the collective routing runs only when a stored event is collective. 391: a collective event of a type no handler on this service applies gets no __collective__ row once every service registered in the schema has written its collective_gate marker (_wh_collective_row_wanted, #2145). 537 (#2323): the slim row leaves out its message id when it is the event id, and its hop scope when it is the scope column alone.';

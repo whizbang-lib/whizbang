@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 565_ThePublishedAssignmentCarriesThePartitionMap.sql (#2558): every function as its previous last word
+-- The reverse of 564_ThePublishedAssignmentCarriesThePartitionMap.sql (#2558): every function as its previous last word
 -- defined it, copied whole, then the predicate and the map column dropped. Claims rank by modulo over the members again,
 -- and an assigner of the release that publishes a map can no longer publish.
 

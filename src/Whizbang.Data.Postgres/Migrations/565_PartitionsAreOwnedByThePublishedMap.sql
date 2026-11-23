@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 560_PartitionsAreOwnedByThePublishedMap.sql
+-- Migration: 565_PartitionsAreOwnedByThePublishedMap.sql
 -- Date: 2026-11-23
 -- Description: The partition ownership table, its one predicate, and the per-service switch that makes the published
 --              partition assignment the only owner of a stream (#2555, #2554; phase 3 of #2540).
@@ -30,7 +30,7 @@
 --                that lapses never stalls claims, and a map known to name a dead member waits for the next assigner.
 --                Judged on the database's clock alone, so no host clock decides it.
 --
---              Nothing claims through the table yet (561 does, behind the switch), and the switch stays off: the
+--              Nothing claims through the table yet (566 does, behind the switch), and the switch stays off: the
 --              assigner asks for it only when PartitionAssigner.OwnershipByMap is set, which defaults off until the
 --              handover and fencing phases land. Off, every claim path is exactly as before.
 --
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_partition_ownership (
 );
 
 COMMENT ON TABLE __SCHEMA__.wh_partition_ownership IS
-  '560 (#2555): who owns each partition, one row per partition, written by the partition assigner under its role epoch '
+  '565 (#2555): who owns each partition, one row per partition, written by the partition assigner under its role epoch '
   'with every publish. epoch rises by one each time the owner changes (the fencing token); state is active, or '
   'handing_over with the next owner and a deadline. Claims decide through wh_i_own once the service''s switch '
   '(wh_partition_ownership_by_map) is on.';
@@ -91,7 +91,7 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_i_own(INTEGER, UUID) IS
-  '560 (#2555): the epoch of p_instance_id''s ownership of the partition when it owns it and the partition is active, '
+  '565 (#2555): the epoch of p_instance_id''s ownership of the partition when it owns it and the partition is active, '
   'NULL otherwise; 0 for work without a partition, which is anyone''s. One primary-key probe of wh_partition_ownership. '
   'The one predicate every claim path decides through once the service''s switch is on.';
 
@@ -114,7 +114,7 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_partition_ownership_by_map() IS
-  '560 (#2555): whether this service claims by the partition ownership table alone (wh_settings partition_ownership_mode '
+  '565 (#2555): whether this service claims by the partition ownership table alone (wh_settings partition_ownership_mode '
   '= map, a one-way latch the assigner writes). One primary-key probe; read once per call by the claim and store paths.';
 
 -- ---------------------------------------------------------------------------------------------
@@ -145,7 +145,7 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_partition_map_is_valid() IS
-  '560 (#2554): whether the published partition map may be claimed by: published, and its lease unexpired or every '
+  '565 (#2554): whether the published partition map may be claimed by: published, and its lease unexpired or every '
   'member live by the one liveness rule. An assigner that lapses never stalls claims while the map''s members are live; '
   'a map that names a dead member past its lease waits for the next assigner. Judged on the database''s clock.';
 
@@ -200,7 +200,7 @@ BEGIN
 
   INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description, updated_at, updated_by)
   VALUES ('partition_ownership_mode', 'map', 'string',
-          'Migration 560 (#2555): every live instance of this service supported ownership by map when this was written, '
+          'Migration 565 (#2555): every live instance of this service supported ownership by map when this was written, '
           'so every claim decides through the partition ownership table (wh_i_own). One-way: never cleared.',
           NOW(), 'wh_open_partition_ownership_by_map')
   ON CONFLICT (setting_key) DO UPDATE SET setting_value = 'map', updated_at = NOW(), updated_by = EXCLUDED.updated_by;
@@ -210,7 +210,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_open_partition_ownership_by_map(TEXT, UUID, BIGINT) IS
-  '560 (#2555): the partition assigner, fenced by its role epoch, latches wh_settings partition_ownership_mode = map '
+  '565 (#2555): the partition assigner, fenced by its role epoch, latches wh_settings partition_ownership_mode = map '
   '(one-way) once a map is published at its epoch and every live instance''s registry metadata says '
   'partition_ownership_level >= 1. Returns open, opened, or closed (reason).';
 
@@ -243,7 +243,7 @@ SET timezone = 'UTC'
 AS $$
 DECLARE
   v_revision BIGINT;
-  -- 560: the members as published, and the ones published before, so the ownership table is written only on a change.
+  -- 565: the members as published, and the ones published before, so the ownership table is written only on a change.
   v_members UUID[] := COALESCE(p_members, ARRAY[]::UUID[]);
   v_previous UUID[];
 BEGIN
@@ -252,7 +252,7 @@ BEGIN
   -- vote cannot hand the role on between the check and the write below.
   PERFORM __SCHEMA__.wh_assert_role_epoch(p_role, p_instance_id, p_epoch);
 
-  -- 560 (#2555): once the service owns by map, an instance that does not support the mode is given no partition, so an
+  -- 565 (#2555): once the service owns by map, an instance that does not support the mode is given no partition, so an
   -- older instance that joins after the switch owns nothing and claims nothing. Rank order is kept.
   IF __SCHEMA__.wh_partition_ownership_by_map() THEN
     SELECT COALESCE(array_agg(m.instance_id ORDER BY m.ordinal), ARRAY[]::UUID[])
@@ -288,7 +288,7 @@ BEGIN
       USING ERRCODE = 'WHF01';
   END IF;
 
-  -- 560 (#2555): the ownership table follows the map, written in this statement so the role epoch fences it too.
+  -- 565 (#2555): the ownership table follows the map, written in this statement so the role epoch fences it too.
   -- Partition p is owned by members[p mod n], the rank every claim already uses. Only a partition whose owner changes is
   -- written, and its epoch advances by one; a new partition starts at epoch 1. A map with no members owns nothing new,
   -- so the table keeps its owners (none of them is live, so none claims) until a map with members is published. The
@@ -321,5 +321,5 @@ COMMENT ON FUNCTION __SCHEMA__.wh_publish_partition_assignment(TEXT, UUID, BIGIN
   '203 (#1254): publishes the partition assignment. Fenced by wh_assert_role_epoch (WHF01 for a deposed assigner); '
   'the revision advances within an epoch and restarts at 1 for a new one; an older epoch is refused. Returns the '
   'revision. 330 (#2046): announces epoch:revision on the signal bus (wh_partition_assignment), recorded durably. '
-  '560 (#2555): writes wh_partition_ownership with the map (members[p mod n], the epoch of each changed partition '
+  '565 (#2555): writes wh_partition_ownership with the map (members[p mod n], the epoch of each changed partition '
   'advancing), and once the service owns by map, leaves out members that do not support the mode.';

@@ -26,7 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// is held to the map too: its latest definition must route by <c>wh_partition_ownership</c> in map mode.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/561_ClaimsDecideThroughTheOwnershipTable.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/566_ClaimsDecideThroughTheOwnershipTable.sql</code-under-test>
 [Category("Migrations")]
 [Category("Shard3")]
 public partial class ClaimPathsDecideThroughTheOwnershipTableGuardTests {

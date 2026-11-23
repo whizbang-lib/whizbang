@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 560_PartitionsAreOwnedByThePublishedMap.sql (#2555): the ownership table, its predicate, the switch and
+-- The reverse of 565_PartitionsAreOwnedByThePublishedMap.sql (#2555): the ownership table, its predicate, the switch and
 -- the map's validity are dropped, and wh_publish_partition_assignment is restored to 330's definition, copied whole.
 
 DELETE FROM __SCHEMA__.wh_settings WHERE setting_key = 'partition_ownership_mode';

@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 559_ReleasedStreamsLeaveTheirLedgerOwner.sql (#2545): release_unstarted_leases as 162 defined it,
+-- The reverse of 563_ReleasedStreamsLeaveTheirLedgerOwner.sql (#2545): release_unstarted_leases as 162 defined it,
 -- copied whole. A release ends only the ledger lease again, so a released perspective stream returns to a live
 -- releaser.
 

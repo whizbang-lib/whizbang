@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 559_ReleasedStreamsLeaveTheirLedgerOwner.sql
+-- Migration: 563_ReleasedStreamsLeaveTheirLedgerOwner.sql
 -- Date: 2026-11-23
 -- Description: A released stream leaves its stored owner, so a released perspective stream goes to the live instance
 --              its partition is assigned to (which may be the releaser) instead of back to the releaser regardless
@@ -74,7 +74,7 @@ BEGIN
     GET DIAGNOSTICS v_perspective = ROW_COUNT;
   END IF;
   -- End this instance's ownership of the released streams so the unowned path opens to siblings.
-  -- 559 (#2545): the ledger owner is cleared, not only its lease. Perspective acquisition lets the named owner claim
+  -- 563 (#2545): the ledger owner is cleared, not only its lease. Perspective acquisition lets the named owner claim
   -- whatever its lease and keeps every other instance out while that owner is live, so a lease ended alone handed a
   -- released perspective stream straight back to the live instance that released it. deregister_instance (463) clears
   -- the owner the same way. The predicate is unchanged, and with it the plan: the releaser's ledger rows by
@@ -91,5 +91,5 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__.release_unstarted_leases(UUID, UUID[], UUID[]) IS
   'Releases the calling instance''s leased-but-not-started inbox and perspective rows in the given streams back to '
   'unassigned (attempt refunded, lease cleared) and ends its ownership of those streams, clearing the stored owner so '
-  'the live instance each stream''s partition is assigned to claims it next (145, #724; 559, #2545). Called by the '
+  'the live instance each stream''s partition is assigned to claims it next (145, #724; 563, #2545). Called by the '
   'instance itself (a stuck claim loop, a halt, a failed batch); never by a sibling.';

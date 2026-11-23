@@ -23,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// acquired it before a rebalance is), then [A, B], which moves the odd partitions to B.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/561_ClaimsDecideThroughTheOwnershipTable.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/566_ClaimsDecideThroughTheOwnershipTable.sql</code-under-test>
 [Category("Shard5")]
 public class OwnershipByMapClaimSqlTests : EFCoreTestBase {
   private const string PERSPECTIVE = "Ownership.Perspective";
