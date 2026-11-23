@@ -341,6 +341,22 @@ public class DapperStartupAssessorTests {
   }
 
   [Test]
+  public async Task WhatThisBuildDefines_IsEveryMigrationPerspectiveTableAndApplicationObject_ByLedgerName_WhicheverWayItWasBuiltAsync() {
+    // #2553: the names and hashes the pass records, so the rollback gate can judge a recorded change by its content.
+    var provider = new PostgresMigrationProvider();
+    var anyMigration = provider.GetMigrations()[0];
+    var fromEntries = new PostgresSchemaInitializer("Host=203.0.113.1", _entries, provider).DefinedContent("public");
+    var legacySql = new PostgresSchemaInitializer("Host=203.0.113.1", "CREATE TABLE IF NOT EXISTS wh_per_legacy (id uuid);").DefinedContent("public");
+
+    await Assert.That(fromEntries[anyMigration.Name]).IsEqualTo(MigrationSqlNormalizer.ContentHash(anyMigration.Sql))
+      .Because("an initializer given its migration provider hashes that provider's scripts, as its pass records them");
+    await Assert.That(fromEntries.ContainsKey("perspective:AssessProbe")).IsTrue();
+    await Assert.That(legacySql.Keys.Any(k => k.StartsWith("perspective:", StringComparison.Ordinal))).IsFalse()
+      .Because("legacy perspective SQL has no per-table entries to name, so its tables are judged by who applied them");
+    await Assert.That(legacySql.ContainsKey(anyMigration.Name)).IsTrue();
+  }
+
+  [Test]
   public async Task RecordingAnApplicationOverride_WithNoInstanceIdentity_TouchesNothingAsync() {
     // #2553: no identity, no row to record the application schema's override on (this connection goes nowhere).
     var initializer = new PostgresSchemaInitializer("Host=203.0.113.1;Port=1;Database=none;Timeout=1");
