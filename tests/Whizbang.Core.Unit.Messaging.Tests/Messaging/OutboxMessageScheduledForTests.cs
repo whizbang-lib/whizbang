@@ -51,7 +51,7 @@ public class OutboxMessageScheduledForTests {
     // Build a minimal OutboxMessage via the required init members. Use object initializer through
     // reflection-less construction so we exercise the actual record-init contract.
     var sample = new OutboxMessage {
-      MessageId = Guid.NewGuid(),
+      MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
       Envelope = null!,           // not under test — left null so the property check is the only assertion
       Metadata = null!,
       EnvelopeType = "x",

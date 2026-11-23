@@ -117,7 +117,8 @@ public class GuidOrderingEntryPointValidationTests {
         .And.Contains(MESSAGE_TYPE).And.Contains(ENTRY_POINT).And.Contains("4");
       await Assert.That(ProbeMeterReader.ReadTotal(meter, GuidOrderingMetrics.NON_V7_MESSAGE_IDS)).IsEqualTo(2);
       var series = ProbeMeterReader.ReadSeries(meter, GuidOrderingMetrics.NON_V7_MESSAGE_IDS);
-      await Assert.That(series.All(s => (string?)s.Tags[GuidOrderingMetrics.ENTRY_POINT_TAG] == ENTRY_POINT)).IsTrue();
+      await Assert.That(series.Where(s => s.Value > 0).All(s => (string?)s.Tags.GetValueOrDefault(GuidOrderingMetrics.ENTRY_POINT_TAG) == ENTRY_POINT))
+        .IsTrue().Because("each count is tagged with its entry point");
     }
   }
 

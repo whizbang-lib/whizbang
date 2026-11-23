@@ -89,7 +89,7 @@ public class PerspectiveWorkerTestHarnessTests {
   public async Task FailureCapture_Enqueue_CapturesCategoryAndFailureAsync() {
     var harness = new PerspectiveWorkerTestHarness();
     var failure = new MessageFailure {
-      MessageId = Guid.NewGuid(),
+      MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
       CompletedStatus = MessageProcessingStatus.Stored,
       Error = "kaboom"
     };

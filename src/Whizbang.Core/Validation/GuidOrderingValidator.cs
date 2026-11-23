@@ -1,24 +1,156 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Collections.Concurrent;
+using System.Globalization;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Configuration;
+using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Validation;
 
 /// <summary>
-/// Validates that TrackedGuid values are appropriate for time-sensitive ordering.
-/// Logs/warns/errors based on configuration when v4 or unknown source is used.
+/// The time-ordering check every event and message id entry point runs (#2528), and the report for stream ids.
 /// </summary>
 /// <remarks>
-/// Creates a new GuidOrderingValidator.
+/// <para>
+/// Version assignment orders a batch by message id, apply order breaks ties on event id, replay falls back to id order,
+/// and <c>wh_lifecycle_completions</c> is partitioned by the time in the event id. An event or message id that is not a
+/// UUIDv7 is therefore refused where it enters (<see cref="ValidateMessageId"/>) at
+/// <see cref="GuidOrderingSeverity.Error"/>, the default. Below that it is logged once and counted, so the count can be
+/// driven to zero. The empty id is refused at every severity.
+/// </para>
+/// <para>
+/// A stream id is hashed and sorted for a total order, never read for its time, so a non-v7 stream id costs only index
+/// locality: <see cref="ReportStreamId"/> logs it once and counts it, and refuses it only when stream ids are raised to
+/// <see cref="GuidOrderingSeverity.Error"/>. A strong id declared to accept any version is never reported.
+/// </para>
 /// </remarks>
-/// <param name="options">Whizbang configuration options.</param>
-/// <param name="logger">Logger for reporting violations.</param>
-public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logger) {
-  private readonly WhizbangOptions _options = ArgumentGuard.NotNull(options);
-  private readonly ILogger _logger = ArgumentGuard.NotNull(logger);
+/// <docs>fundamentals/identity/whizbang-ids#time-ordering-checks</docs>
+/// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingEntryPointValidationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingValidatorTests.cs</tests>
+public partial class GuidOrderingValidator {
+  /// <summary>
+  /// How many distinct ids the once-per-id report remembers before it forgets them all and starts again, so a service
+  /// fed a stream of non-v7 ids does not grow without bound; an id reported before the reset may be reported again.
+  /// </summary>
+#pragma warning disable CA1707 // Repo style: public const fields are ALL_CAPS_SNAKE per editorconfig.
+  public const int MAX_REMEMBERED_IDS = 100_000;
+#pragma warning restore CA1707
+
+  private readonly WhizbangOptions _options;
+  private readonly ILogger _logger;
+  private readonly GuidOrderingMetrics? _metrics;
+  private readonly ConcurrentDictionary<Guid, byte> _reportedMessageIds = new();
+  private readonly ConcurrentDictionary<Guid, byte> _reportedStreamIds = new();
+
+  /// <summary>
+  /// Creates a new GuidOrderingValidator.
+  /// </summary>
+  /// <param name="options">Whizbang configuration options.</param>
+  /// <param name="logger">Logger for reporting violations.</param>
+  public GuidOrderingValidator(WhizbangOptions options, ILogger logger) : this(options, logger, metrics: null) { }
+
+  /// <summary>
+  /// Creates a new GuidOrderingValidator that counts what it accepts below <see cref="GuidOrderingSeverity.Error"/>.
+  /// </summary>
+  /// <param name="options">Whizbang configuration options.</param>
+  /// <param name="logger">Logger for reporting violations.</param>
+  /// <param name="metrics">The counters, or null for none.</param>
+  public GuidOrderingValidator(WhizbangOptions options, ILogger logger, GuidOrderingMetrics? metrics) {
+    _options = ArgumentGuard.NotNull(options);
+    _logger = ArgumentGuard.NotNull(logger);
+    _metrics = metrics;
+  }
+
+  /// <summary>
+  /// The validator a component uses when none was registered: the default options (event and message ids refused,
+  /// stream ids reported), no logger and no counters.
+  /// </summary>
+  public static GuidOrderingValidator Default { get; } = new(new WhizbangOptions(), NullLogger.Instance);
+
+  /// <summary>
+  /// Checks an event or message id where it enters the framework. A UUIDv7 passes at once; the empty id always throws;
+  /// any other version throws at <see cref="GuidOrderingSeverity.Error"/> and is otherwise logged and counted once.
+  /// </summary>
+  /// <param name="id">The event or message id.</param>
+  /// <param name="messageType">The type of the message the id belongs to, for the report.</param>
+  /// <param name="entryPoint">The entry point checking it, for the report.</param>
+  /// <exception cref="GuidOrderingException">The id is empty, or not v7 at <see cref="GuidOrderingSeverity.Error"/>.</exception>
+  public void ValidateMessageId(Guid id, string messageType, string entryPoint) {
+    if (id.Version == 7) {
+      return;
+    }
+    if (id == Guid.Empty) {
+      throw new GuidOrderingException(id, messageType, entryPoint,
+        $"{entryPoint} refused the empty message id {id} for {messageType} (version 0). Event and message ids must be UUIDv7 (time-ordered).");
+    }
+    var severity = _options.GuidOrderingViolationSeverity;
+    if (severity == GuidOrderingSeverity.Error) {
+      throw new GuidOrderingException(id, messageType, entryPoint,
+        $"{entryPoint} refused message id {id} for {messageType}: version {id.Version}, but event and message ids must be UUIDv7 "
+        + "(time-ordered). Mint it with TrackedGuid.New() or a [WhizbangId] type; GuidOrderingViolationSeverity can lower this to a warning.");
+    }
+    if (severity == GuidOrderingSeverity.None || !_firstSighting(_reportedMessageIds, id)) {
+      return;
+    }
+    if (severity == GuidOrderingSeverity.Warning) {
+      LogMessageIdWarning(_logger, entryPoint, id, messageType, id.Version);
+    } else {
+      LogMessageIdInfo(_logger, entryPoint, id, messageType, id.Version);
+    }
+    _metrics?.NonV7MessageIds.Add(1, _entryPointTag(entryPoint), _versionTag(id));
+  }
+
+  /// <summary>
+  /// Reports a stream id that is not a UUIDv7, once per stream: logged and counted, or refused when stream ids are
+  /// raised to <see cref="GuidOrderingSeverity.Error"/>. The empty id (refused elsewhere, by <see cref="StreamIdGuard"/>),
+  /// a UUIDv7 and an id of a type declared to accept any version are never reported. Nothing here compares ids.
+  /// </summary>
+  /// <param name="streamId">The stream id.</param>
+  /// <param name="streamIdType">The stream id's declared type (a strong id or <see cref="Guid"/>), or null when unknown.</param>
+  /// <param name="messageType">The type of the message carrying it, for the report.</param>
+  /// <param name="entryPoint">The entry point reporting it, for the report.</param>
+  /// <exception cref="GuidOrderingException">The stream id is not v7 and stream ids are raised to Error.</exception>
+  public void ReportStreamId(Guid streamId, Type? streamIdType, string messageType, string entryPoint) {
+    if (streamId.Version == 7 || streamId == Guid.Empty || WhizbangIdProviderRegistry.AcceptsAnyVersion(streamIdType)) {
+      return;
+    }
+    var severity = _options.StreamIdOrderingViolationSeverity;
+    if (severity == GuidOrderingSeverity.Error) {
+      throw new GuidOrderingException(streamId, messageType, entryPoint,
+        $"{entryPoint} refused stream id {streamId} for {messageType}: version {streamId.Version}, and stream ids are configured "
+        + "to be UUIDv7 (StreamIdOrderingViolationSeverity = Error).");
+    }
+    if (severity == GuidOrderingSeverity.None || !_firstSighting(_reportedStreamIds, streamId)) {
+      return;
+    }
+    if (severity == GuidOrderingSeverity.Warning) {
+      LogStreamIdWarning(_logger, entryPoint, streamId, messageType, streamId.Version);
+    } else {
+      LogStreamIdInfo(_logger, entryPoint, streamId, messageType, streamId.Version);
+    }
+    _metrics?.NonV7StreamIds.Add(1, _entryPointTag(entryPoint), _versionTag(streamId));
+  }
+
+  /// <summary>
+  /// The check an event store append runs before anything is stored: the envelope's message id (the event id) through
+  /// <see cref="ValidateMessageId"/> and the stream id through <see cref="ReportStreamId"/>, both named by the payload's
+  /// runtime type.
+  /// </summary>
+  /// <typeparam name="TMessage">The envelope's payload type.</typeparam>
+  /// <param name="streamId">The stream appended to.</param>
+  /// <param name="envelope">The envelope appended.</param>
+  /// <param name="entryPoint">The store's entry point, for the report.</param>
+  /// <exception cref="GuidOrderingException">The event id is refused, or the stream id is and stream ids are raised to Error.</exception>
+  public void ValidateAppend<TMessage>(Guid streamId, Observability.MessageEnvelope<TMessage> envelope, string entryPoint) {
+    ArgumentNullException.ThrowIfNull(envelope);
+    var messageType = TypeNameFormatter.SimpleName(envelope.Payload is { } payload ? payload.GetType() : typeof(TMessage));
+    ValidateMessageId(envelope.MessageId.Value, messageType, entryPoint);
+    ReportStreamId(streamId, streamIdType: null, messageType, entryPoint);
+  }
 
   /// <summary>
   /// Validates that a TrackedGuid is appropriate for time-sensitive ordering.
@@ -60,6 +192,40 @@ public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logg
         break;
     }
   }
+
+  // True the first time an id is seen; the memory is cleared when it fills, so it stays bounded.
+  private static bool _firstSighting(ConcurrentDictionary<Guid, byte> seen, Guid id) {
+    if (seen.Count >= MAX_REMEMBERED_IDS) {
+      seen.Clear();
+    }
+    return seen.TryAdd(id, 0);
+  }
+
+  private static KeyValuePair<string, object?> _entryPointTag(string entryPoint) =>
+    new(GuidOrderingMetrics.ENTRY_POINT_TAG, entryPoint);
+
+  private static KeyValuePair<string, object?> _versionTag(Guid id) =>
+    new(GuidOrderingMetrics.VERSION_TAG, id.Version.ToString(CultureInfo.InvariantCulture));
+
+  [LoggerMessage(
+      Level = LogLevel.Warning,
+      Message = "{EntryPoint} accepted message id {MessageId} for {MessageType}: version {Version}, not UUIDv7. Version assignment, apply order and replay read the time in event and message ids; mint them with TrackedGuid.New() or a [WhizbangId] type.")]
+  private static partial void LogMessageIdWarning(ILogger logger, string entryPoint, Guid messageId, string messageType, int version);
+
+  [LoggerMessage(
+      Level = LogLevel.Information,
+      Message = "{EntryPoint} accepted message id {MessageId} for {MessageType}: version {Version}, not UUIDv7. Version assignment, apply order and replay read the time in event and message ids; mint them with TrackedGuid.New() or a [WhizbangId] type.")]
+  private static partial void LogMessageIdInfo(ILogger logger, string entryPoint, Guid messageId, string messageType, int version);
+
+  [LoggerMessage(
+      Level = LogLevel.Warning,
+      Message = "{EntryPoint} saw stream id {StreamId} for {MessageType}: version {Version}, not UUIDv7. A stream id is never read for its time; a non-v7 one costs only index locality.")]
+  private static partial void LogStreamIdWarning(ILogger logger, string entryPoint, Guid streamId, string messageType, int version);
+
+  [LoggerMessage(
+      Level = LogLevel.Information,
+      Message = "{EntryPoint} saw stream id {StreamId} for {MessageType}: version {Version}, not UUIDv7. A stream id is never read for its time; a non-v7 one costs only index locality.")]
+  private static partial void LogStreamIdInfo(ILogger logger, string entryPoint, Guid streamId, string messageType, int version);
 
   [LoggerMessage(
       Level = LogLevel.Error,

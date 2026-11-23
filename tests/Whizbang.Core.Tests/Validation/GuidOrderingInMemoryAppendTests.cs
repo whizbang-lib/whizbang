@@ -80,7 +80,9 @@ public class GuidOrderingInMemoryAppendTests {
   [Test]
   public async Task ValidateAppend_ANullPayload_IsNamedByTheDeclaredTypeAsync() {
     var envelope = new MessageEnvelope<Probe?> {
+#pragma warning disable WHIZ037 // a v4 on purpose: the refusal is the subject
       MessageId = new MessageId(Guid.Parse("919108f7-52d1-4320-9bac-f847db4148a8")),
+#pragma warning restore WHIZ037
       Payload = null,
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = Dispatch.DispatchModes.Local, Source = MessageSource.Local },

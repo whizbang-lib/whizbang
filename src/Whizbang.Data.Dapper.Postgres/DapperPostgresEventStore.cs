@@ -37,8 +37,9 @@ public partial class DapperPostgresEventStore(
   IPolicyEngine policyEngine,
   IPerspectiveInvoker? perspectiveInvoker,
   ILogger<DapperPostgresEventStore> logger,
-  Whizbang.Core.IEphemeralModeResolver? ephemeralModeResolver = null
-  ) : DapperEventStoreBase(connectionFactory, executor, jsonOptions), Whizbang.Data.Postgres.IDirectAppendRowBuilder {
+  Whizbang.Core.IEphemeralModeResolver? ephemeralModeResolver = null,
+  Whizbang.Core.Validation.GuidOrderingValidator? guidOrdering = null
+  ) : DapperEventStoreBase(connectionFactory, executor, jsonOptions, guidOrdering), Whizbang.Data.Postgres.IDirectAppendRowBuilder {
 #pragma warning restore CS9113
   private readonly IJsonbPersistenceAdapter<IMessageEnvelope> _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
   private readonly JsonbSizeValidator _sizeValidator = sizeValidator ?? throw new ArgumentNullException(nameof(sizeValidator));
@@ -64,6 +65,7 @@ public partial class DapperPostgresEventStore(
   /// <exception cref="StreamSealedException">The stream is sealed (#1733); nothing is stored.</exception>
   public override async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
+    GuidOrdering.ValidateAppend(streamId, envelope, "DapperPostgresEventStore.Append");
 
     var jsonb = await _prepareJsonbAsync(envelope);
 

@@ -42,7 +42,7 @@ public class GuidOrderingRefusalMatrixTests : EFCoreTestBase {
     }
   }
 
-  private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext context) =>
+  private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext context) =>
     new(context, JsonContextRegistry.CreateCombinedOptions());
 
   [Test]
@@ -127,6 +127,28 @@ public class GuidOrderingRefusalMatrixTests : EFCoreTestBase {
     await Assert.That(await _countAsync(context, "SELECT count(*) FROM wh_event_store WHERE event_id = @id", appendId)).IsEqualTo(1L);
   }
 
+  /// <summary>
+  /// A non-v7 stream id is stored by default (reported only), and refused with nothing stored when stream ids are raised
+  /// to Error.
+  /// </summary>
+  [Test]
+  public async Task EventStoreAppend_NonV7StreamId_IsStoredByDefault_AndRefusedAtErrorAsync() {
+    await using var context = CreateDbContext();
+    var reported = Guid.Parse("919108f7-52d1-4320-9bac-f847db4148a8");
+    var refused = Guid.Parse("886313e1-3b8a-5372-9b90-0c9aee199e5d");
+    var strict = new GuidOrderingValidator(
+      new Whizbang.Core.Configuration.WhizbangOptions { StreamIdOrderingViolationSeverity = Whizbang.Core.Configuration.GuidOrderingSeverity.Error },
+      Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+
+    await new EFCoreEventStore<WorkCoordinationDbContext>(context).AppendAsync(reported, _envelope(TrackedGuid.New(), reported));
+    await Assert.That(async () => await new EFCoreEventStore<WorkCoordinationDbContext>(context, guidOrdering: strict)
+        .AppendAsync(refused, _envelope(TrackedGuid.New(), refused)))
+      .Throws<GuidOrderingException>();
+
+    await Assert.That(await _countAsync(context, "SELECT count(*) FROM wh_event_store WHERE stream_id = @stream", reported, reported)).IsEqualTo(1L);
+    await Assert.That(await _countAsync(context, "SELECT count(*) FROM wh_event_store WHERE stream_id = @stream", refused, refused)).IsEqualTo(0L);
+  }
+
   /// <summary>A batch holding one refused id writes none of its rows: the check runs before any SQL.</summary>
   [Test]
   public async Task ABatchWithOneRefusedId_StoresNoneOfItsRowsAsync() {
@@ -166,8 +188,8 @@ public class GuidOrderingRefusalMatrixTests : EFCoreTestBase {
     }
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = sql;
-    cmd.Parameters.AddWithValue("id", id);
-    cmd.Parameters.AddWithValue("stream", stream ?? id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
+    cmd.Parameters.AddWithValue(nameof(stream), stream ?? id);
     return (long)(await cmd.ExecuteScalarAsync())!;
   }
 

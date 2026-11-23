@@ -50,7 +50,7 @@ internal sealed class RecordingRebuildDispatcher(PublishedEventLog log, ServiceW
   public List<(string ClaimKey, object? Event, Whizbang.Core.Lenses.PerspectiveScope? Scope)> PublishOnceCalls { get; } = [];
 
   private static DeliveryReceipt _noopReceipt() =>
-    DeliveryReceipt.Accepted(new MessageId(Guid.NewGuid()), destination: "test");
+    DeliveryReceipt.Accepted(Whizbang.Core.ValueObjects.MessageId.New(), destination: "test");
 
   public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) {
     SimpleCallCount++;

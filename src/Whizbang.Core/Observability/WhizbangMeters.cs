@@ -46,6 +46,7 @@ public static class WhizbangMeters {
     EphemeralBlockerMetrics.METER_NAME,
     EventCategoryMetrics.METER_NAME,
     GovernorMetrics.METER_NAME,
+    GuidOrderingMetrics.METER_NAME,
     HousekeepingMetrics.METER_NAME,
     LifecycleCoordinatorMetrics.METER_NAME,
     LifecycleMetrics.METER_NAME,

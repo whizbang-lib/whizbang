@@ -883,6 +883,11 @@ public abstract partial class Dispatcher(
   // Whizbang options for runtime configuration (auto-generate StreamIds, etc.)
 #pragma warning disable S4487, S1144 // Pre-resolved for use by subclasses and future features
   private readonly WhizbangOptions _whizbangOptions = serviceProvider.GetService<Microsoft.Extensions.Options.IOptions<WhizbangOptions>>()?.Value ?? new WhizbangOptions();
+#pragma warning restore S4487, S1144
+  // #2528: the time-ordering check for the ids a caller can hand the dispatcher (a cascade's source, a composite's carried
+  // child ids, a subclass's emission id) and the report for the stream ids it writes.
+  private readonly Whizbang.Core.Validation.GuidOrderingValidator _guidOrdering = serviceProvider.GetService<Whizbang.Core.Validation.GuidOrderingValidator>() ?? Whizbang.Core.Validation.GuidOrderingValidator.Default;
+#pragma warning disable S4487, S1144
 
   // The application author's own declaration that a message type carries no authority (a
   // pre-authentication event, a health check). Stamped so those stay distinguishable from an event
@@ -4367,8 +4372,14 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DispatchExecutionIntegrationTests.cs:MessageWithALocalHandler_TheHandlerSeesTheSentTimeAndCorrelationTheStoredRowCarriesAsync</tests>
   // S3776: Multi-mode cascade dispatch — complexity from conditional logging + Local/EventStore/Outbox routing paths
 #pragma warning disable S3776
-  public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) =>
-    _cascadeMessageAsync(message, sourceEnvelope, mode, presetEventId: null, cancellationToken);
+  public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) {
+    // The source's id anchors every id derived for what the cascade emits, and a derived id is stamped v7 whatever its
+    // anchor, so the anchor is checked here (#2528). A source without an id anchors nothing: fresh ids are minted.
+    if (sourceEnvelope is not null && sourceEnvelope.MessageId.Value != Guid.Empty) {
+      _guidOrdering.ValidateMessageId(sourceEnvelope.MessageId.Value, TypeNameFormatter.SimpleName(message.GetType()), "Dispatcher.Cascade");
+    }
+    return _cascadeMessageAsync(message, sourceEnvelope, mode, presetEventId: null, cancellationToken);
+  }
 
   /// <summary>
   /// Cascades a message; <paramref name="presetEventId"/>, when given, is the id an event is stored under instead of
@@ -4750,6 +4761,8 @@ public abstract partial class Dispatcher(
       var childId = carriedIds is not null
         ? carriedIds[ordinal]
         : CompositeChildIdentity.ForChild(messageId.Value, ordinal, inner.GetType());
+      // A composite that carries its children's ids hands them in as plain Guids (#2528).
+      _guidOrdering.ValidateMessageId(childId, TypeNameFormatter.SimpleName(inner.GetType()), "Dispatcher.CompositeFanOut");
       try {
         await _cascadeMessageAsync(inner, sourceEnvelope, DispatchModes.Local, childId, CancellationToken.None).ConfigureAwait(false);
       } catch (Exception ex) when (!atomic) {
@@ -5180,6 +5193,9 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchExecutorShapeComponentTests.cs</tests>
   protected Task CascadeByRuntimeTypeAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope, Guid? eventId,
       bool eventStoreOnly) {
+    if (eventId is Guid preset) {
+      _guidOrdering.ValidateMessageId(preset, TypeNameFormatter.SimpleName(messageType), "Dispatcher.CascadeByRuntimeType");
+    }
     var messageId = eventId.HasValue ? new MessageId(eventId.Value) : MessageId.New();
     return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope, eventStoreOnly);
   }
@@ -6379,6 +6395,10 @@ public abstract partial class Dispatcher(
     if (payload is IEvent) {
       StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "Dispatcher.Outbox", TypeNameFormatter.DisplayName(payload.GetType()));
     }
+    // #2528: a stream id that is not v7 costs index locality only, so it is reported, not refused (unless configured).
+    var reportedType = payload?.GetType() ?? typeof(TMessage);
+    _guidOrdering.ReportStreamId(streamId, _streamIdExtractor?.GetStreamIdType(reportedType),
+      TypeNameFormatter.SimpleName(reportedType), "Dispatcher.Outbox");
 
     // Priority step 1: declared before the row is built so the number travels inside the stored envelope
     // and sits on the row for the store. The message type is rendered by the shared helper.

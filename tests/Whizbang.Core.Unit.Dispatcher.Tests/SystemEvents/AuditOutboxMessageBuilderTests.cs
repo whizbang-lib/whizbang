@@ -419,7 +419,7 @@ public class AuditOutboxMessageBuilderTests {
   [Test]
   public async Task TryBuildAuditMessage_SetsOriginalEventId_FromSourceMessageAsync() {
     // Arrange
-    var sourceMessageId = Guid.NewGuid();
+    var sourceMessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     var message = _createOutboxMessage(isEvent: true, messageId: sourceMessageId);
     var options = _createOptions(auditEnabled: true);
 

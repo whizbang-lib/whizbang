@@ -87,10 +87,11 @@ public partial class GuidOrderingEntryPointGuardTests {
   [Test]
   public async Task EveryImplementationListedAsValidating_CallsTheValidatorInItsSourceAsync() {
     foreach (var name in _validates) {
-      var file = _sourceFileOf(name);
-      await Assert.That(file).IsNotNull().Because($"{name} is declared somewhere under src");
-      var text = File.ReadAllText(file!);
-      await Assert.That(ValidatorCall().IsMatch(text)).IsTrue().Because($"{name} runs the time-ordering check");
+      // A partial class spans files; one of them runs the check.
+      var files = _sourceFilesOf(name);
+      await Assert.That(files).IsNotEmpty().Because($"{name} is declared somewhere under src");
+      await Assert.That(files.Any(f => ValidatorCall().IsMatch(File.ReadAllText(f)))).IsTrue()
+        .Because($"{name} runs the time-ordering check (declared in {string.Join(", ", files.Select(f => Path.GetRelativePath(_repoRoot, f)))})");
     }
   }
 
@@ -98,9 +99,9 @@ public partial class GuidOrderingEntryPointGuardTests {
   [Test]
   public async Task TheValidator_HasCallersAtEveryNamedEntryPointAsync() {
     var callers = Directory.EnumerateFiles(Path.Combine(_repoRoot, "src"), "*.cs", SearchOption.AllDirectories)
-      .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
-      .Where(f => !f.EndsWith("GuidOrderingValidator.cs", StringComparison.Ordinal))
-      .Where(f => ValidatorCall().IsMatch(File.ReadAllText(f)))
+      .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+        && !f.EndsWith("GuidOrderingValidator.cs", StringComparison.Ordinal)
+        && ValidatorCall().IsMatch(File.ReadAllText(f)))
       .Select(f => Path.GetRelativePath(_repoRoot, f).Replace('\\', '/'))
       .ToHashSet(StringComparer.Ordinal);
 
@@ -132,8 +133,8 @@ public partial class GuidOrderingEntryPointGuardTests {
       .Select(f => Path.GetRelativePath(_repoRoot, f).Replace('\\', '/'))
       .Where(f => !f.Contains("/obj/", StringComparison.Ordinal) && !f.Contains("Generators", StringComparison.Ordinal)
         && !f.StartsWith("src/Whizbang.Testing/", StringComparison.Ordinal) && !f.Contains("Analyzers", StringComparison.Ordinal)
-        && !f.Contains("/Templates/", StringComparison.Ordinal))
-      .Where(f => File.ReadLines(Path.Combine(_repoRoot, f)).Any(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal) && NonV7Minting().IsMatch(l)))
+        && !f.Contains("/Templates/", StringComparison.Ordinal)
+        && File.ReadLines(Path.Combine(_repoRoot, f)).Any(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal) && NonV7Minting().IsMatch(l)))
       .ToList();
 
     await Assert.That(found).Contains("src/Whizbang.Core/Messaging/IntegrityDeliveryId.cs").Because("the control: the scan finds a known site");
@@ -145,14 +146,14 @@ public partial class GuidOrderingEntryPointGuardTests {
       var parts = entry.Site.Split(':');
       var path = Path.Combine(_repoRoot, parts[0]);
       await Assert.That(File.Exists(path)).IsTrue().Because($"{entry.Site} names a file that exists");
-      await Assert.That(File.ReadAllText(path)).Contains(parts[1]).Because($"{entry.Site} names a member of its file");
+      await Assert.That(await File.ReadAllTextAsync(path)).Contains(parts[1]).Because($"{entry.Site} names a member of its file");
     }
   }
 
-  private static string? _sourceFileOf(string typeName) =>
-    Directory.EnumerateFiles(Path.Combine(_repoRoot, "src"), "*.cs", SearchOption.AllDirectories)
-      .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
-      .FirstOrDefault(f => Regex.IsMatch(File.ReadAllText(f), $@"\bclass {typeName}\b"));
+  private static List<string> _sourceFilesOf(string typeName) =>
+    [.. Directory.EnumerateFiles(Path.Combine(_repoRoot, "src"), "*.cs", SearchOption.AllDirectories)
+      .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+        && Regex.IsMatch(File.ReadAllText(f), $@"\bclass {typeName}\b"))];
 
   [GeneratedRegex(@"\.(ValidateMessageId|ValidateAppend)\(")]
   private static partial Regex ValidatorCall();

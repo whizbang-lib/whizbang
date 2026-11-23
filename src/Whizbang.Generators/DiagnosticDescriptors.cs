@@ -541,6 +541,22 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
+  /// WHIZ037: Warning - a Guid built from bytes or a string, or parsed, flows into a message id, an event id or a
+  /// [StreamId] member (#2528). Interception cannot reach a constructor or a value from the wire.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz037</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/NonTimeOrderedIdAnalyzerTests.cs:FlaggedShape_ReportsWHIZ037WarningAsync</tests>
+  public static readonly DiagnosticDescriptor NonTimeOrderedIdFlowsIntoId = new(
+      id: "WHIZ037",
+      title: "A Constructed Or Parsed Guid Flows Into An Id",
+      messageFormat: "{0} flows into {1}; event and message ids must be UUIDv7 (time-ordered) and stream ids should be. Mint it with TrackedGuid.New() or a [WhizbangId] type, or derive it from a message id.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "A Guid built with new Guid(bytes) or new Guid(\"...\"), or read with Guid.Parse or Guid.TryParse, carries whatever version its source had. Event and message ids that are not UUIDv7 are refused at run time, and a stream id that is not costs index locality. Guid interception cannot reach a constructor or a value from the wire, so this warning names the flow at compile time."
+  );
+
+  /// <summary>
   /// WHIZ058: Info - Guid generation call intercepted and replaced with TrackedGuid.New() (#2528).
   /// </summary>
   /// <docs>operations/diagnostics/whiz058</docs>

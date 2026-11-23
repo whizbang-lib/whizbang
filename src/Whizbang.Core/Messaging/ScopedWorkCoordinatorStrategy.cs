@@ -21,6 +21,8 @@ namespace Whizbang.Core.Messaging;
 /// Groups optional lifecycle and tracing dependencies for <see cref="ScopedWorkCoordinatorStrategy"/>.
 /// </summary>
 public record ScopedWorkCoordinatorDependencies {
+  /// <summary>The time-ordering check for queued message ids (#2528); the default validator when null.</summary>
+  public Whizbang.Core.Validation.GuidOrderingValidator? GuidOrdering { get; init; }
   /// <summary>Service scope factory for resolving lifecycle invokers.</summary>
   public IServiceScopeFactory? ScopeFactory { get; init; }
   /// <summary>Deserializer for lifecycle messages.</summary>
@@ -92,6 +94,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   public void QueueOutboxMessage(OutboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ScopedStrategy.QueueOutbox", message.MessageType);
+    (_dependencies.GuidOrdering ?? Whizbang.Core.Validation.GuidOrderingValidator.Default).ValidateMessageId(message.MessageId, message.MessageType, "ScopedStrategy.QueueOutbox");
 
     _queues.AddOutboxMessage(message, _dependencies.SystemEventOptions);
     LogQueuedOutboxMessage(_logger, message.MessageId, message.Destination);
@@ -101,6 +104,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   public void QueueInboxMessage(InboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ScopedStrategy.QueueInbox", message.MessageType);
+    (_dependencies.GuidOrdering ?? Whizbang.Core.Validation.GuidOrderingValidator.Default).ValidateMessageId(message.MessageId, message.MessageType, "ScopedStrategy.QueueInbox");
 
     _queues.AddInboxMessage(message);
     LogQueuedInboxMessage(_logger, message.MessageId, message.HandlerName);

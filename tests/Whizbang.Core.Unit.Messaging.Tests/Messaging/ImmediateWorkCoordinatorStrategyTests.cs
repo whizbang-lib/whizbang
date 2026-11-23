@@ -561,7 +561,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueInboxMessage(new InboxMessage {
-      MessageId = Guid.NewGuid(),
+      MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
       HandlerName = "TestHandler",
       Envelope = _createJsonEnvelope(),
       EnvelopeType = "Test",

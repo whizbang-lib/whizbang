@@ -12,7 +12,7 @@ public class MessageFailureTests {
   public async Task MessageFailure_WithReason_StoresReasonAsync() {
     // Arrange & Act
     var failure = new MessageFailure {
-      MessageId = Guid.NewGuid(),
+      MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
       CompletedStatus = MessageProcessingStatus.Stored,
       Error = "Transport not ready",
       Reason = MessageFailureReason.TransportNotReady
@@ -26,7 +26,7 @@ public class MessageFailureTests {
   public async Task MessageFailure_WithoutReason_DefaultsToUnknownAsync() {
     // Arrange & Act
     var failure = new MessageFailure {
-      MessageId = Guid.NewGuid(),
+      MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
       CompletedStatus = MessageProcessingStatus.Stored,
       Error = "Some error"
     };

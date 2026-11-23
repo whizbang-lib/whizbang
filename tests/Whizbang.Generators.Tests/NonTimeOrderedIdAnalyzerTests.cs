@@ -47,16 +47,18 @@ public class NonTimeOrderedIdAnalyzerTests {
     yield return () => "public static void Run(Envelope e) { e.MessageId = new Guid(\"919108f7-52d1-4320-9bac-f847db4148a8\"); }";
     // Guid.Parse into an event id property
     yield return () => "public static void Run(Envelope e, string s) { e.EventId = Guid.Parse(s); }";
-    // Guid.Parse into MessageId.From
-    yield return () => "public static MessageId Run(string s) => MessageId.From(Guid.Parse(s));";
     // new Guid(bytes) into the MessageId constructor
     yield return () => "public static MessageId Run(byte[] b) => new MessageId(new Guid(b));";
+    // an interpolated string whose head is not a UUIDv7's
+    yield return () => "public static void Run(Envelope e, int n) { e.EventId = Guid.Parse($\"0199b000-0000-4000-8000-{n:D12}\"); }";
+    // an interpolated string with no fixed head
+    yield return () => "public static void Run(Envelope e, string s) { e.EventId = Guid.Parse($\"{s}\"); }";
     // through a local
     yield return () => "public static void Run(Envelope e, string s) { var id = Guid.Parse(s); e.MessageId = id; }";
     // Guid.TryParse's out value
     yield return () => "public static void Run(Envelope e, string s) { if (Guid.TryParse(s, out var id)) { e.MessageId = id; } }";
-    // EventId.From
-    yield return () => "public static EventId Run(byte[] b) => EventId.From(new Guid(b));";
+    // new Guid(bytes) into the EventId constructor
+    yield return () => "public static EventId Run(byte[] b) => new EventId(new Guid(b));";
   }
 
   [Test]
@@ -73,11 +75,17 @@ public class NonTimeOrderedIdAnalyzerTests {
     yield return () => "public static OrderPlaced Run() => new OrderPlaced { OrderId = TrackedGuid.New() };";
     yield return () => "public static void Run(Envelope e) { e.MessageId = MessageId.New(); }";
     yield return () => "public static MessageId Run() => MessageId.New();";
+    // From refuses a non-v7 Guid at run time, so it is not reported
+    yield return () => "public static MessageId Run(string s) => MessageId.From(Guid.Parse(s));";
+    // A literal that is itself a UUIDv7
+    yield return () => "public static void Run(Envelope e) { e.MessageId = Guid.Parse(\"01900000-0000-7000-8000-000000000001\"); }";
     yield return () => "public static OrderPlaced Run(MessageId from) => new OrderPlaced { OrderId = from.Value };";
     // A parse into a property that is no id
     yield return () => "public static void Run(Envelope e, string s) { e.Other = Guid.Parse(s); }";
     // A parse that never reaches an id
     yield return () => "public static Guid Run(string s) => Guid.Parse(s);";
+    // An interpolated string whose fixed head is a UUIDv7's
+    yield return () => "public static void Run(Envelope e, int n) { e.EventId = Guid.Parse($\"0199b000-0000-7000-8000-{n:D12}\"); }";
     // A local initialized from TrackedGuid.New() is quiet
     yield return () => "public static void Run(Envelope e) { var id = (Guid)TrackedGuid.New(); e.MessageId = id; }";
   }

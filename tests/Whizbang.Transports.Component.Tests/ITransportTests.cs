@@ -126,7 +126,7 @@ public class ITransportTests {
       new() {
         Envelope = _createTestEnvelope(),
         EnvelopeType = "TestType, TestAssembly",
-        MessageId = Guid.NewGuid()
+        MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New()
       }
     };
     var destination = new TransportDestination("test-topic");

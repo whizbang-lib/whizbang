@@ -37,8 +37,14 @@ public partial class DapperWorkCoordinator(
   JsonSerializerOptions jsonOptions,
   ILogger<DapperWorkCoordinator>? logger = null,
   WorkCoordinatorGate? gate = null,
-  string? schema = null
+  string? schema = null,
+  Whizbang.Core.Validation.GuidOrderingValidator? guidOrdering = null
 ) : IWorkCoordinator {
+  // #2528: every outbox and inbox write checks its message ids before any SQL runs.
+  private readonly Whizbang.Core.Validation.GuidOrderingValidator _guidOrdering =
+    guidOrdering ?? Whizbang.Core.Validation.GuidOrderingValidator.Default;
+  private const string OUTBOX_ENTRY_POINT = "DapperWorkCoordinator.OutboxWrite";
+  private const string INBOX_ENTRY_POINT = "DapperWorkCoordinator.InboxWrite";
   private readonly string _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<DapperWorkCoordinator>? _logger = logger;
@@ -325,18 +331,28 @@ public partial class DapperWorkCoordinator(
     return JsonSerializer.Serialize(failures, typeInfo);
   }
 
+  // Every outbox write funnels through here, so the time-ordering check refuses a non-v7 message id before any SQL
+  // runs and nothing of the batch is written (#2528).
   private string _serializeNewOutboxMessages(OutboxMessage[] messages) {
     if (messages.Length == 0) {
       return "[]";
+    }
+    foreach (var message in messages) {
+      _guidOrdering.ValidateMessageId(message.MessageId, message.MessageType, OUTBOX_ENTRY_POINT);
     }
 
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(OutboxMessage[]));
     return JsonSerializer.Serialize(messages, typeInfo);
   }
 
+  // Every inbox write funnels through here, so the time-ordering check refuses a non-v7 message id before any SQL
+  // runs and nothing of the batch is written (#2528).
   private string _serializeNewInboxMessages(InboxMessage[] messages) {
     if (messages.Length == 0) {
       return "[]";
+    }
+    foreach (var message in messages) {
+      _guidOrdering.ValidateMessageId(message.MessageId, message.MessageType, INBOX_ENTRY_POINT);
     }
 
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(InboxMessage[]));

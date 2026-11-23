@@ -9,13 +9,14 @@ not touched.
 | Step | State |
 |---|---|
 | Inventory (this file) | done |
-| Interceptor replaces the call, on by default (item 4) | in progress |
-| Validator: severity default Error, Warning logs once + metric, exemption list (items 1-3) | todo |
-| Wiring at the entry points (item 1) | todo |
-| Stream ids reported, not refused (item 5) | todo |
-| Analyzer for `new Guid(...)` / `Guid.Parse` into ids (item 6) | todo |
-| Guards (validator has callers; every entry point wired; exemption list complete) | todo |
-| PostgreSQL refusal matrix (EF Core and Dapper), no partial state | todo |
+| Interceptor replaces the call, on by default (item 4) | done |
+| Validator: severity default Error, Warning logs once + metric, exemption list (items 1-3) | done |
+| Wiring at the entry points (item 1) | done: strategies, EF Core / Dapper coordinators (outbox, inbox, dead letters, commit, coalesce), event stores (EF Core, Dapper, SQLite, in memory), dispatcher (cascade source, composite carried ids, subclass emission id) |
+| Stream ids reported, not refused (item 5) | done at the event store appends and the dispatcher's outbox path (where the CLR type is known) |
+| Analyzer for `new Guid(...)` / `Guid.Parse` into ids (item 6) | done: WHIZ037 |
+| Guards (validator has callers; every entry point wired; exemption list complete) | done |
+| PostgreSQL refusal matrix (EF Core and Dapper), no partial state | done |
+| Docs site pages (`whizbang-ids#time-ordering-checks`, `#stream-id-versions`, `#framework-ids-that-are-not-time-ordered`, `operations/diagnostics/whiz037`, metrics anchor, WHIZ055/056/058 pages) | todo, docs repo |
 
 ## Two facts every entry point depends on
 
@@ -95,8 +96,9 @@ Legend: **strict** = goes through the generated `From`; **raw** = a plain `Guid`
 | `CollectiveOrdering.StreamIdFor`, `SagaItemStreams`, `AuditLedger.StreamFor` | v8 / v5 / v5 | No: stream ids | open item 1 |
 | `EFCorePostgresPerspectiveStore._defaultMetadata.EventId = Guid.NewGuid()` | v4 | Not an `event_id` row | **see finding F1** |
 
-None of the framework's non-v7 ids reaches a validated message or event id entry point, so the exemption list is
-empty of message types; each id above is pinned with its reason by a test.
+None of the framework's non-v7 ids reaches a validated message or event id entry point, so no entry point needs an
+exemption: `FrameworkNonTimeOrderedIds` lists every site with its reason, tests pin the values, and a source guard fails
+when a new minting site appears without an entry.
 
 ## SQL that reads id time order (latest definitions)
 
@@ -112,9 +114,10 @@ empty of message types; each id above is pinned with its reason by a test.
 
 ## Findings for the owner
 
-- **F1. A v4 "last applied event id" in perspective row metadata.** `EFCorePostgresPerspectiveStore` defaults a row's
-  metadata `EventId` to `Guid.NewGuid()`, and `PerspectiveRunnerBase` reads it back as the last applied event id. It is
-  not an `event_id` row and not exempted; whether anything compares it for time order needs a look.
+- **F1 (resolved, safe). A v4 "last applied event id" in perspective row metadata.** `EFCorePostgresPerspectiveStore`
+  defaults a row's metadata `EventId` to `Guid.NewGuid()`, and `PerspectiveRunnerBase` reads it back as the last applied
+  event id. `PerspectiveIdempotencyFilter` compares it for equality only (the ordering comparison was removed), so it is
+  listed with that reason.
 - **F2. Transport receive cannot honor `Warning`.** The generated JSON converter calls the strict `From`, so a non-v7
   id on the wire is refused at deserialization (an `ArgumentException`, dead-lettered at the broker) whatever the
   severity. Relaxing it to `Warning` would mean an unchecked converter for every strong id. Left strict.
@@ -125,3 +128,13 @@ empty of message types; each id above is pinned with its reason by a test.
   attach metadata to a `Guid`.
 - **F4. Recovery inside SQL is not checked in C#.** Dead-letter recovery and broker dead-letter import move ids
   inside SQL. Only the database backstop (open item 2) would catch a non-v7 id there.
+- **F5. Stream-id reporting where only a type name is known.** The outbox and inbox writes carry the message type as a
+  string, so they cannot tell whether a stream id belongs to an any-version strong id; stream ids are reported at the
+  event store appends and the dispatcher's outbox path, where the CLR type is known. A remote producer's stream id that
+  reaches only the inbox is not reported.
+- **F6. "DeriveFrom" in the issue.** No `DeriveFrom` exists; the framework's derivations are
+  `GeneratedStreamIdentity.Derive`, `EmissionIdentity.Derive` and `CompositeChildIdentity.ForChild`. WHIZ037 stays quiet
+  on them because they are not one of its shapes.
+- **F7. Dead-letter stores are checked too.** `Store*DeadLettersAsync` funnels through the same serializer, so a non-v7
+  id is refused there as well, rather than parked in `wh_dead_letters` to re-enter later inside SQL. The broker's own
+  dead-letter queue still holds such a message.
