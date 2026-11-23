@@ -192,15 +192,15 @@ During a rolling deploy, old instances still use the owner path. The two rules m
 
 1. **#2545** (in progress): a release clears the stored owner, so a released stream goes where its
    partition is assigned. Narrow, ships in wave 11.
-2. **One map**: remove the self-ranking fallback (C7), route the wake-up by the map (C8). Claimers with no
+2. **One map** (#2554): remove the self-ranking fallback (C7), route the wake-up by the map (C8). Claimers with no
    valid map wait. Small; safe under today's rules.
-3. **Ownership table and predicate**: `wh_partition_ownership`, `wh_i_own`, and the mode gate (3.9), with
+3. **Ownership table and predicate** (#2555): `wh_partition_ownership`, `wh_i_own`, and the mode gate (3.9), with
    claim functions switched to the predicate behind the gate. Removes C1 to C5. Inventory decides what is left
    of `wh_active_streams`.
-4. **Fencing**: epochs through claims, completions, upserts, flushes and publish marks (C9).
-5. **Handover**: the protocol (3.4), graceful leave, the stuck-work rule (3.7), and the write-behind
+4. **Fencing** (#2556): epochs through claims, completions, upserts, flushes and publish marks (C9).
+5. **Handover** (#2557, the write-behind half of #2540): the protocol (3.4), graceful leave, the stuck-work rule (3.7), and the write-behind
    save/drop (#2540, C11, C12).
-6. **Minimal moves and damping**: incremental map, settle window, ready-before-assigned (C10).
+6. **Minimal moves and damping** (#2558): incremental map, settle window, ready-before-assigned (C10).
 7. **Docs**: rewrite the ownership sections of `partition-assignment`, `multi-instance-coordination`,
    `work-coordination` and `claim-loop` (including the "consistent hashing" wording and the stale "no
    assignment table" line), plus a design page with the reasoning for each principle, linked both ways to
