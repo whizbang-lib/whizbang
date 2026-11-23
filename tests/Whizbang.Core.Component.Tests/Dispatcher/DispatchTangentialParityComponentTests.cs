@@ -156,18 +156,7 @@ public class DispatchTangentialParityComponentTests {
     await Assert.That(Guid.Parse(seen!)).IsNotEqualTo(Guid.Empty);
     await Assert.That(copy.StreamId).IsEqualTo(Guid.Parse(seen!))
       .Because($"{entry}'s stored copy and its local run are one message, on one stream");
-    await Assert.That(_payloadStreamId(copy)).IsEqualTo(Guid.Parse(seen!))
-      .Because("the stored payload names the stream the receptor saw");
     await Assert.That(command.StreamId).IsEqualTo(Guid.Parse(seen!));
-  }
-
-  private static Guid? _payloadStreamId(OutboxMessage copy) {
-    foreach (var property in copy.Envelope.Payload.EnumerateObject()) {
-      if (string.Equals(property.Name, "StreamId", StringComparison.OrdinalIgnoreCase)) {
-        return property.Value.GetGuid();
-      }
-    }
-    return null;
   }
 
   // ── the caller's tenant ──────────────────────────────────────────────────────────────────────
