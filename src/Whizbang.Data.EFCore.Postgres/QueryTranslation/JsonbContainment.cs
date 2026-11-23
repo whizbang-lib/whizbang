@@ -309,27 +309,49 @@ public static class JsonbContainment {
       return _equality(args[0], args[1]);
     }
 
-    SqlExpression payload = _normalized(_withoutStrongIdConversion(args[1], json), json, json.Json.TypeMapping);
-
-    // Build the containment document from the inside out, so a.b.c becomes {"a":{"b":{"c":value}}}.
-    for (var i = json.Path.Count - 1; i >= 0; i--) {
-      var name = json.Path[i].PropertyName;
-      if (name is null) {
-        // An array index cannot be expressed as a containment key.
-        return _equality(args[0], args[1]);
-      }
-
-      payload = new SqlFunctionExpression(
-        "jsonb_build_object",
-        [new SqlConstantExpression(name, typeof(string), StringTypeMapping.Default), payload],
-        nullable: true,
-        argumentsPropagateNullability: _argumentsPropagateNullability,
-        typeof(string),
-        json.Json.TypeMapping);
+    if (json.Path.Any(segment => segment.PropertyName is null)) {
+      // An array index cannot be expressed as a containment key.
+      return _equality(args[0], args[1]);
     }
 
-    return new PgUnknownBinaryExpression(json.Json, payload, "@>", typeof(bool), BoolTypeMapping.Default);
+    var value = _normalized(_withoutStrongIdConversion(args[1], json), json, json.Json.TypeMapping);
+    var contains = _contains(json, _document(json, value));
+    if (json.TypeMapping is not Perspectives.WhizbangIdTypeMapping) {
+      return contains;
+    }
+
+    // #2518: a row still holding the id as the object an earlier release wrote, {"OrderId":{"Value":"<uuid>"}}, is
+    // matched by a second document. Both arms are containment, so the document index answers each.
+    var asObject = _contains(json, _document(json, _object(STRONG_ID_VALUE, value, json.Json.TypeMapping)));
+    return new SqlBinaryExpression(ExpressionType.OrElse, contains, asObject, typeof(bool), BoolTypeMapping.Default);
   }
+
+  /// <summary>The key a strongly-typed id's object form held its value under.</summary>
+  private const string STRONG_ID_VALUE = "Value";
+
+  /// <summary>The containment test of a document against the member's column.</summary>
+  [SuppressMessage("Usage", "EF1001:Internal EF Core API usage", Justification = "As Emit: the containment operator has no public expression type.")]
+  private static PgUnknownBinaryExpression _contains(JsonScalarExpression json, SqlExpression document) =>
+    new(json.Json, document, "@>", typeof(bool), BoolTypeMapping.Default);
+
+  /// <summary>The containment document, built from the inside out, so a.b.c becomes {"a":{"b":{"c":value}}}.</summary>
+  private static SqlExpression _document(JsonScalarExpression json, SqlExpression value) {
+    var payload = value;
+    for (var i = json.Path.Count - 1; i >= 0; i--) {
+      payload = _object(json.Path[i].PropertyName!, payload, json.Json.TypeMapping!);
+    }
+    return payload;
+  }
+
+  /// <summary><c>jsonb_build_object('key', value)</c>.</summary>
+  private static SqlFunctionExpression _object(string key, SqlExpression value, RelationalTypeMapping jsonb) =>
+    new(
+      "jsonb_build_object",
+      [new SqlConstantExpression(key, typeof(string), StringTypeMapping.Default), value],
+      nullable: true,
+      argumentsPropagateNullability: _argumentsPropagateNullability,
+      typeof(string),
+      jsonb);
 
   /// <summary>
   /// Builds <c>&lt;column&gt; @&gt; ANY(jsonb_containment_set('Key', &lt;values&gt;))</c>, which is the
@@ -362,9 +384,22 @@ public static class JsonbContainment {
         "Set membership is only compiled for a top-level member; the rewriter should not have offered this path.");
     }
 
+    var membership = _containsAny(json, "jsonb_containment_set", key, args[1]);
+    if (json.TypeMapping is not Perspectives.WhizbangIdTypeMapping) {
+      return membership;
+    }
+
+    // #2518: the documents for rows still holding the id as the object an earlier release wrote.
+    var asObject = _containsAny(json, "jsonb_strong_id_containment_set", key, args[1]);
+    return new SqlBinaryExpression(ExpressionType.OrElse, membership, asObject, typeof(bool), BoolTypeMapping.Default);
+  }
+
+  /// <summary><c>&lt;column&gt; @&gt; ANY (&lt;function&gt;('Key', &lt;values&gt;))</c>.</summary>
+  [SuppressMessage("Usage", "EF1001:Internal EF Core API usage", Justification = "As Emit: the containment operator has no public expression type.")]
+  private static PgUnknownBinaryExpression _containsAny(JsonScalarExpression json, string function, string key, SqlExpression values) {
     var documents = new SqlFunctionExpression(
-      "jsonb_containment_set",
-      [new SqlConstantExpression(key, typeof(string), StringTypeMapping.Default), args[1]],
+      function,
+      [new SqlConstantExpression(key, typeof(string), StringTypeMapping.Default), values],
       nullable: true,
       argumentsPropagateNullability: _argumentsPropagateNullability,
       typeof(string),

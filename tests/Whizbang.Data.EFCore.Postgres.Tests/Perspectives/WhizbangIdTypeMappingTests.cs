@@ -29,6 +29,14 @@ public class WhizbangIdTypeMappingTests {
     await Assert.That(WhizbangIdTypeMapping.For(typeof(TestOrderId))).IsSameReferenceAs(mapping);
   }
 
+  /// <summary>An id a query inlines as a constant renders as a quoted uuid, not as bare text the parser refuses.</summary>
+  [Test]
+  public async Task SqlLiteral_IsAQuotedUuidAsync() {
+    var mapping = WhizbangIdTypeMapping.For(typeof(TestOrderId))!;
+
+    await Assert.That(mapping.GenerateSqlLiteral(new TestOrderId(Guid.Parse(V4)))).IsEqualTo($"'{V4}'::uuid");
+  }
+
   [Test]
   public async Task NotAnId_HasNoMappingAsync() {
     await Assert.That(WhizbangIdTypeMapping.For(typeof(string))).IsNull();

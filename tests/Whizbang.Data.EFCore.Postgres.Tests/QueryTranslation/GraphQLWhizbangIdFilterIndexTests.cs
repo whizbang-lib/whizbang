@@ -56,6 +56,9 @@ public class GraphQLWhizbangIdFilterIndexTests {
   private readonly TestOrderId _second = TestOrderId.New();
   private readonly TestOrderId _third = TestOrderId.New();
 
+  /// <summary>A row still in the object form an earlier release wrote (#2518).</summary>
+  private readonly TestOrderId _old = TestOrderId.New();
+
   private string _databaseName = null!;
   private DbContextOptions<IdFilterIndexDbContext> _options = null!;
 
@@ -193,6 +196,11 @@ public class GraphQLWhizbangIdFilterIndexTests {
              shape.metadata, shape.scope
       FROM generate_series(1, {ROWS}) g
       CROSS JOIN (SELECT created_at, updated_at, metadata, scope FROM {TABLE} LIMIT 1) shape;
+      INSERT INTO {TABLE} (id, created_at, updated_at, version, data, metadata, scope)
+      SELECT '{_old.Value}', shape.created_at, shape.updated_at, 1,
+             jsonb_build_object('OrderId', jsonb_build_object('Value', '{_old.Value}'), 'Status', 'old'),
+             shape.metadata, shape.scope
+      FROM (SELECT created_at, updated_at, metadata, scope FROM {TABLE} LIMIT 1) shape;
       ANALYZE {TABLE};
       """);
   }
@@ -247,4 +255,19 @@ public class GraphQLWhizbangIdFilterIndexTests {
     await Assert.That(plan).Contains(_documentIndex.Name).Because(plan);
   }
 
+  /// <summary>
+  /// A row still in the object form is found by <c>eq</c> and <c>in</c>, and the document index still answers both: the
+  /// containment test carries a second document for the object form (#2518).
+  /// </summary>
+  [Test]
+  public async Task EqAndIn_FindARowStillInTheObjectForm_ThroughTheDocumentIndexAsync() {
+    var (eq, eqPlan) = await _filterAsync($"{{ eq: \"{_old.Value}\" }}");
+    var (inSet, inPlan) = await _filterAsync($"{{ in: [\"{_first.Value}\", \"{_old.Value}\"] }}");
+
+    await Assert.That(eq).Contains("\"old\"").Because(eq);
+    await Assert.That(eqPlan).Contains(_documentIndex.Name).Because(eqPlan);
+    await Assert.That(inSet).Contains("\"old\"").Because(inSet);
+    await Assert.That(inSet).Contains("\"first\"").Because(inSet);
+    await Assert.That(inPlan).Contains(_documentIndex.Name).Because(inPlan);
+  }
 }

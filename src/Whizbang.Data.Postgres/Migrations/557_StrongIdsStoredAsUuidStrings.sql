@@ -20,9 +20,14 @@
 --
 --              In the bootstrap region because the stored-form phase runs ahead of the migration pass.
 --
+--              jsonb_strong_id_containment_set is jsonb_containment_set (152) for an id still in the object form:
+--              one document {"<key>": {"Value": <id>}} per value, so "data @> ANY(...)" over a set of ids also
+--              matches a row the rewrite has not reached or an earlier release wrote after it settled. Queries call
+--              it, so it lives after the bootstrap region.
+--
 -- Reversal: reversible (the functions are dropped; rows already converted stay converted, and every reader since #2518 reads them)
 -- Dependencies: 176 (wh_stored_form_migrations, the journal the rewrite records in)
--- Objects: _wh_strong_id_scalar, wh_strong_id_scalar_at
+-- Objects: _wh_strong_id_scalar, wh_strong_id_scalar_at, jsonb_strong_id_containment_set
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
 -- @whizbang:bootstrap-begin
@@ -97,3 +102,20 @@ COMMENT ON FUNCTION __SCHEMA__.wh_strong_id_scalar_at(JSONB, TEXT[]) IS
   'value already a string is returned as it was. Idempotent over its own output.';
 
 -- @whizbang:bootstrap-end
+
+-- ONE overload only: the sweep force-replays by name and a second signature would be left behind.
+SELECT __SCHEMA__.drop_all_overloads('jsonb_strong_id_containment_set');
+
+-- <docs>fundamentals/identity/whizbang-ids#stored-form</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/GraphQLWhizbangIdFilterIndexTests.cs</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.jsonb_strong_id_containment_set(
+  p_key TEXT,
+  p_values ANYARRAY
+) RETURNS JSONB[] AS $$
+  SELECT array_agg(jsonb_build_object(p_key, jsonb_build_object('Value', v))) FROM unnest(p_values) AS v;
+$$ LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE;
+
+COMMENT ON FUNCTION __SCHEMA__.jsonb_strong_id_containment_set(TEXT, ANYARRAY) IS
+  'Builds one document {"<key>": {"Value": <id>}} per id, for "data @> ANY(...)" over a set of strongly-typed ids '
+  'still stored in the object form an earlier release wrote (#2518). IMMUTABLE and SQL-bodied so the planner inlines '
+  'it and the GIN index on the data column is still matched.';

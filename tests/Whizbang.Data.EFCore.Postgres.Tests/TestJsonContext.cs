@@ -35,6 +35,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [JsonSerializable(typeof(MultiPerspectiveUpsertSymmetryTests.ModelTwo))]
 [JsonSerializable(typeof(FullLinqSupportTests.CustomerOrder))]
 [JsonSerializable(typeof(FullLinqSupportTests.Address))]
+[JsonSerializable(typeof(Perspectives.WhizbangIdDocumentStorageTests.ProbeDocument))]
 // Values a collective sets on physical fields serialize with the persistence profile, like any document value.
 [JsonSerializable(typeof(Collective.CollectivePhysicalColumnIntegrationTests.TicketKind))]
 [JsonSerializable(typeof(Collective.CollectivePhysicalColumnIntegrationTests.TicketTag))]

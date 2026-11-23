@@ -27,6 +27,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 [Category("Shard3")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable", Justification = "#1954: the [After(Test)] hook disposes them.")]
 public class WhizbangIdDocumentStorageTests {
+  /// <summary>How a query reads <c>OrderId</c>: the UUID string, or the <c>Value</c> of the object an earlier release stored.</summary>
+  private const string _EITHER_FORM_ORDER_ID =
+    "CAST(CASE\n    WHEN w.data ->> 'OrderId' LIKE '{%' THEN jsonb_extract_path_text(CAST(w.data ->> 'OrderId' AS jsonb), 'Value')\n    ELSE w.data ->> 'OrderId'\nEND AS uuid)";
   private string? _databaseName;
   private NpgsqlDataSource? _dataSource;
 
@@ -177,12 +180,10 @@ public class WhizbangIdDocumentStorageTests {
     var stored = await _storedTextAsync(fresh.Id);
     await Assert.That(stored).DoesNotContain("\"Value\"");
 
-    // A query that compares the id casts the stored text to uuid, which an object-form row cannot pass: rows must be
-    // rewritten to the scalar form before any id predicate runs over them.
+    // A query that compares the id reads it in either form, so the object-form row is found rather than failing the
+    // statement (Whizbang_EveryIdQueryFindsARowStillInTheObjectFormAsync covers every query shape).
     var query = db.Rows.AsNoTracking().Where(r => r.Data.OrderId == orderId);
-    await Assert.That(async () => await query.CountAsync())
-      .Throws<PostgresException>()
-      .WithMessageContaining("invalid input syntax for type uuid");
+    await Assert.That(await query.CountAsync()).IsEqualTo(1);
   }
 
   [Before(Test)]
@@ -306,7 +307,7 @@ public class WhizbangIdDocumentStorageTests {
     var sql = query.ToQueryString();
     var matched = await query.ToListAsync();
 
-    await Assert.That(sql).Contains("CAST(w.data ->> 'OrderId' AS uuid)");
+    await Assert.That(sql).Contains(_EITHER_FORM_ORDER_ID);
 
     await Assert.That(matched).Count().IsEqualTo(1);
     await Assert.That(matched[0].Data.OrderId).IsEqualTo(orderId);
@@ -338,7 +339,7 @@ public class WhizbangIdDocumentStorageTests {
     var wanted = new[] { first, second };
     var query = db.Rows.AsNoTracking().Where(r => wanted.Contains(r.Data.OrderId));
 
-    await Assert.That(query.ToQueryString()).Contains("CAST(w.data ->> 'OrderId' AS uuid) = ANY (@wanted)");
+    await Assert.That(query.ToQueryString()).Contains($"{_EITHER_FORM_ORDER_ID} = ANY (@wanted)");
 
     await Assert.That(await query.CountAsync()).IsEqualTo(2);
   }
@@ -395,13 +396,10 @@ public class WhizbangIdDocumentStorageTests {
   /// including an id two levels down, and writes the same document itself.
   /// </summary>
   [Test]
-  [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "A test serializes its probe document by reflection; only the id's type info comes from the generated context.")]
-  [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050", Justification = "As above.")]
   public async Task Convention_ReadsQueriesAndWritesTheAtomicUpsertsBytesAsync() {
     var carrierId = TestOrderId.New();
     var row = _row(TestOrderId.New(), TestOrderId.New(), TestOrderId.New(), carrierId);
-    var upsertOptions = Whizbang.Data.EFCore.Postgres.Tests.Generated.PerspectivePersistenceJsonContext.CreateOptions(
-      new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver());
+    var upsertOptions = PerspectiveDocumentSerialization.Options;
     var upsertJson = System.Text.Json.JsonSerializer.Serialize(row.Data, upsertOptions);
     await using (var connection = await _dataSource!.OpenConnectionAsync())
     await using (var insert = new NpgsqlCommand("INSERT INTO wh_per_probe (id, data) VALUES (@id, CAST(@data AS jsonb))", connection)) {
@@ -422,7 +420,7 @@ public class WhizbangIdDocumentStorageTests {
     await Assert.That(query.ToQueryString()).Contains("AS uuid)");
     await Assert.That(await query.Select(r => r.Id).ToListAsync()).IsEquivalentTo([row.Id]);
 
-    // Every id set: the upsert's options leave a null member out, where Entity Framework writes it as null.
+    // Every id set: a null member is the one difference, pinned on its own below.
     var written = _row(TestOrderId.New(), TestOrderId.New(), TestOrderId.New(), TestOrderId.New());
     db.Rows.Add(written);
     await db.SaveChangesAsync();
@@ -432,6 +430,34 @@ public class WhizbangIdDocumentStorageTests {
     same.Parameters.AddWithValue("upsert", System.Text.Json.JsonSerializer.Serialize(written.Data, upsertOptions));
     await Assert.That((bool)(await same.ExecuteScalarAsync())!).IsTrue()
       .Because("the convention's writer and the atomic upsert must store the same document");
+  }
+
+  /// <summary>
+  /// The one difference between the two writers: the atomic upsert leaves a null id out of the document, where Entity
+  /// Framework writes the key with <c>null</c>. Both read back as null and both match a null comparison.
+  /// </summary>
+  [Test]
+  public async Task Convention_ANullIdIsLeftOutByTheUpsertAndWrittenAsNullByEntityFrameworkAsync() {
+    var byUpsert = _row(TestOrderId.New(), null, TestOrderId.New());
+    var upsertJson = System.Text.Json.JsonSerializer.Serialize(byUpsert.Data, PerspectiveDocumentSerialization.Options);
+    await using (var connection = await _dataSource!.OpenConnectionAsync())
+    await using (var insert = new NpgsqlCommand("INSERT INTO wh_per_probe (id, data) VALUES (@id, CAST(@data AS jsonb))", connection)) {
+      insert.Parameters.AddWithValue("id", byUpsert.Id);
+      insert.Parameters.AddWithValue("data", upsertJson);
+      await insert.ExecuteNonQueryAsync();
+    }
+    await using var db = _context(o => new ConventionContext(o));
+    var byEntityFramework = _row(TestOrderId.New(), null, TestOrderId.New());
+    db.Rows.Add(byEntityFramework);
+    await db.SaveChangesAsync();
+
+    var loaded = await db.Rows.AsNoTracking().Select(r => new { r.Id, r.Data.ParentId }).ToListAsync();
+    var matched = await db.Rows.AsNoTracking().Where(r => r.Data.ParentId == null).Select(r => r.Id).ToListAsync();
+
+    await Assert.That(upsertJson).DoesNotContain("ParentId");
+    await Assert.That(await _storedTextAsync(byEntityFramework.Id)).Contains("\"ParentId\": null");
+    await Assert.That(loaded.All(r => r.ParentId is null)).IsTrue();
+    await Assert.That(matched).IsEquivalentTo([byUpsert.Id, byEntityFramework.Id]);
   }
 
   /// <summary>
@@ -466,5 +492,54 @@ public class WhizbangIdDocumentStorageTests {
     await using var db = _context(o => new ConventionListContext(o));
 
     await Assert.That(() => db.Model).Throws<InvalidOperationException>();
+  }
+
+  /// <summary>
+  /// A row still in the object form an earlier release wrote, which the stored-form rewrite has not reached or which an
+  /// instance of that release wrote after the rewrite settled, is found by every query that reads an id in SQL (#2518).
+  /// </summary>
+  [Test]
+  public async Task Whizbang_EveryIdQueryFindsARowStillInTheObjectFormAsync() {
+    var orderId = TestOrderId.New();
+    var parentId = TestOrderId.New();
+    var lineId = TestOrderId.New();
+    var carrierId = TestOrderId.New();
+    var old = _row(orderId, parentId, lineId, carrierId);
+    await using (var structural = _context(o => new StructuralContext(o))) {
+      structural.Rows.Add(old);
+      structural.Rows.Add(_row(TestOrderId.New(), null, TestOrderId.New()));
+      await structural.SaveChangesAsync();
+    }
+    await Assert.That(await _storedTextAsync(old.Id)).Contains("\"OrderId\": {\"Value\"");
+    await using var db = _context(o => new WhizbangContext(o));
+    var rows = db.Rows.AsNoTracking();
+    var wanted = new[] { orderId };
+    TestOrderId? parent = parentId;
+
+    await Assert.That(await rows.Where(r => r.Data.OrderId == orderId).Select(r => r.Id).ToListAsync()).IsEquivalentTo([old.Id]);
+    await Assert.That(await rows.Where(r => r.Data.ParentId == parent).Select(r => r.Id).ToListAsync()).IsEquivalentTo([old.Id]);
+    await Assert.That(await rows.Where(r => wanted.Contains(r.Data.OrderId)).Select(r => r.Id).ToListAsync()).IsEquivalentTo([old.Id]);
+    await Assert.That(await rows.Where(r => r.Data.Shipment.Carrier.CarrierId == carrierId).Select(r => r.Id).ToListAsync()).IsEquivalentTo([old.Id]);
+    await Assert.That(await rows.Where(r => r.Data.Lines.Any(l => l.LineId == lineId)).Select(r => r.Id).ToListAsync()).IsEquivalentTo([old.Id]);
+    await Assert.That(await rows.Where(r => r.Id == old.Id).Select(r => r.Data.ParentId).SingleAsync()).IsEqualTo(parent);
+    await Assert.That(await rows.OrderBy(r => r.Data.OrderId).Select(r => r.Id).CountAsync()).IsEqualTo(2);
+  }
+
+  /// <summary>A collection of ids still in the object form is found by <c>Contains</c> (#2518).</summary>
+  [Test]
+  public async Task Whizbang_ContainsOverAListOfIdsFindsElementsStillInTheObjectFormAsync() {
+    var wanted = TestOrderId.New();
+    var rowId = Guid.CreateVersion7();
+    await using (var connection = await _dataSource!.OpenConnectionAsync())
+    await using (var insert = new NpgsqlCommand("INSERT INTO wh_per_probe_list (id, data) VALUES (@id, CAST(@data AS jsonb))", connection)) {
+      insert.Parameters.AddWithValue("id", rowId);
+      insert.Parameters.AddWithValue("data", $$"""{"OrderIds": [{"Value": "{{TestOrderId.New().Value}}"}, {"Value": "{{wanted.Value}}"}]}""");
+      await insert.ExecuteNonQueryAsync();
+    }
+    await using var db = _context(o => new WhizbangListContext(o));
+
+    var matched = await db.Rows.AsNoTracking().Where(r => r.Data.OrderIds.Contains(wanted)).Select(r => r.Id).ToListAsync();
+
+    await Assert.That(matched).IsEquivalentTo([rowId]);
   }
 }

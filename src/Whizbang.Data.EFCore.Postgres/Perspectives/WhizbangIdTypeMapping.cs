@@ -3,6 +3,7 @@
 
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq.Expressions;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
@@ -65,6 +66,12 @@ public sealed class WhizbangIdTypeMapping : RelationalTypeMapping {
   /// <inheritdoc/>
   protected override RelationalTypeMapping Clone(RelationalTypeMappingParameters parameters) =>
     new WhizbangIdTypeMapping(parameters);
+
+  /// <summary>An id a query inlines as a constant: a quoted uuid. The value arrives as the stored Guid.</summary>
+  /// <param name="value">The Guid the converter stored.</param>
+  /// <returns>The literal.</returns>
+  protected override string GenerateNonNullSqlLiteral(object value) =>
+    string.Create(CultureInfo.InvariantCulture, $"'{(Guid)value:D}'::{STORE_TYPE}");
 
   private sealed class Factory : IWhizbangIdFormVisitor<WhizbangIdTypeMapping> {
     public static Factory Instance { get; } = new();
