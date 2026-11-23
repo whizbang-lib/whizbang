@@ -17,6 +17,8 @@ not touched.
 | Guards (validator has callers; every entry point wired; exemption list complete) | done |
 | PostgreSQL refusal matrix (EF Core and Dapper), no partial state | done |
 | `[SuppressGuidOrderingValidation]` wired (owner-approved follow-up) | done: generator registry by stored name, validator honors it at every entry point, WHIZ037 quiet in attributed scopes |
+| `suppressed` tag on the non-v7 message id count (owner-approved) | done: boolean tag, always present on that counter |
+| WHIZ037 follows a local assigned after its declaration (owner-approved) | done: reaching assignments over the method's control flow graph |
 | Flaky `LifecycleStageMode_WithDebugOff_AllocatesNothingAsync` | done: root cause in the code under test (weakly cached `Type.Name`), fixed; test collects inside its window |
 | Docs site pages (`whizbang-ids#time-ordering-checks`, `#stream-id-versions`, `#framework-ids-that-are-not-time-ordered`, `operations/diagnostics/whiz037`, metrics anchor, WHIZ055/056/058 pages) | todo, docs repo |
 
@@ -159,6 +161,33 @@ The attribute existed on develop and nothing read it. Decided semantics:
   (strategies, coordinators) looks the stored name up. Only the non-v7 path consults the registry; answers by type are
   cached and the cache is cleared on every registration.
 - Docs follow-up (parent): a section `fundamentals/identity/whizbang-ids#suppressing-the-time-ordering-check`.
+
+## `suppressed` tag (follow-up, owner-approved)
+
+`whizbang.guid_ordering.non_v7_message_ids` carries a third tag, `suppressed` (the meter's existing tags are bare
+snake_case: `entry_point`, `version`), a boolean: `true` when the id's message type carries
+`[SuppressGuidOrderingValidation]`, `false` when the severity alone (Warning or Info) let it through. Always present on
+that counter, never omitted, so the `false` series driven to zero leaves only deliberate opt-outs. Not on
+`non_v7_stream_ids` (the attribute never applies to stream ids). Severity `None` stays completely silent with or without
+the attribute: no log, no count. Pinned in `GuidOrderingSuppressionTests` (every severity x by type / by name x
+attributed or not). Docs follow-up (parent): add the tag to `operations/observability/metrics#time-ordering-checks`.
+
+## WHIZ037 data flow (follow-up, owner-approved)
+
+A local is followed with a reaching-assignment analysis over the method body's control flow graph
+(`OperationAnalysisContext.GetControlFlowGraph()`, built only when an id member is written from a local; no other
+method is looked at). Writes: the initializer and every `local = value` (lowered to assignments in the graph), and an
+`out` argument (`out id` / `out var id`; a shape only for `Guid.TryParse`). Rule: every assignment that can reach the
+use without being overwritten counts (the last one in a straight line; each branch's last one where branches join; a
+later assignment in a loop body round the back edge); report if any reaching one is a shape. Flagged-then-clean before
+the use is quiet. Sets only grow, so loops converge. Inside a lambda or local function, a captured local may hold any
+value the enclosing method assigns. A catch/finally block starts from every assignment in the method.
+
+Not followed (quiet, documented in the analyzer's remarks and pinned in tests): parameters (their value is the
+caller's; following it means every call site), fields/properties copied into the local, conditional expressions,
+writes from inside a lambda seen from the enclosing method, and an assignment inside a `finally` past it (the graph
+leaves a finally by a region exit, not an edge). Docs follow-up (parent): `operations/diagnostics/whiz037` should state
+this rule.
 
 ## Flaky allocation test (follow-up)
 

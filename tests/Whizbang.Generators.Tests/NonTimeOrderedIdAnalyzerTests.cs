@@ -99,6 +99,8 @@ public class NonTimeOrderedIdAnalyzerTests {
     yield return () => "public static void Run(Envelope e, string s) { Guid id; id = Guid.Parse(s); Set(); void Set() => e.MessageId = id; }";
     // the whole flow inside a lambda
     yield return () => "public static Action<string> Run(Envelope e) => s => { Guid id; id = Guid.Parse(s); e.MessageId = id; };";
+    // a lambda searched past another lambda that does not hold the use
+    yield return () => "public static Action Run(Envelope e, string s) { Action x = () => { }; Guid id; id = Guid.Parse(s); x(); return () => e.MessageId = id; }";
     // a catch block may follow any assignment in its try
     yield return () => "public static void Run(Envelope e, string s) { Guid id = TrackedGuid.New(); try { id = Guid.Parse(s); id = TrackedGuid.New(); } catch (FormatException) { e.MessageId = id; } }";
   }
@@ -145,7 +147,7 @@ public class NonTimeOrderedIdAnalyzerTests {
     // a loop that only ever assigns clean values
     yield return () => "public static void Run(Envelope e, int n) { Guid id = TrackedGuid.New(); for (var i = 0; i < n; i++) { e.MessageId = id; id = TrackedGuid.New(); } }";
     // the framework's derivations, From, and a v7 literal, assigned later
-    yield return () => "public static void Run(Envelope e, MessageId source) { Guid id; id = GeneratedStreamIdentity.Derive(source.Value); e.MessageId = id; }";
+    yield return () => "public static void Run(Envelope e, MessageId source) { Guid id; id = Whizbang.Core.Messaging.GeneratedStreamIdentity.Derive(source.Value); e.MessageId = id; }";
     yield return () => "public static void Run(Envelope e, MessageId source) { Guid id; id = Whizbang.Core.Messaging.EmissionIdentity.Derive(source.Value, \"svc\", null, \"T\", 0); e.MessageId = id; }";
     yield return () => "public static void Run(Envelope e, MessageId source) { Guid id; id = Whizbang.Core.Messaging.CompositeChildIdentity.ForChild(source.Value, 0, \"T\"); e.MessageId = id; }";
     yield return () => "public static void Run(Envelope e, string s) { Guid id; id = MessageId.From(Guid.Parse(s)).Value; e.MessageId = id; }";
@@ -159,6 +161,17 @@ public class NonTimeOrderedIdAnalyzerTests {
     yield return () => "private static Guid _field;\npublic static void Run(Envelope e) { Guid id; id = _field; e.MessageId = id; }";
     // an out argument of a method other than Guid.TryParse, into an existing local
     yield return () => "public static void Run(Envelope e) { Guid id; Fill(out id); e.MessageId = id; }\nprivate static void Fill(out Guid g) => g = TrackedGuid.New();";
+    // Guid.TryParse writing a discard or another local leaves this one as it was
+    yield return () => "public static void Run(Envelope e, string s) { Guid id = TrackedGuid.New(); Guid.TryParse(s, out _); Guid.TryParse(s, out var other); e.MessageId = id; e.Other = other; }";
+    // an __arglist argument has no parameter, so it writes nothing
+    yield return () => "public static void Run(Envelope e) { Guid id = TrackedGuid.New(); Log(__arglist(id)); e.MessageId = id; }\nprivate static void Log(__arglist) { }";
+    // an assignment inside a finally block is not followed past it (the graph leaves a finally block by a region exit,
+    // not an edge to the code after it)
+    yield return () => "public static void Run(Envelope e, string s) { Guid id = TrackedGuid.New(); try { e.Other = id; } finally { id = Guid.Parse(s); } e.MessageId = id; }";
+    // the parameterless constructor is the empty id, refused at run time at every severity, and no shape
+    yield return () => "public static void Run(Envelope e) { Guid id; id = new Guid(); e.MessageId = id; }";
+    // a constructor of another type converting to a Guid is no shape
+    yield return () => "public static void Run(Envelope e) { e.MessageId = new Minted(1); }\nprivate sealed class Minted(int n) { public int N => n; public static implicit operator Guid(Minted m) => TrackedGuid.New(); }";
     // a lambda whose local is its own and clean
     yield return () => "public static Action Run(Envelope e) => () => { Guid id; id = TrackedGuid.New(); e.MessageId = id; };";
     // A local that is the out argument of a method other than Guid.TryParse
@@ -208,7 +221,7 @@ public class NonTimeOrderedIdAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task DerivedId_IsQuietAsync() {
     var diagnostics = await _diagnosticsAsync(
-      "public static OrderPlaced Run(MessageId source) => new OrderPlaced { OrderId = GeneratedStreamIdentity.Derive(source.Value) };");
+      "public static OrderPlaced Run(MessageId source) => new OrderPlaced { OrderId = Whizbang.Core.Messaging.GeneratedStreamIdentity.Derive(source.Value) };");
 
     await Assert.That(diagnostics).IsEmpty();
   }

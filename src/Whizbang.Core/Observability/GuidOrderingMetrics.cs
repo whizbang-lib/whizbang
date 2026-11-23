@@ -10,8 +10,18 @@ namespace Whizbang.Core.Observability;
 /// not UUIDv7 and were accepted because the severity is below <see cref="Configuration.GuidOrderingSeverity.Error"/>,
 /// and stream ids that are not UUIDv7. Each id is counted once, so the totals are distinct ids and can be driven to zero.
 /// </summary>
+/// <remarks>
+/// Both counters carry <see cref="ENTRY_POINT_TAG"/> and <see cref="VERSION_TAG"/>. The message id counter also always
+/// carries <see cref="SUPPRESSED_TAG"/>, a boolean: <see langword="true"/> when the id's message type carries
+/// <see cref="SuppressGuidOrderingValidationAttribute"/> (at <see cref="Configuration.GuidOrderingSeverity.Error"/>, the
+/// reason it was accepted), <see langword="false"/> when the severity alone
+/// (<see cref="Configuration.GuidOrderingSeverity.Warning"/> or <see cref="Configuration.GuidOrderingSeverity.Info"/>)
+/// let it through; driving the <see langword="false"/> series to zero leaves only deliberate opt-outs. At
+/// <see cref="Configuration.GuidOrderingSeverity.None"/> nothing is counted, with or without the attribute.
+/// </remarks>
 /// <docs>operations/observability/metrics#time-ordering-checks</docs>
 /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingEntryPointValidationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingSuppressionTests.cs</tests>
 public sealed class GuidOrderingMetrics {
 #pragma warning disable CA1707 // Repo style: public const fields are ALL_CAPS_SNAKE per editorconfig.
   /// <summary>Meter name, listed in <see cref="WhizbangMeters"/>.</summary>
@@ -45,7 +55,7 @@ public sealed class GuidOrderingMetrics {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
     var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
     NonV7MessageIds = meter.CreatePassiveCounter<long>(NON_V7_MESSAGE_IDS,
-      description: "Distinct event and message ids accepted although they are not UUIDv7; tagged by entry_point and version");
+      description: "Distinct event and message ids accepted although they are not UUIDv7; tagged by entry_point, version and suppressed (true when the type carries [SuppressGuidOrderingValidation])");
     NonV7StreamIds = meter.CreatePassiveCounter<long>(NON_V7_STREAM_IDS,
       description: "Distinct stream ids that are not UUIDv7 (index locality only); tagged by entry_point and version");
   }

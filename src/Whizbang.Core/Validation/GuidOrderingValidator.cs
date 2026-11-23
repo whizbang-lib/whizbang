@@ -122,7 +122,7 @@ public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logg
       return;
     }
     _logAcceptedMessageId(severity, suppressed, entryPoint, id, messageType);
-    _metrics?.NonV7MessageIds.Add(1, _entryPointTag(entryPoint), _versionTag(id));
+    _metrics?.NonV7MessageIds.Add(1, _entryPointTag(entryPoint), _versionTag(id), suppressed ? _suppressedTag : _notSuppressedTag);
   }
 
   private void _logAcceptedMessageId(GuidOrderingSeverity severity, bool suppressed, string entryPoint, Guid id, string messageType) {
@@ -238,6 +238,10 @@ public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logg
     }
     return seen.TryAdd(id, 0);
   }
+
+  // Boxed once: the suppressed tag is a boolean, true exactly when the type's attribute let the id through
+  private static readonly KeyValuePair<string, object?> _suppressedTag = new(GuidOrderingMetrics.SUPPRESSED_TAG, true);
+  private static readonly KeyValuePair<string, object?> _notSuppressedTag = new(GuidOrderingMetrics.SUPPRESSED_TAG, false);
 
   private static KeyValuePair<string, object?> _entryPointTag(string entryPoint) =>
     new(GuidOrderingMetrics.ENTRY_POINT_TAG, entryPoint);
