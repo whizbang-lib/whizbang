@@ -31,7 +31,10 @@ namespace Whizbang.Core.Validation;
 /// <docs>fundamentals/identity/whizbang-ids#time-ordering-checks</docs>
 /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingEntryPointValidationTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingValidatorTests.cs</tests>
-public partial class GuidOrderingValidator {
+/// <param name="options">Whizbang configuration options.</param>
+/// <param name="logger">Logger for reporting violations.</param>
+/// <param name="metrics">The counters for what is accepted below <see cref="GuidOrderingSeverity.Error"/>, or null for none.</param>
+public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logger, GuidOrderingMetrics? metrics) {
   /// <summary>
   /// How many distinct ids the once-per-id report remembers before it forgets them all and starts again, so a service
   /// fed a stream of non-v7 ids does not grow without bound; an id reported before the reset may be reported again.
@@ -40,9 +43,9 @@ public partial class GuidOrderingValidator {
   public const int MAX_REMEMBERED_IDS = 100_000;
 #pragma warning restore CA1707
 
-  private readonly WhizbangOptions _options;
-  private readonly ILogger _logger;
-  private readonly GuidOrderingMetrics? _metrics;
+  private readonly WhizbangOptions _options = ArgumentGuard.NotNull(options);
+  private readonly ILogger _logger = ArgumentGuard.NotNull(logger);
+  private readonly GuidOrderingMetrics? _metrics = metrics;
   private readonly ConcurrentDictionary<Guid, byte> _reportedMessageIds = new();
   private readonly ConcurrentDictionary<Guid, byte> _reportedStreamIds = new();
 
@@ -52,18 +55,6 @@ public partial class GuidOrderingValidator {
   /// <param name="options">Whizbang configuration options.</param>
   /// <param name="logger">Logger for reporting violations.</param>
   public GuidOrderingValidator(WhizbangOptions options, ILogger logger) : this(options, logger, metrics: null) { }
-
-  /// <summary>
-  /// Creates a new GuidOrderingValidator that counts what it accepts below <see cref="GuidOrderingSeverity.Error"/>.
-  /// </summary>
-  /// <param name="options">Whizbang configuration options.</param>
-  /// <param name="logger">Logger for reporting violations.</param>
-  /// <param name="metrics">The counters, or null for none.</param>
-  public GuidOrderingValidator(WhizbangOptions options, ILogger logger, GuidOrderingMetrics? metrics) {
-    _options = ArgumentGuard.NotNull(options);
-    _logger = ArgumentGuard.NotNull(logger);
-    _metrics = metrics;
-  }
 
   /// <summary>
   /// The validator a component uses when none was registered: the default options (event and message ids refused,
