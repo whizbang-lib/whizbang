@@ -269,6 +269,40 @@ public class PerspectiveRebuilderBatchedWriteTests {
     await Assert.That(world.Rows.Writes).IsEqualTo(3);
   }
 
+  [Test]
+  public async Task Rebuild_InPlace_WritesThroughTheHostsFlushPolicy_WhenItRegistersOneAsync() {
+    var policy = new CountingFlushPolicy();
+    var world = _world(sink: true, flushPolicy: policy);
+
+    var result = await world.Rebuilder.RebuildStreamsAsync(NAME, _streams);
+
+    await Assert.That(result.Success).IsTrue().Because(result.Error ?? "");
+    await Assert.That(policy.Flushes).IsEqualTo(2).Because("each batch's rows reach the sink through the service's flush policy");
+    await Assert.That(world.Sink.Writes.Count).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task Rebuild_InPlace_InAContainerThatCannotSayWhatItRegisters_WritesEachRowOnItsOwnAsync() {
+    var world = _world(sink: true, hideRegistrations: true);
+
+    var result = await world.Rebuilder.RebuildStreamsAsync(NAME, _streams);
+
+    await Assert.That(result.Success).IsTrue().Because(result.Error ?? "");
+    await Assert.That(world.Sink.Writes).IsEmpty().Because("a sink the container cannot vouch for is not assumed");
+    await Assert.That(world.Rows.Writes).IsEqualTo(3);
+  }
+
+  [Test]
+  public async Task Rebuild_InPlace_CanceledWhileTheBatchTakesItsLocks_EndsTheRebuild_RatherThanRebuildingEachStreamAsync() {
+    var world = _world(sink: true, coordinator: new RefusingCoordinator(new OperationCanceledException("canceled while locking")));
+
+    var result = await world.Rebuilder.RebuildStreamsAsync(NAME, _streams);
+
+    await Assert.That(result.Success).IsFalse().Because("a cancellation is not a failed write to recover from");
+    await Assert.That(world.Rows.Writes).IsEqualTo(0);
+    await Assert.That(world.Sink.Writes).IsEmpty();
+  }
+
   // ===== Fixtures =====
 
   private static async Task _assertParityAsync(World batched, RebuildResult batchedResult, World perRow, RebuildResult perRowResult) {
@@ -314,7 +348,8 @@ public class PerspectiveRebuilderBatchedWriteTests {
   /// reads them.
   /// </summary>
   private static World _world(bool sink, bool stampedAbove = false, string? purgeOn = null, bool rekeyed = false,
-      PerspectiveWriteMode? writeMode = null, IPerspectiveApplyCoordinator? coordinator = null, int batchSize = 2) {
+      PerspectiveWriteMode? writeMode = null, IPerspectiveApplyCoordinator? coordinator = null, int batchSize = 2,
+      IApplyBatchStrategy? flushPolicy = null, bool hideRegistrations = false) {
     var harness = new RbHarness();
     var events = harness.Events;
     events.ReadsInBatches = true;
@@ -370,8 +405,12 @@ public class PerspectiveRebuilderBatchedWriteTests {
     if (coordinator is not null) {
       services.AddSingleton(coordinator);
     }
+    if (flushPolicy is not null) {
+      services.AddSingleton(flushPolicy);
+    }
     var sp = services.BuildServiceProvider();
-    var rebuilder = new PerspectiveRebuilder(sp.GetRequiredService<IServiceScopeFactory>(), new TypedLog(log));
+    var scopes = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilder = new PerspectiveRebuilder(hideRegistrations ? new HidingScopeFactory(scopes) : scopes, new TypedLog(log));
     return new World(rebuilder, events, harness.Rows, completer, dispatcher, log, purgeMarkers, recordingSink);
   }
 
@@ -415,10 +454,37 @@ public class PerspectiveRebuilderBatchedWriteTests {
     }
   }
 
+  /// <summary>A flush policy that writes at once, counting each flush.</summary>
+  private sealed class CountingFlushPolicy : IApplyBatchStrategy {
+    public int Flushes { get; private set; }
+
+    public Task<IReadOnlyList<PerspectiveWriteOutcome>> FlushAsync(
+        IPerspectiveWriteSink sink, IReadOnlyList<PendingPerspectiveWrite> writes, CancellationToken cancellationToken = default) {
+      Flushes++;
+      return sink.WriteAsync(writes, cancellationToken);
+    }
+  }
+
+  /// <summary>Scopes over a container that cannot say what it registers, as a container without that service.</summary>
+  private sealed class HidingScopeFactory(IServiceScopeFactory inner) : IServiceScopeFactory {
+    public IServiceScope CreateScope() => new Scope(inner.CreateScope());
+
+    private sealed class Scope(IServiceScope inner) : IServiceScope, IServiceProvider, IAsyncDisposable {
+      public IServiceProvider ServiceProvider => this;
+      public object? GetService(Type serviceType) =>
+        serviceType == typeof(IServiceProviderIsService) ? null : inner.ServiceProvider.GetService(serviceType);
+      public void Dispose() => inner.Dispose();
+      public ValueTask DisposeAsync() {
+        inner.Dispose();
+        return ValueTask.CompletedTask;
+      }
+    }
+  }
+
   /// <summary>An apply coordinator that cannot take any lock.</summary>
-  private sealed class RefusingCoordinator : IPerspectiveApplyCoordinator {
+  private sealed class RefusingCoordinator(Exception? refusal = null) : IPerspectiveApplyCoordinator {
     public Task<IAsyncDisposable> AcquireAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
-      throw new InvalidOperationException("no lock");
+      throw refusal ?? new InvalidOperationException("no lock");
   }
 
   /// <summary>Purge markers that hold the ones the rebuild records.</summary>
