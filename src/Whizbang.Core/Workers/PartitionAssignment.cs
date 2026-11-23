@@ -9,10 +9,11 @@ namespace Whizbang.Core.Workers;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Partition <c>p</c> belongs to <c>Members[p % Members.Count]</c>: an instance's rank is its position in
-/// <see cref="Members"/> and the member count is the instance count, which is the arithmetic every acquisition already
-/// applies. The assigner decides liveness once, for everyone, so claimers stop ranking the peers they believe are alive
-/// and stop overlapping when that belief is wrong.
+/// Partition <c>p</c> belongs to <c>Members[Owners[p]]</c>, the explicit map the assigner keeps and changes as little
+/// as it can (#2558, <see cref="PartitionMap"/>). An assignment of the older shape carries no map, and partition <c>p</c>
+/// belongs to <c>Members[p % Members.Count]</c>, the arithmetic every acquisition applied before the map. The assigner
+/// decides liveness once, for everyone, so claimers stop ranking the peers they believe are alive and stop overlapping
+/// when that belief is wrong.
 /// </para>
 /// <para>
 /// <see cref="Epoch"/> is the role election's epoch for the assigner's tenure; <see cref="Revision"/> counts publishes
@@ -31,6 +32,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentTests.cs:RankOf_AMember_IsItsPositionAsync</tests>
 /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentTests.cs:OwnerOf_APartition_IsTheMemberAtItsResidueAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentTests.cs:OwnerOf_WithAMap_IsTheMapsMember_NotTheResidueAsync</tests>
 public sealed record PartitionAssignment(
   long Epoch,
   long Revision,
@@ -40,7 +42,7 @@ public sealed record PartitionAssignment(
   DateTimeOffset LeaseExpiresAt,
   IReadOnlyList<short>? Owners = null) {
 
-  /// <summary>Two assignments are equal when every field is, the members compared in order.</summary>
+  /// <summary>Two assignments are equal when every field is, the members and the map compared in order.</summary>
   /// <param name="other">The other assignment.</param>
   /// <returns>True when equal.</returns>
   public bool Equals(PartitionAssignment? other) =>
@@ -50,7 +52,11 @@ public sealed record PartitionAssignment(
     && AssignerInstanceId == other.AssignerInstanceId
     && PublishedAt == other.PublishedAt
     && LeaseExpiresAt == other.LeaseExpiresAt
-    && Members.SequenceEqual(other.Members);
+    && Members.SequenceEqual(other.Members)
+    && _sameMap(Owners, other.Owners);
+
+  private static bool _sameMap(IReadOnlyList<short>? one, IReadOnlyList<short>? other) =>
+    one is null ? other is null : other is not null && one.SequenceEqual(other);
 
   /// <inheritdoc />
   public override int GetHashCode() => HashCode.Combine(Epoch, Revision, AssignerInstanceId);
@@ -70,16 +76,21 @@ public sealed record PartitionAssignment(
     return null;
   }
 
-  /// <summary>The instance a partition belongs to.</summary>
+  /// <summary>
+  /// The instance a partition belongs to: its member in the map (#2558), or, for an assignment of the older shape, the
+  /// member at its residue. A partition past the map wraps, as the claim's predicate does.
+  /// </summary>
   /// <param name="partitionNumber">A partition number, zero or more.</param>
-  /// <returns>The member at the partition's residue.</returns>
+  /// <returns>The partition's member.</returns>
   /// <exception cref="InvalidOperationException">The assignment has no members.</exception>
   public Guid OwnerOf(int partitionNumber) {
     ArgumentOutOfRangeException.ThrowIfNegative(partitionNumber);
     if (Members.Count == 0) {
       throw new InvalidOperationException("The assignment has no members.");
     }
-    return Members[partitionNumber % Members.Count];
+    return Owners is { Count: > 0 } map
+      ? Members[map[partitionNumber % map.Count]]
+      : Members[partitionNumber % Members.Count];
   }
 }
 

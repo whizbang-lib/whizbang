@@ -96,6 +96,11 @@ public class PartitionAssignmentTests {
   }
 
   [Test]
+  public async Task OwnerOf_WithAnEmptyMap_IsTheMemberAtItsResidueAsync() {
+    await Assert.That((_assignment(_a, _b, _c) with { Owners = [] }).OwnerOf(4)).IsEqualTo(_b);
+  }
+
+  [Test]
   public async Task Equality_ComparesTheMapEntryByEntryAsync() {
     var owners = new short[] { 0, 1, 0 };
     var one = _assignment(_a, _b) with { Owners = owners };
