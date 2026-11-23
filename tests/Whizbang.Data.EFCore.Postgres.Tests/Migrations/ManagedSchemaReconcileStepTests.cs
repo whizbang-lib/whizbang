@@ -189,6 +189,26 @@ public class ManagedSchemaReconcileStepTests {
     await Assert.That(await _existsAsync(RETIRED)).IsTrue();
   }
 
+  /// <summary>With debug on, a context with no manifest is named in the skip; with it off its name is never read (#2548).</summary>
+  [Test]
+  public async Task AContextWithNoManifest_WithDebugOn_IsNamedInTheSkipAsync() {
+    var logger = new DebugListLogger();
+    await using var services = new ServiceCollection().BuildServiceProvider();
+
+    await new ManagedSchemaReconcileStep(typeof(DocumentIndexesDbContext), logger).RunAsync(services, CancellationToken.None);
+
+    await Assert.That(logger.Messages).Contains(
+      $"Managed-object step skipped: {nameof(DocumentIndexesDbContext)} registered no managed-object manifest");
+  }
+
+  private sealed class DebugListLogger : Microsoft.Extensions.Logging.ILogger<ManagedSchemaReconcileStep> {
+    public List<string> Messages { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+        Exception? exception, Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
+  }
+
   [Test]
   public async Task WithTheReconcileOff_TheStepDoesNothingAsync() {
     await _runAsync(config: ("Whizbang:Schema:Reconcile:Mode", "Off"));

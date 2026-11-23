@@ -255,7 +255,7 @@ public sealed partial class PerspectiveRebuilder(
       // interface and the concrete type's registration would never be consulted.
       await dispatcher.AsSystem().ForAllTenants().PublishAsync(rebuildEvent);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+#pragma warning disable CA1873 // an exception path: the name is read only once publishing failed
       LogRebuildEventNotPublished(logger, ex, TypeNameFormatter.ForLog(typeof(TEvent)));
 #pragma warning restore CA1873
     }

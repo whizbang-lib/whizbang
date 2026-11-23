@@ -73,11 +73,13 @@ internal sealed partial class StorageProviderStartupReport(IServiceProvider serv
 
     var offload = services.GetService<IOptions<MessageBodyOffloadOptions>>()?.Value.ProviderName;
     if (!string.IsNullOrWhiteSpace(offload)) {
+      // Resolved whether or not anything is logged; named only when it is, since reading a type's name has a cost (#2548)
       var store = services.GetKeyedService<IMessageBodyStore>(offload);
-      var storeName = store is null ? "no store is registered under that name" : TypeNameFormatter.ForLog(store.GetType());
       var reason = services.GetServices<StorageFeatureActivation>()
         .FirstOrDefault(a => a.Feature == StorageFeatureActivation.OFFLOAD && a.Provider == offload)?.Reason ?? "registered in code";
-      LogOffload(logger, offload, storeName, reason);
+      if (logger.IsEnabled(LogLevel.Information)) {
+        LogOffload(logger, offload, store is null ? "no store is registered under that name" : TypeNameFormatter.ForLog(store.GetType()), reason);
+      }
     }
     return Task.CompletedTask;
   }

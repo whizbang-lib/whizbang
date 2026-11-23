@@ -156,6 +156,31 @@ public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logg
     if (streamId.Version == 7 || streamId == Guid.Empty || WhizbangIdProviderRegistry.AcceptsAnyVersion(streamIdType)) {
       return;
     }
+    _reportNonV7StreamId(streamId, messageType, entryPoint);
+  }
+
+  /// <summary>
+  /// Reports a stream id as <see cref="ReportStreamId(Guid, Type, string, string)"/> does, naming the message by its
+  /// type's simple name, which is read only when the stream id is reported: the check runs on every outbox write and
+  /// event store append, and a type's name is cached behind a weak handle, so reading it eagerly allocates after every
+  /// garbage collection (#2548).
+  /// </summary>
+  /// <param name="streamId">The stream id.</param>
+  /// <param name="streamIdType">The stream id's declared type (a strong id or <see cref="Guid"/>), or null when unknown.</param>
+  /// <param name="messageType">The type of the message carrying it, for the report.</param>
+  /// <param name="entryPoint">The entry point reporting it, for the report.</param>
+  /// <exception cref="ArgumentNullException">The message type is null.</exception>
+  /// <exception cref="GuidOrderingException">The stream id is not v7 and stream ids are raised to Error.</exception>
+  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingStreamIdByTypeTests.cs</tests>
+  public void ReportStreamId(Guid streamId, Type? streamIdType, Type messageType, string entryPoint) {
+    ArgumentNullException.ThrowIfNull(messageType);
+    if (streamId.Version == 7 || streamId == Guid.Empty || WhizbangIdProviderRegistry.AcceptsAnyVersion(streamIdType)) {
+      return;
+    }
+    _reportNonV7StreamId(streamId, TypeNameFormatter.SimpleName(messageType), entryPoint);
+  }
+
+  private void _reportNonV7StreamId(Guid streamId, string messageType, string entryPoint) {
     var severity = _options.StreamIdOrderingViolationSeverity;
     if (severity == GuidOrderingSeverity.Error) {
       throw new GuidOrderingException(streamId, messageType, entryPoint,
@@ -187,7 +212,7 @@ public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logg
     ArgumentNullException.ThrowIfNull(envelope);
     var messageType = envelope.Payload is { } payload ? payload.GetType() : typeof(TMessage);
     ValidateMessageId(envelope.MessageId.Value, messageType, entryPoint);
-    ReportStreamId(streamId, streamIdType: null, TypeNameFormatter.SimpleName(messageType), entryPoint);
+    ReportStreamId(streamId, streamIdType: null, messageType, entryPoint);
   }
 
   /// <summary>
