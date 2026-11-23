@@ -83,4 +83,90 @@ public class GeneratedStreamIdentityTests {
     await Assert.That(() => GeneratedStreamIdentity.Derive(Guid.Empty)).Throws<ArgumentException>()
       .Because("every message has an id; an empty one means the caller has none to derive from");
   }
+
+  // ---- DeriveInHandling: a message sent inside a handling under a minted id (#2537) ----
+
+  private const string SERVICE = "orders";
+  private const string HANDLER = "PlaceOrderHandler";
+  private const string TYPE = "Ns.CreateShipment, Asm";
+
+  [Test]
+  public async Task DeriveInHandling_TheSameInputs_DeriveTheSameStreamIdAsync() {
+    var cause = (Guid)TrackedGuid.New();
+
+    await Assert.That(GeneratedStreamIdentity.DeriveInHandling(cause, SERVICE, HANDLER, TYPE, 2))
+      .IsEqualTo(GeneratedStreamIdentity.DeriveInHandling(cause, SERVICE, HANDLER, TYPE, 2))
+      .Because("a redelivered handling sends again in the same order, and must then start the same streams");
+  }
+
+  [Test]
+  public async Task DeriveInHandling_EachInput_SeparatesTheStreamsAsync() {
+    var cause = (Guid)TrackedGuid.New();
+    var baseline = GeneratedStreamIdentity.DeriveInHandling(cause, SERVICE, HANDLER, TYPE, 0);
+
+    await Assert.That(GeneratedStreamIdentity.DeriveInHandling((Guid)TrackedGuid.New(), SERVICE, HANDLER, TYPE, 0)).IsNotEqualTo(baseline)
+      .Because("another handled message is another handling");
+    await Assert.That(GeneratedStreamIdentity.DeriveInHandling(cause, "billing", HANDLER, TYPE, 0)).IsNotEqualTo(baseline)
+      .Because("two services handling one message must not start one stream");
+    await Assert.That(GeneratedStreamIdentity.DeriveInHandling(cause, SERVICE, "OtherHandler", TYPE, 0)).IsNotEqualTo(baseline)
+      .Because("two handlers of one message must not start one stream");
+    await Assert.That(GeneratedStreamIdentity.DeriveInHandling(cause, SERVICE, null, TYPE, 0)).IsNotEqualTo(baseline);
+    await Assert.That(GeneratedStreamIdentity.DeriveInHandling(cause, SERVICE, HANDLER, "Ns.Other, Asm", 0)).IsNotEqualTo(baseline);
+    await Assert.That(GeneratedStreamIdentity.DeriveInHandling(cause, SERVICE, HANDLER, TYPE, 1)).IsNotEqualTo(baseline)
+      .Because("two sends in one handling start two streams");
+  }
+
+  [Test]
+  public async Task DeriveInHandling_IsNeitherTheCausesStreamNorAnEmissionIdAsync() {
+    var cause = (Guid)TrackedGuid.New();
+    var streamId = GeneratedStreamIdentity.DeriveInHandling(cause, SERVICE, HANDLER, TYPE, 0);
+
+    await Assert.That(streamId).IsNotEqualTo(GeneratedStreamIdentity.Derive(cause));
+    await Assert.That(streamId).IsNotEqualTo(EmissionIdentity.Derive(cause, SERVICE, HANDLER, TYPE, 0))
+      .Because("its own canonical prefix keeps it apart from the event id the same inputs derive");
+  }
+
+  [Test]
+  public async Task DeriveInHandling_SortsAtTheCauseThenByOrdinalAsync() {
+    var cause = (Guid)TrackedGuid.New();
+
+    var first = _bytes(GeneratedStreamIdentity.DeriveInHandling(cause, SERVICE, HANDLER, TYPE, 0));
+    var second = _bytes(GeneratedStreamIdentity.DeriveInHandling(cause, SERVICE, HANDLER, TYPE, 1));
+    var source = _bytes(cause);
+
+    await Assert.That(first.AsSpan(0, 10).SequenceEqual(source.AsSpan(0, 10))).IsTrue()
+      .Because("the cause's millisecond and counter place the stream with the handling that started it");
+    await Assert.That(first[10]).IsEqualTo((byte)0);
+    await Assert.That(second[11] >> 4).IsEqualTo(1)
+      .Because("the ordinal follows the cause's prefix, so a handling's streams sort in the order it sent them");
+  }
+
+  [Test]
+  public async Task DeriveInHandling_IsAVersion7IdWithTheRfcVariantAsync() {
+    var streamId = _bytes(GeneratedStreamIdentity.DeriveInHandling(Guid.Parse("5f0c1d2e-3a4b-4c5d-9e6f-7a8b9c0d1e2f"), SERVICE, HANDLER, TYPE, 0));
+
+    await Assert.That(streamId[6] >> 4).IsEqualTo(7);
+    await Assert.That(streamId[8] >> 6).IsEqualTo(0b10);
+  }
+
+  [Test]
+  public async Task DeriveInHandling_FixedInputs_DeriveTheCompatibilityValueAsync() {
+    // Golden value, computed independently of the code under test: the cause's first 80 bits, the ordinal in the next
+    // 12, then SHA-256 of "whizbang.generated-stream.in-handling.v1\n{cause:N}\n{service}\n{handler}\n{type}\n{ordinal}"
+    // in the last 36 bits (low nibble of hash[0], then hash[1..4]). Changing it changes the stream a redelivery across
+    // the deploy starts.
+    var streamId = GeneratedStreamIdentity.DeriveInHandling(Guid.Parse("0190a5b2-3c4d-7e5f-8a1b-2c3d4e5f6a7b"), SERVICE, HANDLER, TYPE, 3);
+
+    await Assert.That(streamId).IsEqualTo(Guid.Parse("0190a5b2-3c4d-7e5f-8a1b-0039b857114e"));
+  }
+
+  [Test]
+  public async Task DeriveInHandling_InvalidInputs_AreRefusedAsync() {
+    var cause = (Guid)TrackedGuid.New();
+
+    await Assert.That(() => GeneratedStreamIdentity.DeriveInHandling(Guid.Empty, SERVICE, HANDLER, TYPE, 0)).Throws<ArgumentException>();
+    await Assert.That(() => GeneratedStreamIdentity.DeriveInHandling(cause, null!, HANDLER, TYPE, 0)).Throws<ArgumentNullException>();
+    await Assert.That(() => GeneratedStreamIdentity.DeriveInHandling(cause, SERVICE, HANDLER, null!, 0)).Throws<ArgumentNullException>();
+    await Assert.That(() => GeneratedStreamIdentity.DeriveInHandling(cause, SERVICE, HANDLER, TYPE, -1)).Throws<ArgumentOutOfRangeException>();
+  }
 }
