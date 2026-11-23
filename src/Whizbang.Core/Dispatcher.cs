@@ -5244,6 +5244,12 @@ public abstract partial class Dispatcher(
     return shared ?? _resolveEventTopic(compositeType);
   }
 
+  /// <summary>RED stub (#2543).</summary>
+#pragma warning disable RCS1163, IDE0060, CA1822, S2325 // RED stub (#2543)
+  protected MessageId CascadeMessageIdFor(IMessage message, IMessageEnvelope? sourceEnvelope, Guid? eventId) =>
+    eventId.HasValue ? new MessageId(eventId.Value) : MessageId.New();
+#pragma warning restore RCS1163, IDE0060, CA1822, S2325
+
   /// <summary>
   /// Writes a cascaded message whose type no generated cascade arm names to the outbox by its runtime
   /// type, instead of dropping it (#1410 follow-up). The generated cascade switch falls through to this.
