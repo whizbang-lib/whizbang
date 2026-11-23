@@ -163,4 +163,43 @@ public class ReceivedStreamOrderTests {
       }
     }
   }
+
+  // ----- #2544: whether filling missing origin positions changes the replay order -----
+
+  [Test]
+  public async Task FillChangesTheOrder_AFillThatLandsWhereTheIdPlacedTheEvent_ChangesNothingAsync() {
+    IReadOnlyList<StoredStreamEvent> stream = [_from(_originA, 1, 1, 10), _from(_originA, 2, 2), _from(_originA, 3, 3, 30)];
+
+    var changed = ReceivedStreamOrder.FillChangesTheOrder(stream, new Dictionary<Guid, long> { [_id(2)] = 20 });
+
+    await Assert.That(changed).IsFalse().Because("placed by its id between 10 and 30, and its position 20 puts it there too");
+  }
+
+  [Test]
+  public async Task FillChangesTheOrder_AFillThatMovesTheEventPastAnother_ChangesTheOrderAsync() {
+    IReadOnlyList<StoredStreamEvent> stream = [_from(_originA, 1, 1, 10), _from(_originA, 2, 2), _from(_originA, 3, 3, 30)];
+
+    var changed = ReceivedStreamOrder.FillChangesTheOrder(stream, new Dictionary<Guid, long> { [_id(2)] = 40 });
+
+    await Assert.That(changed).IsTrue().Because("its position 40 is after the event at 30, where its id had placed it before");
+  }
+
+  [Test]
+  public async Task FillChangesTheOrder_NeverOverwritesAPosition_AndIgnoresNonPositiveFillsAsync() {
+    IReadOnlyList<StoredStreamEvent> stream = [_from(_originA, 1, 1, 10), _from(_originA, 2, 2), _from(_originA, 3, 3, 30)];
+
+    var changed = ReceivedStreamOrder.FillChangesTheOrder(stream,
+      new Dictionary<Guid, long> { [_id(1)] = 99, [_id(2)] = 0, [_id(4)] = 5 });
+
+    await Assert.That(changed).IsFalse().Because("a position held is kept, a zero is no position, and an absent event is ignored");
+  }
+
+  [Test]
+  public async Task FillChangesTheOrder_ReadsTheStreamByVersion_AndRefusesNullAsync() {
+    IReadOnlyList<StoredStreamEvent> stream = [_from(_originA, 3, 3, 30), _from(_originA, 2, 2), _from(_originA, 1, 1, 10)];
+
+    await Assert.That(ReceivedStreamOrder.FillChangesTheOrder(stream, new Dictionary<Guid, long> { [_id(2)] = 40 })).IsTrue();
+    await Assert.That(() => ReceivedStreamOrder.FillChangesTheOrder(null!, new Dictionary<Guid, long>())).Throws<ArgumentNullException>();
+    await Assert.That(() => ReceivedStreamOrder.FillChangesTheOrder(stream, null!)).Throws<ArgumentNullException>();
+  }
 }
