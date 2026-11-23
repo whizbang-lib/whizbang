@@ -34,7 +34,6 @@ namespace Whizbang.Core.Messaging;
 /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SentMessageIdentityTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSendPathsDerivedIdentityTests.cs</tests>
-#pragma warning disable RCS1213, S1144, RCS1163, IDE0060 // RED stub (#2543)
 public static class SentMessageIdentity {
   private const string PREFIX = "whizbang.sent-message.in-handling.v1";
 
@@ -53,7 +52,21 @@ public static class SentMessageIdentity {
   /// <exception cref="ArgumentException">The cause id is empty.</exception>
   /// <exception cref="ArgumentOutOfRangeException">The ordinal is negative.</exception>
   public static Guid Derive(Guid causeId, string serviceName, string? handlerName, string messageTypeName, int ordinal) {
-    return Guid.Empty; // RED stub (#2543)
+    if (causeId == Guid.Empty) {
+      throw new ArgumentException("A message id derived from a handling needs the id of the message being handled.", nameof(causeId));
+    }
+    ArgumentNullException.ThrowIfNull(serviceName);
+    ArgumentNullException.ThrowIfNull(messageTypeName);
+    ArgumentOutOfRangeException.ThrowIfNegative(ordinal);
+
+    var canonical = string.Concat(
+      PREFIX, "\n",
+      causeId.ToString("N"), "\n",
+      serviceName, "\n",
+      handlerName ?? string.Empty, "\n",
+      messageTypeName, "\n",
+      ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    return DerivedIdentity.FromCanonical(causeId, ordinal, canonical);
   }
 
   /// <summary>
@@ -63,7 +76,8 @@ public static class SentMessageIdentity {
   /// </summary>
   /// <exception cref="ArgumentNullException"><paramref name="handling"/> is null.</exception>
   internal static int NextOrdinal(IMessageEnvelope handling) {
-    return 0; // RED stub (#2543)
+    ArgumentNullException.ThrowIfNull(handling);
+    var counter = _ordinals.GetValue(handling, static _ => new StrongBox<int>());
+    return Interlocked.Increment(ref counter.Value) - 1;
   }
 }
-#pragma warning restore RCS1213, S1144, RCS1163, IDE0060

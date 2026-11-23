@@ -21,8 +21,9 @@ namespace Whizbang.Core.Messaging;
 /// record on it, so changing the layout changes the stream a retry across the deploy starts.
 /// </para>
 /// <para>
-/// A message sent inside a handling whose own id is still minted (a command a receptor body sends, #2537) cannot
-/// derive its stream from that id; <see cref="DeriveInHandling"/> derives it from the handling instead.
+/// A command a receptor body sends (#2537) generates its stream before its own id exists (the stream is set on the
+/// message before its envelope is built), so <see cref="DeriveInHandling"/> derives it from the handling instead. Its
+/// own id derives from the handling too since #2543 (<see cref="SentMessageIdentity"/>).
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
@@ -43,10 +44,9 @@ public static class GeneratedStreamIdentity {
     return DerivedIdentity.AtTheSamePosition(messageId, $"{PREFIX}\n{messageId:N}");
   }
 
-  /// <summary>RED stub (#2537).</summary>
   /// <summary>
-  /// Derives the stream id a message starts when it is sent inside a handling under an id of its own that is still
-  /// minted (a command sent from a receptor body, #2537): from the handled message <paramref name="causeId"/>, the
+  /// Derives the stream id a message other than an event starts when it is sent inside a handling (a command sent from
+  /// a receptor body, #2537), whose stream is generated before its own id exists: from the handled message <paramref name="causeId"/>, the
   /// service, the handler, the message type and <paramref name="ordinal"/>, the message's position among the streams
   /// the handling starts this way. A redelivered handling sends again in the same order and starts the same streams.
   /// </summary>
