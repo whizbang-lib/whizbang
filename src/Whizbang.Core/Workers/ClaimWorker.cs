@@ -841,11 +841,20 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
   /// has begun are never released. The store does the row selection; this only names the streams.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// A stuck instance looks idle from outside, and today nothing else can act: siblings cannot take
   /// work from a heartbeating instance (by design, #722), so the instance itself has to let go of
   /// what it is not working on. The release is scoped to this instance's own leases, refunds the
-  /// attempt the claim charged, and ends its ownership of the released streams. One release per
-  /// streak; the streak resets on any productive claim.
+  /// attempt the claim charged, and ends its ownership of the released streams, owner included (#2545).
+  /// One release per streak; the streak resets on any productive claim.
+  /// </para>
+  /// <para>
+  /// Who takes a released stream next is the partition assignment's answer, not this release's (the
+  /// published assignment, or the claim's own ranking while none is published). An inbox stream goes to
+  /// the instance its partition is assigned to, or to an idle sibling allowed to steal (#725). A
+  /// perspective stream goes to the instance its partition is assigned to and nothing steals it, so a
+  /// stream of a partition assigned to this instance comes back to it, with its attempt refunded.
+  /// </para>
   /// </remarks>
   private async Task _releaseUnstartedIfStuckAsync(WorkBatch batch, CancellationToken ct) {
     var streak = _cycleReport.CurrentRepeatStreak;
@@ -880,6 +889,11 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
   /// has started are released, as the #724 release does, so a peer takes them over at once. A stream a drain has begun is
   /// finished here, never released under it.
   /// </summary>
+  /// <remarks>
+  /// The release clears this instance's ownership of each stream (#2545), and a pausing, standing-down or stopping
+  /// instance is no longer eligible for work, so its partitions are assigned to the peers and the peer each released
+  /// stream's partition is assigned to claims it at its next poll, perspective streams included.
+  /// </remarks>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>A task that completes when the release is done.</returns>
   public async Task ReleaseHeldWorkAsync(CancellationToken cancellationToken) {
