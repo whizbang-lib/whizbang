@@ -6022,10 +6022,11 @@ public class PerspectiveWorkerOptions {
   /// prepares every (stream, perspective) pair of a batch and writes the batch's rows with a few set-based statements
   /// per table; <see cref="PerspectiveWriteMode.PerStream"/> writes each pair on its own, as before set-based writes. A
   /// perspective overrides it with <see cref="PerspectiveWriteModeAttribute"/>; a perspective with no generated runner
-  /// is always written per stream.
+  /// is always written per stream. A rebuild in place follows the same mode for each batch of streams it reads (#2522).
   /// </summary>
   /// <docs>fundamentals/perspectives/write-modes#selection</docs>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveWriteModesTests.cs:WorkerOptions_DefaultToSetBasedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderBatchedWriteTests.cs:Rebuild_InPlace_OfAServiceThatWritesPerStream_WritesEachRowOnItsOwnAsync</tests>
   public PerspectiveWriteMode WriteMode { get; set; } = PerspectiveWriteMode.SetBased;
 
   /// <summary>

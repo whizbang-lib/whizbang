@@ -77,14 +77,28 @@ internal static partial class PerspectiveApplyBatch {
   /// <param name="services">The services the batch runs with.</param>
   /// <param name="cancellationToken">Cancels the batch; a cancellation is thrown, never recorded on a pair.</param>
   /// <returns>A task that completes when every pair has ended and the locks are released.</returns>
-  internal static async Task RunAsync(IReadOnlyList<Pair> pairs, Services services, CancellationToken cancellationToken) {
+  internal static Task RunAsync(IReadOnlyList<Pair> pairs, Services services, CancellationToken cancellationToken) =>
+    RunAsync(pairs, services, plan: null, cancellationToken);
+
+  /// <summary>
+  /// Applies the batch, reading the rows from <paramref name="plan"/> when one is given: a rebuild plans its batch's reads
+  /// with its events (#2522), and no row of it is known new, since the row a rebuild re-derives may exist.
+  /// </summary>
+  /// <param name="pairs">The pairs, each with at least one event.</param>
+  /// <param name="services">The services the batch runs with.</param>
+  /// <param name="plan">The batch's reads as its caller planned them, or null to plan them from the state source.</param>
+  /// <param name="cancellationToken">Cancels the batch; a cancellation is thrown, never recorded on a pair.</param>
+  /// <returns>A task that completes when every pair has ended and the locks are released.</returns>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderBatchedWriteTests.cs</tests>
+  internal static async Task RunAsync(
+      IReadOnlyList<Pair> pairs, Services services, IPerspectiveBatchState? plan, CancellationToken cancellationToken) {
     if (pairs.Count == 0) {
       return;
     }
     await using var locks = await PerspectiveApplyLockSet.AcquireAsync(
       services.Coordinator, pairs.Select(p => (p.StreamId, p.PerspectiveName)), cancellationToken).ConfigureAwait(false);
 
-    var batchState = services.StateSource?.BeginBatch([.. pairs.Select(p => new PerspectiveStateRequest(
+    var batchState = plan ?? services.StateSource?.BeginBatch([.. pairs.Select(p => new PerspectiveStateRequest(
       p.StreamId, p.PerspectiveName, p.Events[0].MessageId.Value,
       PerspectiveStateRequest.IsKnownNew(p.LastProcessedEventId, p.Events), [.. p.Events.Select(e => e.MessageId.Value)]))]);
     var parallel = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, services.Width), CancellationToken = cancellationToken };
