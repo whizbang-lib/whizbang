@@ -23,9 +23,10 @@ namespace Whizbang.Core.Workers;
 /// <para>
 /// A model is flushed when its interval elapses, at the batch cap, when the cache is over a bound, when a sync wait waits
 /// on one of its events, when anything else is about to touch its row (a rewind, a per-pair apply, a drain, a purge, a
-/// failure), and at stop. A model whose lease has run out is dropped, never written: its stream may already be another
-/// instance's. A writer outside the runner (a collective, a rebuild) is met by the version check of the merged write,
-/// which then re-applies each held batch on the row it finds.
+/// failure), when a rebuild of its perspective starts (#2533), and at stop. A model whose lease has run out is dropped,
+/// never written: its stream may already be another instance's. Any other writer outside the runner (a collective, or
+/// a rebuild's write that meets a model held after the rebuild started) is met by the version check of the merged
+/// write, which then re-applies each held batch on the row it finds.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/write-modes#write-behind</docs>
@@ -63,6 +64,38 @@ public partial class PerspectiveWorker {
     _writeBehind is null
       ? Task.CompletedTask
       : _flushWriteBehindKeysAsync([.. _writeBehind.Keys().Select(k => (k, WriteBehindFlushReason.Requested))], cancellationToken);
+
+  /// <summary>
+  /// Flushes the held models of a perspective a rebuild is about to replay (#2533): every one of them, or those of
+  /// <paramref name="streamIds"/>. Called by <see cref="PerspectiveRebuilder"/> before it reads a row, so no model held
+  /// before the rebuild is written over it afterwards.
+  /// </summary>
+  /// <remarks>
+  /// A flush that fails is logged and does not fail the rebuild: the flush had taken the models, and their batches were
+  /// released unwritten, so nothing held is left to write over the rebuild; their rows replay from the checkpoint.
+  /// </remarks>
+  /// <param name="perspectiveName">The perspective being rebuilt.</param>
+  /// <param name="streamIds">The streams being rebuilt, or null for every stream of the perspective.</param>
+  /// <param name="cancellationToken">Cancels the flush, and with it the rebuild.</param>
+  /// <returns>A task that completes once each such model is flushed or released.</returns>
+  /// <docs>fundamentals/perspectives/write-modes#write-behind</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeTests.WriteBehindRebuild.cs</tests>
+  internal async Task FlushWriteBehindForRebuildAsync(
+      string perspectiveName, IReadOnlyCollection<Guid>? streamIds, CancellationToken cancellationToken) {
+    if (_writeBehind is null) {
+      return;
+    }
+    var streams = streamIds?.ToHashSet();
+    var keys = _writeBehind.Keys()
+      // A rebuild of every stream (no streams named) flushes every model of the perspective.
+      .Where(k => k.PerspectiveName == perspectiveName && streams?.Contains(k.StreamId) != false)
+      .Select(k => (k, WriteBehindFlushReason.Rebuild));
+    try {
+      await _flushWriteBehindKeysAsync([.. keys], cancellationToken).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogWriteBehindFlushFailed(_logger, ex);
+    }
+  }
 
   /// <summary>Whether a mode prepares its pairs in a set-based batch: set-based and write-behind both do.</summary>
   private static bool _isBatched(PerspectiveWriteMode mode) =>

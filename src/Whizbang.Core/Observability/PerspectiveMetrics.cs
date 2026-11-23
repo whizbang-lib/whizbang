@@ -205,7 +205,7 @@ public sealed class PerspectiveMetrics {
 
   /// <summary>
   /// Models flushed before their interval: over a bound, at the batch cap, for a sync wait, for a rewind, per-pair apply
-  /// or drain that needs the row current, or at stop. Tags: reason.
+  /// or drain that needs the row current, when a rebuild of the perspective starts, on request, or at stop. Tags: reason.
   /// </summary>
   /// <docs>fundamentals/perspectives/write-modes#write-behind-metrics</docs>
   public PassiveCounter<long> WriteBehindForcedFlushes { get; }
