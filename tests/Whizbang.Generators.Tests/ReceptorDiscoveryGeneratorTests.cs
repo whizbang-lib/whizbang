@@ -2085,13 +2085,18 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     // Act
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
-    // Assert - Should call PublishToOutboxAsync with MessageId.New()
+    // Assert - Should call PublishToOutboxAsync under the id the dispatcher creates for a cascade (#2543)
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
     await Assert.That(dispatcher).Contains("PublishToOutboxAsync");
-    await Assert.That(dispatcher).Contains("MessageId.New()");
+    await Assert.That(dispatcher).Contains("var messageId = CascadeMessageIdFor(message, sourceEnvelope, eventId);")
+      .Because("a cascade given no id takes the one the dispatcher creates, which derives inside a handling (#2543)");
+    foreach (var mint in new[] { "MessageId.New(", "TrackedGuid.New", "Guid.NewGuid(", "Guid.CreateVersion7(" }) {
+      await Assert.That(dispatcher!).DoesNotContain(mint)
+        .Because("generated dispatch code never mints a message id of its own; it asks the dispatcher, which derives inside a handling (#2543)");
+    }
   }
 
   /// <summary>

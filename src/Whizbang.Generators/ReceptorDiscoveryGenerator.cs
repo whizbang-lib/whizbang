@@ -56,7 +56,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string INDENT_6_CLOSE_BRACE = "      }";
   private const string BOOL_TRUE_LITERAL = "true";
   private const string BOOL_FALSE_LITERAL = "false";
-  private const string MESSAGE_ID_FROM_EVENT_ID = "        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();";
+  // The id a cascade's copy is written under: the one the dispatcher gave, or the one it creates, derived inside a
+  // handling (#2543). Generated code never mints a message id of its own.
+  private const string MESSAGE_ID_FROM_EVENT_ID = "        var messageId = CascadeMessageIdFor(message, sourceEnvelope, eventId);";
 
   private const string PLACEHOLDER_INDEX = "__INDEX__";
   private const string PLACEHOLDER_RECEPTOR_NAME = "__RECEPTOR_NAME__";
@@ -1648,7 +1650,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Generate concrete type cascades (exact type matching)
     foreach (var eventType in concreteTypes) {
       sb.AppendLine($"      if (messageType == typeof({eventType})) {{");
-      // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
+      // CRITICAL: Use passed eventId for sync tracking consistency, or the dispatcher's id if not provided
       // This ensures the same ID is used for tracking (singleton tracker) AND storage
       sb.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
       // Through object: a reply type that is sealed and not a message cannot be cast from IMessage (CS0030); such a
@@ -1662,7 +1664,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Uses PublishToOutboxDynamicAsync which serializes using the runtime type, not the interface type
     foreach (var eventType in interfaceTypes) {
       sb.AppendLine($"      if (message is {eventType}) {{");
-      // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
+      // CRITICAL: Use passed eventId for sync tracking consistency, or the dispatcher's id if not provided
       sb.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
       sb.AppendLine($"        return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope{eventStoreOnlyParam});");
       sb.AppendLine(INDENT_6_CLOSE_BRACE);
