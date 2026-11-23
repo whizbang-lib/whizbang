@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -41,7 +42,6 @@ public partial class PerspectiveWorkerDrainModeTests {
   private const string BEHIND_TABLE = "wh_per_counter";
   private const int INTERVAL_MS = 1000;
 
-  private static void _registerWriteBehindModes() => PerspectiveWriteModes.Register(BEHIND, PerspectiveWriteMode.WriteBehind);
 
   [Test]
   [Timeout(30000)]
@@ -321,6 +321,124 @@ public partial class PerspectiveWorkerDrainModeTests {
     await Assert.That(worker.WriteBehindModels).IsEqualTo(0);
   }
 
+  [Test]
+  [Timeout(30000)]
+  public async Task WriteBehind_AnIntervalFlushThatFails_ReleasesItsBatchesUnwritten_AndIsLoggedAsync(CancellationToken cancellationToken) {
+    await using var rig = new WriteBehindRig();
+    var stream = Guid.NewGuid();
+    await rig.StartAsync(cancellationToken);
+    await rig.DrainAsync(stream, 1, cancellationToken);
+    rig.Locks.Refuses = true;
+
+    rig.Time.Advance(TimeSpan.FromMilliseconds(INTERVAL_MS));
+    await rig.Worker.WriteBehindTickInFlight.WaitAsync(cancellationToken);
+
+    var failure = await rig.Logs.FlushFailed.WaitAsync(cancellationToken);
+    await Assert.That(failure!.Message).IsEqualTo("the apply lock was refused")
+      .Because("the timer's flush logs what failed instead of ending the timer");
+    await Assert.That(rig.Worker.WriteBehindModels).IsEqualTo(0).Because("the failed flush had taken the model");
+    await Assert.That(rig.Sink.Calls).IsEqualTo(0);
+    await Assert.That(rig.Coordinator.Reported).IsEmpty().Because("its batches replay from the checkpoint, which never moved");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task WriteBehind_ASyncFlushThatFails_IsLoggedAsync(CancellationToken cancellationToken) {
+    await using var rig = new WriteBehindRig();
+    var stream = Guid.NewGuid();
+    await rig.StartAsync(cancellationToken);
+    await rig.DrainAsync(stream, 1, cancellationToken);
+    rig.Locks.Refuses = true;
+
+    _ = rig.Sync.WaitForPerspectiveEventsAsync([rig.EventsOf(stream)[0]], BEHIND, TimeSpan.Zero, cancellationToken: cancellationToken);
+    var failure = await rig.Logs.FlushFailed.WaitAsync(cancellationToken);
+
+    await Assert.That(failure!.Message).IsEqualTo("the apply lock was refused")
+      .Because("the flush a sync wait starts runs apart from the wait, so its failure is logged");
+    await Assert.That(rig.Worker.WriteBehindModels).IsEqualTo(0);
+    await Assert.That(rig.Sink.Calls).IsEqualTo(0);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task WriteBehind_AHeldModelThatGrowsTheCacheOverItsByteBound_IsFlushedForTheBoundAsync(CancellationToken cancellationToken) {
+    // A count of 1 takes one byte, which fits; a count of 10 takes two.
+    await using var rig = new WriteBehindRig { MaxBytes = 1 };
+    var stream = Guid.NewGuid();
+    await rig.StartAsync(cancellationToken);
+    await rig.DrainAsync(stream, 1, cancellationToken);
+    rig.Coordinator.Expect(2, 0);
+
+    await rig.DrainAsync(stream, events: 9, heldCount: 2, cancellationToken);
+    await rig.Coordinator.AllReported.WaitAsync(cancellationToken);
+
+    await Assert.That(rig.Sink.Written).Count().IsEqualTo(1).Because("a held model's later batch is always added, then the bound flushes it");
+    await Assert.That(rig.Sink.Written[0].Row!.Data).IsEqualTo("{\"Count\":10}");
+    await Assert.That(rig.Measured("whizbang.perspective.write_behind.forced_flushes", "bounds")).IsEqualTo(1);
+    await Assert.That(rig.Worker.WriteBehindModels).IsEqualTo(0);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task WriteBehind_AModelThatOutlivesItsLease_IsDropped_OnAWorkerWithoutMetricsAsync(CancellationToken cancellationToken) {
+    await using var rig = new WriteBehindRig { WithoutMetrics = true };
+    var stream = Guid.NewGuid();
+    await rig.StartAsync(cancellationToken);
+    await rig.DrainAsync(stream, 1, cancellationToken);
+
+    rig.Time.Advance(TimeSpan.FromSeconds(270));
+    await rig.Worker.WriteBehindTickInFlight.WaitAsync(cancellationToken);
+    await rig.Worker.FlushWriteBehindDueAsync(cancellationToken);
+
+    await Assert.That(rig.Worker.WriteBehindModels).IsEqualTo(0);
+    await Assert.That(rig.Sink.Calls).IsEqualTo(0).Because("a model whose rows may be another instance's is never written");
+    await Assert.That(rig.Coordinator.Reported).IsEmpty();
+    await Assert.That(rig.Measured("whizbang.perspective.write_behind.dropped", null)).IsEqualTo(0)
+      .Because("a worker without metrics measures nothing");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task WriteBehind_ABatchThatCannotBeHeld_WritesTheHeldModelFirst_UnderTheBatchsApplyLockAsync(CancellationToken cancellationToken) {
+    await using var rig = new WriteBehindRig();
+    var stream = Guid.NewGuid();
+    await rig.StartAsync(cancellationToken);
+    await rig.DrainAsync(stream, 1, cancellationToken);
+    // The next batch's write is not checked against the row's version, so it is written now, and the model before it.
+    rig.Runners.Unchecked = true;
+    rig.Coordinator.Expect(2, 0);
+
+    await rig.DrainAsync(stream, 0, cancellationToken);
+    await rig.Coordinator.AllReported.WaitAsync(cancellationToken);
+
+    await Assert.That(rig.Sink.Written.Select(w => w.Row!.Data).ToList()).IsEquivalentTo(
+      ["{\"Count\":1}", "{\"Count\":2}"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the held model is written before the batch that folded onto it");
+    await Assert.That(rig.Locks.Acquired).Count().IsEqualTo(2)
+      .Because("each drain's batch takes the pair's apply lock once; the flush inside the batch does not take it again");
+    await Assert.That(rig.Measured("whizbang.perspective.write_behind.forced_flushes", "bypass")).IsEqualTo(1);
+    await Assert.That(rig.Worker.WriteBehindModels).IsEqualTo(0);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task WriteBehind_APerPairDrainOfOnlyHeldEvents_AppliesNothingAgainAsync(CancellationToken cancellationToken) {
+    // Its own perspective, since the test changes the perspective's mode once a model is held.
+    const string flipped = BEHIND + ".Flipped";
+    await using var rig = new WriteBehindRig(flipped);
+    var stream = Guid.NewGuid();
+    await rig.StartAsync(cancellationToken);
+    await rig.DrainAsync(stream, 1, cancellationToken);
+    PerspectiveWriteModes.Register(flipped, PerspectiveWriteMode.PerStream);
+
+    await rig.RedrainHeldAsync(stream, cancellationToken);
+
+    await Assert.That(rig.Runners.RunWithEventsCalls).IsEqualTo(0).Because("the per-pair path leaves out the events a held model folded");
+    await Assert.That(rig.Runners.PrepareCalls).IsEqualTo(1);
+    await Assert.That(rig.Sink.Calls).IsEqualTo(0).Because("with nothing left to apply, the held model is not flushed");
+    await Assert.That(rig.Worker.WriteBehindModels).IsEqualTo(1);
+  }
+
   /// <summary>A model held across drains: its count, serialized.</summary>
   public sealed class CounterModel {
     public int Count { get; set; }
@@ -329,6 +447,7 @@ public partial class PerspectiveWorkerDrainModeTests {
   /// <summary>A drain rig for one write-behind perspective, driven drain by drain.</summary>
   private sealed class WriteBehindRig : IAsyncDisposable {
     private readonly ServiceProvider _provider;
+    private readonly string _perspective;
     private readonly PerspectiveWorkerTestHarness _harness = new();
     private readonly ConcurrentDictionary<Guid, List<Guid>> _events = new();
     private readonly ConcurrentDictionary<int, TaskCompletionSource> _held = new();
@@ -343,23 +462,29 @@ public partial class PerspectiveWorkerDrainModeTests {
     public PerspectiveWriteMode ServiceMode { get; init; } = PerspectiveWriteMode.SetBased;
     public int MaxModels { get; init; } = 100;
     public int MaxBatches { get; init; } = 32;
+    public long MaxBytes { get; init; } = 1_000_000;
+    public bool WithoutMetrics { get; init; }
     public FakeTimeProvider Time { get; } = new(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
     public WriteBehindRunners Runners { get; }
     public ReportingCoordinator Coordinator { get; } = new();
     public OutcomeSink Sink { get; } = new();
     public SyncEventTracker Sync { get; } = new();
+    public RecordingLocks Locks { get; } = new();
+    public FlushFailureLog Logs { get; } = new();
     public PerspectiveWorker Worker => _worker!;
 
-    public WriteBehindRig() {
-      _registerWriteBehindModes();
-      Runners = new WriteBehindRunners();
+    /// <summary>A rig for <paramref name="perspective"/>, which this rig declares write-behind.</summary>
+    public WriteBehindRig(string perspective = BEHIND) {
+      _perspective = perspective;
+      PerspectiveWriteModes.Register(perspective, PerspectiveWriteMode.WriteBehind);
+      Runners = new WriteBehindRunners(perspective);
       var services = new ServiceCollection();
       services.TryAddWhizbangDefaults();
       services.AddSingleton<IWorkCoordinator>(Coordinator);
       services.AddSingleton<IPerspectiveRunnerRegistry>(Runners);
       services.AddSingleton<IEventTypeProvider>(new FakeEventTypeProvider([typeof(DrainModeTestEvent)]));
       services.AddSingleton<IEventStore>(_store);
-      services.AddSingleton<IPerspectiveApplyCoordinator>(new RecordingLocks());
+      services.AddSingleton<IPerspectiveApplyCoordinator>(Locks);
       services.AddKeyedSingleton<IPerspectiveWriteSink>(SINK_KEY, Sink);
       services.AddLogging();
       services.AddMetrics();
@@ -405,7 +530,7 @@ public partial class PerspectiveWorkerDrainModeTests {
         WriteMode = ServiceMode,
         DrainBatcher = new SlidingWindowBatcherOptions { SlidingWindow = TimeSpan.Zero, MaxWait = TimeSpan.Zero, MaxSize = 1000 },
         WriteBehind = Bounded
-          ? new PerspectiveWriteBehindOptions { MaxModels = MaxModels, MaxBytes = 1_000_000, MaxBatchesPerModel = MaxBatches, MaxFlushIntervalMilliseconds = INTERVAL_MS }
+          ? new PerspectiveWriteBehindOptions { MaxModels = MaxModels, MaxBytes = MaxBytes, MaxBatchesPerModel = MaxBatches, MaxFlushIntervalMilliseconds = INTERVAL_MS }
           : new PerspectiveWriteBehindOptions(),
       };
       _worker = new PerspectiveWorker(
@@ -417,7 +542,7 @@ public partial class PerspectiveWorkerDrainModeTests {
         eventTypeProvider: _provider.GetRequiredService<IEventTypeProvider>(),
         syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
         syncEventTracker: Sync,
-        logger: NullLogger<PerspectiveWorker>.Instance,
+        logger: Logs,
         snapshotStore: NullPerspectiveSnapshotStore.Instance,
         streamLocker: NullPerspectiveStreamLocker.Instance,
         streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
@@ -436,10 +561,10 @@ public partial class PerspectiveWorkerDrainModeTests {
         generationProvider: new DefaultGenerationProvider(),
         perspectiveNotificationListener: new NoOpWorkNotificationListener(),
         governor: PerspectiveWorker.CreateDefaultGovernor(options),
-        metrics: _provider.GetRequiredService<PerspectiveMetrics>(),
+        metrics: WithoutMetrics ? null : _provider.GetRequiredService<PerspectiveMetrics>(),
         timeProvider: Time);
       _worker.OnWriteBehindHeld += key => {
-        if (key.PerspectiveName == BEHIND) {
+        if (key.PerspectiveName == _perspective) {
           _signal(Interlocked.Increment(ref _holds)).TrySetResult();
         }
       };
@@ -485,7 +610,7 @@ public partial class PerspectiveWorkerDrainModeTests {
     /// <summary>Hands the stream's pair to the claimed path.</summary>
     public async Task ClaimAsync(Guid stream, CancellationToken ct) {
       Runners.ClaimedEvents[stream] = _events[stream];
-      await _harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.NewGuid(), StreamId = stream, PerspectiveName = BEHIND }, ct);
+      await _harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.NewGuid(), StreamId = stream, PerspectiveName = _perspective }, ct);
     }
 
     private async Task _drainAndWaitAsync(Guid stream, int heldCount, CancellationToken ct) {
@@ -501,13 +626,13 @@ public partial class PerspectiveWorkerDrainModeTests {
       }
     }
 
-    private static StreamEventData _row(Guid stream, Guid eventId) => new() {
+    private StreamEventData _row(Guid stream, Guid eventId) => new() {
       StreamId = stream,
       EventId = eventId,
       EventType = TypeNameFormatter.Format(typeof(DrainModeTestEvent)),
       EventData = JsonSerializer.Serialize(new DrainModeTestEvent("write-behind")),
       EventWorkId = Guid.NewGuid(),
-      PerspectiveName = BEHIND,
+      PerspectiveName = _perspective,
     };
 
     private TaskCompletionSource _signal(int count) =>
@@ -523,6 +648,25 @@ public partial class PerspectiveWorkerDrainModeTests {
       }
       _listener.Dispose();
       await _provider.DisposeAsync();
+    }
+  }
+
+  /// <summary>The worker's log, watched for the write-behind flush failure (its event 90).</summary>
+  private sealed class FlushFailureLog : ILogger<PerspectiveWorker> {
+    private const int FLUSH_FAILED = 90;
+    private readonly TaskCompletionSource<Exception?> _flushFailed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes with the exception of the first flush failure logged.</summary>
+    public Task<Exception?> FlushFailed => _flushFailed.Task;
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (eventId.Id == FLUSH_FAILED) {
+        _flushFailed.TrySetResult(exception);
+      }
     }
   }
 
@@ -543,12 +687,14 @@ public partial class PerspectiveWorkerDrainModeTests {
     }
   }
 
-  /// <summary>The fake runner of <see cref="BEHIND"/>: it counts its events onto the held model, or a new one.</summary>
-  private sealed class WriteBehindRunners : IPerspectiveRunnerRegistry {
+  /// <summary>The fake runner of one write-behind perspective: it counts its events onto the held model, or a new one.</summary>
+  private sealed class WriteBehindRunners(string name) : IPerspectiveRunnerRegistry {
     private int _preparedOnHeld;
     private int _prepareCalls;
+    private int _runWithEventsCalls;
     public int PreparedOnHeld => Volatile.Read(ref _preparedOnHeld);
     public int PrepareCalls => Volatile.Read(ref _prepareCalls);
+    public int RunWithEventsCalls => Volatile.Read(ref _runWithEventsCalls);
     public Action? OnFirstPrepare { get; set; }
     public bool Unchecked { get; set; }
     public bool CompleteThrows { get; set; }
@@ -556,10 +702,10 @@ public partial class PerspectiveWorkerDrainModeTests {
     public ConcurrentDictionary<Guid, List<Guid>> ClaimedEvents { get; } = new();
 
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) =>
-      perspectiveName == BEHIND ? new Runner(this) : null;
+      perspectiveName == _name ? new Runner(this) : null;
 
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
-      [new(BEHIND, "global::" + BEHIND, "global::Tests.WriteBehind.CounterModel", [TypeNameFormatter.Format(typeof(DrainModeTestEvent))])];
+      [new(_name, "global::" + _name, "global::Tests.WriteBehind.CounterModel", [TypeNameFormatter.Format(typeof(DrainModeTestEvent))])];
 
     public IReadOnlyList<Type> GetEventTypes() => [typeof(DrainModeTestEvent)];
     public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
@@ -570,8 +716,8 @@ public partial class PerspectiveWorkerDrainModeTests {
         new PerspectiveStoredRow<CounterModel>(ApplyRead, new CounterModel { Count = model.Count }) as PerspectiveStoredRow<TModel>;
     }
 
-    private sealed class Prepared(Guid streamId, IReadOnlyList<MessageEnvelope<IEvent>> events, PendingPerspectiveWrite write, HeldModel? held)
-      : PreparedPerspectiveApply(streamId, BEHIND, null, events, write, PerspectivePerPairReason.None) {
+    private sealed class Prepared(string name, Guid streamId, IReadOnlyList<MessageEnvelope<IEvent>> events, PendingPerspectiveWrite write, HeldModel? held)
+      : PreparedPerspectiveApply(streamId, name, null, events, write, PerspectivePerPairReason.None) {
       public override PerspectiveWriteBehindRow? WriteBehindRow => held;
     }
 
@@ -597,7 +743,7 @@ public partial class PerspectiveWorkerDrainModeTests {
         var write = PendingPerspectiveWrite.Write(BEHIND_TABLE, streamId, version, values).ForSink(SINK_KEY);
         var keep = batchState?.KeepsModels(streamId, perspectiveName) == true;
         var read = new PerspectiveApplyRead(version, null);
-        return new Prepared(streamId, events, write, keep ? new HeldModel(read, events[^1].MessageId.Value, model) : null);
+        return new Prepared(owner._name, streamId, events, write, keep ? new HeldModel(read, events[^1].MessageId.Value, model) : null);
       }
 
       public Task<PerspectiveCursorCompletion> CompleteAsync(PreparedPerspectiveApply prepared, PerspectiveWriteOutcome? outcome, CancellationToken cancellationToken = default) {
@@ -605,33 +751,37 @@ public partial class PerspectiveWorkerDrainModeTests {
         if (owner.CompleteThrows) {
           throw new InvalidOperationException("the completion threw");
         }
-        return Task.FromResult(_completion(prepared.StreamId, prepared.Events[^1].MessageId.Value));
+        return Task.FromResult(owner._completion(prepared.StreamId, prepared.Events[^1].MessageId.Value));
       }
 
       public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) =>
-        Task.FromResult(_completion(streamId, owner.ClaimedEvents.GetValueOrDefault(streamId, [Guid.Empty])[^1]));
+        Task.FromResult(owner._completion(streamId, owner.ClaimedEvents.GetValueOrDefault(streamId, [Guid.Empty])[^1]));
 
       public Task<PerspectiveCursorCompletion> RunWithEventsAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId,
-          IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) =>
-        Task.FromResult(_completion(streamId, events[^1].MessageId.Value));
+          IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
+        Interlocked.Increment(ref owner._runWithEventsCalls);
+        return Task.FromResult(owner._completion(streamId, events[^1].MessageId.Value));
+      }
 
       public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
-        Task.FromResult(_completion(streamId, triggeringEventId));
+        Task.FromResult(owner._completion(streamId, triggeringEventId));
 
       public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
 
-      private static PerspectiveCursorCompletion _completion(Guid streamId, Guid lastEventId) => new() {
-        StreamId = streamId,
-        PerspectiveName = BEHIND,
-        LastEventId = lastEventId,
-        Status = PerspectiveProcessingStatus.Completed,
-        RowChanged = true,
-        ProcessedEventIds = [lastEventId],
-      };
-
       private static MessageEnvelope<IEvent> _envelope(Guid eventId) => Envelope(eventId);
     }
+
+    private readonly string _name = name;
+
+    private PerspectiveCursorCompletion _completion(Guid streamId, Guid lastEventId) => new() {
+      StreamId = streamId,
+      PerspectiveName = _name,
+      LastEventId = lastEventId,
+      Status = PerspectiveProcessingStatus.Completed,
+      RowChanged = true,
+      ProcessedEventIds = [lastEventId],
+    };
 
     /// <summary>The event an id stands for, as the drain and the claimed read hand it to the runner.</summary>
     public static MessageEnvelope<IEvent> Envelope(Guid eventId) => new() {

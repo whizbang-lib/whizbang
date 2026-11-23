@@ -109,6 +109,20 @@ public partial class PerspectiveWorkerDrainModeTests {
 
   [Test]
   [Timeout(30000)]
+  public async Task SetBasedDrain_APairThatEndedBeforeItsBatchsLeaseRanOut_IsNotFailedOnTheLeaseAsync(CancellationToken cancellationToken) {
+    // The lease runs out while the pair's completion runs: the pair has its result, and the batch then meets the lease.
+    var stream = Guid.NewGuid();
+    var rig = new SetBasedRig(PerspectiveWriteMode.SetBased) { CompletionOutlivesLease = true, WaitForBatchEnd = true };
+
+    await rig.DrainExpectingAsync([stream], expectedReports: 0, expectedFailures: 0, cancellationToken);
+
+    await Assert.That(rig.Runners.Completed.Keys).IsEquivalentTo([stream]).Because("the pair's completion ran, so the pair ended");
+    await Assert.That(rig.Coordinator.Failed).IsEmpty()
+      .Because("only a pair that had not ended when the lease ran out is routed to the lease's failure path");
+  }
+
+  [Test]
+  [Timeout(30000)]
   public async Task SetBasedDrain_AReportThatOutlivesTheLease_FailsItsPairOnTheLeaseAsync(CancellationToken cancellationToken) {
     // One stream: once the batch's lease has run out, every pair still finishing meets it.
     var late = Guid.NewGuid();
@@ -448,6 +462,7 @@ public partial class PerspectiveWorkerDrainModeTests {
     public Guid? LeaseExpiresOnReportOf { get; init; }
     public bool RewindThrows { get; init; }
     public bool RewindOutlivesLease { get; init; }
+    public bool CompletionOutlivesLease { get; init; }
     public bool HoldPrepare { get; init; }
     public bool RewindLockHeldElsewhere { get; init; }
     public bool BatchedReads { get; init; }
@@ -564,6 +579,7 @@ public partial class PerspectiveWorkerDrainModeTests {
         ReadThrowsFor = ReadThrowsFor,
         SetBasedUnresolvable = SetBasedUnresolvable,
         OnRewind = RewindOutlivesLease ? () => time.Advance(TimeSpan.FromHours(1)) : null,
+        OnComplete = CompletionOutlivesLease ? () => time.Advance(TimeSpan.FromHours(1)) : null,
       };
       Coordinator.Expect(expectedReports, expectedFailures);
       Coordinator.ReadsCursorsInBatches = !CursorsPerPair;
@@ -716,6 +732,7 @@ public partial class PerspectiveWorkerDrainModeTests {
     public bool HoldPrepare { get; init; }
     public bool RewindThrows { get; init; }
     public Action? OnRewind { get; init; }
+    public Action? OnComplete { get; init; }
     public Guid? ReadThrowsFor { get; init; }
     public ConcurrentQueue<Guid> Rewound { get; } = new();
     private int _runCalls;
@@ -795,6 +812,7 @@ public partial class PerspectiveWorkerDrainModeTests {
 
       public Task<PerspectiveCursorCompletion> CompleteAsync(PreparedPerspectiveApply prepared, PerspectiveWriteOutcome? outcome, CancellationToken cancellationToken = default) {
         owner.Completed[prepared.StreamId] = outcome?.Status;
+        owner.OnComplete?.Invoke();
         return Task.FromResult(owner._completion(prepared.StreamId));
       }
 
@@ -851,6 +869,8 @@ public partial class PerspectiveWorkerDrainModeTests {
       _expectedReports = reports;
       _expectedFailures = failures;
       _all = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      // Nothing expected is already everything expected.
+      _check();
     }
 
     private void _check() {
@@ -944,7 +964,13 @@ public partial class PerspectiveWorkerDrainModeTests {
     private readonly ConcurrentQueue<Guid> _acquired = new();
     public IReadOnlyList<Guid> Acquired => [.. _acquired];
 
+    /// <summary>Whether a lock is refused from now on.</summary>
+    public bool Refuses { get; set; }
+
     public Task<IAsyncDisposable> AcquireAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) {
+      if (Refuses) {
+        throw new InvalidOperationException("the apply lock was refused");
+      }
       _acquired.Enqueue(streamId);
       return Task.FromResult<IAsyncDisposable>(new Nothing());
     }
