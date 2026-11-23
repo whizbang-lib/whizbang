@@ -201,6 +201,7 @@ Whizbang:PerspectiveRowRetention:AutoAcknowledge
 Whizbang:PerspectiveRowRetention:Enabled
 Whizbang:PerspectiveRowRetention:Overrides:*
 Whizbang:Perspectives:ArchivedStreamRows:*
+Whizbang:Perspectives:Rebuild:StreamReadBatchSize
 Whizbang:Perspectives:Rewind:DebounceWindow
 Whizbang:Perspectives:Rewind:Enabled
 Whizbang:Perspectives:Rewind:MaxConcurrentRewinds

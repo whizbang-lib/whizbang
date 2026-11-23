@@ -74,14 +74,18 @@ public class PerspectiveCheckpointCompleterSchemaTests : EFCoreTestBase {
           (LIKE public.wh_event_archive_cursors INCLUDING ALL);
         """;
       await ddl.ExecuteNonQueryAsync();
-      await using var definition = conn.CreateCommand();
-      definition.CommandText = "SELECT pg_get_functiondef('public.wh_complete_rebuilt_cursor'::regproc)";
-      var publicDefinition = (string)(await definition.ExecuteScalarAsync())!;
-      await using var function = conn.CreateCommand();
-      function.CommandText = publicDefinition
-        .Replace("\"public\".", ServiceSchema + ".", StringComparison.Ordinal)
-        .Replace("public.", ServiceSchema + ".", StringComparison.Ordinal);
-      await function.ExecuteNonQueryAsync();
+      // The one-cursor function (273) and the flush the completer calls since 556 (#2513), both as the service's
+      // migrations create them in its schema.
+      foreach (var name in new[] { "wh_complete_rebuilt_cursor", "wh_complete_rebuilt_cursors" }) {
+        await using var definition = conn.CreateCommand();
+        definition.CommandText = $"SELECT pg_get_functiondef('public.{name}'::regproc)";
+        var publicDefinition = (string)(await definition.ExecuteScalarAsync())!;
+        await using var function = conn.CreateCommand();
+        function.CommandText = publicDefinition
+          .Replace("\"public\".", ServiceSchema + ".", StringComparison.Ordinal)
+          .Replace("public.", ServiceSchema + ".", StringComparison.Ordinal);
+        await function.ExecuteNonQueryAsync();
+      }
     }
 
     var options = new DbContextOptionsBuilder<SchemaScopedDbContext>()

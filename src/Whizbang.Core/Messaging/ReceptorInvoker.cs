@@ -48,6 +48,7 @@ namespace Whizbang.Core.Messaging;
 /// <docs>fundamentals/receptors/exactly-once-firing</docs>
 /// <docs>operations/observability/tracing#parent-context</docs>
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorHandlingTests.cs</tests>
 public sealed partial class ReceptorInvoker : IReceptorInvoker {
   private readonly IReceptorRegistry _registry;
   private readonly IServiceProvider _scopedProvider;
@@ -936,8 +937,12 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     _setAmbientLifecycleContext(ctx.LifecycleContext);
     _logCallerInfo(receptor, ctx.CallerInfo);
 
-    // InvokeAsync is a pre-compiled delegate (no reflection)
-    var result = await receptor.InvokeAsync(_scopedProvider, ctx.Message, ctx.Envelope, ctx.CallerInfo, cancellationToken).ConfigureAwait(false);
+    // InvokeAsync is a pre-compiled delegate (no reflection). The body runs inside the handling of its envelope, so an
+    // event it publishes explicitly derives its id from the handling, as what it returns does (#2274)
+    object? result;
+    using (ReceptorHandling.Enter(ctx.Envelope)) {
+      result = await receptor.InvokeAsync(_scopedProvider, ctx.Message, ctx.Envelope, ctx.CallerInfo, cancellationToken).ConfigureAwait(false);
+    }
 
     receptorActivity?.SetStatus(ActivityStatusCode.Ok);
     receptorActivity?.SetTag("whizbang.receptor.has_result", result is not null);

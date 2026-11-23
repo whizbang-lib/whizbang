@@ -47,6 +47,73 @@ public class RunnerBaseEntryPointTests {
   }
 
   [Test]
+  public async Task ReadRebuildEventsAsync_ReadsEveryStreamFromItsStart_WithOneReadOfTheTypesThePerspectiveFoldsAsync() {
+    var harness = new RbHarness();
+    harness.Events.ReadsInBatches = true;
+    var other = TrackedGuid.New().Value;
+    var empty = TrackedGuid.New().Value;
+    var first = harness.Add(harness.Marked("a"));
+    _ = harness.Add(new RbIgnored { StreamId = harness.StreamId });
+    var second = harness.Add(harness.Marked("b"));
+    var others = harness.Events.Add(other, new RbOther { StreamId = other });
+
+    var read = await ((IPerspectiveRunner)harness.Runner).ReadRebuildEventsAsync([harness.StreamId, other, empty]);
+
+    await Assert.That(harness.Events.BatchReads).Count().IsEqualTo(1);
+    await Assert.That(harness.Events.StreamReads).IsEmpty();
+    await Assert.That(read![harness.StreamId]).IsEquivalentTo([first, second]);
+    await Assert.That(read[other]).IsEquivalentTo([others]);
+    await Assert.That(read[empty]).IsEmpty();
+  }
+
+  [Test]
+  public async Task ReadRebuildEventsAsync_OverAStoreThatReadsNoStreamsInBatches_ReturnsNullAsync() {
+    var harness = new RbHarness();
+
+    await Assert.That(await ((IPerspectiveRunner)harness.Runner).ReadRebuildEventsAsync([harness.StreamId])).IsNull();
+  }
+
+  [Test]
+  public async Task RunRebuildWithEventsAsync_FoldsTheEventsItIsGiven_AndReadsNothingOfTheStreamAsync() {
+    var harness = new RbHarness();
+    var first = harness.Add(harness.Marked("a"));
+    var second = harness.Add(harness.Marked("b"));
+
+    var completions = await Rb.RunAsRebuildAsync(() =>
+      ((IPerspectiveRunner)harness.Runner).RunRebuildWithEventsAsync(harness.StreamId, RbHarness.NAME, [first, second]));
+
+    await Assert.That(harness.Events.StreamReads).IsEmpty();
+    await Assert.That(completions).Count().IsEqualTo(1);
+    await Assert.That(completions[0].LastEventId).IsEqualTo(second.MessageId.Value);
+    await Assert.That(harness.Rows.Row(harness.StreamId).Marks).IsEqualTo("ab");
+  }
+
+  [Test]
+  public async Task RunRebuildWithEventsAsync_FoldsTheRow_UnderTheApplyLock_AsTheLiveApplyDoesAsync() {
+    var coordinator = new RbCoordinator();
+    var harness = new RbHarness { Coordinator = coordinator };
+    var first = harness.Add(harness.Marked("a"));
+
+    _ = await Rb.RunAsRebuildAsync(() =>
+      ((IPerspectiveRunner)harness.Runner).RunRebuildWithEventsAsync(harness.StreamId, RbHarness.NAME, [first]));
+
+    await Assert.That(coordinator.Acquired).IsEquivalentTo([(harness.StreamId, RbHarness.NAME)]);
+    await Assert.That(coordinator.Released).IsEqualTo(1);
+    await Assert.That(harness.Rows.Row(harness.StreamId).Marks).IsEqualTo("a");
+  }
+
+  [Test]
+  public async Task RunRebuildWithEventsAsync_OfNoEvents_ReportsOneUntouchedCompletionAsync() {
+    var harness = new RbHarness();
+
+    var completions = await ((IPerspectiveRunner)harness.Runner).RunRebuildWithEventsAsync(harness.StreamId, RbHarness.NAME, []);
+
+    await Assert.That(completions).Count().IsEqualTo(1);
+    await Assert.That(completions[0].LastEventId).IsEqualTo(Guid.Empty);
+    await Assert.That(harness.Events.StreamReads).IsEmpty();
+  }
+
+  [Test]
   public async Task RunRebuildAsync_OfAnEmptyStream_ReportsOneUntouchedCompletionAsync() {
     var harness = new RbHarness();
 
