@@ -49,8 +49,9 @@ public class OverloadGuardsCoverEveryDefinitionSiteTests {
   // The arities 025/138 and 145-onward give claim_orphaned_inbox; see the scanner meta-test.
   // 167 adds the tenth parameter, p_include_idle: acquisition has to agree with the re-offer about whether the
   // idle band may be taken, or the claim leases idle rows it will then withhold. 202 adds the eleventh,
-  // p_ledger_deferred: claim_work writes the stream ledger once for all its acquisitions.
-  private static readonly int[] _claimOrphanedInboxArities = [8, 9, 10, 11];
+  // p_ledger_deferred: claim_work writes the stream ledger once for all its acquisitions. 565 adds the twelfth,
+  // p_partition_owners: the published partition map every partition test reads (#2558).
+  private static readonly int[] _claimOrphanedInboxArities = [8, 9, 10, 11, 12];
 
   private static readonly Regex _definition = new(
     @"CREATE\s+OR\s+REPLACE\s+FUNCTION\s+__SCHEMA__\.([a-z_0-9]+)\s*\(",
