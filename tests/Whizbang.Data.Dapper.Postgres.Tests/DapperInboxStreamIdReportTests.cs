@@ -194,7 +194,12 @@ internal sealed class GuidOrderingProbe : IDisposable {
 
   public List<string> Warnings => _logger.Warnings;
 
+  // The counter is observable: each collection reports every series' running total, so the latest collection is read
   public long StreamIdCount(string entryPoint) {
+    lock (_streamIds) {
+      _streamIds.Clear();
+    }
+    _listener.RecordObservableInstruments();
     lock (_streamIds) {
       return _streamIds.Where(m => m.EntryPoint == entryPoint).Sum(m => m.Value);
     }
