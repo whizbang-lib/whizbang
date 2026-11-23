@@ -17,6 +17,7 @@ using Whizbang.Core.Sequencing;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.MultiStream;
+using Whizbang.Data.Postgres.Notifications;
 using Whizbang.Data.Postgres.Observability;
 using Whizbang.Data.Postgres.Schema;
 
@@ -246,6 +247,11 @@ public static class ServiceCollectionExtensions {
     _addPerspectiveTableSwapper(services, connectionString);
     _addTableStatistics(services, connectionString);
 
+    // #2559: role assignment and the elected partition assigner, through the one registration the EF Core driver calls
+    // too, so the drivers cannot drift: each exclusive duty is held by one instance, and claims present the published
+    // map. The schema bootstrap does not elect a migrator here; every instance migrates under the schema lock in turn.
+    services.AddWhizbangPostgresCoordination(connectionString);
+
     // #1358: multi-stream commands, over this connection string; the worker polls, as there is no listen connection.
     services.AddWhizbangMultiStreamCommands(connectionString);
 
@@ -421,6 +427,11 @@ public static class ServiceCollectionExtensions {
     _addDeadLetterRecoveryService(services, connectionString);
     _addPerspectiveTableSwapper(services, connectionString);
     _addTableStatistics(services, connectionString);
+
+    // #2559: role assignment and the elected partition assigner, through the one registration the EF Core driver calls
+    // too, so the drivers cannot drift: each exclusive duty is held by one instance, and claims present the published
+    // map. The schema bootstrap does not elect a migrator here; every instance migrates under the schema lock in turn.
+    services.AddWhizbangPostgresCoordination(connectionString);
 
     // #1358: multi-stream commands, over this connection string; the worker polls, as there is no listen connection.
     services.AddWhizbangMultiStreamCommands(connectionString);

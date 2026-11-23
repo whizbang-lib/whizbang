@@ -966,8 +966,8 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
 
     // #1254: the assignment's version, from memory while the cached copy is current. Null when there is none, it has
     // expired, or this instance is not in it: the claim then ranks itself, so a missing assignment never stops a claim.
-    // Resolved from the claim's scope, as the coordinator is; a host without the assigner registered ranks every claim
-    // itself, as before.
+    // Resolved from the claim's scope, as the coordinator is. Every Postgres driver runs the elected assigner (#2559); a
+    // host with no source registered ranks every claim itself, as before.
     var partitionAssignments = scope.ServiceProvider.GetService<IPartitionAssignmentSource>();
     // #1286: whether this instance holds its alive-lock. A direct instance holding it beats on the slow cadence and is
     // ranked by the lock, so the claim does not ask it to re-register between beats. Resolved from the claim's scope;

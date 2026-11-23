@@ -13,9 +13,9 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Data.Postgres.Notifications;
 
 /// <summary>
-/// Registers the elected partition assigner (#1254) with the Postgres notifications: the assignment store, the
-/// claimers' cached assignment and its NOTIFY subscription, the assigner worker, the assigner role, and this
-/// instance's connection mode.
+/// Registers the elected partition assigner (#1254) for every Postgres driver (#2559), through
+/// <see cref="PostgresCoordinationRegistration"/>: the assignment store, the claimers' cached assignment and its
+/// subscription to publish announcements, the assigner worker, and the assigner role.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignerRegistrationTests.cs:AddWhizbangPostgresNotifications_WiresThePartitionAssignerAsync</tests>
@@ -25,13 +25,9 @@ internal static class PartitionAssignerRegistration {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       IPostConfigureOptions<RoleAssignmentOptions>, PartitionAssignerRoleOptions>());
 
-    // The registration records how this instance reaches the database (direct when its shared notify connection
-    // resolved a connection of its own), without changing the heartbeat's cadence.
-    services.TryAddSingletonOverNullDefault<IInstanceConnectionModeSource>(sp => sp.GetRequiredService<PgSharedNotifyConnection>());
-
     services.TryAddSingleton<IPartitionAssignmentStore, PgPartitionAssignmentStore>();
     services.TryAddSingleton<PartitionAssignmentCache>();
-    // Over the null source a driver without the assigner registers, in either order.
+    // Over a null source registered before it (a host's or a test's), in either order.
     services.TryAddSingletonOverNullDefault<IPartitionAssignmentSource>(sp => sp.GetRequiredService<PartitionAssignmentCache>());
     services.AddHostedService<PartitionAssignmentSubscriber>();
 
@@ -43,14 +39,9 @@ internal static class PartitionAssignerRegistration {
   }
 }
 
-/// <summary>The assigner's role is one of the roles held by assignment while the assigner is enabled.</summary>
-internal sealed class PartitionAssignerRoleOptions(IOptions<PartitionAssignerOptions> assignerOptions)
-  : IPostConfigureOptions<RoleAssignmentOptions> {
-  public void PostConfigure(string? name, RoleAssignmentOptions options) {
-    if (assignerOptions.Value.Enabled) {
-      _ = options.Roles.Add(PartitionAssignerOptions.ROLE);
-    }
-  }
+/// <summary>The assigner's role is always one of the roles held by assignment (#2559): nothing turns the assigner off.</summary>
+internal sealed class PartitionAssignerRoleOptions : IPostConfigureOptions<RoleAssignmentOptions> {
+  public void PostConfigure(string? name, RoleAssignmentOptions options) => _ = options.Roles.Add(PartitionAssignerOptions.ROLE);
 }
 
 /// <summary>

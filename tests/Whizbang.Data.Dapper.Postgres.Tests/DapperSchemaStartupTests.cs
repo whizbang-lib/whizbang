@@ -189,6 +189,33 @@ public class DapperSchemaStartupTests {
     await Assert.That(await _tableExistsAsync("wh_event_store")).IsFalse();
   }
 
+  /// <summary>
+  /// #2559: the Dapper driver elects its exclusive duties now, but not its migration. Two instances starting together
+  /// each migrate under the schema lock in turn, neither holds the migrator role, and neither opens its gate before the
+  /// schema is in place: the bootstrap is the one it was before role assignment.
+  /// </summary>
+  [Test]
+  public async Task TwoInstancesStarting_MigrateUnderTheSchemaLock_WithoutElectingAMigratorAsync() {
+    await using var first = _services().BuildServiceProvider();
+    await using var second = _services().BuildServiceProvider();
+    await Assert.That(first.GetRequiredService<Whizbang.Core.Startup.IDutyElector>().IsConfigured).IsTrue()
+      .Because("a positive control: role assignment is registered, so an election was there to be held");
+
+    await Task.WhenAll(
+      _initializer(first).StartAsync(CancellationToken.None),
+      _initializer(second).StartAsync(CancellationToken.None));
+
+    await Assert.That(first.GetRequiredService<ISchemaReadyGate>().IsReady).IsTrue();
+    await Assert.That(second.GetRequiredService<ISchemaReadyGate>().IsReady).IsTrue();
+    await Assert.That(await _tableExistsAsync("wh_event_store")).IsTrue()
+      .Because("whichever instance migrated second opened its gate on a migrated schema");
+    await using var db = new NpgsqlConnection(_database.ConnectionString);
+    await Assert.That(await db.ExecuteScalarAsync<long>(
+        "SELECT count(*) FROM wh_role_assignments WHERE role = @role AND holder_instance_id IS NOT NULL",
+        new { role = Whizbang.Core.Startup.StartupDuties.MIGRATOR }))
+      .IsEqualTo(0L).Because("the Dapper bootstrap stays unstaged: no instance is elected migrator");
+  }
+
   [Test]
   public async Task HostStart_WaitsForTheSchemaLock_WhileAnotherSessionHoldsItAsync() {
     var observer = new LockObserver();

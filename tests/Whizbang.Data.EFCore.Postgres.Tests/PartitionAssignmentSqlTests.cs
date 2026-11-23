@@ -13,6 +13,8 @@ using Whizbang.Core.Notifications;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres.Notifications;
 
+using Whizbang.Data.Postgres.TestSupport;
+
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
@@ -390,30 +392,14 @@ public class PartitionAssignmentSqlTests : EFCoreTestBase {
     return (T)Convert.ChangeType(await cmd.ExecuteScalarAsync(), typeof(T), CultureInfo.InvariantCulture)!;
   }
 
-  private static async Task _heartbeatAsync(NpgsqlConnection conn, Guid instance, string? mode) {
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT record_heartbeat(@inst, 'test', 'test-host', 1, '{}'::jsonb, NULL, NULL, NULL, @mode)";
-    cmd.Parameters.AddWithValue("inst", instance);
-    cmd.Parameters.Add(new NpgsqlParameter(nameof(mode), NpgsqlDbType.Text) { Value = (object?)mode ?? DBNull.Value });
-    await cmd.ExecuteNonQueryAsync();
-  }
+  private static Task _heartbeatAsync(NpgsqlConnection conn, Guid instance, string? mode) =>
+    PublishedPartitionMap.RegisterAsync(conn, instance, mode);
 
   /// <summary>Registers the instance and wins the assigner role for it; returns the epoch.</summary>
-  private static async Task<long> _electAsync(NpgsqlConnection conn, Guid instance) {
-    await _heartbeatAsync(conn, instance, InstanceConnectionModes.POOLED);
-    return await _scalarAsync<long>(conn,
-      $"SELECT epoch FROM wh_vote_role('{ROLE}', '{instance}'::uuid, INTERVAL '30 seconds', INTERVAL '5 seconds', NULL, ARRAY[1, 0], NULL) v WHERE v.outcome = 'granted'");
-  }
+  private static Task<long> _electAsync(NpgsqlConnection conn, Guid instance) => PublishedPartitionMap.ElectAsync(conn, instance);
 
-  private static async Task<long> _publishAsync(NpgsqlConnection conn, Guid instance, long epoch, Guid[] members) {
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT wh_publish_partition_assignment(@role, @inst, @epoch, @members, INTERVAL '90 seconds')";
-    cmd.Parameters.AddWithValue("role", ROLE);
-    cmd.Parameters.AddWithValue("inst", instance);
-    cmd.Parameters.AddWithValue(nameof(epoch), epoch);
-    cmd.Parameters.AddWithValue(nameof(members), members);
-    return Convert.ToInt64(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
-  }
+  private static Task<long> _publishAsync(NpgsqlConnection conn, Guid instance, long epoch, Guid[] members) =>
+    PublishedPartitionMap.PublishAtAsync(conn, instance, epoch, members, PublishedPartitionMap.DefaultLease);
 
   /// <summary>Two outbox rows on two unowned streams, partitions 0 and 1.</summary>
   private static async Task _seedOutboxAsync(NpgsqlConnection conn) =>

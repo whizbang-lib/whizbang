@@ -17,7 +17,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.MultiStream;
 /// <summary>
 /// The Dapper driver wires multi-stream commands too (#1358): the Postgres store over the connection string it was given,
 /// and the worker. Without the notification connection it has no new-run notice, so its worker finds runs by polling;
-/// without the elected partition assigner it ranks the live instances itself, as Dapper's work claim does.
+/// it claims each run's streams under the elected partition assigner's published map, as Dapper's work claim does (#2559).
 /// </summary>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#registration</docs>
 [Category("Integration")]
@@ -53,8 +53,8 @@ public class DapperMultiStreamCommandTests : PostgresTestBase {
     await Assert.That(services.Count(d => d.ServiceType == typeof(MultiStreamCommandWorker))).IsEqualTo(1);
     await Assert.That(services.Any(d => d.ImplementationType == typeof(MultiStreamCommandSubscriber))).IsFalse()
       .Because("Dapper has no shared notification connection, so its worker polls");
-    await Assert.That(provider.GetRequiredService<IPartitionAssignmentSource>()).IsSameReferenceAs(NullPartitionAssignmentSource.Instance)
-      .Because("with no elected assigner the claim ranks the live instances itself");
+    await Assert.That(provider.GetRequiredService<IPartitionAssignmentSource>()).IsSameReferenceAs(provider.GetRequiredService<PartitionAssignmentCache>())
+      .Because("the Dapper driver runs the elected assigner (#2559), so a run's streams are claimed under its published map");
     await Assert.That(provider.GetRequiredService<MultiStreamCommandWorker>()).IsNotNull()
       .Because("every dependency the worker requires resolves in a Dapper host");
   }

@@ -104,7 +104,7 @@ public sealed partial class PartitionAssignerWorker : BackgroundService {
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    if (!_options.Enabled || !_roleOptions.Manages(PartitionAssignerOptions.ROLE)) {
+    if (!_roleOptions.Manages(PartitionAssignerOptions.ROLE)) {
       return;
     }
     _options.Validate();

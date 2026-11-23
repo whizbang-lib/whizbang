@@ -5,16 +5,17 @@ namespace Whizbang.Core.Workers;
 
 /// <summary>Options for the elected partition assigner (#1254).</summary>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
+/// <remarks>
+/// The assigner always runs, in every driver (#2559): the published assignment is the one source of stream ownership,
+/// so there is no switch that turns it off. A configured <c>Whizbang:Database:PartitionAssigner:Enabled</c> is reported
+/// at startup as a removed key and changes nothing.
+/// </remarks>
 /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerTests.cs:Validate_ALeaseNoLongerThanTheSlowHeartbeat_IsRefusedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Configuration/UnknownConfigurationKeyCheckTests.cs:Removed_WhizbangCoreDeclaresEveryFormerTableEntry_ThroughTheAttributeAsync</tests>
+[Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:Database:PartitionAssigner:Enabled")]
 public sealed class PartitionAssignerOptions {
   /// <summary>The role the assigner is elected to through the role election.</summary>
   public const string ROLE = "partition-assigner";
-
-  /// <summary>
-  /// Whether an assigner is elected and claimers use its assignment. Default true; it takes effect only where role
-  /// assignment is enabled. Off, every claimer ranks its peers itself, as before.
-  /// </summary>
-  public bool Enabled { get; set; } = true;
 
   /// <summary>
   /// How long a published assignment holds without renewal. The assigner renews it as part of its own liveness (its
