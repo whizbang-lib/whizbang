@@ -711,8 +711,8 @@ public partial class PerspectiveWorker {
 
   /// <summary>
   /// The lap's candidates applied together under one lease for the batch: its token cancels the prepare, the write and
-  /// the completions when the batch outlives the lease, and every pair of the batch that has not ended is then routed
-  /// to the failure path, as one pair's would be.
+  /// the completions when the batch outlives the lease. A pair that had ended is then ended with its own outcome, and
+  /// every other pair the batch does not hold is routed to the failure path, as one pair's would be (#2536).
   /// </summary>
   private async Task _applyDrainBatchAsync(
       ConcurrentQueue<DrainPair> candidates, ParallelOptions parallel, CancellationToken cancellationToken) {
@@ -730,8 +730,15 @@ public partial class PerspectiveWorker {
       await Parallel.ForEachAsync(candidates.Where(p => !p.BatchPair!.Held), parallel, (pair, _) =>
         new ValueTask(_endDrainBatchPairAsync(pair, lease.Token, cancellationToken))).ConfigureAwait(false);
     } catch (OperationCanceledException leaseExpired) when (IsLeaseExpiry(lease.Token, cancellationToken)) {
-      foreach (var pair in candidates.Where(p => !p.BatchPair!.Ended && !p.BatchPair.Held)) {
-        await _failDrainPairOnLeaseExpiryAsync(pair, leaseExpired, cancellationToken).ConfigureAwait(false);
+      // #2536: a pair that ended before the lease ran out is ended with the outcome it has, as the per-pair path ends an
+      // apply that returned: its failure reported, or its result finished, which meets the lease only where a step
+      // observes it. The work is done; failing it on the lease would only replay it. The rest are failed on the lease.
+      foreach (var pair in candidates.Where(p => !p.BatchPair!.Held)) {
+        if (pair.BatchPair!.Ended) {
+          await _endDrainBatchPairAsync(pair, lease.Token, cancellationToken).ConfigureAwait(false);
+        } else {
+          await _failDrainPairOnLeaseExpiryAsync(pair, leaseExpired, cancellationToken).ConfigureAwait(false);
+        }
       }
     }
   }
