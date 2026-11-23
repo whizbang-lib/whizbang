@@ -180,6 +180,28 @@ public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logg
     _reportNonV7StreamId(streamId, TypeNameFormatter.SimpleName(messageType), entryPoint);
   }
 
+  /// <summary>
+  /// Reports a stream id whose message type is known only by its stored name, as on an inbox write (#2549). Only a
+  /// non-v7 stream id is looked at further: the name is resolved to the message type through the names the generated
+  /// JSON contexts register (no reflection), and the type's <c>[StreamId]</c> type through the generated stream id
+  /// extractors, so a strong id declared to accept any version is never reported. A name that does not resolve is
+  /// reported, not skipped.
+  /// </summary>
+  /// <param name="streamId">The stream id.</param>
+  /// <param name="messageType">The stored name of the message's type (<c>Namespace.Type, Assembly</c>).</param>
+  /// <param name="entryPoint">The entry point reporting it, for the report.</param>
+  /// <exception cref="GuidOrderingException">The stream id is not v7 and stream ids are raised to Error.</exception>
+  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingStreamIdByNameTests.cs</tests>
+  public void ReportStreamId(Guid streamId, string messageType, string entryPoint) {
+    if (streamId.Version == 7 || streamId == Guid.Empty) {
+      return;
+    }
+    var streamIdType = Serialization.JsonContextRegistry.TryGetTypeByName(messageType, out var type)
+      ? Registry.StreamIdExtractorRegistry.GetStreamIdType(type)
+      : null;
+    ReportStreamId(streamId, streamIdType, messageType, entryPoint);
+  }
+
   private void _reportNonV7StreamId(Guid streamId, string messageType, string entryPoint) {
     var severity = _options.StreamIdOrderingViolationSeverity;
     if (severity == GuidOrderingSeverity.Error) {
