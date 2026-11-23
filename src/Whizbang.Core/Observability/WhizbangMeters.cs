@@ -70,6 +70,7 @@ public static class WhizbangMeters {
     TypeRegistryMetrics.METER_NAME,
     WorkCoordinatorMetrics.METER_NAME,
     DbStatementMetrics.METER_NAME,
+    SequenceHoldMetrics.METER_NAME,
     // Optional-package meters, as literals (see remarks). Each package's tests lock its
     // literal to the owning METER_NAME constant.
     "Whizbang.Sagas",                    // Whizbang.Sagas — SagaMetrics

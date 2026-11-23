@@ -306,6 +306,21 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
+  public async Task<DateTimeOffset?> GetOldestSequenceHeldOutboxAsync(
+    Guid instanceId,
+    int maxRows,
+    CancellationToken cancellationToken = default) {
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Attributed;
+    var prefix = await _prefixAsync(connection, cancellationToken);
+    var oldest = await connection.ExecuteScalarAsync(
+      $"SELECT {prefix}wh_oldest_sequence_held_outbox(@instanceId, @maxRows)",
+      new { instanceId, maxRows },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    return Whizbang.Data.Postgres.ScalarResult.InstantOrNull(oldest);
+  }
+
+  /// <inheritdoc />
   public async Task<int> CleanupCompletedStreamsAsync(
     IReadOnlyList<Guid> streamIds,
     CancellationToken cancellationToken = default) {

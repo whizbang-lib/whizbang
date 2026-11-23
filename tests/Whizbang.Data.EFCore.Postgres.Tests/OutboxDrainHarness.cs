@@ -28,7 +28,9 @@ internal static class OutboxDrainHarness {
   public static readonly TimeSpan SignalTimeout = TimeSpan.FromSeconds(30);
 
   /// <summary>
-  /// Registers the instance and leases the row to it, as the claim does before the drainer sees it.
+  /// Registers the instance and leases the row to it, as the claim does before the drainer sees it, and stamps the
+  /// commit sequences the commit-order stamper would have stamped by then, so an event held for its stamp (#2542, the
+  /// default bounded hold) is released as it is in a running service.
   /// </summary>
   public static async Task LeaseAsync(string connectionString, IServiceInstanceProvider instance, Guid messageId) {
     await using var connection = new NpgsqlConnection(connectionString);
@@ -53,6 +55,9 @@ internal static class OutboxDrainHarness {
     lease.Parameters.AddWithValue("inst", instance.InstanceId);
     lease.Parameters.AddWithValue("msg", messageId);
     await lease.ExecuteNonQueryAsync();
+    await using var stamp = connection.CreateCommand();
+    stamp.CommandText = "SELECT stamp_pending_commit_sequences(1000)";
+    _ = await stamp.ExecuteScalarAsync();
   }
 
   /// <summary>

@@ -120,6 +120,20 @@ public sealed record MessageTypeCatalogEntry(
   public long? MaxPayloadBytes { get; init; }
 
   /// <summary>
+  /// The type's own sequence integrity from <c>[SequenceIntegrity]</c> (declared on it or a base type), or null when it
+  /// declares none and the configured default applies.
+  /// </summary>
+  /// <docs>fundamentals/messaging/sequence-integrity#on-the-event-type</docs>
+  public Messaging.SequenceIntegrity? SequenceIntegrity { get; init; }
+
+  /// <summary>
+  /// The hold time <c>[SequenceIntegrity]</c> names for a bounded hold, in milliseconds; zero when it names none and the
+  /// configured hold time applies.
+  /// </summary>
+  /// <docs>fundamentals/messaging/sequence-integrity#on-the-event-type</docs>
+  public int SequenceHoldMilliseconds { get; init; }
+
+  /// <summary>
   /// The type's <see cref="Dispatch.DefaultRoutingAttribute"/> mode (declared on it or a base type), or
   /// null when it has none. Read at compile time, so the cascade needs no reflection.
   /// </summary>
