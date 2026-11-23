@@ -29,6 +29,21 @@ public class PerspectiveWriteBehindCacheTests {
     public override PerspectiveStoredRow<TModel>? ReadAs<TModel>() => null;
   }
 
+  [Test]
+  public async Task EveryFlushReason_HasItsOwnMetricTagAsync() {
+    var tags = Enum.GetValues<WriteBehindFlushReason>().ToDictionary(r => r, WriteBehindFlushReasons.TagOf);
+
+    await Assert.That(tags).IsEquivalentTo(new Dictionary<WriteBehindFlushReason, string> {
+      [WriteBehindFlushReason.Interval] = "interval",
+      [WriteBehindFlushReason.Batches] = "batches",
+      [WriteBehindFlushReason.Bounds] = "bounds",
+      [WriteBehindFlushReason.Bypass] = "bypass",
+      [WriteBehindFlushReason.Sync] = "sync",
+      [WriteBehindFlushReason.Stop] = "stop",
+      [WriteBehindFlushReason.Requested] = "requested",
+    }).Because("a reason added without a tag, or a tag out of the enum's order, fails here rather than at a flush");
+  }
+
   private static PerspectiveWriteBehindCache<string> _cache(int models = 10, long bytes = 1000, int batches = 32, int intervalMs = 1000) =>
     new(new PerspectiveWriteBehindOptions {
       MaxModels = models,

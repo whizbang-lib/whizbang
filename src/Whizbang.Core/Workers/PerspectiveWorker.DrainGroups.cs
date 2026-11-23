@@ -634,8 +634,9 @@ public partial class PerspectiveWorker {
           await _applyDrainBatchAsync(candidates, parallel, cancellationToken).ConfigureAwait(false);
         }
       } finally {
-        // A held pair is finished by its model's flush, which releases its scope then.
-        foreach (var pair in candidates.Where(p => p.BatchPair?.Held != true)) {
+        // A held pair is finished by its model's flush, which releases its scope then. A candidate is queued with its
+        // batch pair.
+        foreach (var pair in candidates.Where(p => !p.BatchPair!.Held)) {
           await pair.ScopeLifetime.DisposeAsync().ConfigureAwait(false);
         }
       }

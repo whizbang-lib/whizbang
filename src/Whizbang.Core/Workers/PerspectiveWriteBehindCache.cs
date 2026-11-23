@@ -30,6 +30,18 @@ internal enum WriteBehindFlushReason {
   Requested = 6,
 }
 
+/// <summary>The metric tag of each <see cref="WriteBehindFlushReason"/>.</summary>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PerspectiveWriteBehindCacheTests.cs:EveryFlushReason_HasItsOwnMetricTagAsync</tests>
+internal static class WriteBehindFlushReasons {
+  // At each reason's value.
+  private static readonly string[] _tags = ["interval", "batches", "bounds", "bypass", "sync", "stop", "requested"];
+
+  /// <summary>The tag a flush for <paramref name="reason"/> is measured with.</summary>
+  /// <param name="reason">The flush reason.</param>
+  /// <returns>Its tag.</returns>
+  public static string TagOf(WriteBehindFlushReason reason) => _tags[(int)reason];
+}
+
 /// <summary>One batch a write-behind model holds: what the flush writes and completes for it.</summary>
 /// <typeparam name="THeld">What the worker keeps for the batch until the flush.</typeparam>
 /// <param name="Item">The worker's held batch.</param>

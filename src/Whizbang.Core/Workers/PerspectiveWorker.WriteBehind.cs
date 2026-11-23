@@ -131,8 +131,9 @@ public partial class PerspectiveWorker {
 
   /// <summary>A sync wait began: flushes at once every held model holding one of its events.</summary>
   private void _onSyncWaitStarted(IReadOnlyList<Guid> eventIds) {
-    var keys = _writeBehind?.KeysHolding([.. eventIds]);
-    if (keys is not { Count: > 0 }) {
+    // Subscribed only once the cache exists, which is never taken away.
+    var keys = _writeBehind!.KeysHolding([.. eventIds]);
+    if (keys.Count == 0) {
       return;
     }
     var flush = _flushWriteBehindKeysAsync([.. keys.Select(k => (k, WriteBehindFlushReason.Sync))], _writeBehindStopping.Token);
@@ -237,8 +238,9 @@ public partial class PerspectiveWorker {
       await _writeAndCompleteAsync(entries, takeApplyLocks, cancellationToken).ConfigureAwait(false);
     } finally {
       // Whatever ended the flush early (the worker stopping, a lock it could not take), every held batch not completed
-      // is released, and its rows replay from the checkpoint, which never moved.
-      foreach (var pair in entries.SelectMany(e => e.Entry!.Holds).Select(h => h.Item).Where(p => !p.Released)) {
+      // is released, and its rows replay from the checkpoint, which never moved. A completed batch was released by its
+      // completion, and a release happens once.
+      foreach (var pair in entries.SelectMany(e => e.Entry!.Holds).Select(h => h.Item)) {
         await _releaseHeldAsync(pair).ConfigureAwait(false);
       }
       _reportWriteBehindSize();
@@ -264,7 +266,7 @@ public partial class PerspectiveWorker {
       var (_, reason, held) = entries[i];
       var entry = held!;
       // Recorded when the merged write has landed, before any held batch reports its completion.
-      var tag = new KeyValuePair<string, object?>("reason", _reasonTag(reason));
+      var tag = new KeyValuePair<string, object?>("reason", WriteBehindFlushReasons.TagOf(reason));
       _metrics?.WriteBehindFlushLag.Record((now - entry.FirstHeldAt).TotalMilliseconds, tag);
       if (reason is not WriteBehindFlushReason.Interval) {
         _metrics?.WriteBehindForcedFlushes.Add(1, tag);
@@ -322,16 +324,6 @@ public partial class PerspectiveWorker {
       // The guard turned the merged write away: each batch is re-applied per pair, where the guard rewinds its stream.
       ? PerspectiveWriteOutcome.Conflict(PerspectiveRowVersion.Unchecked)
       : merged;
-
-  private static string _reasonTag(WriteBehindFlushReason reason) => reason switch {
-    WriteBehindFlushReason.Interval => "interval",
-    WriteBehindFlushReason.Batches => "batches",
-    WriteBehindFlushReason.Bounds => "bounds",
-    WriteBehindFlushReason.Bypass => "bypass",
-    WriteBehindFlushReason.Sync => "sync",
-    WriteBehindFlushReason.Requested => "requested",
-    _ => "stop",
-  };
 
   private void _reportWriteBehindSize() => _metrics?.SetWriteBehindSize(_writeBehind!.Count, _writeBehind.Bytes);
 
