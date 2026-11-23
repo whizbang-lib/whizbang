@@ -28,13 +28,15 @@ public sealed record DeclaredKeyTable(string Table, IReadOnlyList<DeclaredKeyCol
   /// The name the check of this table is recorded under in <c>wh_stored_form_migrations</c>: the table and a hash of
   /// what its readers declare. A table found clean is settled and not scanned again until its declarations change.
   /// </summary>
-  public string JournalName {
-    get {
-      var described = string.Join("\n", Columns.Select(c => c.Column + "=" + c.Shape.Describe()));
-      var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(described)))[..12];
-      return $"{JOURNAL_PREFIX}{Table}:{hash}";
-    }
-  }
+  public string JournalName => $"{JOURNAL_PREFIX}{Table}:{ContentHash[..12]}";
+
+  /// <summary>
+  /// What this check records it applied (#2553): the SHA-256 of what the table's readers declare, the same description
+  /// its journal name abbreviates.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredFormApplierTests.cs:EveryConversion_RecordsWhatItApplied_AsTheHashOfItsStatementAsync</tests>
+  public string ContentHash =>
+    Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("\n", Columns.Select(c => c.Column + "=" + c.Shape.Describe())))));
 
   /// <summary>
   /// The tables of models a driver stores with the serializer, each described by the serializer's metadata for its

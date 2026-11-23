@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Startup;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -55,6 +56,58 @@ public class WhizbangHostExtensionsTests {
     await Assert.That(async () =>
       await ((IHost)null!).EnsureWhizbangInitializedAsync()
     ).ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task EnsureWhizbangInitializedAsync_WhenTheApplicationSchemaStoodDown_RunsTheWMigrations_ThenThrowsNamingItAsync() {
+    // #2553: a call that returned success while the instance stood down would be the wrong easy path. The W! migrations
+    // run first (the registered initializer is called), then the call refuses, naming the side and its reason.
+    var invoked = false;
+    DbContextInitializationRegistry.Register<FakeInitializedContext>((_, _, _) => {
+      invoked = true;
+      return Task.CompletedTask;
+    });
+    var standDown = new Whizbang.Core.Startup.StartupAssessment(Whizbang.Core.Startup.StartupVerdict.StandDown,
+      "application schema: perspective:wh_per_orders cannot be reversed") {
+      Platform = new Whizbang.Core.Startup.SchemaSideVerdict(
+        Whizbang.Core.Versioning.SchemaChangeKind.Platform, Whizbang.Core.Startup.StartupVerdict.Serve, "nothing applied since"),
+      Application = new Whizbang.Core.Startup.SchemaSideVerdict(
+        Whizbang.Core.Versioning.SchemaChangeKind.Application, Whizbang.Core.Startup.StartupVerdict.StandDown, "cannot be reversed"),
+    };
+    using var host = new HostBuilder()
+      .ConfigureServices(services => {
+        services.AddLogging();
+        services.AddSingleton<Whizbang.Core.Startup.IStartupAssessor>(new FixedAssessor(standDown));
+        services.TryAddStartupAssessmentSource();
+      })
+      .Build();
+    await host.Services.GetRequiredService<Whizbang.Core.Startup.StartupAssessmentSource>().AssessAsync(CancellationToken.None);
+
+    var refusal = await Assert.That(async () => await host.EnsureWhizbangInitializedAsync())
+      .ThrowsExactly<Whizbang.Data.Postgres.SchemaStandDownException>();
+
+    await Assert.That(invoked).IsTrue().Because("the W! migrations run before the instance stands down");
+    await Assert.That(refusal!.Message).Contains("application schema: perspective:wh_per_orders cannot be reversed");
+  }
+
+  [Test]
+  public async Task EnsureWhizbangInitializedAsync_WithAVerdictThatServes_ReturnsAsync() {
+    DbContextInitializationRegistry.Register<FakeInitializedContext>((_, _, _) => Task.CompletedTask);
+    using var host = new HostBuilder()
+      .ConfigureServices(services => {
+        services.AddLogging();
+        services.AddSingleton<Whizbang.Core.Startup.IStartupAssessor>(
+          new FixedAssessor(new Whizbang.Core.Startup.StartupAssessment(Whizbang.Core.Startup.StartupVerdict.Serve, "clear")));
+        services.TryAddStartupAssessmentSource();
+      })
+      .Build();
+    await host.Services.GetRequiredService<Whizbang.Core.Startup.StartupAssessmentSource>().AssessAsync(CancellationToken.None);
+
+    await host.EnsureWhizbangInitializedAsync();
+  }
+
+  private sealed class FixedAssessor(Whizbang.Core.Startup.StartupAssessment assessment) : Whizbang.Core.Startup.IStartupAssessor {
+    public Task<Whizbang.Core.Startup.StartupAssessment> AssessAsync(CancellationToken cancellationToken) => Task.FromResult(assessment);
   }
 
   [Test]

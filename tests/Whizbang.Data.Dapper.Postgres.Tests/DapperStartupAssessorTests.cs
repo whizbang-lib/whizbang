@@ -357,6 +357,20 @@ public class DapperStartupAssessorTests {
   }
 
   [Test]
+  public async Task WhatThisBuildDefines_IncludesEachDeclaredKeyCheck_ByItsJournalName_WithItsContentHashAsync() {
+    // #2553: the declared-key pass is this driver's conversion; a restored journal row is judged by its hash, or by its
+    // name when it was recorded before the hash.
+    var table = new Whizbang.Data.Postgres.Perspectives.DeclaredKeyTable("wh_per_assess_probe",
+      [new Whizbang.Data.Postgres.Perspectives.DeclaredKeyColumn("data",
+        Whizbang.Data.Postgres.Perspectives.DeclaredKeyShape.ForObject(new Whizbang.Data.Postgres.Perspectives.DeclaredMember("name")))]);
+    var initializer = new PostgresSchemaInitializer("Host=203.0.113.1", _entries) { DeclaredKeyTables = [table] };
+
+    var defined = initializer.DefinedContent("public");
+
+    await Assert.That(defined["stored-form:" + table.JournalName]).IsEqualTo(table.ContentHash);
+  }
+
+  [Test]
   public async Task RecordingAnApplicationOverride_WithNoInstanceIdentity_TouchesNothingAsync() {
     // #2553: no identity, no row to record the application schema's override on (this connection goes nowhere).
     var initializer = new PostgresSchemaInitializer("Host=203.0.113.1;Port=1;Database=none;Timeout=1");

@@ -380,6 +380,22 @@ public class UpgradeOrderTests {
   }
 
   [Test]
+  public async Task AConversionRecordedBeforeItsHash_IsCurrentWhenThisBuildDeclaresItsName_AndJudgedByVersionWhenNotAsync() {
+    // #2553: a conversion's name is its form (a stored-form migration's name, a table's temporal form), so a journal row
+    // written before the journal recorded hashes counts as current when this build declares a conversion of that name.
+    var own = _own("1.0.0", "0.0.0-preview.restored");
+    var declared = _application("temporal-form:wh_per_orders", "1.0.0", "1.63.0-rc.3") with { NameIdentifiesContent = true };
+    var notDeclared = _application("stored-form:wh_per_gone.Status", "1.0.0", "1.63.0-rc.3") with { NameIdentifiesContent = true };
+    var hashedDifferently = declared with { ContentHash = "an-older-statement" };
+    var defined = new Dictionary<string, string>(StringComparer.Ordinal) { ["temporal-form:wh_per_orders"] = "this-builds-statement" };
+
+    await Assert.That(UpgradeOrder.AppliedSince(own, [declared, notDeclared], defined)).IsEquivalentTo([notDeclared]);
+    await Assert.That(UpgradeOrder.AppliedSince(own, [hashedDifferently], defined)).IsEquivalentTo([hashedDifferently])
+      .Because("a recorded hash decides once there is one: the name rule is only for rows recorded before it");
+    await Assert.That(UpgradeOrder.AppliedSince(own, [declared], defined: null)).IsEquivalentTo([declared]);
+  }
+
+  [Test]
   public async Task WhenThisBuildDefinesNothingKnown_EveryChangeIsJudgedByWhoAppliedItAsync() {
     var change = _hashed(_application("perspective:wh_per_orders", "1.0.0", "2.0.0"), "aa11");
 

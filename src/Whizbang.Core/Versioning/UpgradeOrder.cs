@@ -89,6 +89,15 @@ public sealed record AppliedSchemaChange(string Name, SchemaChangeKind Kind, str
   /// </summary>
   /// <docs>operations/startup/rolling-upgrades#the-rollback-gate</docs>
   public string? ContentHash { get; init; }
+
+  /// <summary>
+  /// Whether the change's name alone identifies what was applied when no content hash was recorded (#2553): a
+  /// stored-form or temporal-form conversion recorded before its journal held hashes (570), whose name is the conversion
+  /// form. Such a row counts as current when this build declares a conversion under the same name. Never for a row of the
+  /// migration ledger, which always records its hash.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#the-rollback-gate</docs>
+  public bool NameIdentifiesContent { get; init; }
 }
 
 /// <summary>

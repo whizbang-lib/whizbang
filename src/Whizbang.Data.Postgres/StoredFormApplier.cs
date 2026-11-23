@@ -32,7 +32,25 @@ public sealed record StoredFormApplier(string LibraryVersion, string Application
   /// <summary>The transaction setting the rewrite phase carries the application version in.</summary>
   public const string APPLICATION_SETTING = "whizbang.applied_application_version";
 
+  /// <summary>
+  /// The transaction setting the rewrite phase carries each statement's content hash in (#2553): what a conversion
+  /// records it applied, which the rollback gate compares with what this build declares under the same name.
+  /// </summary>
+  public const string CONTENT_SETTING = "whizbang.applied_content_hash";
+
   private static readonly AsyncLocal<StoredFormApplier?> _current = new();
+
+  /// <summary>
+  /// The content hash a conversion records (#2553): the SHA-256 of the statement that applies it, or of the description
+  /// of what a check declares, as lower-case hex.
+  /// </summary>
+  /// <param name="text">The statement or description.</param>
+  /// <returns>The hash.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredFormApplierTests.cs:EveryConversion_RecordsWhatItApplied_AsTheHashOfItsStatementAsync</tests>
+  public static string ContentHash(string text) {
+    ArgumentNullException.ThrowIfNull(text);
+    return Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)));
+  }
 
   /// <summary>Who this flow of startup records as applying a conversion; null outside any scope.</summary>
   public static StoredFormApplier? Current => _current.Value;
