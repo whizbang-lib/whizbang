@@ -81,7 +81,8 @@ public class DapperEventOriginReadTests : PostgresTestBase {
     }
     var replayed = ReplayEventOrder.Order(read).Select(e => e.MessageId.Value).ToArray();
 
-    await Assert.That(replayed).IsEquivalentTo(new[] { ids[2], ids[0], ids[1] }, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+    Guid[] originOrder = [ids[2], ids[0], ids[1]];
+    await Assert.That(replayed).IsEquivalentTo(originOrder, TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("a received stream replays in its origin's order on Dapper, as it does on EF Core");
   }
 

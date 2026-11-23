@@ -35,6 +35,6 @@ public static class GeneratedStreamIdentity {
     if (messageId == Guid.Empty) {
       throw new ArgumentException("A generated stream id needs the id of the message that starts the stream.", nameof(messageId));
     }
-    return DerivedIdentity.AtTheSamePosition(messageId, string.Concat(PREFIX, "\n", messageId.ToString("N")));
+    return DerivedIdentity.AtTheSamePosition(messageId, $"{PREFIX}\n{messageId:N}");
   }
 }
