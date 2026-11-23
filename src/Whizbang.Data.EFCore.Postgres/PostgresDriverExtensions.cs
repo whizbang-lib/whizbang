@@ -409,6 +409,11 @@ public static class PostgresDriverExtensions {
         // <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MisattributedOriginCorrectionStep>(
           MisattributedOriginCorrectionStep.FromServices));
+        // TURNKEY: the maintenance step that names every seal this service holds for an origin it does not audit (#2544):
+        // such a seal cannot advance, so the cut gate no longer waits on it, and the missing checkpoint route is reported.
+        // <docs>resilience/stream-integrity#a-seal-nothing-audits</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, UnauditedSealReportStep>(
+          UnauditedSealReportStep.FromServices));
         // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
         selector.Services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
           new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));

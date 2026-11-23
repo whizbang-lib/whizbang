@@ -551,6 +551,10 @@ public sealed class StreamIntegrityMetrics {
       "whizbang.stream_integrity.redelivery_answers_capped",
       description: "Redelivery answers stopped at the origin's event bound with more selected; tagged by kind (window | ordinary)");
     _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.unaudited_seals",
+      () => Volatile.Read(ref _unauditedSeals),
+      description: "Seals this service holds for origins it does not audit (no checkpoint, or none with a request address): they cannot advance and hold no cut");
+    _ = meter.CreateObservableGauge(
       "whizbang.stream_integrity.backfill_windows_in_flight",
       () => _backfill.WindowsInFlight,
       description: "Paced backfill windows requested and awaiting their answer");
@@ -792,6 +796,17 @@ public sealed class StreamIntegrityMetrics {
   private static readonly string[] _cappedKinds = ["window", "ordinary"];
 
   private volatile BackfillGaugeSnapshot _backfill = BackfillGaugeSnapshot.Empty;
+
+  private long _unauditedSeals;
+
+  /// <summary>
+  /// Publishes how many seals this service holds for origins it does not audit (#2544): no checkpoint from the origin was
+  /// recorded, or none announced a request address, so the seal has no path to advance. Read each maintenance cycle.
+  /// </summary>
+  /// <param name="count">The seals nothing audits.</param>
+  /// <docs>resilience/stream-integrity#a-seal-nothing-audits</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutOfUnauditedOriginSqlTests.cs:Step_WarnsNamingEachUnauditedOrigin_AndGaugesHowManyThereAreAsync</tests>
+  public void UpdateUnauditedSeals(long count) => Volatile.Write(ref _unauditedSeals, count);
 
   /// <summary>Publishes the paced backfill's current state to its gauges (#2092), swapped atomically like the ledger's.</summary>
   /// <param name="snapshot">The reading; null resets to empty.</param>
