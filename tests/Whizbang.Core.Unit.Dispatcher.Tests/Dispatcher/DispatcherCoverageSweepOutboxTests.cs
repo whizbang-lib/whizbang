@@ -179,6 +179,18 @@ public class DispatcherCoverageSweepOutboxTests {
     }
   }
 
+  /// <summary>Extractor that records every type it is asked for a stream id type about.</summary>
+  private sealed class StreamIdTypeRecordingExtractor : IStreamIdExtractor {
+    public List<Type> StreamIdTypeQueries { get; } = [];
+
+    public Guid? ExtractStreamId(object message, Type messageType) => null;
+
+    public Type? GetStreamIdType(Type messageType) {
+      StreamIdTypeQueries.Add(messageType);
+      return null;
+    }
+  }
+
   /// <summary>Extractor that yields a value for hop metadata, then null on later calls —
   /// models remote-origin envelopes where metadata exists but local extraction cannot.</summary>
   private sealed class OneShotStreamIdExtractor(Guid streamId) : IStreamIdExtractor {
@@ -1332,6 +1344,44 @@ public class DispatcherCoverageSweepOutboxTests {
         await dispatcher.CallPublishToOutboxAsync(document.RootElement, typeof(JsonElement), MessageId.New()))
       .ThrowsExactly<InvalidOperationException>()
       .WithMessageContaining("BUG IN DISPATCHER");
+  }
+
+  [Test]
+  public async Task PublishToOutbox_NullPayload_ReportsTheStreamIdUnderTheDeclaredMessageTypeAsync() {
+    // Arrange - with no payload there is no runtime type, so the stream id report (#2528) asks the extractor about
+    // the declared message type
+    var strategy = new SweepWorkStrategy();
+    var extractor = new StreamIdTypeRecordingExtractor();
+    var dispatcher = new SweepOutboxDispatcher(
+      _buildProvider(strategy: strategy),
+      envelopeSerializer: new SweepEnvelopeSerializer(),
+      streamIdExtractor: extractor);
+
+    // Act
+    await dispatcher.CallPublishToOutboxAsync<SweepSourceCommand>(null!, typeof(SweepSourceCommand), MessageId.New());
+
+    // Assert
+    await Assert.That(strategy.Queued).Count().IsEqualTo(1);
+    await Assert.That(extractor.StreamIdTypeQueries).Contains(typeof(SweepSourceCommand));
+  }
+
+  [Test]
+  public async Task PublishToOutbox_Payload_ReportsTheStreamIdUnderItsRuntimeTypeAsync() {
+    // Arrange - a payload declared as object is reported under the type it actually is (#2528)
+    var strategy = new SweepWorkStrategy();
+    var extractor = new StreamIdTypeRecordingExtractor();
+    var dispatcher = new SweepOutboxDispatcher(
+      _buildProvider(strategy: strategy),
+      envelopeSerializer: new SweepEnvelopeSerializer(),
+      streamIdExtractor: extractor);
+
+    // Act
+    await dispatcher.CallPublishToOutboxAsync<object>(new SweepSourceCommand("x"), typeof(SweepSourceCommand), MessageId.New());
+
+    // Assert
+    await Assert.That(strategy.Queued).Count().IsEqualTo(1);
+    await Assert.That(extractor.StreamIdTypeQueries).Contains(typeof(SweepSourceCommand));
+    await Assert.That(extractor.StreamIdTypeQueries).DoesNotContain(typeof(object));
   }
 
   [Test]
