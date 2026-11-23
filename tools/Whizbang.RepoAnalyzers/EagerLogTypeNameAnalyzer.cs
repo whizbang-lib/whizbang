@@ -116,22 +116,28 @@ public sealed class EagerLogTypeNameAnalyzer : DiagnosticAnalyzer {
   /// or else the local the read initializes.
   /// </summary>
   private static (IInvocationOperation? LogCall, ILocalSymbol? Local) _consumer(IOperation read, KnownTypes known) {
-    // Ends at the first operation that does not carry the value on; the root's null parent is one of those
-    for (var current = read.Parent; ; current = current!.Parent) {
-      switch (current) {
-        case IInvocationOperation invocation when _isLowLevelLogCall(invocation, known) || _startsAnActivity(invocation, known):
-          return (invocation, null);
-        case IVariableDeclaratorOperation declarator:
-          return (null, declarator.Symbol);
-        case IArgumentOperation or IConversionOperation or IInterpolationOperation or IInterpolatedStringOperation
-          or IConditionalOperation or ICoalesceOperation or IBinaryOperation or IArrayInitializerOperation
-          or IArrayCreationOperation or IInvocationOperation or IParenthesizedOperation or IVariableInitializerOperation:
-          continue;
-        default:
-          return (null, null);
-      }
+    var current = read.Parent;
+    while (_carriesTheValueOn(current, known)) {
+      current = current!.Parent;
     }
+    return current switch {
+      IInvocationOperation invocation when _isConsumer(invocation, known) => (invocation, null),
+      IVariableDeclaratorOperation declarator => (null, declarator.Symbol),
+      _ => (null, null),
+    };
   }
+
+  /// <summary>An operation that passes its operand's value on towards an argument or a local, short of a consumer.</summary>
+  private static bool _carriesTheValueOn(IOperation? operation, KnownTypes known) => operation switch {
+    IInvocationOperation invocation => !_isConsumer(invocation, known),
+    IArgumentOperation or IConversionOperation or IInterpolationOperation or IInterpolatedStringOperation
+      or IConditionalOperation or ICoalesceOperation or IBinaryOperation or IArrayInitializerOperation
+      or IArrayCreationOperation or IParenthesizedOperation or IVariableInitializerOperation => true,
+    _ => false,
+  };
+
+  private static bool _isConsumer(IInvocationOperation invocation, KnownTypes known) =>
+    _isLowLevelLogCall(invocation, known) || _startsAnActivity(invocation, known);
 
   /// <summary>Whether every read of <paramref name="local"/> in its method is an argument of a log call.</summary>
   private static bool _onlyLogCallsRead(ILocalSymbol local, IOperation read, KnownTypes known) {
@@ -166,17 +172,12 @@ public sealed class EagerLogTypeNameAnalyzer : DiagnosticAnalyzer {
 
   /// <summary>The level a <c>[LoggerMessage]</c> declares, named or positional; null when the method takes it.</summary>
   private static int? _attributeLevel(AttributeData attribute, KnownTypes known) {
-    foreach (var named in attribute.NamedArguments) {
-      if (named.Key == "Level") {
-        return named.Value.Value as int?;
-      }
+    var named = attribute.NamedArguments.FirstOrDefault(n => n.Key == "Level");
+    if (named.Key is not null) {
+      return named.Value.Value as int?;
     }
-    foreach (var positional in attribute.ConstructorArguments) {
-      if (SymbolEqualityComparer.Default.Equals(positional.Type, known.LogLevel)) {
-        return positional.Value as int?;
-      }
-    }
-    return null;
+    var positional = attribute.ConstructorArguments.FirstOrDefault(p => SymbolEqualityComparer.Default.Equals(p.Type, known.LogLevel));
+    return positional.Type is null ? null : positional.Value as int?;
   }
 
   /// <summary>A level passed to <c>Log(level, ...)</c> is low unless it is a constant at <c>Warning</c> or above.</summary>
@@ -188,24 +189,27 @@ public sealed class EagerLogTypeNameAnalyzer : DiagnosticAnalyzer {
 
   // ===== the level check =====
 
-  private static bool _isGuarded(SyntaxNode site, SemanticModel model) {
-    SyntaxNode child = site;
-    // Ends at the enclosing member, which every read in a method body, field or property has
-    for (var ancestor = site.Parent!; ; child = ancestor, ancestor = ancestor.Parent!) {
-      switch (ancestor) {
-        case IfStatementSyntax ifStatement when ifStatement.Statement == child && _checksEnabled(ifStatement.Condition, model):
-        case ConditionalExpressionSyntax conditional when conditional.WhenTrue == child && _checksEnabled(conditional.Condition, model):
-        case BinaryExpressionSyntax { RawKind: (int)SyntaxKind.LogicalAndExpression } conjunction when conjunction.Right == child && _checksEnabled(conjunction.Left, model):
-          return true;
-        case BlockSyntax block when _earlierExitWhenDisabled(block.Statements, child, model):
-        case SwitchSectionSyntax section when _earlierExitWhenDisabled(section.Statements, child, model):
-          return true;
-        case CatchClauseSyntax:
-          // Runs only once an exception was thrown, which allocates far more than the name
-          return true;
-        case MemberDeclarationSyntax or LocalFunctionStatementSyntax or AnonymousFunctionExpressionSyntax:
-          return false;
-      }
+  /// <summary>
+  /// Whether something enclosing <paramref name="child"/> runs it only when the level is enabled, climbing to the
+  /// enclosing member, which every read in a method body, field or property has.
+  /// </summary>
+  private static bool _isGuarded(SyntaxNode child, SemanticModel model) {
+    var ancestor = child.Parent!;
+    switch (ancestor) {
+      case IfStatementSyntax ifStatement when ifStatement.Statement == child && _checksEnabled(ifStatement.Condition, model):
+      case ConditionalExpressionSyntax conditional when conditional.WhenTrue == child && _checksEnabled(conditional.Condition, model):
+      case BinaryExpressionSyntax { RawKind: (int)SyntaxKind.LogicalAndExpression } conjunction when conjunction.Right == child && _checksEnabled(conjunction.Left, model):
+        return true;
+      case BlockSyntax block when _earlierExitWhenDisabled(block.Statements, child, model):
+      case SwitchSectionSyntax section when _earlierExitWhenDisabled(section.Statements, child, model):
+        return true;
+      case CatchClauseSyntax:
+        // Runs only once an exception was thrown, which allocates far more than the name
+        return true;
+      case MemberDeclarationSyntax or LocalFunctionStatementSyntax or AnonymousFunctionExpressionSyntax:
+        return false;
+      default:
+        return _isGuarded(ancestor, model);
     }
   }
 
