@@ -128,7 +128,7 @@ internal static partial class PerspectiveRegistryCurrency {
       NpgsqlConnection connection, NpgsqlTransaction transaction, long lockId, CancellationToken cancellationToken) {
     await using var attempt = new NpgsqlCommand("SELECT pg_try_advisory_xact_lock($1)", connection, transaction);
     attempt.Parameters.AddWithValue(lockId);
-    return await attempt.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+    return BooleanScalar.Read(await attempt.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), "schema lock attempt");
   }
 
   private static async Task _lockAsync(
