@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -67,15 +66,28 @@ public sealed class TenureFillTests {
   }
 
   [Test]
-  public async Task TheWriteFence_WithNoStreamHoldingATenure_AsksTheDatabaseNothingAsync() {
-    // The connection is never opened: a query on it would throw.
-    await using var connection = new NpgsqlConnection();
+  public async Task TheWriteFence_ReadsTheLedgersWriteTenures_AndIsNoneWithoutALedgerAsync() {
+    var tenures = _ledger();
+    tenures.RecordFetchedPerspective(Guid.CreateVersion7(), _known);
 
-    var noLedger = await PerspectiveWriteFence.StaleAsync(connection, null, "", null, [_known], CancellationToken.None);
-    var noTenure = await PerspectiveWriteFence.StaleAsync(connection, null, "", _ledger(), [_unknown], CancellationToken.None);
+    var fence = PerspectiveWriteFence.For("\"svc\".", tenures)!;
 
-    await Assert.That(noLedger).IsEmpty();
-    await Assert.That(noTenure).IsEmpty().Because("off map mode no claim records a tenure, so nothing is fenced");
+    await Assert.That(PerspectiveWriteFence.For("", null)).IsNull().Because("a process with no ledger fences nothing");
+    await Assert.That(fence.TenureOf(_known)).IsEqualTo(new PartitionTenure(42, 7));
+    await Assert.That(fence.TenureOf(_unknown).HasValue).IsFalse();
+    await Assert.That(PerspectiveWriteFence.IsFenced(new InvalidOperationException())).IsFalse();
+  }
+
+  [Test]
+  public async Task Forgetting_EndsTheWork_AndAFlushsFailuresAreItsWorkAsync() {
+    var tenures = _ledger();
+    var failures = new[] { new CategoryFailures(WorkCategory.Outbox, [_failure(_knownWork)]) };
+
+    TenureFill.Forget(null, [_knownWork]);
+    TenureFill.Forget(tenures, TenureFill.WorkOf(failures));
+
+    await Assert.That(tenures.OfWork(_knownWork).HasValue).IsFalse();
+    await Assert.That(TenureFill.WorkOf(null)).IsEmpty();
   }
 
   private static PartitionTenures _ledger() {

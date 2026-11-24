@@ -53,6 +53,12 @@ public partial class DapperWorkCoordinator(
     return rows;
   }
 
+  // Perspective work also holds its stream's perspective writes until it ends (#2557).
+  private List<T> _recordedPerspective<T>(List<T> rows, Func<T, Guid> workId, Func<T, Guid?> streamId) {
+    TenureFill.RecordFetchedPerspective(_tenures, rows, workId, streamId);
+    return rows;
+  }
+
   // #2554, #2556: counts fenced writes and claims that found no valid partition map.
   private readonly Whizbang.Core.Observability.WorkCoordinatorMetrics? _metrics = metrics;
   // #2528: every outbox and inbox write checks its message ids before any SQL runs.
@@ -492,7 +498,7 @@ public partial class DapperWorkCoordinator(
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
     // #2556: each fetched piece of work is recorded under its stream's claimed tenure, which its result then names.
-    return _recorded(results.Select(r => new StreamEventData {
+    return _recordedPerspective(results.Select(r => new StreamEventData {
       StreamId = r.out_stream_id,
       EventId = r.out_event_id,
       EventType = r.out_event_type,
@@ -1245,12 +1251,16 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
     // 570 (#2556): the epoch each id was claimed under; a completion under one that moved on is fenced and reported.
-    using var fenced = CoordinatorOwnershipNotices.WatchFencedWrites(__scope.Connection, _metrics, _logger, nameof(CompleteOutboxPublishedAsync));
-    return await connection.ExecuteScalarAsync<int>(
-      // complete_outbox_published keeps its two parameters; the fenced mark is its own function.
-      $"SELECT {prefix}wh_complete_outbox_published_fenced(@Ids, @DebugMode, @Epochs)",
-      new { Ids = idArray, DebugMode = debugMode, Epochs = _epochs(TenureFill.Epochs(_tenures, ids, epochs)) },
-      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    int affected;
+    using (CoordinatorOwnershipNotices.WatchFencedWrites(__scope.Connection, _metrics, _logger, nameof(CompleteOutboxPublishedAsync))) {
+      affected = await connection.ExecuteScalarAsync<int>(
+        // complete_outbox_published keeps its two parameters; the fenced mark is its own function.
+        $"SELECT {prefix}wh_complete_outbox_published_fenced(@Ids, @DebugMode, @Epochs)",
+        new { Ids = idArray, DebugMode = debugMode, Epochs = _epochs(TenureFill.Epochs(_tenures, ids, epochs)) },
+        commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    }
+    TenureFill.Forget(_tenures, ids);
+    return affected;
   }
 
   /// <inheritdoc />
@@ -1289,6 +1299,7 @@ public partial class DapperWorkCoordinator(
         new { Cursors = cursorsJson, Ids = idArray, DebugMode = debugMode, Epochs = _epochs(TenureFill.Epochs(_tenures, eventWorkIds, eventWorkEpochs)) },
         commandTimeout: CoordinatorCommandTimeout.SECONDS);
     }
+    TenureFill.Forget(_tenures, eventWorkIds);
     // #720: ring the doorbells the completion queued, after its commit.
     await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(__scope.Connection, prefix + DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
   }
@@ -1314,6 +1325,8 @@ public partial class DapperWorkCoordinator(
         new { Category = category.ToSqlCategory(), Failures = failuresJson },
         commandTimeout: CoordinatorCommandTimeout.SECONDS);
     }
+    // Failed work is no longer in hand; perspective work no longer holds its stream's writes (#2557).
+    TenureFill.Forget(_tenures, failures.Select(f => f.MessageId));
   }
 
   /// <inheritdoc />
@@ -1419,6 +1432,7 @@ public partial class DapperWorkCoordinator(
         },
         commandTimeout: CoordinatorCommandTimeout.SECONDS);
     }
+    TenureFill.Forget(_tenures, outboxIds.Concat(perspIds).Concat(TenureFill.WorkOf(failures)));
     // #720: ring the doorbells the flush queued, after its commit.
     await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(__scope.Connection, prefix + DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
   }

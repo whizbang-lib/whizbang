@@ -588,7 +588,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     using (Whizbang.Data.Postgres.CoordinatorOwnershipNotices.WatchFencedWrites(conn, _metrics, _logger, nameof(CompleteOutboxPublishedAsync))) {
       result = await cmd.ExecuteScalarAsync(cancellationToken);
     }
-    _tenures?.Forget(ids);
+    TenureFill.Forget(_tenures, ids);
     // Slice 5 of zero-idle-polling — piggyback an opportunistic heartbeat row
     // UPDATE so that during continuous work-completion activity the pod's
     // last_heartbeat_at stays fresh without waiting for the 30 s timer-driven
@@ -3716,7 +3716,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     using (Whizbang.Data.Postgres.CoordinatorOwnershipNotices.WatchFencedWrites(conn, _metrics, _logger, nameof(CompletePerspectiveAsync))) {
       _ = await cmd.ExecuteScalarAsync(cancellationToken);
     }
-    _tenures?.Forget(eventWorkIds);
+    TenureFill.Forget(_tenures, eventWorkIds);
     // #720: the hot call queued its doorbells instead of notifying inside its transaction; ring them now,
     // after the commit, on their own autocommit so no notifying commit waits on another.
     await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
@@ -3758,7 +3758,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     using (Whizbang.Data.Postgres.CoordinatorOwnershipNotices.WatchFencedWrites(conn, _metrics, _logger, nameof(FlushCompletionsAsync))) {
       _ = await cmd.ExecuteScalarAsync(cancellationToken);
     }
-    _tenures?.Forget(outboxIds.Concat(perspIds));
+    TenureFill.Forget(_tenures, outboxIds.Concat(perspIds).Concat(TenureFill.WorkOf(failures)));
     // #720: ring the doorbells the flush queued, after its commit.
     await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
   }
@@ -4245,6 +4245,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     using (Whizbang.Data.Postgres.CoordinatorOwnershipNotices.WatchFencedWrites(conn, _metrics, _logger, nameof(ReportFailuresAsync))) {
       _ = await cmd.ExecuteScalarAsync(cancellationToken);
     }
+    // Failed work is no longer in hand; perspective work no longer holds its stream's writes (#2557).
+    TenureFill.Forget(_tenures, failures.Select(f => f.MessageId));
   }
 
   /// <inheritdoc />
@@ -6494,7 +6496,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     // #2556: each fetched piece of work is recorded under its stream's claimed tenure, which its result then names.
-    TenureFill.RecordFetched(_tenures, results, r => r.EventWorkId, r => r.StreamId);
+    TenureFill.RecordFetchedPerspective(_tenures, results, r => r.EventWorkId, r => r.StreamId);
     return results;
   }
 

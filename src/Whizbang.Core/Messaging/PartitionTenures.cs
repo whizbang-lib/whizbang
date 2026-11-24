@@ -53,6 +53,10 @@ public sealed class PartitionTenures {
   private Dictionary<Guid, PartitionTenure> _previousStreams = [];
   private Dictionary<Guid, PartitionTenure> _work = [];
   private Dictionary<Guid, PartitionTenure> _previousWork = [];
+  private Dictionary<Guid, (Guid Stream, PartitionTenure Tenure)> _perspectiveWork = [];
+  private Dictionary<Guid, (Guid Stream, PartitionTenure Tenure)> _previousPerspectiveWork = [];
+  // Per stream: its partition, and how much perspective work is in flight under each epoch, oldest first.
+  private readonly Dictionary<Guid, (int Partition, SortedDictionary<long, int> InFlight)> _writes = [];
 
   /// <summary>Creates a ledger.</summary>
   /// <param name="capacity">The entries a generation holds before it is rotated.</param>
@@ -88,6 +92,53 @@ public sealed class PartitionTenures {
     }
   }
 
+  /// <summary>
+  /// Records a fetched piece of perspective work under its stream's current tenure, and counts it in flight on the
+  /// stream until it is forgotten (#2557): while any is, the stream's perspective writes are fenced by that tenure.
+  /// Nothing when the stream has none; fetching the same work again counts it once.
+  /// </summary>
+  /// <param name="workId">The perspective work id.</param>
+  /// <param name="streamId">Its stream.</param>
+  public void RecordFetchedPerspective(Guid workId, Guid? streamId) {
+    lock (_gate) {
+      if (streamId is not { } stream || _read(_streams, _previousStreams, stream) is not { } tenure) {
+        return;
+      }
+      _put(ref _work, ref _previousWork, workId, tenure);
+      if (_perspectiveWork.ContainsKey(workId) || _previousPerspectiveWork.ContainsKey(workId)) {
+        return;
+      }
+      if (_perspectiveWork.Count >= _capacity) {
+        // The generation dropped is no longer in flight: its work no longer holds its streams' writes.
+        foreach (var dropped in _previousPerspectiveWork.Values) {
+          _release(dropped.Stream, dropped.Tenure.Epoch);
+        }
+        _previousPerspectiveWork = _perspectiveWork;
+        _perspectiveWork = [];
+      }
+      _perspectiveWork[workId] = (stream, tenure);
+      if (!_writes.TryGetValue(stream, out var held)) {
+        held = (tenure.Partition, new SortedDictionary<long, int>());
+        _writes[stream] = held;
+      }
+      held.InFlight[tenure.Epoch] = held.InFlight.GetValueOrDefault(tenure.Epoch) + 1;
+    }
+  }
+
+  /// <summary>
+  /// The tenure a perspective write of the stream is fenced by (#2557): that of the stream's perspective work in flight
+  /// (the oldest epoch, while work of two epochs is), or null when none is. A write that applies no claimed work, such as a
+  /// local rebuild, is never fenced by a claim a moved partition left behind.
+  /// </summary>
+  /// <param name="streamId">The stream.</param>
+  /// <returns>Its tenure, or null.</returns>
+  public PartitionTenure? OfPerspectiveWrite(Guid streamId) {
+    lock (_gate) {
+      // The oldest epoch with work in flight: while work claimed under it is, the stream's writes are judged by it.
+      return _writes.TryGetValue(streamId, out var held) ? new PartitionTenure(held.Partition, held.InFlight.Keys.First()) : null;
+    }
+  }
+
   /// <summary>The tenure a stream was last claimed under, or null.</summary>
   /// <param name="streamId">The stream.</param>
   /// <returns>Its tenure, or null.</returns>
@@ -114,6 +165,9 @@ public sealed class PartitionTenures {
       foreach (var id in workIds) {
         _work.Remove(id);
         _previousWork.Remove(id);
+        if (_perspectiveWork.Remove(id, out var ended) || _previousPerspectiveWork.Remove(id, out ended)) {
+          _release(ended.Stream, ended.Tenure.Epoch);
+        }
       }
     }
   }
@@ -135,6 +189,29 @@ public sealed class PartitionTenures {
           map.Remove(key);
         }
       }
+      foreach (var map in new[] { _perspectiveWork, _previousPerspectiveWork }) {
+        foreach (var key in map.Where(e => set.Contains(e.Value.Tenure.Partition % 10000)).Select(e => e.Key).ToList()) {
+          map.Remove(key);
+        }
+      }
+      foreach (var key in _writes.Where(e => set.Contains(e.Value.Partition % 10000)).Select(e => e.Key).ToList()) {
+        _writes.Remove(key);
+      }
+    }
+  }
+
+  // One piece of the stream's perspective work ended.
+  // Every piece of perspective work recorded is counted on its stream under its epoch, so both entries exist here.
+  private void _release(Guid stream, long epoch) {
+    var held = _writes[stream];
+    var count = held.InFlight[epoch];
+    if (count > 1) {
+      held.InFlight[epoch] = count - 1;
+      return;
+    }
+    held.InFlight.Remove(epoch);
+    if (held.InFlight.Count == 0) {
+      _writes.Remove(stream);
     }
   }
 

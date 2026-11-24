@@ -3,6 +3,7 @@
 
 using Npgsql;
 using NpgsqlTypes;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.Postgres.Perspectives;
@@ -44,6 +45,10 @@ internal static class PostgresPerspectiveWriter {
   /// <param name="writeClock">The system time stamped on every row (<c>sys_created_at</c>, <c>sys_updated_at</c>).</param>
   /// <param name="cancellationToken">Cancels the write.</param>
   /// <param name="maxParameters">The parameter budget of one statement; a group that needs more is split.</param>
+  /// <param name="fence">
+  /// The write fence (#2556), when the process keeps a tenure ledger: a statement any of whose rows has perspective work in
+  /// flight holds each such row's partition at its epoch, and a row whose epoch moved on is <see cref="PerspectiveWriteStatus.Fenced"/>.
+  /// </param>
   /// <returns>One outcome per write, at the write's index.</returns>
   internal static async Task<IReadOnlyList<PerspectiveWriteOutcome>> WriteAsync(
       NpgsqlConnection connection,
@@ -51,12 +56,17 @@ internal static class PostgresPerspectiveWriter {
       IReadOnlyList<PendingPerspectiveWrite> writes,
       DateTime writeClock,
       CancellationToken cancellationToken,
-      int maxParameters = MAX_PARAMETERS) {
+      int maxParameters = MAX_PARAMETERS,
+      PerspectiveWriteFence? fence = null) {
     ArgumentNullException.ThrowIfNull(connection);
     ArgumentNullException.ThrowIfNull(writes);
     var outcomes = new PerspectiveWriteOutcome[writes.Count];
-    var context = new WriteContext(connection, transaction, writes, writeClock, outcomes);
-    foreach (var (shape, rows) in Plan(writes, outcomes, maxParameters)) {
+    // Each write's tenure, read once: null for every write off map mode or with no work in flight.
+    var tenures = writes.Select(w => fence?.TenureOf(w.StreamId)).ToArray();
+    var context = new WriteContext(connection, transaction, writes, writeClock, outcomes, fence, tenures);
+    // A fenced row binds its partition and epoch as well.
+    var fencedPerRow = tenures.Any(t => t.HasValue) ? 2 : 0;
+    foreach (var (shape, rows) in Plan(writes, outcomes, maxParameters, fencedPerRow)) {
       await _writeAsync(context, shape, rows, cancellationToken).ConfigureAwait(false);
     }
     return outcomes;
@@ -67,7 +77,7 @@ internal static class PostgresPerspectiveWriter {
   /// parameter budget. A write whose physical column cannot be written into a statement is failed here instead.
   /// </summary>
   internal static List<(PerspectiveWriteShape Shape, List<int> Rows)> Plan(
-      IReadOnlyList<PendingPerspectiveWrite> writes, PerspectiveWriteOutcome[] outcomes, int maxParameters) {
+      IReadOnlyList<PendingPerspectiveWrite> writes, PerspectiveWriteOutcome[] outcomes, int maxParameters, int fencedPerRow = 0) {
     var occurrences = new Dictionary<(string, Guid), int>();
     var groups = new Dictionary<(int, (string, PerspectiveWriteOperation, bool, bool, bool, bool, bool, string)), (PerspectiveWriteShape Shape, List<int> Rows)>();
     var order = new List<(int Round, int First, (int, (string, PerspectiveWriteOperation, bool, bool, bool, bool, bool, string)) Key)>();
@@ -95,7 +105,7 @@ internal static class PostgresPerspectiveWriter {
       var (shape, rows) = groups[key];
       var perStatement = shape.Operation == PerspectiveWriteOperation.Purge
         ? rows.Count
-        : Math.Max(1, (maxParameters - PerspectiveWriteSql.GROUP_PARAMETERS) / PerspectiveWriteSql.ParametersPerRow(shape));
+        : Math.Max(1, (maxParameters - PerspectiveWriteSql.GROUP_PARAMETERS) / (PerspectiveWriteSql.ParametersPerRow(shape) + fencedPerRow));
       for (var start = 0; start < rows.Count; start += perStatement) {
         statements.Add((shape, rows.GetRange(start, Math.Min(perStatement, rows.Count - start))));
       }
@@ -118,7 +128,16 @@ internal static class PostgresPerspectiveWriter {
       NpgsqlTransaction? Transaction,
       IReadOnlyList<PendingPerspectiveWrite> Writes,
       DateTime WriteClock,
-      PerspectiveWriteOutcome[] Outcomes);
+      PerspectiveWriteOutcome[] Outcomes,
+      PerspectiveWriteFence? Fence,
+      PartitionTenure?[] Tenures) {
+    /// <summary>The fence a statement of <paramref name="rows"/> carries: none unless a row has work in flight.</summary>
+    public PerspectiveWriteFence? FenceOf(List<int> rows) => rows.Any(i => Tenures[i].HasValue) ? Fence : null;
+  }
+
+  // #2556: a row whose partition moved on raised in its own statement; it is fenced, not failed.
+  private static PerspectiveWriteOutcome _rejected(Exception ex) =>
+    PerspectiveWriteFence.IsFenced(ex) ? PerspectiveWriteOutcome.Fenced : PerspectiveWriteOutcome.Failed(ex);
 
   private static async Task _writeAsync(
       WriteContext context, PerspectiveWriteShape shape, List<int> rows, CancellationToken cancellationToken) {
@@ -131,7 +150,7 @@ internal static class PostgresPerspectiveWriter {
         await transaction.RollbackAsync(SAVEPOINT, cancellationToken).ConfigureAwait(false);
       }
       if (rows.Count == 1) {
-        context.Outcomes[rows[0]] = PerspectiveWriteOutcome.Failed(ex);
+        context.Outcomes[rows[0]] = _rejected(ex);
         return;
       }
       var half = rows.Count / 2;
@@ -176,27 +195,44 @@ internal static class PostgresPerspectiveWriter {
     await using var command = context.Connection.CreateWhizbangCommand();
     command.Transaction = context.Transaction;
     var written = new HashSet<Guid>();
+    var fence = context.FenceOf(rows);
     if (shape.Operation == PerspectiveWriteOperation.Purge) {
-      command.CommandText = PerspectiveWriteSql.PurgeStatement(shape.Table);
-      command.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) {
-        Value = rows.Select(i => context.Writes[i].StreamId).ToArray(),
-      });
+      _bindPurge(command, shape, rows, context, fence);
       await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
       return written;
     }
 
-    command.CommandText = PerspectiveWriteSql.RowStatement(shape, rows.Count);
+    command.CommandText = PerspectiveWriteSql.RowStatement(shape, rows.Count, fence);
     command.Parameters.Add(new NpgsqlParameter("wb_sys", context.WriteClock));
     command.Parameters.Add(new NpgsqlParameter("wb_suppressactivity", shape.SuppressActivity));
     command.Parameters.Add(new NpgsqlParameter("wb_versionbump", shape.BumpVersion ? 1 : 0));
     for (var r = 0; r < rows.Count; r++) {
       _bindRow(command, shape, r, context.Writes[rows[r]]);
+      if (fence is not null) {
+        command.Parameters.Add(PerspectiveWriteFence.PartitionParameter("fp" + r, context.Tenures[rows[r]]));
+        command.Parameters.Add(PerspectiveWriteFence.EpochParameter("fe" + r, context.Tenures[rows[r]]));
+      }
     }
     await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       written.Add(reader.GetGuid(0));
     }
     return written;
+  }
+
+  private static void _bindPurge(NpgsqlCommand command, PerspectiveWriteShape shape, List<int> rows, WriteContext context, PerspectiveWriteFence? fence) {
+    command.CommandText = PerspectiveWriteSql.PurgeStatement(shape.Table, fence);
+    command.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) {
+      Value = rows.Select(i => context.Writes[i].StreamId).ToArray(),
+    });
+    if (fence is not null) {
+      command.Parameters.Add(new NpgsqlParameter("fps", NpgsqlDbType.Array | NpgsqlDbType.Integer) {
+        Value = rows.Select(i => context.Tenures[i] is { } t ? (int?)(t.Partition % 10000) : null).ToArray(),
+      });
+      command.Parameters.Add(new NpgsqlParameter("fes", NpgsqlDbType.Array | NpgsqlDbType.Bigint) {
+        Value = rows.Select(i => context.Tenures[i]?.Epoch).ToArray(),
+      });
+    }
   }
 
   private static void _bindRow(NpgsqlCommand command, PerspectiveWriteShape shape, int r, PendingPerspectiveWrite write) {

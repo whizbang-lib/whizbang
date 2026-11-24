@@ -88,13 +88,40 @@ public static class TenureFill {
   /// <param name="rows">The fetched rows.</param>
   /// <param name="workId">The row's work id.</param>
   /// <param name="streamId">The row's stream.</param>
-  public static void RecordFetched<T>(PartitionTenures? tenures, IEnumerable<T> rows, Func<T, Guid> workId, Func<T, Guid?> streamId) {
+  public static void RecordFetched<T>(PartitionTenures? tenures, IEnumerable<T> rows, Func<T, Guid> workId, Func<T, Guid?> streamId) =>
+    _record(tenures, rows, workId, streamId, static (ledger, work, stream) => ledger.RecordFetched(work, stream));
+
+  /// <summary>
+  /// Records each fetched piece of perspective work under its stream's tenure, and counts it in flight on its stream, so
+  /// the stream's perspective writes are fenced by it until it ends (#2557).
+  /// </summary>
+  /// <typeparam name="T">The fetched row type.</typeparam>
+  /// <param name="tenures">The ledger, when registered.</param>
+  /// <param name="rows">The fetched rows.</param>
+  /// <param name="workId">The row's work id.</param>
+  /// <param name="streamId">The row's stream.</param>
+  public static void RecordFetchedPerspective<T>(PartitionTenures? tenures, IEnumerable<T> rows, Func<T, Guid> workId, Func<T, Guid?> streamId) =>
+    _record(tenures, rows, workId, streamId, static (ledger, work, stream) => ledger.RecordFetchedPerspective(work, stream));
+
+  /// <summary>Forgets work whose result has been written: completed, or failed and reported.</summary>
+  /// <param name="tenures">The ledger, when registered.</param>
+  /// <param name="workIds">The work ids.</param>
+  public static void Forget(PartitionTenures? tenures, IEnumerable<Guid> workIds) => tenures?.Forget(workIds);
+
+  /// <summary>The work ids of a flush's failures; none when it carries none.</summary>
+  /// <param name="failures">The flush's failures, by category.</param>
+  /// <returns>The failed work ids.</returns>
+  public static IEnumerable<Guid> WorkOf(IReadOnlyList<CategoryFailures>? failures) =>
+    failures?.SelectMany(g => g.Items.Select(f => f.MessageId)) ?? [];
+
+  private static void _record<T>(
+      PartitionTenures? tenures, IEnumerable<T> rows, Func<T, Guid> workId, Func<T, Guid?> streamId, Action<PartitionTenures, Guid, Guid?> record) {
     ArgumentNullException.ThrowIfNull(rows);
     if (tenures is null) {
       return;
     }
     foreach (var row in rows) {
-      tenures.RecordFetched(workId(row), streamId(row));
+      record(tenures, workId(row), streamId(row));
     }
   }
 }

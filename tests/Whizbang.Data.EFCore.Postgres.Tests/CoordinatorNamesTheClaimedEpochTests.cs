@@ -143,6 +143,43 @@ public class CoordinatorNamesTheClaimedEpochTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task APerspectiveFetch_HoldsItsStreamsWriteTenure_UntilItsCompletionAsync() {
+    var stream = (Guid)TrackedGuid.New();
+    await using var conn = await _openAsync();
+    await _mapModeAsync(conn);
+    var work = await _perspectiveEventAsync(conn, stream);
+    var tenures = new PartitionTenures();
+    var (coordinator, _) = _coordinator(tenures);
+
+    _ = await coordinator.ClaimWorkAsync(_claim());
+    _ = await coordinator.GetStreamEventsAsync(_a, [stream]);
+    var inFlight = tenures.OfPerspectiveWrite(stream);
+    await coordinator.CompletePerspectiveAsync([], [work], debugMode: false);
+
+    await Assert.That(inFlight.HasValue).IsTrue().Because("the stream's writes are fenced by the work being applied");
+    await Assert.That(tenures.OfPerspectiveWrite(stream).HasValue).IsFalse()
+      .Because("with its work done, a later write of the stream (a rebuild) is fenced by nothing it no longer holds");
+  }
+
+  [Test]
+  public async Task AReportedPerspectiveFailure_EndsItsWorksWriteTenureAsync() {
+    var stream = (Guid)TrackedGuid.New();
+    await using var conn = await _openAsync();
+    await _mapModeAsync(conn);
+    var work = await _perspectiveEventAsync(conn, stream);
+    var tenures = new PartitionTenures();
+    var (coordinator, _) = _coordinator(tenures);
+
+    _ = await coordinator.ClaimWorkAsync(_claim());
+    _ = await coordinator.GetStreamEventsAsync(_a, [stream]);
+    await coordinator.ReportFailuresAsync(WorkCategory.PerspectiveEvent,
+      [new MessageFailure { MessageId = work, CompletedStatus = MessageProcessingStatus.Stored, Error = "failed" }]);
+
+    await Assert.That(tenures.OfPerspectiveWrite(stream).HasValue).IsFalse();
+    await Assert.That(tenures.OfWork(work).HasValue).IsFalse().Because("failed work is no longer in hand");
+  }
+
+  [Test]
   public async Task AFailure_OfWorkFetchedBeforeThePartitionMoved_IsNotRecordedAsync() {
     var stream = (Guid)TrackedGuid.New();
     await using var conn = await _openAsync();

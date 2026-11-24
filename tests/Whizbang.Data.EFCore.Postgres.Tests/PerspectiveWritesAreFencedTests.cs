@@ -107,21 +107,186 @@ public class PerspectiveWritesAreFencedTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task TheFence_InsideTheWritesTransaction_OnAHostWithoutMetricsOrLogging_StillFencesAsync() {
+  public async Task TheSink_InsideTheWritesTransaction_OnAHostWithoutMetricsOrLogging_StillFencesAsync() {
     await using var conn = await _openAsync();
     await _mapModeAsync(conn);
     var tenures = new PartitionTenures();
     await using var host = new ServiceCollection().AddSingleton(tenures).BuildServiceProvider();
     var options = new DbContextOptionsBuilder<WorkCoordinationDbContext>(DbContextOptions).UseApplicationServiceProvider(host).Options;
     await using var context = new WorkCoordinationDbContext(options);
-    var stream = Guid.CreateVersion7();
-    _claim(tenures, stream, 5);
+    var stale = Guid.CreateVersion7();
+    var current = Guid.CreateVersion7();
+    _claim(tenures, stale, 5);
+    _claim(tenures, current, 6);
     await _moveOnAsync(conn, 5);
     await using var transaction = await context.Database.BeginTransactionAsync();
 
-    var stale = await EFCorePerspectiveWriteFence.StaleAsync(context, [stream], CancellationToken.None);
+    var outcomes = await new EFCorePostgresPerspectiveWriteSink(context).WriteAsync([_write(context, stale), _write(context, current)]);
+    await transaction.CommitAsync();
 
-    await Assert.That(stale).IsEquivalentTo([stream]).Because("the check runs in the write's own transaction, and fences without a meter or a logger");
+    await Assert.That(outcomes.Select(o => o.Status)).IsEquivalentTo(
+      [PerspectiveWriteStatus.Fenced, PerspectiveWriteStatus.Written], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the fenced row is undone to its savepoint and the write's transaction goes on, with no meter or logger to report to");
+    await Assert.That(await _rowExistsAsync(conn, current)).IsTrue();
+    await Assert.That(await _rowExistsAsync(conn, stale)).IsFalse();
+  }
+
+  [Test]
+  [Timeout(60_000)]
+  public async Task TheSink_AgainstAFlipThatCommitsWhileItWrites_WaitsForIt_AndIsFencedAsync(CancellationToken cancellationToken) {
+    await using var conn = await _openAsync();
+    await _mapModeAsync(conn);
+    var (context, tenures, observer) = _context();
+    await using var _ = context;
+    using var __ = observer;
+    var stream = Guid.CreateVersion7();
+    _claim(tenures, stream, 5);
+    var pid = await _pidOfAsync(context);
+    var (flipConnection, flip) = await _flipUncommittedAsync(5);
+    await using var ___ = flipConnection;
+
+    var writing = new EFCorePostgresPerspectiveWriteSink(context).WriteAsync([_write(context, stream)], cancellationToken);
+    await _blockedOrDoneAsync(conn, pid, writing, cancellationToken);
+    await flip.CommitAsync(cancellationToken);
+    var outcomes = await writing;
+
+    await Assert.That(outcomes.Single().Status).IsEqualTo(PerspectiveWriteStatus.Fenced)
+      .Because("the write holds its partition's epoch in its own statement, so a flip committed before the write is fenced, never slipped past");
+    await Assert.That(await _rowExistsAsync(conn, stream)).IsFalse();
+    await Assert.That(observer.Total()).IsEqualTo(1L);
+  }
+
+  [Test]
+  [Timeout(60_000)]
+  public async Task ThePerPairUpsert_AgainstAFlipThatCommitsWhileItWrites_WaitsForIt_AndThrowsAsync(CancellationToken cancellationToken) {
+    await using var conn = await _openAsync();
+    await _mapModeAsync(conn);
+    var (context, tenures, observer) = _context();
+    await using var _ = context;
+    using var __ = observer;
+    var stream = Guid.CreateVersion7();
+    _claim(tenures, stream, 5);
+    var pid = await _pidOfAsync(context);
+    var (flipConnection, flip) = await _flipUncommittedAsync(5);
+    await using var ___ = flipConnection;
+
+    var writing = new PostgresUpsertStrategy().UpsertPerspectiveRowAsync(
+      context, ACTION_TABLE, stream, new ActionTestModel { Id = stream, Name = "stale", Value = 1 }, _meta(), new PerspectiveScope(), cancellationToken);
+    await _blockedOrDoneAsync(conn, pid, writing, cancellationToken);
+    await flip.CommitAsync(cancellationToken);
+
+    await Assert.ThrowsAsync<PartitionOwnershipLostException>(() => writing);
+    await Assert.That(await _rowExistsAsync(conn, stream)).IsFalse();
+    await Assert.That(observer.Total()).IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task ALocalRebuild_AfterTheStreamsWorkEnded_IsWritten_ThoughItsPartitionMovedByDeadlineAsync() {
+    await using var conn = await _openAsync();
+    await _mapModeAsync(conn);
+    var (context, tenures, observer) = _context();
+    await using var _ = context;
+    using var __ = observer;
+    var stream = Guid.CreateVersion7();
+    var work = _claim(tenures, stream, 5);
+    await _moveOnAsync(conn, 5);
+    tenures.Forget([work]);
+
+    await new PostgresUpsertStrategy().UpsertPerspectiveRowAsync(
+      context, ACTION_TABLE, stream, new ActionTestModel { Id = stream, Name = "rebuilt", Value = 1 }, _meta(), new PerspectiveScope());
+
+    await Assert.That(await _rowExistsAsync(conn, stream)).IsTrue()
+      .Because("the claim the moved partition left behind applies no work in flight, so it fences nothing");
+    await Assert.That(observer.Total()).IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task EveryWriteForm_IsFencedInItsStatement_AndAStreamWithNoWorkInTheSameStatementIsWrittenAsync() {
+    await using var conn = await _openAsync();
+    await _mapModeAsync(conn);
+    var (context, tenures, observer) = _context();
+    await using var _ = context;
+    using var __ = observer;
+    var upserted = Guid.CreateVersion7();
+    var updated = Guid.CreateVersion7();
+    var purged = Guid.CreateVersion7();
+    var freePurge = Guid.CreateVersion7();
+    var freeUpsert = Guid.CreateVersion7();
+    var sink = new EFCorePostgresPerspectiveWriteSink(context);
+    await sink.WriteAsync([_write(context, updated), _write(context, purged), _write(context, freePurge)]);
+    var xmin = Convert.ToInt64(await _scalarAsync(conn, $"SELECT xmin::text::bigint FROM {ACTION_TABLE} WHERE id = @id", ("id", updated)),
+      System.Globalization.CultureInfo.InvariantCulture);
+    foreach (var stream in new[] { upserted, updated, purged }) {
+      _claim(tenures, stream, 5);
+    }
+    await _moveOnAsync(conn, 5);
+
+    var outcomes = await sink.WriteAsync([
+      _write(context, upserted, PerspectiveRowVersion.Unchecked),
+      _write(context, freeUpsert, PerspectiveRowVersion.Unchecked),
+      _write(context, updated, PerspectiveRowVersion.Of(xmin)),
+      PendingPerspectiveWrite.Purge(ACTION_TABLE, purged),
+      PendingPerspectiveWrite.Purge(ACTION_TABLE, freePurge),
+    ]);
+
+    await Assert.That(outcomes.Select(o => o.Status)).IsEquivalentTo([
+      PerspectiveWriteStatus.Fenced, PerspectiveWriteStatus.Written, PerspectiveWriteStatus.Fenced,
+      PerspectiveWriteStatus.Fenced, PerspectiveWriteStatus.Written,
+    ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(await _rowExistsAsync(conn, upserted)).IsFalse();
+    await Assert.That(await _rowExistsAsync(conn, purged)).IsTrue().Because("a stale owner's purge removes nothing");
+    await Assert.That(await _rowExistsAsync(conn, freePurge)).IsFalse();
+    await Assert.That(observer.Total()).IsEqualTo(3L);
+  }
+
+  [Test]
+  public async Task ThePerPairCheckedUpdate_OfAStreamWhosePartitionMoved_ThrowsAsync() {
+    await using var conn = await _openAsync();
+    await _mapModeAsync(conn);
+    var (context, tenures, observer) = _context();
+    await using var _ = context;
+    using var __ = observer;
+    var stream = Guid.CreateVersion7();
+    await new EFCorePostgresPerspectiveWriteSink(context).WriteAsync([_write(context, stream)]);
+    var xmin = Convert.ToInt64(await _scalarAsync(conn, $"SELECT xmin::text::bigint FROM {ACTION_TABLE} WHERE id = @id", ("id", stream)),
+      System.Globalization.CultureInfo.InvariantCulture);
+    _claim(tenures, stream, 5);
+    await _moveOnAsync(conn, 5);
+
+    await Assert.ThrowsAsync<PartitionOwnershipLostException>(() => new PostgresUpsertStrategy().UpsertPerspectiveRowAsync(
+      context, ACTION_TABLE, stream, new ActionTestModel { Id = stream, Name = "stale", Value = 2 }, _meta(), new PerspectiveScope(),
+      forceUpdateScope: false, PerspectiveRowVersion.Of(xmin)));
+
+    await Assert.That(observer.Total()).IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task TheEntityFrameworkWrite_HoldsThePartitionFirst_AndAStaleOwnerThrows_ACurrentOneWritesAsync() {
+    await using var conn = await _openAsync();
+    await _mapModeAsync(conn);
+    var (context, tenures, observer) = _context();
+    await using var _ = context;
+    using var __ = observer;
+    var stale = Guid.CreateVersion7();
+    var current = Guid.CreateVersion7();
+    _claim(tenures, stale, 5);
+    _claim(tenures, current, 6);
+    await _moveOnAsync(conn, 5);
+    var strategy = new EntityFrameworkOnlyStrategy();
+
+    await Assert.ThrowsAsync<PartitionOwnershipLostException>(() => strategy.UpsertPerspectiveRowAsync(
+      context, ACTION_TABLE, stale, new ActionTestModel { Id = stale, Name = "stale", Value = 1 }, _meta(), new PerspectiveScope()));
+    await strategy.UpsertPerspectiveRowAsync(
+      context, ACTION_TABLE, current, new ActionTestModel { Id = current, Name = "current", Value = 1 }, _meta(), new PerspectiveScope());
+
+    await Assert.That(await _rowExistsAsync(conn, stale)).IsFalse();
+    await Assert.That(await _rowExistsAsync(conn, current)).IsTrue();
+    await Assert.That(observer.Total()).IsEqualTo(1L);
+  }
+
+  /// <summary>The upsert with its single-statement path off, so every write takes the Entity Framework path.</summary>
+  private sealed class EntityFrameworkOnlyStrategy : PostgresUpsertStrategy {
+    protected override bool UsesAtomicUpsert => false;
   }
 
   [Test]
@@ -143,8 +308,44 @@ public class PerspectiveWritesAreFencedTests : EFCoreTestBase {
     return (new WorkCoordinationDbContext(options), tenures, new CounterObserver(host.GetRequiredService<WorkCoordinatorMetrics>()));
   }
 
-  private static void _claim(PartitionTenures tenures, Guid stream, int partition) =>
+  // The stream claimed at its partition's epoch (1, as _mapModeAsync opened it), with perspective work fetched on it.
+  private static Guid _claim(PartitionTenures tenures, Guid stream, int partition) {
     tenures.RecordClaim(new Dictionary<Guid, long> { [stream] = 1 }, new Dictionary<Guid, int> { [stream] = partition });
+    var work = Guid.CreateVersion7();
+    tenures.RecordFetchedPerspective(work, stream);
+    return work;
+  }
+
+  // A flip of the partition, open in its own transaction, so the test decides when it commits.
+  private async Task<(NpgsqlConnection Connection, NpgsqlTransaction Flip)> _flipUncommittedAsync(int partition) {
+    var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+    var flip = await connection.BeginTransactionAsync();
+    await using var cmd = connection.CreateCommand();
+    cmd.Transaction = flip;
+    cmd.CommandText = "UPDATE wh_partition_ownership SET owner_instance_id = @b, epoch = epoch + 1 WHERE partition_number = @p";
+    cmd.Parameters.AddWithValue("b", _b);
+    cmd.Parameters.AddWithValue("p", partition);
+    await cmd.ExecuteNonQueryAsync();
+    return (connection, flip);
+  }
+
+  // Completes once the backend is waiting on a lock another session holds, or once the write finished without waiting.
+  private static async Task _blockedOrDoneAsync(NpgsqlConnection observer, int pid, Task write, CancellationToken cancellationToken) {
+    while (!write.IsCompleted) {
+      cancellationToken.ThrowIfCancellationRequested();
+      if ((bool)(await _scalarAsync(observer, "SELECT cardinality(pg_blocking_pids(@pid)) > 0", ("pid", pid)))!) {
+        return;
+      }
+    }
+  }
+
+  private static async Task<int> _pidOfAsync(DbContext context) {
+    await context.Database.OpenConnectionAsync();
+    await using var cmd = context.Database.GetDbConnection().CreateCommand();
+    cmd.CommandText = "SELECT pg_backend_pid()";
+    return Convert.ToInt32(await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
+  }
 
   private static PerspectiveMetadata _meta() => new() {
     EventType = "FenceTestEvent",
@@ -152,9 +353,11 @@ public class PerspectiveWritesAreFencedTests : EFCoreTestBase {
     Timestamp = new DateTime(2026, 11, 24, 12, 0, 0, DateTimeKind.Utc),
   };
 
-  private static PendingPerspectiveWrite _write(DbContext context, Guid id) =>
+  private static PendingPerspectiveWrite _write(DbContext context, Guid id) => _write(context, id, PerspectiveRowVersion.Absent);
+
+  private static PendingPerspectiveWrite _write(DbContext context, Guid id, PerspectiveRowVersion version) =>
     new PostgresUpsertStrategy().PreparePendingWrite(context, new BaseUpsertStrategy.UpsertRowArgs<ActionTestModel>(ACTION_TABLE, id,
-      new ActionTestModel { Id = id, Name = "set-based", Value = 1 }, _meta(), new PerspectiveScope(), null, false, PerspectiveRowVersion.Absent))!;
+      new ActionTestModel { Id = id, Name = "set-based", Value = 1 }, _meta(), new PerspectiveScope(), null, false, version))!;
 
   private sealed class CounterObserver : IDisposable {
     private readonly MeterListener _listener = new();

@@ -8,56 +8,58 @@ using Whizbang.Core.Messaging;
 namespace Whizbang.Data.Postgres.Perspectives;
 
 /// <summary>
-/// The perspective write fence (#2556): which streams' partitions are no longer owned at the epoch their work was
-/// claimed under, by the process's tenure ledger, so their rows are not written and the current owner applies them.
-/// One statement for a batch, one primary-key probe of <c>wh_partition_ownership</c> per stream with a tenure; none at
-/// all when no stream has one (the service does not own by map), so a write off map mode costs nothing more.
+/// The perspective write fence (#2556), carried in the statement that writes each row: a write of a stream with
+/// perspective work in flight names the partition and epoch that work was claimed under, and the statement holds the
+/// partition at that epoch (<c>wh_hold_partition_epoch</c>, migration 577) until it commits. A flip cannot commit while
+/// the write is open, and one that committed first makes the write raise <see cref="SQL_STATE"/>, so it lands nowhere
+/// and the current owner applies the stream. A stream with no work in flight (off map mode, or a rebuild) names nothing,
+/// and its statement is as it always was.
 /// </summary>
-/// <remarks>
-/// The check runs on the write's own connection and transaction, just before the write. A flip that lands between the
-/// two is the deadline takeover of an owner stuck at that moment; the handover protocol flips a partition only after its
-/// owner has acknowledged, with nothing in flight, so a running owner's write is never caught between them.
-/// </remarks>
+/// <param name="Prefix">The framework schema as a statement prefix (<c>"svc".</c>), or empty.</param>
+/// <param name="TenureOf">The tenure a stream's write is fenced by (<see cref="PartitionTenures.OfPerspectiveWrite"/>).</param>
 /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveWritesAreFencedTests.cs</tests>
-public static class PerspectiveWriteFence {
-  /// <summary>The streams among <paramref name="streams"/> whose claimed tenure is no longer current.</summary>
-  /// <param name="connection">An open connection.</param>
-  /// <param name="transaction">The write's transaction, if any.</param>
-  /// <param name="schemaPrefix">The framework schema as a statement prefix (<c>"svc".</c>), or empty.</param>
+public sealed record PerspectiveWriteFence(string Prefix, Func<Guid, PartitionTenure?> TenureOf) {
+  /// <summary>The SQLSTATE a fenced write raises.</summary>
+  public const string SQL_STATE = "WHF02";
+
+  /// <summary>Whether <paramref name="exception"/> is a write the fence stopped.</summary>
+  /// <param name="exception">The exception.</param>
+  /// <returns>True for <see cref="SQL_STATE"/>.</returns>
+  public static bool IsFenced(Exception exception) => exception is PostgresException { SqlState: SQL_STATE };
+
+  /// <summary>The fence for <paramref name="tenures"/>, or null when the process keeps no ledger.</summary>
+  /// <param name="prefix">The framework schema as a statement prefix.</param>
   /// <param name="tenures">The tenure ledger, when registered.</param>
-  /// <param name="streams">The streams about to be written.</param>
-  /// <param name="cancellationToken">Cancellation.</param>
-  /// <returns>The fenced streams; empty when none is, or none has a tenure.</returns>
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "The schema prefix cannot be a bind parameter, so it is interpolated; it is built by PgIdentifier, which doubles any embedded quote. Every value is a bound parameter.")]
-  public static async Task<IReadOnlySet<Guid>> StaleAsync(
-      NpgsqlConnection connection,
-      NpgsqlTransaction? transaction,
-      string schemaPrefix,
-      PartitionTenures? tenures,
-      IEnumerable<Guid> streams,
-      CancellationToken cancellationToken) {
-    ArgumentNullException.ThrowIfNull(connection);
-    ArgumentNullException.ThrowIfNull(streams);
-    var held = tenures is null
-      ? []
-      : streams.Distinct().Select(s => (Stream: s, Tenure: tenures.OfStream(s))).Where(t => t.Tenure is not null).ToList();
-    if (held.Count == 0) {
-      return new HashSet<Guid>();
-    }
-    await using var cmd = connection.CreateCommand();
-    cmd.Transaction = transaction;
-    cmd.CommandText =
-      "SELECT t.s FROM unnest(@s, @p, @e) AS t(s, p, e) "
-      + $"WHERE NOT EXISTS (SELECT 1 FROM {schemaPrefix}wh_partition_ownership o WHERE o.partition_number = t.p % 10000 AND o.epoch = t.e)";
-    cmd.Parameters.Add(new NpgsqlParameter("s", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = held.Select(h => h.Stream).ToArray() });
-    cmd.Parameters.Add(new NpgsqlParameter("p", NpgsqlDbType.Array | NpgsqlDbType.Integer) { Value = held.Select(h => h.Tenure!.Value.Partition).ToArray() });
-    cmd.Parameters.Add(new NpgsqlParameter("e", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = held.Select(h => h.Tenure!.Value.Epoch).ToArray() });
-    var stale = new HashSet<Guid>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      stale.Add(reader.GetGuid(0));
-    }
-    return stale;
-  }
+  /// <returns>The fence, or null.</returns>
+  public static PerspectiveWriteFence? For(string prefix, PartitionTenures? tenures) =>
+    tenures is null ? null : new PerspectiveWriteFence(prefix, tenures.OfPerspectiveWrite);
+
+  /// <summary>The call that holds a partition at an epoch, for an update's or a purge's predicate.</summary>
+  /// <param name="partition">The partition expression.</param>
+  /// <param name="epoch">The epoch expression.</param>
+  /// <returns>The SQL.</returns>
+  internal string Hold(string partition, string epoch) => Prefix + "wh_hold_partition_epoch(" + partition + ", " + epoch + ")";
+
+  /// <summary>The id expression of a fenced insert or upsert.</summary>
+  /// <param name="id">The id expression.</param>
+  /// <param name="partition">The partition expression.</param>
+  /// <param name="epoch">The epoch expression.</param>
+  /// <returns>The SQL.</returns>
+  internal string HeldStream(string id, string partition, string epoch) =>
+    Prefix + "wh_held_stream(" + id + ", " + partition + ", " + epoch + ")";
+
+  /// <summary>The partition parameter of a fenced row: the ownership table's partition, or null when it names none.</summary>
+  /// <param name="name">The parameter name.</param>
+  /// <param name="tenure">The row's tenure.</param>
+  /// <returns>The parameter.</returns>
+  internal static NpgsqlParameter PartitionParameter(string name, PartitionTenure? tenure) =>
+    new(name, NpgsqlDbType.Integer) { Value = tenure is { } t ? t.Partition % 10000 : DBNull.Value };
+
+  /// <summary>The epoch parameter of a fenced row, or null when it names none.</summary>
+  /// <param name="name">The parameter name.</param>
+  /// <param name="tenure">The row's tenure.</param>
+  /// <returns>The parameter.</returns>
+  internal static NpgsqlParameter EpochParameter(string name, PartitionTenure? tenure) =>
+    new(name, NpgsqlDbType.Bigint) { Value = tenure is { } t ? t.Epoch : DBNull.Value };
 }

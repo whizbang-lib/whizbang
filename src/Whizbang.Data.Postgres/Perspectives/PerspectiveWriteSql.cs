@@ -40,12 +40,22 @@ internal static class PerspectiveWriteSql {
   internal static int ParametersPerRow(PerspectiveWriteShape shape) =>
     ROW_PARAMETERS + (shape.HasExpiry ? 1 : 0) + shape.PhysicalColumns.Count;
 
-  /// <summary>The statement for <paramref name="rowCount"/> rows of an upsert, insert or update shape.</summary>
-  internal static string RowStatement(PerspectiveWriteShape shape, int rowCount) =>
-    shape.Operation == PerspectiveWriteOperation.Update ? _update(shape, rowCount) : _insert(shape, rowCount);
+  /// <summary>
+  /// The statement for <paramref name="rowCount"/> rows of an upsert, insert or update shape. With a fence, each row
+  /// also binds <c>@fp</c><i>n</i> and <c>@fe</c><i>n</i>, and the statement holds each row's partition at that epoch
+  /// (#2556): as the id of an insert or upsert, as a predicate of an update.
+  /// </summary>
+  internal static string RowStatement(PerspectiveWriteShape shape, int rowCount, PerspectiveWriteFence? fence = null) =>
+    shape.Operation == PerspectiveWriteOperation.Update ? _update(shape, rowCount, fence) : _insert(shape, rowCount, fence);
 
-  /// <summary>The purge of a table's rows, by id.</summary>
-  internal static string PurgeStatement(string table) => "DELETE FROM " + table + " WHERE id = ANY(@ids)";
+  /// <summary>
+  /// The purge of a table's rows, by id. With a fence it binds <c>@fps</c> and <c>@fes</c> beside <c>@ids</c> and holds
+  /// each purged row's partition at its epoch (#2556).
+  /// </summary>
+  internal static string PurgeStatement(string table, PerspectiveWriteFence? fence = null) => fence is null
+    ? "DELETE FROM " + table + " WHERE id = ANY(@ids)"
+    : "DELETE FROM " + table + " USING unnest(@ids, @fps, @fes) AS wb_f(id, p, e) WHERE " + table + ".id = wb_f.id AND "
+      + fence.Hold("wb_f.p", "wb_f.e");
 
   /// <summary>The read that explains rows a checked statement did not write: their current version, if any.</summary>
   internal static string VersionsStatement(string table) => "SELECT id, xmin FROM " + table + " WHERE id = ANY(@ids)";
@@ -73,7 +83,7 @@ internal static class PerspectiveWriteSql {
     !string.IsNullOrWhiteSpace(storeType)
     && storeType.All(c => char.IsAsciiLetterOrDigit(c) || c is ' ' or '_' or '(' or ')' or ',' or '[' or ']' or '.');
 
-  private static string _insert(PerspectiveWriteShape shape, int rowCount) {
+  private static string _insert(PerspectiveWriteShape shape, int rowCount, PerspectiveWriteFence? fence) {
     var t = shape.Table;
     var sql = new StringBuilder("INSERT INTO ").Append(t)
       .Append(" (id, data, metadata, scope, created_at, updated_at, sys_created_at, sys_updated_at, version");
@@ -85,8 +95,10 @@ internal static class PerspectiveWriteSql {
     }
     sql.Append(") VALUES ");
     for (var row = 0; row < rowCount; row++) {
+      var id = "@i" + row;
       sql.Append(row == 0 ? "(" : ", (")
-        .Append("@i").Append(row).Append(", @d").Append(row).Append("::jsonb, @m").Append(row).Append("::jsonb, @s").Append(row)
+        .Append(fence is null ? id : fence.HeldStream(id, "@fp" + row, "@fe" + row))
+        .Append(", @d").Append(row).Append("::jsonb, @m").Append(row).Append("::jsonb, @s").Append(row)
         .Append("::jsonb, @c").Append(row).Append(", @u").Append(row).Append(", @wb_sys, @wb_sys, 1");
       if (shape.HasExpiry) {
         sql.Append(", @e").Append(row);
@@ -120,7 +132,7 @@ internal static class PerspectiveWriteSql {
       .Append(" RETURNING id").ToString();
   }
 
-  private static string _update(PerspectiveWriteShape shape, int rowCount) {
+  private static string _update(PerspectiveWriteShape shape, int rowCount, PerspectiveWriteFence? fence) {
     var t = shape.Table;
     var sql = new StringBuilder("UPDATE ").Append(t)
       .Append(" SET data = r.data, metadata = r.metadata, updated_at = CASE WHEN @wb_suppressactivity THEN ")
@@ -137,20 +149,7 @@ internal static class PerspectiveWriteSql {
     }
     sql.Append(" FROM (VALUES ");
     for (var row = 0; row < rowCount; row++) {
-      sql.Append(row == 0 ? "(" : ", (")
-        .Append("@i").Append(row).Append("::uuid, @d").Append(row).Append("::jsonb, @m").Append(row).Append("::jsonb, @s").Append(row)
-        .Append("::jsonb, @u").Append(row).Append(", @x").Append(row).Append("::xid");
-      if (shape.HasExpiry) {
-        sql.Append(", @e").Append(row).Append("::timestamptz");
-      }
-      for (var p = 0; p < shape.PhysicalColumns.Count; p++) {
-        sql.Append(", @p").Append(row).Append('_').Append(p);
-        // A VALUES list has no target column to take a type from, so a null alone would be read as text.
-        if (shape.PhysicalColumns[p].StoreType is { } storeType) {
-          sql.Append("::").Append(storeType);
-        }
-      }
-      sql.Append(')');
+      _appendUpdateRow(sql, shape, row, fence);
     }
     sql.Append(") AS r(id, data, metadata, scope, updated_at, expected");
     if (shape.HasExpiry) {
@@ -159,9 +158,36 @@ internal static class PerspectiveWriteSql {
     for (var p = 0; p < shape.PhysicalColumns.Count; p++) {
       sql.Append(", p_").Append(p);
     }
-    return sql.Append(") WHERE ").Append(t).Append(".id = r.id AND ").Append(t).Append(".xmin = r.expected AND (")
-      .Append(PerspectiveRowVersionCommands.OrderingGuard(t, "r.metadata", shape.OrdersOnEventId))
-      .Append(") RETURNING ").Append(t).Append(".id").ToString();
+    if (fence is not null) {
+      sql.Append(", wb_fp, wb_fe");
+    }
+    sql.Append(") WHERE ").Append(t).Append(".id = r.id AND ").Append(t).Append(".xmin = r.expected AND (")
+      .Append(PerspectiveRowVersionCommands.OrderingGuard(t, "r.metadata", shape.OrdersOnEventId)).Append(')');
+    if (fence is not null) {
+      sql.Append(" AND ").Append(fence.Hold("r.wb_fp", "r.wb_fe"));
+    }
+    return sql.Append(" RETURNING ").Append(t).Append(".id").ToString();
+  }
+
+  // One row of an update's VALUES list: each value cast, as a VALUES list has no target column to take a type from.
+  private static void _appendUpdateRow(StringBuilder sql, PerspectiveWriteShape shape, int row, PerspectiveWriteFence? fence) {
+    sql.Append(row == 0 ? "(" : ", (")
+      .Append("@i").Append(row).Append("::uuid, @d").Append(row).Append("::jsonb, @m").Append(row).Append("::jsonb, @s").Append(row)
+      .Append("::jsonb, @u").Append(row).Append(", @x").Append(row).Append("::xid");
+    if (shape.HasExpiry) {
+      sql.Append(", @e").Append(row).Append("::timestamptz");
+    }
+    for (var p = 0; p < shape.PhysicalColumns.Count; p++) {
+      sql.Append(", @p").Append(row).Append('_').Append(p);
+      // A VALUES list has no target column to take a type from, so a null alone would be read as text.
+      if (shape.PhysicalColumns[p].StoreType is { } storeType) {
+        sql.Append("::").Append(storeType);
+      }
+    }
+    if (fence is not null) {
+      sql.Append(", @fp").Append(row).Append("::integer, @fe").Append(row).Append("::bigint");
+    }
+    sql.Append(')');
   }
 }
 
