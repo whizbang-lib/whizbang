@@ -92,6 +92,12 @@ public class DapperOwnershipNoticesTests : PostgresTestBase {
         (message_id, stream_id, received_at, priority, is_event, status, attempts, partition_number, instance_id, lease_expiry)
       SELECT m.message_id, m.stream_id, m.received_at, 150, FALSE, 0, 0, @p, @a, NOW() + INTERVAL '5 minutes' FROM m
       """, new { id = inbox, stream = (Guid)TrackedGuid.New(), p = PARTITION, a = _a });
+    var work = (Guid)TrackedGuid.New();
+    await conn.ExecuteAsync("""
+      INSERT INTO wh_perspective_events
+        (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at, instance_id, lease_expiry)
+      VALUES (@w, @stream, 'Notices.Perspective', @event, @p, 0, 0, NOW(), @a, NOW() + INTERVAL '5 minutes')
+      """, new { w = work, stream = (Guid)TrackedGuid.New(), @event = (Guid)TrackedGuid.New(), p = PARTITION, a = _a });
     await conn.ExecuteAsync("""
       UPDATE wh_partition_ownership SET owner_instance_id = @b, epoch = epoch + 1 WHERE partition_number = @p
       """, new { b = _b, p = PARTITION });
@@ -104,13 +110,15 @@ public class DapperOwnershipNoticesTests : PostgresTestBase {
     var affected = await coordinator.CompleteOutboxPublishedAsync([message], [1L], debugMode: false);
     var results = await coordinator.CommitHandlerBatchAsync([request]);
     await coordinator.CommitHandlerResultAsync(request);
-    await coordinator.CompletePerspectiveAsync([], [], [1L], debugMode: false);
+    await coordinator.CompletePerspectiveAsync([], [work], [1L], debugMode: false);
     await coordinator.FlushCompletionsAsync(new FlushCompletionsRequest(OutboxIds: [message], OutboxEpochs: [1L]));
 
     await Assert.That(affected).IsEqualTo(0);
     await Assert.That(results[0].Fenced).IsTrue();
-    await Assert.That(observer.Total()).IsEqualTo(4L)
-      .Because("the publish mark, the batch item, the single commit and the flush were each fenced and counted");
+    await Assert.That(observer.Total()).IsEqualTo(5L)
+      .Because("the publish mark, the batch item, the single commit, the perspective work and the flush were each fenced and counted");
+    await Assert.That(await conn.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_perspective_events WHERE event_work_id = @work", new { work }))
+      .IsEqualTo(1L).Because("the fenced perspective completion leaves the work for the current owner");
   }
 
   // --- helpers --------------------------------------------------------------------------------------
