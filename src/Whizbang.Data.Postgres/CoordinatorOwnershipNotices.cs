@@ -99,15 +99,6 @@ public static partial class CoordinatorOwnershipNotices {
       _connection.Notice += _onNotice;
     }
 
-    /// <summary>How many writes were fenced so far, all kinds together.</summary>
-    public long Total {
-      get {
-        lock (_fenced) {
-          return _fenced.Sum(f => f.Count);
-        }
-      }
-    }
-
     /// <inheritdoc />
     public void Dispose() {
       _connection.Notice -= _onNotice;

@@ -36,6 +36,24 @@ public class WorkCoordinatorDefaultInterfaceTests {
     await Assert.That(oldest).IsNull();
   }
 
+  [Test]
+  public async Task CompleteOutboxPublishedAsync_WithEpochs_ByDefault_IsTheCompletionWithoutThemAsync() {
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.CompleteOutboxPublishedAsync([(Guid)TrackedGuid.New()], [1L], debugMode: false));
+
+    await Assert.That(message).Contains("CompleteOutboxPublishedAsync")
+      .Because("#2556: a store that does not fence ignores the epochs and completes as it always did");
+  }
+
+  [Test]
+  public async Task CompletePerspectiveAsync_WithEpochs_ByDefault_IsTheCompletionWithoutThemAsync() {
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.CompletePerspectiveAsync([], [(Guid)TrackedGuid.New()], [1L], debugMode: false));
+
+    await Assert.That(message).Contains("CompletePerspectiveAsync")
+      .Because("#2556: a store that does not fence ignores the epochs and completes as it always did");
+  }
+
   // ========================================
   // Throwing defaults (Postgres-only surfaces)
   // ========================================
