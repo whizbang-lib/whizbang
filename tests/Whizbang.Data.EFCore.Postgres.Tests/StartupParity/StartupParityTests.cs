@@ -109,11 +109,12 @@ public class StartupParityTests {
   private Task<bool> _existsAsync(string index) => _scalarAsync<bool>("SELECT to_regclass('public.' || $1) IS NOT NULL", index);
 
   /// <summary>An index Whizbang built that the driver no longer declares, recorded by one start after it appeared.</summary>
-  private async Task _retiredIndexSeenAsync(StartupDriver driver) {
+  private async Task<ServiceProvider> _retiredIndexSeenAsync(StartupDriver driver) {
     await _execAsync($"CREATE INDEX {driver.Retired} ON {driver.Table} USING gin (data)");
-    await _startAsync(driver);
+    var instance = await _startAsync(driver);
     await Assert.That(await _existsAsync(driver.Retired)).IsTrue()
       .Because("the start that first sees an object records it and drops nothing");
+    return instance;
   }
 
   private static async Task _runReconcileStepAsync(IServiceProvider instance) {
@@ -148,24 +149,82 @@ public class StartupParityTests {
       .IsEqualTo(1L).Because("the instances that start after it see it running, so its declarations count");
   }
 
+  /// <summary>
+  /// With several instances running, an object none of them declares is dropped, and what each running instance
+  /// declares is kept. "Running" is the liveness rule's call, which reads each instance's last heartbeat on the
+  /// database clock. These instances run only their initializers, so nothing beats for them: the test beats for the
+  /// earlier ones at every stage the judging start reports (its <see cref="IStartupStageReporter"/>, awaited on each
+  /// transition): on EF Core that includes Converge, entered just before the reconcile; the Dapper driver reports no
+  /// Converge, so there the last beat is the last stage it reports before it. Their heartbeats are first aged past every
+  /// window, as a slow run leaves them, so a beat that lands after the reconcile fails every run rather than only on a
+  /// loaded server. It used to rely on the three starts finishing inside the liveness window: on a loaded full run they
+  /// took 2 min 42 s, and past the window the reconcile forgets the first instance's declarations as a dead one's
+  /// (reproduced by aging the heartbeats with no beat).
+  /// </summary>
   [Test]
   [Arguments("efcore")]
   [Arguments("dapper")]
   public async Task WithSeveralInstancesRunning_ARetiredObjectIsDroppedAsync(string driverName) {
     var driver = StartupDriver.For(driverName);
     var first = await _startAsync(driver);
-    await _retiredIndexSeenAsync(driver);
+    var second = await _retiredIndexSeenAsync(driver);
+    Guid[] running = [_instanceId(first), _instanceId(second)];
+    await _execAsync("UPDATE wh_service_instances SET last_heartbeat_at = now() - interval '1 hour'");
+    var peers = new RunningPeersBeatAtEachStage(_database.ConnectionString, running);
 
-    await _startAsync(driver);
+    var third = _compose(driver, configure: s => s.AddSingleton<IStartupStageReporter>(peers));
+    await _initializer(third).StartAsync(CancellationToken.None);
 
+    Guid[] everyInstance = [.. running, _instanceId(third)];
+    await Assert.That(peers.BeatAt).IsNotEmpty().Because("the judging start reported its stages, and the running instances beat at each");
+    if (driverName == "efcore") {
+      await Assert.That(peers.BeatAt).Contains(StartupStage.Converge)
+        .Because("they beat on entering Converge, the stage whose reconcile reads the liveness rule");
+    }
     await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_service_instances")).IsGreaterThanOrEqualTo(3L)
       .Because("every earlier instance is still running");
-    var firstDeclared = await _scalarAsync<long>(
-      "SELECT count(*) FROM wh_managed_object_declarations WHERE instance_id = $1",
-      first.GetRequiredService<IServiceInstanceProvider>().InstanceId);
-    await Assert.That(firstDeclared).IsEqualTo(1L).Because("each running instance has reported what it declares");
+    await Assert.That(await _scalarAsync<long>(
+        "SELECT count(*) FROM wh_managed_object_declarations WHERE instance_id = ANY($1)", everyInstance))
+      .IsEqualTo(3L).Because("each running instance has reported what it declares, and none of it was forgotten as a dead one's");
     await Assert.That(await _existsAsync(driver.Retired)).IsFalse()
       .Because("no running instance declares it, so the fleet gate lets the drop through (#1253)");
+  }
+
+  private static Guid _instanceId(IServiceProvider instance) =>
+    instance.GetRequiredService<IServiceInstanceProvider>().InstanceId;
+
+  /// <summary>
+  /// Stands in for the heartbeat of instances that are running but whose heartbeat worker this test does not start:
+  /// at every stage the start it reports for enters or skips, each beats on the database clock, so they have beaten at
+  /// the last report before the reconcile that reads the liveness rule (Converge on EF Core). The initializer awaits
+  /// its reporter on every transition, as it does the host's own.
+  /// </summary>
+  private sealed class RunningPeersBeatAtEachStage(string connectionString, Guid[] running) : IStartupStageReporter {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<StartupStage> _beats = new();
+    public IReadOnlyCollection<StartupStage> BeatAt => _beats;
+    public StartupStageSnapshot? Current { get; private set; }
+
+    public ValueTask EnterAsync(StartupStage stage, string message, CancellationToken cancellationToken = default) {
+      Current = new StartupStageSnapshot(stage, message, false, DateTimeOffset.UnixEpoch);
+      return _beatAsync(stage, cancellationToken);
+    }
+
+    public ValueTask SkipAsync(StartupStage stage, string reason, CancellationToken cancellationToken = default) {
+      Current = new StartupStageSnapshot(stage, "skipped: " + reason, true, DateTimeOffset.UnixEpoch);
+      return _beatAsync(stage, cancellationToken);
+    }
+
+    public ValueTask InstanceRegisteredAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
+    private async ValueTask _beatAsync(StartupStage stage, CancellationToken cancellationToken) {
+      await using var db = new NpgsqlConnection(connectionString);
+      await db.OpenAsync(cancellationToken);
+      await using var beat = new NpgsqlCommand(
+        "UPDATE wh_service_instances SET last_heartbeat_at = now() WHERE instance_id = ANY($1)", db);
+      beat.Parameters.AddWithValue(running);
+      await beat.ExecuteNonQueryAsync(cancellationToken);
+      _beats.Enqueue(stage);
+    }
   }
 
   [Test]
