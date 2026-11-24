@@ -173,6 +173,137 @@ public class DapperMigratorElectionTests {
   }
 
   /// <summary>
+  /// The duty a schema initialization holds is created on the host's clock and role options, and holds nothing until an
+  /// election decides: with no host at all it reads the defaults.
+  /// </summary>
+  [Test]
+  public async Task CreateDuty_ReadsTheHostsClockAndRoleOptions_AndHoldsNothingAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<TimeProvider>(new FakeTimeProvider());
+    services.Configure<RoleAssignmentOptions>(o => o.MigratorStallLimit = TimeSpan.FromMinutes(3));
+    await using var host = services.BuildServiceProvider();
+
+    await using var hosted = MigratorElection.CreateDuty(host, 600);
+    await using var bare = MigratorElection.CreateDuty(null, 600);
+
+    foreach (var duty in new[] { hosted, bare }) {
+      await Assert.That(duty.Stage).IsEqualTo(SchemaStage.Unstaged);
+      await Assert.That(duty.Grant).IsNull();
+      await Assert.That(duty.IsKeptAlive).IsFalse().Because("nothing is renewed before an election grants a duty");
+    }
+  }
+
+  /// <summary>The election as a driver calls it, over this test's database, with the given closure.</summary>
+  private MigratorElectionRequest _request(IReadOnlyList<(string Name, string Sql)> closure) => new(
+    () => new NpgsqlConnection(_database.ConnectionString), "public", SchemaInitializationLockKey.Compute("public"), closure,
+    600, (_, _) => Task.FromResult(false));
+
+  /// <summary>The whole closure the Dapper driver applies, rendered for <c>public</c>.</summary>
+  private async Task<IReadOnlyList<(string Name, string Sql)>> _closureAsync() =>
+    (await new PostgresSchemaInitializer(_database.ConnectionString).ElectionClosureAsync(CancellationToken.None)).Scripts;
+
+  private static ServiceProvider _host(IServiceInstanceProvider identity, IStartupStageReporter? stages = null) {
+    var services = new ServiceCollection();
+    services.AddSingleton(identity);
+    if (stages is not null) {
+      services.AddSingleton(stages);
+    }
+    return services.BuildServiceProvider();
+  }
+
+  /// <summary>
+  /// A closure that leaves the database unable to hold an election (here, only migration 000's region) is not a
+  /// failure: the instance is unstaged, migrates under the schema lock as before any election existed, and Elect is
+  /// reported skipped.
+  /// </summary>
+  [Test]
+  public async Task AClosureThatCannotElect_LeavesTheInstanceUnstaged_AndElectSkippedAsync() {
+    var closure = (await _closureAsync()).Where(s => s.Name.StartsWith("000", StringComparison.Ordinal)).ToList();
+    var stages = new RecordedStages();
+    await using var host = _host(new Identity("svc"), stages);
+    await using var duty = MigratorElection.CreateDuty(host, 600);
+
+    var staging = await MigratorElection.StageAsync(duty, _request(closure), host, logger: null, CancellationToken.None);
+
+    await Assert.That(closure).Count().IsEqualTo(1).Because("a positive control: the closure is cut to migration 000's region");
+    await Assert.That(staging.Stage).IsEqualTo(SchemaStage.Unstaged);
+    await Assert.That(stages.Calls).IsEquivalentTo(["Skip Elect"]).Because("nothing was registered or voted for");
+  }
+
+  /// <summary>
+  /// An instance the registry refuses (its row cannot be written) is never elected and never fails the start: it is
+  /// unstaged, so it migrates under the schema lock, and says why.
+  /// </summary>
+  [Test]
+  public async Task AnInstanceTheRegistryRefuses_IsUnstaged_NotFailedAsync() {
+    var stages = new RecordedStages();
+    await using var host = _host(new Identity(serviceName: null!), stages);
+    await using var duty = MigratorElection.CreateDuty(host, 600);
+
+    var staging = await MigratorElection.StageAsync(duty, _request(await _closureAsync()), host, logger: null, CancellationToken.None);
+
+    await Assert.That(staging.Stage).IsEqualTo(SchemaStage.Unstaged);
+    await Assert.That(staging.Detail).IsEqualTo("this instance could not join the registry");
+    await Assert.That(stages.Calls).IsEquivalentTo(["Enter Preflight", "Skip Elect"]);
+  }
+
+  /// <summary>
+  /// Anything the election did not foresee (here, the stage reporter failing as the vote begins) is kept out of the
+  /// startup path: the instance is unstaged and holds no duty.
+  /// </summary>
+  [Test]
+  public async Task AnUnforeseenFailureInTheElection_LeavesTheInstanceUnstaged_HoldingNothingAsync() {
+    var stages = new RecordedStages { FailOnVote = true };
+    await using var host = _host(new Identity("svc"), stages);
+    await using var duty = MigratorElection.CreateDuty(host, 600);
+
+    var staging = await MigratorElection.StageAsync(duty, _request(await _closureAsync()), host, logger: null, CancellationToken.None);
+
+    await Assert.That(staging.Stage).IsEqualTo(SchemaStage.Unstaged);
+    await Assert.That(duty.Grant).IsNull();
+    await Assert.That(stages.Calls).IsEquivalentTo(["Enter Preflight", "Enter Elect", "Skip Elect"]);
+  }
+
+  private sealed class Identity(string serviceName) : IServiceInstanceProvider {
+    public Guid InstanceId { get; } = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    public string ServiceName => serviceName;
+    public string HostName => "election-host";
+    public int ProcessId => 7;
+    public ServiceInstanceInfo ToInfo() => new() {
+      InstanceId = InstanceId,
+      ServiceName = ServiceName,
+      HostName = HostName,
+      ProcessId = ProcessId,
+    };
+  }
+
+  /// <summary>Records each stage by kind and name; optionally fails as the vote begins.</summary>
+  private sealed class RecordedStages : IStartupStageReporter {
+    private readonly ConcurrentQueue<string> _calls = new();
+
+    public bool FailOnVote { get; init; }
+
+    public List<string> Calls => [.. _calls];
+
+    public StartupStageSnapshot? Current => null;
+
+    public ValueTask EnterAsync(StartupStage stage, string message, CancellationToken cancellationToken = default) {
+      _calls.Enqueue($"Enter {stage}");
+      if (FailOnVote && stage == StartupStage.Elect) {
+        throw new InvalidOperationException("the stage reporter failed as the vote began");
+      }
+      return ValueTask.CompletedTask;
+    }
+
+    public ValueTask SkipAsync(StartupStage stage, string reason, CancellationToken cancellationToken = default) {
+      _calls.Enqueue($"Skip {stage}");
+      return ValueTask.CompletedTask;
+    }
+
+    public ValueTask InstanceRegisteredAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+  }
+
+  /// <summary>
   /// Watches one instance's schema initialization: each committed step, and the wait for another instance. Holds the
   /// pass at the first step at or past <c>holdFrom</c> until released, standing in for a migrator mid-migration.
   /// </summary>

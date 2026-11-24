@@ -158,6 +158,52 @@ public sealed class PostgresSchemaInitializer {
   internal bool ApplicationHeld { get; set; }
 
   /// <summary>
+  /// The migrator duty this instance holds while its pass runs (#2561), set by the runner once the shared election made
+  /// this instance the migrator. The pass marks its connection's backend as the duty's, so the assignment stays live
+  /// while one long migration statement runs past its lease; null marks nothing.
+  /// </summary>
+  internal IDutyGrant? MigratorGrant { get; set; }
+
+  /// <summary>
+  /// What the shared migrator election needs from this driver (#2561): the schema this initialization installs into
+  /// (created when the connection string names one that does not exist), and the bootstrap closure: the core tables,
+  /// then the marked regions of the library's migrations rendered for that schema, in order.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The schema, and the closure.</returns>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMigratorElectionTests.cs:TwoInstancesStarting_OneMigrates_TheOtherWaitsForIt_ThenServesAsync</tests>
+  internal async Task<(string Schema, IReadOnlyList<(string Name, string Sql)> Scripts)> ElectionClosureAsync(
+      CancellationToken cancellationToken) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    var schema = await _targetSchemaAsync(connection, cancellationToken);
+    if (_rendersForTargetSchema) {
+      _migrationProvider = new PostgresMigrationProvider(typeof(PostgresMigrationProvider).Assembly, schema);
+    }
+    // Unqualified, as this driver's pass applies them: the bootstrap runs them under a search path set to the schema.
+    List<(string Name, string Sql)> scripts = [
+      ("core-infrastructure-tables", PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(
+        new SchemaConfiguration(InfrastructurePrefix: "wh_", PerspectivePrefix: "wh_per_"))),
+      .. MigrationBootstrapClosure.RegionsOf(_migrationProvider),
+    ];
+    return (schema, scripts);
+  }
+
+  /// <summary>
+  /// The start of an instance whose migrator finished the schema while it waited (#2561): no schema lock and no pass,
+  /// only what follows the schema work on every start (the managed-object reconcile and the storage settings). This
+  /// instance registered when it voted.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes once the schema converged.</returns>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMigratorElectionTests.cs:TwoInstancesStarting_OneMigrates_TheOtherWaitsForIt_ThenServesAsync</tests>
+  internal async Task ConvergeMigratedAsync(CancellationToken cancellationToken) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+    await _convergeAsync(connection, await _targetSchemaAsync(connection, cancellationToken), cancellationToken);
+  }
+
+  /// <summary>
   /// Initializes the Whizbang schema by generating SQL from C# schema definitions.
   /// Optionally executes perspective schema SQL if provided.
   /// Uses hash-based change detection to skip unchanged migrations.
@@ -177,6 +223,10 @@ public sealed class PostgresSchemaInitializer {
     if (_rendersForTargetSchema) {
       _migrationProvider = new PostgresMigrationProvider(typeof(PostgresMigrationProvider).Assembly, schema);
     }
+    // #2561: the migrator marks this connection's backend as its duty's, committed before any migration transaction, so
+    // the assignment stays live while one long statement runs here past its lease. Nothing for any other instance.
+    await using var migratorBackend = await Whizbang.Data.Postgres.Notifications.PgRoleElector.MarkDutyBackendAsync(
+      connection, MigratorGrant, cancellationToken);
 
     // Everything up to the managed-object reconcile runs under the schema initialization lock, the key the EF Core
     // driver's DDL transaction takes, so instances starting together migrate one after the other.
@@ -256,8 +306,8 @@ public sealed class PostgresSchemaInitializer {
   /// <summary>
   /// Rolls the schema back to this binary's version (#2122): the rollback <c>Assess</c> decided on, run before the schema
   /// pass, under the schema lock, in one transaction, from the reverse scripts the newer version stored in the ledger
-  /// (<see cref="SchemaRollback"/>). This driver holds no election, so the schema lock alone keeps it to one instance; it
-  /// decides again under the lock, so an instance that waited finds nothing left to reverse.
+  /// (<see cref="SchemaRollback"/>). The runner calls it on the instance doing the schema work (#2561); it decides again
+  /// under the lock, so an instance that could not be staged and waited for the lock finds nothing left to reverse.
   /// </summary>
   /// <param name="plan">The rollback Assess decided on.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
@@ -688,7 +738,7 @@ public sealed class PostgresSchemaInitializer {
   /// Optionally executes perspective schema SQL if provided.
   /// </summary>
   public void InitializeSchema() {
-    InitializeSchemaAsync().GetAwaiter().GetResult();
+    InitializeSchemaAsync(CancellationToken.None).GetAwaiter().GetResult();
   }
 
   /// <summary>
