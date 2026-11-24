@@ -22,7 +22,7 @@ namespace Whizbang.Core.Messaging;
 /// the execution context, so work the body starts and awaits (a local receptor of what it publishes) is part of it.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+/// <docs>fundamentals/dispatcher/message-cascade#every-dispatch-path-derives</docs>
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorHandlingTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDerivedIdentityInHandlingTests.cs</tests>
 internal static class ReceptorHandling {

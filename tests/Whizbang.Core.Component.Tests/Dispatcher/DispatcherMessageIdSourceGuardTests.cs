@@ -19,7 +19,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// The behavioral side is <c>DispatchSurfaceDerivedIdentityComponentTests</c>, one probe per dispatch method. Each scan
 /// here is checked against a site it must find, so a scan that reads the wrong file fails instead of passing on nothing.
 /// </remarks>
-/// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+/// <docs>fundamentals/dispatcher/message-cascade#every-dispatch-path-derives</docs>
 [Category("Dispatcher")]
 [Category("Messaging")]
 public partial class DispatcherMessageIdSourceGuardTests {

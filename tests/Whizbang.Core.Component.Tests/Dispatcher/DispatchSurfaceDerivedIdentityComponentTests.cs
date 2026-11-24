@@ -34,7 +34,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// dispatcher creates a message id in one place.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Dispatcher.cs</code-under-test>
-/// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+/// <docs>fundamentals/dispatcher/message-cascade#every-dispatch-path-derives</docs>
 [Category("Dispatcher")]
 [Category("Messaging")]
 public class DispatchSurfaceDerivedIdentityComponentTests {

@@ -31,7 +31,7 @@ namespace Whizbang.Core.Messaging;
 /// layout changes the id a redelivery across the deploy sends under.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+/// <docs>fundamentals/dispatcher/message-cascade#every-dispatch-path-derives</docs>
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/SentMessageIdentityTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSendPathsDerivedIdentityTests.cs</tests>
 public static class SentMessageIdentity {

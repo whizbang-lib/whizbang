@@ -51,7 +51,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 ///   right path per stream within the same claim call.</description></item>
 /// </list>
 /// </summary>
-/// <docs>fundamentals/work-coordinator/stream-ownership</docs>
+/// <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
 [Category("Shard3")]
 public class ClaimOrphanedDeadlockMitigationSqlTests : EFCoreTestBase {
 

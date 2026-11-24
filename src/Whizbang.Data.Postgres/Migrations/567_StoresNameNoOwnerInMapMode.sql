@@ -788,7 +788,7 @@ SELECT __SCHEMA__.drop_all_overloads('store_perspective_events');
 -- store_perspective_events: last word 022, redefined as the perspective work store with the event-store chain's
 -- rules (partition, Stored status, priority, the lease routing, the rewind of a late event and the doorbell), and with
 -- dead-letter recovery as one more arrival (#1722). Signature unchanged.
--- <docs>fundamentals/work-coordinator/stream-ownership</docs>
+-- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveEventsPartitionSqlTests.cs:StorePerspectiveEvents_PopulatesPartitionNumberAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredWorkReentrySqlTests.cs:ARecoveredPerspectiveWorkRow_IsStoredInTheShapeTheEventStoreChainStoresItInAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredWorkReentrySqlTests.cs:ARecoveredPerspectiveEvent_BehindItsCursor_FlagsTheCursorForRewindAsync</tests>

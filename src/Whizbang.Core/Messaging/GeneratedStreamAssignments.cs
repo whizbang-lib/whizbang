@@ -30,7 +30,7 @@ namespace Whizbang.Core.Messaging;
 /// generating a second one (#2552).
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+/// <docs>fundamentals/dispatcher/message-cascade#every-dispatch-path-derives</docs>
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/GeneratedStreamAssignmentsTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDerivedIdentityInHandlingTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchTangentialParityComponentTests.cs</tests>

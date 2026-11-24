@@ -20,7 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// emitted it). Written in one batch, the cause must still take the lower version.
 /// </summary>
 /// <docs>fundamentals/event-store/version-ordering#emission-order</docs>
-/// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+/// <docs>fundamentals/dispatcher/message-cascade#every-dispatch-path-derives</docs>
 [Category("Shard5")]
 public class EmissionOrderVersioningSqlTests : EFCoreTestBase {
   private const string TOPIC = "emission-order-topic";

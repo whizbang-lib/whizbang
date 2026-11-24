@@ -3418,7 +3418,7 @@ public abstract partial class Dispatcher(
   /// re-derives the same ids and the store's primary keys turn the second copy into a counted no-op
   /// instead of a republish. A root emission with no source keeps a fresh time-ordered id.
   /// </summary>
-  /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+  /// <docs>fundamentals/dispatcher/message-cascade#every-dispatch-path-derives</docs>
   /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherEmissionIdentityTests.cs</tests>
   private Guid _mintEmissionId(IMessageEnvelope? sourceEnvelope, Type emittedType) {
     // With no source envelope, an emission made inside a receptor's handling is that handling's (#2543)
@@ -3468,7 +3468,7 @@ public abstract partial class Dispatcher(
   /// under) all name the stream the first of them minted (#2539). That path reads one ambient value and one table
   /// entry and allocates nothing, so generating the stream costs the void local invoke nothing.
   /// </summary>
-  /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+  /// <docs>fundamentals/dispatcher/message-cascade#every-dispatch-path-derives</docs>
   /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDerivedIdentityInHandlingTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherLocalInvokeGeneratedStreamAllocationTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchTangentialParityComponentTests.cs</tests>
@@ -3521,7 +3521,7 @@ public abstract partial class Dispatcher(
   /// does not shift the handling's event ids. A batch creates its items' ids in item order, so each item derives at its
   /// own position. Outside a handling it is minted, as before.
   /// </summary>
-  /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+  /// <docs>fundamentals/dispatcher/message-cascade#every-dispatch-path-derives</docs>
   /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDerivedIdentityInHandlingTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherSendPathsDerivedIdentityTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchSurfaceDerivedIdentityComponentTests.cs</tests>
@@ -5312,7 +5312,7 @@ public abstract partial class Dispatcher(
   /// <param name="sourceEnvelope">The cascade's source envelope, or null.</param>
   /// <param name="eventId">The id the dispatcher gave the cascade, or null.</param>
   /// <returns>The id to write the copy under.</returns>
-  /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+  /// <docs>fundamentals/dispatcher/message-cascade#every-dispatch-path-derives</docs>
   /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherCoverageSweepOutboxTests.cs:CascadeMessageIdFor_TakesTheGivenIdOrDerivesFromTheSourceOrTheHandlingAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_CascadeToOutbox_CallsPublishToOutboxWithMessageIdAsync</tests>
   protected MessageId CascadeMessageIdFor(IMessage message, IMessageEnvelope? sourceEnvelope, Guid? eventId) =>

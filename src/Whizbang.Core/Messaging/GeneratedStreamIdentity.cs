@@ -27,7 +27,7 @@ namespace Whizbang.Core.Messaging;
 /// since #2543 (<see cref="SentMessageIdentity"/>).
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+/// <docs>fundamentals/dispatcher/message-cascade#every-dispatch-path-derives</docs>
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/GeneratedStreamIdentityTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDerivedIdentityInHandlingTests.cs</tests>
 public static class GeneratedStreamIdentity {
