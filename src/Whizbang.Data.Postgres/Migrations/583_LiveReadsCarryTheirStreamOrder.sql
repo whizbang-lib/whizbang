@@ -491,7 +491,8 @@ BEGIN
   -- the wide row to apply the same predicate. i.* is enumerated rather than starred because the
   -- moved columns are no longer on wh_inbox and a star would silently change the result shape.
   RETURN QUERY
-  WITH candidates AS (
+  -- Materialized, so each row's stored version is probed once however often the ranking below reads it.
+  WITH candidates AS MATERIALIZED (
     SELECT
       i.message_id,
       ist.stream_id,
