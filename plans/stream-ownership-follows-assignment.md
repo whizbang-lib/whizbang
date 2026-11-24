@@ -220,3 +220,20 @@ EXPLAIN before and after.
    minimum release.
 3. **Partition count**: fixed at 10,000. Changing it later re-partitions every stream, which is a migration on its
    own.
+
+## 7. Progress (2026-11-24)
+
+Phases 4 (#2556) and 5 (#2557) are built in the wave 11 bundle, and the switch defaults on.
+
+- Fencing: migrations 570 and 572. Claims project each row's epoch in the claim's own statement; one ledger per process
+  (`PartitionTenures`) records claimed and fetched work, and the coordinator names the epoch on every completion,
+  failure, cursor, publish mark and handler commit. Perspective rows are fenced in the set-based sink (`Fenced`) and the
+  per-pair upsert (`PartitionOwnershipLostException`).
+- Handover: migration 571 (publish sets `handing_over`, acknowledgement, deadline completion, renewals scoped).
+  `PartitionHandoverWorker` hands a partition over once no participant works its streams, after the write-behind models
+  there are saved and the queued writes land; a fenced write-behind flush drops the model.
+- Graceful leave: the handover worker is a held-work releaser, so a stopping instance hands its partitions over before it
+  releases its roles and deregisters.
+- The stuck-work rule (3.7, #724) is not needed for ownership safety: in map mode a release returns rows to their owner,
+  and rows that keep failing still reach the dead-letter path through the attempt limits. Left for a later liveness change.
+- `PartitionAssigner.OwnershipByMap` defaults on, bound from `Whizbang:Database:PartitionAssigner:OwnershipByMap`.

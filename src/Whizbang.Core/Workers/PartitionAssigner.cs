@@ -32,14 +32,17 @@ public sealed class PartitionAssignerOptions {
   /// <summary>
   /// Whether the assigner turns ownership by map on for this service (#2555): once every live instance of the service
   /// supports it, the assigner writes the service's one-way switch, and from then on every claim decides through the
-  /// partition ownership table alone (<c>wh_i_own</c>), with no stored owner and no ranking of its own. Default false:
-  /// the handover and fencing that make a moved partition safe arrive in later phases of #2540, and the default turns on
-  /// with them. The ownership table is written with every publish either way, so it is ready when the switch flips.
+  /// partition ownership table alone (<c>wh_i_own</c>), with no stored owner and no ranking of its own; a moved partition
+  /// is handed over (#2557) and a stale owner's writes are fenced (#2556). Default true. The switch still waits for every
+  /// live instance of the service to support the mode, so a rolling deploy of mixed releases keeps the stored-owner rules
+  /// until the last older instance is gone. False keeps the stored-owner rules. Bound from
+  /// <c>Whizbang:Database:PartitionAssigner:OwnershipByMap</c>.
   /// </summary>
   /// <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerWorkerTests.cs:Options_OwnershipByMap_DefaultsOn_AndTheDefaultStillWaitsForEveryInstanceAsync</tests>
   /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerWorkerTests.cs:Tick_WithOwnershipByMapOff_NeverAsksForTheSwitchAsync</tests>
-  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerWorkerTests.cs:Tick_WithOwnershipByMapOn_AsksForTheSwitchAfterPublishing_AtItsEpochAsync</tests>
-  public bool OwnershipByMap { get; set; }
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignerRegistrationTests.cs:AddWhizbangPostgresNotifications_BindsEveryAssignerKeyFromConfigurationAsync</tests>
+  public bool OwnershipByMap { get; set; } = true;
 
   /// <summary>
   /// How long a membership change is collected before one new map is published (#2558): the window runs from the first
