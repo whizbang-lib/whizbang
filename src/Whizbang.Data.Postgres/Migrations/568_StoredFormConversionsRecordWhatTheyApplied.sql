@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 570_StoredFormConversionsRecordWhatTheyApplied.sql
+-- Migration: 568_StoredFormConversionsRecordWhatTheyApplied.sql
 -- Date: 2026-11-23
 -- Description: A stored-form conversion records what it applied, as a content hash, beside who applied it (#2553).
 --
