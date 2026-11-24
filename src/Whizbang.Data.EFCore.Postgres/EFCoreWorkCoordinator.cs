@@ -487,8 +487,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public Task<int> CompleteOutboxPublishedAsync(
+    IReadOnlyList<Guid> ids, bool debugMode, CancellationToken cancellationToken = default) =>
+    CompleteOutboxPublishedAsync(ids, epochs: null, debugMode, cancellationToken);
+
+  /// <inheritdoc />
   public async Task<int> CompleteOutboxPublishedAsync(
-    IReadOnlyList<Guid> ids, bool debugMode, CancellationToken cancellationToken = default) {
+    IReadOnlyList<Guid> ids, IReadOnlyList<long?>? epochs, bool debugMode, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(ids);
     if (ids.Count == 0) {
       return 0;
@@ -503,10 +508,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCoordinatorCommand();
-    cmd.CommandText = $"SELECT {functionName}(@p_ids, @p_debug_mode)";
+    cmd.CommandText = $"SELECT {functionName}(@p_ids, @p_debug_mode, @p_epochs)";
     cmd.Parameters.Add(new NpgsqlParameter(P_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArray });
     cmd.Parameters.Add(new NpgsqlParameter("p_debug_mode", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = debugMode });
-    var result = await cmd.ExecuteScalarAsync(cancellationToken);
+    // 570 (#2556): the epoch each id was claimed under; a completion under one that moved on is fenced and reported.
+    cmd.Parameters.Add(EpochsParameter("p_epochs", epochs));
+    object? result;
+    using (Whizbang.Data.Postgres.CoordinatorOwnershipNotices.WatchFencedWrites(conn, _metrics, _logger, nameof(CompleteOutboxPublishedAsync))) {
+      result = await cmd.ExecuteScalarAsync(cancellationToken);
+    }
     // Slice 5 of zero-idle-polling — piggyback an opportunistic heartbeat row
     // UPDATE so that during continuous work-completion activity the pod's
     // last_heartbeat_at stays fresh without waiting for the 30 s timer-driven
@@ -3593,9 +3603,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public Task CompletePerspectiveAsync(
+    IReadOnlyList<PerspectiveCursorCompletion> cursors,
+    IReadOnlyList<Guid> eventWorkIds,
+    bool debugMode,
+    CancellationToken cancellationToken = default) =>
+    CompletePerspectiveAsync(cursors, eventWorkIds, eventWorkEpochs: null, debugMode, cancellationToken);
+
+  /// <inheritdoc />
   public async Task CompletePerspectiveAsync(
     IReadOnlyList<PerspectiveCursorCompletion> cursors,
     IReadOnlyList<Guid> eventWorkIds,
+    IReadOnlyList<long?>? eventWorkEpochs,
     bool debugMode,
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(cursors);
@@ -3615,11 +3634,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCoordinatorCommand();
-    cmd.CommandText = $"SELECT {functionName}(@p_cursors::jsonb, @p_ids, @p_debug_mode)";
+    cmd.CommandText = $"SELECT {functionName}(@p_cursors::jsonb, @p_ids, @p_debug_mode, @p_epochs)";
     cmd.Parameters.Add(new NpgsqlParameter("p_cursors", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = cursorsJson });
     cmd.Parameters.Add(new NpgsqlParameter(P_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArray });
     cmd.Parameters.Add(new NpgsqlParameter("p_debug_mode", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = debugMode });
-    _ = await cmd.ExecuteScalarAsync(cancellationToken);
+    // 570 (#2556): the work ids' epochs; each cursor names its own.
+    cmd.Parameters.Add(EpochsParameter("p_epochs", eventWorkEpochs));
+    using (Whizbang.Data.Postgres.CoordinatorOwnershipNotices.WatchFencedWrites(conn, _metrics, _logger, nameof(CompletePerspectiveAsync))) {
+      _ = await cmd.ExecuteScalarAsync(cancellationToken);
+    }
     // #720: the hot call queued its doorbells instead of notifying inside its transaction; ring them now,
     // after the commit, on their own autocommit so no notifying commit waits on another.
     await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
@@ -3647,12 +3670,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCoordinatorCommand();
-    cmd.CommandText = $"SELECT {functionName}(@p_outbox, @p_cursors::jsonb, @p_persp, @p_fail::jsonb)";
+    cmd.CommandText = $"SELECT {functionName}(@p_outbox, @p_cursors::jsonb, @p_persp, @p_fail::jsonb, @p_outbox_epochs, @p_persp_epochs)";
     cmd.Parameters.Add(new NpgsqlParameter("p_outbox", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = outboxIds });
     cmd.Parameters.Add(new NpgsqlParameter("p_cursors", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = cursorsJson });
     cmd.Parameters.Add(new NpgsqlParameter("p_persp", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = perspIds });
     cmd.Parameters.Add(new NpgsqlParameter("p_fail", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = failuresJson });
-    _ = await cmd.ExecuteScalarAsync(cancellationToken);
+    // 570 (#2556): the epoch each id was claimed under; failures and cursors name their own.
+    cmd.Parameters.Add(EpochsParameter("p_outbox_epochs", request.OutboxEpochs));
+    cmd.Parameters.Add(EpochsParameter("p_persp_epochs", request.PerspectiveEventWorkEpochs));
+    using (Whizbang.Data.Postgres.CoordinatorOwnershipNotices.WatchFencedWrites(conn, _metrics, _logger, nameof(FlushCompletionsAsync))) {
+      _ = await cmd.ExecuteScalarAsync(cancellationToken);
+    }
     // #720: ring the doorbells the flush queued, after its commit.
     await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
   }
@@ -3792,15 +3820,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "claim_work");
     var outstandingFn = BuildSchemaQualifiedName(schema, "count_outstanding_work");
+    // 570 (#2556): each row carries the epoch this instance holds its partition at, read in the claim's own statement
+    // (ClaimedTenures.ProjectEpochs).
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCoordinatorCommand();
-    cmd.CommandText =
-      "SELECT source, work_id, work_stream_id, partition_number, destination, message_type, " +
-      "envelope_type, message_data, metadata, status, attempts, is_newly_stored, is_orphaned, " +
-      $"perspective_name, priority, received_at FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after, @p_outbox_rows, @p_outbox_run, @p_assignment_epoch, @p_assignment_revision, @p_alive_lock_held, @p_lifecycle_phase, @p_acquire_inbox)";
+    cmd.CommandText = Whizbang.Data.Postgres.ClaimedTenures.ProjectEpochs(
+      Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema),
+      "c.source, c.work_id, c.work_stream_id, c.partition_number, c.destination, c.message_type, c.envelope_type, "
+      + "c.message_data, c.metadata, c.status, c.attempts, c.is_newly_stored, c.is_orphaned, c.perspective_name, c.priority, "
+      + "c.received_at",
+      $"{functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after, @p_outbox_rows, @p_outbox_run, @p_assignment_epoch, @p_assignment_revision, @p_alive_lock_held, @p_lifecycle_phase, @p_acquire_inbox)",
+      "@p_id", "@p_part");
     if (request.IncludeOutstanding) {
       // #635: the outstanding-budget counts ride the claim's round trip as a second result set,
       // from the same snapshot, instead of a separate per-cycle call. Untruncated by design: they
@@ -3863,7 +3896,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var registrationStale = false;
     // 203 (#1254): the cached partition assignment was superseded or expired; the claim ranked itself.
     var assignmentStale = false;
+    // #2554: in map mode the claim found no valid partition map, so it claimed nothing and the instance waits.
+    var mapUnavailable = false;
     void OnClaimNotice(object? sender, NpgsqlNoticeEventArgs e) {
+      mapUnavailable |= string.Equals(e.Notice.MessageText, Whizbang.Data.Postgres.CoordinatorOwnershipNotices.PARTITION_MAP_UNAVAILABLE, StringComparison.Ordinal);
       outboxAcquisitionFull |= string.Equals(e.Notice.MessageText, OutboxClaimNotices.ACQUISITION_FULL, StringComparison.Ordinal);
       registrationStale |= string.Equals(e.Notice.MessageText, OutboxClaimNotices.REGISTRATION_STALE, StringComparison.Ordinal);
       assignmentStale |= string.Equals(e.Notice.MessageText, OutboxClaimNotices.PARTITION_ASSIGNMENT_STALE, StringComparison.Ordinal);
@@ -3892,7 +3928,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
           PerspectiveName = null,
           // 150: the inbox row's priority and arrival, folded per stream below for the batch hooks.
           Priority = await reader.IsDBNullAsync(14, cancellationToken) ? null : reader.GetInt32(14),
-          ReceivedAt = await reader.IsDBNullAsync(15, cancellationToken) ? null : await reader.GetFieldValueAsync<DateTimeOffset>(15, cancellationToken)
+          ReceivedAt = await reader.IsDBNullAsync(15, cancellationToken) ? null : await reader.GetFieldValueAsync<DateTimeOffset>(15, cancellationToken),
+          // 570 (#2556): null unless the service owns by map.
+          PartitionEpoch = await reader.IsDBNullAsync(16, cancellationToken) ? null : reader.GetInt64(16),
+          TenurePartition = await reader.IsDBNullAsync(17, cancellationToken) ? null : reader.GetInt32(17)
         });
       }
       if (request.IncludeOutstanding && await reader.NextResultAsync(cancellationToken)
@@ -3906,6 +3945,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     } finally {
       conn.Notice -= OnClaimNotice;
     }
+    // #2554: a claim that waited for a map is counted, and warned once per streak; one that had a map ends the streak.
+    Whizbang.Data.Postgres.CoordinatorOwnershipNotices.ReportPartitionMap(mapUnavailable, _metrics, _logger);
     if (rows.Count > 0) {
       // #720: a claim that leased or re-emitted work may have queued ownership doorbells; ring them
       // after its commit. An empty claim queued nothing and skips the round trip.
@@ -3935,7 +3976,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
       Outstanding = outstanding,
       OutboxAcquisitionFull = outboxAcquisitionFull,
       InstanceRegistrationStale = registrationStale,
-      PartitionAssignmentStale = assignmentStale
+      PartitionAssignmentStale = assignmentStale,
+      PartitionMapUnavailable = mapUnavailable,
+      StreamEpochs = ClaimedTenures.Epochs(rows, r => r.StreamId, r => r.PartitionEpoch),
+      StreamPartitions = ClaimedTenures.Partitions(rows, r => r.StreamId, r => r.PartitionEpoch is null ? null : r.TenurePartition)
     };
   }
 
@@ -3957,7 +4001,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var cmd = conn.CreateCoordinatorCommand();
     cmd.CommandText = $"SELECT {functionName}(@p_request::jsonb)";
     cmd.Parameters.Add(new NpgsqlParameter("p_request", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = payload });
-    _ = await cmd.ExecuteScalarAsync(cancellationToken);
+    // 570 (#2556): a commit under an epoch that moved on commits nothing; it is counted and logged, never silent.
+    using (Whizbang.Data.Postgres.CoordinatorOwnershipNotices.WatchFencedWrites(conn, _metrics, _logger, nameof(CommitHandlerResultAsync))) {
+      _ = await cmd.ExecuteScalarAsync(cancellationToken);
+    }
     // #720: ring the doorbells the commit queued, after the commit.
     await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
   }
@@ -3996,12 +4043,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var results = new List<HandlerBatchResult>(requests.Count);
     var fellBack = false;
     string? bulkError = null;
+    using (Whizbang.Data.Postgres.CoordinatorOwnershipNotices.WatchFencedWrites(conn, _metrics, _logger, nameof(CommitHandlerBatchAsync)))
     await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken)) {
       while (await reader.ReadAsync(cancellationToken)) {
         results.Add(new HandlerBatchResult(
           HandlerId: reader.GetGuid(0),
           Success: reader.GetBoolean(1),
-          ErrorMessage: await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetString(2)));
+          ErrorMessage: await reader.IsDBNullAsync(2, cancellationToken) ? null : reader.GetString(2),
+          // 570 (#2556): tier 0 is the fenced outcome: nothing committed, and the message stays for the current owner.
+          Fenced: reader.GetInt32(3) == FENCED_TIER));
         if (!fellBack && reader.GetInt32(3) == 2) {
           fellBack = true;
           bulkError = await reader.IsDBNullAsync(4, cancellationToken) ? null : reader.GetString(4);
@@ -4036,6 +4086,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     sb.Append(",\"process_id\":").Append(request.ProcessId);
     sb.Append(",\"partition_count\":").Append(request.PartitionCount);
     sb.Append(",\"debug_mode\":").Append(_jsonBool(request.DebugMode));
+    // 570 (#2556): the epoch the message was claimed under; a commit under one that moved on commits nothing.
+    if (request.PartitionEpoch is { } partitionEpoch) {
+      sb.Append(",\"partition_epoch\":").Append(partitionEpoch.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
     sb.Append(",\"inbox_completion\":{")
       .Append("\"MessageId\":\"").Append(request.InboxCompletion.MessageId).Append("\",")
       .Append("\"Status\":").Append(request.InboxCompletion.Status)
@@ -4058,6 +4112,22 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorParameterBindingTests.cs</tests>
 #pragma warning disable RCS1158 // Static helper shared by every generic instantiation; it does not depend on TDbContext.
   internal static T[] AsArray<T>(IEnumerable<T> items) => items as T[] ?? [.. items];
+
+  /// <summary>The tier <c>commit_handler_batch</c> returns for a fenced item (570, #2556).</summary>
+  internal const int FENCED_TIER = 0;
+
+  /// <summary>
+  /// The bigint[] parameter carrying the partition epochs a write was made under (570, #2556): NULL when the caller names
+  /// none, so nothing is fenced.
+  /// </summary>
+  /// <param name="name">The parameter name.</param>
+  /// <param name="epochs">The epochs by position, or null.</param>
+  /// <returns>The parameter.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorOwnershipNoticesTests.cs:AFencedWrite_IsCountedByKind_AndLoggedAsync</tests>
+  internal static NpgsqlParameter EpochsParameter(string name, IReadOnlyList<long?>? epochs) =>
+    new(name, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+      Value = epochs is null ? DBNull.Value : AsArray(epochs)
+    };
 #pragma warning restore RCS1158
 
   // One JSON literal per bool, so every hand-written payload spells its flags the same way and the
@@ -7003,6 +7073,12 @@ internal class WorkBatchRow {
 
   [Column("perspective_name")]
   public string? PerspectiveName { get; set; }  // NULL for non-perspective work
+
+  /// <summary>570 (#2556): the epoch this instance held the row's partition at when it claimed it; null off map mode.</summary>
+  public long? PartitionEpoch { get; set; }
+
+  /// <summary>570 (#2556): the partition the epoch is of: the row's, or its stream's when the row names none.</summary>
+  public int? TenurePartition { get; set; }
 }
 
 /// <summary>

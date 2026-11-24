@@ -469,6 +469,25 @@ public interface IWorkCoordinator {
       $"{TypeNameFormatter.ForLog(GetType())} does not implement CompleteOutboxPublishedAsync.");
 
   /// <summary>
+  /// Marks outbox rows complete after a successful publish, each under the partition epoch it was claimed under (#2556).
+  /// In map mode an id whose epoch is no longer its partition's is not marked: it is reported fenced and stays for the
+  /// current owner. A store that does not fence ignores <paramref name="epochs"/>.
+  /// </summary>
+  /// <param name="ids">Outbox message ids whose transport publish succeeded.</param>
+  /// <param name="epochs">The epoch each id was claimed under, by position; null (or a null entry) names none.</param>
+  /// <param name="debugMode">From <see cref="IWorkCoordinatorStrategy.DebugMode"/> at the call site.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Number of rows actually affected.</returns>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorOwnershipNoticesTests.cs:AFencedWrite_IsCountedByKind_AndLoggedAsync</tests>
+  Task<int> CompleteOutboxPublishedAsync(
+    IReadOnlyList<Guid> ids,
+    IReadOnlyList<long?>? epochs,
+    bool debugMode,
+    CancellationToken cancellationToken = default)
+    => CompleteOutboxPublishedAsync(ids, debugMode, cancellationToken);
+
+  /// <summary>
   /// Advances perspective cursors and deletes processed perspective_event rows in one round-trip.
   /// Coalesced flush from the C# PerspectiveCompletionFlushWorker.
   /// Phase B of work-pump decomposition.
@@ -500,6 +519,26 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
       $"{TypeNameFormatter.ForLog(GetType())} does not implement CompletePerspectiveAsync.");
+
+  /// <summary>
+  /// Advances cursors and retires perspective work, each work id under the partition epoch it was claimed under and each
+  /// cursor under the epoch it names (#2556). In map mode one whose epoch is no longer its partition's lands nowhere and
+  /// is reported fenced. A store that does not fence ignores the epochs.
+  /// </summary>
+  /// <param name="cursors">Cursor advancement specs, each naming its partition and epoch.</param>
+  /// <param name="eventWorkIds">Event-work ids to mark processed.</param>
+  /// <param name="eventWorkEpochs">The epoch each work id was claimed under, by position; null names none.</param>
+  /// <param name="debugMode">From <see cref="IWorkCoordinatorStrategy.DebugMode"/> at the call site.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorOwnershipNoticesTests.cs:AFencedPerspectiveCompletion_IsCountedAsync</tests>
+  Task CompletePerspectiveAsync(
+    IReadOnlyList<PerspectiveCursorCompletion> cursors,
+    IReadOnlyList<Guid> eventWorkIds,
+    IReadOnlyList<long?>? eventWorkEpochs,
+    bool debugMode,
+    CancellationToken cancellationToken = default)
+    => CompletePerspectiveAsync(cursors, eventWorkIds, debugMode, cancellationToken);
 
   /// <summary>
   /// Extends <c>lease_expiry</c> for the supplied ids in the chosen category that <paramref name="instanceId"/> still
@@ -4576,6 +4615,34 @@ public record WorkBatch {
   public bool PartitionAssignmentStale { get; init; }
 
   /// <summary>
+  /// The partition epoch this instance held each claimed stream's partition at when it claimed it, keyed by stream id
+  /// (#2556). Present only when the service owns partitions by map. A write that commits a result for the stream names
+  /// it, and lands only while it is still the partition's epoch. A value of -1 means the claim was made without owning
+  /// the partition, so nothing written under it lands. Empty when the service does not own by map, or the store does
+  /// not report epochs.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorOwnershipNoticesTests.cs:AClaimInMapMode_CarriesTheEpochOfEachStreamsPartitionAsync</tests>
+  public IReadOnlyDictionary<Guid, long> StreamEpochs { get; init; } = new Dictionary<Guid, long>();
+
+  /// <summary>
+  /// The partition number of each claimed stream, keyed by stream id, as the claim reported it; read with
+  /// <see cref="StreamEpochs"/> to name a write's tenure. Empty when the store does not report it.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorOwnershipNoticesTests.cs:AClaimInMapMode_CarriesTheEpochOfEachStreamsPartitionAsync</tests>
+  public IReadOnlyDictionary<Guid, int> StreamPartitions { get; init; } = new Dictionary<Guid, int>();
+
+  /// <summary>
+  /// True when the service owns partitions by map and the claim found no valid partition map, so it claimed nothing and
+  /// the instance waits for the assigner to publish one (#2554). The coordinator counts and warns about it; the caller
+  /// may back off. False when the store does not report it.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorOwnershipNoticesTests.cs:AClaimWithNoValidMap_IsCounted_AndWarnedOncePerStreakAsync</tests>
+  public bool PartitionMapUnavailable { get; init; }
+
+  /// <summary>
   /// This instance's untruncated outstanding-work counts, taken in the SAME round trip and snapshot
   /// as the claim, when the request asked for them (<see cref="ClaimWorkRequest.IncludeOutstanding"/>)
   /// and the store supports it. Null means "not measured here" — the caller must fall back to
@@ -4995,6 +5062,18 @@ public record MessageFailure {
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
   public MessageFailureReason Reason { get; init; } = MessageFailureReason.Unknown;
+
+  /// <summary>
+  /// The partition this work belongs to and the epoch it was claimed under (<see cref="WorkBatch.StreamEpochs"/>), when
+  /// the service owns partitions by map. The write lands only while that epoch is still the partition's; otherwise it is
+  /// reported fenced and the work stays for the current owner (#2556). Null names none, and the write is not fenced.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  public int? PartitionNumber { get; init; }
+
+  /// <inheritdoc cref="PartitionNumber"/>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  public long? PartitionEpoch { get; init; }
 }
 
 /// <summary>
@@ -5250,6 +5329,19 @@ public record PerspectiveCursorCompletion {
   /// </remarks>
   /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
   public long? LastCommitSequence { get; init; }
+
+  /// <summary>
+  /// The partition this work belongs to and the epoch it was claimed under (<see cref="WorkBatch.StreamEpochs"/>), when
+  /// the service owns partitions by map. The write lands only while that epoch is still the partition's; otherwise it is
+  /// reported fenced and the work stays for the current owner (#2556). Null names none, and the write is not fenced.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  public int? PartitionNumber { get; init; }
+
+  /// <inheritdoc cref="PartitionNumber"/>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  public long? PartitionEpoch { get; init; }
+
 
   /// <summary>
   /// The commit-sequence frontier a completed replay (a rewind or a rebuild) read through: every event of the stream

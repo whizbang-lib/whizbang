@@ -196,7 +196,9 @@ public static class ServiceCollectionExtensions {
         connectionString,
         jsonOptions,
         sp.GetService<ILogger<DapperWorkCoordinator>>(),
-        guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>()));
+        guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>(),
+        // #2554, #2556: the fenced writes and the claims that waited for a map are counted on the coordinator's meter.
+        metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     // #2359: records past their own expiry are removed every maintenance cycle; the store's expiry had no caller.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep,
@@ -374,7 +376,9 @@ public static class ServiceCollectionExtensions {
         connectionString,
         jsonOptions,
         sp.GetService<ILogger<DapperWorkCoordinator>>(),
-        guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>()));
+        guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>(),
+        // #2554, #2556: the fenced writes and the claims that waited for a map are counted on the coordinator's meter.
+        metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     // #2359: records past their own expiry are removed every maintenance cycle; the store's expiry had no caller.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep,

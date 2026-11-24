@@ -38,8 +38,11 @@ public partial class DapperWorkCoordinator(
   ILogger<DapperWorkCoordinator>? logger = null,
   WorkCoordinatorGate? gate = null,
   string? schema = null,
-  Whizbang.Core.Validation.GuidOrderingValidator? guidOrdering = null
+  Whizbang.Core.Validation.GuidOrderingValidator? guidOrdering = null,
+  Whizbang.Core.Observability.WorkCoordinatorMetrics? metrics = null
 ) : IWorkCoordinator {
+  // #2554, #2556: counts fenced writes and claims that found no valid partition map.
+  private readonly Whizbang.Core.Observability.WorkCoordinatorMetrics? _metrics = metrics;
   // #2528: every outbox and inbox write checks its message ids before any SQL runs.
   private readonly Whizbang.Core.Validation.GuidOrderingValidator _guidOrdering =
     guidOrdering ?? Whizbang.Core.Validation.GuidOrderingValidator.Default;
@@ -1157,7 +1160,12 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
-  public async Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, bool debugMode, CancellationToken cancellationToken = default) {
+  public Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, bool debugMode, CancellationToken cancellationToken = default) =>
+    CompleteOutboxPublishedAsync(ids, epochs: null, debugMode, cancellationToken);
+
+  /// <inheritdoc />
+  public async Task<int> CompleteOutboxPublishedAsync(
+    IReadOnlyList<Guid> ids, IReadOnlyList<long?>? epochs, bool debugMode, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(ids);
     if (ids.Count == 0) {
       return 0;
@@ -1167,15 +1175,27 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
+    // 570 (#2556): the epoch each id was claimed under; a completion under one that moved on is fenced and reported.
+    using var fenced = CoordinatorOwnershipNotices.WatchFencedWrites(__scope.Connection, _metrics, _logger, nameof(CompleteOutboxPublishedAsync));
     return await connection.ExecuteScalarAsync<int>(
-      $"SELECT {prefix}complete_outbox_published(@Ids, @DebugMode)", new { Ids = idArray, DebugMode = debugMode },
+      $"SELECT {prefix}complete_outbox_published(@Ids, @DebugMode, @Epochs)",
+      new { Ids = idArray, DebugMode = debugMode, Epochs = _epochs(epochs) },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
   }
+
+  /// <inheritdoc />
+  public Task CompletePerspectiveAsync(
+    IReadOnlyList<PerspectiveCursorCompletion> cursors,
+    IReadOnlyList<Guid> eventWorkIds,
+    bool debugMode,
+    CancellationToken cancellationToken = default) =>
+    CompletePerspectiveAsync(cursors, eventWorkIds, eventWorkEpochs: null, debugMode, cancellationToken);
 
   /// <inheritdoc />
   public async Task CompletePerspectiveAsync(
     IReadOnlyList<PerspectiveCursorCompletion> cursors,
     IReadOnlyList<Guid> eventWorkIds,
+    IReadOnlyList<long?>? eventWorkEpochs,
     bool debugMode,
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(cursors);
@@ -1192,10 +1212,12 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
-    await connection.ExecuteAsync(
-      $"SELECT {prefix}complete_perspective(@Cursors::jsonb, @Ids, @DebugMode)",
-      new { Cursors = cursorsJson, Ids = idArray, DebugMode = debugMode },
-      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    using (CoordinatorOwnershipNotices.WatchFencedWrites(__scope.Connection, _metrics, _logger, nameof(CompletePerspectiveAsync))) {
+      await connection.ExecuteAsync(
+        $"SELECT {prefix}complete_perspective(@Cursors::jsonb, @Ids, @DebugMode, @Epochs)",
+        new { Cursors = cursorsJson, Ids = idArray, DebugMode = debugMode, Epochs = _epochs(eventWorkEpochs) },
+        commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    }
     // #720: ring the doorbells the completion queued, after its commit.
     await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(__scope.Connection, prefix + DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
   }
@@ -1252,9 +1274,11 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
-    await connection.ExecuteAsync(
-      $"SELECT {prefix}commit_handler_result(@Payload::jsonb)", new { Payload = payload },
-      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    using (CoordinatorOwnershipNotices.WatchFencedWrites(__scope.Connection, _metrics, _logger, nameof(CommitHandlerResultAsync))) {
+      await connection.ExecuteAsync(
+        $"SELECT {prefix}commit_handler_result(@Payload::jsonb)", new { Payload = payload },
+        commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    }
     // #720: ring the doorbells the commit queued, after the commit.
     await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(__scope.Connection, prefix + DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
   }
@@ -1279,13 +1303,17 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
-    var rows = await connection.QueryAsync<HandlerBatchRow>(
-      $"SELECT handler_id AS HandlerId, success AS Success, error_message AS ErrorMessage FROM {prefix}commit_handler_batch(@Results::jsonb)",
-      new { Results = batchJson },
-      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    IEnumerable<HandlerBatchRow> rows;
+    using (CoordinatorOwnershipNotices.WatchFencedWrites(__scope.Connection, _metrics, _logger, nameof(CommitHandlerBatchAsync))) {
+      rows = await connection.QueryAsync<HandlerBatchRow>(
+        $"SELECT handler_id AS HandlerId, success AS Success, error_message AS ErrorMessage, tier AS Tier FROM {prefix}commit_handler_batch(@Results::jsonb)",
+        new { Results = batchJson },
+        commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    }
     // #720: ring the doorbells the commits queued, after the commits.
     await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(__scope.Connection, prefix + DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
-    return [.. rows.Select(r => new HandlerBatchResult(r.HandlerId, r.Success, r.ErrorMessage))];
+    // 570 (#2556): tier 0 is the fenced outcome: nothing committed, and the message stays for the current owner.
+    return [.. rows.Select(r => new HandlerBatchResult(r.HandlerId, r.Success, r.ErrorMessage, Fenced: r.Tier == FENCED_TIER))];
   }
 
   /// <inheritdoc />
@@ -1300,10 +1328,20 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
-    await connection.ExecuteAsync(
-      $"SELECT {prefix}flush_completions(@Outbox, @Cursors::jsonb, @Persp, @Failures::jsonb)",
-      new { Outbox = outboxIds, Cursors = cursorsJson, Persp = perspIds, Failures = failuresJson },
-      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    using (CoordinatorOwnershipNotices.WatchFencedWrites(__scope.Connection, _metrics, _logger, nameof(FlushCompletionsAsync))) {
+      await connection.ExecuteAsync(
+        $"SELECT {prefix}flush_completions(@Outbox, @Cursors::jsonb, @Persp, @Failures::jsonb, @OutboxEpochs, @PerspEpochs)",
+        new {
+          Outbox = outboxIds,
+          Cursors = cursorsJson,
+          Persp = perspIds,
+          Failures = failuresJson,
+          // 570 (#2556): the epoch each id was claimed under; failures and cursors name their own.
+          OutboxEpochs = _epochs(request.OutboxEpochs),
+          PerspEpochs = _epochs(request.PerspectiveEventWorkEpochs)
+        },
+        commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    }
     // #720: ring the doorbells the flush queued, after its commit.
     await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(__scope.Connection, prefix + DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
   }
@@ -1364,7 +1402,10 @@ public partial class DapperWorkCoordinator(
     var registrationStale = false;
     // 203 (#1254): the cached partition assignment was superseded or expired; the claim ranked itself.
     var assignmentStale = false;
+    // #2554: in map mode the claim found no valid partition map, so it claimed nothing and the instance waits.
+    var mapUnavailable = false;
     void OnClaimNotice(object? sender, NpgsqlNoticeEventArgs e) {
+      mapUnavailable |= string.Equals(e.Notice.MessageText, CoordinatorOwnershipNotices.PARTITION_MAP_UNAVAILABLE, StringComparison.Ordinal);
       registrationStale |= string.Equals(e.Notice.MessageText, REGISTRATION_STALE_NOTICE, StringComparison.Ordinal);
       assignmentStale |= string.Equals(e.Notice.MessageText, PARTITION_ASSIGNMENT_STALE_NOTICE, StringComparison.Ordinal);
     }
@@ -1374,9 +1415,14 @@ public partial class DapperWorkCoordinator(
       // Phase C lands the full envelope-deserializing path. For now Dapper backend
       // returns perspective_stream rows + throws on outbox/inbox to keep callers safe.
       rows = await connection.QueryAsync<ClaimWorkRow>(
-        $"SELECT source AS Source, work_id AS WorkId, work_stream_id AS StreamId FROM {prefix}claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease, @Fresh, @Rows, @Steal, @Persp, "
-        + "p_assignment_epoch => @AssignmentEpoch, p_assignment_revision => @AssignmentRevision, p_alive_lock_held => @AliveLockHeld, "
-        + "p_lifecycle_phase => @LifecyclePhase, p_acquire_inbox => @AcquireInbox)",
+        // 570 (#2556): each row carries the epoch this instance holds its partition at, read in the claim's own statement.
+        ClaimedTenures.ProjectEpochs(
+          prefix,
+          "c.source AS Source, c.work_id AS WorkId, c.work_stream_id AS StreamId",
+          prefix + "claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease, @Fresh, @Rows, @Steal, @Persp, "
+          + "p_assignment_epoch => @AssignmentEpoch, p_assignment_revision => @AssignmentRevision, p_alive_lock_held => @AliveLockHeld, "
+          + "p_lifecycle_phase => @LifecyclePhase, p_acquire_inbox => @AcquireInbox)",
+          "@Id", "@Part", epochColumn: "PartitionEpoch", partitionColumn: "TenurePartition"),
         new {
           Id = request.InstanceId,
           Svc = request.ServiceName,
@@ -1404,6 +1450,8 @@ public partial class DapperWorkCoordinator(
     } finally {
       __scope.Connection.Notice -= OnClaimNotice;
     }
+    // #2554: a claim that waited for a map is counted, and warned once per streak; one that had a map ends the streak.
+    CoordinatorOwnershipNotices.ReportPartitionMap(mapUnavailable, _metrics, _logger);
     // 463: the claim returns outbox, inbox and perspective_stream rows only (it no longer returns receptor work).
     var claimed = rows.ToList();
     var perspectiveStreamIds = claimed.Where(r => r.Source == "perspective_stream").Select(r => r.StreamId).OfType<Guid>().ToList();
@@ -1422,7 +1470,11 @@ public partial class DapperWorkCoordinator(
       PerspectiveWork = [],
       PerspectiveStreamIds = perspectiveStreamIds,
       InstanceRegistrationStale = registrationStale,
-      PartitionAssignmentStale = assignmentStale
+      PartitionAssignmentStale = assignmentStale,
+      PartitionMapUnavailable = mapUnavailable,
+      // 570 (#2556): the epoch each claimed stream's partition was held at; empty off map mode.
+      StreamEpochs = ClaimedTenures.Epochs(claimed, r => r.StreamId, r => r.PartitionEpoch),
+      StreamPartitions = ClaimedTenures.Partitions(claimed, r => r.StreamId, r => r.PartitionEpoch is null ? null : r.TenurePartition)
     };
   }
 
@@ -1431,6 +1483,12 @@ public partial class DapperWorkCoordinator(
 
   /// <summary>Raised by <c>claim_work</c> when the partition assignment version it was handed is no longer current (203).</summary>
   internal const string PARTITION_ASSIGNMENT_STALE_NOTICE = "whizbang.partition_assignment_stale=true";
+
+  /// <summary>The tier <c>commit_handler_batch</c> returns for a fenced item (570, #2556).</summary>
+  internal const int FENCED_TIER = 0;
+
+  // 570 (#2556): the epochs a write was made under, by position; null when the caller names none, so nothing is fenced.
+  private static long?[]? _epochs(IReadOnlyList<long?>? epochs) => epochs is null ? null : epochs as long?[] ?? [.. epochs];
 
   // --- helpers shared by the new methods ---
 
@@ -1443,6 +1501,10 @@ public partial class DapperWorkCoordinator(
     sb.Append(",\"process_id\":").Append(request.ProcessId);
     sb.Append(",\"partition_count\":").Append(request.PartitionCount);
     sb.Append(",\"debug_mode\":").Append(request.DebugMode ? JSON_TRUE : JSON_FALSE);
+    // 570 (#2556): the epoch the message was claimed under; a commit under one that moved on commits nothing.
+    if (request.PartitionEpoch is { } partitionEpoch) {
+      sb.Append(",\"partition_epoch\":").Append(partitionEpoch.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
     sb.Append(",\"inbox_completion\":{")
       .Append("\"MessageId\":\"").Append(request.InboxCompletion.MessageId).Append("\",")
       .Append("\"Status\":").Append(request.InboxCompletion.Status)
@@ -1493,9 +1555,9 @@ public partial class DapperWorkCoordinator(
   private static string _jsonEscape(string s) =>
     s.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
 
-  private sealed record HandlerBatchRow(Guid HandlerId, bool Success, string? ErrorMessage);
+  private sealed record HandlerBatchRow(Guid HandlerId, bool Success, string? ErrorMessage, int Tier);
   private sealed record SyncInquiryRow(Guid InquiryId, Guid StreamId, int PendingCount, int ProcessedCount);
-  private sealed record ClaimWorkRow(string Source, Guid? WorkId, Guid? StreamId);
+  private sealed record ClaimWorkRow(string Source, Guid? WorkId, Guid? StreamId, long? PartitionEpoch, int? TenurePartition);
 
   #endregion
 }
