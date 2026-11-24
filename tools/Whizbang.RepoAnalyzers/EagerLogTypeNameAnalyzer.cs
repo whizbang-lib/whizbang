@@ -52,6 +52,7 @@ public sealed class EagerLogTypeNameAnalyzer : DiagnosticAnalyzer {
   private const int WARNING_LEVEL = 3;
 
   /// <summary>WHIZ610: Error. A type name is formatted for a log call before the log level is checked.</summary>
+  /// <docs>operations/diagnostics/whiz610</docs>
   /// <tests>tests/Whizbang.RepoAnalyzers.Tests/EagerLogTypeNameAnalyzerTests.cs:UnguardedLogArgument_IsReportedAsync</tests>
   private static readonly DiagnosticDescriptor _rule = new(
     id: "WHIZ610",
