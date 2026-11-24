@@ -103,4 +103,28 @@ public class DriverCoordinationParityTests {
       await Assert.That(roles.Manages(StartupDuties.MAINTAINER)).IsTrue();
     }
   }
+
+  /// <summary>
+  /// #2561: both drivers run the one shared migrator election (<c>MigratorElection</c>), which resolves the elector,
+  /// this instance's identity and the migrator's lease from the host. Each driver's container answers all three alike,
+  /// so an election is held on either driver: neither falls back to migrating every instance in turn for want of one.
+  /// </summary>
+  [Test]
+  public async Task BothDrivers_ResolveWhatTheMigratorElectionNeedsAsync() {
+    await using var efCore = _efCore().BuildServiceProvider();
+    await using var dapper = _dapper().BuildServiceProvider();
+
+    foreach (var (driver, provider) in new (string, ServiceProvider)[] { ("EF Core", efCore), ("Dapper", dapper) }) {
+      await Assert.That(provider.GetService<IDutyElector>()).IsSameReferenceAs(provider.GetRequiredService<PgRoleElector>())
+        .Because($"{driver} votes for the migrator duty through the shared elector");
+      await Assert.That(provider.GetService<IServiceInstanceProvider>()).IsNotNull()
+        .Because($"{driver} registers this instance before it votes");
+      var roles = provider.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value;
+      await Assert.That(roles.Manages(StartupDuties.MIGRATOR)).IsTrue()
+        .Because($"{driver} holds the migrator duty as a role assignment, which a waiter watches");
+      await Assert.That(roles.LeaseFor(StartupDuties.MIGRATOR))
+        .IsEqualTo(new RoleAssignmentOptions().LeaseFor(StartupDuties.MIGRATOR))
+        .Because($"{driver} holds the migrator to the same lease");
+    }
+  }
 }
