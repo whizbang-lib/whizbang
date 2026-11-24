@@ -185,7 +185,7 @@ public class OwnershipFencingSqlTests : EFCoreTestBase {
 
     long affected = 0;
     var fenced = await _withNoticesAsync(conn, async () => affected = await _scalarAsync<int>(conn,
-      "SELECT complete_outbox_published(ARRAY[@m]::uuid[], FALSE, ARRAY[1]::bigint[])", ("m", message)));
+      "SELECT wh_complete_outbox_published_fenced(ARRAY[@m]::uuid[], FALSE, ARRAY[1]::bigint[])", ("m", message)));
 
     await Assert.That(affected).IsEqualTo(0L);
     await Assert.That(await _countAsync(conn, "wh_outbox", "message_id", message)).IsEqualTo(1L);

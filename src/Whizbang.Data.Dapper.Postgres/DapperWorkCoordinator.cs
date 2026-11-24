@@ -1178,7 +1178,8 @@ public partial class DapperWorkCoordinator(
     // 570 (#2556): the epoch each id was claimed under; a completion under one that moved on is fenced and reported.
     using var fenced = CoordinatorOwnershipNotices.WatchFencedWrites(__scope.Connection, _metrics, _logger, nameof(CompleteOutboxPublishedAsync));
     return await connection.ExecuteScalarAsync<int>(
-      $"SELECT {prefix}complete_outbox_published(@Ids, @DebugMode, @Epochs)",
+      // complete_outbox_published keeps its two parameters; the fenced mark is its own function.
+      $"SELECT {prefix}wh_complete_outbox_published_fenced(@Ids, @DebugMode, @Epochs)",
       new { Ids = idArray, DebugMode = debugMode, Epochs = _epochs(epochs) },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
   }

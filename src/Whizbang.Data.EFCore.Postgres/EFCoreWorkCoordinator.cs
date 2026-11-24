@@ -501,7 +501,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var functionName = BuildSchemaQualifiedName(schema, "complete_outbox_published");
+    // 570 (#2556): complete_outbox_published keeps its two parameters; the fenced mark is its own function, which fences
+    // the ids and hands the rest to it.
+    var functionName = BuildSchemaQualifiedName(schema, "wh_complete_outbox_published_fenced");
 
     var idArray = AsArray(ids);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(

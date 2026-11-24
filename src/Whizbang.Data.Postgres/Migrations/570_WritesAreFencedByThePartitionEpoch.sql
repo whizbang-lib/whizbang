@@ -15,7 +15,8 @@
 --              NOTICE 'whizbang.fenced' with DETAIL '<kind>=<count>' per kind, which the coordinator turns into the
 --              fenced metric and a debug log naming what was fenced.
 --
---              * flush_completions and complete_outbox_published take the epochs of their outbox ids by position;
+--              * flush_completions and wh_complete_outbox_published_fenced (a publish mark, which then calls
+--                complete_outbox_published, whose two parameters are kept) take the epochs of their outbox ids by position;
 --                complete_perspective those of its work ids; a cursor and a failure item name their own
 --                (PartitionNumber, PartitionEpoch); a handler commit names partition_epoch, checked against its inbox
 --                row's partition, and a fenced one commits nothing, neither the completion nor what the handler emitted.
@@ -35,10 +36,10 @@
 --
 -- Reversal: reversible (the down file restores each function's previous last word and drops the helpers)
 -- Dependencies: 565 (wh_partition_ownership, wh_partition_ownership_by_map), 245 (flush_completions), 241
---               (complete_outbox_published), 374 (complete_perspective), 369 (commit_handler_result), 029
+--               (complete_outbox_published, called unchanged), 374 (complete_perspective), 369 (commit_handler_result), 029
 --               (commit_handler_batch)
 -- Objects: wh_held_epoch, wh_epoch_is_current, _wh_report_fenced, _wh_fence_outbox_ids, _wh_fence_perspective_work_ids,
---          _wh_fence_items, _wh_fence_failures, _wh_handler_commit_is_fenced, flush_completions, complete_outbox_published,
+--          _wh_fence_items, _wh_fence_failures, _wh_handler_commit_is_fenced, flush_completions, wh_complete_outbox_published_fenced,
 --          complete_perspective, commit_handler_result, commit_handler_batch
 -- Constants: the double-underscore tokens in this file (for example __CATEGORY_OUTBOX__) are substituted from
 --            Migrations/constants.txt at apply time (README rule 12).
@@ -448,106 +449,38 @@ COMMENT ON FUNCTION __SCHEMA__.flush_completions(UUID[], JSONB, UUID[], JSONB, B
 'Composite single-round-trip flusher: complete_outbox_published + report_failures (per category) + complete_perspective in one transaction. 245 (#1785): every outbox row it writes (completed rows, failed rows, the runs the failures release) is locked first in one (stream_id, created_at, message_id) pass, and the steps run in the canonical table order (outbox, inbox, perspective work), so it cannot deadlock against another writer that takes outbox rows in that order. 570 (#2556): in map mode, a completion, failure or cursor named under a partition epoch that is no longer current is dropped before anything is written and reported as fenced (NOTICE whizbang.fenced, DETAIL kind=count).';
 
 -- ---------------------------------------------------------------------------------------------
--- complete_outbox_published: 241's definition, with the 570 delta.
+-- wh_complete_outbox_published_fenced: a publish mark that names its epochs.
 -- ---------------------------------------------------------------------------------------------
-SELECT __SCHEMA__.drop_all_overloads('complete_outbox_published');
+-- complete_outbox_published keeps its two parameters: its earlier definitions (172, 241) clear no overloads, so a
+-- replay of either beside a three-parameter version would leave two functions of one name, and every unqualified
+-- reference would fail with 42725 (OverloadGuardsCoverEveryDefinitionSiteTests). The fenced mark is its own function,
+-- which fences the ids and hands the rest to complete_outbox_published.
+SELECT __SCHEMA__.drop_all_overloads('wh_complete_outbox_published_fenced');
 
--- <docs>fundamentals/work-coordinator/per-stream-drain</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxStreamRunDeadlockSqlTests.cs:CompleteOutboxPublished_DeletesItsRowsInStreamOrderAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxStreamRunDeadlockSqlTests.cs:CompleteOutboxPublished_InDebugMode_UpdatesItsRowsInStreamOrderAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CompleteOutboxPublishedSqlTests.cs:CompleteOutboxPublished_Production_DeletesRowsAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredOutboxDeadLetterPublishTests.cs:ARecoveredOutboxEvent_IsPublishedAsTheEventItWasStoredAs_AndReadsRecoveredOncePublishedAsync</tests>
 -- <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipFencingSqlTests.cs:PublishMark_UnderAStaleEpoch_AffectsNoRowAsync</tests>
-CREATE OR REPLACE FUNCTION __SCHEMA__.complete_outbox_published(
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorOwnershipNoticesTests.cs:AFencedWrite_IsCountedByKind_AndLoggedAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_complete_outbox_published_fenced(
   p_ids UUID[],
-  p_debug_mode BOOLEAN DEFAULT FALSE,
-  -- 570 (#2556): the partition epoch each id was claimed under, by position; NULL names none.
-  p_epochs BIGINT[] DEFAULT NULL
-) RETURNS INTEGER AS $$
-DECLARE
-  v_affected INTEGER;
-  v_recovered UUID[];         -- 241: the dead letters the completed rows were recovered from
-  v_dead_letter_id UUID;
+  p_debug_mode BOOLEAN,
+  -- The partition epoch each id was claimed under, by position; NULL names none.
+  p_epochs BIGINT[]
+) RETURNS INTEGER
+LANGUAGE plpgsql
+AS $$
 BEGIN
-  IF p_ids IS NULL OR array_length(p_ids, 1) IS NULL THEN
-    RETURN 0;
-  END IF;
-
-  -- 570 (#2556): in map mode a publish mark made under a partition epoch that is no longer current marks nothing.
-  IF p_epochs IS NOT NULL AND __SCHEMA__.wh_partition_ownership_by_map() THEN
+  IF p_epochs IS NOT NULL AND p_ids IS NOT NULL AND array_length(p_ids, 1) IS NOT NULL
+     AND __SCHEMA__.wh_partition_ownership_by_map() THEN
     p_ids := __SCHEMA__._wh_fence_outbox_ids(p_ids, p_epochs);
   END IF;
-
-  IF p_debug_mode THEN
-    -- Debug mode: retain the row for forensics; stamp published_at + processed_at
-    -- and set the Published bit. eligible_outbox filters published_at IS NULL so
-    -- claim_work treats the row as if deleted on subsequent polls.
-    -- 241: counted and collected from the statement's own rows, so the settle below reads nothing again.
-    WITH completed AS (
-      UPDATE __SCHEMA__.wh_outbox o
-      SET processed_at = NOW(),
-          published_at = NOW(),
-          status = o.status | 4,         -- Published flag
-          instance_id = NULL,
-          lease_expiry = NULL
-      FROM (
-        -- 172: locked in (stream_id, created_at, message_id) order; see the production branch.
-        SELECT l.message_id
-        FROM __SCHEMA__.wh_outbox l
-        WHERE l.message_id = ANY(p_ids)
-          AND l.processed_at IS NULL
-        ORDER BY l.stream_id, l.created_at, l.message_id
-        FOR UPDATE OF l
-      ) locked
-      WHERE o.message_id = locked.message_id
-        AND o.processed_at IS NULL
-      RETURNING o.recovered_from_dead_letter_id
-    )
-    SELECT count(*), array_agg(c.recovered_from_dead_letter_id) FILTER (WHERE c.recovered_from_dead_letter_id IS NOT NULL)
-    INTO v_affected, v_recovered
-    FROM completed c;
-  ELSE
-    -- Production mode: row exits the table on success, structurally immune to
-    -- claim_work re-issuing it on the next poll cycle.
-    --
-    -- 172: the rows are locked in (stream_id, created_at, message_id) order before they are deleted.
-    -- The bare DELETE locked them in primary-key order, which is not the order any other writer of
-    -- the outbox uses; a completion flush that also reports failures holds these rows while
-    -- process_outbox_failures takes more, so the two passes must run the same way. Primary-key
-    -- lookups, then a sort of the batch: priced by the batch.
-    WITH completed AS (
-      DELETE FROM __SCHEMA__.wh_outbox o
-      USING (
-        SELECT l.message_id
-        FROM __SCHEMA__.wh_outbox l
-        WHERE l.message_id = ANY(p_ids)
-          AND l.processed_at IS NULL
-        ORDER BY l.stream_id, l.created_at, l.message_id
-        FOR UPDATE OF l
-      ) locked
-      WHERE o.message_id = locked.message_id
-        AND o.processed_at IS NULL
-      RETURNING o.recovered_from_dead_letter_id
-    )
-    SELECT count(*), array_agg(c.recovered_from_dead_letter_id) FILTER (WHERE c.recovered_from_dead_letter_id IS NOT NULL)
-    INTO v_affected, v_recovered
-    FROM completed c;
-  END IF;
-
-  -- 241 (#1722): a recovered message that has been published settles the dead letter it re-entered from (Recovered).
-  -- After the outbox rows, so the outbox keeps its place first in the lock order.
-  IF v_recovered IS NOT NULL THEN
-    FOREACH v_dead_letter_id IN ARRAY v_recovered LOOP
-      PERFORM __SCHEMA__._wh_settle_recovered_dead_letter(v_dead_letter_id, TRUE, NOW());
-    END LOOP;
-  END IF;
-
-  RETURN v_affected;
+  RETURN __SCHEMA__.complete_outbox_published(p_ids, p_debug_mode);
 END;
-$$ LANGUAGE plpgsql;
-COMMENT ON FUNCTION __SCHEMA__.complete_outbox_published(UUID[], BOOLEAN, BIGINT[]) IS
-'Completes outbox rows after successful transport publish. Production (p_debug_mode=FALSE, default): DELETEs the row, structurally immune to claim_work re-issuing it. Debug mode (p_debug_mode=TRUE): retains the row, stamps published_at + processed_at + Published bit; eligible_outbox filters published_at IS NULL so claim_work skips it. Coalesced + batched by C# OutboxCompletionFlushWorker. Idempotent: unknown ids silently no-op. Returns rows-affected (deletions in prod, updates in debug). 172: rows are locked in (stream_id, created_at, message_id) order. 241 (#1722): a completed row recovered from a dead letter settles that dead letter Recovered. 570 (#2556): in map mode, an id named under a partition epoch that is no longer current is not marked, and is reported as fenced.';
+$$;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_complete_outbox_published_fenced(UUID[], BOOLEAN, BIGINT[]) IS
+  '570 (#2556): complete_outbox_published for ids that name the partition epoch they were claimed under: in map mode an '
+  'id whose epoch is no longer its partition''s is not marked and is reported fenced (outbox_completion). Returns the '
+  'rows affected, as complete_outbox_published does.';
 
 -- ---------------------------------------------------------------------------------------------
 -- complete_perspective: 374's definition, with the 570 delta.

@@ -121,99 +121,6 @@ COMMENT ON FUNCTION __SCHEMA__.flush_completions(UUID[], JSONB, UUID[], JSONB) I
 'Composite single-round-trip flusher: complete_outbox_published + report_failures (per category) + complete_perspective in one transaction. 245 (#1785): every outbox row it writes (completed rows, failed rows, the runs the failures release) is locked first in one (stream_id, created_at, message_id) pass, and the steps run in the canonical table order (outbox, inbox, perspective work), so it cannot deadlock against another writer that takes outbox rows in that order.';
 
 -- ---------------------------------------------------------------------------------------------
--- complete_outbox_published: 241's definition, copied whole.
--- ---------------------------------------------------------------------------------------------
-SELECT __SCHEMA__.drop_all_overloads('complete_outbox_published');
-
--- <docs>fundamentals/work-coordinator/per-stream-drain</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxStreamRunDeadlockSqlTests.cs:CompleteOutboxPublished_DeletesItsRowsInStreamOrderAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxStreamRunDeadlockSqlTests.cs:CompleteOutboxPublished_InDebugMode_UpdatesItsRowsInStreamOrderAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CompleteOutboxPublishedSqlTests.cs:CompleteOutboxPublished_Production_DeletesRowsAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredOutboxDeadLetterPublishTests.cs:ARecoveredOutboxEvent_IsPublishedAsTheEventItWasStoredAs_AndReadsRecoveredOncePublishedAsync</tests>
-CREATE OR REPLACE FUNCTION __SCHEMA__.complete_outbox_published(
-  p_ids UUID[],
-  p_debug_mode BOOLEAN DEFAULT FALSE
-) RETURNS INTEGER AS $$
-DECLARE
-  v_affected INTEGER;
-  v_recovered UUID[];         -- 241: the dead letters the completed rows were recovered from
-  v_dead_letter_id UUID;
-BEGIN
-  IF p_ids IS NULL OR array_length(p_ids, 1) IS NULL THEN
-    RETURN 0;
-  END IF;
-
-  IF p_debug_mode THEN
-    -- Debug mode: retain the row for forensics; stamp published_at + processed_at
-    -- and set the Published bit. eligible_outbox filters published_at IS NULL so
-    -- claim_work treats the row as if deleted on subsequent polls.
-    -- 241: counted and collected from the statement's own rows, so the settle below reads nothing again.
-    WITH completed AS (
-      UPDATE __SCHEMA__.wh_outbox o
-      SET processed_at = NOW(),
-          published_at = NOW(),
-          status = o.status | 4,         -- Published flag
-          instance_id = NULL,
-          lease_expiry = NULL
-      FROM (
-        -- 172: locked in (stream_id, created_at, message_id) order; see the production branch.
-        SELECT l.message_id
-        FROM __SCHEMA__.wh_outbox l
-        WHERE l.message_id = ANY(p_ids)
-          AND l.processed_at IS NULL
-        ORDER BY l.stream_id, l.created_at, l.message_id
-        FOR UPDATE OF l
-      ) locked
-      WHERE o.message_id = locked.message_id
-        AND o.processed_at IS NULL
-      RETURNING o.recovered_from_dead_letter_id
-    )
-    SELECT count(*), array_agg(c.recovered_from_dead_letter_id) FILTER (WHERE c.recovered_from_dead_letter_id IS NOT NULL)
-    INTO v_affected, v_recovered
-    FROM completed c;
-  ELSE
-    -- Production mode: row exits the table on success, structurally immune to
-    -- claim_work re-issuing it on the next poll cycle.
-    --
-    -- 172: the rows are locked in (stream_id, created_at, message_id) order before they are deleted.
-    -- The bare DELETE locked them in primary-key order, which is not the order any other writer of
-    -- the outbox uses; a completion flush that also reports failures holds these rows while
-    -- process_outbox_failures takes more, so the two passes must run the same way. Primary-key
-    -- lookups, then a sort of the batch: priced by the batch.
-    WITH completed AS (
-      DELETE FROM __SCHEMA__.wh_outbox o
-      USING (
-        SELECT l.message_id
-        FROM __SCHEMA__.wh_outbox l
-        WHERE l.message_id = ANY(p_ids)
-          AND l.processed_at IS NULL
-        ORDER BY l.stream_id, l.created_at, l.message_id
-        FOR UPDATE OF l
-      ) locked
-      WHERE o.message_id = locked.message_id
-        AND o.processed_at IS NULL
-      RETURNING o.recovered_from_dead_letter_id
-    )
-    SELECT count(*), array_agg(c.recovered_from_dead_letter_id) FILTER (WHERE c.recovered_from_dead_letter_id IS NOT NULL)
-    INTO v_affected, v_recovered
-    FROM completed c;
-  END IF;
-
-  -- 241 (#1722): a recovered message that has been published settles the dead letter it re-entered from (Recovered).
-  -- After the outbox rows, so the outbox keeps its place first in the lock order.
-  IF v_recovered IS NOT NULL THEN
-    FOREACH v_dead_letter_id IN ARRAY v_recovered LOOP
-      PERFORM __SCHEMA__._wh_settle_recovered_dead_letter(v_dead_letter_id, TRUE, NOW());
-    END LOOP;
-  END IF;
-
-  RETURN v_affected;
-END;
-$$ LANGUAGE plpgsql;
-COMMENT ON FUNCTION __SCHEMA__.complete_outbox_published(UUID[], BOOLEAN) IS
-'Completes outbox rows after successful transport publish. Production (p_debug_mode=FALSE, default): DELETEs the row, structurally immune to claim_work re-issuing it. Debug mode (p_debug_mode=TRUE): retains the row, stamps published_at + processed_at + Published bit; eligible_outbox filters published_at IS NULL so claim_work skips it. Coalesced + batched by C# OutboxCompletionFlushWorker. Idempotent: unknown ids silently no-op. Returns rows-affected (deletions in prod, updates in debug). 172: rows are locked in (stream_id, created_at, message_id) order. 241 (#1722): a completed row recovered from a dead letter settles that dead letter Recovered.';
-
--- ---------------------------------------------------------------------------------------------
 -- complete_perspective: 374's definition, copied whole.
 -- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('complete_perspective');
@@ -475,6 +382,7 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__.commit_handler_batch IS
 'Two-tier (Option D) batched commit orchestrator. Tier 1: optimistic bulk attempt via commit_handler_batch_bulk: no savepoint overhead on the happy path. Tier 2: on any error, falls back to per-handler SAVEPOINT loop preserving isolated per-handler success/failure reporting. Returns per-handler (handler_id, success, error_message) for the C# flusher. Single fsync at outer commit on the happy path; bulk-then-loop on the rare failure path.';
 
+SELECT __SCHEMA__.drop_all_overloads('wh_complete_outbox_published_fenced');
 SELECT __SCHEMA__.drop_all_overloads('_wh_handler_commit_is_fenced');
 SELECT __SCHEMA__.drop_all_overloads('_wh_fence_failures');
 SELECT __SCHEMA__.drop_all_overloads('_wh_fence_items');
