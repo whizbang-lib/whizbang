@@ -938,21 +938,42 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   // Fast path hash comparison tests
   // ═══════════════════════════════════════════════════════════════════════════
 
+  /// <summary>
+  /// A schema whose every hash matches is not migrated again: the pass commits no step, and the ledger is left as it
+  /// was. Waited on the initializer's own signals: its observer hears every committed step
+  /// (<see cref="ISchemaInitializationObserver.OnSchemaStepCommittedAsync"/>), and the call's task completes when the
+  /// start is done. It used to time the call against 10 seconds; on a loaded full run the same fast path took 24, and
+  /// a quick call would not have shown that nothing was applied anyway.
+  /// </summary>
   [Test]
-  [Timeout(30000)]
   public async Task FastPath_WhenBothHashesMatch_SkipsInitializationAsync(CancellationToken cancellationToken) {
-    // Arrange — ensure database is fully initialized (done by EFCoreTestBase)
+    // Arrange: the database is fully initialized (a copy of the run's migrated template).
     await using var context = CreateDbContext();
+    var ledgerBefore = await _ledgerAsync(cancellationToken);
+    var steps = new CommandTimeoutAtEachStep(context);
+    var services = new ServiceCollection();
+    services.AddSingleton<ISchemaInitializationObserver>(steps);
+    await using var provider = services.BuildServiceProvider();
 
-    // Act — run initialization again (should hit fast path since all hashes match)
-    // The second call should be significantly faster because it skips DDL
-    var sw = System.Diagnostics.Stopwatch.StartNew();
-    await context.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken);
-    sw.Stop();
+    // Act: run initialization again, to completion.
+    await context.EnsureWhizbangDatabaseInitializedAsync(serviceProvider: provider, cancellationToken: cancellationToken);
 
-    // Assert — should complete quickly (fast path skips lock acquisition and DDL)
-    // Allow generous timeout for CI environments but expect it to be fast
-    await Assert.That(sw.ElapsedMilliseconds).IsLessThan(10_000);
+    // Assert: the fast path applied nothing.
+    await Assert.That(steps.Seen).IsEmpty().Because("every hash matches, so no step of the pass is committed");
+    await Assert.That(await _ledgerAsync(cancellationToken)).IsEqualTo(ledgerBefore)
+      .Because("a start that skips the pass writes no ledger row");
+  }
+
+  /// <summary>Every ledger row's name, hash, status and write time, as one string.</summary>
+  private async Task<string> _ledgerAsync(CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      SELECT string_agg(file_name || '|' || content_hash || '|' || status || '|' || updated_at::text, E'\n' ORDER BY file_name)
+      FROM wh_schema_migrations
+      """;
+    return (string)(await cmd.ExecuteScalarAsync(cancellationToken))!;
   }
 
   [Test]
