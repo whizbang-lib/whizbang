@@ -330,19 +330,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         var storedFormMigrations = GetStoredFormMigrations();
         await global::Whizbang.Data.Postgres.StoredFormMigrationSql.DeclareAsync(
           rewriteConnectionFactory, "__SCHEMA__", storedFormMigrations, cancellationToken);
-        // A strongly-typed id an earlier release stored as {"Value": ...} becomes the UUID string, so an id predicate's
-        // uuid cast reads every row (#2518). A dictionary an earlier release stored as an object becomes an array of
-        // key/value pairs before the temporal rewrite, so a temporal held in a dictionary's value is at the path the
-        // readers read (#1911).
-        var rewrites = global::System.Linq.Enumerable.ToList(global::System.Linq.Enumerable.Concat(global::System.Linq.Enumerable.Concat(global::System.Linq.Enumerable.Concat(
+        // A dictionary an earlier release stored as an object becomes an array of key/value pairs before the temporal
+        // rewrite, so a temporal held in a dictionary's value is at the path the readers read (#1911).
+        var rewrites = global::System.Linq.Enumerable.ToList(global::System.Linq.Enumerable.Concat(global::System.Linq.Enumerable.Concat(
           global::System.Linq.Enumerable.Concat(
             global::Whizbang.Data.Postgres.StoredFormMigrationSql.ForPhase("__SCHEMA__", storedFormMigrations),
-            global::System.Linq.Enumerable.Select(
-              Whizbang.Data.EFCore.Postgres.Perspectives.StrongIdScalarRewrite.ForModel(
-                dbContext.Model,
-                Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options,
-                "__SCHEMA__"),
-              t => (t.Name, t.Sql))),
           global::System.Linq.Enumerable.Select(
             Whizbang.Data.EFCore.Postgres.Perspectives.DictionaryPairsRewrite.ForModel(
               dbContext.Model,
@@ -356,6 +348,31 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           GetPhysicalColumnRewrites()));
         await Whizbang.Data.Postgres.CanonicalTemporalRewritePhase.ApplyAsync(
           rewriteConnectionFactory, lockId, rewrites, _schemaCommandTimeoutSeconds, logger,
+          cancellationToken);
+        // A strongly-typed id an earlier release stored as {"Value": ...} becomes the UUID string (#2518): one slice here,
+        // a batch at a time from where the journal says the last one stopped, each batch committed under the schema lock;
+        // the maintenance cycle carries on until every table is settled. Queries read both forms meanwhile, so nothing
+        // waits on it. It waits while an earlier release is live, which reads only the object form.
+        var strongIdLibraryVersion = (serviceProvider?.GetService(typeof(Whizbang.Core.Observability.ILibraryVersionProvider))
+          as Whizbang.Core.Observability.ILibraryVersionProvider)?.LibraryVersion;
+        await global::Whizbang.Data.Postgres.BatchedRewriteRunner.RunAsync(
+          new global::Whizbang.Data.Postgres.BatchedRewriteRequest(
+            rewriteConnectionFactory, "__SCHEMA__", lockId,
+            global::System.Linq.Enumerable.ToList(global::System.Linq.Enumerable.Select(
+              Whizbang.Data.EFCore.Postgres.Perspectives.StrongIdScalarRewrite.ForModel(
+                dbContext.Model,
+                Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options,
+                "__SCHEMA__"),
+              t => (t.Name, t.Sql))),
+            _schemaCommandTimeoutSeconds),
+          global::Whizbang.Data.Postgres.BatchedRewriteBudget.ForStartup(_schemaCommandTimeoutSeconds),
+          strongIdLibraryVersion is null
+            ? null
+            : (connection, ct) => global::Whizbang.Data.Postgres.FleetVersions.OlderLiveLibraryVersionsAsync(
+                connection, "__SCHEMA__", strongIdLibraryVersion, ct),
+          global::Whizbang.Data.Postgres.StoredFormApplier.Current,
+          startupClock,
+          logger,
           cancellationToken);
         // An index a migration dropped because it cast a converted key to the old type is built again for the new
         // type, concurrently, now that the conversion has committed. One that cannot be is left to the schema pass.
@@ -1013,13 +1030,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           global::System.Linq.Enumerable.Select(
             Whizbang.Data.EFCore.Postgres.Perspectives.DeclaredKeyShapes.ForModel(dbContext.Model, documentOptions),
             t => (t.JournalName, t.Table)),
-          global::System.Linq.Enumerable.Concat(
-            global::System.Linq.Enumerable.Select(
-              Whizbang.Data.EFCore.Postgres.Perspectives.DictionaryPairsRewrite.ForModel(dbContext.Model, documentOptions, "__SCHEMA__"),
-              t => (t.Name, t.Table)),
-            global::System.Linq.Enumerable.Select(
-              Whizbang.Data.EFCore.Postgres.Perspectives.StrongIdScalarRewrite.ForModel(dbContext.Model, documentOptions, "__SCHEMA__"),
-              t => (t.Name, t.Table))))),
+          // The strong-id rewrite is not waited on (#2518): queries read both forms, and the maintenance cycle finishes it.
+          global::System.Linq.Enumerable.Select(
+            Whizbang.Data.EFCore.Postgres.Perspectives.DictionaryPairsRewrite.ForModel(dbContext.Model, documentOptions, "__SCHEMA__"),
+            t => (t.Name, t.Table)))),
       global::System.Linq.Enumerable.Select(GetPhysicalColumnRewrites(), r => r.Name),
       cancellationToken);
   }

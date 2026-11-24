@@ -28,7 +28,7 @@ public readonly record struct StrongIdPath(string Column, ImmutableArray<string>
 /// <summary>One table's strong-id rewrite: its journal name, its table and the statement that converts it.</summary>
 /// <param name="Name">The journal name, <c>strong-id-scalar:&lt;table&gt;:&lt;shape&gt;</c>.</param>
 /// <param name="Table">The table.</param>
-/// <param name="Sql">The <c>DO</c> block.</param>
+/// <param name="Sql">The <c>DO</c> block that converts one batch.</param>
 /// <docs>fundamentals/identity/whizbang-ids#stored-form</docs>
 public sealed record StrongIdScalarTable(string Name, string Table, string Sql);
 
@@ -50,12 +50,13 @@ public sealed record StrongIdScalarTable(string Name, string Table, string Sql);
 /// carries a hash of the paths, so a model that gains an id is scanned again.
 /// </para>
 /// <para>
-/// The statement walks the table in primary-key order, a batch at a time, and updates each row that needs it once, for
-/// all of its paths. It stops when the phase's budget (<see cref="BUDGET_SETTING"/>, set by the phase from its command
-/// timeout) is spent, leaving the journal unsettled: what it converted commits with the phase, and the next startup
-/// carries on. Settled by the first complete pass that converts nothing; a table that does not exist yet is settled at
-/// once. A row it has not reached yet, or one an instance of an earlier release writes after it settled, is still
-/// queried correctly, because an id read in SQL takes either form (<c>StrongIdToleranceRewriter</c>).
+/// Each statement converts one batch, in primary-key order, every path of a row in one update, and records in the journal
+/// the key it reached (<c>resume_key</c>). <see cref="BatchedRewriteRunner"/> runs each batch in its own transaction under
+/// the schema lock, startup one slice within a budget and the maintenance cycle (<see cref="StrongIdScalarRewriteStep"/>)
+/// the rest, so a table of any size finishes and a restart redoes nothing. Settled by the first complete pass that
+/// converts nothing; a table that does not exist yet is settled at once. The rewrite waits while an instance of an earlier
+/// release is live, since that release reads only the object form. A row it has not reached yet is still queried
+/// correctly, because an id read in SQL takes either form (<c>StrongIdToleranceRewriter</c>).
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/identity/whizbang-ids#stored-form</docs>
@@ -63,12 +64,6 @@ public sealed record StrongIdScalarTable(string Name, string Table, string Sql);
 public static class StrongIdScalarRewrite {
   /// <summary>The journal name's prefix and the journal row's kind.</summary>
   public const string KIND = "strong-id-scalar";
-
-  /// <summary>
-  /// The transaction setting that bounds one table's statement, in milliseconds. Unset, a statement runs to the end of
-  /// its table.
-  /// </summary>
-  public const string BUDGET_SETTING = CanonicalTemporalRewritePhase.BUDGET_SETTING;
 
   /// <summary>The rows one batch reads.</summary>
   public const int BATCH_SIZE = 1000;
@@ -80,8 +75,10 @@ public static class StrongIdScalarRewrite {
   /// <param name="model">The context's model.</param>
   /// <param name="documentOptions">The options every document is read with.</param>
   /// <param name="schema">The schema the tables live in.</param>
+  /// <param name="batchSize">The rows one batch reads.</param>
   /// <returns>One entry per table with an id.</returns>
-  public static ImmutableArray<StrongIdScalarTable> ForModel(IModel model, JsonSerializerOptions documentOptions, string schema) {
+  public static ImmutableArray<StrongIdScalarTable> ForModel(
+      IModel model, JsonSerializerOptions documentOptions, string schema, int batchSize = BATCH_SIZE) {
     ArgumentNullException.ThrowIfNull(model);
     ArgumentNullException.ThrowIfNull(documentOptions);
     ArgumentNullException.ThrowIfNull(schema);
@@ -96,7 +93,7 @@ public static class StrongIdScalarRewrite {
       if (!paths.IsEmpty) {
         var key = entityType.FindPrimaryKey()!.Properties[0];
         tables.Add(new StrongIdScalarTable(
-          JournalName(table, paths), table, StatementFor(schema, table, paths, key.GetColumnName(), key.GetColumnType())));
+          JournalName(table, paths), table, StatementFor(schema, table, paths, key.GetColumnName(), key.GetColumnType(), batchSize)));
       }
     }
 
@@ -137,19 +134,31 @@ public static class StrongIdScalarRewrite {
     return $"{KIND}:{table}:{hash}";
   }
 
-  /// <summary>The statement that converts one table, a batch at a time, within the phase's budget.</summary>
+  /// <summary>
+  /// The statement that converts one batch of one table, from the primary key the journal says the last batch reached, and
+  /// records where it stopped. Run in a transaction of its own by <see cref="BatchedRewriteRunner"/>.
+  /// </summary>
   /// <param name="schema">The schema the table lives in.</param>
   /// <param name="table">The table.</param>
   /// <param name="paths">Its id paths.</param>
   /// <param name="keyColumn">The table's primary key column, the order the batches walk.</param>
   /// <param name="keyType">That column's store type.</param>
+  /// <param name="batchSize">The rows one batch reads.</param>
   /// <returns>A <c>DO</c> block.</returns>
+  /// <remarks>
+  /// The journal row is locked first, so two sessions never convert the same batch: the second waits, then reads the key
+  /// the first recorded. A batch that finds no row past the key has reached the end of a pass. A pass that converted
+  /// nothing settles the table; one that converted anything starts another from the beginning, which converts a row an
+  /// earlier release wrote behind the key meanwhile. A table that does not exist yet is settled at once.
+  /// </remarks>
   public static string StatementFor(
-      string schema, string table, ImmutableArray<StrongIdPath> paths, string keyColumn, string keyType) {
+      string schema, string table, ImmutableArray<StrongIdPath> paths, string keyColumn, string keyType,
+      int batchSize = BATCH_SIZE) {
     ArgumentNullException.ThrowIfNull(schema);
     ArgumentNullException.ThrowIfNull(table);
     ArgumentNullException.ThrowIfNull(keyColumn);
     ArgumentNullException.ThrowIfNull(keyType);
+    ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
 
     var quotedSchema = SqlText.Identifier(schema);
     var qualifiedTable = $"{quotedSchema}.{SqlText.Identifier(table)}";
@@ -157,6 +166,7 @@ public static class StrongIdScalarRewrite {
     var tableLiteral = SqlText.Literal(table);
     var name = SqlText.Literal(JournalName(table, paths));
     var key = SqlText.Identifier(keyColumn);
+    var row = $"WHERE name = {name}";
 
     // Each column once, with every path of it applied in turn: one update per row however many ids it holds.
     var rewrites = paths.GroupBy(p => p.Column).Select(column => {
@@ -170,67 +180,65 @@ public static class StrongIdScalarRewrite {
     sb.Append("DO $wb$\n");
     sb.Append("DECLARE\n");
     sb.Append("  v_settled timestamptz;\n");
+    sb.Append("  v_resume text;\n");
+    sb.Append("  v_pass bigint;\n");
     sb.Append("  v_count bigint;\n");
-    sb.Append("  v_touched bigint := 0;\n");
-    sb.Append("  v_finished boolean := true;\n");
     sb.Append(CultureInfo.InvariantCulture, $"  v_last {keyType};\n");
     sb.Append(CultureInfo.InvariantCulture, $"  v_next {keyType};\n");
-    sb.Append("  v_started timestamptz := clock_timestamp();\n");
-    sb.Append(CultureInfo.InvariantCulture,
-      $"  v_budget_ms bigint := nullif(current_setting({SqlText.Literal(BUDGET_SETTING)}, true), '')::bigint;\n");
     sb.Append("BEGIN\n");
     sb.Append(CultureInfo.InvariantCulture, $"  IF to_regclass({SqlText.Literal(journal)}) IS NULL THEN\n");
     sb.Append(CultureInfo.InvariantCulture,
       $"    RAISE NOTICE USING MESSAGE = format('%s: strong ids: no journal yet, nothing to convert', {tableLiteral});\n");
     sb.Append("    RETURN;\n");
     sb.Append(END_IF);
-    sb.Append(CultureInfo.InvariantCulture, $"  SELECT settled_at INTO v_settled FROM {journal} WHERE name = {name};\n");
-    sb.Append("  IF v_settled IS NOT NULL THEN\n");
     sb.Append(CultureInfo.InvariantCulture,
-      $"    RAISE NOTICE USING MESSAGE = format('%s: strong ids: settled, skipped', {tableLiteral});\n");
+      $"  INSERT INTO {journal} (name, table_name, kind) VALUES ({name}, {tableLiteral}, {SqlText.Literal(KIND)}) ON CONFLICT (name) DO NOTHING;\n");
+    // Locked, so a second session converting this table waits here and then reads the key the first recorded.
+    sb.Append(CultureInfo.InvariantCulture,
+      $"  SELECT settled_at, resume_key, pass_rows_converted INTO v_settled, v_resume, v_pass FROM {journal} {row} FOR UPDATE;\n");
+    sb.Append("  IF v_settled IS NOT NULL THEN\n");
     sb.Append("    RETURN;\n");
     sb.Append(END_IF);
-    // A table this release has not created yet holds no row in the old form: it is settled at once below.
-    sb.Append(CultureInfo.InvariantCulture, $"  IF to_regclass({SqlText.Literal(qualifiedTable)}) IS NOT NULL THEN\n");
-    sb.Append("    LOOP\n");
+    sb.Append(CultureInfo.InvariantCulture, $"  IF to_regclass({SqlText.Literal(qualifiedTable)}) IS NULL THEN\n");
+    // A table this release has not created yet holds no row in the old form.
+    sb.Append(CultureInfo.InvariantCulture,
+      $"    UPDATE {journal} SET first_applied_at = coalesce(first_applied_at, now()), last_applied_at = now(), settled_at = now(), resume_key = NULL {row};\n");
+    sb.Append("    RETURN;\n");
+    sb.Append(END_IF);
+    sb.Append(CultureInfo.InvariantCulture, $"  v_last := v_resume::{keyType};\n");
     sb.Append(CultureInfo.InvariantCulture,
       // The batch's last key: ORDER BY rather than max(), which has no uuid overload before PostgreSQL 18.
-      $"      SELECT b.{key} INTO v_next FROM (SELECT {key} FROM {qualifiedTable} WHERE v_last IS NULL OR {key} > v_last ORDER BY {key} LIMIT {BATCH_SIZE}) b ORDER BY b.{key} DESC LIMIT 1;\n");
-    sb.Append("      EXIT WHEN v_next IS NULL;\n");
+      $"  SELECT b.{key} INTO v_next FROM (SELECT {key} FROM {qualifiedTable} WHERE v_last IS NULL OR {key} > v_last ORDER BY {key} LIMIT {batchSize}) b ORDER BY b.{key} DESC LIMIT 1;\n");
+    sb.Append("  IF v_next IS NULL THEN\n");
+    sb.Append("    IF v_pass = 0 THEN\n");
     sb.Append(CultureInfo.InvariantCulture,
-      $"      UPDATE {qualifiedTable} SET {string.Join(", ", rewrites.Select(r => $"{r.Column} = {r.Rewritten}"))}\n");
+      $"      UPDATE {journal} SET first_applied_at = coalesce(first_applied_at, now()), last_applied_at = now(), settled_at = now(), resume_key = NULL {row};\n");
     sb.Append(CultureInfo.InvariantCulture,
-      $"        WHERE (v_last IS NULL OR {key} > v_last) AND {key} <= v_next\n");
+      $"      RAISE NOTICE USING MESSAGE = format('%s: strong ids: a complete pass converted nothing; settled', {tableLiteral});\n");
+    sb.Append("    ELSE\n");
     sb.Append(CultureInfo.InvariantCulture,
-      $"          AND ({string.Join(" OR ", rewrites.Select(r => $"{r.Column} IS DISTINCT FROM {r.Rewritten}"))});\n");
-    sb.Append("      GET DIAGNOSTICS v_count = ROW_COUNT;\n");
-    sb.Append("      v_touched := v_touched + v_count;\n");
-    sb.Append("      v_last := v_next;\n");
-    sb.Append("      IF v_budget_ms IS NOT NULL AND clock_timestamp() - v_started > v_budget_ms * interval '1 millisecond' THEN\n");
-    sb.Append("        v_finished := false;\n");
-    sb.Append("        EXIT;\n");
-    sb.Append("      END IF;\n");
-    sb.Append("    END LOOP;\n");
+      $"      UPDATE {journal} SET last_applied_at = now(), resume_key = NULL, pass_rows_converted = 0 {row};\n");
+    sb.Append(CultureInfo.InvariantCulture,
+      $"      RAISE NOTICE USING MESSAGE = format('%s: strong ids: a pass converted %s row(s); another checks for rows written meanwhile', {tableLiteral}, v_pass);\n");
+    sb.Append("    END IF;\n");
+    sb.Append("    RETURN;\n");
     sb.Append(END_IF);
     sb.Append(CultureInfo.InvariantCulture,
-      $"  INSERT INTO {journal} (name, table_name, kind, first_applied_at, last_applied_at, rows_converted, settled_at)\n");
+      $"  UPDATE {qualifiedTable} SET {string.Join(", ", rewrites.Select(r => $"{r.Column} = {r.Rewritten}"))}\n");
     sb.Append(CultureInfo.InvariantCulture,
-      $"  VALUES ({name}, {tableLiteral}, {SqlText.Literal(KIND)}, now(), now(), v_touched, CASE WHEN v_touched = 0 AND v_finished THEN now() END)\n");
-    sb.Append("  ON CONFLICT (name) DO UPDATE SET last_applied_at = now(),\n");
+      $"    WHERE (v_last IS NULL OR {key} > v_last) AND {key} <= v_next\n");
     sb.Append(CultureInfo.InvariantCulture,
-      $"    rows_converted = {journal}.rows_converted + EXCLUDED.rows_converted, settled_at = EXCLUDED.settled_at;\n");
-    sb.Append("  IF v_touched > 0 THEN\n");
+      $"      AND ({string.Join(" OR ", rewrites.Select(r => $"{r.Column} IS DISTINCT FROM {r.Rewritten}"))});\n");
+    sb.Append("  GET DIAGNOSTICS v_count = ROW_COUNT;\n");
+    sb.Append(CultureInfo.InvariantCulture,
+      $"  UPDATE {journal} SET first_applied_at = coalesce(first_applied_at, now()), last_applied_at = now(), resume_key = v_next::text,\n");
+    sb.Append(CultureInfo.InvariantCulture,
+      $"    pass_rows_converted = pass_rows_converted + v_count, rows_converted = rows_converted + v_count {row};\n");
+    sb.Append("  IF v_count > 0 THEN\n");
     sb.Append(CultureInfo.InvariantCulture,
       $"    {IndexStatistics.MarkRewrittenSql(SqlText.Literal(schema), tableLiteral)}\n");
     sb.Append(StoredFormApplier.RecordSql(journal, "name", name, "    "));
     sb.Append(END_IF);
-    sb.Append("  IF NOT v_finished THEN\n");
-    sb.Append(CultureInfo.InvariantCulture,
-      $"    RAISE NOTICE USING MESSAGE = format('%s: strong ids: budget spent after %s row update(s); the next startup carries on', {tableLiteral}, v_touched);\n");
-    sb.Append("    RETURN;\n");
-    sb.Append(END_IF);
-    sb.Append(CultureInfo.InvariantCulture,
-      $"  RAISE NOTICE USING MESSAGE = format('%s: strong ids: converted, %s row update(s)', {tableLiteral}, v_touched);\n");
     sb.Append("END\n");
     sb.Append("$wb$;");
     return sb.ToString();

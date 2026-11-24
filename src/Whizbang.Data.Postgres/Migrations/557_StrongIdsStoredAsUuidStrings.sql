@@ -10,9 +10,14 @@
 --              transport writes it, by both writers of the document: Entity Framework, whose type mapping makes the id
 --              a uuid scalar, and the serializer the atomic upsert writes with. A document written before stores each
 --              id as an object. The readers take either form, but a query that compares an id casts the stored text to
---              uuid, which the object form fails; so the stored-form phase rewrites the object form once per table,
---              before any query runs, journaled in wh_stored_form_migrations under 'strong-id-scalar:<table>:<shape>'
---              and settled by the first pass that converts nothing.
+--              uuid unless it is told to take either form; so the object form is rewritten, per table, journaled in
+--              wh_stored_form_migrations under 'strong-id-scalar:<table>:<shape>' and settled by the first complete
+--              pass that converts nothing.
+--
+--              The rewrite runs a batch at a time, each batch its own transaction under the schema lock, and records
+--              in the journal the last primary key it reached (resume_key) and what the current pass has converted
+--              (pass_rows_converted). Startup runs one budgeted slice and the maintenance cycle carries on from the
+--              saved key, so a table of any size finishes; a restart redoes nothing.
 --
 --              _wh_strong_id_scalar converts one value: an object whose Value is a string becomes that string; any
 --              other value is returned as it was. wh_strong_id_scalar_at walks one path to it, through nested objects
@@ -27,7 +32,8 @@
 --
 -- Reversal: reversible (the functions are dropped; rows already converted stay converted, and every reader since #2518 reads them)
 -- Dependencies: 176 (wh_stored_form_migrations, the journal the rewrite records in)
--- Objects: _wh_strong_id_scalar, wh_strong_id_scalar_at, jsonb_strong_id_containment_set
+-- Objects: _wh_strong_id_scalar, wh_strong_id_scalar_at, jsonb_strong_id_containment_set,
+--          wh_stored_form_migrations.resume_key, wh_stored_form_migrations.pass_rows_converted
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
 -- @whizbang:bootstrap-begin
@@ -100,6 +106,18 @@ COMMENT ON FUNCTION __SCHEMA__.wh_strong_id_scalar_at(JSONB, TEXT[]) IS
   'Rewrites the strongly-typed id at one path of a perspective document from {"Value": "<uuid>"} to the UUID string. '
   'The path walks nested objects and, at a segment written [], every element of a collection; a missing key or a '
   'value already a string is returned as it was. Idempotent over its own output.';
+
+-- Where a batched rewrite stands: the primary key its last batch reached (as text; null at the start of a pass) and what
+-- the current pass has converted, so a run resumes there and a table settles on a complete pass that converts nothing.
+ALTER TABLE __SCHEMA__.wh_stored_form_migrations ADD COLUMN IF NOT EXISTS resume_key TEXT NULL;
+ALTER TABLE __SCHEMA__.wh_stored_form_migrations ADD COLUMN IF NOT EXISTS pass_rows_converted BIGINT NOT NULL DEFAULT 0;
+
+COMMENT ON COLUMN __SCHEMA__.wh_stored_form_migrations.resume_key IS
+  'For a migration run a batch at a time (#2518): the primary key, as text, the last committed batch reached. Null '
+  'at the start of a pass. Each run starts from it, so a restart redoes nothing.';
+COMMENT ON COLUMN __SCHEMA__.wh_stored_form_migrations.pass_rows_converted IS
+  'For a migration run a batch at a time (#2518): the rows the current pass has converted. A pass that reaches the '
+  'end with none settles the migration; one with any starts another, which catches rows written meanwhile.';
 
 -- @whizbang:bootstrap-end
 

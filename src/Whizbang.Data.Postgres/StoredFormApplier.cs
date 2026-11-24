@@ -74,6 +74,25 @@ public sealed record StoredFormApplier(string LibraryVersion, string Application
 
     """;
 
+  /// <summary>
+  /// Carries <paramref name="applier"/> to every conversion in <paramref name="transaction"/>, as the transaction settings
+  /// <see cref="RecordSql"/> reads. Null records nobody.
+  /// </summary>
+  /// <param name="connection">The connection the transaction is on.</param>
+  /// <param name="transaction">The transaction the conversions run in.</param>
+  /// <param name="applier">Who applies them.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  internal static async Task StampAsync(
+      Npgsql.NpgsqlConnection connection, Npgsql.NpgsqlTransaction transaction, StoredFormApplier? applier,
+      CancellationToken cancellationToken) {
+    await using var stamp = new Npgsql.NpgsqlCommand(
+      $"SELECT set_config('{LIBRARY_SETTING}', $1, true), set_config('{APPLICATION_SETTING}', $2, true)",
+      connection, transaction);
+    stamp.Parameters.AddWithValue(applier?.LibraryVersion ?? string.Empty);
+    stamp.Parameters.AddWithValue(applier?.ApplicationVersion ?? string.Empty);
+    await stamp.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
   /// <summary>Restores the applier recorded before.</summary>
   private sealed class Scope(StoredFormApplier? previous) : IDisposable {
     public void Dispose() => _current.Value = previous;
