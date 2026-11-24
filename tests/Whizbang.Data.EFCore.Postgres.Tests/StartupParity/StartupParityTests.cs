@@ -227,6 +227,51 @@ public class StartupParityTests {
     }
   }
 
+  /// <summary>
+  /// Both drivers enter Converge before the managed-object reconcile, so a host watching the stages sees the reconcile
+  /// coming, and a test can act at that transition (#2563). Checked at the moment of entry: the retired index the
+  /// reconcile drops is still there, and it is gone once the start completes.
+  /// </summary>
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  public async Task EachDriver_EntersConverge_BeforeItsReconcileAsync(string driverName) {
+    var driver = StartupDriver.For(driverName);
+    await _startAsync(driver);
+    await _retiredIndexSeenAsync(driver);
+    var converge = new ConvergeEntry(() => _existsAsync(driver.Retired));
+
+    var instance = _compose(driver, configure: s => s.AddSingleton<IStartupStageReporter>(converge));
+    await _initializer(instance).StartAsync(CancellationToken.None);
+
+    await Assert.That(converge.Entered).IsTrue().Because("the start reports Converge, on either driver");
+    await Assert.That(converge.RetiredWhenEntered).IsTrue()
+      .Because("Converge is entered before the reconcile, which is what drops the retired index");
+    await Assert.That(await _existsAsync(driver.Retired)).IsFalse().Because("the reconcile that followed dropped it");
+  }
+
+  /// <summary>Records, when Converge is entered, whether the retired index is still there.</summary>
+  private sealed class ConvergeEntry(Func<Task<bool>> retiredExists) : IStartupStageReporter {
+    public bool Entered { get; private set; }
+    public bool RetiredWhenEntered { get; private set; }
+    public StartupStageSnapshot? Current { get; private set; }
+
+    public async ValueTask EnterAsync(StartupStage stage, string message, CancellationToken cancellationToken = default) {
+      Current = new StartupStageSnapshot(stage, message, false, DateTimeOffset.UnixEpoch);
+      if (stage == StartupStage.Converge && !Entered) {
+        Entered = true;
+        RetiredWhenEntered = await retiredExists();
+      }
+    }
+
+    public ValueTask SkipAsync(StartupStage stage, string reason, CancellationToken cancellationToken = default) {
+      Current = new StartupStageSnapshot(stage, "skipped: " + reason, true, DateTimeOffset.UnixEpoch);
+      return ValueTask.CompletedTask;
+    }
+
+    public ValueTask InstanceRegisteredAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+  }
+
   [Test]
   [Arguments("efcore")]
   [Arguments("dapper")]
