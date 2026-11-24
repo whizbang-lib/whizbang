@@ -14,7 +14,9 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.EFCore.Postgres.Functions;
 using Whizbang.Data.EFCore.Postgres.QueryTranslation;
+using Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
 using Whizbang.Generators.Shared.Utilities;
 using Whizbang.Testing.Containers;
 using Whizbang.Transports.HotChocolate;
@@ -36,7 +38,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// <para>
 /// The index is built from the schema's own declaration of it (<see cref="SchemaRegistry.Indexes"/>, the
 /// decisions the table DDL makes), the context runs the shipped query pipeline (<c>UseWhizbangPhysicalFields</c>,
-/// <c>UseWhizbangJsonbContainment</c>), and the query comes from the GraphQL filter, so a change on either side that
+/// <c>UseWhizbangJsonbContainment</c>, <c>UseWhizbangFunctions</c>), and the query comes from the GraphQL filter, so a change on either side that
 /// stops the index from answering fails here rather than as a slower query in production. Sequential scans are
 /// switched off for the plan, so the planner takes the index whenever it can answer the filter at all.
 /// </para>
@@ -166,7 +168,9 @@ public class GraphQLWhizbangIdFilterIndexTests {
       """);
 
     _options = new DbContextOptionsBuilder<IdFilterIndexDbContext>()
-      .UseNpgsql(connectionString)
+      // UseWhizbangFunctions, as every generated context: it registers the postprocessor the strong-id rewrite and the
+      // translated-tree reshape run in.
+      .UseNpgsql(connectionString, npgsql => npgsql.UseWhizbangFunctions())
       .UseWhizbangPhysicalFields()
       .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
       .Options;
@@ -269,5 +273,40 @@ public class GraphQLWhizbangIdFilterIndexTests {
     await Assert.That(inSet).Contains("\"old\"").Because(inSet);
     await Assert.That(inSet).Contains("\"first\"").Because(inSet);
     await Assert.That(inPlan).Contains(_documentIndex.Name).Because(inPlan);
+  }
+
+  /// <summary>
+  /// An id equality written in LINQ finds a row in either stored form through the document index, in each containment
+  /// mechanism: the tree rewrite (the default) and the reshape of the translated query, which runs before the strong-id
+  /// rewrite and builds a containment test for both forms (#2518).
+  /// </summary>
+  [Test]
+  [NotInParallel] // Switches the process-wide containment mode every perspective query compiles under: runs alone.
+  [Arguments(ContainmentMode.ExpressionTree)]
+  [Arguments(ContainmentMode.TranslatedTree)]
+  public async Task IdEquality_FindsBothFormsThroughTheDocumentIndex_InEitherContainmentModeAsync(ContainmentMode mode) {
+    JsonbContainmentSwitch.SetMode(mode);
+    try {
+      foreach (var (id, status) in new[] { (_old, "old"), (_second, "second") }) {
+        var capture = new PlanCapture();
+        var options = new DbContextOptionsBuilder<IdFilterIndexDbContext>(_options).AddInterceptors(capture).Options;
+        await using var context = new IdFilterIndexDbContext(options);
+        var rows = context.Set<PerspectiveRow<IdFilterDocument>>();
+        // A literal per mode, so neither mode answers from a query the other compiled.
+        var query = mode == ContainmentMode.TranslatedTree
+          ? rows.Where(r => r.Data.OrderId == id && r.Data.Status != "translated-tree")
+          : rows.Where(r => r.Data.OrderId == id && r.Data.Status != "expression-tree");
+        var sql = query.ToQueryString();
+
+        var found = await query.Select(r => r.Data.Status).ToListAsync();
+
+        await Assert.That(found).IsEquivalentTo([status]).Because(sql);
+        await Assert.That(sql).Contains("@>").Because(sql);
+        await Assert.That(sql).Contains("'Value'").Because(sql);
+        await Assert.That(capture.Plan).Contains(_documentIndex.Name).Because(capture.Plan);
+      }
+    } finally {
+      JsonbContainmentSwitch.Reset();
+    }
   }
 }
