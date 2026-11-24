@@ -804,14 +804,18 @@ BEGIN
     JOIN __SCHEMA__.wh_perspective_cursors c
       ON c.stream_id = pe.stream_id AND c.perspective_name = pe.perspective_name
     JOIN __SCHEMA__.wh_event_store se ON se.event_id = pe.event_id
-    JOIN __SCHEMA__.wh_event_store ce ON ce.event_id = c.last_event_id
+    -- The cursor's position: the stream version of its last applied event (a bound on the stream, never a judgment of
+    -- which copy of a superseding key is newer, which _wh_supersedes alone decides).
+    CROSS JOIN LATERAL (
+      SELECT ce.version AS through_version FROM __SCHEMA__.wh_event_store ce WHERE ce.event_id = c.last_event_id
+    ) AS cursor_at
     CROSS JOIN LATERAL (
       -- The origin's latest event at or below the cursor's version: one backward probe of idx_event_store_stream.
       SELECT a.event_id, a.origin_commit_sequence
       FROM __SCHEMA__.wh_event_store a
       WHERE a.stream_id = se.stream_id
         AND a.origin_service_id = se.origin_service_id
-        AND a.version <= ce.version
+        AND a.version <= cursor_at.through_version
       ORDER BY a.version DESC
       LIMIT 1
     ) AS applied
