@@ -1,12 +1,12 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Down migration: 583_LiveReadsCarryTheirStreamOrder.down.sql
--- Restores store_inbox_messages, fetch_inbox_batch and get_stream_events to their last words before 583 and removes
+-- Down migration: 576_LiveReadsCarryTheirStreamOrder.down.sql
+-- Restores store_inbox_messages, fetch_inbox_batch and get_stream_events to their last words before 576 and removes
 -- the arrival position.
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
--- store_inbox_messages: its last word before 583 (567).
+-- store_inbox_messages: its last word before 576 (567).
 CREATE OR REPLACE FUNCTION __SCHEMA__.store_inbox_messages(
   p_messages JSONB,
   p_instance_id UUID,
@@ -332,7 +332,7 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__.store_inbox_messages(JSONB, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
   'Stores received inbox messages with deduplication (121: every arrival counted), priority (149), the work-state row (162). 236 (#1664): a message recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead letter, is stored even though its id was seen, and its work-state row names the dead letter for the completion to settle. 242 (#1720): a message the consumer skipped on receive (DiscardedOnReceive) is stored settled: processed, Stored and Published, the reason in error, never claimed, copied or returned as new work. 368: and without its body (event_data and metadata stored empty), since nothing reads a settled row''s body and deduplication does not need it. 252 (#1843): a repair child (RestoreIfMissing) whose id was seen but which neither the event store nor the inbox holds is stored again as state only, or stored settled as refused when its stream had earlier history truncated. 460 (#2363): refuses a redelivered event of a purged stream, recording why in wh_inbox_state.error. 567 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own).';
 
--- fetch_inbox_batch: its last word before 583 (230).
+-- fetch_inbox_batch: its last word before 576 (230).
 SELECT __SCHEMA__.drop_all_overloads('fetch_inbox_batch');
 CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_inbox_batch(
   p_stream_ids UUID[],
@@ -438,7 +438,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- get_stream_events: its last word before 583 (582).
+-- get_stream_events: its last word before 576 (575).
 SELECT __SCHEMA__.drop_all_overloads('get_stream_events');
 CREATE OR REPLACE FUNCTION __SCHEMA__.get_stream_events(
   p_instance_id UUID,
@@ -578,7 +578,7 @@ BEGIN
     AND pe.processed_at IS NULL
     AND pe.stream_id = ANY(p_stream_ids)
     AND (es.commit_sequence IS NOT NULL OR pe.created_at <= v_stamp_cutoff)
-  -- 582 (#2551): an unstamped event is read in stream order, its version, never by id.
+  -- 575 (#2551): an unstamped event is read in stream order, its version, never by id.
   ORDER BY pe.stream_id, es.commit_sequence ASC NULLS LAST, es.version;
 END;
 $$ LANGUAGE plpgsql;
@@ -593,6 +593,6 @@ COMMENT ON FUNCTION __SCHEMA__.get_stream_events(UUID, UUID[], TIMESTAMPTZ, INTE
 
 DROP FUNCTION IF EXISTS __SCHEMA__.fetch_inbox_batch_in_stream_order(UUID[], UUID, INTEGER, BIGINT);
 DROP FUNCTION IF EXISTS __SCHEMA__.get_stream_events_in_stream_order(UUID, UUID[], TIMESTAMPTZ, INTEGER);
--- Dropping the column drops its default; IF EXISTS keeps the file safe to run where 583 never ran.
+-- Dropping the column drops its default; IF EXISTS keeps the file safe to run where 576 never ran.
 ALTER TABLE __SCHEMA__.wh_inbox DROP COLUMN IF EXISTS arrival_position;
 DROP SEQUENCE IF EXISTS __SCHEMA__.wh_inbox_arrival_seq;

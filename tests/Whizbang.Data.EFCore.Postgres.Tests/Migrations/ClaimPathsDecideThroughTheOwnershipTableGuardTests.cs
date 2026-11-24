@@ -38,7 +38,7 @@ public partial class ClaimPathsDecideThroughTheOwnershipTableGuardTests {
     "claim_orphaned_inbox",
     "claim_orphaned_perspective_events",
     "wh_claim_multi_stream_work",
-    // 583 (#2551): the perspective read moved to a new name for its new result; get_stream_events reads through it.
+    // 576 (#2551): the perspective read moved to a new name for its new result; get_stream_events reads through it.
     "get_stream_events_in_stream_order",
     "wh_continue_outbox_streams",
     "wh_claim_due_schedules",

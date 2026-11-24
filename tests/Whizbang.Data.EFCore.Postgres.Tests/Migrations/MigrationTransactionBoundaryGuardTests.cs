@@ -87,7 +87,7 @@ public partial class MigrationTransactionBoundaryGuardTests {
   /// </summary>
   private static readonly Dictionary<string, string> READS_THE_MOVED_COLUMN_FROM_THE_SIDE_TABLE = new(StringComparer.Ordinal) {
     ["fetch_inbox_batch_in_stream_order"] =
-      "583 (#2551): fetch_inbox_batch's body (230, redirected by 162) under a new name for its new result: status, "
+      "576 (#2551): fetch_inbox_batch's body (230, redirected by 162) under a new name for its new result: status, "
       + "attempts, partition_number, error, processed_at, lease_expiry and instance_id are read from wh_inbox_state (alias ist); "
       + "wh_inbox supplies the message, its priority and its arrival_position, none of which moved",
     ["wh_reconcile_redelivered_bundle_by_first_hop"] =

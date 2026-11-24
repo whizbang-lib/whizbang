@@ -1,14 +1,14 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 583_LiveReadsCarryTheirStreamOrder.sql
+-- Migration: 576_LiveReadsCarryTheirStreamOrder.sql
 -- Date: 2026-11-24
 -- Description: The live reads rank a stream in its stream order and hand the rank to the worker on each row, never by
 --              id (#2551).
 --
 --              An id is time-ordered and never a stream position. fetch_inbox_batch ranked a stream's received rows by
 --              message id, and the workers re-sorted every batch by id in C#. A stream's received events are stored in
---              receive order (581), so their stored version is their position; a command has no version, and its
+--              receive order (574), so their stored version is their position; a command has no version, and its
 --              position is its arrival, which nothing recorded: every row of one store_inbox_messages call shares one
 --              received_at, and the call inserts in stream-and-id lock order.
 --
@@ -34,11 +34,11 @@
 --              primary-key probe of wh_event_store per leased row and three window passes over the rows it already
 --              reads. The stream read returns a column it already reads. EXPLAIN in the commit report.
 --
---              Number 583: reserved for this change (580 to 584).
+--              Number 576: reserved for this change (573 to 576).
 --
 -- Reversal: reversible (the down file restores the three functions' previous last words, drops the two new
 --           functions, the column and the sequence)
--- Dependencies: 567 (store_inbox_messages), 230 (fetch_inbox_batch), 582 (get_stream_events), 581 (receive order)
+-- Dependencies: 567 (store_inbox_messages), 230 (fetch_inbox_batch), 575 (get_stream_events), 574 (receive order)
 -- Objects: wh_inbox.arrival_position, wh_inbox_arrival_seq, store_inbox_messages, fetch_inbox_batch_in_stream_order,
 --          fetch_inbox_batch, get_stream_events_in_stream_order, get_stream_events
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
@@ -77,10 +77,10 @@ $$;
 ALTER TABLE __SCHEMA__.wh_inbox ALTER COLUMN arrival_position SET DEFAULT nextval('__SCHEMA__.wh_inbox_arrival_seq');
 
 COMMENT ON COLUMN __SCHEMA__.wh_inbox.arrival_position IS
-'583 (#2551): the message''s arrival, its position in the order store_inbox_messages was handed its delivery. A command''s stream position (fetch_inbox_batch); for an event, the arrival slot its stored version is dealt into.';
+'576 (#2551): the message''s arrival, its position in the order store_inbox_messages was handed its delivery. A command''s stream position (fetch_inbox_batch); for an event, the arrival slot its stored version is dealt into.';
 
 -- ---------------------------------------------------------------------------------------------
--- store_inbox_messages: copied from its last word (567), recording each message's arrival (583).
+-- store_inbox_messages: copied from its last word (567), recording each message's arrival (576).
 -- ---------------------------------------------------------------------------------------------
 -- <docs>resilience/stream-integrity#remembered-but-missing</docs>
 -- <docs>messaging/transports/transport-consumer#batch-handler</docs>
@@ -135,12 +135,12 @@ DECLARE
   v_refusal TEXT;             -- 252: why such a child is refused instead, stored settled with the reason
   -- 566 (#2554, #2555): the service's switch, read once: on, the partition ownership table alone decides.
   v_map BOOLEAN := __SCHEMA__.wh_partition_ownership_by_map();
-  -- 583 (#2551): one arrival per element, in the order the delivery lists them.
+  -- 576 (#2551): one arrival per element, in the order the delivery lists them.
   v_arrivals BIGINT[];
 BEGIN
   IF jsonb_array_length(p_messages) = 0 THEN RETURN; END IF;
 
-  -- 583 (#2551): the delivery's arrivals, taken in its order before the inserts, which run in lock order.
+  -- 576 (#2551): the delivery's arrivals, taken in its order before the inserts, which run in lock order.
   v_arrivals := ARRAY(
     SELECT nextval('__SCHEMA__.wh_inbox_arrival_seq') FROM generate_series(1, jsonb_array_length(p_messages)) AS g(n) ORDER BY g.n);
 
@@ -176,7 +176,7 @@ BEGIN
       NULLIF(elem->>'DiscardedOnReceive', '') as discarded_on_receive,
       -- 252 (#1843): set on the children of a redelivery that repair or an operator asked for.
       COALESCE((elem->>'RestoreIfMissing')::BOOLEAN, false) as restore_if_missing,
-      -- 583 (#2551): the element's place in the delivery.
+      -- 576 (#2551): the element's place in the delivery.
       listed.position as arrival_ordinal
     FROM jsonb_array_elements(p_messages) WITH ORDINALITY AS listed(elem, position)
     ORDER BY (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID NULLS FIRST, (elem->>__ENVELOPE_FIELD_MESSAGE_ID__)::UUID
@@ -438,11 +438,11 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.store_inbox_messages(JSONB, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-  'Stores received inbox messages with deduplication (121: every arrival counted), priority (149), the work-state row (162). 236 (#1664): a message recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead letter, is stored even though its id was seen, and its work-state row names the dead letter for the completion to settle. 242 (#1720): a message the consumer skipped on receive (DiscardedOnReceive) is stored settled: processed, Stored and Published, the reason in error, never claimed, copied or returned as new work. 368: and without its body (event_data and metadata stored empty), since nothing reads a settled row''s body and deduplication does not need it. 252 (#1843): a repair child (RestoreIfMissing) whose id was seen but which neither the event store nor the inbox holds is stored again as state only, or stored settled as refused when its stream had earlier history truncated. 460 (#2363): refuses a redelivered event of a purged stream, recording why in wh_inbox_state.error. 567 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own). 583 (#2551): records each message''s arrival (wh_inbox.arrival_position) in the order the delivery lists it.';
+  'Stores received inbox messages with deduplication (121: every arrival counted), priority (149), the work-state row (162). 236 (#1664): a message recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead letter, is stored even though its id was seen, and its work-state row names the dead letter for the completion to settle. 242 (#1720): a message the consumer skipped on receive (DiscardedOnReceive) is stored settled: processed, Stored and Published, the reason in error, never claimed, copied or returned as new work. 368: and without its body (event_data and metadata stored empty), since nothing reads a settled row''s body and deduplication does not need it. 252 (#1843): a repair child (RestoreIfMissing) whose id was seen but which neither the event store nor the inbox holds is stored again as state only, or stored settled as refused when its stream had earlier history truncated. 460 (#2363): refuses a redelivered event of a purged stream, recording why in wh_inbox_state.error. 567 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own). 576 (#2551): records each message''s arrival (wh_inbox.arrival_position) in the order the delivery lists it.';
 
 -- ---------------------------------------------------------------------------------------------
 -- fetch_inbox_batch_in_stream_order: fetch_inbox_batch's last word (230), ranked in stream order and returning the
--- rank (583). A new name: a function's result never changes under its name (454).
+-- rank (576). A new name: a function's result never changes under its name (454).
 -- ---------------------------------------------------------------------------------------------
 
 -- <docs>fundamentals/work-coordinator/claim-loop</docs>
@@ -481,8 +481,8 @@ BEGIN
     RETURN;
   END IF;
 
-  -- 583 (#2551): a stream's rows are ranked in its stream order, never by id: its events by stored version (the receive
-  -- order 581 stored them in), its commands by arrival, each kind dealt into the arrival slots it holds. The rank is
+  -- 576 (#2551): a stream's rows are ranked in its stream order, never by id: its events by stored version (the receive
+  -- order 574 stored them in), its commands by arrival, each kind dealt into the arrival slots it holds. The rank is
   -- returned as stream_position, and the drain dispatches by it.
   --
   -- 162: this function needs both tables, because it returns the message and selects on its claim
@@ -586,10 +586,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__.fetch_inbox_batch_in_stream_order(UUID[], UUID, INTEGER, BIGINT) IS
-  '583 (#2551): fetch_inbox_batch with each row''s stream position: a stream''s events by stored version, its commands by arrival, each kind dealt into the arrival slots it holds; never by id. A new name, because a function''s result never changes under its name (migration 454).';
+  '576 (#2551): fetch_inbox_batch with each row''s stream position: a stream''s events by stored version, its commands by arrival, each kind dealt into the arrival slots it holds; never by id. A new name, because a function''s result never changes under its name (migration 454).';
 
 -- ---------------------------------------------------------------------------------------------
--- fetch_inbox_batch: its result unchanged, its rows now in stream order: the new function's, less the rank (583).
+-- fetch_inbox_batch: its result unchanged, its rows now in stream order: the new function's, less the rank (576).
 -- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('fetch_inbox_batch');
 
@@ -616,7 +616,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_inbox_batch(
   priority INTEGER
 ) AS $$
 BEGIN
-  -- 583 (#2551): the same rows in the same stream order as fetch_inbox_batch_in_stream_order, for a caller built before
+  -- 576 (#2551): the same rows in the same stream order as fetch_inbox_batch_in_stream_order, for a caller built before
   -- it; never ranked by id.
   RETURN QUERY
   SELECT f.message_id, f.stream_id, f.handler_name, f.message_type, f.event_data, f.metadata, f.scope, f.status,
@@ -627,7 +627,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- ---------------------------------------------------------------------------------------------
--- get_stream_events_in_stream_order: get_stream_events' last word (582), returning each event's version (583).
+-- get_stream_events_in_stream_order: get_stream_events' last word (575), returning each event's version (576).
 -- ---------------------------------------------------------------------------------------------
 -- <docs>fundamentals/perspectives/perspectives-with-actions#no-row-contract</docs>
 -- <docs>fundamentals/work-coordinator/commit-sequence</docs>
@@ -757,7 +757,7 @@ BEGIN
       )
       ELSE FALSE
     END,
-    -- 583 (#2551): the event's stream position, which the drain applies the stream in.
+    -- 576 (#2551): the event's stream position, which the drain applies the stream in.
     es.version::BIGINT
   FROM __SCHEMA__.wh_perspective_events pe
   -- 536: the event by its key, one probe per work row.
@@ -783,15 +783,15 @@ BEGIN
     AND pe.processed_at IS NULL
     AND pe.stream_id = ANY(p_stream_ids)
     AND (es.commit_sequence IS NOT NULL OR pe.created_at <= v_stamp_cutoff)
-  -- 582 (#2551): an unstamped event is read in stream order, its version, never by id.
+  -- 575 (#2551): an unstamped event is read in stream order, its version, never by id.
   ORDER BY pe.stream_id, es.commit_sequence ASC NULLS LAST, es.version;
 END;
 $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__.get_stream_events_in_stream_order(UUID, UUID[], TIMESTAMPTZ, INTEGER) IS
-  '583 (#2551): get_stream_events with each event''s version (out_version), its stream position, which the perspective drain applies a stream by. A new name, because a function''s result never changes under its name (migration 454).';
+  '576 (#2551): get_stream_events with each event''s version (out_version), its stream position, which the perspective drain applies a stream by. A new name, because a function''s result never changes under its name (migration 454).';
 
 -- ---------------------------------------------------------------------------------------------
--- get_stream_events: its result unchanged, read through the new function, less the version (583).
+-- get_stream_events: its result unchanged, read through the new function, less the version (576).
 -- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('get_stream_events');
 
@@ -816,7 +816,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.get_stream_events(
   out_first_in_stream BOOLEAN
 ) AS $$
 BEGIN
-  -- 583 (#2551): the same rows in the same order as get_stream_events_in_stream_order, for a caller built before it.
+  -- 576 (#2551): the same rows in the same order as get_stream_events_in_stream_order, for a caller built before it.
   RETURN QUERY
   SELECT g.out_stream_id, g.out_event_id, g.out_event_type, g.out_event_data, g.out_metadata, g.out_scope,
          g.out_event_work_id, g.out_perspective_name, g.out_commit_sequence, g.out_attempts, g.out_failures,

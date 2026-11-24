@@ -568,7 +568,7 @@ public partial class DapperPostgresEventStore(
         StoredScope.RestoreInto(hops, StoredScope.Read(jsonb.ScopeJson, JsonOptions));
         var envelope = _buildPolymorphicEnvelope(eventData, messageId, hops, jsonb);
         envelope.LocalCommitSequence = raw.CommitSequence;
-        // 583 (#2551): the event's stream position, which the drain applies the stream in, never its id.
+        // 576 (#2551): the event's stream position, which the drain applies the stream in, never its id.
         envelope.LocalStreamVersion = raw.Version;
         results.Add(envelope);
       } catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException) {

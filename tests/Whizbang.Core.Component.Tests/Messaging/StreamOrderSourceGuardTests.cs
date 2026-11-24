@@ -19,7 +19,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <remarks>
 /// The one fallback allowed is the replay's, for an event that carries neither a version nor a commit sequence, or an
 /// origin's event with no origin position (#2379), shared with the receive order the SQL stores
-/// (581_ReceivedStreamsAreVersionedInReceiveOrder.sql); it is allowed only in the files that define it, by exact text.
+/// (574_ReceivedStreamsAreVersionedInReceiveOrder.sql); it is allowed only in the files that define it, by exact text.
 /// </remarks>
 /// <docs>fundamentals/event-store/version-ordering#dispatch-order</docs>
 [Category("Messaging")]

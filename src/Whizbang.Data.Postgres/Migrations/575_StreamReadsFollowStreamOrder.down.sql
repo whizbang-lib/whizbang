@@ -1,46 +1,12 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 582_StreamReadsFollowStreamOrder.sql
--- Date: 2026-11-23
--- Description: The perspective reads return a stream's events in stream order, never by id (#2551).
---
---              get_stream_events and wh_collective_sink_queue read a stream's events by commit sequence and broke a
---              tie (the unstamped events they admit past the stamp cutoff) by event id; fetch_events_by_ids,
---              fetch_pending_perspective_events and claim_and_fetch_pending_perspective_events returned a stream's
---              events by event id. An id is time-ordered and never stream position (580 and 581 version a stream in
---              emission and receive order). Each now orders by the stream's version, unique within a stream, after
---              the commit sequence where it read one. Only the ORDER BY changes.
---
---              Cost: the same rows are read; each sort key is a column of a row already in hand, so the sort costs
---              what it did (EXPLAIN in the commit report).
---
---              Number 582: reserved for this change (580 to 584).
---
--- Reversal: reversible (the down file restores each function's previous last word)
--- Dependencies: 566 (get_stream_events), 175 (wh_collective_sink_queue), 078 (fetch_events_by_ids), 042
---               (fetch_pending_perspective_events, claim_and_fetch_pending_perspective_events)
--- Objects: get_stream_events, wh_collective_sink_queue, fetch_events_by_ids, fetch_pending_perspective_events,
---          claim_and_fetch_pending_perspective_events
+-- Down migration: 575_StreamReadsFollowStreamOrder.down.sql
+-- Restores each function 575 redefined to its previous last word, which breaks a tie or orders by event id.
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
--- ---------------------------------------------------------------------------------------------
--- get_stream_events: copied from its last word (566_ClaimsDecideThroughTheOwnershipTable.sql), ordered by stream version, never by id (582).
--- ---------------------------------------------------------------------------------------------
+-- get_stream_events: its last word before 575 (566_ClaimsDecideThroughTheOwnershipTable.sql).
 SELECT __SCHEMA__.drop_all_overloads('get_stream_events');
-
--- <docs>fundamentals/perspectives/perspectives-with-actions#no-row-contract</docs>
--- <docs>fundamentals/work-coordinator/commit-sequence</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FirstEventInStreamReadTests.cs:GetStreamEvents_ReturnsWhetherEachEventIsTheFirstInItsStreamAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/GetStreamEventsCommitSequencePropagationSqlTests.cs:GetStreamEvents_StampedReturnedUnstampedExcludedOnSameStreamAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveFailureCounterSqlTests.cs:GetStreamEvents_SurfacesFailures_ForTheDeadLetterDecisionAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/GetStreamEventsCrossPodOwnershipTests.cs:LiveOwnersExpiredLeaseRow_NotStolenByAnotherInstance</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveWorkQueueBacklogCostSqlTests.cs:GetStreamEvents_ReadsWhatItsBatchHolds_NotTheBacklogAsync</tests>
--- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapClaimSqlTests.cs:Fetch_TheNewOwnerFetchesTheStream_AndTheStoredOwnerNothingAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ClaimPathsDecideThroughTheOwnershipTableGuardTests.cs:EveryClaimFunction_DecidesThroughWhIOwn_AndRanksOnlyInTheLegacyBranchAsync</tests>
--- <docs>fundamentals/event-store/version-ordering#reads</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/StreamOrderNeverByIdGuardTests.cs:NoStoreReceiveOrReplayFunction_OrdersAStreamById_InItsLatestDefinitionAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.get_stream_events(
   p_instance_id UUID,
   p_stream_ids UUID[],
@@ -179,8 +145,7 @@ BEGIN
     AND pe.processed_at IS NULL
     AND pe.stream_id = ANY(p_stream_ids)
     AND (es.commit_sequence IS NOT NULL OR pe.created_at <= v_stamp_cutoff)
-  -- 582 (#2551): an unstamped event is read in stream order, its version, never by id.
-  ORDER BY pe.stream_id, es.commit_sequence ASC NULLS LAST, es.version;
+  ORDER BY pe.stream_id, es.commit_sequence ASC NULLS LAST, es.event_id;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -192,15 +157,7 @@ COMMENT ON FUNCTION __SCHEMA__.get_stream_events(UUID, UUID[], TIMESTAMPTZ, INTE
   'event is the first in its stream (264). 536: the event, its body and the stream''s ledger row are each read by one '
   'probe per work row, so a call reads what its batch holds and never the whole event store or ledger. 566 (#2554, #2555): with the service''s switch on (wh_partition_ownership_by_map), decided through wh_i_own alone.';
 
--- ---------------------------------------------------------------------------------------------
--- wh_collective_sink_queue: copied from its last word (175_CollectiveSinkQueue.sql), ordered by stream version, never by id (582).
--- ---------------------------------------------------------------------------------------------
--- <docs>fundamentals/messaging/collective-events</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:SinkQueue_TwoCollectivesSharingAKey_AreInCommitOrder_WhenIdsRunBackwardAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:SinkQueue_LeavesOutProcessedRowsOtherPerspectivesAndOtherStreamsAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:SinkQueue_UnstampedRowsComeLastInEventIdOrderAsync</tests>
--- <docs>fundamentals/event-store/version-ordering#reads</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/StreamOrderNeverByIdGuardTests.cs:NoStoreReceiveOrReplayFunction_OrdersAStreamById_InItsLatestDefinitionAsync</tests>
+-- wh_collective_sink_queue: its last word before 575 (175_CollectiveSinkQueue.sql).
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_collective_sink_queue(
   p_stream_id UUID
 ) RETURNS TABLE(
@@ -216,8 +173,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.wh_collective_sink_queue(
   WHERE pe.stream_id = p_stream_id
     AND pe.perspective_name = '__collective__'
     AND pe.processed_at IS NULL
-  -- 582 (#2551): an unstamped event is read in stream order, its version, never by id.
-  ORDER BY es.commit_sequence ASC NULLS LAST, es.version;
+  ORDER BY es.commit_sequence ASC NULLS LAST, es.event_id;
 $$ LANGUAGE sql STABLE;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_collective_sink_queue(UUID) IS
@@ -225,11 +181,7 @@ COMMENT ON FUNCTION __SCHEMA__.wh_collective_sink_queue(UUID) IS
   'commit_sequence order (unstamped last, event_id breaking ties), the order the stream''s collectives apply and the '
   'order a replay reads the stream in. A read, not a claim.';
 
--- ---------------------------------------------------------------------------------------------
--- fetch_events_by_ids: copied from its last word (078_DropInlineBodyColumns.sql), ordered by stream version, never by id (582).
--- ---------------------------------------------------------------------------------------------
--- <docs>fundamentals/event-store/version-ordering#reads</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/StreamOrderNeverByIdGuardTests.cs:NoStoreReceiveOrReplayFunction_OrdersAStreamById_InItsLatestDefinitionAsync</tests>
+-- fetch_events_by_ids: its last word before 575 (078_DropInlineBodyColumns.sql).
 CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_events_by_ids(
   p_event_ids UUID[]
 ) RETURNS TABLE(
@@ -253,16 +205,11 @@ BEGIN
   -- Migration 072: COALESCE the offloaded ephemeral body (see get_stream_events above).
   LEFT JOIN __SCHEMA__.wh_event_body eb ON eb.event_id = es.event_id
   WHERE es.event_id = ANY(p_event_ids)
-  -- 582 (#2551): each stream's events in stream order, never by id.
-  ORDER BY es.stream_id, es.version;
+  ORDER BY es.event_id ASC;
 END;
 $$ LANGUAGE plpgsql;
 
--- ---------------------------------------------------------------------------------------------
--- fetch_pending_perspective_events: copied from its last word (042_FetchPendingPerspectiveEvents.sql), ordered by stream version, never by id (582).
--- ---------------------------------------------------------------------------------------------
--- <docs>fundamentals/event-store/version-ordering#reads</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/StreamOrderNeverByIdGuardTests.cs:NoStoreReceiveOrReplayFunction_OrdersAStreamById_InItsLatestDefinitionAsync</tests>
+-- fetch_pending_perspective_events: its last word before 575 (042_FetchPendingPerspectiveEvents.sql).
 CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_pending_perspective_events(
   p_stream_id UUID,
   p_perspective_name TEXT,
@@ -289,16 +236,11 @@ BEGIN
     AND pe.instance_id = p_instance_id
     AND pe.processed_at IS NULL
     AND es.commit_sequence IS NOT NULL
-  -- 582 (#2551): the stream's events in stream order, never by id.
-  ORDER BY es.version;
+  ORDER BY pe.event_id ASC;
 END;
 $$ LANGUAGE plpgsql;
 
--- ---------------------------------------------------------------------------------------------
--- claim_and_fetch_pending_perspective_events: copied from its last word (042_FetchPendingPerspectiveEvents.sql), ordered by stream version, never by id (582).
--- ---------------------------------------------------------------------------------------------
--- <docs>fundamentals/event-store/version-ordering#reads</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/StreamOrderNeverByIdGuardTests.cs:NoStoreReceiveOrReplayFunction_OrdersAStreamById_InItsLatestDefinitionAsync</tests>
+-- claim_and_fetch_pending_perspective_events: its last word before 575 (042_FetchPendingPerspectiveEvents.sql).
 CREATE OR REPLACE FUNCTION __SCHEMA__.claim_and_fetch_pending_perspective_events(
   p_stream_id UUID,
   p_perspective_name TEXT,
@@ -368,7 +310,6 @@ BEGIN
     AND pe.instance_id = p_instance_id
     AND pe.processed_at IS NULL
     AND es.commit_sequence IS NOT NULL
-  -- 582 (#2551): the stream's events in stream order, never by id.
-  ORDER BY es.version;
+  ORDER BY pe.event_id ASC;
 END;
 $$ LANGUAGE plpgsql;

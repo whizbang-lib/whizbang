@@ -955,7 +955,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       LocalCommitSequence = raw.CommitSequence,
       // The drain query decided it from the event's position (264, #1878).
       IsFirstInLocalStream = raw.IsFirstInStream,
-      // 583 (#2551): the event's stream position, which the drain applies the stream in, never its id.
+      // 576 (#2551): the event's stream position, which the drain applies the stream in, never its id.
       LocalStreamVersion = raw.Version,
     };
   }

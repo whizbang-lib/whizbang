@@ -75,7 +75,7 @@ public static class ReplayEventOrder {
     }
     // The one id fallback (#2551): nothing positional exists for an event that carries neither a version nor a commit
     // sequence. The id's canonical text, compared ordinally, is the order Postgres gives a uuid, so this is the same
-    // comparison the receive order (581) uses for an event with no origin position.
+    // comparison the receive order (574) uses for an event with no origin position.
     return [.. events.OrderBy(static e => e.MessageId.Value.ToString("D"), StringComparer.Ordinal)];
   }
 

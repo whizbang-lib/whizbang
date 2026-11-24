@@ -1,11 +1,99 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Down migration: 581_ReceivedStreamsAreVersionedInReceiveOrder.down.sql
--- Restores _emit_event_store_chain_for_inbox to its last word before 581 (567), which versions a received batch,
--- holds it back and declares a straggler by id.
+-- Migration: 574_ReceivedStreamsAreVersionedInReceiveOrder.sql
+-- Date: 2026-11-23
+-- Description: A received stream is versioned in its origin's order, never by id, and a straggler is declared by that
+--              order too (#2551).
+--
+--              _emit_event_store_chain_for_inbox numbered a claimed batch per stream with ROW_NUMBER() ORDER BY
+--              message_id, held a batch back behind a stream's first unheld row by id, listed the refusals' candidates
+--              in no order (the refusals judge by position since 573), and declared a straggler when a stored event's
+--              id sorted below its cursor's last event. An id is time-ordered and never stream position; ids derived
+--              inside a handling (#2520, #2543) sort at their cause, not in the order the origin wrote them.
+--
+--              Receive order is the order a replay folds a received stream in (ReplayEventOrder, #2257, #2379), so the
+--              store and the replay agree:
+--                * each origin's events in the origin's order, its commit sequence (the position the event carries);
+--                * an event with no origin position (a fan-out child, a redelivery that lost it) goes before the first
+--                  of its origin's positioned events whose id sorts after its own: the replay's documented fallback,
+--                  and the only place an id decides anything, because nothing positional exists for it;
+--                * between origins the arrival order: each origin is dealt into the arrival slots it holds.
+--              The candidates are read once in that order; the refusals take them in it, and the copy numbers each
+--              stream by a candidate's position. The hold-back compares an unheld head with a batch row by the strict
+--              total key (arrival, origin, origin position, id), so two claims never wait for each other, and a row
+--              that waits holds back every row after it in receive order. The straggler compares a stored event with
+--              its origin's latest event at or below the cursor's version, by origin position.
+--
+--              Cost: the candidate read adds five window passes and one single-key join over the rows it already
+--              reads (200 leased rows of one stream: 0.4 ms unordered, 0.9 ms in receive order), and a correlated
+--              probe of the same CTE for an unpositioned row only. The hold-back's probe reads the range
+--              it read before (the id bound is gone; the range was already bounded by the batch's newest arrival)
+--              and joins wh_inbox by primary key only for a row it does not hold. The straggler adds two primary-key
+--              reads and one backward probe of idx_event_store_stream per stored event whose stream has a cursor.
+--              EXPLAIN in the commit report.
+--
+--              Number 574: reserved for this change (573 to 576).
+--
+-- Reversal: reversible (the down file restores 567's definition, which versions by id)
+-- Dependencies: 567 (_emit_event_store_chain_for_inbox), 573 (the refusals judge by array position)
+-- Objects: _emit_event_store_chain_for_inbox
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
+-- ---------------------------------------------------------------------------------------------
+-- _emit_event_store_chain_for_inbox: copied from its last word (567), with the 574 delta: receive order, never id.
+-- ---------------------------------------------------------------------------------------------
+-- <docs>fundamentals/events/stream-end-of-life#the-stream-lifecycle-ledger</docs>
+-- <docs>fundamentals/messaging/collective-events#only-handled-types-are-queued</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveRowGateSqlTests.cs:Inbox_OnceTheMarkerExists_AHandledTypeGetsItsRow_AndAnUnhandledTypeGetsNoneAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveRowGateSqlTests.cs:Inbox_WithoutAGateMarker_EveryCollectiveEventGetsItsRowAsync</tests>
+-- <docs>fundamentals/events/stream-end-of-life#a-sealed-stream-refuses-appends</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamLifecycleLedgerSqlTests.cs:InboxAppend_CreatesAndAdvancesTheRowAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReceivedStreamOrderSqlTests.cs:TwoClaimsOfOneStream_TheHeadsClaimCommitsLast_VersionsFollowTheProducerOrderAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AuditDigestLaneSqlTests.cs:InboxStoredAuditRecord_LeavesTheOriginsDigestLaneUntouched_WhileADomainEventFoldsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:TerminalEvent_OnTheInbox_SealsTheStream_AndLaterRowsAreRefusedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:InboxAppend_ToASealedStream_DeadLettersTheRow_AndStoresTheRestAsync</tests>
+-- <docs>fundamentals/events/archive-store#appending-to-an-archived-stream</docs>
+-- <docs>fundamentals/events/superseding-events#across-services</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingEventReaperSqlTests.cs:Emit_Inbox_StampsTheKey_AndQueuesTheOlderOneAsync</tests>
+-- <docs>fundamentals/events/superseding-events#superseding-groups</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingGroupSqlTests.cs:Emit_Inbox_StampsTheGroup_AndQueuesAcrossTypesAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:InboxAppend_Refuse_DeadLettersTheRow_AndStoresTheRestAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:InboxAppend_AutoRestore_DeadLettersAwaitingRestore_AndQueuesTheRequestAsync</tests>
+-- <docs>data/event-store#stored-metadata</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:InboxChain_DefaultForm_StoresTheSlimRow_AndStagesTheFullFormAsync</tests>
+-- <docs>fundamentals/events/archive-store#new-generation</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveNewGenerationSqlTests.cs:InboxAppend_StoresTheReceivedEventAtTheNextVersionAsync</tests>
+-- <docs>resilience/stream-integrity#one-digest-fold</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestWritersTests.cs:InboxEmitChain_FoldsEveryLaneIntoTheOriginsBucketAsync</tests>
+-- <docs>fundamentals/work-coordinator/claim-loop#the-claim-runs-only-what-can-find-work</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimFixedCostSqlTests.cs:StorePass_ARowWhoseEventIsAlreadyStored_IsStamped_WithoutRunningTheCopyAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimFixedCostSqlTests.cs:StorePass_AfterAPassWithNoCandidate_AReadyRowIsStoredByTheNextClaimAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimFixedCostSqlTests.cs:StorePass_AnOrdinaryEvent_RunsNoCollectiveRoutingAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimFixedCostSqlTests.cs:StorePass_ACollectiveEvent_IsStillRoutedToTheCollectiveSinkAsync</tests>
+-- <docs>fundamentals/work-coordinator/claim-loop#a-held-back-stream-is-claimed-whole</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HeldBackStreamsClaimSqlTests.cs:Claim_ARowHeldBackBehindAPredecessorAPeerHolds_IsNotChargedAnAttemptAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/HeldBackStreamsClaimSqlTests.cs:Claim_AHeldBackRowAcquiredByAnEarlierClaim_IsNotRefundedAgainAsync</tests>
+-- <docs>fundamentals/events/superseding-events#the-digest-counts-the-key</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingCountsTheKeySqlTests.cs:Emit_CopiesOfAKey_AreCountedOnce_AsTheKeysSlotAsync</tests>
+-- <docs>data/event-store#row-values</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:InboxChain_DefaultForm_StoresTheSlimRow_AndStagesTheFullFormAsync</tests>
+-- <docs>fundamentals/work-coordinator/claim-loop#a-row-waiting-for-its-stream-head</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AwaitingStreamHeadSqlTests.cs:Claim_ARowHeldBackBehindAnUnstoredHead_ShowsItAwaitsTheStreamHeadAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AwaitingStreamHeadSqlTests.cs:Claim_AWaitingRowWhoseLeaseLapsed_IsReclaimedStillAwaitingTheHead_NotAsALeaseExpiryAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AwaitingStreamHeadSqlTests.cs:Claim_OnceTheHeadIsHeld_TheWaitingRowIsStored_AndNoLongerShowsItWaitsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AwaitingStreamHeadSqlTests.cs:Claim_AHeldBackRowCarryingAnEarlierLeaseExpiry_ShowsItAwaitsTheHeadInsteadAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AwaitingStreamHeadSqlTests.cs:Claim_AHeldBackRowCarryingAnotherRecordedFailure_KeepsItAsync</tests>
+-- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
+-- <docs>fundamentals/event-store/version-ordering#receive-order</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReceiveOrderVersioningSqlTests.cs:OneClaim_AnOriginsEvents_AreVersionedByTheOriginsSequence_NotByIdAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReceiveOrderVersioningSqlTests.cs:AnUnpositionedEvent_TakesTheReplaysPlace_AmongItsOriginsPositionedEventsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReceiveOrderVersioningSqlTests.cs:TwoOrigins_KeepTheirArrivalSlots_EachDealtInItsOwnOrderAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReceiveOrderVersioningSqlTests.cs:AnOriginsEarlierEvent_HeldElsewhere_HoldsBackTheLaterOne_WhateverTheIdsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReceiveOrderVersioningSqlTests.cs:ALaterArrivalHeldElsewhere_DoesNotHoldBackAnEarlierArrivalOfAnotherOriginAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReconcileRewindDeclarationSqlTests.cs:InboxEmitChain_LateEventBelowCursor_DeclaresRewindOnTheCursorAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReconcileRewindDeclarationSqlTests.cs:InboxEmitChain_EventAboveCursor_DoesNotDeclareRewindAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReconcileRewindDeclarationSqlTests.cs:InboxEmitChain_AnotherOriginsEvent_WithALowerId_DoesNotDeclareRewindAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,
@@ -114,19 +202,83 @@ BEGIN
   -- message row is not touched here: this runs inside claim_work after the stream ledger, and wh_inbox comes first
   -- in the canonical lock order. The rows are the ones the copy reads, by the same predicate, under the locks taken
   -- above.
-  SELECT array_agg(ist.message_id), array_agg(ist.stream_id), array_agg(i.flags), array_agg(i.message_type)
+  --
+  -- 574 (#2551): the candidates are listed in RECEIVE ORDER, the order this pass versions each stream in and the order
+  -- the refusals judge "first" and "after" by (their position in these arrays). Never by id: an id is time-ordered,
+  -- never stream position. Receive order is the order a replay folds the stream in (ReplayEventOrder, #2257), so what
+  -- is stored and what a replay folds agree:
+  --   * each origin's events in the origin's order: its commit sequence (the origin position the event carries);
+  --   * an origin's event that carries no position (0: a fan-out child, or a redelivery that lost it) goes before the
+  --     first of its origin's positioned events, in origin order, whose id sorts after its own, and after them all when
+  --     none does. This is the replay's rule for it (#2379) and the one fallback to an id: nothing positional exists;
+  --   * between origins, the arrival order: each origin's events are dealt, in the origin's order, into the arrival
+  --     slots that origin holds (received_at, then origin, then the origin's own order breaking a tie).
+  -- A received event of this service, or one with no origin, is one origin (the empty id), as the copy files it.
+  WITH cand AS (
+    SELECT ist.message_id, ist.stream_id, i.flags, i.message_type, ist.received_at,
+           CASE WHEN i.source_service_id IS NULL OR i.source_service_id = __EMPTY_UUID__::uuid
+                     OR i.source_service_id = v_local_service_id
+                THEN __EMPTY_UUID__::uuid ELSE i.source_service_id END AS origin,
+           NULLIF(i.source_commit_sequence, 0) AS origin_seq
+    FROM __SCHEMA__.wh_inbox_state ist
+    JOIN __SCHEMA__.wh_inbox i ON i.message_id = ist.message_id
+    WHERE ist.instance_id = p_instance_id
+      AND ist.lease_expiry > p_now
+      AND ist.processed_at IS NULL
+      AND ist.is_event = true
+      AND ist.stream_id IS NOT NULL
+      AND ist.chain_emitted_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = ist.message_id
+      )
+  ),
+  -- The origin-order key: a positioned event's own (position, id); for an unpositioned event, the (position, id) of the
+  -- positioned event it goes just before (#2379), and none when it goes after them all.
+  keyed AS (
+    SELECT k.*,
+           COALESCE(k.origin_seq, nx.origin_seq) AS origin_key,
+           CASE WHEN k.origin_seq IS NOT NULL THEN k.message_id ELSE nx.message_id END AS origin_key_id
+    FROM cand k
+    LEFT JOIN LATERAL (
+      SELECT p.origin_seq, p.message_id FROM cand p
+      WHERE p.stream_id = k.stream_id AND p.origin = k.origin AND p.origin_seq IS NOT NULL
+        AND p.message_id > k.message_id
+      ORDER BY p.origin_seq, p.message_id
+      LIMIT 1
+    ) AS nx ON k.origin_seq IS NULL
+  ),
+  -- The event's rank in its origin's order: by the key, an unpositioned event just before the positioned one whose key it
+  -- took, the id breaking what is left (the replay's tie-break).
+  ranked AS (
+    SELECT r.*,
+           row_number() OVER (PARTITION BY r.stream_id, r.origin
+                              ORDER BY r.origin_key NULLS LAST, r.origin_key_id, (r.origin_seq IS NOT NULL), r.message_id)
+             AS origin_rank
+    FROM keyed r
+  ),
+  -- The arrival slots, and each slot's rank among its origin's slots.
+  slotted AS (
+    SELECT s.*,
+           row_number() OVER (PARTITION BY s.stream_id ORDER BY s.received_at, s.origin, s.origin_rank) AS slot
+    FROM ranked s
+  ),
+  -- The event of origin rank n takes its origin's n-th slot. Each side is numbered over the whole batch in (stream,
+  -- origin, rank) order, so the n-th event and the n-th slot of an origin share one number and the two meet on a single
+  -- key: a join on (stream, origin) with the rank as a filter compared every pair of an origin's rows.
+  events AS (
+    SELECT e.message_id, e.stream_id, e.flags, e.message_type,
+           row_number() OVER (ORDER BY e.stream_id, e.origin, e.origin_rank) AS pair
+    FROM slotted e
+  ),
+  slots AS (
+    SELECT p.slot, row_number() OVER (ORDER BY p.stream_id, p.origin, p.slot) AS pair
+    FROM slotted p
+  )
+  SELECT array_agg(e.message_id ORDER BY e.stream_id, place.slot), array_agg(e.stream_id ORDER BY e.stream_id, place.slot),
+         array_agg(e.flags ORDER BY e.stream_id, place.slot), array_agg(e.message_type ORDER BY e.stream_id, place.slot)
     INTO v_candidate_ids, v_candidate_streams, v_candidate_flags, v_candidate_types
-  FROM __SCHEMA__.wh_inbox_state ist
-  JOIN __SCHEMA__.wh_inbox i ON i.message_id = ist.message_id
-  WHERE ist.instance_id = p_instance_id
-    AND ist.lease_expiry > p_now
-    AND ist.processed_at IS NULL
-    AND ist.is_event = true
-    AND ist.stream_id IS NOT NULL
-    AND ist.chain_emitted_at IS NULL
-    AND NOT EXISTS (
-      SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = ist.message_id
-    );
+  FROM events e
+  JOIN slots place ON place.pair = e.pair;
   -- 266 (#1733): a sealed stream refuses every append, so its rows are dead-lettered and completed in place first, as
   -- the mixed-stream refusal does, and leave the candidates.
   -- 271 (#1738): so does an archived stream, by its type's AppendToArchived policy, after the seal. One probe per stream
@@ -187,9 +339,7 @@ BEGIN
   --   - have a stream_id
   --   - aren't yet in wh_event_store (idempotent, ON CONFLICT swallows duplicates)
   -- Bounded by lease ownership so we don't scan the whole inbox every tick.
-  -- Phase H step 10 slice 1: ORDER BY i.message_id (UUIDv7 = chronological at the source) so
-  -- version assignment matches canonical event_id order. See _emit_event_store_chain above
-  -- for the rationale, same fix applies to the inbox backfill path.
+  -- 574 (#2551): versions follow the candidates' receive order (their position in v_candidate_ids), never the id.
   -- Migration 061: i.flags carried into wh_event_store.flags (was dropped here previously).
   WITH inbox_events AS (
     SELECT
@@ -202,12 +352,23 @@ BEGIN
       i.flags,
       i.source_service_id,
       i.source_commit_sequence,
-      ist.received_at
+      ist.received_at,
+      -- 574 (#2551): the event's place in receive order, and its receive-order key (arrival, origin, origin position;
+      -- an unpositioned event sorts after its origin's positioned events of the same arrival, then by id, the one
+      -- fallback where nothing positional exists), which the hold-back below compares with a row this pass does not hold.
+      cand.position AS receive_position,
+      CASE WHEN i.source_service_id IS NULL OR i.source_service_id = __EMPTY_UUID__::uuid
+                OR i.source_service_id = v_local_service_id
+           THEN __EMPTY_UUID__::uuid ELSE i.source_service_id END AS receive_origin,
+      COALESCE(NULLIF(i.source_commit_sequence, 0), 9223372036854775807) AS receive_seq
     -- 162: this pass needs the message body, so both tables. The LEASE table drives the join, so
     -- selection happens on the narrow table and the wide row is fetched only for the rows that
     -- survive it, which is the opposite of scanning the wide row to apply the same predicate.
+    -- 574: a row the candidates do not list (committed by a concurrent claim after they were read) is left for the
+    -- next pass, unstamped, as a row that pass would have missed.
     FROM __SCHEMA__.wh_inbox_state ist
     JOIN __SCHEMA__.wh_inbox i ON i.message_id = ist.message_id
+    JOIN unnest(v_candidate_ids) WITH ORDINALITY AS cand(message_id, position) ON cand.message_id = ist.message_id
     WHERE ist.instance_id = p_instance_id
       AND ist.lease_expiry > p_now
       AND ist.processed_at IS NULL
@@ -218,56 +379,69 @@ BEGIN
         SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = ist.message_id
       )
   ),
-  -- 230 (#1607): a received stream is stored in the producer's order, however many claims carry it. A claim
-  -- numbers the rows it holds after the stream's tail, so a claim that holds a stream's later events and reaches
-  -- this pass first would number them ahead of the head another claim leased earlier and has not stored yet.
-  -- The head is visible here as a pending event of the stream that this pass does not hold: not yet in the event
-  -- store, and not leased to this instance under a live lease (a peer's lease, an expired one, none, or a lease a
-  -- concurrent claim has not committed). Every row of this batch that sorts after the stream's first such event
-  -- waits: it is not stored and not stamped, so the next claim re-reads it, and fetch_inbox_batch does not hand
-  -- it to the dispatcher before it is stored. Rows before it are stored now, so the head of a stream never waits.
-  -- The order is the message id, the order this pass has always numbered by (slice 1): a fan-out child's id is
-  -- derived from its composite and ordinal, so it sorts in producer order whether or not it carries an origin
-  -- commit sequence.
+  -- 230 (#1607): a received stream is stored in its receive order, however many claims carry it. A claim numbers
+  -- the rows it holds after the stream's tail, so a claim that holds a stream's later events and reaches this pass
+  -- first would number them ahead of the head another claim leased earlier and has not stored yet. The head is visible
+  -- here as a pending event of the stream that this pass does not hold: not yet in the event store, and not leased to
+  -- this instance under a live lease (a peer's lease, an expired one, none, or a lease a concurrent claim has not
+  -- committed). A row of this batch waits when such an event comes before it, and so does every row after it in the
+  -- batch's receive order: it is not stored and not stamped, so the next claim re-reads it, and fetch_inbox_batch does
+  -- not hand it to the dispatcher before it is stored. Rows before it are stored now, so the head never waits.
+  --
+  -- 574 (#2551): "comes before" is the receive-order key (arrival, origin, origin position, then the id for an
+  -- unpositioned event), never the id alone. The key is a strict total order, so two claims of one stream can never
+  -- each wait for the other. An event of another origin that arrived after this row is never its head: between origins
+  -- the arrival order stands.
   --
   -- One probe per stream, over idx_inbox_state_stream_order (stream_id, received_at, message_id), bounded by the
-  -- batch: only rows received no later than the batch's newest row and sorting before its last one can hold it
-  -- back. In a stream's FIFO backlog that range is the batch and the rows before it, never the rows queued behind
-  -- it, and the lease test is answered from the index, so only a row this pass does not hold reads the heap. No
-  -- index is added: wh_inbox_state's index count is a gated design property (InboxStateWriteCostScenarioTests).
-  -- An event received after the rows it precedes is not waited for; that is the transport reordering two
-  -- deliveries, which the receiver cannot see coming.
+  -- batch: only rows received no later than the batch's newest row can hold it back. In a stream's FIFO backlog that
+  -- range is the batch and the rows before it, never the rows queued behind it, and the lease test is answered from the
+  -- index, so only a row this pass does not hold reads the heap (and its message row, for the origin). No index is
+  -- added: wh_inbox_state's index count is a gated design property (InboxStateWriteCostScenarioTests).
   batch_streams AS (
-    SELECT ie.stream_id,
-           MAX(ie.received_at) AS newest_received_at,
-           (array_agg(ie.message_id ORDER BY ie.message_id DESC))[1] AS last_message_id
+    SELECT ie.stream_id, MAX(ie.received_at) AS newest_received_at
     FROM inbox_events ie
     GROUP BY ie.stream_id
   ),
   held_back_from AS (
-    SELECT s.stream_id,
-           (SELECT b.message_id
-            FROM __SCHEMA__.wh_inbox_state b
-            WHERE b.stream_id = s.stream_id
-              AND b.processed_at IS NULL
-              AND b.received_at <= s.newest_received_at
-              AND b.message_id < s.last_message_id
-              AND NOT COALESCE(b.instance_id = p_instance_id AND b.lease_expiry > p_now, false)
-              AND b.is_event = true
-              AND b.chain_emitted_at IS NULL
-              AND NOT EXISTS (
-                SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = b.message_id
-              )
-            ORDER BY b.message_id
-            LIMIT 1) AS first_unheld
+    SELECT s.stream_id, h.received_at, h.origin, h.seq, h.message_id
     FROM batch_streams s
+    CROSS JOIN LATERAL (
+      SELECT b.received_at,
+             CASE WHEN bi.source_service_id IS NULL OR bi.source_service_id = __EMPTY_UUID__::uuid
+                       OR bi.source_service_id = v_local_service_id
+                  THEN __EMPTY_UUID__::uuid ELSE bi.source_service_id END AS origin,
+             COALESCE(NULLIF(bi.source_commit_sequence, 0), 9223372036854775807) AS seq,
+             b.message_id
+      FROM __SCHEMA__.wh_inbox_state b
+      JOIN __SCHEMA__.wh_inbox bi ON bi.message_id = b.message_id
+      WHERE b.stream_id = s.stream_id
+        AND b.processed_at IS NULL
+        AND b.received_at <= s.newest_received_at
+        AND NOT COALESCE(b.instance_id = p_instance_id AND b.lease_expiry > p_now, false)
+        AND b.is_event = true
+        AND b.chain_emitted_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = b.message_id
+        )
+      ORDER BY b.received_at, 2, 3, b.message_id
+      LIMIT 1
+    ) AS h
+  ),
+  -- Per stream, the first row (in receive order) that the unheld head comes before; it and every row after it wait.
+  first_waiting AS (
+    SELECT ie.stream_id, MIN(ie.receive_position) AS position
+    FROM inbox_events ie
+    JOIN held_back_from h ON h.stream_id = ie.stream_id
+    WHERE (h.received_at, h.origin, h.seq, h.message_id) < (ie.received_at, ie.receive_origin, ie.receive_seq, ie.message_id)
+    GROUP BY ie.stream_id
   ),
   storable_events AS (
     SELECT ie.*,
-           ROW_NUMBER() OVER (PARTITION BY ie.stream_id ORDER BY ie.message_id) AS row_num
+           ROW_NUMBER() OVER (PARTITION BY ie.stream_id ORDER BY ie.receive_position) AS row_num
     FROM inbox_events ie
-    JOIN held_back_from h ON h.stream_id = ie.stream_id
-    WHERE h.first_unheld IS NULL OR ie.message_id < h.first_unheld
+    LEFT JOIN first_waiting w ON w.stream_id = ie.stream_id
+    WHERE w.position IS NULL OR ie.receive_position < w.position
   ),
   -- Phase H step 10 slice 3: version computed via correlated subquery rather than a
   -- pre-materialized CTE. Inside the per-stream advisory lock the values are equivalent, but
@@ -602,32 +776,62 @@ BEGIN
     )
   ON CONFLICT ON CONSTRAINT uq_perspective_event DO NOTHING;
 
-  -- 100: reconcile self-declares the rewind. Any of THIS invocation's fresh work items whose
-  -- event id slots BELOW its cursor's last-applied event is a straggler by construction, a
-  -- backfilled event keeps its ORIGINAL id, while its fresh local commit_sequence sits above
-  -- the cursor and hides it from the runtime inversion detector forever. Flag the cursor
-  -- RewindRequired with the earliest straggler as trigger (min-merge with any existing
-  -- trigger, mirroring complete_perspective_checkpoint's straggler path); the worker's
-  -- existing rewind routing replays the stream through the corrected order.
+  -- 100: reconcile self-declares the rewind. Any of THIS invocation's fresh work items that
+  -- slots BELOW its cursor's last-applied event is a straggler by construction: its fresh local
+  -- commit_sequence sits above the cursor and hides it from the runtime inversion detector forever.
+  -- Flag the cursor RewindRequired with the earliest straggler as trigger (min-merge with any
+  -- existing trigger); the worker's existing rewind routing replays the stream through the
+  -- corrected order.
+  -- 574 (#2551): "below the cursor" is the replay's order, never the id. A stored event is appended after everything
+  -- the cursor applied, and a replay moves it only within its own origin's slots (#2257), so it is a straggler exactly
+  -- when its origin had already delivered a later event the cursor applied: the origin's latest event at or below the
+  -- cursor's version comes after it in the origin's order (origin sequence; when either carries none, the id, the
+  -- replay's rule for an unpositioned event, #2379). A local event, or another origin's, keeps its place and is never
+  -- one. The earliest straggler, and the earlier of it and an existing trigger, are by stream version; the worker judges
+  -- the replay floor from the trigger in the replay's order (ReplayFloor).
   UPDATE __SCHEMA__.wh_perspective_cursors pc
   SET status = pc.status | 32,  -- RewindRequired flag (1 << 5)
       rewind_trigger_event_id = CASE
         WHEN pc.rewind_trigger_event_id IS NULL THEN s.straggler_event_id
-        WHEN s.straggler_event_id < pc.rewind_trigger_event_id THEN s.straggler_event_id
+        WHEN s.straggler_version < COALESCE(
+               (SELECT t.version FROM __SCHEMA__.wh_event_store t WHERE t.event_id = pc.rewind_trigger_event_id),
+               9223372036854775807)
+          THEN s.straggler_event_id
         ELSE pc.rewind_trigger_event_id
       END,
       rewind_flagged_at = p_now,
       rewind_first_flagged_at = COALESCE(pc.rewind_first_flagged_at, p_now)
   FROM (
     SELECT pe.stream_id, pe.perspective_name,
-           (array_agg(pe.event_id ORDER BY pe.event_id))[1] AS straggler_event_id
+           (array_agg(pe.event_id ORDER BY se.version))[1] AS straggler_event_id,
+           MIN(se.version) AS straggler_version
     FROM __SCHEMA__.wh_perspective_events pe
     JOIN __SCHEMA__.wh_perspective_cursors c
       ON c.stream_id = pe.stream_id AND c.perspective_name = pe.perspective_name
+    JOIN __SCHEMA__.wh_event_store se ON se.event_id = pe.event_id
+    -- The cursor's position: the stream version of its last applied event (a bound on the stream, never a judgment of
+    -- which copy of a superseding key is newer, which _wh_supersedes alone decides).
+    CROSS JOIN LATERAL (
+      SELECT ce.version AS through_version FROM __SCHEMA__.wh_event_store ce WHERE ce.event_id = c.last_event_id
+    ) AS cursor_at
+    CROSS JOIN LATERAL (
+      -- The origin's latest event at or below the cursor's version: one backward probe of idx_event_store_stream.
+      SELECT a.event_id, a.origin_commit_sequence
+      FROM __SCHEMA__.wh_event_store a
+      WHERE a.stream_id = se.stream_id
+        AND a.origin_service_id = se.origin_service_id
+        AND a.version <= cursor_at.through_version
+      ORDER BY a.version DESC
+      LIMIT 1
+    ) AS applied
     WHERE pe.event_id = ANY(v_stored_event_ids)
       AND pe.processed_at IS NULL
       AND c.last_event_id IS NOT NULL
-      AND pe.event_id < c.last_event_id
+      AND se.origin_service_id IS NOT NULL
+      AND CASE WHEN se.origin_commit_sequence IS NOT NULL AND applied.origin_commit_sequence IS NOT NULL
+               THEN se.origin_commit_sequence < applied.origin_commit_sequence
+               ELSE se.event_id < applied.event_id
+          END
     GROUP BY pe.stream_id, pe.perspective_name
   ) s
   WHERE pc.stream_id = s.stream_id AND pc.perspective_name = s.perspective_name;
@@ -693,4 +897,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-  '551 (#1630): a row this pass held back shows it waits for its stream''s head (failure_reason 30, AwaitingStreamHead, and an error naming the stream and when the wait began), replacing only a lapsed-lease record, and the stamp clears it once the row is stored. 411 (#2120): a row the calling claim leased (lease_expiry = p_lease_expiry) that this pass held back is refunded the attempt the claim counted. Copies leased inbox events into the event store, stamps their origin and creates their perspective work (162). 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 228: an event that would make its stream hold both ephemeral and Sourced events is dead-lettered instead (WHIZ133, #1546). 230: a row waits behind an earlier pending row of its stream that this pass does not hold, so a received stream is stored in the producer''s order (#1607). 260: keeps each stored stream''s wh_stream_lifecycle row, one upsert per batch (#1732). 266: dead-letters each received event a sealed stream refuses and stores the rest; a terminal event seals its stream in the same statement (#1733). 271: and each received event an archived stream refuses, by its type''s AppendToArchived policy, queuing the stream''s restore under AutoRestore (#1738). 285: each row keeps the slim form unless kept full, carries its route id, and under the Linked form stages its full form (#1725). 295: stamps a superseding event''s key (wh_event_store.supersede_key) and queues the older events of its key for the reaper (#1729). 296: starts the new generation of an archived stream whose type declares NewGeneration, numbered on from its last version (#1734). 352: and its superseding group (wh_event_store.supersede_group, #2124), so the older events of its group, not only its type, are queued. 367: a pass whose lock pass finds no candidate only stamps, and the collective routing runs only when a stored event is collective. 391: a collective event of a type no handler on this service applies gets no __collective__ row once every service registered in the schema has written its collective_gate marker (_wh_collective_row_wanted, #2145). 537 (#2323): the slim row leaves out its message id when it is the event id, and its hop scope when it is the scope column alone. 567 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own).';
+  '551 (#1630): a row this pass held back shows it waits for its stream''s head (failure_reason 30, AwaitingStreamHead, and an error naming the stream and when the wait began), replacing only a lapsed-lease record, and the stamp clears it once the row is stored. 411 (#2120): a row the calling claim leased (lease_expiry = p_lease_expiry) that this pass held back is refunded the attempt the claim counted. Copies leased inbox events into the event store, stamps their origin and creates their perspective work (162). 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 228: an event that would make its stream hold both ephemeral and Sourced events is dead-lettered instead (WHIZ133, #1546). 230: a row waits behind an earlier pending row of its stream that this pass does not hold, so a received stream is stored in the producer''s order (#1607). 260: keeps each stored stream''s wh_stream_lifecycle row, one upsert per batch (#1732). 266: dead-letters each received event a sealed stream refuses and stores the rest; a terminal event seals its stream in the same statement (#1733). 271: and each received event an archived stream refuses, by its type''s AppendToArchived policy, queuing the stream''s restore under AutoRestore (#1738). 285: each row keeps the slim form unless kept full, carries its route id, and under the Linked form stages its full form (#1725). 295: stamps a superseding event''s key (wh_event_store.supersede_key) and queues the older events of its key for the reaper (#1729). 296: starts the new generation of an archived stream whose type declares NewGeneration, numbered on from its last version (#1734). 352: and its superseding group (wh_event_store.supersede_group, #2124), so the older events of its group, not only its type, are queued. 367: a pass whose lock pass finds no candidate only stamps, and the collective routing runs only when a stored event is collective. 391: a collective event of a type no handler on this service applies gets no __collective__ row once every service registered in the schema has written its collective_gate marker (_wh_collective_row_wanted, #2145). 537 (#2323): the slim row leaves out its message id when it is the event id, and its hop scope when it is the scope column alone. 567 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own). 574 (#2551): versions a received stream in receive order (each origin by its origin position, dealt into its arrival slots; the id only for an event with no origin position, as the replay places it), holds a batch back behind an unheld head by that order, and declares a straggler by the origin''s order, never by id.';

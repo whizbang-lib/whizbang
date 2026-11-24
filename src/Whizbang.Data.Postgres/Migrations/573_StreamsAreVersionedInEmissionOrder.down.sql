@@ -1,60 +1,12 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 580_StreamsAreVersionedInEmissionOrder.sql
--- Date: 2026-11-23
--- Description: A stream's events in one stored batch are versioned in the order the producer emitted them, never by
---              id (#2551).
---
---              An id is time-ordered and never a stream position. Since #2520/#2543 a message dispatched inside a
---              handling takes an id derived from what caused it, sorting at its cause, so the effect a cause's local
---              receptor emits can sort before the cause itself. The emit chain numbered a batch's events per stream
---              with ROW_NUMBER() ORDER BY message_id, so written together the effect took version 1 and its cause
---              version 2; the sealing and mixed-stream refusals likewise judged "after a terminal event" and "the
---              stream's first event" by id.
---
---              How emission position reaches the SQL: it is the element's position in the batch the producer stores,
---              the p_messages array (jsonb_array_elements WITH ORDINALITY), taken once at the entry and carried as an
---              explicit ordinal. The producer keeps that array in emission order: each strategy flushes a stream's
---              messages in the order they were appended and no longer sorts them by id (C#, same change). No field is
---              added to the wire or to wh_outbox: the array already holds the order, an ordinal field beside it would
---              be a second source that could disagree with it, and the order only has to live for the one call that
---              stores the batch. Inside the call:
---                store_outbox_messages   inserts in its lock order (stream, then id) as before, records each
---                                        inserted event's position, and hands the refusals and the chain the
---                                        events in position order.
---                _emit_event_store_chain numbers each stream by the event's position in the id array it is handed
---                                        (unnest WITH ORDINALITY; an id listed twice keeps its first position).
---                the refusals            take their arrays in that order and judge by array position: the sealing
---                                        refusal's "after the first terminal event" (_wh_sealed_stream_refusals,
---                                        fed by _wh_refuse_sealed_stream_outbox_events, which now builds its arrays
---                                        in the chain's order), the mixed-stream refusal's "first event decides the
---                                        kind" and "earlier in the write" (_wh_mixed_stream_refusals), and the
---                                        archived refusal's report order (_wh_archived_stream_refusals).
---              commit_handler_result stores through store_outbox_messages, so a handler's commit is covered unchanged.
---
---              Cost: the same rows are read. The chain keeps the ANY probe of wh_outbox_pkey and hash-joins the
---              batch's positions to what it finds (EXPLAIN in the commit report: a bitmap scan of wh_outbox_pkey either
---              way). store_outbox_messages adds one in-memory sort of the arrays it already holds, only when it
---              inserted more than one event. Every other function is copied whole from its last word with only the
---              ordering delta.
---
---              Number 580: reserved for this change (580 to 584).
---
--- Reversal: reversible (the down file restores each function's previous last word, which versions by id)
--- Dependencies: 567 (_emit_event_store_chain, store_outbox_messages), 266 (_wh_sealed_stream_refusals,
---               _wh_refuse_sealed_stream_outbox_events), 393 (_wh_mixed_stream_refusals), 280 (_wh_archived_stream_refusals)
--- Objects: _wh_sealed_stream_refusals, _wh_refuse_sealed_stream_outbox_events, _wh_mixed_stream_refusals,
---          _wh_archived_stream_refusals, _emit_event_store_chain, store_outbox_messages
+-- Down migration: 573_StreamsAreVersionedInEmissionOrder.down.sql
+-- Restores each function 573 redefined to its previous last word, which versions a batch's events and judges the
+-- refusals by id.
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
--- ---------------------------------------------------------------------------------------------
--- _wh_sealed_stream_refusals: copied from its last word (266), with the 580 delta: emission position, never id.
--- ---------------------------------------------------------------------------------------------
--- <docs>fundamentals/events/stream-end-of-life#a-sealed-stream-refuses-appends</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:OutboxAppend_ToASealedStream_DeadLettersThatEvent_AndTheRestOfTheBatchCommitsAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:OutboxBatch_EventsAfterATerminalEvent_AreDeadLettered_AndTheOnesBeforeItAreStoredAsync</tests>
--- <docs>fundamentals/event-store/version-ordering#emission-order</docs>
+-- _wh_sealed_stream_refusals: its last word before 573 (266_SealedStreamsRefuseAppends.sql).
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_sealed_stream_refusals(
   p_event_ids UUID[],
   p_stream_ids UUID[],
@@ -71,13 +23,9 @@ DECLARE
   c_flags_off_the_ledger CONSTANT INTEGER := 24;   -- ephemeral (8) or a compaction origin (16): no row to seal (260)
 BEGIN
   RETURN QUERY
-  -- 580 (#2551): an event's place in the write is its position in the arrays, which list the write in the order its
-  -- events were emitted. "After a terminal event" is after it in that order, never by id: an id is time-ordered and
-  -- says nothing about stream position.
   WITH candidate AS (
-    SELECT c.event_id, c.stream_id, COALESCE(c.flags, 0) AS flags, c.event_type, c.position
-    FROM unnest(p_event_ids, p_stream_ids, p_flags, p_event_types)
-           WITH ORDINALITY AS c(event_id, stream_id, flags, event_type, position)
+    SELECT c.event_id, c.stream_id, COALESCE(c.flags, 0) AS flags, c.event_type
+    FROM unnest(p_event_ids, p_stream_ids, p_flags, p_event_types) AS c(event_id, stream_id, flags, event_type)
     WHERE c.stream_id IS NOT NULL
       AND c.stream_id <> __EMPTY_UUID__::uuid
   ),
@@ -85,12 +33,11 @@ BEGIN
     SELECT DISTINCT ON (k.stream_id)
            k.stream_id,
            k.event_id,
-           k.position,
            __SCHEMA__._wh_terminal_seal_reason(split_part(__SCHEMA__.normalize_event_type(k.event_type), ',', 1), k.event_id) AS reason
     FROM candidate k
     WHERE k.flags & c_flag_terminal <> 0
       AND k.flags & c_flags_off_the_ledger = 0
-    ORDER BY k.stream_id, k.position
+    ORDER BY k.stream_id, k.event_id
   ),
   sealed AS (
     SELECT l.stream_id, l.sealed_at, l.sealed_reason
@@ -105,24 +52,17 @@ BEGIN
   LEFT JOIN sealed s ON s.stream_id = k.stream_id
   LEFT JOIN ending e ON e.stream_id = k.stream_id
   WHERE s.stream_id IS NOT NULL
-     OR k.position > e.position
-  ORDER BY k.position;
+     OR k.event_id > e.event_id
+  ORDER BY k.stream_id, k.event_id;
 END;
 $$ LANGUAGE plpgsql STABLE;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_sealed_stream_refusals(UUID[], UUID[], INTEGER[], TEXT[], TIMESTAMPTZ) IS
   'Finds the events of a write that a sealed stream refuses (#1733): those of a stream whose wh_stream_lifecycle row is '
   'sealed, and those after the first terminal event of their stream in the same write. Reads only; the caller holds the '
-  'stream locks. 580 (#2551): "first" and "after" are by position in the arrays, the order the write was emitted in, '
-  'never by id.';
+  'stream locks.';
 
--- ---------------------------------------------------------------------------------------------
--- _wh_refuse_sealed_stream_outbox_events: copied from its last word (266), with the 580 delta: emission position, never id.
--- ---------------------------------------------------------------------------------------------
--- <docs>fundamentals/events/stream-end-of-life#a-sealed-stream-refuses-appends</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:OutboxAppend_ToASealedStream_DeadLettersThatEvent_AndTheRestOfTheBatchCommitsAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:StoreOutboxMessages_ToASealedStream_DeadLettersTheEvent_ThroughTheCoordinatorAsync</tests>
--- <docs>fundamentals/event-store/version-ordering#emission-order</docs>
+-- _wh_refuse_sealed_stream_outbox_events: its last word before 573 (266_SealedStreamsRefuseAppends.sql).
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_refuse_sealed_stream_outbox_events(
   p_outbox_message_ids UUID[],
   p_instance_id UUID,
@@ -140,17 +80,9 @@ DECLARE
   v_refusal RECORD;
   v_count INTEGER := 0;
 BEGIN
-  -- 580 (#2551): the arrays list the batch in the order the chain was handed it, the order its events were emitted, so
-  -- the refusal judges "after a terminal event" by emission position. An id listed twice keeps its first position.
-  SELECT array_agg(o.message_id ORDER BY b.position), array_agg(o.stream_id ORDER BY b.position),
-         array_agg(o.flags ORDER BY b.position), array_agg(o.message_type ORDER BY b.position)
+  SELECT array_agg(o.message_id), array_agg(o.stream_id), array_agg(o.flags), array_agg(o.message_type)
     INTO v_ids, v_streams, v_flags, v_types
-  FROM (
-    SELECT listed.message_id, min(listed.position) AS position
-    FROM unnest(p_outbox_message_ids) WITH ORDINALITY AS listed(message_id, position)
-    GROUP BY listed.message_id
-  ) AS b
-  JOIN __SCHEMA__.wh_outbox o ON o.message_id = b.message_id
+  FROM __SCHEMA__.wh_outbox o
   WHERE o.message_id = ANY(p_outbox_message_ids)
     AND o.is_event = true
     AND o.stream_id IS NOT NULL;
@@ -173,22 +105,7 @@ COMMENT ON FUNCTION __SCHEMA__._wh_refuse_sealed_stream_outbox_events(UUID[], UU
   'Moves each outbox event of the batch that a sealed stream refuses to wh_dead_letters (reason 25, the refusal as its '
   'error text), so the outbox emit chain stores the rest (#1733). Returns the events refused.';
 
--- ---------------------------------------------------------------------------------------------
--- _wh_mixed_stream_refusals: copied from its last word (393), with the 580 delta: emission position, never id.
--- ---------------------------------------------------------------------------------------------
--- <docs>operations/diagnostics/whiz133</docs>
--- <docs>fundamentals/events/ephemeral-events#allowing-mixed-streams</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_SourcedEventOnAnEphemeralStream_DeadLettersTheSourcedEventAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_EphemeralEventOnASourcedStream_DeadLettersTheEphemeralEventAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_FirstWriteMixesBothKinds_KeepsTheFirstKindAndDeadLettersTheOtherAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_SourcedEventOnACompactedStream_IsStoredAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:InboxChain_FirstClaimMixesBothKinds_KeepsTheFirstKindAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DirectAppendMixedStreamGuardTests.cs:DirectAppend_CompactionOriginOnAnEphemeralStream_IsStored_AndTheStreamStaysEphemeralAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:Append_AnAllowedPair_StoresEitherKindOnAStreamHoldingTheOtherAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:Append_AnUnpairedType_IsStillRefused_OnAStreamTheAllowanceMixedAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:Append_WithNoAllowance_IsRefusedAsBeforeAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamAllowanceSqlTests.cs:Store_AnAllowedPairInOneOutboxWrite_StoresBothKindsAsync</tests>
--- <docs>fundamentals/event-store/version-ordering#emission-order</docs>
+-- _wh_mixed_stream_refusals: its last word before 573 (393_AllowedPairsMayShareAStream.sql).
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_mixed_stream_refusals(
   p_event_ids UUID[],
   p_stream_ids UUID[],
@@ -228,24 +145,20 @@ BEGIN
   v_allow := EXISTS (SELECT 1 FROM __SCHEMA__.wh_mixed_stream_allowances);
 
   RETURN QUERY
-  -- 580 (#2551): an event's place in the write is its position in the arrays, which list the write in the order its
-  -- events were emitted; the stream is versioned in that order, so "first" and "earlier" are by position, never by id.
   WITH candidate AS (
     SELECT c.event_id,
            c.stream_id,
            (COALESCE(c.flags, 0) & c_flag_ephemeral) <> 0 AS is_ephemeral,
-           __SCHEMA__.normalize_event_type(c.event_type) AS event_type,
-           c.position
-    FROM unnest(p_event_ids, p_stream_ids, p_flags, p_event_types)
-           WITH ORDINALITY AS c(event_id, stream_id, flags, event_type, position)
+           __SCHEMA__.normalize_event_type(c.event_type) AS event_type
+    FROM unnest(p_event_ids, p_stream_ids, p_flags, p_event_types) AS c(event_id, stream_id, flags, event_type)
     WHERE c.stream_id IS NOT NULL
       AND (COALESCE(c.flags, 0) & c_flag_compacted) = 0
   ),
-  -- Each stream's first event in this write (version order is emission order, 580), one sort over the write.
+  -- Each stream's first event in this write (version order is message id order), one sort over the write.
   opener AS (
     SELECT DISTINCT ON (candidate.stream_id) candidate.stream_id, candidate.is_ephemeral, candidate.event_type
     FROM candidate
-    ORDER BY candidate.stream_id, candidate.position
+    ORDER BY candidate.stream_id, candidate.event_id
   ),
   stream_kind AS (
     SELECT o.stream_id,
@@ -282,14 +195,14 @@ BEGIN
                       WHERE c.stream_id = k.stream_id))
   ),
   -- 393: the (type, kind)s each checked stream holds (written_before NULL), and those this write brings to it, each with
-  -- its position in the write (version order is emission order, 580). A compaction origin is neither kind.
+  -- its event id (version order is message id order). A compaction origin is neither kind.
   present AS (
-    SELECT DISTINCT es.stream_id, es.event_type, (es.flags & c_flag_ephemeral) <> 0 AS is_ephemeral, NULL::BIGINT AS written_before
+    SELECT DISTINCT es.stream_id, es.event_type, (es.flags & c_flag_ephemeral) <> 0 AS is_ephemeral, NULL::UUID AS written_before
     FROM checked ch
     JOIN __SCHEMA__.wh_event_store es ON es.stream_id = ch.stream_id
     WHERE (es.flags & c_flag_compacted) = 0
     UNION ALL
-    SELECT c.stream_id, c.event_type, c.is_ephemeral, c.position
+    SELECT c.stream_id, c.event_type, c.is_ephemeral, c.event_id
     FROM candidate c
     JOIN checked ch ON ch.stream_id = c.stream_id
   ),
@@ -297,7 +210,6 @@ BEGIN
     -- 228: an event whose kind differs from its stream's, in every stream the allowance does not check.
     SELECT c.event_id,
            c.stream_id,
-           c.position,
            c.event_type,
            CASE WHEN c.is_ephemeral THEN 'ephemeral' ELSE 'Sourced' END AS event_kind,
            k.event_type AS stream_event_type,
@@ -313,7 +225,6 @@ BEGIN
     -- refuse more than needed in one write but never less.
     SELECT c.event_id,
            c.stream_id,
-           c.position,
            c.event_type,
            CASE WHEN c.is_ephemeral THEN 'ephemeral' ELSE 'Sourced' END,
            other.event_type,
@@ -324,7 +235,7 @@ BEGIN
       SELECT p.event_type, p.is_ephemeral
       FROM present p
       WHERE p.stream_id = c.stream_id
-        AND (p.written_before IS NULL OR p.written_before < c.position)
+        AND (p.written_before IS NULL OR p.written_before < c.event_id)
         AND p.is_ephemeral <> c.is_ephemeral
         AND NOT EXISTS (
           SELECT 1 FROM __SCHEMA__.wh_mixed_stream_allowances a
@@ -349,7 +260,7 @@ BEGIN
            'stream_event_type', r.stream_event_type,
            'stream_kind', r.stream_kind)
   FROM refused r
-  ORDER BY r.position ASC;
+  ORDER BY r.stream_id ASC, r.event_id ASC;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -358,27 +269,18 @@ COMMENT ON FUNCTION __SCHEMA__._wh_mixed_stream_refusals(UUID[], UUID[], INTEGER
   'event store copy''s per-stream advisory locks, and words each refusal. A compaction origin (flags & 16) is '
   'neither kind. Locks no work table. 393 (#2255): a pair in wh_mixed_stream_allowances may share a stream; a stream '
   'naming a paired type is judged by every kind it holds, and an event is refused only for an other-kind type it is '
-  'not paired with. With no pair the finder is 228''s. 580 (#2551): a stream''s first event, and an event earlier in the '
-  'write, are by position in the arrays, the order the write was emitted in, never by id.';
+  'not paired with. With no pair the finder is 228''s.';
 
--- ---------------------------------------------------------------------------------------------
--- _wh_archived_stream_refusals: copied from its last word (280), with the 580 delta: emission position, never id.
--- ---------------------------------------------------------------------------------------------
--- <docs>fundamentals/events/archive-store#appending-to-an-archived-stream</docs>
--- <docs>fundamentals/events/archive-store#new-generation</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:OutboxAppend_Refuse_DeadLettersThatEvent_AndTheRestOfTheBatchCommitsAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:OutboxAppend_AutoRestore_DeadLettersAwaitingRestore_AndQueuesOneRequestPerStreamAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveNewGenerationSqlTests.cs:OutboxAppend_AParkedCursorWithoutASnapshotAtIt_IsDeadLetteredAwaitingRestoreAsync</tests>
--- <docs>fundamentals/event-store/version-ordering#emission-order</docs>
+-- _wh_archived_stream_refusals: its last word before 573 (280_FinalSnapshotAndScheduledDisposition.sql).
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_archived_stream_refusals(p_event_ids UUID[], p_stream_ids UUID[])
 RETURNS TABLE(refused_event_id UUID, refused_stream_id UUID, append_policy TEXT, refusal_text TEXT) AS $$
 BEGIN
   RETURN QUERY
   WITH policy AS (
-    SELECT c.event_id, c.stream_id, c.position, l.last_version,
+    SELECT c.event_id, c.stream_id, l.last_version,
            CASE WHEN p.append_to_archived = 'NewGeneration' THEN 'AutoRestore'
                 ELSE COALESCE(p.append_to_archived, 'Refuse') END AS append_policy
-    FROM unnest(p_event_ids, p_stream_ids) WITH ORDINALITY AS c(event_id, stream_id, position)
+    FROM unnest(p_event_ids, p_stream_ids) AS c(event_id, stream_id)
     JOIN __SCHEMA__.wh_stream_lifecycle l ON l.stream_id = c.stream_id
     LEFT JOIN __SCHEMA__.wh_stream_type_policies p ON p.stream_type = l.stream_type
     WHERE l.state = 'Archived'
@@ -390,8 +292,7 @@ BEGIN
          pl.append_policy,
          __SCHEMA__._wh_stream_archived_refusal_text(pl.stream_id, pl.last_version, pl.append_policy)
   FROM policy pl
-  -- 580 (#2551): reported in the order the write lists them, never by id; a refusal here does not depend on order.
-  ORDER BY pl.position;
+  ORDER BY pl.stream_id, pl.event_id;
 END;
 $$ LANGUAGE plpgsql STABLE;
 
@@ -401,63 +302,7 @@ COMMENT ON FUNCTION __SCHEMA__._wh_archived_stream_refusals(UUID[], UUID[]) IS
   '280: a stream the write starts a new generation of is not refused, and NewGeneration without a snapshot at every parked '
   'cursor reads AutoRestore (#1734).';
 
--- ---------------------------------------------------------------------------------------------
--- _emit_event_store_chain: copied from its last word (567), with the 580 delta: emission position, never id.
--- ---------------------------------------------------------------------------------------------
--- <docs>fundamentals/events/stream-end-of-life#the-stream-lifecycle-ledger</docs>
--- <docs>fundamentals/messaging/collective-events#only-handled-types-are-queued</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveRowGateSqlTests.cs:Outbox_OnceTheMarkerExists_AHandledTypeGetsItsRow_AndAnUnhandledTypeGetsNoneAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveRowGateSqlTests.cs:Outbox_WithoutAGateMarker_EveryCollectiveEventGetsItsRowAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EmitEventStoreChainCollectiveSqlTests.cs:EmitEventStoreChain_CollectiveEvent_CreatesSingleCollectiveSinkRowAsync</tests>
--- <docs>fundamentals/events/stream-end-of-life#a-sealed-stream-refuses-appends</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamLifecycleLedgerSqlTests.cs:OutboxAppend_CreatesTheRow_FromTheStreamsFirstEventAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamLifecycleLedgerSqlTests.cs:Append_WritesOneLedgerRowPerStreamPerBatch_NotOnePerEventAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamLifecycleLedgerSqlTests.cs:AppendWithinTheHour_IsAHeapOnlyUpdate_WhileAnIndexedColumnChangeIsNotAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamLifecycleLedgerSqlTests.cs:Bucket_AdvancesOnlyWhenTheHourChanges_AndAnEarlierClockNeverMovesItBackAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamLifecycleLedgerSqlTests.cs:ConcurrentBatchesOnDifferentStreams_NeitherWaitsForTheOtherAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AuditDigestLaneSqlTests.cs:Reconciliation_AuditTraffic_OriginAndSubscriberAnswerTheSameAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:TerminalEvent_OnTheOutbox_SealsTheStream_InTheTransactionThatStoresItAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:OutboxAppend_ToASealedStream_DeadLettersThatEvent_AndTheRestOfTheBatchCommitsAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:OutboxBatch_EventsAfterATerminalEvent_AreDeadLettered_AndTheOnesBeforeItAreStoredAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:TerminalFlag_OnAnEphemeralEvent_SealsNothingAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Performance/StreamSealingEmitCostScenarioTests.cs:EmitChain_WithAndWithoutTheSealCheck_ReportAsync</tests>
--- <docs>fundamentals/events/archive-store#appending-to-an-archived-stream</docs>
--- <docs>fundamentals/events/superseding-events#the-key</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingEventReaperSqlTests.cs:Emit_Outbox_StampsTheKeyOnlyOnASupersedingEvent_AndQueuesTheOlderOneAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingEventReaperSqlTests.cs:Emit_TwoEventsOfOneKeyInOneBatch_QueueTheOlderAsync</tests>
--- <docs>fundamentals/events/superseding-events#superseding-groups</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingGroupSqlTests.cs:Emit_ANewerEventOfAnotherTypeInTheGroup_QueuesTheOlder_InEitherOrderAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:OutboxAppend_Refuse_DeadLettersThatEvent_AndTheRestOfTheBatchCommitsAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:OutboxAppend_AutoRestore_DeadLettersAwaitingRestore_AndQueuesOneRequestPerStreamAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Performance/ArchivedStreamEmitCostScenarioTests.cs:EmitChain_With266sProbeAndWith271s_ReportAsync</tests>
--- <docs>data/event-store#stored-metadata</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:OutboxChain_DefaultForm_StoresTheSlimRow_AndStagesTheFullFormAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:FullListedType_KeepsTheFullRow_ByTypeAndByNamespaceAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:DebugMode_KeepsEveryRowFullAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:WriteFormFull_KeepsFullRows_AndStagesNothingAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataWriteSqlTests.cs:WriteFormSlim_StoresSlimRows_AndStagesNothingAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Performance/StoredMetadataEmitCostScenarioTests.cs:EmitChain_FullAgainstLinked_ReportAsync</tests>
--- <docs>fundamentals/events/archive-store#new-generation</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveNewGenerationSqlTests.cs:OutboxAppend_StoresTheEventAtTheNextVersion_AndDeadLettersNothingAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveNewGenerationSqlTests.cs:OutboxAppend_AParkedCursorWithoutASnapshotAtIt_IsDeadLetteredAwaitingRestoreAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveNewGenerationSqlTests.cs:StoreOutboxMessages_AnAwaitedWrite_IsStoredAtTheNextVersionAsync</tests>
--- <docs>resilience/stream-integrity#one-digest-fold</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestWritersTests.cs:OutboxEmitChain_FoldsEveryLaneAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamDigestWritersTests.cs:OutboxEmitChain_FoldingIntoARowWithoutIdLanes_KeepsThemNullAsync</tests>
--- <docs>fundamentals/events/superseding-events#the-digest-counts-the-key</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingCountsTheKeySqlTests.cs:Emit_CopiesOfAKey_AreCountedOnce_AsTheKeysSlotAsync</tests>
--- <docs>data/event-store#row-values</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataRowValuesSqlTests.cs:OutboxChain_LeavesOutTheMessageIdAndTheHopScopeTheRowHolds_AndNothingElseAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataRowValuesSqlTests.cs:OutboxChain_KeepsWhatTheRowDoesNotHoldAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataRowValuesSqlTests.cs:FullRows_KeepEverythingAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredMetadataRowValuesReadTests.cs:EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync</tests>
--- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapStoreSqlTests.cs:EmitChain_InMapMode_LeasesByPartition_NeverToTheStoredOwnerAsync</tests>
--- <docs>fundamentals/event-store/version-ordering#emission-order</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EmissionOrderVersioningSqlTests.cs:EmitChain_EventsListedAgainstTheirIdOrder_AreVersionedInTheOrderListedAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EmissionOrderVersioningSqlTests.cs:EmitChain_AnIdListedTwice_KeepsItsFirstPositionAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreVersionOrderingSqlTests.cs:EmitChain_BatchedShuffledMessageIds_InsertsInTheBatchsOrderAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreVersionOrderingSqlTests.cs:EmitEventStoreChain_AssignsVersions_InTheOrderTheBatchListsThem_NotByIdOrCreatedAtAsync</tests>
+-- _emit_event_store_chain: its last word before 573 (567_StoresNameNoOwnerInMapMode.sql).
 CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain(
   p_outbox_message_ids UUID[],
   p_instance_id UUID,
@@ -553,10 +398,11 @@ BEGIN
   v_trim := __SCHEMA__._wh_metadata_trim_on();
 
   -- Phase 4.5A-equivalent: store outbox events into wh_event_store with sequential versioning.
-  -- 580 (#2551): a stream's events are numbered in the order the batch lists them, which is the order the producer
-  -- emitted them (store_outbox_messages hands them over in that order), never by id. An id is time-ordered and says
-  -- nothing about stream position: a derived id sorts at its cause, so an effect derived from a cause can sort before
-  -- it. An id listed twice keeps its first position.
+  -- Phase H step 10 slice 1: ORDER BY o.message_id (UUIDv7 = chronological at the source)
+  -- so version assignment matches canonical event_id ordering. Without this, two events stored
+  -- "out of wall-clock order" (e.g., one took longer to land) would receive versions that
+  -- disagree with their UUIDv7 ordering, perspective cursors advance by version, then later
+  -- see an "earlier" event_id and trip the cursor-inversion detector + full replay.
   -- Phase H step 10 slice 3: version is computed via a correlated subquery rather than a
   -- pre-materialized CTE. Inside the per-stream advisory lock the values are equivalent, but
   -- the per-row form is defensive, if a future refactor weakens or bypasses the lock, the
@@ -572,13 +418,8 @@ BEGIN
       o.scope,
       o.flags,
       o.created_at,
-      ROW_NUMBER() OVER (PARTITION BY o.stream_id ORDER BY batch.position) AS row_num
-    FROM (
-      SELECT listed.message_id, min(listed.position) AS position
-      FROM unnest(p_outbox_message_ids) WITH ORDINALITY AS listed(message_id, position)
-      GROUP BY listed.message_id
-    ) AS batch
-    JOIN __SCHEMA__.wh_outbox o ON o.message_id = batch.message_id
+      ROW_NUMBER() OVER (PARTITION BY o.stream_id ORDER BY o.message_id) AS row_num
+    FROM __SCHEMA__.wh_outbox o
     WHERE o.message_id = ANY(p_outbox_message_ids)
       AND o.is_event = true
       AND o.stream_id IS NOT NULL
@@ -907,32 +748,9 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain(UUID[], UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-  'Copies committed outbox events into the event store and creates their perspective work (146). 149: the perspective rows inherit the outbox row''s priority. 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 260: keeps each stored stream''s wh_stream_lifecycle row, one upsert per batch (#1732). 266: dead-letters each event a sealed stream refuses and stores the rest; a terminal event seals its stream in the same statement (#1733). 271: and each event an archived stream refuses, by its type''s AppendToArchived policy, queuing the stream''s restore under AutoRestore (#1738). 285: each row keeps the slim form unless kept full, carries its route id, and under the Linked form stages its full form (#1725). 295: stamps a superseding event''s key (wh_event_store.supersede_key) and queues the older events of its key for the reaper (#1729). 296: starts the new generation of an archived stream whose type declares NewGeneration, numbered on from its last version (#1734). 352: and its superseding group (wh_event_store.supersede_group, #2124), so the older events of its group, not only its type, are queued. 391: a collective event of a type no handler on this service applies gets no __collective__ row once every service registered in the schema has written its collective_gate marker (_wh_collective_row_wanted, #2145). 537 (#2323): the slim row leaves out its message id when it is the event id, and its hop scope when it is the scope column alone. 567 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own). 580 (#2551): a stream''s events are numbered in the order the id array lists them, the order they were emitted, never by id.';
+  'Copies committed outbox events into the event store and creates their perspective work (146). 149: the perspective rows inherit the outbox row''s priority. 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 260: keeps each stored stream''s wh_stream_lifecycle row, one upsert per batch (#1732). 266: dead-letters each event a sealed stream refuses and stores the rest; a terminal event seals its stream in the same statement (#1733). 271: and each event an archived stream refuses, by its type''s AppendToArchived policy, queuing the stream''s restore under AutoRestore (#1738). 285: each row keeps the slim form unless kept full, carries its route id, and under the Linked form stages its full form (#1725). 295: stamps a superseding event''s key (wh_event_store.supersede_key) and queues the older events of its key for the reaper (#1729). 296: starts the new generation of an archived stream whose type declares NewGeneration, numbered on from its last version (#1734). 352: and its superseding group (wh_event_store.supersede_group, #2124), so the older events of its group, not only its type, are queued. 391: a collective event of a type no handler on this service applies gets no __collective__ row once every service registered in the schema has written its collective_gate marker (_wh_collective_row_wanted, #2145). 537 (#2323): the slim row leaves out its message id when it is the event id, and its hop scope when it is the scope column alone. 567 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own).';
 
--- ---------------------------------------------------------------------------------------------
--- store_outbox_messages: copied from its last word (567), with the 580 delta: emission position, never id.
--- ---------------------------------------------------------------------------------------------
--- <docs>fundamentals/events/system-events#audit</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AuditRecordStreamPositionSqlTests.cs:Store_EventAndItsAuditTogether_RecordCarriesTheEventsVersionAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/EFCoreCollectiveOrderingHeadTests.cs:StoreOutboxMessagesAsync_TwoCoordinators_LinkTheSecondToTheFirstAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_RefusedEventInABatch_LeavesTheOtherStreamsStoredAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StringEventFlagsStoreTests.cs:StoreOutbox_FlagsWrittenAsNames_KeepsEveryBitAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredWorkReentrySqlTests.cs:ARecoveredOutboxMessage_IsStoredInTheShapeItWasStoredInAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredWorkReentrySqlTests.cs:ARecovery_OfAnOutboxMessageStillInTheOutbox_LeavesItsDeadLetterDueAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredOutboxDeadLetterPublishTests.cs:ARecoveredOutboxEvent_IsPublishedAsTheEventItWasStoredAs_AndReadsRecoveredOncePublishedAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:StoreOutboxMessages_AnAwaitedWriteToASealedStream_ThrowsStreamSealedException_AndStoresNothingAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:StoreOutboxMessages_TheSameWriteNotAwaited_IsDeadLettered_AndAnAwaitedWriteToAnOpenStreamIsStoredAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:StoreOutboxMessages_AnAwaitedWrite_Refuse_ThrowsStreamArchivedException_AndStoresNothingAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:StoreOutboxMessages_AnAwaitedWrite_AutoRestore_RaisesTheRestoreStateAsync</tests>
--- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapStoreSqlTests.cs:StoreOutbox_InMapMode_RecordsTheStreamWithoutAnOwnerAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapStoreSqlTests.cs:StoreOutbox_SwitchOff_PinsTheFirstWriter_AsBeforeAsync</tests>
--- <docs>fundamentals/messaging/sequence-integrity#how-the-hold-works</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SequenceIntegritySqlTests.cs:Store_WritesEachModesHoldOntoAnEventsRow_AndNeverOntoACommandsAsync</tests>
--- <docs>fundamentals/event-store/version-ordering#emission-order</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EmissionOrderVersioningSqlTests.cs:Store_ACauseAndItsDerivedEffectInOneBatch_TheCauseTakesTheLowerVersionAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EmissionOrderVersioningSqlTests.cs:CommitHandlerResult_ACauseAndItsDerivedEffect_TheCauseTakesTheLowerVersionAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_FirstWriteMixesBothKinds_KeepsTheFirstKindAndDeadLettersTheOtherAsync</tests>
+-- store_outbox_messages: its last word before 573 (567_StoresNameNoOwnerInMapMode.sql).
 CREATE OR REPLACE FUNCTION __SCHEMA__.store_outbox_messages(
   p_messages JSONB,
   p_instance_id UUID,
@@ -973,9 +791,6 @@ DECLARE
   v_inserted_event_streams UUID[] := ARRAY[]::UUID[];
   v_inserted_event_flags INTEGER[] := ARRAY[]::INTEGER[];
   v_inserted_event_types TEXT[] := ARRAY[]::TEXT[];
-  -- 580 (#2551): each inserted event's position in p_messages (same positions as v_inserted_event_ids), the order the
-  -- producer emitted the batch in.
-  v_inserted_event_positions BIGINT[] := ARRAY[]::BIGINT[];
   v_raise_event_ids UUID[] := ARRAY[]::UUID[];
   v_refused_event_ids UUID[];
   v_claimed INTEGER;          -- 241: rows the recovery claim touched
@@ -1015,12 +830,8 @@ BEGIN
       -- 228 (#1546): set by a write its caller awaits; a refusal of this event is raised instead of dead-lettered.
       COALESCE((elem->>'RaiseOnMixedStream')::BOOLEAN, false) as raise_on_mixed_stream,
       -- 241 (#1722): set only by dead-letter recovery, naming the dead-letter row the message re-enters from.
-      (elem->>'RecoveredFromDeadLetterId')::UUID as recovered_from,
-      -- 580 (#2551): the element's position in the batch, which is the order the producer emitted it in.
-      listed.position as emission_position
-    FROM jsonb_array_elements(p_messages) WITH ORDINALITY AS listed(elem, position)
-    -- Inserted in stream and id order, the canonical lock order of the rows this loop writes; the order the events are
-    -- versioned in is their emission position, collected below.
+      (elem->>'RecoveredFromDeadLetterId')::UUID as recovered_from
+    FROM jsonb_array_elements(p_messages) as elem
     ORDER BY (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID NULLS FIRST, (elem->>__ENVELOPE_FIELD_MESSAGE_ID__)::UUID
   LOOP
     -- 241 (#1722): dead-letter recovery re-enters a message HERE, as one more arrival, so every rule below applies to
@@ -1078,10 +889,8 @@ BEGIN
         -- index's own key removes the bad plan instead of out-costing it: a sequential scan would
         -- have to sort before it could answer. stream_id is pinned by the equality above, so the
         -- clause changes no result -- order by that column alone is dropped as redundant, which is
-        -- why a second key of the index is here too. 580 (#2551): the second key is perspective_name, the next column
-        -- of uq_perspective_event (stream_id, perspective_name, event_id), not the event id: the probe asks only whether
-        -- a row exists, and nothing is ordered by id.
-        ORDER BY pe.stream_id, pe.perspective_name
+        -- why event_id is here too.
+        ORDER BY pe.stream_id, pe.event_id
         LIMIT 1
         FOR SHARE OF pe SKIP LOCKED;  -- 140: same rule for the perspective doorbell
       IF NOT FOUND THEN
@@ -1194,7 +1003,6 @@ BEGIN
       v_inserted_event_streams := array_append(v_inserted_event_streams, v_msg.stream_id);
       v_inserted_event_flags := array_append(v_inserted_event_flags, COALESCE(v_msg.flags, 0));
       v_inserted_event_types := array_append(v_inserted_event_types, v_msg.message_type);
-      v_inserted_event_positions := array_append(v_inserted_event_positions, v_msg.emission_position);
       IF v_msg.raise_on_mixed_stream THEN
         v_raise_event_ids := array_append(v_raise_event_ids, v_msg.msg_id);
       END IF;
@@ -1223,18 +1031,6 @@ BEGIN
     RETURN QUERY SELECT v_msg.msg_id AS message_id, v_msg.stream_id AS stream_id, v_was_new AS was_newly_created;
   END LOOP;
 
-  -- 580 (#2551): the inserted events are handed on in the order the producer emitted them (their position in
-  -- p_messages), not in the loop's lock order, which sorts them by stream and id. The refusals judge "first" and
-  -- "after" by position in these arrays, and the chain numbers each stream in their order: an id is time-ordered,
-  -- never stream position.
-  IF cardinality(v_inserted_event_ids) > 1 THEN
-    SELECT array_agg(k.id ORDER BY k.pos), array_agg(k.sid ORDER BY k.pos), array_agg(k.bits ORDER BY k.pos),
-           array_agg(k.type_name ORDER BY k.pos)
-      INTO v_inserted_event_ids, v_inserted_event_streams, v_inserted_event_flags, v_inserted_event_types
-    FROM unnest(v_inserted_event_ids, v_inserted_event_streams, v_inserted_event_flags, v_inserted_event_types,
-                v_inserted_event_positions) AS k(id, sid, bits, type_name, pos);
-  END IF;
-
   -- 228 (#1546): an event that would make its stream hold both ephemeral and Sourced events is refused before the
   -- copy. A refusal the caller awaits raises (the whole call rolls back); any other is dead-lettered, which moves its
   -- outbox row out of the queue, and is left out of the copy so the rest of the write is stored.
@@ -1257,8 +1053,7 @@ BEGIN
       v_raise_event_ids, p_instance_id);
     IF cardinality(v_refused_event_ids) > 0 THEN
       v_inserted_event_ids := ARRAY(
-        SELECT kept.id FROM unnest(v_inserted_event_ids) WITH ORDINALITY AS kept(id, ord)
-        WHERE kept.id <> ALL(v_refused_event_ids) ORDER BY kept.ord);
+        SELECT kept.id FROM unnest(v_inserted_event_ids) AS kept(id) WHERE kept.id <> ALL(v_refused_event_ids));
     END IF;
   END IF;
 
@@ -1328,4 +1123,4 @@ COMMENT ON FUNCTION __SCHEMA__.store_outbox_messages(JSONB, UUID, TIMESTAMPTZ, T
   '(StreamSealedException) for an event the caller awaits on a sealed stream (#1733). 271: and SQLSTATE WHA01 or WHA02 '
   '(StreamArchivedException) for one on an archived stream, by its type''s AppendToArchived policy (#1738). 559: writes '
   'the hold the origin decided for a published event (SequenceHoldMilliseconds) as sequence_hold_until (#2542). '
-  '567 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own). 580 (#2551): hands the events it inserted to the refusals and the emit chain in the order the producer emitted them (their position in p_messages), never sorted by id.';
+  '567 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own).';

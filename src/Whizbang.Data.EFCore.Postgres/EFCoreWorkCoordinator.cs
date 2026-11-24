@@ -6397,7 +6397,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    // 583 (#2551): the read that carries each event's version, its stream position.
+    // 576 (#2551): the read that carries each event's version, its stream position.
     var functionName = BuildSchemaQualifiedName(schema, "get_stream_events_in_stream_order");
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -6462,7 +6462,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // Pre-264 SQL function: no first-in-stream fact. Field stays false: an event whose position the read does not
       // know is never the first in its stream (#1878).
     }
-    // 583 (#2551): the event's version, its stream position.
+    // 576 (#2551): the event's version, its stream position.
     var versionOrdinal = reader.GetOrdinal("out_version");
     while (await reader.ReadAsync(cancellationToken)) {
       // AOT-safe: read columns by ordinal, parse event_data as string
@@ -6706,7 +6706,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    // 583 (#2551): the fetch that ranks each stream in stream order and returns the rank.
+    // 576 (#2551): the fetch that ranks each stream in stream order and returns the rank.
     var functionName = BuildSchemaQualifiedName(schema, "fetch_inbox_batch_in_stream_order");
 
     var streamArr = AsArray(streamIds);
@@ -6733,7 +6733,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // 149: the row's priority; a fetch_inbox_batch that predates the column leaves it undeclared, which the
     // dispatch worker reads as the standard band.
     var priorityOrdinal = _ordinalOrAbsent(reader, "priority");
-    // 583 (#2551): the row's position in its stream.
+    // 576 (#2551): the row's position in its stream.
     var streamPositionOrdinal = reader.GetOrdinal("stream_position");
     while (await reader.ReadAsync(cancellationToken)) {
       results.Add(new InboxBatchRow {

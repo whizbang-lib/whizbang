@@ -28,9 +28,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/event-store/version-ordering</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/580_StreamsAreVersionedInEmissionOrder.sql</code-under-test>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/581_ReceivedStreamsAreVersionedInReceiveOrder.sql</code-under-test>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/582_StreamReadsFollowStreamOrder.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/573_StreamsAreVersionedInEmissionOrder.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/574_ReceivedStreamsAreVersionedInReceiveOrder.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/575_StreamReadsFollowStreamOrder.sql</code-under-test>
 [Category("Migrations")]
 [Category("Shard3")]
 public partial class StreamOrderNeverByIdGuardTests {
