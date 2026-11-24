@@ -25,6 +25,9 @@ public class WhizbangIdVersionAcceptanceTests {
   private const string V7 = "019e244a-6bda-78a9-a08f-a1011c9c31dd";
   private const string V8 = "a1b2c3d4-e5f6-8789-8abc-def012345678";
 
+  // Version nibble 5, variant nibble C (110x, Microsoft's reserved variant): a v5 by its version, not an RFC 9562 UUID.
+  private const string V5_OTHER_VARIANT = "886313e1-3b8a-5372-cb90-0c9aee199e5d";
+
   private static T _readJson<T>(string guid, SerializationProfile profile) {
     var options = JsonContextRegistry.CreateCombinedOptions(profile);
     return (T)JsonSerializer.Deserialize($"\"{guid}\"", options.GetTypeInfo(typeof(T)))!;
@@ -186,7 +189,25 @@ public class WhizbangIdVersionAcceptanceTests {
     await Assert.That(() => MintedOrNamedTestId.From(TrackedGuid.FromExternal(guid))).ThrowsExactly<ArgumentException>();
     await Assert.That(() => MintedOrNamedTestId.Parse(text)).ThrowsExactly<ArgumentException>();
     await Assert.That(() => (MintedOrNamedTestId)guid).ThrowsExactly<ArgumentException>();
-    await Assert.That(() => _readJson<MintedOrNamedTestId>(text, SerializationProfile.Default)).Throws<Exception>();
+    var json = await Assert.That(() => _readJson<MintedOrNamedTestId>(text, SerializationProfile.Default)).ThrowsExactly<ArgumentException>();
+    await Assert.That(json!.Message).Contains($"MintedOrNamedTestId requires UUIDv5 or UUIDv7 (RFC 9562 variant) but received version {guid.Version}");
+  }
+
+  /// <summary>
+  /// A listed version is not enough: the variant must be RFC 9562's too, so a hash or random bytes that carry a listed
+  /// version nibble by chance are refused (#2516).
+  /// </summary>
+  [Test]
+  public async Task AllowList_ListedVersionWithAnotherVariant_IsRejectedByEveryCheckedEntryPointAsync() {
+    var guid = Guid.Parse(V5_OTHER_VARIANT);
+
+    await Assert.That(guid.Version).IsEqualTo(5);
+    var thrown = await Assert.That(() => MintedOrNamedTestId.From(guid)).ThrowsExactly<ArgumentException>();
+    await Assert.That(thrown!.Message).Contains("but received version 5, variant C");
+    await Assert.That(() => MintedOrNamedTestId.From(TrackedGuid.FromExternal(guid))).ThrowsExactly<ArgumentException>();
+    await Assert.That(() => MintedOrNamedTestId.Parse(V5_OTHER_VARIANT)).ThrowsExactly<ArgumentException>();
+    await Assert.That(() => (MintedOrNamedTestId)guid).ThrowsExactly<ArgumentException>();
+    await Assert.That(() => _readJson<MintedOrNamedTestId>(V5_OTHER_VARIANT, SerializationProfile.Default)).ThrowsExactly<ArgumentException>();
   }
 
   [Test]
@@ -200,7 +221,7 @@ public class WhizbangIdVersionAcceptanceTests {
   public async Task AllowList_Refusal_NamesTheAcceptedVersionsAndTheOneReceivedAsync() {
     var thrown = Assert.Throws<ArgumentException>(() => MintedOrNamedTestId.From(Guid.Parse(V4)));
 
-    await Assert.That(thrown.Message).Contains("MintedOrNamedTestId requires UUIDv5 or UUIDv7 but received version 4");
+    await Assert.That(thrown.Message).Contains("MintedOrNamedTestId requires UUIDv5 or UUIDv7 (RFC 9562 variant) but received version 4");
     await Assert.That(thrown.ParamName).IsEqualTo("value");
   }
 

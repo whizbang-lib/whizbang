@@ -175,7 +175,7 @@ public class WhizbangIdTypeTests {
 
     await Assert.That(() => scalar.TryDeserialize("3f2504e0-4f89-41d3-9a0c-0305e82c3301", out _))
       .Throws<SerializationException>()
-      .WithMessageContaining("GraphQLConnectorId requires UUIDv5 or UUIDv7 but received version 4");
+      .WithMessageContaining("GraphQLConnectorId requires UUIDv5 or UUIDv7 (RFC 9562 variant) but received version 4");
   }
 
   [Test]

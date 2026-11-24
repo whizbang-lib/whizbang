@@ -47,6 +47,8 @@ public enum DiscoverySource {
 /// <paramref name="AcceptAnyVersion"/> is true.</param>
 /// <param name="DeclaresVersions">True if <c>Versions</c> is written on this declaration's attribute, so writing it
 /// next to <c>AcceptAnyVersion = true</c> can be reported (WHIZ039).</param>
+/// <param name="OutOfRangeVersionBits">The bits of the written <c>Versions</c> outside versions 1 to 8, which name no
+/// version and are reported (WHIZ044); zero when there are none.</param>
 /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdTypeInfoTests.cs</tests>
 public sealed record WhizbangIdInfo(
   string TypeName,
@@ -56,7 +58,8 @@ public sealed record WhizbangIdInfo(
   Location? Location = null,
   bool AcceptAnyVersion = false,
   int Versions = UuidVersionMask.V7,
-  bool DeclaresVersions = false
+  bool DeclaresVersions = false,
+  int OutOfRangeVersionBits = 0
 ) {
   /// <summary>
   /// Gets the fully qualified name of the ID type (Namespace.TypeName).
@@ -70,7 +73,8 @@ public sealed record WhizbangIdInfo(
   /// Two WhizbangIdInfo instances are equal if they have the same FullyQualifiedName and version rule.
   /// </summary>
   /// <remarks>
-  /// AcceptAnyVersion and Versions change the generated code, and DeclaresVersions the diagnostics, so they take
+  /// AcceptAnyVersion and Versions change the generated code, and DeclaresVersions and OutOfRangeVersionBits the
+  /// diagnostics, so they take
   /// part: an id whose option was toggled must not compare equal to the cached one, or the incremental pipeline
   /// would keep the old output.
   /// </remarks>
@@ -80,7 +84,8 @@ public sealed record WhizbangIdInfo(
     && FullyQualifiedName == other.FullyQualifiedName
     && AcceptAnyVersion == other.AcceptAnyVersion
     && Versions == other.Versions
-    && DeclaresVersions == other.DeclaresVersions;
+    && DeclaresVersions == other.DeclaresVersions
+    && OutOfRangeVersionBits == other.OutOfRangeVersionBits;
 
   /// <summary>
   /// Hash code based on FullyQualifiedName and the version rule.
@@ -89,6 +94,7 @@ public sealed record WhizbangIdInfo(
   public override int GetHashCode() {
     var hash = (FullyQualifiedName.GetHashCode() * 397) ^ AcceptAnyVersion.GetHashCode();
     hash = (hash * 397) ^ Versions;
-    return (hash * 397) ^ DeclaresVersions.GetHashCode();
+    hash = (hash * 397) ^ DeclaresVersions.GetHashCode();
+    return (hash * 397) ^ OutOfRangeVersionBits;
   }
 }

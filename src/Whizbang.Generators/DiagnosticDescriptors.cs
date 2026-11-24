@@ -254,7 +254,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ038: Warning - A [WhizbangId] Versions list is narrowed by another [WhizbangId] for the same id (#2516).
   /// </summary>
-  /// <docs>operations/diagnostics/whiz037</docs>
+  /// <docs>operations/diagnostics/whiz038</docs>
   /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:RoutesThatDisagree_TakeTheCommonVersionsAndReportWhiz038AtTheNarrowedListAsync</tests>
   public static readonly DiagnosticDescriptor WhizbangIdVersionsNarrowed = new(
       id: "WHIZ038",
@@ -269,7 +269,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ039: Error - A [WhizbangId] writes both AcceptAnyVersion = true and Versions (#2516).
   /// </summary>
-  /// <docs>operations/diagnostics/whiz038</docs>
+  /// <docs>operations/diagnostics/whiz039</docs>
   /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:AcceptAnyVersionAndVersions_ReportWhiz039AtTheAttributeAsync</tests>
   public static readonly DiagnosticDescriptor WhizbangIdAcceptAnyVersionWithVersions = new(
       id: "WHIZ039",
@@ -284,7 +284,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ043: Error - A [WhizbangId] accepts no UUID version (#2516).
   /// </summary>
-  /// <docs>operations/diagnostics/whiz039</docs>
+  /// <docs>operations/diagnostics/whiz043</docs>
   /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:EmptyVersions_ReportWhiz043Async</tests>
   /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:RoutesWithNoVersionInCommon_ReportWhiz043Async</tests>
   public static readonly DiagnosticDescriptor WhizbangIdAcceptsNoVersion = new(
@@ -295,6 +295,21 @@ public static class DiagnosticDescriptors {
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
       description: "A strongly-typed id must accept at least one UUID version through From, Parse, the explicit cast and JSON. Its Versions list is empty, or the [WhizbangId] declarations for it (the type, a property, a parameter) list no version in common."
+  );
+
+  /// <summary>
+  /// WHIZ044: Error - A [WhizbangId] Versions value has bits outside versions 1 to 8 (#2516).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz044</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:VersionsWithBitsOutsideOneToEight_ReportWhiz044Async</tests>
+  public static readonly DiagnosticDescriptor WhizbangIdVersionsOutOfRange = new(
+      id: "WHIZ044",
+      title: "WhizbangId Versions Outside 1 To 8",
+      messageFormat: "'{0}' lists bits {1} in Versions that name no UUID version. Use the UuidVersions flags (V1 to V8) only.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Each UuidVersions flag is the bit of its version number, 1 to 8. A cast such as (UuidVersions)1 or a bit above 8 names no version and would otherwise be dropped without a word, leaving an id that accepts fewer versions than written."
   );
 
   /// <summary>

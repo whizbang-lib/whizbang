@@ -180,7 +180,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
         AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr),
         Versions: _versionsOf(whizbangIdAttr),
-        DeclaresVersions: _declaresVersions(whizbangIdAttr)
+        DeclaresVersions: _declaresVersions(whizbangIdAttr),
+        OutOfRangeVersionBits: _outOfRangeVersionBitsOf(whizbangIdAttr)
     );
 
     return (idInfo, null, null);
@@ -212,12 +213,19 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// The versions <c>[WhizbangId(Versions = ...)]</c> lists, as a <see cref="UuidVersionMask"/>; UUIDv7 when it is not
-  /// written (#2516). Bits outside versions 1 to 8 are dropped, so a cast like <c>(UuidVersions)1</c> lists nothing.
+  /// written (#2516). Bits outside versions 1 to 8 name no version and take no part; they are reported (WHIZ044).
   /// </summary>
   private static int _versionsOf(AttributeData attribute) =>
     attribute.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Versions").Value.Value is int mask
       ? mask & UuidVersionMask.ALL
       : UuidVersionMask.V7;
+
+  /// <summary>The bits of a written <c>Versions</c> outside versions 1 to 8, such as <c>(UuidVersions)1</c> or
+  /// <c>1 &lt;&lt; 9</c>; zero when it is not written or has none.</summary>
+  private static int _outOfRangeVersionBitsOf(AttributeData attribute) =>
+    attribute.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Versions").Value.Value is int mask
+      ? mask & ~UuidVersionMask.ALL
+      : 0;
 
   /// <summary>Whether <c>Versions</c> is written on the attribute at all, whatever its value.</summary>
   private static bool _declaresVersions(AttributeData attribute) =>
@@ -272,7 +280,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
         AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr),
         Versions: _versionsOf(whizbangIdAttr),
-        DeclaresVersions: _declaresVersions(whizbangIdAttr)
+        DeclaresVersions: _declaresVersions(whizbangIdAttr),
+        OutOfRangeVersionBits: _outOfRangeVersionBitsOf(whizbangIdAttr)
     );
 
     return (idInfo, null, null);
@@ -331,7 +340,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
         AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr),
         Versions: _versionsOf(whizbangIdAttr),
-        DeclaresVersions: _declaresVersions(whizbangIdAttr)
+        DeclaresVersions: _declaresVersions(whizbangIdAttr),
+        OutOfRangeVersionBits: _outOfRangeVersionBitsOf(whizbangIdAttr)
     );
 
     return (idInfo, null, null);
@@ -480,20 +490,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     }
 
     var common = listed.Aggregate(UuidVersionMask.ALL, (mask, id) => mask & id.Versions);
-    if (common == 0) {
-      // No version in common: an error already, so generate the default rule rather than an id nothing can enter.
-      if (listed.All(id => id.Versions != 0)) {
-        context.ReportDiagnostic(Diagnostic.Create(
-            DiagnosticDescriptors.WhizbangIdAcceptsNoVersion,
-            listed[0].Location,
-            listed[0].FullyQualifiedName,
-            "its [WhizbangId] declarations list no version in common"
-        ));
-      }
-      return listed[0] with { Versions = UuidVersionMask.V7 };
-    }
-
-    var description = UuidVersionMask.Describe(common);
+    // No version in common is an error already, so the default rule is generated rather than an id nothing can enter.
+    var resolved = common == 0 ? UuidVersionMask.V7 : common;
+    var description = UuidVersionMask.Describe(resolved);
     foreach (var route in all) {
       if (route.AcceptAnyVersion) {
         context.ReportDiagnostic(Diagnostic.Create(
@@ -502,7 +501,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
             route.FullyQualifiedName,
             description
         ));
-      } else if (route.Versions != common) {
+      } else if (common != 0 && route.Versions != common) {
         context.ReportDiagnostic(Diagnostic.Create(
             DiagnosticDescriptors.WhizbangIdVersionsNarrowed,
             route.Location,
@@ -512,14 +511,36 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
       }
     }
 
-    return listed[0] with { Versions = common };
+    // An empty list is reported where it is written; lists that only fail together are reported at one that was
+    // written, not at a declaration that took the default.
+    if (common == 0 && listed.All(id => id.Versions != 0)) {
+      var written = listed.FirstOrDefault(id => id.DeclaresVersions) ?? listed[0];
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.WhizbangIdAcceptsNoVersion,
+          written.Location,
+          written.FullyQualifiedName,
+          "its [WhizbangId] declarations list no version in common"
+      ));
+    }
+
+    return listed[0] with { Versions = resolved };
   }
 
   /// <summary>
   /// Reports the declarations whose version rule is wrong on its own: <c>AcceptAnyVersion = true</c> together with
-  /// <c>Versions</c> (WHIZ039), and an empty <c>Versions</c> list (WHIZ043).
+  /// <c>Versions</c> (WHIZ039), an empty <c>Versions</c> list (WHIZ043), and bits of <c>Versions</c> outside versions
+  /// 1 to 8 (WHIZ044).
   /// </summary>
   private static void _reportVersionDeclarationErrors(SourceProductionContext context, List<WhizbangIdInfo> routes) {
+    foreach (var route in routes.Where(id => id.OutOfRangeVersionBits != 0)) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.WhizbangIdVersionsOutOfRange,
+          route.Location,
+          route.FullyQualifiedName,
+          $"0x{route.OutOfRangeVersionBits:X}"
+      ));
+    }
+
     foreach (var route in routes.Where(id => id.DeclaresVersions)) {
       if (route.AcceptAnyVersion) {
         context.ReportDiagnostic(Diagnostic.Create(
@@ -782,8 +803,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// The factories of an id declared with a <c>Versions</c> allow-list other than UUIDv7 alone: <c>From</c> takes a
-  /// Guid whose version is listed (#2516). <see cref="Guid.Empty"/> has version 0, which no list holds, so it is
-  /// refused with the rest. The constructor and the <c>Value</c> initializer stay unchecked, as on every id.
+  /// Guid whose version is listed and whose variant is RFC 9562's (#2516). <see cref="Guid.Empty"/> has version 0,
+  /// which no list holds, so it is refused with the rest. The constructor and the <c>Value</c> initializer stay unchecked, as on every id.
   /// </summary>
   private static void _appendAllowListFactories(StringBuilder sb, string typeName, int versions) {
     var accepted = UuidVersionMask.Describe(versions);
@@ -801,8 +822,10 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
     sb.AppendLine($"  /// <summary>Returns the Guid, or throws if its version is not {accepted}.</summary>");
     sb.AppendLine("  private static Guid _requireAcceptedVersion(Guid value, string parameterName) {");
-    sb.AppendLine($"    if (value.Version is not {UuidVersionMask.Pattern(versions)})");
-    sb.AppendLine($"      throw new ArgumentException($\"{typeName} requires {accepted} but received version {{value.Version}}\", parameterName);");
+    // The RFC 9562 variant as well as the version: a hash or random bytes carry a version nibble by chance, and the
+    // variant, the top two bits of octet 8 (10xx), is what says the bytes are a UUID at all.
+    sb.AppendLine($"    if (value.Version is not {UuidVersionMask.Pattern(versions)} || (value.Variant & 0xC) != 0x8)");
+    sb.AppendLine($"      throw new ArgumentException($\"{typeName} requires {accepted} (RFC 9562 variant) but received version {{value.Version}}, variant {{value.Variant:X}}\", parameterName);");
     sb.AppendLine("    return value;");
     sb.AppendLine("  }");
   }
