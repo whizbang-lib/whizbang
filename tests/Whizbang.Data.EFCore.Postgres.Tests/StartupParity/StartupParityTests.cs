@@ -154,10 +154,9 @@ public class StartupParityTests {
   /// declares is kept. "Running" is the liveness rule's call, which reads each instance's last heartbeat on the
   /// database clock. These instances run only their initializers, so nothing beats for them: the test beats for the
   /// earlier ones at every stage the judging start reports (its <see cref="IStartupStageReporter"/>, awaited on each
-  /// transition): on EF Core that includes Converge, entered just before the reconcile; the Dapper driver reports no
-  /// Converge, so there the last beat is the last stage it reports before it. Their heartbeats are first aged past every
-  /// window, as a slow run leaves them, so a beat that lands after the reconcile fails every run rather than only on a
-  /// loaded server. It used to rely on the three starts finishing inside the liveness window: on a loaded full run they
+  /// transition), Converge among them, which both drivers enter just before the reconcile. Their heartbeats are first
+  /// aged past every window, as a slow run leaves them, so a beat that lands after the reconcile fails every run rather
+  /// than only on a loaded server. It used to rely on the three starts finishing inside the liveness window: on a loaded full run they
   /// took 2 min 42 s, and past the window the reconcile forgets the first instance's declarations as a dead one's
   /// (reproduced by aging the heartbeats with no beat).
   /// </summary>
@@ -176,11 +175,8 @@ public class StartupParityTests {
     await _initializer(third).StartAsync(CancellationToken.None);
 
     Guid[] everyInstance = [.. running, _instanceId(third)];
-    await Assert.That(peers.BeatAt).IsNotEmpty().Because("the judging start reported its stages, and the running instances beat at each");
-    if (driverName == "efcore") {
-      await Assert.That(peers.BeatAt).Contains(StartupStage.Converge)
-        .Because("they beat on entering Converge, the stage whose reconcile reads the liveness rule");
-    }
+    await Assert.That(peers.BeatAt).Contains(StartupStage.Converge)
+      .Because("they beat on entering Converge, which both drivers enter just before the reconcile reads the liveness rule");
     await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_service_instances")).IsGreaterThanOrEqualTo(3L)
       .Because("every earlier instance is still running");
     await Assert.That(await _scalarAsync<long>(
@@ -196,8 +192,8 @@ public class StartupParityTests {
   /// <summary>
   /// Stands in for the heartbeat of instances that are running but whose heartbeat worker this test does not start:
   /// at every stage the start it reports for enters or skips, each beats on the database clock, so they have beaten at
-  /// the last report before the reconcile that reads the liveness rule (Converge on EF Core). The initializer awaits
-  /// its reporter on every transition, as it does the host's own.
+  /// Converge, just before the reconcile that reads the liveness rule. The initializer awaits its reporter on every
+  /// transition, as it does the host's own.
   /// </summary>
   private sealed class RunningPeersBeatAtEachStage(string connectionString, Guid[] running) : IStartupStageReporter {
     private readonly System.Collections.Concurrent.ConcurrentQueue<StartupStage> _beats = new();
