@@ -1649,6 +1649,7 @@ public abstract partial class Dispatcher(
       options = _withTimeout(options, out timeoutScope);
     }
     using var timeoutDisposal = timeoutScope;
+    using var sequenceIntegrityScope = SequenceIntegrityContext.EnterFor(options);   // #2566: what the handling produces inherits an explicit setting
     var cancellationToken = options?.CancellationToken ?? CancellationToken.None;
     await _awaitSchemaReadyAsync(cancellationToken).ConfigureAwait(false);
     _throwIfLocalDispatchTypeNeedsContext(messageType);
@@ -2625,6 +2626,7 @@ public abstract partial class Dispatcher(
 
     options = _withTimeout(options, out var timeoutScope);
     using var timeoutDisposal = timeoutScope;
+    using var sequenceIntegrityScope = SequenceIntegrityContext.EnterFor(options);   // #2566: what the handling produces inherits an explicit setting
     // A Routed<T> is unwrapped and its route reaches the decision: the LocalInvoke policy ignores it,
     // a policy the caller selects may not (#1410 follow-up)
     DispatchModes? route = null;
@@ -2674,6 +2676,7 @@ public abstract partial class Dispatcher(
 
     options = _withTimeout(options, out var timeoutScope);
     using var timeoutDisposal = timeoutScope;
+    using var sequenceIntegrityScope = SequenceIntegrityContext.EnterFor(options);   // #2566: what the handling produces inherits an explicit setting
     // A Routed<T> is unwrapped and its route reaches the decision: the LocalInvoke policy ignores it,
     // a policy the caller selects may not (#1410 follow-up)
     DispatchModes? route = null;
@@ -3018,6 +3021,7 @@ public abstract partial class Dispatcher(
     AutoGenerateStreamIdIfNeeded(message, messageType);
 
     var invoker = _lookupResultInvoker<TResult>(message, messageType) ?? throw new ReceptorNotFoundException(messageType);
+    using var sequenceIntegrityScope = SequenceIntegrityContext.EnterFor(options);   // #2566: what the handling produces inherits an explicit setting
     var invokeResult = await _localInvokeWithTracingAndReceiptAndOptionsAsync(message, messageType, context, invoker, options);
     await _waitForPerspectivesIfNeededAsync(options);
     return invokeResult;
@@ -4265,6 +4269,7 @@ public abstract partial class Dispatcher(
 
     options = _withTimeout(options, out var timeoutScope);
     using var timeoutDisposal = timeoutScope;
+    using var sequenceIntegrityScope = SequenceIntegrityContext.EnterFor(options);   // #2566: what the handling produces inherits an explicit setting
     options.CancellationToken.ThrowIfCancellationRequested();
 
     await _awaitSchemaReadyAsync(options.CancellationToken).ConfigureAwait(false);
@@ -5630,6 +5635,7 @@ public abstract partial class Dispatcher(
     // The caller's token and timeout cover the whole batch, as they cover a single dispatch
     options = _withTimeout(options, out var timeoutScope);
     using var timeoutDisposal = timeoutScope;
+    using var sequenceIntegrityScope = SequenceIntegrityContext.EnterFor(options);   // #2566: what the handling produces inherits an explicit setting
     var cancellationToken = options.CancellationToken;
     cancellationToken.ThrowIfCancellationRequested();
     // Dispatch writes, so every entry waits for the migration while the schema is not ready (#1877)

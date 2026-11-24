@@ -139,15 +139,15 @@ public class DispatcherSequenceIntegrityInheritanceTests {
   public async Task Publish_AfterANestedScopeIsDisposed_TakesTheOuterOneAsync() {
     var (dispatcher, strategy) = _dispatcher();
 
-    using (SequenceIntegrityContext.Enter(SequenceIntegrity.UntilStamped)) {
+    using (SequenceIntegrityContext.Enter(SequenceIntegrity.Bounded, TimeSpan.FromMilliseconds(250))) {
       using (SequenceIntegrityContext.Enter(SequenceIntegrity.None)) {
         await dispatcher.PublishAsync(new ItemIndexed(Guid.CreateVersion7()));
       }
-      await dispatcher.PublishAsync(new ItemInitialized(Guid.CreateVersion7()));
+      await dispatcher.PublishAsync(new LedgerPosted(Guid.CreateVersion7()));
     }
 
     await Assert.That(strategy.HoldOf<ItemIndexed>()).IsEqualTo(0);
-    await Assert.That(strategy.HoldOf<ItemInitialized>()).IsEqualTo(SequenceHold.UNTIL_STAMPED_MILLISECONDS);
+    await Assert.That(strategy.HoldOf<LedgerPosted>()).IsEqualTo(250);
   }
 
   [Test]
