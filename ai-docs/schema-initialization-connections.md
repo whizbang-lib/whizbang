@@ -387,6 +387,32 @@ The descriptor ensure (`PostgresSchemaBuilder`) does not declare these columns, 
 `StartupStageHostTests.AFreshDatabase_EntersEveryStageInOrder_LogsEach_AndRecordsEachTheRowCanHoldAsync` are the
 behavior.
 
+### One election, both drivers (#2561)
+
+The election (the bootstrap, the registration, the vote, the Elect stage, then the waiter's watch or the takeover of a
+dead migrator before the schema lock) is `MigratorElection` in `Whizbang.Data.Postgres`. The EF Core driver's generated
+initializer and the Dapper driver's runner both call it; neither carries a copy, and
+`CanonicalTemporalRewriteWiringTests.TheWaitAndTheTakeoverAreTheSharedElectionsAsync` fails if generated code grows one.
+A change to who migrates is made there, once.
+
+What differs per driver is only what the election is handed:
+
+- **The closure.** The generator extracts the bootstrap regions at build time (`MigrationBootstrapRegions`, which runs as
+  an analyzer); the Dapper driver reads the same embedded migrations at run time (`MigrationBootstrapClosure`). The two
+  readers must agree, and `MigrationBootstrapClosureParityTests` fails on any shipped migration where they do not.
+  Dapper's closure is unqualified and applied under a search path set to the schema, as its pass is.
+- **The currency check.** EF Core passes `_isSchemaCurrentAsync`; Dapper passes `PostgresSchemaInitializer.IsCurrentAsync`,
+  the check `Assess` uses. A failure reads as "not current", so a waiter on an empty database keeps waiting.
+- **What a waiter does when its migrator finished.** EF Core goes on to the pass, whose fast path exits in one query.
+  Dapper's pass has no fast path, so `RunPreLockAsync` answers whether the migrator finished the schema, and a Dapper
+  waiter then converges and serves without taking the schema lock.
+
+The Dapper pass reports each committed migration file as a step (`OnSchemaStepCommittedAsync`) and as startup progress,
+so a Dapper migrator's keepalive renews through a long pass (#2165), and its connection's backend is marked as the
+duty's, as EF Core's is. `DapperMigratorElectionTests` holds a migrator mid-pass on that step and is the behavior: one
+instance migrates and the other serves without a step of its own, and a migrator killed mid-pass (its sessions ended,
+then reaped by the liveness rule on the database clock) is taken over by the waiter.
+
 ### What a non-holder watches
 
 The **duty** lock key, not the schema lock key. Watching the schema key would report the migrator as
@@ -422,6 +448,9 @@ initializer derives it from the DbContext schema, and nothing but a test makes t
 | `Staged_ANonHolderWaitsForTheDutyHolderAsync` | the elector and the waiter disagreeing about the duty lock key |
 | `Staged_AKilledDutyHolderIsTakenOverAsync` | a fleet stranded on a duty holder that no longer exists |
 | `Staged_TheMigratorRegistersAndThenReleasesTheDutyAsync` | a leaked duty, which would stall the next deployment |
+| `DapperMigratorElectionTests.TwoInstancesStarting_OneMigrates_TheOtherWaitsForIt_ThenServesAsync` | the Dapper driver migrating on every instance in turn again |
+| `DapperMigratorElectionTests.AMigratorThatDiesMidMigration_HandsTheWorkToTheWaiterAsync` | a Dapper fleet stranded on a dead migrator |
+| `MigrationBootstrapClosureParityTests` | the run-time closure reader drifting from the generator's |
 
 The integration witness is `wh_schema_migrations.updated_at`. Re-applying a migration stamps it
 `NOW()`, so a sentinel timestamp surviving the run is proof the deferring instance applied nothing,

@@ -155,11 +155,13 @@ public static partial class MigratorElection {
     ArgumentNullException.ThrowIfNull(request);
     ArgumentNullException.ThrowIfNull(workAsync);
     var worked = false;
+    // The elector a re-vote asks: a waiter whose migrator died, or a migrator that lost its grant, votes again.
+    var elector = services?.GetService<IDutyElector>();
     await MigratorPreLockPhase.RunAsync(
       duty,
       new PreLockPhaseSteps(
         WaitAsync: (stage, ct) => _waitAsync(request, stage, services, logger, ct),
-        ElectAsync: ct => MigratorDutyStaging.ElectAsync(services?.GetService<IDutyElector>(), request.Schema, logger, ct),
+        ElectAsync: ct => MigratorDutyStaging.ElectAsync(elector, request.Schema, logger, ct),
         // On the system clock, like the deferral's own polls: a host clock frozen by a test must not stall a vote.
         PauseAsync: (vote, ct) => Task.Delay(MigratorPreLockPhase.ReelectionDelay(vote), TimeProvider.System, ct),
         WorkAsync: async ct => {
