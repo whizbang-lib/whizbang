@@ -64,23 +64,16 @@ public partial class StreamOrderNeverByIdGuardTests {
     "complete_perspective_cursor_work", "wh_received_stream_order_window", "wh_resequence_stream",
   };
 
-  /// <summary>Exact allowed texts, per function, with why each is not a stream ordered by id.</summary>
+  /// <summary>
+  /// Exact allowed texts, per function, with why each is the one documented fallback: an event that carries no origin
+  /// position, placed by its id the way the replay places it (#2379; ReplayEventOrder in C#). Nothing else is allowed.
+  /// </summary>
   private static readonly (string Function, string Text, string Reason)[] _allowed = [
-    ("store_outbox_messages", "ORDER BY pe.stream_id, pe.event_id LIMIT 1",
-      "the emptiness probe (161): the stream is pinned by equality and the order only makes the index reachable; "
-      + "it reads whether any row exists, never which comes first"),
     ("_emit_event_store_chain_for_inbox", "p.message_id > k.message_id",
       "the replay's rule for an event that carries no origin position (#2379): it goes before the first of its "
       + "origin's positioned events whose id sorts after its own; nothing positional exists for it"),
     ("_emit_event_store_chain_for_inbox", "se.event_id < applied.event_id",
       "the same fallback for the straggler: when either event carries no origin position, the replay places it by id"),
-    ("fetch_inbox_batch", "PARTITION BY ist.stream_id ORDER BY i.message_id",
-      "dispatch order of a stream's received messages, which interleaves its commands (no stream position) with its "
-      + "stored events; the dispatcher re-sorts by id in C# (InboxDrainWorker). Follow-up of #2551"),
-    ("fetch_inbox_batch", "PARTITION BY r.stream_id ORDER BY r.message_id",
-      "the byte budget's running total, in the same dispatch order as the rank above. Follow-up of #2551"),
-    ("fetch_inbox_batch", "ORDER BY b.stream_id, b.message_id",
-      "the dispatch batch's output order, the same dispatch order. Follow-up of #2551"),
   ];
 
   [Test]

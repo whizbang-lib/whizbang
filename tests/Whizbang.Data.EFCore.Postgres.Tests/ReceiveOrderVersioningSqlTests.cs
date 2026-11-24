@@ -6,6 +6,10 @@ using NpgsqlTypes;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -139,6 +143,48 @@ public class ReceiveOrderVersioningSqlTests : EFCoreTestBase {
       .IsEquivalentTo([mine], TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("between origins the arrival order stands; a later arrival of another origin is not this event's head");
   }
+
+  /// <summary>
+  /// The receive order is defined once, by the replay (<see cref="ReplayEventOrder"/>), and the SQL that stores a
+  /// received stream follows it: over many arrangements of origins, positioned and unpositioned events and arrivals, the
+  /// stored version order is a fixed point of the replay's order. A drift between the two definitions fails here.
+  /// </summary>
+  [Test]
+  public async Task OverManyArrangements_TheStoredOrderIsTheReplaysOrder_SoTheTwoDefinitionsCannotDriftAsync() {
+    var rng = new Random(2551);
+    await using var connection = await _openAsync();
+    var origins = new[] { (Guid)TrackedGuid.New(), (Guid)TrackedGuid.New() };
+    for (var arrangement = 0; arrangement < 40; arrangement++) {
+      var instance = await _registerInstanceAsync(connection);
+      var stream = (Guid)TrackedGuid.New();
+      var count = rng.Next(2, 7);
+      var ids = _orderedIds(count).OrderBy(_ => rng.Next()).ToArray();
+      var sequences = Enumerable.Range(1, count).OrderBy(_ => rng.Next()).ToArray();
+      var rows = new Row[count];
+      for (var i = 0; i < count; i++) {
+        var unpositioned = rng.Next(5) == 0;
+        rows[i] = new Row(ids[i], origins[rng.Next(origins.Length)], unpositioned ? 0 : sequences[i], rng.Next(0, 3));
+      }
+      await _receiveAsync(connection, stream, rows);
+      await _leaseAsync(connection, instance, ids);
+      await _emitInboxChainAsync(connection, instance);
+
+      var stored = await _eventIdsInVersionOrderAsync(connection, stream);
+      var byId = rows.ToDictionary(r => r.Id);
+      var envelopes = stored.Select((id, index) => new MessageEnvelope<IEvent>(MessageId.From(id), new Probe(), []) {
+        LocalStreamVersion = index + 1,
+        SourceServiceId = byId[id].Origin,
+        SourceCommitSequence = byId[id].Sequence,
+      }).ToList();
+
+      await Assert.That(stored.Count).IsEqualTo(count);
+      await Assert.That(ReplayEventOrder.Order(envelopes).Select(e => e.MessageId.Value))
+        .IsEquivalentTo(stored, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+        .Because($"arrangement {arrangement}: the store's receive order and the replay's order are one rule");
+    }
+  }
+
+  private sealed record Probe : IEvent;
 
   // ===== Helpers =====
 
