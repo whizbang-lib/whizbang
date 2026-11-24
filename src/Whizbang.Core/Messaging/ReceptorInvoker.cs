@@ -411,8 +411,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       return false;
     }
     _ensureLogger();
-    if (_logger is not null) {
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+#pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
       Log.SkippedSameServicePostInbox(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value, _serviceName);
 #pragma warning restore CA1873
     }
@@ -441,8 +441,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       return false;
     }
     _ensureLogger();
-    if (_logger is not null) {
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+#pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
       Log.SkippedOwnedDomainFilter(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
     }
@@ -497,8 +497,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     }
     if (kept.Count == 0) {
       _ensureLogger();
-      if (_logger is not null) {
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+      if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+#pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
         Log.SkippedLocalDispatchPreOutbox(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
       }
@@ -527,8 +527,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       Tags.MessageChanges? changes,
       CancellationToken cancellationToken) {
     _ensureLogger();
-    if (_logger is not null) {
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+#pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
       Log.NoReceptorsRegistered(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
     }
@@ -554,8 +554,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       return true;
     }
     _ensureLogger();
-    if (_logger is not null) {
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+#pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
       Log.SkippedStageTrackerDedup(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
     }
@@ -565,8 +565,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   /// <summary>Logs that replay-mode filtering removed every remaining receptor.</summary>
   private void _logSkippedReplayModeFilter(IMessageEnvelope envelope, Type messageType, LifecycleStage stage) {
     _ensureLogger();
-    if (_logger is not null) {
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+#pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
       Log.SkippedReplayModeFilter(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
     }
@@ -605,7 +605,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       // Refusing it here, after its handler ran, would protect nothing, so it runs without a context
       _ensureLogger();
       if (_logger is not null) {
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+#pragma warning disable CA1873 // an exception path: the name is read only once the refusal was thrown
         Log.LocalStageRanWithoutContext(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
       }

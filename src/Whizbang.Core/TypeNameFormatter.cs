@@ -44,7 +44,55 @@ public static class TypeNameFormatter {
   /// <param name="type">The type to describe.</param>
   public static string DisplayName(Type type) {
     ArgumentNullException.ThrowIfNull(type);
-    return type.FullName ?? type.Name;
+    var names = NamesOf(type);
+    return names.FullName ?? names.Name;
+  }
+
+  /// <summary>
+  /// The names a type gives, read once and kept with it (#2548). The stored and assembly-qualified forms are built on
+  /// every outbox and inbox write, and the runtime keeps a type's names in a cache it holds weakly (it builds the
+  /// assembly-qualified name afresh on every read), so each read allocated, and again after every collection. The table
+  /// holds the type weakly, so a collectible type still unloads; nothing here reflects beyond the reads it replaces.
+  /// </summary>
+  /// <param name="type">The type.</param>
+  /// <returns>The type's names.</returns>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/TypeNameFormatterCachingTests.cs</tests>
+  internal static ResolvedNames NamesOf(Type type) => _resolved.GetValue(type, static t => new ResolvedNames(t));
+
+  private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Type, ResolvedNames> _resolved = [];
+
+  /// <summary>A type's names, read once (#2548).</summary>
+  internal sealed class ResolvedNames {
+    internal ResolvedNames(Type type) {
+      Name = type.Name;
+      FullName = type.FullName;
+      QualifiedName = type.AssemblyQualifiedName;
+      Namespace = type.Namespace;
+      AssemblyName = type.Assembly.GetName().Name;
+      FullNameWithAssembly = FullName + ", " + AssemblyName;
+    }
+
+    /// <summary><see cref="Type.Name"/>.</summary>
+    public string Name { get; }
+
+    /// <summary><see cref="Type.FullName"/>, null for a generic parameter.</summary>
+    public string? FullName { get; }
+
+    /// <summary><see cref="Type.AssemblyQualifiedName"/>, null for a generic parameter.</summary>
+    public string? QualifiedName { get; }
+
+    /// <summary><see cref="Type.Namespace"/>, null in the global namespace.</summary>
+    public string? Namespace { get; }
+
+    /// <summary>The simple name of the type's assembly.</summary>
+    public string? AssemblyName { get; }
+
+    /// <summary>The full name and the assembly's simple name, joined as the matching helper always joined them (not
+    /// normalized; <see cref="Format"/> is the stored form).</summary>
+    public string FullNameWithAssembly { get; }
+
+    /// <summary>The stored form, once <see cref="Format"/> has rendered it.</summary>
+    public string? Stored { get; set; }
   }
 
   /// <summary>
@@ -67,15 +115,16 @@ public static class TypeNameFormatter {
   /// <exception cref="InvalidOperationException">The type has no assembly-qualified name (an open generic parameter).</exception>
   public static string AssemblyQualifiedName(Type type) {
     ArgumentNullException.ThrowIfNull(type);
-    return type.AssemblyQualifiedName
-      ?? throw new InvalidOperationException($"Type {type.Name} does not have an assembly-qualified name");
+    var names = NamesOf(type);
+    return names.QualifiedName
+      ?? throw new InvalidOperationException($"Type {names.Name} does not have an assembly-qualified name");
   }
 
   /// <summary>The versioned assembly-qualified form, or null for a type that has none.</summary>
   /// <param name="type">The type to name.</param>
   public static string? AssemblyQualifiedNameOrNull(Type type) {
     ArgumentNullException.ThrowIfNull(type);
-    return type.AssemblyQualifiedName;
+    return NamesOf(type).QualifiedName;
   }
 
   /// <summary>
@@ -86,7 +135,7 @@ public static class TypeNameFormatter {
   /// <param name="type">The type to name.</param>
   public static string AssemblyQualifiedNameOrDisplay(Type type) {
     ArgumentNullException.ThrowIfNull(type);
-    return type.AssemblyQualifiedName ?? DisplayName(type);
+    return NamesOf(type).QualifiedName ?? DisplayName(type);
   }
 
   /// <summary>
@@ -108,16 +157,23 @@ public static class TypeNameFormatter {
   /// <tests>tests/Whizbang.Core.Tests/TypeNameWireFormTests.cs:SimpleNames_AreTheTypesOwnAsync</tests>
   public static string SimpleName(Type type) {
     ArgumentNullException.ThrowIfNull(type);
-    return type.Name;
+    return NamesOf(type).Name;
   }
 
   /// <summary>The type's namespace, or null for a type in the global namespace (#2267).</summary>
+  /// <remarks>
+  /// Resolved once per type and kept with it: the owned-domain filter asks on every PreOutbox stage, and the runtime
+  /// keeps <see cref="Type.Namespace"/> in a cache it holds weakly, so reading it there allocated again after every
+  /// garbage collection (#2548). The table holds the type weakly, so a collectible type is still unloaded.
+  /// </remarks>
   /// <param name="type">The type.</param>
   /// <returns>The namespace, or null.</returns>
   /// <tests>tests/Whizbang.Core.Tests/TypeNameWireFormTests.cs:SimpleNames_AreTheTypesOwnAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/TypeNameLookupAllocationTests.cs:NamespaceOf_AfterCollections_AllocatesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/TypeNameLookupAllocationTests.cs:NamespaceOf_IsTheTypesOwnNamespace_EveryTimeAsync</tests>
   public static string? NamespaceOf(Type type) {
     ArgumentNullException.ThrowIfNull(type);
-    return type.Namespace;
+    return NamesOf(type).Namespace;
   }
 
   /// <summary>The assembly's simple name (<c>Whizbang.Core</c>), the prefix of its embedded resource names (#2267).</summary>
@@ -170,11 +226,10 @@ public static class TypeNameFormatter {
   /// <exception cref="InvalidOperationException">If type doesn't have required metadata</exception>
   public static string Format(Type type) {
     ArgumentNullException.ThrowIfNull(type);
-
-    var typeName = type.FullName
-      ?? throw new InvalidOperationException($"Type {type.Name} does not have a FullName");
-
-    return Whizbang.Core.Messaging.EventTypeMatchingHelper.NormalizeTypeName($"{typeName}, {_assemblyNameOf(type)}");
+    var names = NamesOf(type);
+    // Rendered on the first call for the type and kept (#2548)
+    return names.Stored ??= Whizbang.Core.Messaging.EventTypeMatchingHelper.NormalizeTypeName(
+      $"{names.FullName ?? throw new InvalidOperationException($"Type {names.Name} does not have a FullName")}, {_assemblyNameOf(type)}");
   }
 
   // The simple assembly name the stored form carries.
@@ -213,7 +268,7 @@ public static class TypeNameFormatter {
   /// <tests>tests/Whizbang.Core.Tests/Priority/PrioritySugarHooksBranchCoverageTests.cs:DeclarePriority_TaggedTypeWithNoAssemblyQualifiedName_IsKeyedByDisplayNameAsync</tests>
   public static string FormatOrDisplay(Type type) {
     ArgumentNullException.ThrowIfNull(type);
-    return type.FullName is null ? DisplayName(type) : Format(type);
+    return NamesOf(type).FullName is null ? DisplayName(type) : Format(type);
   }
 
   /// <summary>
@@ -238,8 +293,9 @@ public static class TypeNameFormatter {
   /// <exception cref="InvalidOperationException">If the type has no FullName.</exception>
   public static string FormatClrTypeName(Type type) {
     ArgumentNullException.ThrowIfNull(type);
-    return type.FullName
-      ?? throw new InvalidOperationException($"Type {type.Name} does not have a FullName");
+    var names = NamesOf(type);
+    return names.FullName
+      ?? throw new InvalidOperationException($"Type {names.Name} does not have a FullName");
   }
 
   /// <summary>
@@ -252,7 +308,7 @@ public static class TypeNameFormatter {
   /// <returns><c>true</c> when the type has a CLR full name.</returns>
   public static bool TryFormatClrTypeName(Type type, [NotNullWhen(true)] out string? clrTypeName) {
     ArgumentNullException.ThrowIfNull(type);
-    clrTypeName = type.FullName;
+    clrTypeName = NamesOf(type).FullName;
     return clrTypeName is not null;
   }
 

@@ -111,6 +111,24 @@ public class DbContextInitializationRegistryTests {
     await Assert.That((first, second)).IsEqualTo((0, 1)).Because("the latest registration for a context replaces the earlier one");
   }
 
+  /// <summary>
+  /// Each context is named in an information log only when that level is on: with it off the context's type name is
+  /// never read, and with it on the log names the context (#2548).
+  /// </summary>
+  [Test]
+  [Arguments(LogLevel.Information, true)]
+  [Arguments(LogLevel.Warning, false)]
+  public async Task InitializeAllAsync_NamesEachContext_OnlyWhenInformationIsOnAsync(LogLevel minimum, bool named) {
+    var called = 0;
+    DbContextInitializationRegistry.Register<FakeDbContextA>((_, _, _) => { called++; return Task.CompletedTask; });
+    var messages = new List<string>();
+
+    await DbContextInitializationRegistry.InitializeAllAsync(new FakeServiceProvider(), new LevelLogger(minimum, messages));
+
+    await Assert.That(called).IsEqualTo(1);
+    await Assert.That(messages.Contains($"Initializing {nameof(FakeDbContextA)}...")).IsEqualTo(named);
+  }
+
   [Test]
   public async Task InitializeAllAsync_CallsAllRegisteredCallbacksAsync() {
     // Arrange
@@ -485,6 +503,18 @@ public class DbContextInitializationRegistryTests {
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
       lock (_sink) {
         _sink.Add(formatter(state, exception));
+      }
+    }
+  }
+
+  private sealed class LevelLogger(LogLevel minimum, List<string> sink) : ILogger {
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => logLevel >= minimum;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (IsEnabled(logLevel)) {
+        lock (sink) {
+          sink.Add(formatter(state, exception));
+        }
       }
     }
   }

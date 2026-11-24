@@ -559,6 +559,28 @@ public static class JsonContextRegistry {
   }
 
   /// <summary>
+  /// The type a stored name (<c>Namespace.Type, Assembly</c>, short or full form) was registered under by a generated
+  /// JSON context: the same lookup <see cref="GetTypeInfoByName"/> makes, without building metadata. No reflection.
+  /// </summary>
+  /// <param name="assemblyQualifiedName">The stored type name.</param>
+  /// <param name="type">The registered type, or null when the name is empty or not registered.</param>
+  /// <returns>True when the name is registered.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingStreamIdByNameTests.cs:TheRegistry_ResolvesAStoredNameToItsTypeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingStreamIdByNameTests.cs:TheRegistry_DoesNotResolveAnEmptyOrUnknownNameAsync</tests>
+  internal static bool TryGetTypeByName(string assemblyQualifiedName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Type? type) {
+    type = null;
+    if (string.IsNullOrEmpty(assemblyQualifiedName)) {
+      return false;
+    }
+    var mappings = Volatile.Read(ref _typeNameSnapshot) ?? _freezeTypeNames();
+    if (!mappings.TryGetValue(Messaging.EventTypeMatchingHelper.NormalizeTypeName(assemblyQualifiedName), out var entry)) {
+      return false;
+    }
+    type = entry.type;
+    return true;
+  }
+
+  /// <summary>
   /// Gets the count of registered resolvers (for diagnostics/testing).
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:RegisterConverter_WithConverterInstance_AddsToConverterCollectionAsync</tests>

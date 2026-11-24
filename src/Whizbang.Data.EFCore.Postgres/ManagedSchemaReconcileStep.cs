@@ -48,9 +48,11 @@ public sealed partial class ManagedSchemaReconcileStep(
   public async Task RunAsync(IServiceProvider services, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(services);
     if (services.GetKeyedService<ManagedSchemaManifest>(_dbContextType) is not { } manifest) {
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
-      LogNoManifest(_logger, TypeNameFormatter.ForLog(_dbContextType));
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+#pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
+        LogNoManifest(_logger, TypeNameFormatter.ForLog(_dbContextType));
 #pragma warning restore CA1873
+      }
       return;
     }
     var settings = ManagedSchemaReconcile.Settings(services);

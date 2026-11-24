@@ -368,6 +368,11 @@ public partial class DapperWorkCoordinator(
     }
     foreach (var message in messages) {
       _guidOrdering.ValidateMessageId(message.MessageId, message.MessageType, INBOX_ENTRY_POINT);
+      if (message.StreamId is { } streamId) {
+        // A remote producer's stream id may reach this service only here (#2549): reported, or refused at Error
+        // before any SQL runs, resolved through the message type's stored name
+        _guidOrdering.ReportStreamId(streamId, message.MessageType, INBOX_ENTRY_POINT);
+      }
     }
 
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(InboxMessage[]));

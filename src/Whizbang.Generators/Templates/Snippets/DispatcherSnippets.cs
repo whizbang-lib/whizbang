@@ -575,10 +575,11 @@ public class DispatcherSnippets {
             // Get tracer for explicit trace output
             var tracer = sp.GetService<global::Whizbang.Core.Tracing.ITracer>();
 
-            // Begin trace span if tracing is enabled for this handler
+            // Begin trace span if tracing is enabled for this handler. The message type is named through the shared
+            // naming code, which keeps the name per type: Type.Name is rebuilt after every collection (#2548)
             tracer?.BeginHandlerTrace(
                 "__RECEPTOR_CLASS__",
-                typeof(__MESSAGE_TYPE__).Name,
+                global::Whizbang.Core.TypeNameFormatter.SimpleName(typeof(__MESSAGE_TYPE__)),
                 __HANDLER_COUNT__,
                 __IS_EXPLICIT__);
 
@@ -602,7 +603,7 @@ public class DispatcherSnippets {
               // End trace span
               tracer?.EndHandlerTrace(
                   "__RECEPTOR_CLASS__",
-                  typeof(__MESSAGE_TYPE__).Name,
+                  global::Whizbang.Core.TypeNameFormatter.SimpleName(typeof(__MESSAGE_TYPE__)),
                   status,
                   durationMs,
                   startTime,
@@ -651,10 +652,11 @@ public class DispatcherSnippets {
             // Get tracer for explicit trace output
             var tracer = sp.GetService<global::Whizbang.Core.Tracing.ITracer>();
 
-            // Begin trace span if tracing is enabled for this handler
+            // Begin trace span if tracing is enabled for this handler. The message type is named through the shared
+            // naming code, which keeps the name per type: Type.Name is rebuilt after every collection (#2548)
             tracer?.BeginHandlerTrace(
                 "__RECEPTOR_CLASS__",
-                typeof(__MESSAGE_TYPE__).Name,
+                global::Whizbang.Core.TypeNameFormatter.SimpleName(typeof(__MESSAGE_TYPE__)),
                 __HANDLER_COUNT__,
                 __IS_EXPLICIT__);
 
@@ -676,7 +678,7 @@ public class DispatcherSnippets {
               // End trace span
               tracer?.EndHandlerTrace(
                   "__RECEPTOR_CLASS__",
-                  typeof(__MESSAGE_TYPE__).Name,
+                  global::Whizbang.Core.TypeNameFormatter.SimpleName(typeof(__MESSAGE_TYPE__)),
                   status,
                   durationMs,
                   startTime,
