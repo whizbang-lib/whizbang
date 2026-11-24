@@ -296,7 +296,6 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task SlowPath_WhenAnotherProcessHoldsTheSchemaLock_WaitsInsteadOfMigratingAsync(
       CancellationToken cancellationToken) {
     // The lock is worth nothing unless a DIFFERENT process computes the SAME key. That is exactly
@@ -327,16 +326,22 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
       await Assert.That(drifted).IsEqualTo(1); // guard: the arrangement must actually bite
     }
 
-    // Act — initialize with a deadline. Held lock ⇒ the inner loop backs off until the token fires.
+    // Act: initialize, and cancel it the moment it reports finding the lock held (the initializer's own signal, where
+    // it used to be a 5-second deadline that also canceled an initialization that had not reached the lock yet).
     await using var context = CreateDbContext();
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-    cts.CancelAfter(TimeSpan.FromSeconds(5));
+    var contention = new CancelOnLockContention(cts);
+    var services = new ServiceCollection();
+    services.AddSingleton<ISchemaInitializationObserver>(contention);
+    await using var provider = services.BuildServiceProvider();
 
-    // Assert — excluded, so it waited and was canceled rather than running DDL alongside the
+    // Assert: excluded, so it found the lock held, waited, and was canceled rather than running DDL alongside the
     // holder. On a per-process key it would take its own lock, sail through, and throw nothing.
     await Assert.That(async () =>
-        await context.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cts.Token))
+        await context.EnsureWhizbangDatabaseInitializedAsync(serviceProvider: provider, cancellationToken: cts.Token))
       .Throws<OperationCanceledException>();
+    await Assert.That(contention.Heard).IsTrue()
+      .Because("the cancellation came from the initializer reporting the held lock, not from anything earlier");
 
     // Cleanup — release the lock and let initialization complete, restoring the drifted hash.
     await using (var unlockCmd = holdingConn.CreateCommand()) {
@@ -1044,8 +1049,11 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   // Init connection string tests
   // ═══════════════════════════════════════════════════════════════════════════
 
+  /// <summary>
+  /// A whole start, awaited to completion on the call itself. It used to race a 30-second [Timeout], which a whole start
+  /// on a loaded run can outrun with nothing wrong (#2563).
+  /// </summary>
   [Test]
-  [Timeout(30000)]
   public async Task Initialization_WithInitConnectionString_UsesDirectConnectionAsync(CancellationToken cancellationToken) {
     // Arrange — use the test connection string as the "init" connection string
     // This simulates providing a direct Postgres connection (bypassing PgBouncer)
@@ -1059,8 +1067,11 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
       .ThrowsNothing();
   }
 
+  /// <summary>
+  /// A whole start, awaited to completion on the call itself. It used to race a 30-second [Timeout], which a whole start
+  /// on a loaded run can outrun with nothing wrong (#2563).
+  /// </summary>
   [Test]
-  [Timeout(30000)]
   public async Task Initialization_WithoutInitConnectionString_UsesNormalConnectionAsync(CancellationToken cancellationToken) {
     // Arrange — no init connection string (default behavior)
     await using var context = CreateDbContext();
@@ -1112,6 +1123,17 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
       .Because("every step runs under the schema budget, not the context's default");
     await Assert.That(context.Database.GetCommandTimeout()).IsEqualTo(before)
       .Because("the pass puts the context's command timeout back when it completes");
+  }
+
+  /// <summary>Cancels the initialization it watches once that initialization reports the schema lock held.</summary>
+  private sealed class CancelOnLockContention(CancellationTokenSource cancel) : ISchemaInitializationObserver {
+    private int _heard;
+    public bool Heard => Volatile.Read(ref _heard) == 1;
+
+    public async ValueTask OnSchemaLockContendedAsync(string schema, CancellationToken cancellationToken) {
+      Interlocked.Exchange(ref _heard, 1);
+      await cancel.CancelAsync();
+    }
   }
 
   /// <summary>Reads the context's command timeout at every committed step of the pass.</summary>
