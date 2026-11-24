@@ -399,14 +399,26 @@ public class OwnershipByMapClaimSqlTests : EFCoreTestBase {
       "SELECT epoch FROM wh_vote_role(@role, @a, INTERVAL '30 seconds', INTERVAL '5 seconds', NULL, ARRAY[1, 0], NULL) v WHERE v.outcome = 'granted'",
       ("role", PartitionAssignerOptions.ROLE), ("a", _a)), CultureInfo.InvariantCulture);
 
+  /// <summary>
+  /// Publishes the map, and completes every handover it started (#2557): in map mode a partition moving away from a live
+  /// owner hands over first. The flip is written directly, as the protocol's last step writes it, so the stored owner
+  /// these tests set up stays in the ledger: they prove the claim paths never consult it.
+  /// </summary>
   private static async Task _publishAsync(NpgsqlConnection conn, long epoch, Guid[] members) {
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT wh_publish_partition_assignment(@role, @a, @epoch, @members, INTERVAL '90 seconds')";
-    cmd.Parameters.AddWithValue("role", PartitionAssignerOptions.ROLE);
-    cmd.Parameters.AddWithValue("a", _a);
-    cmd.Parameters.AddWithValue(nameof(epoch), epoch);
-    cmd.Parameters.Add(new NpgsqlParameter(nameof(members), NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = members });
-    await cmd.ExecuteNonQueryAsync();
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText = "SELECT wh_publish_partition_assignment(@role, @a, @epoch, @members, INTERVAL '90 seconds')";
+      cmd.Parameters.AddWithValue("role", PartitionAssignerOptions.ROLE);
+      cmd.Parameters.AddWithValue("a", _a);
+      cmd.Parameters.AddWithValue(nameof(epoch), epoch);
+      cmd.Parameters.Add(new NpgsqlParameter(nameof(members), NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = members });
+      await cmd.ExecuteNonQueryAsync();
+    }
+    await _execAsync(conn, """
+      UPDATE wh_partition_ownership
+      SET owner_instance_id = next_owner_instance_id, epoch = epoch + 1, state = 'active',
+          next_owner_instance_id = NULL, handover_deadline = NULL
+      WHERE state = 'handing_over'
+      """);
   }
 
   /// <summary>The ledger names <paramref name="owner"/> under a live lease, as after that instance's claim.</summary>
