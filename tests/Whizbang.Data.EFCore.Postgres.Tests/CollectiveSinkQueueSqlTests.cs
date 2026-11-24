@@ -56,8 +56,9 @@ public class CollectiveSinkQueueSqlTests : EFCoreTestBase {
     var queue = await _queueAsync(conn, keyStream);
 
     await Assert.That(queue.Select(q => q.EventId)).IsEquivalentTo(
-      [_firstCommitted, laterB, laterA], TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("A row the stamper has not reached yet sorts after every stamped one, and event_id breaks the tie.");
+      [_firstCommitted, laterA, laterB], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("A row the stamper has not reached yet sorts after every stamped one, and the stream's version breaks "
+        + "the tie (#2551): laterA was stored first, although laterB's id sorts before it.");
     await Assert.That(queue[1].CommitSequence).IsNull();
   }
 
