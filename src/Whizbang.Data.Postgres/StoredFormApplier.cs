@@ -32,7 +32,25 @@ public sealed record StoredFormApplier(string LibraryVersion, string Application
   /// <summary>The transaction setting the rewrite phase carries the application version in.</summary>
   public const string APPLICATION_SETTING = "whizbang.applied_application_version";
 
+  /// <summary>
+  /// The transaction setting the rewrite phase carries each statement's content hash in (#2553): what a conversion
+  /// records it applied, which the rollback gate compares with what this build declares under the same name.
+  /// </summary>
+  public const string CONTENT_SETTING = "whizbang.applied_content_hash";
+
   private static readonly AsyncLocal<StoredFormApplier?> _current = new();
+
+  /// <summary>
+  /// The content hash a conversion records (#2553): the SHA-256 of the statement that applies it, or of the description
+  /// of what a check declares, as lower-case hex.
+  /// </summary>
+  /// <param name="text">The statement or description.</param>
+  /// <returns>The hash.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StoredFormApplierTests.cs:EveryConversion_RecordsWhatItApplied_AsTheHashOfItsStatementAsync</tests>
+  public static string ContentHash(string text) {
+    ArgumentNullException.ThrowIfNull(text);
+    return Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)));
+  }
 
   /// <summary>Who this flow of startup records as applying a conversion; null outside any scope.</summary>
   public static StoredFormApplier? Current => _current.Value;
@@ -55,8 +73,9 @@ public sealed record StoredFormApplier(string LibraryVersion, string Application
 
   /// <summary>
   /// The PL/pgSQL statement a conversion runs when it applied something: records the applier the rewrite phase
-  /// carried on <paramref name="journal"/>'s row where <paramref name="keyColumn"/> is <paramref name="keyLiteral"/>.
-  /// Nothing on a journal older than 385.
+  /// carried on <paramref name="journal"/>'s row where <paramref name="keyColumn"/> is <paramref name="keyLiteral"/>,
+  /// and what it applied (#2553, the statement's content hash). Nothing on a journal older than 385, and no hash on one
+  /// older than 570: the hash is written dynamically, so a statement planned against an older journal still runs.
   /// </summary>
   /// <param name="journal">The journal, schema-qualified.</param>
   /// <param name="keyColumn">Its key column.</param>
@@ -70,6 +89,11 @@ public sealed record StoredFormApplier(string LibraryVersion, string Application
     {indent}  UPDATE {journal} SET applied_library_version = nullif(current_setting('{LIBRARY_SETTING}', true), ''),
     {indent}    applied_application_version = nullif(current_setting('{APPLICATION_SETTING}', true), '')
     {indent}  WHERE {keyColumn} = {keyLiteral};
+    {indent}  IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass({SqlText.Literal(journal)})
+    {indent}             AND attname = 'content_hash' AND NOT attisdropped) THEN
+    {indent}    EXECUTE format('UPDATE %s SET content_hash = $1 WHERE %I = $2', {SqlText.Literal(journal)}, {SqlText.Literal(keyColumn)})
+    {indent}      USING nullif(current_setting('{CONTENT_SETTING}', true), ''), {keyLiteral};
+    {indent}  END IF;
     {indent}END IF;
 
     """;

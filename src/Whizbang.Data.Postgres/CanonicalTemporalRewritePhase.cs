@@ -171,6 +171,11 @@ public static class CanonicalTemporalRewritePhase {
         StartupProgress.Note();
         await transaction.SaveAsync(SAVEPOINT, cancellationToken);
         try {
+          // #2553: what this statement applies, recorded by the conversion beside who applied it.
+          await using (var content = new NpgsqlCommand($"SELECT set_config('{StoredFormApplier.CONTENT_SETTING}', $1, true)", connection)) {
+            content.Parameters.AddWithValue(StoredFormApplier.ContentHash(sql));
+            await content.ExecuteNonQueryAsync(cancellationToken);
+          }
           await using var command = new NpgsqlCommand(sql, connection) {
             CommandTimeout = commandTimeoutSeconds,
           };

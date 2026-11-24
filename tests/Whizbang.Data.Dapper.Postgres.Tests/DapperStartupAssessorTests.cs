@@ -271,6 +271,44 @@ public class DapperStartupAssessorTests {
     await Assert.That(assessment.Reason).Contains($"(applied by library {_newerThanThisBinary()}, application unknown)");
   }
 
+  // ── #2553: a restored database is judged by what was applied ──
+
+  /// <summary>
+  /// A database restored from another environment: every change was applied by that environment's release, whose
+  /// application version is SemVer-higher than a preview build's, over the hashes this build writes.
+  /// </summary>
+  private async Task _restoreFromAnotherEnvironmentAsync() {
+    var restored = await _versionAsync(BuildInfo.Version, "1.63.0-rc.3");
+    await _execAsync("ALTER TABLE wh_schema_migrations DISABLE TRIGGER wh_schema_migrations_applied_by");
+    await _execAsync($"UPDATE wh_schema_migrations SET version_id = {restored}, applied_version_id = {restored} WHERE file_name NOT LIKE 'step:%'");
+    await _execAsync("ALTER TABLE wh_schema_migrations ENABLE TRIGGER wh_schema_migrations_applied_by");
+  }
+
+  [Test]
+  public async Task ARestoredDatabase_WhoseChangesThisBuildDefinesIdentically_ServesWhateverVersionAppliedThemAsync() {
+    await _startAsync();
+    await _restoreFromAnotherEnvironmentAsync();
+
+    var assessment = await _assessAtAsync("0.0.0-preview.restored");
+
+    await Assert.That(assessment.Verdict).IsNotEqualTo(StartupVerdict.StandDown).Because(assessment.Reason);
+    await Assert.That(assessment.Rollback).IsNull().Because(assessment.Reason);
+  }
+
+  [Test]
+  public async Task ARestoredDatabase_WithAChangeThisBuildDoesNotDefine_StillStandsDown_NamingOnlyThatChangeAsync() {
+    await _startAsync();
+    await _restoreFromAnotherEnvironmentAsync();
+    await _execAsync("UPDATE wh_schema_migrations SET content_hash = 'the-other-environments-columns', status = 2 WHERE file_name = 'perspective:AssessProbe'");
+
+    var assessment = await _assessAtAsync("0.0.0-preview.restored");
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(assessment.Reason).Contains(
+      "1 schema change(s) were applied by a newer version that this version did not make, and 1 cannot be reversed: "
+      + $"perspective:AssessProbe (applied by library {BuildInfo.Version}, application 1.63.0-rc.3)");
+  }
+
   [Test]
   public async Task ServingAsItIs_RegistersTheInstance_WithItsConnectionModeAndLivenessWindow_AndTheOverrideAsync() {
     // The start the override allowed joins the registry like any other (#2022), so it records what the one liveness
@@ -300,5 +338,45 @@ public class DapperStartupAssessorTests {
     await initializer.ServeAsItIsAsync("the reason", CancellationToken.None);
 
     await Assert.That(async () => await initializer.ServeAsItIsAsync(" ", CancellationToken.None)).Throws<ArgumentException>();
+  }
+
+  [Test]
+  public async Task WhatThisBuildDefines_IsEveryMigrationPerspectiveTableAndApplicationObject_ByLedgerName_WhicheverWayItWasBuiltAsync() {
+    // #2553: the names and hashes the pass records, so the rollback gate can judge a recorded change by its content.
+    var provider = new PostgresMigrationProvider();
+    var anyMigration = provider.GetMigrations()[0];
+    var fromEntries = new PostgresSchemaInitializer("Host=203.0.113.1", _entries, provider).DefinedContent("public");
+    var legacySql = new PostgresSchemaInitializer("Host=203.0.113.1", "CREATE TABLE IF NOT EXISTS wh_per_legacy (id uuid);").DefinedContent("public");
+
+    await Assert.That(fromEntries[anyMigration.Name]).IsEqualTo(MigrationSqlNormalizer.ContentHash(anyMigration.Sql))
+      .Because("an initializer given its migration provider hashes that provider's scripts, as its pass records them");
+    await Assert.That(fromEntries.ContainsKey("perspective:AssessProbe")).IsTrue();
+    await Assert.That(legacySql.Keys.Any(k => k.StartsWith("perspective:", StringComparison.Ordinal))).IsFalse()
+      .Because("legacy perspective SQL has no per-table entries to name, so its tables are judged by who applied them");
+    await Assert.That(legacySql.ContainsKey(anyMigration.Name)).IsTrue();
+  }
+
+  [Test]
+  public async Task WhatThisBuildDefines_IncludesEachDeclaredKeyCheck_ByItsJournalName_WithItsContentHashAsync() {
+    // #2553: the declared-key pass is this driver's conversion; a restored journal row is judged by its hash, or by its
+    // name when it was recorded before the hash.
+    var table = new Whizbang.Data.Postgres.Perspectives.DeclaredKeyTable("wh_per_assess_probe",
+      [new Whizbang.Data.Postgres.Perspectives.DeclaredKeyColumn("data",
+        Whizbang.Data.Postgres.Perspectives.DeclaredKeyShape.ForObject(new Whizbang.Data.Postgres.Perspectives.DeclaredMember("name")))]);
+    var initializer = new PostgresSchemaInitializer("Host=203.0.113.1", _entries) { DeclaredKeyTables = [table] };
+
+    var defined = initializer.DefinedContent("public");
+
+    await Assert.That(defined["stored-form:" + table.JournalName]).IsEqualTo(table.ContentHash);
+  }
+
+  [Test]
+  public async Task RecordingAnApplicationOverride_WithNoInstanceIdentity_TouchesNothingAsync() {
+    // #2553: no identity, no row to record the application schema's override on (this connection goes nowhere).
+    var initializer = new PostgresSchemaInitializer("Host=203.0.113.1;Port=1;Database=none;Timeout=1");
+
+    await initializer.RecordIncompatibilityOverrideAsync("the reason", CancellationToken.None);
+
+    await Assert.That(initializer.ApplicationHeld).IsFalse().Because("a pass applies the application's schema unless told to hold it");
   }
 }

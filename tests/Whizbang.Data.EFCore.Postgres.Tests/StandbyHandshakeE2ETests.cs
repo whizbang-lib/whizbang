@@ -157,6 +157,14 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     cmd.CommandText = "UPDATE wh_schema_versions SET library_version = @v";
     cmd.Parameters.AddWithValue("v", version);
     await cmd.ExecuteNonQueryAsync(ct);
+    // The newer version's migration changed what was applied: a change this binary does not define (#2553). One it
+    // defines identically would be current, whichever version the ledger says applied it.
+    await using var applied = conn.CreateCommand();
+    applied.CommandText = """
+      UPDATE wh_schema_migrations SET content_hash = 'committed-by-the-newer-version', status = 2
+      WHERE file_name = (SELECT max(file_name) FROM wh_schema_migrations WHERE owner = 'whizbang')
+      """;
+    await applied.ExecuteNonQueryAsync(ct);
   }
 
   private async Task _restoreLedgerVersionsAsync(List<(int Id, string Version)> rows, CancellationToken ct) {

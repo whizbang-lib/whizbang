@@ -104,6 +104,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // #2022: the incompatibility override let this build start on a schema it did not create. It serves the schema as it
     // is: nothing is bootstrapped, elected, migrated or converged, and the instance's row records the override.
     var incompatibilityOverride = assessment?.OverriddenReason;
+    // #2553: W! first. The application's schema stood down, or is served as it is: this start applies the W! migrations
+    // alone, and leaves every perspective table, association, registry and stored form as it is.
+    var applicationHeld = assessment?.HoldsApplication == true;
+    _applicationHeld.Value = applicationHeld;
     _schemaCommandTimeout.Value = commandTimeoutSeconds ?? Whizbang.Data.Postgres.SchemaCommandTimeout.Resolve(initConnectionString);
     _ledgerApplicationVersion.Value = Whizbang.Data.Postgres.SchemaLedgerVersion.ApplicationVersionOf(serviceProvider);
     // #2131: every stored-form conversion this start applies records the versions that applied it, so the rollback gate
@@ -232,6 +236,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
               await Whizbang.Data.Postgres.SchemaBootstrapPhase.RegisterInstanceAsync(
                 segmentConnectionFactory, "__SCHEMA__", instanceProvider,
                 liveness: Whizbang.Data.Postgres.InstanceRegistrationLiveness.Of(serviceProvider), cancellationToken: ct);
+              // #2553: the application's schema served as it is by its own override, while the W! migrations still run.
+              if (incompatibilityOverride is not null) {
+                await Whizbang.Data.Postgres.SchemaBootstrapPhase.RecordIncompatibilityOverrideAsync(
+                  segmentConnectionFactory, "__SCHEMA__", instanceProvider.InstanceId, incompatibilityOverride, ct);
+              }
               // The row exists now: the stage held until it did is written.
               await Whizbang.Data.Postgres.SchemaInitializationStages.RegisteredAsync(serviceProvider, ct);
             },
@@ -404,7 +413,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         new Whizbang.Data.Postgres.SchemaRollbackRequest(
           rollbackConnectionFactory, "__SCHEMA__", lockId,
           new Whizbang.Core.Versioning.VersionSighting("__LIBRARY_VERSION__", _ledgerApplicationVersion.Value, rollingInstance),
-          rollback.AllowLossy, _schemaCommandTimeoutSeconds),
+          rollback, _schemaCommandTimeoutSeconds, GetWhizbangSchemaContent(dbContext, serviceProvider)),
         startupClock, logger, cancellationToken);
     }
 
@@ -439,7 +448,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           PauseAsync: (vote, ct) => Task.Delay(Whizbang.Data.Postgres.MigratorPreLockPhase.ReelectionDelay(vote), TimeProvider.System, ct),
           WorkAsync: async _ => {
             await rollBackAsync(segmentConnectionFactory);
-            await rewriteStoredFormsAsync(segmentConnectionFactory);
+            // #2553: a stored-form conversion is the application's: a held application schema is left as it is.
+            if (!applicationHeld) {
+              await rewriteStoredFormsAsync(segmentConnectionFactory);
+            }
           }),
         "__SCHEMA__", logger, cancellationToken);
     }
@@ -527,8 +539,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
               } else {
                 // Hashes cannot see a declared object dropped by hand either. The tables missing one have their
                 // hashes forgotten, so the slow path's pass builds them again (the managed-object ledger, #1252).
-                var tablesMissingObjects = await Whizbang.Data.Postgres.Schema.ManagedSchemaReconciler.TablesMissingDeclaredObjectsAsync(
-                  connection, "__SCHEMA__", GetManagedSchemaObjects(), cancellationToken);
+                // #2553: those tables are the application's; a held application schema is left as it is.
+                global::System.Collections.Generic.IReadOnlyList<string> tablesMissingObjects = applicationHeld
+                  ? []
+                  : await Whizbang.Data.Postgres.Schema.ManagedSchemaReconciler.TablesMissingDeclaredObjectsAsync(
+                    connection, "__SCHEMA__", GetManagedSchemaObjects(), cancellationToken);
                 if (tablesMissingObjects.Count > 0) {
                   await using (var forget = new Npgsql.NpgsqlCommand(
                     @"DELETE FROM __QUOTED_SCHEMA__.wh_schema_migrations WHERE file_name = ANY(@keys)", connection)) {
@@ -734,8 +749,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // index until autovacuum next analyzes the table (#1004). Outside the transaction and the lock, and
     // never fatal: a table left unanalyzed is found by the maintenance step.
     await Whizbang.Data.Postgres.SchemaInitializationStages.ConvergingAsync(serviceProvider, cancellationToken);
-    if (incompatibilityOverride is not null) {
+    if (incompatibilityOverride is not null || applicationHeld) {
       // #2022: a build serving past an incompatibility verdict changes nothing: no analyze, no reconcile, no settings.
+      // #2553: nor does a start that holds the application's schema, whose tables these all concern.
       return;
     }
     await _analyzeNewlyIndexedTablesAsync(dbContext, segmentConnectionFactory, logger, cancellationToken);
@@ -946,6 +962,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   // #2027: the application version this pass records in the migration ledger beside the library version, resolved from
   // the host's services for the pass that is running (the same ambient shape as the command timeout above).
   private static readonly global::System.Threading.AsyncLocal<string?> _ledgerApplicationVersion = new();
+  // #2553: this start leaves the application's schema as it is (its verdict stood it down, or its override serves it as
+  // it is): the pass applies the W! migrations alone. Set for the whole start, so no step has to be handed it.
+  private static readonly global::System.Threading.AsyncLocal<bool> _applicationHeld = new();
 
   /// <summary>
   /// How long any one schema statement may take: the initialization connection string's
@@ -1009,6 +1028,48 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             t => (t.Name, t.Table)))),
       global::System.Linq.Enumerable.Select(GetPhysicalColumnRewrites(), r => r.Name),
       cancellationToken);
+  }
+
+  /// <summary>
+  /// What this context's schema pass records (#2553): every migration file, perspective table, the associations set and
+  /// every stored-form and temporal-form conversion, by the gate's name for each, with the content hash recorded for it. The rollback gate judges a recorded
+  /// change this build defines identically as current, whatever version applied it.
+  /// </summary>
+  /// <param name="dbContext">The __DBCONTEXT_CLASS__ instance.</param>
+  /// <param name="serviceProvider">The host's services, for the collective event types its handlers apply (#2145),
+  /// which the associations hash covers; null reads them from the host the context was built from.</param>
+  /// <returns>Each change by ledger name, with its content hash.</returns>
+  public static global::System.Collections.Generic.IReadOnlyDictionary<string, string> GetWhizbangSchemaContent(
+      this __DBCONTEXT_FQN__ dbContext, IServiceProvider? serviceProvider = null) {
+    var content = new global::System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal);
+    foreach (var (name, sql) in GetMigrationScripts()) {
+      content[name] = _migrationHash(_transformMigrationSql(sql, "__SCHEMA__"));
+    }
+    foreach (var (name, sql) in GetPerspectiveEntries()) {
+      content[$"perspective:{name}"] = _contentHash(sql);
+    }
+    // The hash the associations step records, over this host's collective handlers, without setting the pass's own.
+    var associations = global::Whizbang.Core.Perspectives.CollectiveRoutingAssociations.AssociationsHash(
+      _perspectiveAssociationsHash, Whizbang.Data.EFCore.Postgres.SchemaCollectiveHandlers.Resolve(dbContext, serviceProvider));
+    if (associations.Length > 0) {
+      content[_associationsHashKey] = associations;
+    }
+    // The stored-form conversions, by the gate's name for each, with the hash each records (#2553): the statement the
+    // rewrite phase runs, or what a declared-key check declares. The same lists rewriteStoredFormsAsync builds.
+    var documentOptions = Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options;
+    foreach (var (name, sql) in global::Whizbang.Data.Postgres.StoredFormMigrationSql.ForPhase("__SCHEMA__", GetStoredFormMigrations())) {
+      content["stored-form:" + name] = global::Whizbang.Data.Postgres.StoredFormApplier.ContentHash(sql);
+    }
+    foreach (var pairs in Whizbang.Data.EFCore.Postgres.Perspectives.DictionaryPairsRewrite.ForModel(dbContext.Model, documentOptions, "__SCHEMA__")) {
+      content["stored-form:" + pairs.Name] = global::Whizbang.Data.Postgres.StoredFormApplier.ContentHash(pairs.Sql);
+    }
+    foreach (var declared in Whizbang.Data.EFCore.Postgres.Perspectives.DeclaredKeyShapes.ForModel(dbContext.Model, documentOptions)) {
+      content["stored-form:" + declared.JournalName] = declared.ContentHash;
+    }
+    foreach (var (table, sql) in Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalRewrite.ForModel(dbContext.Model, documentOptions, "__SCHEMA__")) {
+      content["temporal-form:" + table] = global::Whizbang.Data.Postgres.StoredFormApplier.ContentHash(sql);
+    }
+    return content;
   }
 
   /// <summary>
@@ -1241,6 +1302,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         infraChanged = true;
         break;
       }
+    }
+
+    // #2553: a start that holds the application's schema owes it nothing: only the W! migrations are compared.
+    if (_applicationHeld.Value) {
+      return (infraChanged, false, false);
     }
 
     // Compare perspective entries
@@ -1871,7 +1937,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       return null;
     }
 
-    var pass = new SchemaPass { Tracked = true, Infra = infra, Persp = persp, RunPerspectives = infra || persp };
+    var pass = new SchemaPass { Tracked = true, Infra = infra, Persp = persp, RunPerspectives = (infra || persp) && !_applicationHeld.Value };
     var appliedBy = new global::System.Collections.Generic.Dictionary<string, string?>(StringComparer.Ordinal);
     foreach (var (fileName, hash, owner, version, status) in rows) {
       if (owner == Whizbang.Data.Postgres.SchemaPassLedger.STEP_OWNER) {
@@ -1894,8 +1960,11 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     if (pass.RunPerspectives && GetPerspectiveEntries().Length == 0) {
       pass.NeededSteps.Add(_perspectiveTablesStep);
     }
-    pass.NeededSteps.Add(_associationsStep);
-    pass.NeededSteps.Add(_registriesStep);
+    // #2553: the associations and the registries are the application's; a held application schema is left as it is.
+    if (!_applicationHeld.Value) {
+      pass.NeededSteps.Add(_associationsStep);
+      pass.NeededSteps.Add(_registriesStep);
+    }
 
     if (infra) {
       await _planMigrationsAsync(connection, pass, appliedBy, logger, ct);

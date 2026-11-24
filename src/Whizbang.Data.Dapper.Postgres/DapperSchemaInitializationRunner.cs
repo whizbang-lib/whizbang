@@ -55,7 +55,14 @@ internal sealed class DapperSchemaInitializationRunner(
     if (assessment?.Rollback is { } rollback) {
       await createInitializer().RollBackSchemaAsync(rollback, cancellationToken).ConfigureAwait(false);
     }
-    await createInitializer().InitializeSchemaAsync(cancellationToken).ConfigureAwait(false);
+    // #2553: W! first. A held application schema (stood down, or served as it is by its own override) is left as it is,
+    // and the pass applies the W! migrations alone.
+    var initializer = createInitializer();
+    initializer.ApplicationHeld = assessment?.HoldsApplication == true;
+    await initializer.InitializeSchemaAsync(cancellationToken).ConfigureAwait(false);
+    if (assessment?.OverriddenReason is { } applicationAsItIs) {
+      await initializer.RecordIncompatibilityOverrideAsync(applicationAsItIs, cancellationToken).ConfigureAwait(false);
+    }
     await retry.WaitForSchemaReadyAsync(connectionString, cancellationToken).ConfigureAwait(false);
   }
 }

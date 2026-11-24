@@ -81,6 +81,57 @@ public sealed record AppliedSchemaChange(string Name, SchemaChangeKind Kind, str
   /// <summary>How the change is reversed, as recorded when it was applied (#2122); irreversible when nothing says.</summary>
   /// <docs>operations/infrastructure/migrations#how-a-migration-is-reversed</docs>
   public SchemaChangeReversal Reversal { get; init; }
+
+  /// <summary>
+  /// The content hash the ledger recorded for the change (#2553): what was applied, which the rollback gate compares
+  /// with what this build defines under the same name. Null when the ledger recorded none (a stored-form or temporal-form
+  /// conversion, which its journal records without one), and the change is then judged by who applied it.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#the-rollback-gate</docs>
+  public string? ContentHash { get; init; }
+
+  /// <summary>
+  /// Whether the change's name alone identifies what was applied when no content hash was recorded (#2553): a
+  /// stored-form or temporal-form conversion recorded before its journal held hashes (570), whose name is the conversion
+  /// form. Such a row counts as current when this build declares a conversion under the same name. Never for a row of the
+  /// migration ledger, which always records its hash.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#the-rollback-gate</docs>
+  public bool NameIdentifiesContent { get; init; }
+}
+
+/// <summary>
+/// The operator's overrides of the rollback gate for each side (#2553, owner decision 2): the W! migrations and the
+/// application's schema are judged apart, so an operator can serve one side as it is, or let one side's rollback discard
+/// data, without doing the same to the other. Read by <see cref="UpgradeOrder.ReadOverrides"/>, where the shared keys
+/// still mean both sides.
+/// </summary>
+/// <param name="OverridePlatform">Serve the W! migrations as they are when they would stand down.</param>
+/// <param name="OverrideApplication">Serve the application's schema as it is when it would stand down.</param>
+/// <param name="AllowLossyPlatform">Let a rollback of the W! migrations discard data a newer version wrote.</param>
+/// <param name="AllowLossyApplication">Let a rollback of the application's schema discard data a newer version wrote.</param>
+/// <docs>operations/startup/rolling-upgrades#the-incompatibility-override</docs>
+/// <tests>tests/Whizbang.Core.Tests/Versioning/UpgradeOrderTests.cs:TheOverrides_AreScopedPerSide_AndTheSharedKeysStillMeanBothAsync</tests>
+public sealed record SchemaGateOverrides(bool OverridePlatform, bool OverrideApplication, bool AllowLossyPlatform, bool AllowLossyApplication) {
+  /// <summary>No override on either side: the default.</summary>
+  public static SchemaGateOverrides None { get; } = new(false, false, false, false);
+
+  /// <summary>The same overrides on both sides, as the shared keys set them.</summary>
+  /// <param name="overrideIncompatibility">Serve each side as it is when it would stand down.</param>
+  /// <param name="allowLossyRollback">Let each side's rollback discard data.</param>
+  /// <returns>The overrides.</returns>
+  public static SchemaGateOverrides Both(bool overrideIncompatibility, bool allowLossyRollback) =>
+    new(overrideIncompatibility, overrideIncompatibility, allowLossyRollback, allowLossyRollback);
+
+  /// <summary>Whether <paramref name="side"/> is served as it is when it would stand down.</summary>
+  /// <param name="side">The side.</param>
+  /// <returns>The side's override.</returns>
+  public bool Overrides(SchemaChangeKind side) => side == SchemaChangeKind.Platform ? OverridePlatform : OverrideApplication;
+
+  /// <summary>Whether a rollback of <paramref name="side"/> may discard data.</summary>
+  /// <param name="side">The side.</param>
+  /// <returns>The side's setting.</returns>
+  public bool AllowsLossy(SchemaChangeKind side) => side == SchemaChangeKind.Platform ? AllowLossyPlatform : AllowLossyApplication;
 }
 
 /// <summary>
@@ -130,6 +181,64 @@ public static class UpgradeOrder {
   /// down with an error naming each change; it never lets an irreversible change be rolled back.
   /// </summary>
   public const string ALLOW_LOSSY_ROLLBACK_KEY = "Whizbang:Startup:AllowLossyRollback";
+
+  /// <summary>
+  /// The incompatibility override for the W! migrations alone (#2553): <c>true</c> serves the schema as it is when the
+  /// W! migrations would stand down, <c>false</c> refuses even when <see cref="OVERRIDE_INCOMPATIBILITY_KEY"/> is on.
+  /// Unset, the shared key decides for both sides.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#the-incompatibility-override</docs>
+  public const string PLATFORM_OVERRIDE_INCOMPATIBILITY_KEY = "Whizbang:Startup:Platform:OverrideIncompatibility";
+
+  /// <summary>
+  /// The incompatibility override for the application's schema alone (#2553): <c>true</c> serves the application's schema
+  /// as it is when it would stand down, while the W! migrations are still judged and run on their own. Unset, the
+  /// shared key (<see cref="OVERRIDE_INCOMPATIBILITY_KEY"/>) decides.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#the-incompatibility-override</docs>
+  public const string APPLICATION_OVERRIDE_INCOMPATIBILITY_KEY = "Whizbang:Startup:Application:OverrideIncompatibility";
+
+  /// <summary>
+  /// Whether a rollback of the W! migrations may discard data (#2553). Unset, the shared key
+  /// (<see cref="ALLOW_LOSSY_ROLLBACK_KEY"/>) decides for both sides.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#rolling-back</docs>
+  public const string PLATFORM_ALLOW_LOSSY_ROLLBACK_KEY = "Whizbang:Startup:Platform:AllowLossyRollback";
+
+  /// <summary>
+  /// Whether a rollback of the application's schema may discard data (#2553). Unset, the shared key
+  /// (<see cref="ALLOW_LOSSY_ROLLBACK_KEY"/>) decides for both sides.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#rolling-back</docs>
+  public const string APPLICATION_ALLOW_LOSSY_ROLLBACK_KEY = "Whizbang:Startup:Application:AllowLossyRollback";
+
+  /// <summary>
+  /// The operator's overrides of the gate, for each side (#2553): a side's own key when it is set, else the shared key,
+  /// so the shared keys keep meaning both sides.
+  /// </summary>
+  /// <param name="configuration">The host's configuration; null reads none.</param>
+  /// <returns>The overrides.</returns>
+  /// <exception cref="InvalidOperationException">A key holds something that is not a boolean.</exception>
+  /// <tests>tests/Whizbang.Core.Tests/Versioning/UpgradeOrderTests.cs:TheOverrides_AreScopedPerSide_AndTheSharedKeysStillMeanBothAsync</tests>
+  public static SchemaGateOverrides ReadOverrides(IConfiguration? configuration) {
+    var overrideBoth = IsIncompatibilityOverridden(configuration);
+    var lossyBoth = IsLossyRollbackAllowed(configuration);
+    return new SchemaGateOverrides(
+      _sideOr(configuration, PLATFORM_OVERRIDE_INCOMPATIBILITY_KEY, overrideBoth),
+      _sideOr(configuration, APPLICATION_OVERRIDE_INCOMPATIBILITY_KEY, overrideBoth),
+      _sideOr(configuration, PLATFORM_ALLOW_LOSSY_ROLLBACK_KEY, lossyBoth),
+      _sideOr(configuration, APPLICATION_ALLOW_LOSSY_ROLLBACK_KEY, lossyBoth));
+  }
+
+  /// <summary>A side's own key when it is set, else the shared key's value.</summary>
+  private static bool _sideOr(IConfiguration? configuration, string key, bool shared) =>
+    string.IsNullOrWhiteSpace(configuration?[key]) ? shared : _isOn(configuration, key);
+
+  /// <summary>The incompatibility override key that serves <paramref name="side"/> as it is.</summary>
+  /// <param name="side">The side.</param>
+  /// <returns>The side's own key.</returns>
+  public static string OverrideKeyFor(SchemaChangeKind side) =>
+    side == SchemaChangeKind.Platform ? PLATFORM_OVERRIDE_INCOMPATIBILITY_KEY : APPLICATION_OVERRIDE_INCOMPATIBILITY_KEY;
 
   /// <summary>Whether the host turned the incompatibility override on (#2022).</summary>
   /// <param name="configuration">The host's configuration; null reads none.</param>
@@ -217,19 +326,47 @@ public static class UpgradeOrder {
   }
 
   /// <summary>
-  /// The rollback gate (#2022): every schema change applied after this instance's version. A W! migration counts when
-  /// a newer library applied it; an application schema change counts when a newer application or a newer library did.
-  /// A change whose applier is unknown never counts.
+  /// The rollback gate (#2022): every schema change applied after this instance's version, judged by what was applied
+  /// (#2553, owner decision 1). A change this build defines identically (the same name, recorded with the same content
+  /// hash) is current, whatever version applied it: a database restored from another environment records that
+  /// environment's versions, which say nothing about whether this build makes the same change. Only a change this build
+  /// does not define that way (a different hash, a name it does not produce, or no recorded hash) is judged by who
+  /// applied it: a W! migration counts when a newer library applied it; an application schema change counts when a newer
+  /// application or a newer library did. A change whose applier is unknown never counts.
   /// </summary>
   /// <param name="own">This instance's versions.</param>
   /// <param name="changes">The changes the ledger records, with who applied each.</param>
+  /// <param name="defined">What this build defines (#2553): each change it produces, by the ledger's name for it, with
+  /// its content hash; null when nothing is known.</param>
   /// <returns>The changes applied since, in the order given.</returns>
-  public static IReadOnlyList<AppliedSchemaChange> AppliedSince(VersionSighting own, IEnumerable<AppliedSchemaChange> changes) {
+  public static IReadOnlyList<AppliedSchemaChange> AppliedSince(
+      VersionSighting own, IEnumerable<AppliedSchemaChange> changes, IReadOnlyDictionary<string, string>? defined) {
     ArgumentNullException.ThrowIfNull(own);
     ArgumentNullException.ThrowIfNull(changes);
-    return [.. changes.Where(change => CompareLibrary(change.LibraryVersion, own.LibraryVersion) > 0
+    return [.. changes.Where(change => !IsDefinedIdentically(change, defined)
+      && (CompareLibrary(change.LibraryVersion, own.LibraryVersion) > 0
       || (change.Kind == SchemaChangeKind.Application
-          && CompareApplication(change.ApplicationVersion, own.ApplicationVersion) > 0))];
+          && CompareApplication(change.ApplicationVersion, own.ApplicationVersion) > 0)))];
+  }
+
+  /// <summary>
+  /// Whether this build makes exactly the change the ledger recorded (#2553): the same name, with the same content hash.
+  /// A row with no recorded hash matches only when its name identifies its content (a conversion recorded before its
+  /// journal held hashes) and this build declares that name; any other is judged by who applied it, as before.
+  /// </summary>
+  /// <param name="change">The recorded change.</param>
+  /// <param name="defined">What this build defines, by name, with each content hash; null when nothing is known.</param>
+  /// <returns><see langword="true"/> when the recorded hash is the one this build produces under that name.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Versioning/UpgradeOrderTests.cs:AChangeThisBuildDefinesIdentically_IsCurrent_WhateverVersionAppliedItAsync</tests>
+  public static bool IsDefinedIdentically(AppliedSchemaChange change, IReadOnlyDictionary<string, string>? defined) {
+    ArgumentNullException.ThrowIfNull(change);
+    if (defined is null || !defined.TryGetValue(change.Name, out var mine)) {
+      return false;
+    }
+    // A recorded hash decides; a conversion recorded before its journal held one is identified by its name.
+    return change.ContentHash is { } recorded
+      ? string.Equals(mine, recorded, StringComparison.Ordinal)
+      : change.NameIdentifiesContent;
   }
 
   /// <summary>

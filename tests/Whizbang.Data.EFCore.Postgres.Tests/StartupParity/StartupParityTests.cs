@@ -467,6 +467,114 @@ public class StartupParityTests {
     await Assert.That(await _ledgerAsync()).IsEqualTo(before);
   }
 
+  // ── #2553: two verdicts, the W! migrations first ─────────────────────
+
+  private const string NEWER_APPLICATION_CHANGE = "perspective:wh_per_only_a_newer_version_has";
+
+  /// <summary>
+  /// An application schema change this build does not make, applied by a newer release, with no recorded way to reverse
+  /// it: the application's schema stands down. Written as each driver's ledger names an application change.
+  /// </summary>
+  private Task _recordNewerApplicationChangeAsync() => _execAsync($$"""
+    WITH v AS (INSERT INTO wh_schema_versions (library_version) VALUES ('999.0.0') RETURNING id)
+    INSERT INTO wh_schema_migrations (file_name, content_hash, version_id, status)
+      SELECT '{{NEWER_APPLICATION_CHANGE}}', 'its-columns', id, 1 FROM v;
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM pg_attribute
+                 WHERE attrelid = 'wh_schema_migrations'::regclass AND attname = 'owner' AND NOT attisdropped) THEN
+        UPDATE wh_schema_migrations SET owner = 'perspective' WHERE file_name = '{{NEWER_APPLICATION_CHANGE}}';
+      END IF;
+    END $$;
+    """);
+
+  /// <summary>
+  /// Work owed on both sides: the newest W! migration's ledger row is gone, so the W! migrations have it to apply, and the
+  /// driver's perspective table is gone with its ledger rows, so the application's schema pass would build it again.
+  /// </summary>
+  /// <returns>The W! migration owed.</returns>
+  private async Task<string> _oweWorkOnBothSidesAsync(StartupDriver driver) {
+    var owed = await _scalarAsync<string>("SELECT max(file_name) FROM wh_schema_migrations WHERE file_name ~ '^[0-9]'");
+    await _execAsync($"DELETE FROM wh_schema_migrations WHERE file_name = '{owed}' OR file_name LIKE 'perspective:%'; DROP TABLE {driver.Table} CASCADE");
+    return owed;
+  }
+
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  [Timeout(300000)]
+  public async Task AnApplicationStandDown_LetsTheWMigrationsRunFirst_ThenStandsDown_LeavingTheApplicationSchemaAsItIsAsync(
+      string driverName, CancellationToken cancellationToken) {
+    var driver = StartupDriver.For(driverName);
+    await _startAsync(driver);
+    var owed = await _oweWorkOnBothSidesAsync(driver);
+    await _recordNewerApplicationChangeAsync();
+    var stages = new StageLog();
+    var instance = _compose(driver, configure: s => s.AddSingleton<IStartupStageReporter>(stages));
+    var initializer = _initializer(instance);
+
+    await initializer.StartAsync(cancellationToken);
+    await initializer.StopAsync(cancellationToken);
+    await initializer.StandDownTask!;
+
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_schema_migrations WHERE file_name = $1", owed)).IsEqualTo(1L)
+      .Because("an application stand-down never blocks the W! migrations, which run first");
+    await Assert.That(await _existsAsync(driver.Table)).IsFalse()
+      .Because("the application's schema is left as it is: its pass does not run");
+    await Assert.That(instance.GetRequiredService<ISchemaReadyGate>().IsReady).IsFalse()
+      .Because("the instance serves only when both sides can");
+    await Assert.That(stages.Calls.Any(c => c.StartsWith("Enter Preflight: standing down: ", StringComparison.Ordinal)
+      && c.Contains("application schema: ", StringComparison.Ordinal)
+      && c.Contains(NEWER_APPLICATION_CHANGE + " (applied by library 999.0.0", StringComparison.Ordinal))).IsTrue()
+      .Because("the stand-down names its side and its changes: " + string.Join(" | ", stages.Calls));
+  }
+
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  [Timeout(300000)]
+  public async Task AWStandDown_RunsNothing_NotEvenTheApplicationSchema_AndNamesItsSideAsync(
+      string driverName, CancellationToken cancellationToken) {
+    var driver = StartupDriver.For(driverName);
+    await _startAsync(driver);
+    await _oweWorkOnBothSidesAsync(driver);
+    await _recordNewerVersionAsync("999.0.0");
+    var before = await _ledgerAsync();
+    var stages = new StageLog();
+    var instance = _compose(driver, configure: s => s.AddSingleton<IStartupStageReporter>(stages));
+    var initializer = _initializer(instance);
+
+    await initializer.StartAsync(cancellationToken);
+    await initializer.StopAsync(cancellationToken);
+    await initializer.StandDownTask!;
+
+    await Assert.That(await _ledgerAsync()).IsEqualTo(before).Because("W! first: when it stands down, nothing runs");
+    await Assert.That(await _existsAsync(driver.Table)).IsFalse().Because("the application's step does not run either");
+    await Assert.That(stages.Calls.Any(c => c.StartsWith("Enter Preflight: standing down: W! migrations: ", StringComparison.Ordinal)))
+      .IsTrue().Because(string.Join(" | ", stages.Calls));
+  }
+
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  [Timeout(300000)]
+  public async Task TheApplicationsOwnOverride_ServesItAsItIs_WhileTheWMigrationsStillRun_AndRecordsItAsync(
+      string driverName, CancellationToken cancellationToken) {
+    var driver = StartupDriver.For(driverName);
+    await _startAsync(driver);
+    var owed = await _oweWorkOnBothSidesAsync(driver);
+    await _recordNewerApplicationChangeAsync();
+    var instance = _compose(driver, config: ("Whizbang:Startup:Application:OverrideIncompatibility", "true"));
+
+    await _initializer(instance).StartAsync(cancellationToken);
+
+    await Assert.That(instance.GetRequiredService<ISchemaReadyGate>().IsReady).IsTrue();
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_schema_migrations WHERE file_name = $1", owed)).IsEqualTo(1L)
+      .Because("an operator never has to skip the W! migrations to get past an application change");
+    await Assert.That(await _existsAsync(driver.Table)).IsFalse().Because("the application's schema is served as it is");
+    var recorded = await _overrideRecordAsync(instance) as string;
+    await Assert.That(recorded).Contains(NEWER_APPLICATION_CHANGE);
+  }
+
   // ── the incompatibility override (owner decision, #2022) ─────────────
 
   private const string OVERRIDE = "Whizbang:Startup:OverrideIncompatibility";

@@ -169,8 +169,6 @@ public partial class CoordinationSourceGuardTests {
   private static readonly Dictionary<string, string> _overrideAllowlist = new(StringComparer.Ordinal) {
     ["src/Whizbang.Core/Versioning/UpgradeOrder.cs"] = "the setting's key, read once, beside the rule it overrides",
     ["src/Whizbang.Data.Postgres/PostgresStartupAssessment.cs"] = "THE verdict: the only place an incompatibility becomes a start",
-    ["src/Whizbang.Data.EFCore.Postgres/PostgresDriverExtensions.cs"] = "hands the setting to the EF Core driver's assessor",
-    ["src/Whizbang.Data.Dapper.Postgres/ServiceCollectionExtensions.cs"] = "hands the setting to the Dapper driver's assessor",
   };
 
   [GeneratedRegex(@"IsIncompatibilityOverridden\(|OverrideIncompatibility""|OverriddenReason\s*=(?!=)")]

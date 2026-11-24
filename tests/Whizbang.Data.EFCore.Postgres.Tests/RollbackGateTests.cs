@@ -41,7 +41,7 @@ public class RollbackGateTests : EFCoreTestBase {
     return new EFCorePostgresStartupAssessor(
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), typeof(WorkCoordinationDbContext),
       new LibraryVersionProvider(library), new ApplicationVersionProvider(ApplicationVersion.FromRecorded(application)),
-      overrideIncompatibility: overrideIncompatibility);
+      overrides: SchemaGateOverrides.Both(overrideIncompatibility, allowLossyRollback: false));
   }
 
   private async Task<T> _scalarAsync<T>(string sql, CancellationToken ct, params (string Name, object Value)[] args) {
@@ -149,7 +149,9 @@ public class RollbackGateTests : EFCoreTestBase {
     var file = await _lastWhizbangMigrationAsync(ct);
     var newer = await _versionAsync("1000.0.0", "unknown", ct);
     await _execAsync("ALTER TABLE wh_schema_migrations DISABLE TRIGGER wh_schema_migrations_applied_by", ct);
-    await _execAsync("UPDATE wh_schema_migrations SET version_id = @v, status = 2, applied_version_id = NULL WHERE file_name = @f",
+    // A content this build does not define (#2553): a change it defines identically is current, whoever applied it.
+    await _execAsync(
+      "UPDATE wh_schema_migrations SET version_id = @v, status = 2, applied_version_id = NULL, content_hash = 'applied-by-a-newer-version' WHERE file_name = @f",
       ct, ("v", newer), ("f", file));
     await _execAsync("ALTER TABLE wh_schema_migrations ENABLE TRIGGER wh_schema_migrations_applied_by", ct);
 
@@ -187,7 +189,7 @@ public class RollbackGateTests : EFCoreTestBase {
 
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(assessment.Reason).IsEqualTo(
-      $"since this instance's version (library {library}, application 1.9.0), 1 {SINCE}: wh_per_rollback_probe (applied by "
+      $"application schema: since this instance's version (library {library}, application 1.9.0), 1 {SINCE}: wh_per_rollback_probe (applied by "
       + $"library {library}, application 2.0.0); a rollback runs only when every change since this version can be "
       + "reversed; standing down: never apply anything, hold the data plane, report not-ready-while-alive");
   }
@@ -250,6 +252,9 @@ public class RollbackGateTests : EFCoreTestBase {
     await _execAsync("ALTER TABLE wh_schema_migrations DROP COLUMN applied_version_id CASCADE", ct);
     await _execAsync("DROP TRIGGER IF EXISTS wh_schema_migrations_applied_by ON wh_schema_migrations", ct);
     await _restampAsync(await _versionAsync("1000.0.0", "unknown", ct), ct);
+    // One change this build does not define (#2553): the rest it defines identically, and they are current.
+    await _execAsync("UPDATE wh_schema_migrations SET content_hash = 'applied-by-a-newer-version' WHERE file_name = @f",
+      ct, ("f", await _lastWhizbangMigrationAsync(ct)));
 
     var assessment = await _assessor(library, null).AssessAsync(ct);
 
@@ -257,20 +262,80 @@ public class RollbackGateTests : EFCoreTestBase {
     await Assert.That(assessment.Reason).Contains("(applied by library 1000.0.0, application unknown)");
   }
 
+  // ── #2553: a restored database is judged by what was applied ────────
+
+  /// <summary>
+  /// A database restored from another environment: every change its ledger records was applied by that environment's
+  /// release, whose application version (here <c>1.63.0-rc.3</c>) is SemVer-higher than a preview build's, over the hashes
+  /// the pass writes. Who applied each row is rewritten as the restore would leave it, with the trigger off.
+  /// </summary>
+  private async Task _restoreFromAnotherEnvironmentAsync(string library, CancellationToken ct) {
+    var restored = await _versionAsync(library, "1.63.0-rc.3", ct);
+    await _execAsync("ALTER TABLE wh_schema_migrations DISABLE TRIGGER wh_schema_migrations_applied_by", ct);
+    await _execAsync("UPDATE wh_schema_migrations SET version_id = @v, applied_version_id = @v WHERE owner <> 'step'", ct, ("v", restored));
+    await _execAsync("ALTER TABLE wh_schema_migrations ENABLE TRIGGER wh_schema_migrations_applied_by", ct);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task ARestoredDatabase_WhoseChangesThisBuildDefinesIdentically_ServesWhateverVersionAppliedThemAsync(CancellationToken ct) {
+    var library = await _ledgerLibraryAsync(ct);
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_schema_migrations WHERE owner = 'perspective'", ct))
+      .IsGreaterThan(0).Because("the scenario needs the application's own schema changes in the ledger");
+    await _restoreFromAnotherEnvironmentAsync(library, ct);
+
+    var assessment = await _assessor(library, "0.0.0-preview.restored").AssessAsync(ct);
+
+    await Assert.That(assessment.Verdict).IsNotEqualTo(StartupVerdict.StandDown).Because(assessment.Reason);
+    await Assert.That(assessment.Rollback).IsNull()
+      .Because("nothing this build defines identically is rolled back, whoever applied it: " + assessment.Reason);
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task ARestoredDatabase_WithAChangeThisBuildDoesNotDefine_StillGoesThroughTheGate_NamingOnlyThatChangeAsync(CancellationToken ct) {
+    var library = await _ledgerLibraryAsync(ct);
+    await _restoreFromAnotherEnvironmentAsync(library, ct);
+    var restored = await _versionAsync(library, "1.63.0-rc.3", ct);
+    await _execAsync("""
+      INSERT INTO wh_schema_migrations (file_name, content_hash, version_id, status, owner)
+      VALUES ('perspective:wh_per_only_the_other_environment_has', 'its-columns', @v, 1, 'perspective')
+      """, ct, ("v", restored));
+
+    var assessment = await _assessor(library, "0.0.0-preview.restored").AssessAsync(ct);
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(assessment.Reason).Contains(
+      $"1 {SINCE}: perspective:wh_per_only_the_other_environment_has (applied by library {library}, application 1.63.0-rc.3)");
+  }
+
+  [Test]
+  public async Task TheVerdict_JudgesAChangeThisBuildDefinesIdentically_AsCurrentAsync() {
+    var restored = _appliedSince with { ContentHash = "this-builds-hash" };
+
+    var verdict = PostgresStartupAssessment.ComputeVerdict(_me, [restored], [],
+      defined: new Dictionary<string, string>(StringComparer.Ordinal) { [restored.Name] = "this-builds-hash" });
+
+    await Assert.That(verdict.Verdict).IsEqualTo(StartupVerdict.Serve).Because(verdict.Reason);
+  }
+
   // ── the incompatibility override (owner decision, #2022) ─────────────
 
   private static readonly VersionSighting _me = new("1.0.0", "1.9.0", Guid.Parse("0199dddd-0000-0000-0000-000000000001"));
   private static readonly AppliedSchemaChange _appliedSince = new("perspective:wh_per_orders", SchemaChangeKind.Application, "1.0.0", "2.0.0");
+  private static readonly SchemaGateOverrides _overrideBoth = SchemaGateOverrides.Both(overrideIncompatibility: true, allowLossyRollback: false);
+  private static readonly SchemaGateOverrides _lossyBoth = SchemaGateOverrides.Both(overrideIncompatibility: false, allowLossyRollback: true);
 
   [Test]
   public async Task TheOverride_LetsAnIncompatibleInstanceServe_WithoutAMigration_AndCarriesTheFullReasonAsync() {
     var refused = PostgresStartupAssessment.ComputeVerdict(_me, [_appliedSince], []);
-    var overridden = PostgresStartupAssessment.ComputeVerdict(_me, [_appliedSince], [], overrideIncompatibility: true);
+    var overridden = PostgresStartupAssessment.ComputeVerdict(_me, [_appliedSince], [], overrides: _overrideBoth);
 
     await Assert.That(refused.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(refused.OverriddenReason).IsNull();
-    await Assert.That(overridden.Verdict).IsEqualTo(StartupVerdict.Current)
-      .Because("Current skips the election and the pass: the override only lets this build serve, it never migrates backward");
+    await Assert.That(overridden.Verdict).IsEqualTo(StartupVerdict.Serve)
+      .Because("#2553: the application's schema is served as it is, and the W! migrations, with nothing applied since, still run");
+    await Assert.That(overridden.HoldsApplication).IsTrue().Because("the override never migrates the application backward");
     await Assert.That(overridden.OverriddenReason).IsEqualTo(refused.Reason)
       .Because("the same detail the stand-down error carries");
     await Assert.That(overridden.Reason).Contains(UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY);
@@ -280,9 +345,9 @@ public class RollbackGateTests : EFCoreTestBase {
   public async Task TheOverride_NeverOverridesANewerVersionOnlineAsync() {
     VersionSighting[] online = [new("1.0.0", "2.0.0", Guid.Parse("0199dddd-0000-0000-0000-000000000002"))];
 
-    var withAppliedSince = PostgresStartupAssessment.ComputeVerdict(_me, [_appliedSince], online, overrideIncompatibility: true);
+    var withAppliedSince = PostgresStartupAssessment.ComputeVerdict(_me, [_appliedSince], online, overrides: _overrideBoth);
     var alone = PostgresStartupAssessment.ComputeVerdict(_me, [new AppliedSchemaChange("100_X.sql", SchemaChangeKind.Platform, "1.0.0", null)],
-      online, overrideIncompatibility: true);
+      online, overrides: _overrideBoth);
 
     await Assert.That(withAppliedSince.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(withAppliedSince.Reason).Contains("is online with application version 2.0.0");
@@ -293,7 +358,7 @@ public class RollbackGateTests : EFCoreTestBase {
   [Test]
   public async Task TheOverride_OnACompatibleInstance_ChangesNothingAsync() {
     var verdict = PostgresStartupAssessment.ComputeVerdict(_me,
-      [new AppliedSchemaChange("100_X.sql", SchemaChangeKind.Platform, "1.0.0", null)], [], overrideIncompatibility: true);
+      [new AppliedSchemaChange("100_X.sql", SchemaChangeKind.Platform, "1.0.0", null)], [], overrides: _overrideBoth);
 
     await Assert.That(verdict.Verdict).IsEqualTo(StartupVerdict.Serve);
     await Assert.That(verdict.OverriddenReason).IsNull();
@@ -303,7 +368,7 @@ public class RollbackGateTests : EFCoreTestBase {
   [Arguments(null)]
   [Arguments("not-a-version")]
   public async Task TheOverride_NeverServesABuildThatCannotSayWhatItIsAsync(string? library) {
-    var verdict = PostgresStartupAssessment.ComputeVerdict(new VersionSighting(library, null), [_appliedSince], [], overrideIncompatibility: true);
+    var verdict = PostgresStartupAssessment.ComputeVerdict(new VersionSighting(library, null), [_appliedSince], [], overrides: _overrideBoth);
 
     await Assert.That(verdict.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(verdict.OverriddenReason).IsNull();
@@ -366,7 +431,7 @@ public class RollbackGateTests : EFCoreTestBase {
   [Test]
   public async Task ALossyChange_StandsDown_UnlessTheOperatorAllowsItAsync() {
     var refused = PostgresStartupAssessment.ComputeVerdict(_me, [_lossy], []);
-    var allowed = PostgresStartupAssessment.ComputeVerdict(_me, [_lossy], [], allowLossyRollback: true);
+    var allowed = PostgresStartupAssessment.ComputeVerdict(_me, [_lossy], [], overrides: _lossyBoth);
 
     await Assert.That(refused.Verdict).IsEqualTo(StartupVerdict.StandDown);
     await Assert.That(refused.Reason).Contains(UpgradeOrder.ALLOW_LOSSY_ROLLBACK_KEY);
