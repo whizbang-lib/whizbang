@@ -194,6 +194,35 @@ public class DispatcherSequenceIntegrityInheritanceTests {
   }
 
   [Test]
+  public async Task Cascade_FromALocalInvoke_InheritsItsExplicitSettingAsync() {
+    var (dispatcher, strategy) = _dispatcher();
+
+    await dispatcher.LocalInvokeAsync<object>(new PostLedger(Guid.CreateVersion7()), _live());
+
+    await Assert.That(strategy.HoldOf<LedgerPosted>()).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task Cascade_FromALocalInvokeWithReceipt_InheritsItsExplicitSettingAsync() {
+    var (dispatcher, strategy) = _dispatcher();
+
+    await dispatcher.LocalInvokeWithReceiptAsync<object>(new PostLedger(Guid.CreateVersion7()), _live());
+
+    await Assert.That(strategy.HoldOf<LedgerPosted>()).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task Cascade_FromABatch_InheritsTheBatchsExplicitSettingAsync() {
+    var (dispatcher, strategy) = _dispatcher();
+
+    await dispatcher.SendManyAsync<object>([new PostLedger(Guid.CreateVersion7()), new CreateItem(Guid.CreateVersion7())], _live());
+
+    await Assert.That(strategy.HoldOf<LedgerPosted>()).IsEqualTo(0);
+    await Assert.That(strategy.HoldOf<ItemInitialized>()).IsEqualTo(0);
+    await Assert.That(strategy.HoldOf<ItemIndexed>()).IsEqualTo(0);
+  }
+
+  [Test]
   public async Task Cascade_InheritsTheAmbientScopeAsync() {
     var (dispatcher, strategy) = _dispatcher();
 
