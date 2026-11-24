@@ -24,6 +24,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class PartitionOwnershipSqlTests : EFCoreTestBase {
   private const int PARTITIONS = 10_000;
   private const string SUPPORTS_MAP = """{"partition_ownership_level":1}""";
+  private const string ROWS_THIS_TRANSACTION_WROTE =
+    "SELECT count(*) FROM wh_partition_ownership WHERE xmin = pg_current_xact_id()::xid";
   private static readonly Guid _a = new("00000000-0000-0000-0000-00000000000a");
   private static readonly Guid _b = new("00000000-0000-0000-0000-00000000000b");
   private static readonly Guid _c = new("00000000-0000-0000-0000-00000000000c");
@@ -268,20 +270,18 @@ public class PartitionOwnershipSqlTests : EFCoreTestBase {
     var map = _inverted();
     await _publishAsync(conn, _a, epoch, [_a, _b], map);
 
-    // The republish runs in a transaction of its own, so the transaction's table statistics count exactly its writes.
+    // The republish runs in a transaction of its own, and a row it writes carries that transaction's id (xmin).
     long written;
     await using (var tx = await conn.BeginTransactionAsync()) {
       await _publishAsync(conn, _a, epoch, [_a, _b], map);
-      written = await _scalarAsync<long>(conn,
-        "SELECT n_tup_upd + n_tup_ins FROM pg_stat_xact_user_tables WHERE relname = 'wh_partition_ownership' AND schemaname = current_schema()");
+      written = await _scalarAsync<long>(conn, ROWS_THIS_TRANSACTION_WROTE);
       await tx.CommitAsync();
     }
     map[7] = 1;
     long writtenForAMove;
     await using (var tx = await conn.BeginTransactionAsync()) {
       await _publishAsync(conn, _a, epoch, [_a, _b], map);
-      writtenForAMove = await _scalarAsync<long>(conn,
-        "SELECT n_tup_upd + n_tup_ins FROM pg_stat_xact_user_tables WHERE relname = 'wh_partition_ownership' AND schemaname = current_schema()");
+      writtenForAMove = await _scalarAsync<long>(conn, ROWS_THIS_TRANSACTION_WROTE);
       await tx.CommitAsync();
     }
 

@@ -437,9 +437,9 @@ BEGIN
     END IF;
 
     IF NOT v_map AND NOT v_assigned THEN
-    -- 566 (#2558): a claim that ranks itself ranks by modulo, never by a map it is not a member of.
-    v_owners := NULL;
-    SELECT ranked.instance_rank, ranked.active_instance_count INTO v_rank, v_count
+    -- 566 (#2558): a claim that ranks itself ranks by modulo, never by a map it is not a member of, so the map read
+    -- with a rank it did not keep is cleared in the same statement.
+    SELECT ranked.instance_rank, ranked.active_instance_count, NULL::SMALLINT[] INTO v_rank, v_count, v_owners
     FROM (
       SELECT live.instance_id,
              (ROW_NUMBER() OVER (ORDER BY live.instance_id) - 1)::INTEGER AS instance_rank,
@@ -2991,9 +2991,9 @@ BEGIN
   END IF;
 
   IF NOT v_map AND v_rank IS NULL THEN
-    -- 566 (#2558): a claim that ranks itself ranks by modulo, never by a map it is not a member of.
-    v_owners := NULL;
-    SELECT ranked.instance_rank, ranked.active_instance_count INTO v_rank, v_count
+    -- 566 (#2558): a claim that ranks itself ranks by modulo, never by a map it is not a member of, so the map read
+    -- with a rank it did not keep is cleared in the same statement.
+    SELECT ranked.instance_rank, ranked.active_instance_count, NULL::SMALLINT[] INTO v_rank, v_count, v_owners
     FROM (
       SELECT live.instance_id,
              (ROW_NUMBER() OVER (ORDER BY live.instance_id) - 1)::INTEGER AS instance_rank,
