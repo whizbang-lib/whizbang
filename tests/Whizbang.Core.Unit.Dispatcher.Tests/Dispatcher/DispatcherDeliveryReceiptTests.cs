@@ -155,6 +155,18 @@ public class DispatcherDeliveryReceiptTests {
   }
 
   [Test]
+  public async Task PublishManyAsync_EventWithStreamId_TheLocalReceiptNamesItsStreamAsync() {
+    var orderId = (Guid)TrackedGuid.New();
+    var dispatcher = _createDispatcher();
+
+    var receipts = (await dispatcher.PublishManyAsync([new OrderCreatedEvent(orderId, "Batch Customer")], new Whizbang.Core.Dispatch.DispatchOptions())).ToList();
+
+    await Assert.That(receipts).Count().IsEqualTo(1);
+    await Assert.That(receipts[0].StreamId).IsEqualTo(orderId)
+      .Because("a batch's local run reads the stream id through the extractor, as a single publish does");
+  }
+
+  [Test]
   public async Task PublishAsync_EventWithStreamId_ExtractsStreamIdAsync() {
     // Arrange
     var expectedId = Guid.NewGuid();

@@ -290,7 +290,7 @@ public class DispatcherStreamIdGenerationTests {
     Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.RemoveAll<IStreamIdExtractor>(services);
     var dispatcher = services.BuildServiceProvider().GetRequiredService<IDispatcher>();
 
-    var receipts = (await dispatcher.PublishManyAsync([new NoExtractorEvent((Guid)Whizbang.Core.ValueObjects.TrackedGuid.New())])).ToList();
+    var receipts = (await dispatcher.PublishManyAsync([new NoExtractorEvent((Guid)Whizbang.Core.ValueObjects.TrackedGuid.New())], new Whizbang.Core.Dispatch.DispatchOptions())).ToList();
 
     await Assert.That(receipts).Count().IsEqualTo(1);
     await Assert.That(receipts[0].StreamId).IsNull()
