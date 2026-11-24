@@ -60,15 +60,21 @@ public class DapperMigratorElectionTests {
     new NpgsqlConnectionStringBuilder(_database.ConnectionString) { ApplicationName = pod }.ConnectionString;
 
   /// <summary>One instance, as a host builds it: the Dapper driver, a frozen clock, an hour's migrator lease, an observer.</summary>
-  private ServiceProvider _instance(string pod, StepObserver observer) {
+  private ServiceProvider _instance(string pod, StepObserver observer, StageLog? stages = null, HoldingElector? elector = null) {
     var services = new ServiceCollection();
     services.AddLogging();
+    if (stages is not null) {
+      services.AddSingleton<IStartupStageReporter>(stages);
+    }
     services.AddSingleton<TimeProvider>(new FakeTimeProvider());
     services.AddSingleton<ISchemaInitializationObserver>(observer);
     services.Configure<SchemaInitializationOptions>(o => o.NonBlockingSchemaInit = false);
     services.Configure<RoleAssignmentOptions>(o => o.RoleLeases[StartupDuties.MIGRATOR] = TimeSpan.FromHours(1));
     services.AddWhizbangPostgres(
       _connectionFor(pod), JsonContextRegistry.CreateCombinedOptions(), initializeSchema: true, _entries, managedObjects: null);
+    if (elector is not null) {
+      services.AddSingleton<IDutyElector>(sp => elector.Over(sp.GetRequiredService<Whizbang.Data.Postgres.Notifications.PgRoleElector>()));
+    }
     return services.BuildServiceProvider();
   }
 
@@ -88,16 +94,19 @@ public class DapperMigratorElectionTests {
 
   /// <summary>
   /// Two instances starting together: the first is elected migrator and is held mid-pass; the second registers, votes,
-  /// loses, and waits on the migrator's duty with its gate shut. Once the migrator finishes, the second serves the
-  /// schema the migrator built, having applied no step of its own, and nobody holds the duty any more.
+  /// loses, and waits on the migrator's duty with its gate shut. The migrator is then held again as it gives its duty
+  /// back, its schema work done, so the waiter's next look can only find the schema current while the duty is still held:
+  /// it takes the migrated-elsewhere start, applies no step, and serves. Once the migrator lets go, nobody holds the duty.
   /// </summary>
   [Test]
   [Timeout(180_000)]
   public async Task TwoInstancesStarting_OneMigrates_TheOtherWaitsForIt_ThenServesAsync(CancellationToken cancellationToken) {
     var migratorSteps = new StepObserver(holdFrom: HOLD_FROM_STEP);
     var waiterSteps = new StepObserver(holdFrom: null);
-    await using var migrator = _instance("pod-migrator", migratorSteps);
-    await using var waiter = _instance("pod-waiter", waiterSteps);
+    var migratorDuty = new HoldingElector();
+    var waiterStages = new StageLog();
+    await using var migrator = _instance("pod-migrator", migratorSteps, elector: migratorDuty);
+    await using var waiter = _instance("pod-waiter", waiterSteps, waiterStages);
 
     var migrating = _initializer(migrator).StartAsync(cancellationToken);
     await migratorSteps.Held.WaitAsync(cancellationToken);
@@ -111,11 +120,17 @@ public class DapperMigratorElectionTests {
       .Because("a waiter never serves a schema its migrator has not finished");
 
     migratorSteps.Release();
-    await migrating;
+    await migratorDuty.Releasing.WaitAsync(cancellationToken);
     await waiting;
+    var waiterServedWhileTheDutyWasHeld = waiter.GetRequiredService<ISchemaReadyGate>().IsReady;
+    migratorDuty.LetGo();
+    await migrating;
 
+    await Assert.That(waiterStages.Messages.Any(m => m.Contains("another instance migrated the schema", StringComparison.Ordinal))).IsTrue()
+      .Because("the migrator still held its duty with the schema current, so the waiter took the migrated-elsewhere start; "
+        + "the waiter's stages: " + string.Join(" | ", waiterStages.Messages));
+    await Assert.That(waiterServedWhileTheDutyWasHeld).IsTrue();
     await Assert.That(migrator.GetRequiredService<ISchemaReadyGate>().IsReady).IsTrue();
-    await Assert.That(waiter.GetRequiredService<ISchemaReadyGate>().IsReady).IsTrue();
     await Assert.That(migratorSteps.Committed.Count).IsGreaterThan(0);
     await Assert.That(waiterSteps.Committed).IsEmpty()
       .Because("the waiter waited for the migrator and then served: it took no schema lock and applied no step");
@@ -134,8 +149,9 @@ public class DapperMigratorElectionTests {
   public async Task AMigratorThatDiesMidMigration_HandsTheWorkToTheWaiterAsync(CancellationToken cancellationToken) {
     var migratorSteps = new StepObserver(holdFrom: HOLD_FROM_STEP);
     var waiterSteps = new StepObserver(holdFrom: null);
+    var waiterStages = new StageLog();
     await using var migrator = _instance("pod-dying", migratorSteps);
-    await using var waiter = _instance("pod-survivor", waiterSteps);
+    await using var waiter = _instance("pod-survivor", waiterSteps, waiterStages);
     using var migratorLife = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
     var migrating = _initializer(migrator).StartAsync(migratorLife.Token);
@@ -161,6 +177,8 @@ public class DapperMigratorElectionTests {
     await Assert.That(waiter.GetRequiredService<ISchemaReadyGate>().IsReady).IsTrue();
     await Assert.That(waiterSteps.Committed.Count).IsGreaterThan(0)
       .Because("the survivor took over the steps the dead migrator left outstanding");
+    await Assert.That(waiterStages.Messages.Any(m => m.Contains("another instance migrated the schema", StringComparison.Ordinal))).IsFalse()
+      .Because("the survivor found the migrator gone before the schema was current, so it voted and ran the pass itself");
     await Assert.That(await _tableExistsAsync(TABLE)).IsTrue();
     await Assert.That(await _migratorHolderAsync()).IsNull()
       .Because("the survivor held the duty it took over only until its initialization returned");
@@ -537,6 +555,62 @@ public class DapperMigratorElectionTests {
   }
 
   /// <summary>Records each stage by kind and name; optionally fails as the vote begins.</summary>
+  /// <summary>Records each stage an instance enters or skips, with its message, as the host's stage reporter.</summary>
+  private sealed class StageLog : IStartupStageReporter {
+    private readonly ConcurrentQueue<string> _messages = new();
+
+    public List<string> Messages => [.. _messages];
+
+    public StartupStageSnapshot? Current { get; private set; }
+
+    public ValueTask EnterAsync(StartupStage stage, string message, CancellationToken cancellationToken = default) {
+      Current = new StartupStageSnapshot(stage, message, false, DateTimeOffset.UnixEpoch);
+      _messages.Enqueue($"{stage}: {message}");
+      return ValueTask.CompletedTask;
+    }
+
+    public ValueTask SkipAsync(StartupStage stage, string reason, CancellationToken cancellationToken = default) {
+      _messages.Enqueue($"{stage}: {reason}");
+      return ValueTask.CompletedTask;
+    }
+
+    public ValueTask InstanceRegisteredAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+  }
+
+  /// <summary>
+  /// The host's elector, with the migrator duty's grant held as it is given back until the test lets go: the instance's
+  /// schema work is done and it still holds the duty.
+  /// </summary>
+  private sealed class HoldingElector {
+    private readonly TaskCompletionSource _releasing = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _letGo = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Releasing => _releasing.Task;
+
+    public void LetGo() => _letGo.TrySetResult();
+
+    public IDutyElector Over(IDutyElector inner) => new Elector(inner, this);
+
+    private sealed class Elector(IDutyElector inner, HoldingElector hold) : IDutyElector {
+      public async Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
+        var attempt = await inner.TryAcquireAsync(duty, cancellationToken);
+        return attempt.Grant is { } grant && duty == StartupDuties.MIGRATOR ? DutyAttempt.Granted(new Grant(grant, hold)) : attempt;
+      }
+    }
+
+    private sealed class Grant(IDutyGrant inner, HoldingElector hold) : IDutyGrant {
+      public string Duty => inner.Duty;
+      public DateTimeOffset AcquiredAt => inner.AcquiredAt;
+      public Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken) => inner.VerifyStillHeldAsync(cancellationToken);
+
+      public async ValueTask DisposeAsync() {
+        hold._releasing.TrySetResult();
+        await hold._letGo.Task;
+        await inner.DisposeAsync();
+      }
+    }
+  }
+
   private sealed class RecordedStages : IStartupStageReporter {
     private readonly ConcurrentQueue<string> _calls = new();
 
