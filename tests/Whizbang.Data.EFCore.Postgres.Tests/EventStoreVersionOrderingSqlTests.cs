@@ -79,7 +79,10 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
   // ============================================================================
 
   [Test]
-  public async Task ClaimWorkInboxBackfill_AssignsVersions_ByMessageIdOrder_NotReceivedAtAsync() {
+  public async Task ClaimWorkInboxBackfill_EventsWithNoOriginPosition_FallBackToTheirIdOrder_NotReceivedAtAsync() {
+    // #2551: a received stream is versioned in its origin's order. These events carry no origin position (no source
+    // commit sequence), so nothing positional exists for them and the receive order falls back to their ids, the order
+    // a replay places them in (#2379). Their arrival times run the other way and decide nothing within one origin.
     await using var dbContext = CreateDbContext();
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) {
@@ -90,13 +93,9 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
     var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
-    var idA = (Guid)TrackedGuid.New();
-    await Task.Delay(2);
-    var idB = (Guid)TrackedGuid.New();
-    await Task.Delay(2);
-    var idC = (Guid)TrackedGuid.New();
+    var ids = _orderedIds(3);
+    var (idA, idB, idC) = (ids[0], ids[1], ids[2]);
 
-    // INSERT in reverse message_id order → received_at ascending DOES NOT match message_id ascending.
     var nowOldest = DateTimeOffset.UtcNow.AddSeconds(-30);
     await _insertInboxEventAsync(conn, idC, streamId, instanceId, receivedAt: nowOldest);
     await _insertInboxEventAsync(conn, idB, streamId, instanceId, receivedAt: nowOldest.AddSeconds(10));
@@ -107,7 +106,7 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
 
     var versions = await _readVersionsAsync(conn, streamId);
     await Assert.That(versions[idA]).IsLessThan(versions[idB])
-      .Because("inbox backfill must assign versions by message_id order so cursor monotonicity matches event_id monotonicity");
+      .Because("with no origin position, one origin's events fall back to their id order, as a replay places them");
     await Assert.That(versions[idB]).IsLessThan(versions[idC]);
   }
 
