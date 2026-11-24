@@ -35,8 +35,8 @@ public partial class PerspectiveWorker {
   /// its stream's events after it, of every event type, in the stream's order.
   /// </summary>
   private sealed record ClaimedPrefetch(PerspectiveCursorInfo? Checkpoint, IReadOnlyList<MessageEnvelope<IEvent>> StreamEvents) {
-    /// <summary>The events in the order the per-pair path loads them (by id), for the lifecycle stages and the trace.</summary>
-    public List<MessageEnvelope<IEvent>> Upcoming { get; } = [.. StreamEvents.OrderByMessageId()];
+    /// <summary>The events in the order the per-pair path loads them (stream order, #2551), for the lifecycle stages and the trace.</summary>
+    public List<MessageEnvelope<IEvent>> Upcoming { get; } = StreamOrder.InStreamOrder(StreamEvents);
   }
 
   /// <summary>One claimed group between its phases: its scope, what it resolved, and its span.</summary>
@@ -460,9 +460,11 @@ public partial class PerspectiveWorker {
         var prefetched = new Dictionary<(Guid StreamId, string PerspectiveName), ClaimedPrefetch>();
         foreach (var pair in pairs) {
           var checkpoint = cursors.GetValueOrDefault(pair);
-          // The stream was read from its pairs' earliest cursor: each pair takes the events after its own.
-          prefetched[pair] = new ClaimedPrefetch(checkpoint, [.. read.GetValueOrDefault(pair.StreamId, [])
-            .Where(e => checkpoint?.LastEventId is not { } last || e.MessageId.Value.CompareTo(last) > 0)]);
+          // The stream was read from its pairs' earliest cursor: each pair takes the events after its own, in stream
+          // order (#2551), never an id range. The earliest cursor's own event is not in the read, so that pair takes all.
+          var stream = StreamOrder.InStreamOrder(read.GetValueOrDefault(pair.StreamId, []));
+          var after = stream.FindIndex(e => e.MessageId.Value == checkpoint?.LastEventId) + 1;
+          prefetched[pair] = new ClaimedPrefetch(checkpoint, stream.GetRange(after, stream.Count - after));
         }
         return prefetched;
       } catch (Exception ex) when (ex is not OperationCanceledException) {

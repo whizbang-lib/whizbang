@@ -232,23 +232,28 @@ BEGIN
         SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = ist.message_id
       )
   ),
-  -- The origin-order key: the origin position, or for an unpositioned event the position it goes before (#2379).
+  -- The origin-order key: a positioned event's own (position, id); for an unpositioned event, the (position, id) of the
+  -- positioned event it goes just before (#2379), and none when it goes after them all.
   keyed AS (
     SELECT k.*,
-           COALESCE(k.origin_seq,
-             (SELECT p.origin_seq FROM cand p
-              WHERE p.stream_id = k.stream_id AND p.origin = k.origin AND p.origin_seq IS NOT NULL
-                AND p.message_id > k.message_id
-              ORDER BY p.origin_seq, p.message_id
-              LIMIT 1)) AS origin_key
+           COALESCE(k.origin_seq, nx.origin_seq) AS origin_key,
+           CASE WHEN k.origin_seq IS NOT NULL THEN k.message_id ELSE nx.message_id END AS origin_key_id
     FROM cand k
+    LEFT JOIN LATERAL (
+      SELECT p.origin_seq, p.message_id FROM cand p
+      WHERE p.stream_id = k.stream_id AND p.origin = k.origin AND p.origin_seq IS NOT NULL
+        AND p.message_id > k.message_id
+      ORDER BY p.origin_seq, p.message_id
+      LIMIT 1
+    ) AS nx ON k.origin_seq IS NULL
   ),
-  -- The event's rank in its origin's order: by the key, an unpositioned event before the positioned one it shares a key
-  -- with, the id breaking what is left (the replay's tie-break).
+  -- The event's rank in its origin's order: by the key, an unpositioned event just before the positioned one whose key it
+  -- took, the id breaking what is left (the replay's tie-break).
   ranked AS (
     SELECT r.*,
            row_number() OVER (PARTITION BY r.stream_id, r.origin
-                              ORDER BY r.origin_key NULLS LAST, (r.origin_seq IS NOT NULL), r.message_id) AS origin_rank
+                              ORDER BY r.origin_key NULLS LAST, r.origin_key_id, (r.origin_seq IS NOT NULL), r.message_id)
+             AS origin_rank
     FROM keyed r
   ),
   -- The arrival slots, and each slot's rank among its origin's slots.

@@ -577,13 +577,13 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// Ordering invariant, at the apply boundary. A rebuild folds the whole stream it read, so it takes the replay
   /// order the rewind uses (origin, then stream version, then commit, then id; #1352): sorting it by id applied a
   /// stream's first committed event last whenever that event carried the highest id, and checkpointed on it (#1331).
-  /// The live drain keeps id order; an inversion there is the rewind's to correct.
+  /// The live drain applies the stream in its stream order, the version each event carries (#2551), never by id.
   /// </summary>
   private static IReadOnlyList<MessageEnvelope<IEvent>> _orderForApply(IReadOnlyList<MessageEnvelope<IEvent>> events) {
     if (events.Count > 1) {
       events = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild
           ? global::Whizbang.Core.Perspectives.ReplayEventOrder.Order(events)
-          : [.. events.OrderByMessageId()];
+          : global::Whizbang.Core.Messaging.StreamOrder.InStreamOrder(events);
     }
     return events;
   }

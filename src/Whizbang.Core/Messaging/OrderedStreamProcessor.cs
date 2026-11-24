@@ -70,7 +70,7 @@ public partial class OrderedStreamProcessor(ILogger<OrderedStreamProcessor> logg
       .GroupBy(w => w.StreamId ?? Guid.Empty)  // NULL stream = no ordering required, group together
       .Select(g => new StreamBatch<InboxWork> {
         StreamId = g.Key,
-        Messages = [.. g.OrderBy(m => m.MessageId)]  // Ensure ordering by message_id (UUIDv7)
+        Messages = [.. g]  // #2551: the order the batch arrived in (its stream order), never re-sorted by id
       })
       .ToList();
 
@@ -120,7 +120,7 @@ public partial class OrderedStreamProcessor(ILogger<OrderedStreamProcessor> logg
       .GroupBy(w => w.StreamId ?? Guid.Empty)
       .Select(g => new StreamBatch<OutboxWork> {
         StreamId = g.Key,
-        Messages = [.. g.OrderBy(m => m.MessageId)]  // Order by message_id (UUIDv7)
+        Messages = [.. g]  // #2551: the order the batch arrived in (its stream order), never re-sorted by id
       })
       .ToList();
 

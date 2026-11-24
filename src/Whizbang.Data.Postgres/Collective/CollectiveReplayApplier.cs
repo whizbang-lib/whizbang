@@ -234,7 +234,12 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     }
 
     await _readReachAsync(allCollectives, cancellationToken).ConfigureAwait(false);
-    var orderedCollectives = allCollectives.OrderByMessageId().ToList();
+    // #2551: the collectives in commit order, an unstamped one after them by its stream's version, never by id.
+    var orderedCollectives = allCollectives
+      .OrderBy(static e => e.LocalCommitSequence is null)
+      .ThenBy(static e => e.LocalCommitSequence)
+      .ThenBy(static e => e.LocalStreamVersion)
+      .ToList();
     _putSharedStreamsInCommitOrder(orderedCollectives, byStream, positions);
     return _mergeIntoStreamOrder(streamEvents, orderedCollectives);
   }
@@ -343,10 +348,10 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
 
   /// <summary>
   /// Collectives that share an ordering key share a stream, and the live sink applied that stream in commit order
-  /// (<c>wh_collective_sink_queue</c>: <c>commit_sequence</c>, an unstamped event last, <c>event_id</c> breaking the
+  /// (<c>wh_collective_sink_queue</c>: <c>commit_sequence</c>, an unstamped event last, its <c>version</c> breaking the
   /// tie). An event id is minted before commit, so two of them can have ids in the opposite order; left in id order
   /// the replay would fold the earlier commit last and end where live did not. They change places among themselves
-  /// only, in the slots their ids gave them, so every other event keeps its place in the fold. A collective whose stream
+  /// only, in the slots the merge gave them, so every other event keeps its place in the fold. A collective whose stream
   /// is archived whole has no hot position, and its commit sequence is the one its event carries back from the archive.
   /// </summary>
   private static void _putSharedStreamsInCommitOrder(
@@ -360,6 +365,8 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
       commitSequence.TryAdd(collective.MessageId.Value, collective.LocalCommitSequence);
     }
 
+    long? commitOf(MessageEnvelope<IEvent> collective) => commitSequence.GetValueOrDefault(collective.MessageId.Value);
+
     foreach (var collectives in byStream.Where(c => c.Count > 1)) {
       var members = new HashSet<Guid>(collectives.Select(e => e.MessageId.Value));
       var slots = new List<int>();
@@ -369,10 +376,10 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
         }
       }
       var inCommitOrder = collectives
-        .OrderBy(e => commitSequence.GetValueOrDefault(e.MessageId.Value) is null)
-        .ThenBy(e => commitSequence.GetValueOrDefault(e.MessageId.Value))
-        // Postgres orders a uuid by its text; .NET's Guid order differs, so the tie-break compares the text too.
-        .ThenBy(e => e.MessageId.Value.ToString(), StringComparer.Ordinal)
+        .OrderBy(e => commitOf(e) is null)
+        .ThenBy(commitOf)
+        // #2551: an unstamped one by its version on the stream, never by id.
+        .ThenBy(static e => e.LocalStreamVersion)
         .ToList();
       for (var i = 0; i < slots.Count; i++) {
         ordered[slots[i]] = inCommitOrder[i];

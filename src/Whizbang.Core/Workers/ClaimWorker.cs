@@ -659,10 +659,9 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
   }
 
   private async Task _distributeAsync(WorkBatch batch, CancellationToken ct) {
-    // Ordering invariant: write each category in MessageId order so downstream channel readers
-    // (which preserve enqueue order) receive same-stream items chronologically. See
-    // plans/ordered-stream-invariant.md.
-    foreach (var ow in batch.OutboxWork.OrderByMessageId()) {
+    // #2551: each category is handed on in the order the claim returned it, never re-sorted by id. A claimed item is a
+    // signal that its stream has work; the drain fetches the stream's rows in stream order (StreamOrder).
+    foreach (var ow in batch.OutboxWork) {
       await _outboxChannel.WriteAsync(ow, ct);
     }
     // The claim already charged an attempt against every row here. If this loop is cut short —
@@ -682,7 +681,6 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
     // eligible again on its own, so the failure is self-healing rather than permanent.
     var ordered = batch.InboxWork
       .Where(w => !_inboxChannel.IsInFlight(w.MessageId))
-      .OrderByMessageId()
       .ToList();
     var handedOff = 0;
     try {

@@ -624,10 +624,11 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         return;
       }
 
-      // Ordering invariant: defensive sort by message_id. SQL fetch_outbox_batch already
-      // orders by (stream_id, message_id), but the apply boundary trusts only message_id.
-      // See plans/ordered-stream-invariant.md.
-      var rows = rowsRaw.OrderByMessageId().ToList();
+      // Published in id order because the stream's continuation is still an id cursor (#917): _markPublished keeps the
+      // largest id published, and wh_continue_outbox_streams returns the rows above it. Publishing in any other order
+      // could leave a row below the cursor unpublished. The one allowed id sort in the workers (StreamOrderSourceGuardTests),
+      // until the continuation carries a stream position (#2551 follow-up).
+      List<OutboxBatchRow> rows = [.. rowsRaw.OrderBy(static r => r.MessageId)];
 
       var newRowList = new List<OutboxBatchRow>(rows.Count);
       foreach (var row in rows) {

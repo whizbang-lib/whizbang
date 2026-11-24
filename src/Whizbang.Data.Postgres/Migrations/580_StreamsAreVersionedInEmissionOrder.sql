@@ -1078,8 +1078,10 @@ BEGIN
         -- index's own key removes the bad plan instead of out-costing it: a sequential scan would
         -- have to sort before it could answer. stream_id is pinned by the equality above, so the
         -- clause changes no result -- order by that column alone is dropped as redundant, which is
-        -- why event_id is here too.
-        ORDER BY pe.stream_id, pe.event_id
+        -- why a second key of the index is here too. 580 (#2551): the second key is perspective_name, the next column
+        -- of uq_perspective_event (stream_id, perspective_name, event_id), not the event id: the probe asks only whether
+        -- a row exists, and nothing is ordered by id.
+        ORDER BY pe.stream_id, pe.perspective_name
         LIMIT 1
         FOR SHARE OF pe SKIP LOCKED;  -- 140: same rule for the perspective doorbell
       IF NOT FOUND THEN

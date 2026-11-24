@@ -480,6 +480,7 @@ public partial class DapperWorkCoordinator(
       EventWorkId = r.out_event_work_id,
       Attempts = r.out_attempts,
       Failures = r.out_failures,
+      Version = r.out_version,
     })];
   }
 
@@ -588,6 +589,7 @@ public partial class DapperWorkCoordinator(
       IsEvent = r.is_event,
       Error = r.error,
       Priority = r.priority,
+      StreamPosition = r.stream_position,
     })];
   }
 
@@ -768,6 +770,8 @@ public partial class DapperWorkCoordinator(
     public bool is_event { get; set; }
     public string? error { get; set; }
     public int priority { get; set; }
+    // 583 (#2551): the row's position in its stream.
+    public long stream_position { get; set; }
   }
 
   private sealed class PendingPerspectiveEventDto {
@@ -1546,6 +1550,10 @@ internal class StreamEventRow {
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3459:Unassigned members should be removed",
     Justification = "Hydrated by Dapper at runtime via column name mapping; not visible to static analysis.")]
   public int out_failures { get; set; }
+  // 583 (#2551): the event's version, its stream position.
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3459:Unassigned members should be removed",
+    Justification = "Hydrated by Dapper at runtime via column name mapping; not visible to static analysis.")]
+  public long? out_version { get; set; }
 }
 
 /// <summary>

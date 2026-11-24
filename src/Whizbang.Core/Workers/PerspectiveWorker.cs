@@ -2328,7 +2328,8 @@ public partial class PerspectiveWorker(
       .GroupBy(e => rawByEventId[e.MessageId.Value].First().StreamId)
       .ToDictionary(
         g => g.Key,
-        g => g.DistinctBy(e => e.MessageId.Value).OrderByMessageId().ToList());
+        // #2551: each stream by the version each event carries, never by id.
+        g => StreamOrder.InStreamOrder(g.DistinctBy(e => e.MessageId.Value)));
   }
 
   /// <summary>
@@ -4605,7 +4606,9 @@ public partial class PerspectiveWorker(
     // completion's last event, as the range read below returns them.
     List<MessageEnvelope<IEvent>> processedEvents = [];
     if (shouldLoadEvents && prefetched is { } batchRead) {
-      processedEvents = [.. batchRead.Upcoming.Where(e => e.MessageId.Value.CompareTo(result.LastEventId) <= 0)];
+      // #2551: the prefix of the stream, in stream order, through the completion's last event; never an id range.
+      var through = batchRead.Upcoming.FindIndex(e => e.MessageId.Value == result.LastEventId);
+      processedEvents = batchRead.Upcoming.GetRange(0, through + 1);
     } else if (shouldLoadEvents) {
       processedEvents = await _loadProcessedEventsAsync(eventStore!, streamId, perspectiveName, lastProcessedEventId, result.LastEventId, cancellationToken);
     }

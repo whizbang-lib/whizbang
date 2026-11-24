@@ -37,6 +37,20 @@ public partial class StreamOrderSourceGuardTests {
       "the replay's fallback for a batch with an event that carries neither a version nor a commit sequence"),
     ("LastInReplayOrder.cs", "envelope.MessageId.Value.ToString(\"D\"), _byId.MessageId.Value.ToString(\"D\")",
       "the same fallback, computed without materializing the stream"),
+    ("LastInReplayOrder.cs", "envelope.MessageId.Value.ToString(\"D\"), current.MessageId.Value.ToString(\"D\")",
+      "the replay's tie-break within equal keys (ReplayEventOrder.TieBreak), never reached for versioned events"),
+    ("InMemoryEventStore.cs", "(anchor is not null ? e.Version > anchor.Version : e.EventId.CompareTo(fromEventId.Value) > 0)",
+      "an anchor the stream does not hold has no position in it; compared by id, as the Postgres stores read it (#2379)"),
+    ("InMemoryEventStore.cs", "(after is not null ? e.Version > after.Version : e.EventId.CompareTo(afterEventId.Value) > 0)",
+      "the same: a lower checkpoint the stream does not hold (#2381)"),
+    ("InMemoryEventStore.cs", "(upTo is not null ? e.Version <= upTo.Version : e.EventId.CompareTo(upToEventId) <= 0)",
+      "the same: an upper checkpoint the stream does not hold (#2381)"),
+    ("CollectiveReplayStart.cs", ": collective.MessageId.Value.CompareTo(after) > 0;",
+      "a collective or a start with no commit sequence (unstamped) has no position across streams: the replay's fallback"),
+    ("OutboxDrainWorker.cs", "List<OutboxBatchRow> rows = [.. rowsRaw.OrderBy(static r => r.MessageId)];",
+      "publishing matches the outbox continuation, still an id cursor (#917, wh_continue_outbox_streams); a #2551 follow-up"),
+    ("OutboxDrainWorker.cs", "(_, prior) => row.MessageId.CompareTo(prior) > 0 ? row.MessageId : prior);",
+      "that continuation cursor: the largest id published; a #2551 follow-up"),
   ];
 
   // A sort keyed on an id, an id comparison, or the retired helper.
