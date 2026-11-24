@@ -10,7 +10,7 @@ using TUnit.Core;
 namespace Whizbang.Generators.Tests;
 
 /// <summary>
-/// Every generated id declares <c>static partial void IsGrandfathered(Guid value, ref bool grandfathered)</c>
+/// A strict or allow-list id declares <c>static partial void _isGrandfathered(Guid value, ref bool grandfathered)</c>
 /// (#2517). An id type that implements it lets its checked entry points (<c>From</c>, <c>Parse</c>, the explicit
 /// cast, the JSON converter, the GraphQL scalar) accept the values it names even when their version breaks the
 /// id's rule. Left unimplemented, the compiler removes the call and the id behaves as before. <c>Guid.Empty</c> is
@@ -24,7 +24,7 @@ namespace Whizbang.Generators.Tests;
 [Category("SourceGenerators")]
 public class WhizbangIdGrandfatheredTests {
 
-  private const string HOOK_DECLARATION = "static partial void IsGrandfathered(Guid value, ref bool grandfathered);";
+  private const string HOOK_DECLARATION = "static partial void _isGrandfathered(Guid value, ref bool grandfathered);";
 
   [RequiresAssemblyFiles()]
   private static string _generatedId(string source, string typeName = "ProductId") {
@@ -46,8 +46,8 @@ public class WhizbangIdGrandfatheredTests {
     var generated = _generatedId(source);
 
     await Assert.That(generated).Contains(HOOK_DECLARATION);
-    await Assert.That(generated).Contains("if (value.Version != 7 && !_isGrandfathered(value))");
-    await Assert.That(generated).Contains("if (!tracked.IsTimeOrdered && !_isGrandfathered(tracked.Value))");
+    await Assert.That(generated).Contains("if (value.Version != 7 && !_grandfathers(value))");
+    await Assert.That(generated).Contains("if (!tracked.IsTimeOrdered && !_grandfathers(tracked.Value))");
   }
 
   [Test]
@@ -63,24 +63,61 @@ public class WhizbangIdGrandfatheredTests {
     var generated = _generatedId(source);
 
     await Assert.That(generated).Contains(HOOK_DECLARATION);
-    await Assert.That(generated).Contains("if ((value.Version is not (5 or 7) || (value.Variant & 0xC) != 0x8) && !_isGrandfathered(value))");
+    await Assert.That(generated).Contains("if ((value.Version is not (5 or 7) || (value.Variant & 0xC) != 0x8) && !_grandfathers(value))");
   }
 
   /// <summary>An any-version id refuses only the empty Guid, which is never grandfathered, so it never asks.</summary>
+  /// <summary>
+  /// An any-version id refuses only the empty Guid, so it declares no hook: one implemented there would never run, and
+  /// is a compile error (CS0759) instead.
+  /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task AnyVersionId_DeclaresTheHookButNeverConsultsItAsync() {
-    const string source = """
+  public async Task AnyVersionId_DeclaresNoHook_AndImplementingOneIsCs0759Async() {
+    const string declared = """
       using Whizbang.Core;
       namespace MyApp.Domain;
       [WhizbangId(AcceptAnyVersion = true)]
       public readonly partial struct ProductId;
       """;
+    const string implemented = """
+      using System;
+      using Whizbang.Core;
+      namespace MyApp.Domain;
+      [WhizbangId(AcceptAnyVersion = true)]
+      public readonly partial struct ProductId {
+        static partial void _isGrandfathered(Guid value, ref bool grandfathered) => grandfathered = true;
+      }
+      """;
 
-    var generated = _generatedId(source);
+    var generated = _generatedId(declared);
+    var (_, output) = GeneratorTestHelper.RunGeneratorWithFullReferences(new WhizbangIdGenerator(), implemented);
 
-    await Assert.That(generated).Contains(HOOK_DECLARATION);
-    await Assert.That(generated).DoesNotContain("_isGrandfathered(");
+    await Assert.That(generated).DoesNotContain("_isGrandfathered");
+    await Assert.That(generated).DoesNotContain("_grandfathers");
+    await Assert.That(output.GetDiagnostics().Select(d => d.Id)).Contains("CS0759");
+  }
+
+  /// <summary>
+  /// The hook is implemented as declared, without an accessibility modifier: C# lets a partial method go unimplemented
+  /// only when it has none, and an implementation that adds <c>private</c> is CS8799, as the docs say.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task HookImplementedWithAModifier_IsCs8799Async() {
+    const string source = """
+      using System;
+      using Whizbang.Core;
+      namespace MyApp.Domain;
+      [WhizbangId]
+      public readonly partial struct ProductId {
+        private static partial void _isGrandfathered(Guid value, ref bool grandfathered) => grandfathered = true;
+      }
+      """;
+
+    var (_, output) = GeneratorTestHelper.RunGeneratorWithFullReferences(new WhizbangIdGenerator(), source);
+
+    await Assert.That(output.GetDiagnostics().Select(d => d.Id)).Contains("CS8799");
   }
 
   [Test]
@@ -95,7 +132,7 @@ public class WhizbangIdGrandfatheredTests {
 
     var generated = _generatedId(source);
 
-    await Assert.That(generated).Contains("private static bool _isGrandfathered(Guid value) {");
+    await Assert.That(generated).Contains("private static bool _grandfathers(Guid value) {");
     await Assert.That(generated).Contains("if (value == Guid.Empty)");
   }
 
@@ -124,12 +161,12 @@ public class WhizbangIdGrandfatheredTests {
       namespace MyApp.Domain;
       [WhizbangId]
       public readonly partial struct ProductId {
-        private static readonly FrozenSet<Guid> _grandfathered = new[] {
+        private static readonly FrozenSet<Guid> _grandfatheredValues = new[] {
           new Guid("3f2504e0-4f89-41d3-9a0c-0305e82c3301"),
         }.ToFrozenSet();
 
-        static partial void IsGrandfathered(Guid value, ref bool grandfathered) =>
-          grandfathered = _grandfathered.Contains(value);
+        static partial void _isGrandfathered(Guid value, ref bool grandfathered) =>
+          grandfathered = _grandfatheredValues.Contains(value);
       }
       """;
 

@@ -167,6 +167,26 @@ public class WhizbangIdTypeTests {
     await Assert.That(value).IsEqualTo(GraphQLConnectorId.From(Guid.Parse(v5)));
   }
 
+  /// <summary>
+  /// The scalar of an id that grandfathers a value reads it, and refuses a value it does not name and the empty Guid
+  /// as the rule says (#2517).
+  /// </summary>
+  [Test]
+  public async Task TryDeserialize_OnAGrandfatheringId_ReadsTheSeededValue_AndRefusesOthersAsync() {
+    var scalar = new WhizbangIdType(
+      typeof(GraphQLSeededId), WhizbangIdProviderRegistry.GetGuidConversions()[typeof(GraphQLSeededId)]);
+
+    var read = scalar.TryDeserialize(GraphQLSeededId.SeededV4.ToString(), out var value);
+
+    await Assert.That(read).IsTrue();
+    await Assert.That(value).IsEqualTo(GraphQLSeededId.From(GraphQLSeededId.SeededV4));
+    await Assert.That(() => scalar.TryDeserialize("6ba7b810-9dad-41d1-80b4-00c04fd430c8", out _))
+      .Throws<SerializationException>()
+      .WithMessageContaining("GraphQLSeededId requires UUIDv7 but received version 4");
+    await Assert.That(() => scalar.TryDeserialize(Guid.Empty.ToString(), out _))
+      .Throws<SerializationException>();
+  }
+
   /// <summary>...and refuses an unlisted one, naming the accepted versions (#2516).</summary>
   [Test]
   public async Task TryDeserialize_OnAnAllowListId_RefusesAnUnlistedVersionNamingTheListAsync() {

@@ -21,8 +21,8 @@ namespace Whizbang.Generators.Tests;
 [Category("SourceGenerators")]
 public class WhizbangIdVersionsTests {
 
-  private const string STRICT_FROM_GUARD = "if (value.Version != 7 && !_isGrandfathered(value))";
-  private const string ALLOW_LIST_GUARD = "if ((value.Version is not (5 or 7) || (value.Variant & 0xC) != 0x8) && !_isGrandfathered(value))";
+  private const string STRICT_FROM_GUARD = "if (value.Version != 7 && !_grandfathers(value))";
+  private const string ALLOW_LIST_GUARD = "if ((value.Version is not (5 or 7) || (value.Variant & 0xC) != 0x8) && !_grandfathers(value))";
   private const string NON_EMPTY_GUARD = "_requireNonEmpty(";
 
   [RequiresAssemblyFiles()]
@@ -91,21 +91,30 @@ public class WhizbangIdVersionsTests {
   }
 
   /// <summary>
-  /// The default rule generates, byte for byte, what the generator produced before <c>Versions</c> existed:
-  /// <c>Snapshots/WhizbangIdDefault.snapshot.txt</c> is develop's output for this source, captured before #2516.
+  /// The default rule generates, byte for byte, what the generator produced before <c>Versions</c> existed, apart from
+  /// the grandfathered-values hook (#2517): <c>Snapshots/WhizbangIdDefault.snapshot.txt</c> is develop's output for this
+  /// source, captured before #2516, and the output with the hook's declaration, its helper and its two guard clauses
+  /// taken out is that snapshot. Anything else that changes the default output fails here.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task DefaultRule_IsByteIdenticalToTheOutputBeforeVersionsAsync() {
+  public async Task DefaultRule_IsByteIdenticalToTheOutputBeforeVersions_ApartFromTheHookAsync() {
     const string source = """
       using Whizbang.Core;
       namespace MyApp.Domain;
       [WhizbangId]
       public readonly partial struct ProductId;
       """;
+    var generated = _generatedId(source).Replace("\r\n", "\n", StringComparison.Ordinal);
+    var hookStart = generated.IndexOf("  /// <summary>\n  /// Implement to let the checked entry points", StringComparison.Ordinal);
+    var hookEnd = generated.IndexOf("    return grandfathered;\n  }\n\n", StringComparison.Ordinal) + "    return grandfathered;\n  }\n\n".Length;
 
-    await Assert.That(_generatedId(source).Replace("\r\n", "\n", StringComparison.Ordinal))
-      .IsEqualTo(_snapshot(DEFAULT_SNAPSHOT).Replace("\r\n", "\n", StringComparison.Ordinal));
+    await Assert.That(hookStart).IsGreaterThan(0);
+    var withoutHook = (generated[..hookStart] + generated[hookEnd..])
+      .Replace(" && !_grandfathers(tracked.Value)", "", StringComparison.Ordinal)
+      .Replace(" && !_grandfathers(value)", "", StringComparison.Ordinal);
+
+    await Assert.That(withoutHook).IsEqualTo(_snapshot(DEFAULT_SNAPSHOT).Replace("\r\n", "\n", StringComparison.Ordinal));
   }
 
   private const string DEFAULT_SNAPSHOT = "Whizbang.Generators.Tests.Snapshots.WhizbangIdDefault.snapshot.txt";
@@ -129,7 +138,7 @@ public class WhizbangIdVersionsTests {
 
     var generated = _generatedId(source);
 
-    await Assert.That(generated).Contains("if ((value.Version is not (5) || (value.Variant & 0xC) != 0x8) && !_isGrandfathered(value))");
+    await Assert.That(generated).Contains("if ((value.Version is not (5) || (value.Variant & 0xC) != 0x8) && !_grandfathers(value))");
     await Assert.That(generated).Contains("ProductId requires UUIDv5 (RFC 9562 variant) but received version");
   }
 
