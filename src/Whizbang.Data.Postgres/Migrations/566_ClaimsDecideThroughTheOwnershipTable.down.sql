@@ -3094,11 +3094,13 @@ COMMENT ON FUNCTION __SCHEMA__.notify_instance_owners_with_payload(TEXT, TEXT, U
 'Instance-routed NOTIFY emission with doorbell debounce (slice 27 + v0.685 + 130, kind split from payload in 141). 369: the live instances are read once per call, and each target''s liveness and the deterministic rank come from that read (the rule reads pg_locks, so judging it per target cost a plan and a pg_locks read per owner). Per-owner for pinned streams; rank-deterministic for unclaimed outbox/inbox/perspective streams, where the partition number is the stream ledger''s, else computed through compute_partition, never read out of a queue table. Every emission goes through _wh_notify_debounced_for(instance, p_kind, p_payload, window, live). Signals call this form with their wire name as both, and reach only the per-owner path. 536: an unclaimed stream is found by one probe of its ledger row, never by a pass over the ledger.';
 
 -- ---------------------------------------------------------------------------------------------
--- wh_continue_outbox_streams: 172's definition, copied whole.
+-- wh_continue_outbox_streams: 559's definition, copied whole.
 -- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('wh_continue_outbox_streams');
 
 -- <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+-- <docs>fundamentals/messaging/sequence-integrity#how-the-hold-works</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SequenceIntegritySqlTests.cs:Continue_StopsAStreamAtItsHeldEvent_AsTheFetchDoesAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxStreamRunDeadlockSqlTests.cs:ContinueOutboxStreams_WhileAnotherSessionHoldsTheStreamLedger_NeverWaitsAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxStreamRunDeadlockSqlTests.cs:ConcurrentClaimsDrainsContinuationsCompletionsAndFailureReleases_NeverDeadlockAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxStreamRunSqlTests.cs:ContinueOutboxStreams_LeasesTheNextRunAndReturnsOnlyRowsAfterTheCursorAsync</tests>
@@ -3279,6 +3281,10 @@ BEGIN
       es.commit_sequence AS es_commit_sequence,
       es.origin_service_id AS es_origin_service_id,
       es.origin_commit_sequence AS es_origin_commit_sequence,
+      -- 559 (#2542): an event held for its commit-order stamp: it has a hold that has not run out, and its stored
+      -- event has no commit sequence yet. A row with no stored event is never held, since nothing would stamp it.
+      (o.sequence_hold_until IS NOT NULL AND o.sequence_hold_until > v_now
+        AND es.event_id IS NOT NULL AND es.commit_sequence IS NULL) AS sequence_held,
       ROW_NUMBER() OVER (
         PARTITION BY o.stream_id
         ORDER BY es.commit_sequence ASC NULLS LAST, o.message_id
@@ -3295,6 +3301,12 @@ BEGIN
   budgeted AS (
     SELECT
       r.*,
+      -- 559 (#2542): true from a stream's first held row on. That row and every row after it stay where they are,
+      -- whatever their own setting, so a receiver never sees the stream out of order.
+      bool_or(r.sequence_held)
+        OVER (PARTITION BY r.stream_id
+              ORDER BY r.es_commit_sequence ASC NULLS LAST, r.message_id
+              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS behind_hold,
       SUM(COALESCE(octet_length(r.event_data::TEXT), 0)
           + COALESCE(octet_length(r.metadata::TEXT), 0))
         OVER (PARTITION BY r.stream_id
@@ -3321,9 +3333,10 @@ BEGIN
     b.error,
     b.priority
   FROM budgeted b
-  WHERE p_max_bytes IS NULL
+  WHERE NOT b.behind_hold
+    AND (p_max_bytes IS NULL
      OR b.rank_in_stream = 1
-     OR b.running_bytes <= p_max_bytes
+     OR b.running_bytes <= p_max_bytes)
   ORDER BY b.stream_id, b.es_commit_sequence ASC NULLS LAST, b.message_id;
 END;
 $$ LANGUAGE plpgsql SET plan_cache_mode = force_custom_plan;
@@ -3333,7 +3346,8 @@ COMMENT ON FUNCTION __SCHEMA__.wh_continue_outbox_streams(UUID, UUID[], UUID[], 
   'up to p_run_length of the stream''s next consecutive rows as a prefix (stopping at a row it may not take), '
   'and returns the rows it holds after the last one the drain published, in fetch_outbox_batch''s shape and '
   'order. Lets the drain move a long stream on without waiting for the next claim cycle. 172: it never waits for a '
-  'lock: run rows and ledger rows another session holds are skipped.';
+  'lock: run rows and ledger rows another session holds are skipped. 559 (#2542): cuts each stream at its first event '
+  'held for its commit-order stamp, as fetch_outbox_batch does.';
 
 -- ---------------------------------------------------------------------------------------------
 -- wh_claim_due_schedules: 068's definition, copied whole.
@@ -3461,3 +3475,8 @@ BEGIN
   END LOOP;
 END;
 $$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_claim_due_schedules(UUID, TIMESTAMPTZ, INTEGER, INTEGER, TIMESTAMPTZ) IS
+  'Temporal engine authoritative fire: leases due Active owned schedules (SKIP LOCKED), spawns each '
+  'occurrence into the outbox, advances next_fire_at (wh_schedule_next_fire + until/max bounds; '
+  'completion => status 2), and logs a wh_schedule_runs row, all atomically (exactly-once creation).';

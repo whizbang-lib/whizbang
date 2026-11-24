@@ -18,7 +18,7 @@
 --              Off, every function is exactly as before: each change is the switch's other arm.
 --
 -- Reversal: reversible (the down file restores each function's previous last word)
--- Dependencies: 565 (wh_i_own, wh_partition_ownership_by_map), 271 (store_outbox_messages), 460 (store_inbox_messages),
+-- Dependencies: 565 (wh_i_own, wh_partition_ownership_by_map), 559 (store_outbox_messages), 460 (store_inbox_messages),
 --               241 (store_perspective_events), 537 (_emit_event_store_chain), 551 (_emit_event_store_chain_for_inbox)
 -- Objects: store_outbox_messages, store_inbox_messages, store_perspective_events, _emit_event_store_chain,
 --          _emit_event_store_chain_for_inbox
@@ -27,7 +27,7 @@
 
 
 -- ---------------------------------------------------------------------------------------------
--- store_outbox_messages: copied from its last word (271), with the 567 delta: the switch's map branch.
+-- store_outbox_messages: copied from its last word (559), with the 567 delta: the switch's map branch.
 -- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('store_outbox_messages');
 
@@ -46,6 +46,8 @@ SELECT __SCHEMA__.drop_all_overloads('store_outbox_messages');
 -- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapStoreSqlTests.cs:StoreOutbox_InMapMode_RecordsTheStreamWithoutAnOwnerAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapStoreSqlTests.cs:StoreOutbox_SwitchOff_PinsTheFirstWriter_AsBeforeAsync</tests>
+-- <docs>fundamentals/messaging/sequence-integrity#how-the-hold-works</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SequenceIntegritySqlTests.cs:Store_WritesEachModesHoldOntoAnEventsRow_AndNeverOntoACommandsAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.store_outbox_messages(
   p_messages JSONB,
   p_instance_id UUID,
@@ -107,6 +109,8 @@ BEGIN
       (elem->>'IsEvent')::BOOLEAN as is_event,
       -- 149: the priority the producer declared; zero (undeclared) and an absent field read as standard.
       COALESCE(NULLIF((elem->>'Priority')::INTEGER, 0), 150) as priority,
+      -- 559 (#2542): the hold the origin decided for the event, in milliseconds: 0 none, -1 until stamped.
+      COALESCE((elem->>'SequenceHoldMilliseconds')::INTEGER, 0) as sequence_hold_ms,
       -- EventFlags (062): persisted so migration 061's collective routing can see (flags & 1). 232 (#1612): the
       -- number (what the framework writes) is read here; a name list is read bit by bit by _wh_event_flags_from_names,
       -- which raises on a name it does not know rather than store the event as Sourced.
@@ -232,7 +236,8 @@ BEGIN
       scheduled_for,
       coalesce_group,
       priority,
-      recovered_from_dead_letter_id
+      recovered_from_dead_letter_id,
+      sequence_hold_until
     ) VALUES (
       v_msg.msg_id,
       v_msg.destination,
@@ -253,7 +258,14 @@ BEGIN
       v_msg.scheduled_for,
       v_msg.coalesce_group,
       v_msg.priority,
-      v_msg.recovered_from  -- 241: NULL for every arrival but a recovery
+      v_msg.recovered_from,  -- 241: NULL for every arrival but a recovery
+      -- 559 (#2542): only an event that is published is stamped and held. The deadline is taken from the store's own
+      -- clock, the one created_at is, so a bounded hold lasts what the origin asked for however late the row is fetched.
+      CASE
+        WHEN NOT COALESCE(v_msg.is_event, false) OR v_msg.destination IS NULL OR v_msg.sequence_hold_ms = 0 THEN NULL
+        WHEN v_msg.sequence_hold_ms < 0 THEN 'infinity'::TIMESTAMPTZ
+        ELSE p_now + v_msg.sequence_hold_ms * INTERVAL '1 millisecond'
+      END
     )
     ON CONFLICT ON CONSTRAINT wh_outbox_pkey DO NOTHING;
 
@@ -406,7 +418,9 @@ COMMENT ON FUNCTION __SCHEMA__.store_outbox_messages(JSONB, UUID, TIMESTAMPTZ, T
   'recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead '
   'letter and its row names it for complete_outbox_published to settle. 266: raises SQLSTATE WHS01 '
   '(StreamSealedException) for an event the caller awaits on a sealed stream (#1733). 271: and SQLSTATE WHA01 or WHA02 '
-  '(StreamArchivedException) for one on an archived stream, by its type''s AppendToArchived policy (#1738). 567 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own).';
+  '(StreamArchivedException) for one on an archived stream, by its type''s AppendToArchived policy (#1738). 559: writes '
+  'the hold the origin decided for a published event (SequenceHoldMilliseconds) as sequence_hold_until (#2542). '
+  '567 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own).';
 
 -- ---------------------------------------------------------------------------------------------
 -- store_inbox_messages: copied from its last word (460), with the 567 delta: the switch's map branch.

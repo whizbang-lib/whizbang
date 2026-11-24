@@ -30,9 +30,17 @@
 --                map, for every kind.
 --              A partition handing over is claimed by nobody until its flip (phase 5).
 --
---              Off, every function is exactly as before: each change is the switch's other arm, and the legacy arm is
---              the previous text unchanged. ClaimPathsDecideThroughTheOwnershipTableGuardTests fails when a claim
---              function does not call wh_i_own, or ranks anywhere but in the legacy arm.
+--              Off (the legacy arm), every claim function tests a partition through wh_partition_in_share (564,
+--              #2558), the published partition map's answer when the caller's assignment carries one and the residue
+--              otherwise: claim_work and wh_claim_multi_stream_work read the map with the rank, and the acquisitions
+--              take it as a trailing p_partition_owners. The wake-up's unclaimed streams ring the partition's owner in
+--              the published map (wh_partition_ownership) when it is live, and the live list's residue only when no
+--              live owner is mapped. Nothing else changes off. The two migrations that redefine these functions for
+--              #2558 and #2555 are folded here, so each is redefined once with both arms; a later number copied from
+--              either one alone would drop the other's arm (InstalledClaimDefinitionsCarryEveryBranchSqlTests reads
+--              the installed definitions). ClaimPathsDecideThroughTheOwnershipTableGuardTests fails when a claim
+--              function does not call wh_i_own, or ranks anywhere but in the legacy arm, and
+--              ClaimsReadThePartitionMapGuardTests when one ranks by a bare modulo.
 --
 --              Cost: the switch is one primary-key read of wh_settings per call. Under claim_work's
 --              plan_cache_mode = force_custom_plan it is a constant at plan time, so the arm not taken is planned
@@ -42,9 +50,11 @@
 -- Dependencies: 565 (wh_i_own, wh_partition_ownership_by_map, wh_partition_map_is_valid), 545 (claim_work), 317
 --               (claim_orphaned_outbox, wh_claim_multi_stream_work), 411 (claim_orphaned_inbox), 557
 --               (claim_orphaned_perspective_events), 536 (get_stream_events, wh_lease_claimed_streams,
---               notify_instance_owners_with_payload)
+--               notify_instance_owners_with_payload), 559 (wh_continue_outbox_streams), 564 (wh_partition_in_share and the
+--               published map)
 -- Objects: idx_partition_ownership_active_owner, wh_partitions_i_own, claim_work, claim_orphaned_outbox, claim_orphaned_inbox, claim_orphaned_perspective_events,
---          wh_lease_claimed_streams, wh_claim_multi_stream_work, get_stream_events, notify_instance_owners_with_payload
+--          wh_lease_claimed_streams, wh_claim_multi_stream_work, get_stream_events, notify_instance_owners_with_payload,
+--          wh_continue_outbox_streams, wh_claim_due_schedules
 -- Constants: the double-underscore tokens in this file (for example __CATEGORY_OUTBOX__) are substituted from
 --            Migrations/constants.txt at apply time (README rule 12).
 
@@ -162,6 +172,10 @@ SELECT __SCHEMA__.drop_all_overloads('claim_work');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapClaimSqlTests.cs:Inbox_AnExpiredLeaseOnAPartitionThatMovedAway_IsNotRenewedByItsHolderAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapClaimSqlTests.cs:SwitchOff_TheStoredOwnerKeepsItsStream_AsBeforeAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ClaimPathsDecideThroughTheOwnershipTableGuardTests.cs:EveryClaimFunction_DecidesThroughWhIOwn_AndRanksOnlyInTheLegacyBranchAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionMapClaimSqlTests.cs:ClaimWork_Outbox_WithAMap_TakesThePartitionsTheMapGivesIt_NotItsResidueAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionMapClaimSqlTests.cs:ClaimWork_WithAMapButAStaleVersion_RanksItselfByTheResidueAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionMapClaimSqlTests.cs:ClaimWork_WithAMapThatLeavesItOut_RanksItselfByTheResidueAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionMapClaimSqlTests.cs:ClaimWork_HeldInboxLeases_AreRenewedOnlyOnPartitionsTheMapGivesItAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.claim_work(
   p_instance_id UUID,
   p_service_name TEXT,
@@ -270,6 +284,9 @@ BEGIN
     v_caller __SCHEMA__.wh_service_instances%ROWTYPE;
     v_caller_found BOOLEAN;
     v_count INTEGER;
+    -- 566 (#2558): the published partition map, read with the rank when the caller's assignment passes the fence; NULL
+    -- otherwise, so a claim that ranks itself ranks by modulo as before.
+    v_owners SMALLINT[];
     -- v0.661: track per-category RETURN QUERY rowcount so the drain-mode hint
     -- can be derived from ROW_COUNT instead of four fresh COUNT(*) queries.
     v_outbox_rows INTEGER := 0;
@@ -406,8 +423,8 @@ BEGIN
     -- index page as well (PartitionAssignmentClaimCostScenarioTests).
     -- 566: the rank below is the legacy mode's alone; in map mode no claim ranks.
     IF NOT v_map AND p_assignment_epoch IS NOT NULL THEN
-      SELECT array_position(pa.members, p_instance_id) - 1, cardinality(pa.members)
-      INTO v_rank, v_count
+      SELECT array_position(pa.members, p_instance_id) - 1, cardinality(pa.members), pa.partition_owners
+      INTO v_rank, v_count, v_owners
       FROM __SCHEMA__.wh_published_partition_assignment pa
       WHERE pa.epoch = p_assignment_epoch
         AND pa.revision = p_assignment_revision
@@ -420,6 +437,8 @@ BEGIN
     END IF;
 
     IF NOT v_map AND NOT v_assigned THEN
+    -- 566 (#2558): a claim that ranks itself ranks by modulo, never by a map it is not a member of.
+    v_owners := NULL;
     SELECT ranked.instance_rank, ranked.active_instance_count INTO v_rank, v_count
     FROM (
       SELECT live.instance_id,
@@ -491,7 +510,8 @@ BEGIN
       FROM __SCHEMA__.claim_orphaned_outbox(
         p_instance_id, v_rank, v_count, v_lease_expiry, v_now, p_partition_count, v_stale_cutoff,
         v_outbox_bound, GREATEST(COALESCE(p_outbox_run_length, 1), 1), p_max_streams,
-        TRUE
+        TRUE,
+        v_owners
       ) a;
     END IF;
 
@@ -529,7 +549,8 @@ BEGIN
         -- is withheld; whatever is acquired is re-offered below in full, so a leased idle row can
         -- never be held unoffered.
         v_idle_acquire_rows,
-        TRUE
+        TRUE,
+        v_owners
       ) a;
     END IF;
 
@@ -570,7 +591,7 @@ BEGIN
                 WHERE ast.stream_id = e.stream_id
                   AND ast.assigned_instance_id = p_instance_id
                   AND ast.lease_expiry > v_now))
-           OR ((e.partition_number IS NULL OR CASE WHEN v_map THEN __SCHEMA__.wh_i_own(e.partition_number, p_instance_id) IS NOT NULL ELSE (e.partition_number % v_count) = v_rank END)
+           OR ((e.partition_number IS NULL OR CASE WHEN v_map THEN __SCHEMA__.wh_i_own(e.partition_number, p_instance_id) IS NOT NULL ELSE __SCHEMA__.wh_partition_in_share(e.partition_number, v_rank, v_count, v_owners) END)
                AND (v_map OR NOT EXISTS (
                  SELECT 1
                  FROM __SCHEMA__.wh_active_streams ast
@@ -634,7 +655,8 @@ BEGIN
       FROM __SCHEMA__.claim_orphaned_perspective_events(
         p_instance_id, v_lease_expiry, v_now, COALESCE(p_max_perspective_streams, p_max_streams), v_rank, v_count,
         COALESCE(p_max_rows, GREATEST(COALESCE(p_max_perspective_streams, p_max_streams), 1) * 8),
-        TRUE
+        TRUE,
+        v_owners
       ) a;
     END IF;
 
@@ -1190,6 +1212,7 @@ SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_outbox');
 -- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapClaimSqlTests.cs:Outbox_TheMapMovesThePartition_TheNewOwnerClaimsTheStream_AndTheStoredOwnerNothingAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ClaimPathsDecideThroughTheOwnershipTableGuardTests.cs:EveryClaimFunction_DecidesThroughWhIOwn_AndRanksOnlyInTheLegacyBranchAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionMapClaimSqlTests.cs:ClaimWork_Outbox_WithAMap_TakesThePartitionsTheMapGivesIt_NotItsResidueAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_outbox(
   p_instance_id UUID,
   p_instance_rank INTEGER,
@@ -1208,7 +1231,11 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_outbox(
   -- write no ledger row of their own; it writes every claimed stream's row once, in one stream_id pass,
   -- after the last acquisition (wh_lease_claimed_streams). A direct caller keeps the default and gets
   -- the same one-pass write here, inside this statement.
-  p_ledger_deferred BOOLEAN DEFAULT FALSE
+  p_ledger_deferred BOOLEAN DEFAULT FALSE,
+  -- 566 (#2558): the published partition map, when the caller's assignment carries one: entry p + 1 is the index in
+  -- the assignment's members of the member partition p belongs to. NULL ranks by modulo, as before. Every legacy-mode
+  -- partition test in this function reads it through wh_partition_in_share.
+  p_partition_owners SMALLINT[] DEFAULT NULL
 ) RETURNS TABLE(
   message_id UUID,
   stream_id UUID,
@@ -1308,7 +1335,7 @@ BEGIN
         EXISTS (SELECT 1 FROM mine_owned m WHERE m.stream_id = s.s_stream_id)
         OR (
           (s.s_partition_number IS NULL
-           OR CASE WHEN v_map THEN (s.s_partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE (s.s_partition_number % p_active_instance_count) = p_instance_rank END)
+           OR CASE WHEN v_map THEN (s.s_partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE __SCHEMA__.wh_partition_in_share(s.s_partition_number, p_instance_rank, p_active_instance_count, p_partition_owners) END)
           AND NOT EXISTS (SELECT 1 FROM others_live ol WHERE ol.stream_id = s.s_stream_id)
         )
       )
@@ -1575,7 +1602,7 @@ BEGIN
   SELECT c.c_message_id AS message_id, c.c_stream_id AS stream_id, c.c_partition_number AS partition_number FROM claimed c;
 END;
 $$ LANGUAGE plpgsql;
-COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_outbox(UUID, INTEGER, INTEGER, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER, TIMESTAMPTZ, INTEGER, INTEGER, INTEGER, BOOLEAN) IS
+COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_outbox(UUID, INTEGER, INTEGER, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER, TIMESTAMPTZ, INTEGER, INTEGER, INTEGER, BOOLEAN, SMALLINT[]) IS
   'Acquires unowned/abandoned pending outbox rows for an instance (see 024 for the ownership rationale, 115 for the '
   'coalesce-aware selection, 148 for the stream lease). 171: the oldest claimable rows (at most p_max_heads) choose '
   'the streams that move, and each leases up to p_run_length of its next consecutive rows as a prefix, within '
@@ -1612,6 +1639,7 @@ SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_inbox');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapClaimSqlTests.cs:Inbox_TheMapMovesThePartition_TheNewOwnerClaimsTheStream_AndTheStoredOwnerNothingAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapClaimSqlTests.cs:Inbox_StealingNeverTakesAPartitionThisInstanceDoesNotOwnAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ClaimPathsDecideThroughTheOwnershipTableGuardTests.cs:EveryClaimFunction_DecidesThroughWhIOwn_AndRanksOnlyInTheLegacyBranchAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionMapClaimSqlTests.cs:ClaimWork_Inbox_WithAMap_TakesThePartitionsTheMapGivesIt_NotItsResidueAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_inbox(
   p_instance_id UUID,
   p_instance_rank INTEGER,
@@ -1635,7 +1663,11 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_inbox(
   -- write no ledger row of their own; it writes every claimed stream's row once, in one stream_id pass,
   -- after the last acquisition (wh_lease_claimed_streams). A direct caller keeps the default and gets
   -- the same one-pass write here, inside this statement.
-  p_ledger_deferred BOOLEAN DEFAULT FALSE
+  p_ledger_deferred BOOLEAN DEFAULT FALSE,
+  -- 566 (#2558): the published partition map, when the caller's assignment carries one: entry p + 1 is the index in
+  -- the assignment's members of the member partition p belongs to. NULL ranks by modulo, as before. Every legacy-mode
+  -- partition test in this function reads it through wh_partition_in_share.
+  p_partition_owners SMALLINT[] DEFAULT NULL
 ) RETURNS TABLE(
   message_id UUID,
   stream_id UUID,
@@ -1869,7 +1901,7 @@ BEGIN
         i.stream_id IN (SELECT stream_id FROM mine_owned)
         OR (
           (i.partition_number IS NULL
-           OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE (i.partition_number % p_active_instance_count) = p_instance_rank END
+           OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE __SCHEMA__.wh_partition_in_share(i.partition_number, p_instance_rank, p_active_instance_count, p_partition_owners) END
            OR (p_allow_steal AND NOT v_map AND NOT EXISTS (
                  -- 145 (#725): never steal from a stream another live instance is mid-drain on; taking its next
                  -- row would interleave one stream across two instances and break per-stream order.
@@ -1894,7 +1926,7 @@ BEGIN
         i.stream_id IN (SELECT stream_id FROM mine_owned)
         OR (
           (i.partition_number IS NULL
-           OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE (i.partition_number % p_active_instance_count) = p_instance_rank END
+           OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE __SCHEMA__.wh_partition_in_share(i.partition_number, p_instance_rank, p_active_instance_count, p_partition_owners) END
            OR (p_allow_steal AND NOT v_map AND NOT EXISTS (
                  -- 145 (#725): never steal from a stream another live instance is mid-drain on; taking its next
                  -- row would interleave one stream across two instances and break per-stream order.
@@ -1924,7 +1956,7 @@ BEGIN
         i.stream_id IN (SELECT stream_id FROM mine_owned)
         OR (
           (i.partition_number IS NULL
-           OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE (i.partition_number % p_active_instance_count) = p_instance_rank END
+           OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE __SCHEMA__.wh_partition_in_share(i.partition_number, p_instance_rank, p_active_instance_count, p_partition_owners) END
            OR (p_allow_steal AND NOT v_map AND NOT EXISTS (
                  -- 145 (#725): never steal from a stream another live instance is mid-drain on; taking its next
                  -- row would interleave one stream across two instances and break per-stream order.
@@ -1956,7 +1988,7 @@ BEGIN
         i.stream_id IN (SELECT stream_id FROM mine_owned)
         OR (
           (i.partition_number IS NULL
-           OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE (i.partition_number % p_active_instance_count) = p_instance_rank END
+           OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE __SCHEMA__.wh_partition_in_share(i.partition_number, p_instance_rank, p_active_instance_count, p_partition_owners) END
            OR (p_allow_steal AND NOT v_map AND NOT EXISTS (
                  -- 145 (#725): never steal from a stream another live instance is mid-drain on; taking its next
                  -- row would interleave one stream across two instances and break per-stream order.
@@ -1981,7 +2013,7 @@ BEGIN
         i.stream_id IN (SELECT stream_id FROM mine_owned)
         OR (
           (i.partition_number IS NULL
-           OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE (i.partition_number % p_active_instance_count) = p_instance_rank END
+           OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE __SCHEMA__.wh_partition_in_share(i.partition_number, p_instance_rank, p_active_instance_count, p_partition_owners) END
            OR (p_allow_steal AND NOT v_map AND NOT EXISTS (
                  -- 145 (#725): never steal from a stream another live instance is mid-drain on; taking its next
                  -- row would interleave one stream across two instances and break per-stream order.
@@ -2012,7 +2044,7 @@ BEGIN
         i.stream_id IN (SELECT stream_id FROM mine_owned)
         OR (
           (i.partition_number IS NULL
-           OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE (i.partition_number % p_active_instance_count) = p_instance_rank END
+           OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE __SCHEMA__.wh_partition_in_share(i.partition_number, p_instance_rank, p_active_instance_count, p_partition_owners) END
            OR (p_allow_steal AND NOT v_map AND NOT EXISTS (
                  -- 145 (#725): never steal from a stream another live instance is mid-drain on; taking its next
                  -- row would interleave one stream across two instances and break per-stream order.
@@ -2031,7 +2063,7 @@ BEGIN
           AND (j.instance_id IS NULL OR j.lease_expiry < p_now)
           AND (j.scheduled_for IS NULL OR j.scheduled_for <= p_now)
           AND (j.partition_number IS NULL
-               OR CASE WHEN v_map THEN (j.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE (j.partition_number % p_active_instance_count) = p_instance_rank END
+               OR CASE WHEN v_map THEN (j.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE __SCHEMA__.wh_partition_in_share(j.partition_number, p_instance_rank, p_active_instance_count, p_partition_owners) END
                OR (p_allow_steal AND NOT v_map AND NOT EXISTS (
                  SELECT 1 FROM __SCHEMA__.wh_inbox_state l
                  WHERE l.stream_id = j.stream_id AND l.processed_at IS NULL
@@ -2058,7 +2090,7 @@ BEGIN
       WHERE i.stream_id = s.stream_id
         AND i.is_event = TRUE
         AND (i.partition_number IS NULL
-             OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE (i.partition_number % p_active_instance_count) = p_instance_rank END
+             OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE __SCHEMA__.wh_partition_in_share(i.partition_number, p_instance_rank, p_active_instance_count, p_partition_owners) END
              OR (p_allow_steal AND NOT v_map AND NOT EXISTS (
                  SELECT 1 FROM __SCHEMA__.wh_inbox_state l
                  WHERE l.stream_id = i.stream_id AND l.processed_at IS NULL
@@ -2083,7 +2115,7 @@ BEGIN
         i.stream_id IN (SELECT stream_id FROM mine_owned)
         OR (
           (i.partition_number IS NULL
-           OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE (i.partition_number % p_active_instance_count) = p_instance_rank END
+           OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE __SCHEMA__.wh_partition_in_share(i.partition_number, p_instance_rank, p_active_instance_count, p_partition_owners) END
            OR (p_allow_steal AND NOT v_map AND NOT EXISTS (
                  -- 145 (#725): never steal from a stream another live instance is mid-drain on; taking its next
                  -- row would interleave one stream across two instances and break per-stream order.
@@ -2114,7 +2146,7 @@ BEGIN
         i.stream_id IN (SELECT stream_id FROM mine_owned)
         OR (
           (i.partition_number IS NULL
-           OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE (i.partition_number % p_active_instance_count) = p_instance_rank END
+           OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE __SCHEMA__.wh_partition_in_share(i.partition_number, p_instance_rank, p_active_instance_count, p_partition_owners) END
            OR (p_allow_steal AND NOT v_map AND NOT EXISTS (
                  -- 145 (#725): never steal from a stream another live instance is mid-drain on; taking its next
                  -- row would interleave one stream across two instances and break per-stream order.
@@ -2133,7 +2165,7 @@ BEGIN
           AND (j.instance_id IS NULL OR j.lease_expiry < p_now)
           AND (j.scheduled_for IS NULL OR j.scheduled_for <= p_now)
           AND (j.partition_number IS NULL
-               OR CASE WHEN v_map THEN (j.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE (j.partition_number % p_active_instance_count) = p_instance_rank END
+               OR CASE WHEN v_map THEN (j.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE __SCHEMA__.wh_partition_in_share(j.partition_number, p_instance_rank, p_active_instance_count, p_partition_owners) END
                OR (p_allow_steal AND NOT v_map AND NOT EXISTS (
                  SELECT 1 FROM __SCHEMA__.wh_inbox_state l
                  WHERE l.stream_id = j.stream_id AND l.processed_at IS NULL
@@ -2160,7 +2192,7 @@ BEGIN
       WHERE i.stream_id = s.stream_id
         AND i.is_event = TRUE
         AND (i.partition_number IS NULL
-             OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE (i.partition_number % p_active_instance_count) = p_instance_rank END
+             OR CASE WHEN v_map THEN (i.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE __SCHEMA__.wh_partition_in_share(i.partition_number, p_instance_rank, p_active_instance_count, p_partition_owners) END
              OR (p_allow_steal AND NOT v_map AND NOT EXISTS (
                  SELECT 1 FROM __SCHEMA__.wh_inbox_state l
                  WHERE l.stream_id = i.stream_id AND l.processed_at IS NULL
@@ -2416,7 +2448,7 @@ BEGIN
   ORDER BY c.c_lane, c.c_kind, c.c_stream_seq, c.c_received_at, c.c_message_id;
 END;
 $$ LANGUAGE plpgsql;
-COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_inbox(UUID, INTEGER, INTEGER, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER, TIMESTAMPTZ, INTEGER, BOOLEAN, INTEGER, BOOLEAN) IS
+COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_inbox(UUID, INTEGER, INTEGER, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER, TIMESTAMPTZ, INTEGER, BOOLEAN, INTEGER, BOOLEAN, SMALLINT[]) IS
   '411 (#2120): a picked stream''s earlier pending events that no live lease holds are taken ahead of its picked rows, '
   'whatever their priority, at most as many as the stream''s picked rows, so an event is not held back behind '
   'predecessors outside its band''s window. '
@@ -2442,6 +2474,7 @@ SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_perspective_events');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapClaimSqlTests.cs:Perspective_TheMapMovesThePartition_TheNewOwnerClaimsTheStream_AndTheStoredOwnerNothingAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapClaimSqlTests.cs:APartitionHandingOver_IsClaimedByNeitherSideAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ClaimPathsDecideThroughTheOwnershipTableGuardTests.cs:EveryClaimFunction_DecidesThroughWhIOwn_AndRanksOnlyInTheLegacyBranchAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionMapClaimSqlTests.cs:ClaimWork_Perspective_WithAMap_TakesThePartitionsTheMapGivesIt_NotItsResidueAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_perspective_events(
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,
@@ -2462,7 +2495,11 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_perspective_events(
   -- write no ledger row of their own; it writes every claimed stream's row once, in one stream_id pass,
   -- after the last acquisition (wh_lease_claimed_streams). A direct caller keeps the default and gets
   -- the same one-pass write here, inside this statement.
-  p_ledger_deferred BOOLEAN DEFAULT FALSE
+  p_ledger_deferred BOOLEAN DEFAULT FALSE,
+  -- 566 (#2558): the published partition map, when the caller's assignment carries one: entry p + 1 is the index in
+  -- the assignment's members of the member partition p belongs to. NULL ranks by modulo, as before. Every legacy-mode
+  -- partition test in this function reads it through wh_partition_in_share.
+  p_partition_owners SMALLINT[] DEFAULT NULL
 ) RETURNS TABLE(
   event_work_id UUID,
   stream_id UUID,
@@ -2539,7 +2576,7 @@ BEGIN
         OR
         -- UNOWNED / ABANDONED PATH: partition-modulo selection for streams with no live owner.
         (
-          CASE WHEN v_map THEN (pe.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE (pe.partition_number % p_active_instance_count) = p_instance_rank END
+          CASE WHEN v_map THEN (pe.partition_number % 10000) IN (SELECT mp.partition_number FROM mine_partitions mp) ELSE __SCHEMA__.wh_partition_in_share(pe.partition_number, p_instance_rank, p_active_instance_count, p_partition_owners) END
           AND (v_map OR NOT COALESCE(
             owner.assigned_instance_id != p_instance_id
             -- 317 (#2027): the owner counts while the one liveness rule calls it live.
@@ -2746,7 +2783,7 @@ BEGIN
   FROM claimed c;
 END;
 $$ LANGUAGE plpgsql;
-COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_perspective_events(UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER, INTEGER, INTEGER, INTEGER, BOOLEAN) IS
+COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_perspective_events(UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER, INTEGER, INTEGER, INTEGER, BOOLEAN, SMALLINT[]) IS
   'Acquires unowned/abandoned pending perspective events for an instance, by stream (027 ownership, 140 per-stream gate, 148 stream leases). 150: the streams with the most urgent claimable event are selected first, oldest first within a priority. 160: bounded by ROWS as well as by streams -- it used to take a batch of streams and lease every pending event of each, so one call cost whatever a consumer''s streams happened to hold; a stream deeper than the bound is now captured from its head over consecutive polls. 202: the stream ledger is '
   'written in one stream_id pass (lock every existing row first, then refresh, take over, and insert new streams), and '
   'p_ledger_deferred leaves it to the caller (claim_work), each row carrying its partition number for that write. '
@@ -2923,6 +2960,8 @@ DECLARE
   v_count INTEGER;
   -- 566 (#2554, #2555): the service's switch, read once: on, the partition ownership table alone decides.
   v_map BOOLEAN := __SCHEMA__.wh_partition_ownership_by_map();
+  -- 566 (#2558): the published partition map, when the caller is a member of the current assignment; NULL otherwise.
+  v_owners SMALLINT[];
 BEGIN
   -- 300 (#1636): a caller whose own row says it may not claim gets nothing, as claim_work refuses it. One primary-key
   -- lookup of the caller's row.
@@ -2943,8 +2982,8 @@ BEGIN
   END IF;
 
   IF NOT v_map AND p_assignment_epoch IS NOT NULL THEN
-    SELECT array_position(pa.members, p_instance_id) - 1, cardinality(pa.members)
-    INTO v_rank, v_count
+    SELECT array_position(pa.members, p_instance_id) - 1, cardinality(pa.members), pa.partition_owners
+    INTO v_rank, v_count, v_owners
     FROM __SCHEMA__.wh_published_partition_assignment pa
     WHERE pa.epoch = p_assignment_epoch
       AND pa.revision = p_assignment_revision
@@ -2952,6 +2991,8 @@ BEGIN
   END IF;
 
   IF NOT v_map AND v_rank IS NULL THEN
+    -- 566 (#2558): a claim that ranks itself ranks by modulo, never by a map it is not a member of.
+    v_owners := NULL;
     SELECT ranked.instance_rank, ranked.active_instance_count INTO v_rank, v_count
     FROM (
       SELECT live.instance_id,
@@ -2982,7 +3023,7 @@ BEGIN
         OR (
           -- Otherwise the partition decides, unless a live sibling holds the stream's lease. 566: in map mode the
           -- partition's owner decides alone.
-          CASE WHEN v_map THEN __SCHEMA__.wh_i_own(rs.partition_number, p_instance_id) IS NOT NULL ELSE (rs.partition_number % v_count) = v_rank END
+          CASE WHEN v_map THEN __SCHEMA__.wh_i_own(rs.partition_number, p_instance_id) IS NOT NULL ELSE __SCHEMA__.wh_partition_in_share(rs.partition_number, v_rank, v_count, v_owners) END
           AND (v_map OR NOT (
             ast.assigned_instance_id IS NOT NULL
             AND ast.assigned_instance_id <> p_instance_id
@@ -3285,18 +3326,27 @@ BEGIN
   -- The partition number is COMPUTED, never read from a queue table (see 317 and its predecessors): the stream
   -- ledger's number first, compute_partition only for a stream the ledger has never held, so the doorbell wakes the
   -- instance the claim itself routes the stream to. A doorbell kind other than these three (schedule) and a signal's
-  -- wire name reach no branch, as before. Every target here is live by construction (it is drawn from v_live).
+  -- wire name reach no branch, as before. Every target here is live by construction.
+  -- 566 (#2554, #2558): the target is the partition's owner in the published map (wh_partition_ownership, written from
+  -- the map with every publish), the instance the legacy claim's map-aware rank (wh_partition_in_share) routes the
+  -- stream to, when that owner is live. Only a partition with no live owner in the map (none published yet, or its
+  -- owner gone before the next publish) falls back to the live list's residue, the rank a claimer with no valid map
+  -- takes. One primary-key probe per unclaimed stream.
   IF p_kind IN (__CATEGORY_OUTBOX__, __CATEGORY_INBOX__, __CATEGORY_PERSPECTIVE__) THEN
     PERFORM __SCHEMA__._wh_notify_debounced_for(targets.target_instance_id, p_kind, p_payload, v_debounce, true)
     FROM (
-      SELECT DISTINCT v_live[1 + (
-        COALESCE(
-          (SELECT ast.partition_number
-           FROM __SCHEMA__.wh_active_streams ast
-           WHERE ast.stream_id = s),
-          __SCHEMA__.compute_partition(s)
-        ) % v_active_count)] AS target_instance_id
-      FROM unnest(v_unclaimed_streams) AS s
+      SELECT DISTINCT COALESCE(o.owner_instance_id, v_live[1 + (sp.partition_number % v_active_count)]) AS target_instance_id
+      FROM (
+        SELECT COALESCE(
+                 (SELECT ast.partition_number
+                  FROM __SCHEMA__.wh_active_streams ast
+                  WHERE ast.stream_id = s),
+                 __SCHEMA__.compute_partition(s)) AS partition_number
+        FROM unnest(v_unclaimed_streams) AS s
+      ) AS sp
+      LEFT JOIN __SCHEMA__.wh_partition_ownership o
+        ON o.partition_number = sp.partition_number % 10000
+       AND o.owner_instance_id = ANY(v_live)
     ) AS targets
     -- A number outside 0..count-1 (only a negative stored partition) matched no rank before and rings no one now.
     WHERE targets.target_instance_id IS NOT NULL;
@@ -3308,7 +3358,7 @@ COMMENT ON FUNCTION __SCHEMA__.notify_instance_owners_with_payload(TEXT, TEXT, U
 'Instance-routed NOTIFY emission with doorbell debounce (slice 27 + v0.685 + 130, kind split from payload in 141). 369: the live instances are read once per call, and each target''s liveness and the deterministic rank come from that read (the rule reads pg_locks, so judging it per target cost a plan and a pg_locks read per owner). Per-owner for pinned streams; rank-deterministic for unclaimed outbox/inbox/perspective streams, where the partition number is the stream ledger''s, else computed through compute_partition, never read out of a queue table. Every emission goes through _wh_notify_debounced_for(instance, p_kind, p_payload, window, live). Signals call this form with their wire name as both, and reach only the per-owner path. 536: an unclaimed stream is found by one probe of its ledger row, never by a pass over the ledger. 566 (#2554, #2555): with the service''s switch on (wh_partition_ownership_by_map), decided through wh_i_own alone.';
 
 -- ---------------------------------------------------------------------------------------------
--- wh_continue_outbox_streams: copied from its last word (172), with the 566 delta: the switch's map branch.
+-- wh_continue_outbox_streams: copied from its last word (559), with the 566 delta: the switch's map branch.
 -- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('wh_continue_outbox_streams');
 
@@ -3320,6 +3370,8 @@ SELECT __SCHEMA__.drop_all_overloads('wh_continue_outbox_streams');
 -- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapClaimSqlTests.cs:Continuation_ContinuesOnlyAStreamOnAPartitionThisInstanceOwnsAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ClaimPathsDecideThroughTheOwnershipTableGuardTests.cs:EveryClaimFunction_DecidesThroughWhIOwn_AndRanksOnlyInTheLegacyBranchAsync</tests>
+-- <docs>fundamentals/messaging/sequence-integrity#how-the-hold-works</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SequenceIntegritySqlTests.cs:Continue_StopsAStreamAtItsHeldEvent_AsTheFetchDoesAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_continue_outbox_streams(
   p_instance_id UUID,
   p_stream_ids UUID[],
@@ -3500,6 +3552,10 @@ BEGIN
       es.commit_sequence AS es_commit_sequence,
       es.origin_service_id AS es_origin_service_id,
       es.origin_commit_sequence AS es_origin_commit_sequence,
+      -- 559 (#2542): an event held for its commit-order stamp: it has a hold that has not run out, and its stored
+      -- event has no commit sequence yet. A row with no stored event is never held, since nothing would stamp it.
+      (o.sequence_hold_until IS NOT NULL AND o.sequence_hold_until > v_now
+        AND es.event_id IS NOT NULL AND es.commit_sequence IS NULL) AS sequence_held,
       ROW_NUMBER() OVER (
         PARTITION BY o.stream_id
         ORDER BY es.commit_sequence ASC NULLS LAST, o.message_id
@@ -3516,6 +3572,12 @@ BEGIN
   budgeted AS (
     SELECT
       r.*,
+      -- 559 (#2542): true from a stream's first held row on. That row and every row after it stay where they are,
+      -- whatever their own setting, so a receiver never sees the stream out of order.
+      bool_or(r.sequence_held)
+        OVER (PARTITION BY r.stream_id
+              ORDER BY r.es_commit_sequence ASC NULLS LAST, r.message_id
+              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS behind_hold,
       SUM(COALESCE(octet_length(r.event_data::TEXT), 0)
           + COALESCE(octet_length(r.metadata::TEXT), 0))
         OVER (PARTITION BY r.stream_id
@@ -3542,9 +3604,10 @@ BEGIN
     b.error,
     b.priority
   FROM budgeted b
-  WHERE p_max_bytes IS NULL
+  WHERE NOT b.behind_hold
+    AND (p_max_bytes IS NULL
      OR b.rank_in_stream = 1
-     OR b.running_bytes <= p_max_bytes
+     OR b.running_bytes <= p_max_bytes)
   ORDER BY b.stream_id, b.es_commit_sequence ASC NULLS LAST, b.message_id;
 END;
 $$ LANGUAGE plpgsql SET plan_cache_mode = force_custom_plan;
@@ -3554,7 +3617,9 @@ COMMENT ON FUNCTION __SCHEMA__.wh_continue_outbox_streams(UUID, UUID[], UUID[], 
   'up to p_run_length of the stream''s next consecutive rows as a prefix (stopping at a row it may not take), '
   'and returns the rows it holds after the last one the drain published, in fetch_outbox_batch''s shape and '
   'order. Lets the drain move a long stream on without waiting for the next claim cycle. 172: it never waits for a '
-  'lock: run rows and ledger rows another session holds are skipped. 566 (#2554, #2555): with the service''s switch on (wh_partition_ownership_by_map), decided through wh_i_own alone.';
+  'lock: run rows and ledger rows another session holds are skipped. 559 (#2542): cuts each stream at its first event '
+  'held for its commit-order stamp, as fetch_outbox_batch does. 566 (#2554, #2555): with the service''s switch on '
+  '(wh_partition_ownership_by_map), decided through wh_i_own alone.';
 
 -- ---------------------------------------------------------------------------------------------
 -- wh_claim_due_schedules: copied from its last word (068), with the 566 delta: the switch's map branch.
@@ -3692,3 +3757,9 @@ BEGIN
   END LOOP;
 END;
 $$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_claim_due_schedules(UUID, TIMESTAMPTZ, INTEGER, INTEGER, TIMESTAMPTZ) IS
+  'Temporal engine authoritative fire: leases due Active owned schedules (SKIP LOCKED), spawns each '
+  'occurrence into the outbox, advances next_fire_at (wh_schedule_next_fire + until/max bounds; '
+  'completion => status 2), and logs a wh_schedule_runs row, all atomically (exactly-once creation). 566 (#2554, '
+  '#2555): with the service''s switch on (wh_partition_ownership_by_map), a schedule is owned through wh_i_own alone.';
