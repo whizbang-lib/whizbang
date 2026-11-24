@@ -14,6 +14,14 @@
     <WhizbangEmitFolderReadmes Condition="'$(WhizbangEmitFolderReadmes)' == ''">true</WhizbangEmitFolderReadmes>
   </PropertyGroup>
 
+  <!-- Guid interception is on by default (#2528): an intercepted Guid.NewGuid() or Guid.CreateVersion7() returns the
+       framework's UUIDv7. The generated interceptors live in Whizbang.Generators.Generated, which the compiler must
+       allow; a project that sets WhizbangGuidInterceptionEnabled=false gets no interceptors, and the allowance is then
+       unused. -->
+  <PropertyGroup>
+    <InterceptorsNamespaces>$(InterceptorsNamespaces);Whizbang.Generators.Generated</InterceptorsNamespaces>
+  </PropertyGroup>
+
   <!-- WHIZ309 (a collective predicate on an unindexed field) is on by default. Consumers can set
        WhizbangCollectiveIndexWarning=false to turn it off for a project; a reasoned
        [SuppressIndexAdvisory] turns it off for one perspective, model or field instead.
@@ -29,7 +37,7 @@
   <!-- Every other property a generator reads must be declared here too, or a project's setting never reaches it
        and the default always applies (#1426; BuildPropertyVisibilityTests finds each read in the source).
        Table naming: WhizbangMaxIdentifierLength, WhizbangStripTableNameSuffixes, WhizbangTableNameSuffixesToStrip.
-       WhizbangGuidInterceptionEnabled turns on Guid creation interception; WhizbangQueryComposingAttributes names
+       WhizbangGuidInterceptionEnabled=false turns off Guid creation interception, which is on by default (#2528); WhizbangQueryComposingAttributes names
        a third party's query-composing attributes, comma separated. The Exclude keeps one item per name when the
        EF Core generators package declares the table-naming properties as well. -->
   <ItemGroup>

@@ -176,7 +176,7 @@ public sealed class WhizbangIdAttribute(string? targetNamespace = null) : Attrib
   /// <para>
   /// Prefer <see cref="Versions"/> when the id's values are made in known ways, for example minted (v7) or derived
   /// by name (v5): the id then still refuses a random v4 or a raw hash. Keep this option for ids issued outside the
-  /// application, whose version it does not control. Writing both is an error (WHIZ038).
+  /// application, whose version it does not control. Writing both is an error (WHIZ039).
   /// </para>
   /// </remarks>
   /// <example>
@@ -212,9 +212,9 @@ public sealed class WhizbangIdAttribute(string? targetNamespace = null) : Attrib
   /// </para>
   /// <para>
   /// When the <c>[WhizbangId]</c> declarations for one id (the struct, a property, a parameter) list different
-  /// versions, the id accepts the versions they have in common and WHIZ037 is reported at each list that was
-  /// narrowed. An empty list, or declarations with no version in common, is an error (WHIZ039). Writing this
-  /// together with <c>AcceptAnyVersion = true</c> is an error (WHIZ038).
+  /// versions, the id accepts the versions they have in common and WHIZ038 is reported at each list that was
+  /// narrowed. An empty list, or declarations with no version in common, is an error (WHIZ043). Writing this
+  /// together with <c>AcceptAnyVersion = true</c> is an error (WHIZ039).
   /// </para>
   /// </remarks>
   /// <example>

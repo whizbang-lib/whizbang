@@ -462,6 +462,15 @@ public static class ServiceCollectionExtensions {
     // (idle footprint per periodic worker): both passive, every series present at zero.
     services.TryAddSingleton<InstanceLivenessMetrics>();
     services.TryAddSingleton<CompositeMetrics>();
+    // #2528: the time-ordering check every event and message id entry point runs, with the configured severity and
+    // the counters for what it accepts below Error.
+    services.TryAddSingleton<GuidOrderingMetrics>();
+    services.TryAddSingleton(static sp => new Whizbang.Core.Validation.GuidOrderingValidator(
+      sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.WhizbangOptions>>()?.Value
+        ?? new Whizbang.Core.Configuration.WhizbangOptions(),
+      sp.GetService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Validation.GuidOrderingValidator>>()
+        ?? (Microsoft.Extensions.Logging.ILogger)Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance,
+      sp.GetService<GuidOrderingMetrics>()));
     services.AddWhizbangPriority();
     services.TryAddSingleton<ProbeCadenceMetrics>();
     // Turn-key: registered here so a governor's decisions and the evidence behind them reach

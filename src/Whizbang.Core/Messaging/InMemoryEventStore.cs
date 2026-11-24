@@ -28,6 +28,9 @@ public class InMemoryEventStore : IEventStore {
   private readonly ConcurrentDictionary<Guid, StreamData> _streams = new();
   private readonly IEnvelopeRegistry? _envelopeRegistry;
 
+  /// <summary>The time-ordering check every append runs before anything is stored (#2528); the default validator unless set.</summary>
+  public Whizbang.Core.Validation.GuidOrderingValidator GuidOrdering { get; init; } = Whizbang.Core.Validation.GuidOrderingValidator.Default;
+
   /// <summary>
   /// Creates an InMemoryEventStore without envelope registry support.
   /// Messages passed to the raw AppendAsync overload will use minimal envelopes.
@@ -55,6 +58,7 @@ public class InMemoryEventStore : IEventStore {
   /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
   public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
+    GuidOrdering.ValidateAppend(streamId, envelope, "InMemoryEventStore.Append");
 
     var stream = _streams.GetOrAdd(streamId, _ => new StreamData());
     stream.Append(envelope);

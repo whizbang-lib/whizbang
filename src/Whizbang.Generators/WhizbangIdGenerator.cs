@@ -466,9 +466,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// The one id that the routes discovering the same type resolve to: the strictest version rule they have in common,
   /// whatever the discovery order. When every route agrees, the first is kept, as before. Otherwise a route without
   /// <c>AcceptAnyVersion</c> is kept, its <c>Versions</c> narrowed to the versions every such route lists, and each
-  /// route whose rule was narrowed is reported: WHIZ029 at an ignored <c>AcceptAnyVersion</c> opt-in (#2071), WHIZ037
-  /// at a narrowed <c>Versions</c> list (#2516). A rule that accepts no version is WHIZ039, and
-  /// <c>AcceptAnyVersion = true</c> written with <c>Versions</c> is WHIZ038.
+  /// route whose rule was narrowed is reported: WHIZ029 at an ignored <c>AcceptAnyVersion</c> opt-in (#2071), WHIZ038
+  /// at a narrowed <c>Versions</c> list (#2516). A rule that accepts no version is WHIZ043, and
+  /// <c>AcceptAnyVersion = true</c> written with <c>Versions</c> is WHIZ039.
   /// </summary>
   private static WhizbangIdInfo _resolveRoutes(SourceProductionContext context, IEnumerable<WhizbangIdInfo> routes) {
     var all = routes.ToList();
@@ -517,7 +517,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Reports the declarations whose version rule is wrong on its own: <c>AcceptAnyVersion = true</c> together with
-  /// <c>Versions</c> (WHIZ038), and an empty <c>Versions</c> list (WHIZ039).
+  /// <c>Versions</c> (WHIZ039), and an empty <c>Versions</c> list (WHIZ043).
   /// </summary>
   private static void _reportVersionDeclarationErrors(SourceProductionContext context, List<WhizbangIdInfo> routes) {
     foreach (var route in routes.Where(id => id.DeclaresVersions)) {
@@ -1005,6 +1005,11 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterValueMember<global::{id.FullyQualifiedName}>(" +
         "static id => id.Value);"
       );
+      // An id that takes any version is never reported as a stream id that is not time-ordered (#2528).
+      if (id.AcceptAnyVersion) {
+        guidConversions.AppendLine(
+          $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterAcceptsAnyVersion<global::{id.FullyQualifiedName}>();");
+      }
     }
     template = TemplateUtilities.ReplaceRegion(
       template,

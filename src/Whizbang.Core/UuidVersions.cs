@@ -16,7 +16,7 @@ namespace Whizbang.Core;
 /// <tests>tests/Whizbang.Core.Tests/WhizbangIdAttributeTests.cs:UuidVersions_EachFlagIsTheBitOfItsVersionNumberAsync</tests>
 [Flags]
 public enum UuidVersions {
-  /// <summary>No version. An id that accepts none is an error (WHIZ039).</summary>
+  /// <summary>No version. An id that accepts none is an error (WHIZ043).</summary>
   None = 0,
 
   /// <summary>Version 1: time and node based (Gregorian timestamp, MAC address).</summary>

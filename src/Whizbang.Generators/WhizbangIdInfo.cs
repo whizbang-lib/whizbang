@@ -46,7 +46,7 @@ public enum DiscoverySource {
 /// <param name="Versions">The UUID versions the id accepts, as a <see cref="UuidVersionMask"/> (#2516). Ignored when
 /// <paramref name="AcceptAnyVersion"/> is true.</param>
 /// <param name="DeclaresVersions">True if <c>Versions</c> is written on this declaration's attribute, so writing it
-/// next to <c>AcceptAnyVersion = true</c> can be reported (WHIZ038).</param>
+/// next to <c>AcceptAnyVersion = true</c> can be reported (WHIZ039).</param>
 /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdTypeInfoTests.cs</tests>
 public sealed record WhizbangIdInfo(
   string TypeName,

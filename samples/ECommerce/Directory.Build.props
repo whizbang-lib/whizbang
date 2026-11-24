@@ -2,6 +2,9 @@
   <PropertyGroup>
     <TargetFramework>net11.0</TargetFramework>
     <LangVersion>latest</LangVersion>
+    <!-- Guid interception is on by default (#2528); the generated interceptors live in this namespace. A NuGet consumer
+         gets this from the package's props; these samples reference the generator as a project, so they set it. -->
+    <InterceptorsNamespaces>$(InterceptorsNamespaces);Whizbang.Generators.Generated</InterceptorsNamespaces>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
 

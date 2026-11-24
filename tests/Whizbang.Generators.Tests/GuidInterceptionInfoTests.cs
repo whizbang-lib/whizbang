@@ -83,11 +83,12 @@ public class GuidInterceptionInfoTests {
   public async Task GuidInterceptionInfo_Deconstruction_WorksCorrectlyAsync() {
     // Arrange
     var info = new GuidInterceptionInfo(
-      "src/file.cs", 100, 20, "CreateVersion7", "global::System.Guid", "Version7", "SourceMarten", "Intercept_Test"
+      "src/file.cs", 100, 20, "CreateVersion7", "global::System.Guid", "Version7", "SourceMarten", "Intercept_Test", 1, "data"
     );
 
     // Act
-    var (filePath, lineNumber, columnNumber, originalMethod, fullyQualifiedTypeName, guidVersion, guidSource, interceptorMethodName) = info;
+    var (filePath, lineNumber, columnNumber, originalMethod, fullyQualifiedTypeName, guidVersion, guidSource, interceptorMethodName,
+      locationVersion, locationData) = info;
 
     // Assert
     await Assert.That(filePath).IsEqualTo("src/file.cs");
@@ -98,6 +99,8 @@ public class GuidInterceptionInfoTests {
     await Assert.That(guidVersion).IsEqualTo("Version7");
     await Assert.That(guidSource).IsEqualTo("SourceMarten");
     await Assert.That(interceptorMethodName).IsEqualTo("Intercept_Test");
+    await Assert.That(locationVersion).IsEqualTo(1);
+    await Assert.That(locationData).IsEqualTo("data");
   }
 
   [Test]

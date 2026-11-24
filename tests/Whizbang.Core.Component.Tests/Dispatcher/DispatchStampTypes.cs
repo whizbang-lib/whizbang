@@ -29,3 +29,22 @@ public sealed class TgStampedCommandReceptor(IEnvelopeRegistry registry) : IRece
     return ValueTask.CompletedTask;
   }
 }
+
+/// <summary>
+/// A command another service owns whose stream the dispatcher generates on every send (the default
+/// <c>OnlyIfEmpty = false</c>), so a send runs it here and also writes its copy (#2539).
+/// </summary>
+[GenerateStreamId]
+public sealed class TgGeneratedStreamCommand : ICommand {
+  [StreamId]
+  public Guid StreamId { get; set; }
+
+  public required Guid Marker { get; init; }
+}
+
+public sealed class TgGeneratedStreamCommandReceptor : IReceptor<TgGeneratedStreamCommand> {
+  public ValueTask HandleAsync(TgGeneratedStreamCommand message, CancellationToken cancellationToken = default) {
+    TangentialProbe.Saw("commandStream", message.Marker, message.StreamId.ToString());
+    return ValueTask.CompletedTask;
+  }
+}

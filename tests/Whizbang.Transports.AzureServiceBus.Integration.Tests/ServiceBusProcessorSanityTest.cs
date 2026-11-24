@@ -67,7 +67,7 @@ public class ServiceBusProcessorSanityTest(ServiceBusEmulatorFixtureSource fixtu
 
     // The subscription is shared, so the processor completes whatever it gets but signals only on
     // THIS test's message: a stray from another test must neither satisfy nor fail the wait.
-    var testMessageId = Guid.NewGuid().ToString();
+    var testMessageId = Whizbang.Core.ValueObjects.TrackedGuid.New().Value.ToString();
     // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlock when Dispose() waits for handler
     var messageReceived = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
 

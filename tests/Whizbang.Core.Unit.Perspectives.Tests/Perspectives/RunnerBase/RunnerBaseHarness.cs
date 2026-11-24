@@ -214,6 +214,13 @@ internal static class Rb {
     return JsonSerializer.Deserialize(read.Model.GetRawText(), info)!;
   }
 
+  /// <summary>Runs <paramref name="body"/> as a rebuild runs it, and returns what it returned.</summary>
+  public static async Task<T> RunAsRebuildAsync<T>(Func<Task<T>> body) {
+    T result = default!;
+    await WithModeAsync(ProcessingMode.Rebuild, async () => result = await body());
+    return result;
+  }
+
   public static async Task WithModeAsync(ProcessingMode mode, Func<Task> body) {
     var previous = ProcessingModeAccessor.Current;
     ProcessingModeAccessor.Current = mode;
@@ -275,9 +282,47 @@ internal sealed class RbEvents() : ForwardingEventStoreDecorator(new InMemoryEve
   public IReadOnlyList<MessageEnvelope<IEvent>> Stream(Guid streamId) =>
     _streams.TryGetValue(streamId, out var stream) ? stream : [];
 
+  /// <summary>Whether the store reads many streams with one read; false answers a batched read with null.</summary>
+  public bool ReadsInBatches { get; set; }
+
+  /// <summary>Throws from every batched read.</summary>
+  public Exception? BatchReadFails { get; set; }
+
+  /// <summary>Streams a batched read leaves out of its answer, as a store that does not hold them might.</summary>
+  public HashSet<Guid> BatchOmits { get; } = [];
+
+  /// <summary>Called before each batched read with the streams it reads, so a test can cancel there.</summary>
+  public Action<IReadOnlyList<Guid>>? BeforeBatchRead { get; set; }
+
+  /// <summary>The round trips the store served: one per per-stream read, one per batched read.</summary>
+  public int RoundTrips => StreamReads.Count + BatchReads.Count;
+
+  /// <summary>Each per-stream polymorphic read, by stream.</summary>
+  public List<Guid> StreamReads { get; } = [];
+
+  /// <summary>Each batched read, with the streams it read.</summary>
+  public List<IReadOnlyList<Guid>> BatchReads { get; } = [];
+
+  public override Task<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?> ReadPolymorphicManyAsync(
+      IReadOnlyList<(Guid StreamId, Guid? FromEventId)> streams, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) {
+    if (!ReadsInBatches) {
+      return Task.FromResult<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?>(null);
+    }
+    var ids = streams.Select(s => s.StreamId).ToList();
+    BeforeBatchRead?.Invoke(ids);
+    BatchReads.Add(ids);
+    if (BatchReadFails is { } failure) {
+      throw failure;
+    }
+    return Task.FromResult<IReadOnlyDictionary<Guid, IReadOnlyList<MessageEnvelope<IEvent>>>?>(
+      streams.Where(s => !BatchOmits.Contains(s.StreamId)).ToDictionary(s => s.StreamId, s => (IReadOnlyList<MessageEnvelope<IEvent>>)_after(s.StreamId, s.FromEventId, eventTypes)));
+  }
+
   public override async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
       Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes,
       [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+    StreamReads.Add(streamId);
     BeforeRead?.Invoke(streamId);
     foreach (var envelope in _after(streamId, fromEventId, eventTypes)) {
       yield return envelope;
@@ -321,7 +366,31 @@ internal sealed class RbEvents() : ForwardingEventStoreDecorator(new InMemoryEve
     return Task.FromResult(stream.Take(at < 0 ? 0 : at).Any(e => eventTypes.Contains(e.Payload.GetType())));
   }
 
+  /// <summary>Whether the store answers many commit sequences with one read; false asks each event on its own.</summary>
+  public bool ReadsCommitSequencesInBatches { get; set; }
+
+  /// <summary>Each per-event commit-sequence lookup.</summary>
+  public List<Guid> CommitSequenceReads { get; } = [];
+
+  /// <summary>Each batched commit-sequence lookup, with the events it asked.</summary>
+  public List<IReadOnlyCollection<Guid>> BatchCommitSequenceReads { get; } = [];
+
+  public override async Task<IReadOnlyDictionary<Guid, long?>> GetCommitSequencesAsync(
+      IReadOnlyCollection<Guid> eventIds, CancellationToken cancellationToken = default) {
+    if (!ReadsCommitSequencesInBatches) {
+      var each = new Dictionary<Guid, long?>();
+      foreach (var eventId in eventIds) {
+        each[eventId] = await GetCommitSequenceAsync(eventId, cancellationToken);
+      }
+      return each;
+    }
+    BatchCommitSequenceReads.Add([.. eventIds]);
+    var all = _streams.Values.SelectMany(s => s).ToList();
+    return eventIds.Distinct().ToDictionary(id => id, id => all.FirstOrDefault(e => e.MessageId.Value == id)?.LocalCommitSequence);
+  }
+
   public override Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken cancellationToken = default) {
+    CommitSequenceReads.Add(eventId);
     if (CommitSequenceOverrides.TryGetValue(eventId, out var given)) {
       return Task.FromResult(given);
     }
@@ -378,7 +447,33 @@ internal sealed class RbRows : IPerspectiveStore<RbModel> {
   public RbModel Row(Guid id) => _rows[id].Model;
   public PerspectiveMetadata MetadataOf(Guid id) => _rows[id].Metadata;
 
+  /// <summary>Whether the store reads many rows with one read; false answers a batched read with null.</summary>
+  public bool ReadsInBatches { get; set; }
+
+  /// <summary>Each per-stream read of a row (its version and metadata, or its model), by stream.</summary>
+  public List<Guid> RowReads { get; } = [];
+
+  /// <summary>Each batched read of rows, with the streams it read.</summary>
+  public List<IReadOnlyCollection<Guid>> BatchRowReads { get; } = [];
+
+  public Task<IReadOnlyDictionary<Guid, PerspectiveStoredRow<RbModel>>?> ReadForApplyManyAsync(
+      IReadOnlyCollection<Guid> streamIds, CancellationToken cancellationToken = default) {
+    if (!ReadsInBatches) {
+      return Task.FromResult<IReadOnlyDictionary<Guid, PerspectiveStoredRow<RbModel>>?>(null);
+    }
+    BatchRowReads.Add([.. streamIds]);
+    var rows = new Dictionary<Guid, PerspectiveStoredRow<RbModel>>();
+    foreach (var id in streamIds.Where(_rows.ContainsKey)) {
+      var row = _rows[id];
+      rows[id] = new PerspectiveStoredRow<RbModel>(
+        Versioned ? new PerspectiveApplyRead(PerspectiveRowVersion.Of(row.Version), row.Metadata) { Scope = row.Scope } : PerspectiveApplyRead.Unchecked,
+        row.Model);
+    }
+    return Task.FromResult<IReadOnlyDictionary<Guid, PerspectiveStoredRow<RbModel>>?>(rows);
+  }
+
   public Task<PerspectiveApplyRead> ReadForApplyAsync(Guid streamId, CancellationToken cancellationToken = default) {
+    RowReads.Add(streamId);
     if (!Versioned) {
       return Task.FromResult(PerspectiveApplyRead.Unchecked);
     }
@@ -387,8 +482,10 @@ internal sealed class RbRows : IPerspectiveStore<RbModel> {
       : new PerspectiveApplyRead(PerspectiveRowVersion.Absent, null));
   }
 
-  public Task<RbModel?> GetByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) =>
-    Task.FromResult(_rows.TryGetValue(streamId, out var row) ? row.Model : null);
+  public Task<RbModel?> GetByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) {
+    RowReads.Add(streamId);
+    return Task.FromResult(_rows.TryGetValue(streamId, out var row) ? row.Model : null);
+  }
 
   public Task<PerspectiveMetadata?> GetMetadataByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) =>
     Task.FromResult(_rows.TryGetValue(streamId, out var row) ? row.Metadata : null);
@@ -433,12 +530,35 @@ internal sealed class RbRows : IPerspectiveStore<RbModel> {
       return null;
     }
     Prepared.Add((streamId, model, scope, forceUpdateScope, physicalFieldValues));
+    _preparedRows[streamId] = (model, scope, forceUpdateScope, metadata);
     return PendingPerspectiveWrite.Write("\"rb\"", streamId, expectedVersion, new PerspectiveRowValues(
       "{}", "{}", "{}", forceUpdateScope, false, DateTime.UnixEpoch, DateTime.UnixEpoch, false, true, null, []));
   }
 
   public PendingPerspectiveWrite? PreparePurge(Guid streamId) =>
     Prepares ? PendingPerspectiveWrite.Purge("\"rb\"", streamId) : null;
+
+  private readonly Dictionary<Guid, (RbModel Model, PerspectiveScope Scope, bool Force, PerspectiveMetadata Metadata)> _preparedRows = [];
+
+  /// <summary>
+  /// Writes a prepared write as a write sink would, with the same checks as the per-row write: a purge removes the row, a
+  /// write lands only on the version it read (a conflict otherwise) and is refused below the row's stamp.
+  /// </summary>
+  public PerspectiveWriteOutcome ApplyPrepared(PendingPerspectiveWrite write) {
+    if (write.Operation == PerspectiveWriteOperation.Purge) {
+      Purged.Add(write.StreamId);
+      _rows.Remove(write.StreamId);
+      return PerspectiveWriteOutcome.Written;
+    }
+    var (model, scope, force, metadata) = _preparedRows[write.StreamId];
+    try {
+      return _write(write.StreamId, model, scope, force, metadata, write.ExpectedVersion)
+        ? PerspectiveWriteOutcome.Written
+        : PerspectiveWriteOutcome.Refused;
+    } catch (PerspectiveRowConflictException conflict) {
+      return PerspectiveWriteOutcome.Conflict(conflict.ActualVersion);
+    }
+  }
 
   public Task UpsertAsync(Guid streamId, RbModel model, CancellationToken cancellationToken = default) =>
     throw new InvalidOperationException("the runner writes through the versioned overloads");

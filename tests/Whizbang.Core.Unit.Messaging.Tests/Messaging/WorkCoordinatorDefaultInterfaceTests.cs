@@ -26,6 +26,16 @@ public class WorkCoordinatorDefaultInterfaceTests {
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance", Justification = "Default interface members are only dispatchable through the interface type — that dispatch IS the behavior under test")]
   private readonly IWorkCoordinator _coordinator = new MinimalWorkCoordinator();
 
+  /// <summary>
+  /// #2542: a coordinator with no outbox holds nothing for its stamp, so the held-age reading finds no held event.
+  /// </summary>
+  [Test]
+  public async Task GetOldestSequenceHeldOutboxAsync_DefaultImplementation_HoldsNothingAsync() {
+    var oldest = await _coordinator.GetOldestSequenceHeldOutboxAsync((Guid)TrackedGuid.New(), 1000);
+
+    await Assert.That(oldest).IsNull();
+  }
+
   // ========================================
   // Throwing defaults (Postgres-only surfaces)
   // ========================================

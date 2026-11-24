@@ -77,7 +77,7 @@ public class MessagePublishStrategyTests {
 
   [Test]
   public async Task ToFailure_NoError_PublishFailedAsync() {
-    var result = new MessagePublishResult { MessageId = Guid.NewGuid(), Success = false, CompletedStatus = MessageProcessingStatus.None };
+    var result = new MessagePublishResult { MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(), Success = false, CompletedStatus = MessageProcessingStatus.None };
 
     await Assert.That(result.ErrorText).IsEqualTo("publish failed");
     await Assert.That(result.ToFailure(result.MessageId).Error).IsEqualTo("publish failed")

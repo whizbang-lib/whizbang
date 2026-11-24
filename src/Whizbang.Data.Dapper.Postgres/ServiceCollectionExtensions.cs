@@ -194,7 +194,8 @@ public static class ServiceCollectionExtensions {
       new DapperWorkCoordinator(
         connectionString,
         jsonOptions,
-        sp.GetService<ILogger<DapperWorkCoordinator>>()));
+        sp.GetService<ILogger<DapperWorkCoordinator>>(),
+        guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     // #2359: records past their own expiry are removed every maintenance cycle; the store's expiry had no caller.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep,
@@ -366,7 +367,8 @@ public static class ServiceCollectionExtensions {
       new DapperWorkCoordinator(
         connectionString,
         jsonOptions,
-        sp.GetService<ILogger<DapperWorkCoordinator>>()));
+        sp.GetService<ILogger<DapperWorkCoordinator>>(),
+        guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     // #2359: records past their own expiry are removed every maintenance cycle; the store's expiry had no caller.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep,
@@ -522,7 +524,9 @@ public static class ServiceCollectionExtensions {
       sp.GetService<IPerspectiveInvoker>(),
       sp.GetRequiredService<ILogger<DapperPostgresEventStore>>(),
       // #1546: an appended event's kind is the one the dispatch path stamps, [Ephemeral] on a type included.
-      sp.GetService<Whizbang.Core.IEphemeralModeResolver>());
+      sp.GetService<Whizbang.Core.IEphemeralModeResolver>(),
+      // #2528: the time-ordering check for appended event ids, with the configured severity.
+      sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>());
 
   /// <summary>
   /// Registers the purge markers that keep a purged perspective row purged (<see cref="IPerspectivePurgeMarkerStore"/>)

@@ -384,6 +384,8 @@ public partial class PerspectiveWorker(
     }
     _collectiveHoldWakes.Clear();
     await base.StopAsync(cancellationToken).ConfigureAwait(false);
+    // #2247: the loops have stopped, so the held models are flushed before the detached stages are waited for.
+    await _stopWriteBehindAsync(cancellationToken).ConfigureAwait(false);
     await DetachedWork.DrainAsync(cancellationToken).ConfigureAwait(false);
   }
   private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions = leaseRenewalOptions.Value;
@@ -1032,6 +1034,8 @@ public partial class PerspectiveWorker(
     }
 
     _perspectivesPerEventType = _buildPerspectivesPerEventTypeMap(registeredPerspectives);
+    // #2247: before anything is applied, the write-behind bounds are checked and its cache made.
+    _initWriteBehind(registeredPerspectives.Select(p => p.ClrTypeName));
     return true;
   }
 
@@ -1428,7 +1432,7 @@ public partial class PerspectiveWorker(
     // preserved exactly as today (different streams → different per-stream workers); only
     // same-stream concurrency is serialized.
     var claimedBatch = new ClaimedBatchContext(batchActivity, effectiveParent, batchProcessedEvents, batchIsNewByEventId);
-    if (groupedWork.Exists(g => _writeModeOf(g.Key.PerspectiveName) == PerspectiveWriteMode.SetBased)) {
+    if (groupedWork.Exists(g => _isBatched(_writeModeOf(g.Key.PerspectiveName)))) {
       // #2246: the batch's set-based pairs are prepared together, written with one statement per table and shape, and
       // completed; every other pair runs the per-pair path inside the same batch.
       await _processClaimedGroupsSetBasedAsync(groupedWork, claimedBatch, cancellationToken).ConfigureAwait(false);
@@ -1460,28 +1464,8 @@ public partial class PerspectiveWorker(
         });
     }
 
-    if (!batchProcessedEvents.IsEmpty) {
-      var priorPostLifecycle = Interlocked.Exchange(ref _pendingPostLifecycle, null);
-      if (priorPostLifecycle is not null) {
-        try {
-          await priorPostLifecycle;
-        } catch (Exception ex) when (ex is not OperationCanceledException) {
-          LogPriorPostLifecycleFaulted(_logger, ex);
-        }
-      }
-      var bgProcessedEvents = batchProcessedEvents;
-      var bgGroupedWork = groupedWork;
-      var bgIsNew = batchIsNewByEventId;
-      var bgCoordinator = lifecycleCoordinator;
-      var bgCt = cancellationToken;
-      _pendingPostLifecycle = BackgroundStageDispatch.StartLongRunning(async () => {
-        await using var bgScope = _scopeFactory.CreateAsyncScope();
-        var bgReceptorInvoker = bgScope.ServiceProvider.GetService<IReceptorInvoker>();
-        await FirePostLifecycleDetachedAsync(
-          bgProcessedEvents, bgCoordinator, bgReceptorInvoker, bgGroupedWork,
-          bgScope.ServiceProvider, bgCt, bgIsNew);
-      }, cancellationToken);
-    }
+    await _startBatchPostLifecycleAsync(
+      batchProcessedEvents, groupedWork, batchIsNewByEventId, lifecycleCoordinator, cancellationToken).ConfigureAwait(false);
 
     _logBatchSummary([], [], workBatch);
     _metrics?.BatchesProcessed.Add(1);
@@ -1490,6 +1474,36 @@ public partial class PerspectiveWorker(
       LogDrainCycleComplete(_logger, !IsIdle, batchProcessedEvents.Count, batchSw.ElapsedMilliseconds);
     }
     OnBatchCycleComplete?.Invoke();
+  }
+
+  /// <summary>
+  /// Starts the batch-level post-lifecycle stages of the events a batch (or a write-behind flush, #2247) processed, after
+  /// the previous batch's have ended, so they keep the order the batches applied in.
+  /// </summary>
+  private async Task _startBatchPostLifecycleAsync(
+      ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> batchProcessedEvents,
+      List<IGrouping<(Guid StreamId, string PerspectiveName), PerspectiveWork>> groupedWork,
+      ConcurrentDictionary<Guid, bool> batchIsNewByEventId,
+      ILifecycleCoordinator? lifecycleCoordinator,
+      CancellationToken cancellationToken) {
+    if (batchProcessedEvents.IsEmpty) {
+      return;
+    }
+    var priorPostLifecycle = Interlocked.Exchange(ref _pendingPostLifecycle, null);
+    if (priorPostLifecycle is not null) {
+      try {
+        await priorPostLifecycle;
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogPriorPostLifecycleFaulted(_logger, ex);
+      }
+    }
+    _pendingPostLifecycle = BackgroundStageDispatch.StartLongRunning(async () => {
+      await using var bgScope = _scopeFactory.CreateAsyncScope();
+      var bgReceptorInvoker = bgScope.ServiceProvider.GetService<IReceptorInvoker>();
+      await FirePostLifecycleDetachedAsync(
+        batchProcessedEvents, lifecycleCoordinator, bgReceptorInvoker, groupedWork,
+        bgScope.ServiceProvider, cancellationToken, batchIsNewByEventId);
+    }, cancellationToken);
   }
 
   /// <summary>
@@ -1915,7 +1929,7 @@ public partial class PerspectiveWorker(
     var drainBatchContext = new DrainBatchContext(
       rawByEventId, typeNameCache, batchProcessedEvents, batchIsNewByEventId, lifecycleCoordinator, appliedGroups, cursorsReadFor);
     if (eventsByStream.Any(stream => _collectDrainModePerspectiveNames(stream.Value, typeNameCache)
-          .Any(name => _writeModeOf(name) == PerspectiveWriteMode.SetBased))) {
+          .Any(name => _isBatched(_writeModeOf(name))))) {
       // #2246: the first lap of every stream is applied as one set-based batch; later laps run per pair.
       await _processDrainModeStreamsSetBasedAsync(scope, workCoordinator, eventsByStream, drainBatchContext, cancellationToken).ConfigureAwait(false);
       return;
@@ -6022,11 +6036,21 @@ public class PerspectiveWorkerOptions {
   /// prepares every (stream, perspective) pair of a batch and writes the batch's rows with a few set-based statements
   /// per table; <see cref="PerspectiveWriteMode.PerStream"/> writes each pair on its own, as before set-based writes. A
   /// perspective overrides it with <see cref="PerspectiveWriteModeAttribute"/>; a perspective with no generated runner
-  /// is always written per stream.
+  /// is always written per stream. A rebuild in place follows the same mode for each batch of streams it reads (#2522).
   /// </summary>
   /// <docs>fundamentals/perspectives/write-modes#selection</docs>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveWriteModesTests.cs:WorkerOptions_DefaultToSetBasedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderBatchedWriteTests.cs:Rebuild_InPlace_OfAServiceThatWritesPerStream_WritesEachRowOnItsOwnAsync</tests>
   public PerspectiveWriteMode WriteMode { get; set; } = PerspectiveWriteMode.SetBased;
+
+  /// <summary>
+  /// The bounds of the write-behind model cache (#2247), bound from <c>Whizbang:Workers:Perspective:WriteBehind</c>.
+  /// Required (<see cref="PerspectiveWriteBehindOptions.MaxModels"/> and <see cref="PerspectiveWriteBehindOptions.MaxBytes"/>)
+  /// whenever any perspective writes behind; the worker does not start without them.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#write-behind</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveWriteBehindOptionsTests.cs</tests>
+  public PerspectiveWriteBehindOptions WriteBehind { get; set; } = new();
 
   /// <summary>
   /// Slice 17: number of parallel consumer loops running on the channel reader. Each loop

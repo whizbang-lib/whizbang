@@ -34,6 +34,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   // shared drain helper so its metrics carry the same name.
   private const string STRATEGY_NAME = "interval";
 
+  private readonly Whizbang.Core.Validation.GuidOrderingValidator _guidOrdering;
   private readonly IWorkCoordinator? _coordinator;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly WorkCoordinatorOptions _options;
@@ -93,8 +94,11 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     DetachedLifecycleWork detachedWork,
     IDeferredOutboxChannel deferredChannel,
     WorkCoordinatorMetrics? metrics = null,
-    LifecycleMetrics? lifecycleMetrics = null) {
+    LifecycleMetrics? lifecycleMetrics = null,
+    Whizbang.Core.Validation.GuidOrderingValidator? guidOrdering = null) {
 #pragma warning restore S107
+    // #2528: a message id that is not a UUIDv7 is refused where it is queued, before it can join a batch and fail it.
+    _guidOrdering = guidOrdering ?? Whizbang.Core.Validation.GuidOrderingValidator.Default;
     _coordinator = coordinator;
     ArgumentNullException.ThrowIfNull(instanceProvider);
     _instanceProvider = instanceProvider;
@@ -137,6 +141,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   public void QueueOutboxMessage(OutboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "IntervalStrategy.QueueOutbox", message.MessageType);
+    _guidOrdering.ValidateMessageId(message.MessageId, message.MessageType, "IntervalStrategy.QueueOutbox");
 
     lock (_lock) {
       _queuedOutboxMessages.Add(message);
@@ -151,6 +156,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   public void QueueInboxMessage(InboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "IntervalStrategy.QueueInbox", message.MessageType);
+    _guidOrdering.ValidateMessageId(message.MessageId, message.MessageType, "IntervalStrategy.QueueInbox");
 
     lock (_lock) {
       _queuedInboxMessages.Add(message);

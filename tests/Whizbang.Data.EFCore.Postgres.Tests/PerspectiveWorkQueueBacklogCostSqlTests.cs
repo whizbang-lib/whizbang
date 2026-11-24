@@ -232,6 +232,112 @@ public class PerspectiveWorkQueueBacklogCostSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// The eviction's outbox probe reads what its batch holds, not the outbox (#2538). Its check for a pending outbox row
+  /// (processed_at IS NULL) matched no outbox index, so every candidate stream with no pending inbox or perspective work
+  /// read the whole outbox: 753 blocks a stream at 12,500 pending rows, 381,015 for a batch of 1,000. The probe now asks
+  /// for the rows the claim can still take (processed_at IS NULL AND published_at IS NULL), which idx_outbox_stream_run
+  /// answers in one descent.
+  /// </summary>
+  [Test]
+  [Arguments("force_custom_plan")]
+  [Arguments("force_generic_plan")]
+  [Timeout(600000)]
+  public async Task CleanupCompletedStreams_WithAFullOutbox_ReadsWhatItsBatchHolds_NotTheOutboxAsync(
+      string planMode, CancellationToken cancellationToken) {
+    const int pendingOutbox = 12_500;
+    Guid[] batch;
+    await using (var setup = new NpgsqlConnection(ConnectionString)) {
+      await setup.OpenAsync(cancellationToken);
+      await _registerAsync(setup, cancellationToken);
+      batch = await _fillAsync(setup, "fill-outbox", BATCH, cancellationToken);
+      _ = await _fetchAsync(setup, batch, cancellationToken);
+      await _completeAsync(setup, batch, cancellationToken);
+      await using var outbox = setup.CreateCommand();
+      outbox.CommandTimeout = 300;
+      // Pending rows of other streams: what the outbox holds while a service publishes, none of it the batch's.
+      outbox.CommandText = """
+        INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, attempts, created_at,
+                               stream_id, partition_number)
+        SELECT gen_random_uuid(), 'topic', 'Perf.Message, Perf', '{}'::jsonb, '{}'::jsonb, 0, 0, NOW(),
+               gen_random_uuid(), 0
+        FROM generate_series(1, @rows);
+        """;
+      outbox.Parameters.AddWithValue("rows", pendingOutbox);
+      _ = await outbox.ExecuteNonQueryAsync(cancellationToken);
+      await _vacuumAsync(setup, cancellationToken);
+      await using var analyze = setup.CreateCommand();
+      analyze.CommandTimeout = 300;
+      analyze.CommandText = "VACUUM ANALYZE wh_outbox";
+      _ = await analyze.ExecuteNonQueryAsync(cancellationToken);
+    }
+    // A fresh connection, so the call is planned in the mode under test and inherits no cached plan.
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await using (var mode = conn.CreateCommand()) {
+      mode.CommandText = $"SET plan_cache_mode = {planMode}";
+      _ = await mode.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    var evicted = 0;
+    var read = await RowsRead.MeasureAsync(conn, async () => {
+      await using var cleanup = conn.CreateCommand();
+      cleanup.CommandTimeout = 300;
+      cleanup.CommandText = "SELECT cleanup_completed_streams(@streams)";
+      cleanup.Parameters.AddWithValue("streams", batch);
+      evicted = Convert.ToInt32(await cleanup.ExecuteScalarAsync(cancellationToken), System.Globalization.CultureInfo.InvariantCulture);
+    }, commit: true, cancellationToken);
+    Console.WriteLine($"MEASURE {planMode} cleanup over {pendingOutbox} pending outbox rows: {read}");
+
+    await Assert.That(evicted).IsEqualTo(BATCH).Because("every stream of the batch is left with nothing to do, or it measured nothing");
+    await Assert.That(read.Total).IsLessThanOrEqualTo((long)CLEANUP_ROWS_PER_STREAM * BATCH)
+      .Because($"the outbox probe stops at the stream's first pending row in an index, whatever the outbox holds ({planMode}): {read}");
+  }
+
+  /// <summary>
+  /// An outbox row stamped published is not pending work for the eviction (#2538), as it is not for the claim: the
+  /// claim's run walk and the store's emptiness probe both skip a row with published_at set, and the framework sets it
+  /// only together with processed_at. The eviction now asks the same question, so a stream whose only outbox row is
+  /// published leaves the ledger; a stream with an unpublished pending row stays.
+  /// </summary>
+  [Test]
+  public async Task CleanupCompletedStreams_AnOutboxRowAlreadyPublished_DoesNotHoldTheStreamAsync(CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    var published = (Guid)TrackedGuid.New();
+    var unpublished = (Guid)TrackedGuid.New();
+    Guid[] all = [published, unpublished];
+    await using (var seed = conn.CreateCommand()) {
+      seed.CommandText = """
+        INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, created_at, last_activity_at)
+        SELECT s, 0, @instance, NOW(), NOW() FROM unnest(@all) s;
+
+        INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, attempts, created_at,
+                               stream_id, partition_number, published_at)
+        VALUES (gen_random_uuid(), 'topic', 'Perf.Message, Perf', '{}'::jsonb, '{}'::jsonb, 4, 0, NOW(), @published, 0, NOW()),
+               (gen_random_uuid(), 'topic', 'Perf.Message, Perf', '{}'::jsonb, '{}'::jsonb, 0, 0, NOW(), @unpublished, 0, NULL);
+        """;
+      seed.Parameters.AddWithValue("instance", _instance);
+      seed.Parameters.AddWithValue(nameof(all), all);
+      seed.Parameters.AddWithValue(nameof(published), published);
+      seed.Parameters.AddWithValue(nameof(unpublished), unpublished);
+      _ = await seed.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    await using (var cleanup = conn.CreateCommand()) {
+      cleanup.CommandText = "SELECT cleanup_completed_streams(@all)";
+      cleanup.Parameters.AddWithValue(nameof(all), all);
+      await Assert.That(Convert.ToInt32(await cleanup.ExecuteScalarAsync(cancellationToken), System.Globalization.CultureInfo.InvariantCulture))
+        .IsEqualTo(1);
+    }
+    await using var read = conn.CreateCommand();
+    read.CommandText = "SELECT array_agg(stream_id) FROM wh_active_streams WHERE stream_id = ANY(@all)";
+    read.Parameters.AddWithValue(nameof(all), all);
+    var remaining = (Guid[])(await read.ExecuteScalarAsync(cancellationToken))!;
+    await Assert.That(remaining).IsEquivalentTo([unpublished])
+      .Because("the published row is no work the claim can take, so only the unpublished row holds its stream");
+  }
+
+  /// <summary>
   /// Measures one call over a backlog and over four times it, each time on a batch of new streams from the latest fill,
   /// and requires the deeper call to read no more than the shallower one and no more than
   /// <paramref name="rowsPerStream"/> rows per stream of its batch. The deeper round may read up to one more row per

@@ -211,18 +211,25 @@ public class PerspectiveRunnerTemplateInvariantTests {
       .Because("resurrection delegates to the lock-free rewind core");
 
     // Deadlock guard: exactly ONE _applyCoordinator acquisition may exist in each public entry
-    // (the apply, RewindAndRunAsync, and the rebuild from the newest snapshot, #1931, which replays
-    // through the rewind's replay); the rewind CORE itself must not acquire it.
+    // (the apply, RewindAndRunAsync, the rebuild from the newest snapshot, #1931, which replays
+    // through the rewind's replay, and a batched rebuild's row, #2513, which folds through the
+    // lock-free apply core); the rewind CORE itself must not acquire it.
     var acquisitions = 0;
     var idx = 0;
     while ((idx = template.IndexOf("_applyCoordinator.AcquireAsync", idx, StringComparison.Ordinal)) >= 0) {
       acquisitions++;
       idx++;
     }
-    await Assert.That(acquisitions).IsEqualTo(3)
-      .Because("only the three public entry points acquire the apply lock; the shared core assumes it is held");
+    await Assert.That(acquisitions).IsEqualTo(4)
+      .Because("only the four public entry points acquire the apply lock; the shared core assumes it is held");
     await Assert.That(template).Contains("public async Task<IReadOnlyList<PerspectiveCursorCompletion>?> RunRebuildFromLatestSnapshotAsync(")
       .Because("the third acquisition is the rebuild from the newest snapshot, which calls the lock-free replay");
+    await Assert.That(template).Contains("private async Task<PerspectiveCursorCompletion> _runRebuildPartitionAsync(")
+      .Because("the fourth acquisition is a batched rebuild's row (#2513), reached from RunRebuildWithEventsAsync");
+    var partition = template[template.IndexOf("private async Task<PerspectiveCursorCompletion> _runRebuildPartitionAsync(", StringComparison.Ordinal)..];
+    partition = partition[..partition.IndexOf("\n  }\n", StringComparison.Ordinal)];
+    await Assert.That(partition).Contains("_runWithEventsLockedAsync(")
+      .Because("the batched rebuild's row folds through the lock-free core after taking the lock once, never through a public entry that takes it again");
   }
 
   [Test]

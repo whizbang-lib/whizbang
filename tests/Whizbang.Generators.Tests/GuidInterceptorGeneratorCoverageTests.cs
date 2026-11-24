@@ -31,13 +31,6 @@ namespace Whizbang.Generators.Tests;
 /// pre-filter their trivia with <c>t.IsKind(SyntaxKind.PragmaWarningDirectiveTrivia)</c> — Roslyn
 /// guarantees that trivia of that kind structures into exactly that syntax type. Dead by
 /// construction: the input is already validated before either method sees it.</item>
-/// <item>Line 417 (the <c>_ =&gt;</c> default arm of the <c>originalCall</c> switch in
-/// <c>_generateInterceptors</c>) — every <see cref="Whizbang.Generators.GuidInterceptionInfo"/> that
-/// reaches this switch was produced by <c>_resolveGuidVersionAndSource</c>, which only ever succeeds
-/// for exactly six (containing type, method name) pairs: System.Guid.NewGuid/CreateVersion7, and the
-/// four entries in <c>_thirdPartyMethods</c> (Marten NewGuid, UUIDNext NewDatabaseFriendly/NewSequential,
-/// Medo NewUuid7). All six are handled by the switch's other arms, so the default arm can never run —
-/// dead by construction, tracing back to the producer that restricts the input.</item>
 /// </list>
 /// </remarks>
 public class GuidInterceptorGeneratorCoverageTests {

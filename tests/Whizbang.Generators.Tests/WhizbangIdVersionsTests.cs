@@ -14,8 +14,8 @@ namespace Whizbang.Generators.Tests;
 /// <c>[WhizbangId(Versions = ...)]</c> generates an id whose checked entry points (<c>From</c>, <c>Parse</c>, the
 /// explicit cast and the JSON converter) take exactly the listed UUID versions (#2516). An id that leaves
 /// <c>Versions</c> at its default, or writes <c>Versions = UuidVersions.V7</c>, generates the same code as before.
-/// Writing <c>Versions</c> together with <c>AcceptAnyVersion = true</c> is WHIZ038; an empty list, or declarations
-/// with no version in common, is WHIZ039; a declaration whose list is narrowed by another is WHIZ037.
+/// Writing <c>Versions</c> together with <c>AcceptAnyVersion = true</c> is WHIZ039; an empty list, or declarations
+/// with no version in common, is WHIZ043; a declaration whose list is narrowed by another is WHIZ038.
 /// </summary>
 /// <code-under-test>src/Whizbang.Generators/WhizbangIdGenerator.cs</code-under-test>
 [Category("SourceGenerators")]
@@ -152,55 +152,16 @@ public class WhizbangIdVersionsTests {
   }
 
   // ========================================
-  // WHIZ038: AcceptAnyVersion and Versions both written
+  // WHIZ039: AcceptAnyVersion and Versions both written
   // ========================================
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task AcceptAnyVersionAndVersions_ReportWhiz038AtTheAttributeAsync() {
+  public async Task AcceptAnyVersionAndVersions_ReportWhiz039AtTheAttributeAsync() {
     const string source = """
       using Whizbang.Core;
       namespace MyApp.Domain;
       [WhizbangId(AcceptAnyVersion = true, Versions = UuidVersions.V5)]
-      public readonly partial struct ProductId;
-      """;
-
-    var result = GeneratorTestHelper.RunGenerator<WhizbangIdGenerator>(source);
-    var whiz038 = result.Diagnostics.Where(d => d.Id == "WHIZ038").ToList();
-
-    await Assert.That(whiz038).Count().IsEqualTo(1);
-    await Assert.That(whiz038[0].Severity).IsEqualTo(DiagnosticSeverity.Error);
-    await Assert.That(whiz038[0].GetMessage(CultureInfo.InvariantCulture)).Contains("ProductId");
-    await Assert.That(DiagnosticSourceText.Of(whiz038[0]))
-      .IsEqualTo("WhizbangId(AcceptAnyVersion = true, Versions = UuidVersions.V5)");
-  }
-
-  [Test]
-  [RequiresAssemblyFiles()]
-  public async Task AcceptAnyVersionFalseWithVersions_ReportsNoWhiz038Async() {
-    const string source = """
-      using Whizbang.Core;
-      namespace MyApp.Domain;
-      [WhizbangId(AcceptAnyVersion = false, Versions = UuidVersions.V7 | UuidVersions.V5)]
-      public readonly partial struct ProductId;
-      """;
-
-    var result = GeneratorTestHelper.RunGenerator<WhizbangIdGenerator>(source);
-
-    await Assert.That(result.Diagnostics.Where(d => d.Id == "WHIZ038")).IsEmpty();
-  }
-
-  // ========================================
-  // WHIZ039: no version accepted
-  // ========================================
-
-  [Test]
-  [RequiresAssemblyFiles()]
-  public async Task EmptyVersions_ReportWhiz039Async() {
-    const string source = """
-      using Whizbang.Core;
-      namespace MyApp.Domain;
-      [WhizbangId(Versions = UuidVersions.None)]
       public readonly partial struct ProductId;
       """;
 
@@ -210,11 +171,50 @@ public class WhizbangIdVersionsTests {
     await Assert.That(whiz039).Count().IsEqualTo(1);
     await Assert.That(whiz039[0].Severity).IsEqualTo(DiagnosticSeverity.Error);
     await Assert.That(whiz039[0].GetMessage(CultureInfo.InvariantCulture)).Contains("ProductId");
+    await Assert.That(DiagnosticSourceText.Of(whiz039[0]))
+      .IsEqualTo("WhizbangId(AcceptAnyVersion = true, Versions = UuidVersions.V5)");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task RoutesWithNoVersionInCommon_ReportWhiz039Async() {
+  public async Task AcceptAnyVersionFalseWithVersions_ReportsNoWhiz039Async() {
+    const string source = """
+      using Whizbang.Core;
+      namespace MyApp.Domain;
+      [WhizbangId(AcceptAnyVersion = false, Versions = UuidVersions.V7 | UuidVersions.V5)]
+      public readonly partial struct ProductId;
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<WhizbangIdGenerator>(source);
+
+    await Assert.That(result.Diagnostics.Where(d => d.Id == "WHIZ039")).IsEmpty();
+  }
+
+  // ========================================
+  // WHIZ043: no version accepted
+  // ========================================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task EmptyVersions_ReportWhiz043Async() {
+    const string source = """
+      using Whizbang.Core;
+      namespace MyApp.Domain;
+      [WhizbangId(Versions = UuidVersions.None)]
+      public readonly partial struct ProductId;
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<WhizbangIdGenerator>(source);
+    var whiz043 = result.Diagnostics.Where(d => d.Id == "WHIZ043").ToList();
+
+    await Assert.That(whiz043).Count().IsEqualTo(1);
+    await Assert.That(whiz043[0].Severity).IsEqualTo(DiagnosticSeverity.Error);
+    await Assert.That(whiz043[0].GetMessage(CultureInfo.InvariantCulture)).Contains("ProductId");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task RoutesWithNoVersionInCommon_ReportWhiz043Async() {
     const string source = """
       using Whizbang.Core;
       namespace MyApp.Domain;
@@ -228,12 +228,12 @@ public class WhizbangIdVersionsTests {
 
     var result = GeneratorTestHelper.RunGenerator<WhizbangIdGenerator>(source);
 
-    await Assert.That(result.Diagnostics.Where(d => d.Id == "WHIZ039")).Count().IsEqualTo(1);
-    await Assert.That(result.Diagnostics.Where(d => d.Id == "WHIZ037")).IsEmpty();
+    await Assert.That(result.Diagnostics.Where(d => d.Id == "WHIZ043")).Count().IsEqualTo(1);
+    await Assert.That(result.Diagnostics.Where(d => d.Id == "WHIZ038")).IsEmpty();
   }
 
   // ========================================
-  // WHIZ037 / WHIZ029: declarations disagree; the id takes the versions they have in common
+  // WHIZ038 / WHIZ029: declarations disagree; the id takes the versions they have in common
   // ========================================
 
   [Test]
@@ -253,17 +253,17 @@ public class WhizbangIdVersionsTests {
     var result = GeneratorTestHelper.RunGenerator<WhizbangIdGenerator>(source);
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "ProductId.g.cs");
 
-    await Assert.That(result.Diagnostics.Where(d => d.Id is "WHIZ037" or "WHIZ029" or "WHIZ039")).IsEmpty();
+    await Assert.That(result.Diagnostics.Where(d => d.Id is "WHIZ038" or "WHIZ029" or "WHIZ043")).IsEmpty();
     await Assert.That(generated).Contains(ALLOW_LIST_GUARD);
   }
 
   /// <summary>
   /// The type lists v7 and v5 and a property's attribute keeps the default: the id takes the strictest common set
-  /// (v7) whichever route is found first, and WHIZ037 points at the list that was narrowed.
+  /// (v7) whichever route is found first, and WHIZ038 points at the list that was narrowed.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task RoutesThatDisagree_TakeTheCommonVersionsAndReportWhiz037AtTheNarrowedListAsync() {
+  public async Task RoutesThatDisagree_TakeTheCommonVersionsAndReportWhiz038AtTheNarrowedListAsync() {
     const string source = """
       using Whizbang.Core;
       namespace MyApp.Domain;
@@ -277,14 +277,14 @@ public class WhizbangIdVersionsTests {
 
     var result = GeneratorTestHelper.RunGenerator<WhizbangIdGenerator>(source);
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "ProductId.g.cs");
-    var whiz037 = result.Diagnostics.Where(d => d.Id == "WHIZ037").ToList();
+    var whiz038 = result.Diagnostics.Where(d => d.Id == "WHIZ038").ToList();
 
     await Assert.That(generated).Contains(STRICT_FROM_GUARD);
-    await Assert.That(whiz037).Count().IsEqualTo(1);
-    await Assert.That(whiz037[0].Severity).IsEqualTo(DiagnosticSeverity.Warning);
-    await Assert.That(whiz037[0].GetMessage(CultureInfo.InvariantCulture)).Contains("ProductId");
-    await Assert.That(whiz037[0].GetMessage(CultureInfo.InvariantCulture)).Contains("UUIDv7");
-    await Assert.That(DiagnosticSourceText.Of(whiz037[0]))
+    await Assert.That(whiz038).Count().IsEqualTo(1);
+    await Assert.That(whiz038[0].Severity).IsEqualTo(DiagnosticSeverity.Warning);
+    await Assert.That(whiz038[0].GetMessage(CultureInfo.InvariantCulture)).Contains("ProductId");
+    await Assert.That(whiz038[0].GetMessage(CultureInfo.InvariantCulture)).Contains("UUIDv7");
+    await Assert.That(DiagnosticSourceText.Of(whiz038[0]))
       .IsEqualTo("WhizbangId(Versions = UuidVersions.V7 | UuidVersions.V5)");
   }
 
@@ -310,6 +310,6 @@ public class WhizbangIdVersionsTests {
     await Assert.That(generated).Contains(ALLOW_LIST_GUARD);
     await Assert.That(whiz029).Count().IsEqualTo(1);
     await Assert.That(whiz029[0].GetMessage(CultureInfo.InvariantCulture)).Contains("UUIDv5 or UUIDv7");
-    await Assert.That(result.Diagnostics.Where(d => d.Id == "WHIZ037")).IsEmpty();
+    await Assert.That(result.Diagnostics.Where(d => d.Id == "WHIZ038")).IsEmpty();
   }
 }

@@ -129,6 +129,36 @@ public class DispatchTangentialParityComponentTests {
       .Because($"{entry} generates the stream id before the receptor runs");
   }
 
+  /// <summary>
+  /// One send gives a <c>[GenerateStreamId]</c> command one stream everywhere it goes: the stored copy and the local
+  /// run name the same stream, outside a handling too (#2539). Registering the local run's envelope generated it again.
+  /// </summary>
+  [Test]
+  [Arguments("SendAsync")]
+  [Arguments("SendAsync(options)")]
+  [Arguments("SendManyAsync")]
+  public async Task EverySendThatRunsHereAndWritesACopy_GivesTheCommandOneStreamAsync(string entry) {
+    var outbox = new PolicyRecordingOutbox();
+    await using var provider = _buildProvider(outbox);
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var marker = Guid.CreateVersion7();
+    var command = new TgGeneratedStreamCommand { Marker = marker };
+
+    switch (entry) {
+      case "SendAsync": await dispatcher.SendAsync(command); break;
+      case "SendAsync(options)": await dispatcher.SendAsync(command, new DispatchOptions()); break;
+      default: await dispatcher.SendManyAsync(new object[] { command }); break;
+    }
+
+    var copy = outbox.QueuedOf(typeof(TgGeneratedStreamCommand)).Single();
+    var seen = TangentialProbe.Seen("commandStream", marker);
+    await Assert.That(seen).IsNotNull().Because($"{entry} runs the command here");
+    await Assert.That(Guid.Parse(seen!)).IsNotEqualTo(Guid.Empty);
+    await Assert.That(copy.StreamId).IsEqualTo(Guid.Parse(seen!))
+      .Because($"{entry}'s stored copy and its local run are one message, on one stream");
+    await Assert.That(command.StreamId).IsEqualTo(Guid.Parse(seen!));
+  }
+
   // ── the caller's tenant ──────────────────────────────────────────────────────────────────────
 
   [Test]

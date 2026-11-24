@@ -883,6 +883,11 @@ public abstract partial class Dispatcher(
   // Whizbang options for runtime configuration (auto-generate StreamIds, etc.)
 #pragma warning disable S4487, S1144 // Pre-resolved for use by subclasses and future features
   private readonly WhizbangOptions _whizbangOptions = serviceProvider.GetService<Microsoft.Extensions.Options.IOptions<WhizbangOptions>>()?.Value ?? new WhizbangOptions();
+#pragma warning restore S4487, S1144
+  // #2528: the time-ordering check for the ids a caller can hand the dispatcher (a cascade's source, a composite's carried
+  // child ids, a subclass's emission id) and the report for the stream ids it writes.
+  private readonly Whizbang.Core.Validation.GuidOrderingValidator _guidOrdering = serviceProvider.GetService<Whizbang.Core.Validation.GuidOrderingValidator>() ?? Whizbang.Core.Validation.GuidOrderingValidator.Default;
+#pragma warning disable S4487, S1144
 
   // The application author's own declaration that a message type carries no authority (a
   // pre-authentication event, a health check). Stamped so those stay distinguishable from an event
@@ -906,6 +911,8 @@ public abstract partial class Dispatcher(
   // The message payload limit, checked where each message is serialized for the outbox. Built from the host's
   // options when the host did not register it, so the limit holds either way.
   private readonly MessagePayloadLimits _payloadLimits = MessagePayloadLimits.Resolve(serviceProvider);
+  // Sequence integrity (#2542): how long each outgoing event is held for its commit-order stamp, decided here at the origin.
+  private readonly SequenceIntegrityPolicy _sequenceIntegrity = SequenceIntegrityPolicy.Resolve(serviceProvider);
   // Message tag processor - invoked after successful receptor completion
   private readonly IMessageTagProcessor? _messageTagProcessor = serviceProvider.GetService<IMessageTagProcessor>();
 
@@ -3378,8 +3385,8 @@ public abstract partial class Dispatcher(
     var eventId = _mintEmissionId(sourceEnvelope, messageType);
     var streamId = _streamIdExtractor?.ExtractStreamId(msg, messageType) ?? Guid.Empty;
 
-    // Auto-generate StreamId based on [GenerateStreamId] attribute policy
-    streamId = _autoGenerateStreamIdIfNeeded(msg, messageType, streamId);
+    // Auto-generate StreamId based on [GenerateStreamId] attribute policy, derived from the event's own id (#2274)
+    streamId = _autoGenerateStreamIdIfNeeded(msg, messageType, streamId, startedBy: eventId);
 
     // Cascade StreamId propagation: inherit from source command when event's StreamId is still empty
     streamId = _cascadeStreamIdFromSourceIfNeeded(msg, messageType, streamId, sourceEnvelope);
@@ -3412,12 +3419,7 @@ public abstract partial class Dispatcher(
     if (sourceEnvelope is null) {
       return ValueObjects.TrackedGuid.New();
     }
-    // A nested local cascade hands receptors a wrapper that reports the inbound message's id and handler.
-    // Their emissions anchor on the cascaded message that caused them (carried by the wrapper) so they
-    // cannot collide with the top-level handler's emissions of the same type.
-    var anchor = sourceEnvelope is CascadeEnvelopeWrapper { EmissionAnchor: { } nestedAnchor }
-      ? nestedAnchor
-      : sourceEnvelope.MessageId.Value;
+    var anchor = _emissionAnchor(sourceEnvelope);
     if (anchor == Guid.Empty) {
       return ValueObjects.TrackedGuid.New();
     }
@@ -3438,15 +3440,64 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
-  /// Auto-generates a StreamId based on [GenerateStreamId] attribute policy if applicable.
+  /// The message a handling's derived ids anchor on. A nested local cascade hands receptors a wrapper that reports the
+  /// inbound message's id and handler; their emissions anchor on the cascaded message that caused them (carried by the
+  /// wrapper) so they cannot collide with the top-level handler's emissions of the same type. Empty when the handling's
+  /// envelope carries no id.
+  /// </summary>
+  private static Guid _emissionAnchor(IMessageEnvelope handling) =>
+    handling is CascadeEnvelopeWrapper { EmissionAnchor: { } nestedAnchor } ? nestedAnchor : handling.MessageId.Value;
+
+  /// <summary>
+  /// The stream a <c>[GenerateStreamId]</c> message starts when nothing it carries derives one. Inside a receptor's
+  /// handling (<see cref="ReceptorHandling"/>) a message other than an event, a command sent from the body, derives it
+  /// from the handling (<see cref="GeneratedStreamIdentity.DeriveInHandling"/>) at the handling's next ordinal for this
+  /// purpose, once per message (<see cref="GeneratedStreamAssignments"/>), so a redelivered handling sends on the
+  /// streams its first run started (#2537). Outside a handling, for a handling with no message id, and for an event,
+  /// whose stream derives from the event's own id once that id derives, a fresh stream is minted, once per message
+  /// instance: the envelopes one send builds (the local run's, the stored copy's, the one a local run of the copy is
+  /// registered under) all name the stream the first of them minted (#2539).
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDerivedIdentityInHandlingTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchTangentialParityComponentTests.cs</tests>
+  private Guid _generatedStreamOf(object message, Type messageType) {
+    if (message is IEvent || ReceptorHandling.Current is not { } handling) {
+      return GeneratedStreamAssignments.GetOrMint(message);
+    }
+    var cause = _emissionAnchor(handling);
+    if (cause == Guid.Empty) {
+      return GeneratedStreamAssignments.GetOrMint(message);
+    }
+    var serviceName = _instanceProvider.ServiceName;
+    var handlerName = handling.DispatchContext.HandlerName;
+    var typeName = TypeNameFormatter.Format(messageType);
+    return GeneratedStreamAssignments.GetOrAdd(handling, message,
+      ordinal => GeneratedStreamIdentity.DeriveInHandling(cause, serviceName, handlerName, typeName, ordinal));
+  }
+
+  /// <summary>
+  /// The id of an event published explicitly. Inside a receptor's handling (<see cref="ReceptorHandling"/>) it is
+  /// derived from the handling through <see cref="_mintEmissionId"/>, on the same ordinals as what the receptor returns,
+  /// so a retry of the handling publishes under the ids of its first run and the stored copies absorb it (#2274).
+  /// Outside a handling it is minted.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDerivedIdentityInHandlingTests.cs</tests>
+  private MessageId _mintPublishedMessageId(Type eventType) =>
+    ReceptorHandling.Current is { } handling ? new MessageId(_mintEmissionId(handling, eventType)) : MessageId.New();
+
+  /// <summary>
+  /// Auto-generates a StreamId based on [GenerateStreamId] attribute policy if applicable, derived from
+  /// <paramref name="startedBy"/>, the id of the message that starts the stream (#2274).
   /// Returns the (potentially updated) streamId.
   /// </summary>
-  private Guid _autoGenerateStreamIdIfNeeded(object msg, Type messageType, Guid streamId) {
+  private Guid _autoGenerateStreamIdIfNeeded(object msg, Type messageType, Guid streamId, Guid startedBy) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (_streamIdExtractor is not null) {
       var (shouldGenerate, onlyIfEmpty) = _streamIdExtractor.GetGenerationPolicy(msg);
       if (shouldGenerate && (!onlyIfEmpty || streamId == Guid.Empty)) {
-        var minted = ValueObjects.TrackedGuid.New();
+        var minted = GeneratedStreamIdentity.Derive(startedBy);
         // A [StreamId] property as well as IHasStreamId, as the publish path sets it (#1410 follow-up)
         if (msg is IHasStreamId hasStreamId) {
           hasStreamId.StreamId = minted;
@@ -3470,9 +3521,11 @@ public abstract partial class Dispatcher(
   /// Auto-generates StreamId for messages with [GenerateStreamId] attribute during envelope creation.
   /// This ensures commands (and any IMessage) get their StreamId populated before dispatch,
   /// using the same plumbing as [Populate*] attributes.
-  /// Events cascaded from receptors are handled separately in the cascade path.
+  /// Events cascaded from receptors are handled separately in the cascade path. With <paramref name="startedBy"/>,
+  /// the id of the message that starts the stream, the stream id derives from it (#2274); without it the stream comes
+  /// from <see cref="_generatedStreamOf"/>, derived from the handling for a command sent inside one (#2537).
   /// </summary>
-  private void _autoGenerateStreamIdIfNeeded(object message, Type messageType) {
+  private void _autoGenerateStreamIdIfNeeded(object message, Type messageType, Guid? startedBy = null) {
     if (_streamIdExtractor is null) {
       return;
     }
@@ -3484,7 +3537,7 @@ public abstract partial class Dispatcher(
 
     var streamId = _streamIdExtractor.ExtractStreamId(message, messageType) ?? Guid.Empty;
     if (!onlyIfEmpty || streamId == Guid.Empty) {
-      var newStreamId = ValueObjects.TrackedGuid.New();
+      var newStreamId = startedBy is { } messageId ? GeneratedStreamIdentity.Derive(messageId) : _generatedStreamOf(message, messageType);
 
       // Try IHasStreamId first (direct interface), then fall back to generated setter
       if (message is IHasStreamId hasStreamId) {
@@ -3788,11 +3841,15 @@ public abstract partial class Dispatcher(
   internal ValueTask ProcessTagsIfEnabledAsync(object message, Type messageType, CancellationToken ct = default) {
     // Runs after every dispatch, so it allocates nothing while debug is off (#1756): the log calls are
     // source-generated and check the level before building anything, and the step completes synchronously unless
-    // the processor does not, so no async state machine is created on the common paths
+    // the processor does not, so no async state machine is created on the common paths. The type's name is read
+    // only when debug is on: the runtime caches Type.Name behind a weak handle, so after a collection the read
+    // allocates again (#2528)
     var logger = DispatcherLogger;
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
-    Log.TagProcessingEntered(logger, TypeNameFormatter.ForLog(messageType));
+    if (logger.IsEnabled(LogLevel.Debug)) {
+#pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through
+      Log.TagProcessingEntered(logger, TypeNameFormatter.ForLog(messageType));
 #pragma warning restore CA1873
+    }
 
     // Skip if tag processing is disabled
     if (!_coreOptions.EnableTagProcessing) {
@@ -4092,11 +4149,12 @@ public abstract partial class Dispatcher(
     _resolveReEmissionDiagnostic()?.RecordEmission(TypeNameFormatter.Format(eventType));
     try {
 
-      // Auto-generate StreamId for events with [GenerateStreamId] attribute
-      _autoGenerateStreamIdIfNeeded(eventData, eventType);
+      // Create MessageId once - used for the outbox row and, for an event, as its event store event_id (store_outbox_messages -> _emit_event_store_chain).
+      // Inside a receptor's handling it derives from the handling, as a returned event's does (#2274)
+      var messageId = _mintPublishedMessageId(eventType);
 
-      // Create MessageId once - used for the outbox row and, for an event, as its event store event_id (store_outbox_messages -> _emit_event_store_chain)
-      var messageId = MessageId.New();
+      // Auto-generate StreamId for events with [GenerateStreamId] attribute, derived from the event's id (#2274)
+      _autoGenerateStreamIdIfNeeded(eventData, eventType, startedBy: messageId.Value);
 
       // Extract stream ID early — needed for both sync tracking and delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType);
@@ -4212,10 +4270,11 @@ public abstract partial class Dispatcher(
     _resolveReEmissionDiagnostic()?.RecordEmission(TypeNameFormatter.Format(eventType));
     try {
 
-      // Auto-generate StreamId for events with [GenerateStreamId] attribute
-      _autoGenerateStreamIdIfNeeded(eventData, eventType);
+      // Inside a receptor's handling the id derives from the handling, as a returned event's does (#2274)
+      var messageId = _mintPublishedMessageId(eventType);
 
-      var messageId = MessageId.New();
+      // Auto-generate StreamId for events with [GenerateStreamId] attribute, derived from the event's id (#2274)
+      _autoGenerateStreamIdIfNeeded(eventData, eventType, startedBy: messageId.Value);
 
       // Tracked for perspective sync as the plain overload tracks it (#1410 follow-up)
       if (_streamIdExtractor?.ExtractStreamId(eventData, eventType) is { } trackedStreamId) {
@@ -4352,8 +4411,14 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DispatchExecutionIntegrationTests.cs:MessageWithALocalHandler_TheHandlerSeesTheSentTimeAndCorrelationTheStoredRowCarriesAsync</tests>
   // S3776: Multi-mode cascade dispatch — complexity from conditional logging + Local/EventStore/Outbox routing paths
 #pragma warning disable S3776
-  public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) =>
-    _cascadeMessageAsync(message, sourceEnvelope, mode, presetEventId: null, cancellationToken);
+  public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) {
+    // The source's id anchors every id derived for what the cascade emits, and a derived id is stamped v7 whatever its
+    // anchor, so the anchor is checked here (#2528). A source without an id anchors nothing: fresh ids are minted.
+    if (sourceEnvelope is not null && sourceEnvelope.MessageId.Value != Guid.Empty) {
+      _guidOrdering.ValidateMessageId(sourceEnvelope.MessageId.Value, message.GetType(), "Dispatcher.Cascade");
+    }
+    return _cascadeMessageAsync(message, sourceEnvelope, mode, presetEventId: null, cancellationToken);
+  }
 
   /// <summary>
   /// Cascades a message; <paramref name="presetEventId"/>, when given, is the id an event is stored under instead of
@@ -4390,7 +4455,7 @@ public abstract partial class Dispatcher(
     // CRITICAL: This is the primary path for receptor event cascading via DispatcherEventCascader
     if (message is IEvent) {
       eventId = presetEventId ?? _mintEmissionId(sourceEnvelope, messageType);
-      var streamId = _resolveStreamId(message, messageType, sourceEnvelope);
+      var streamId = _resolveStreamId(message, messageType, sourceEnvelope, eventId.Value);
       if (_persists(mode)) {
         _trackEventForSync(messageType, eventId.Value, streamId);
       }
@@ -4422,9 +4487,9 @@ public abstract partial class Dispatcher(
 
   /// <summary>
   /// Resolves the StreamId for a cascaded event, including inheritance from source command
-  /// and auto-generation based on [GenerateStreamId] attribute policy.
+  /// and auto-generation based on [GenerateStreamId] attribute policy, derived from the event's own id (#2274).
   /// </summary>
-  private Guid _resolveStreamId(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope) {
+  private Guid _resolveStreamId(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope, Guid eventId) {
     var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType) ?? Guid.Empty;
 
     // Cascade StreamId propagation: inherit from source command when event's StreamId is empty
@@ -4433,7 +4498,7 @@ public abstract partial class Dispatcher(
     // Auto-generate StreamId based on [GenerateStreamId] attribute policy, for a [StreamId] property as well
     // as IHasStreamId: the cascade used to leave a plain property empty (#1410 follow-up)
     if (streamId == Guid.Empty) {
-      streamId = _autoGenerateStreamIdIfNeeded(message, messageType, streamId);
+      streamId = _autoGenerateStreamIdIfNeeded(message, messageType, streamId, startedBy: eventId);
     }
 
     return streamId;
@@ -4538,6 +4603,8 @@ public abstract partial class Dispatcher(
       var envelope = _createOutboxEnvelopeWithHop(eventData, eventType, messageId, sourceEnvelope, destination);
       _stampExplicitPriority(envelope, priority);   // an explicit number on the options is the caller's declaration
       envelope.PayloadLimitOverride = options?.MaxPayloadBytes;
+      envelope.SequenceIntegrityOverride = options?.SequenceIntegrity;
+      envelope.SequenceHoldTimeOverride = options?.SequenceHoldTime;
       // A copy marked handled here (a cascade that ran the event's receptors, which reaches this through
       // the generated outbox cascade) records it as a publish does (#1410 follow-up)
       if (recordLocalDispatch || _outboxCopyMark.Value == OutboxCopyMark.HandledLocally) {
@@ -4735,6 +4802,8 @@ public abstract partial class Dispatcher(
       var childId = carriedIds is not null
         ? carriedIds[ordinal]
         : CompositeChildIdentity.ForChild(messageId.Value, ordinal, inner.GetType());
+      // A composite that carries its children's ids hands them in as plain Guids (#2528).
+      _guidOrdering.ValidateMessageId(childId, inner.GetType(), "Dispatcher.CompositeFanOut");
       try {
         await _cascadeMessageAsync(inner, sourceEnvelope, DispatchModes.Local, childId, CancellationToken.None).ConfigureAwait(false);
       } catch (Exception ex) when (!atomic) {
@@ -4965,7 +5034,8 @@ public abstract partial class Dispatcher(
       var streamId = StreamIdentity.Of(jsonEnvelope);
       _payloadLimits.Enforce(jsonEnvelope.Payload, eventType, messageId.Value, streamId);
 
-      var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId, _ephemeralModeResolver);
+      var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId, _ephemeralModeResolver)
+        with { SequenceHoldMilliseconds = _sequenceHoldMilliseconds(eventData, eventType, destination, null, null) };
       // An effect is queued after its cause (#1410 follow-up)
       await _afterCauseCopyWriteAsync().ConfigureAwait(false);
       // Composite pre-fanout hook (Phase B): divert into the ambient collector when one is open.
@@ -5073,6 +5143,17 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
+  /// Sequence integrity (#2542): how long the outbox holds an outgoing message for its commit-order stamp, in the stored
+  /// form. Only an event that is published is stamped and held; a command, and an event that is only stored, never is.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DispatcherSequenceIntegrityTests.cs</tests>
+  private int _sequenceHoldMilliseconds(object? payload, Type payloadType, string? destination,
+      SequenceIntegrity? callMode, TimeSpan? callHoldTime) =>
+    payload is IEvent && destination is not null
+      ? _sequenceIntegrity.For(payloadType, callMode, callHoldTime).HoldMilliseconds
+      : 0;
+
+  /// <summary>
   /// Builds an OutboxMessage from the serialized envelope and metadata.
   /// </summary>
   private static OutboxMessage _buildOutboxMessage(
@@ -5165,6 +5246,9 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchExecutorShapeComponentTests.cs</tests>
   protected Task CascadeByRuntimeTypeAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope, Guid? eventId,
       bool eventStoreOnly) {
+    if (eventId is Guid preset) {
+      _guidOrdering.ValidateMessageId(preset, messageType, "Dispatcher.CascadeByRuntimeType");
+    }
     var messageId = eventId.HasValue ? new MessageId(eventId.Value) : MessageId.New();
     return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope, eventStoreOnly);
   }
@@ -5313,6 +5397,8 @@ public abstract partial class Dispatcher(
       var envelope = _createSendEnvelope(message, context, new MessageDispatchContext { Mode = _outboxModeFor(handledLocallyReceipt), Source = MessageSource.Local, LocalDeferred = localDeferred }, callerMemberName, callerFilePath, callerLineNumber, copyId);
       _stampExplicitPriority(envelope, options?.Priority ?? Whizbang.Core.Priority.WorkPriority.UNDECLARED);
       envelope.PayloadLimitOverride = options?.MaxPayloadBytes;
+      envelope.SequenceIntegrityOverride = options?.SequenceIntegrity;
+      envelope.SequenceHoldTimeOverride = options?.SequenceHoldTime;
 
       // Start dispatch activity to serve as parent for handler traces (on receiving end)
       // The activity context will be propagated through the outbox message
@@ -5449,6 +5535,8 @@ public abstract partial class Dispatcher(
     var destination = decision.WriteOutbox ? _resolveDestination(message, messageType) : null;
     _stampExplicitPriority(envelope, options.Priority);
     envelope.PayloadLimitOverride = options.MaxPayloadBytes;
+    envelope.SequenceIntegrityOverride = options.SequenceIntegrity;
+    envelope.SequenceHoldTimeOverride = options.SequenceHoldTime;
     var copy = _serializeToNewOutboxMessage(envelope, message, messageType, destination, decision.DeferUntil);
     var receipt = DeliveryReceipt.Accepted(envelope.MessageId, destination ?? TypeNameFormatter.SimpleName(messageType), context.CorrelationId, context.CausationId,
       _streamIdExtractor?.ExtractStreamId(message, messageType));
@@ -6364,6 +6452,10 @@ public abstract partial class Dispatcher(
     if (payload is IEvent) {
       StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "Dispatcher.Outbox", TypeNameFormatter.DisplayName(payload.GetType()));
     }
+    // #2528: a stream id that is not v7 costs index locality only, so it is reported, not refused (unless configured).
+    var reportedType = payload?.GetType() ?? typeof(TMessage);
+    _guidOrdering.ReportStreamId(streamId, _streamIdExtractor?.GetStreamIdType(reportedType),
+      TypeNameFormatter.SimpleName(reportedType), "Dispatcher.Outbox");
 
     // Priority step 1: declared before the row is built so the number travels inside the stored envelope
     // and sits on the row for the store. The message type is rendered by the shared helper.
@@ -6418,6 +6510,8 @@ public abstract partial class Dispatcher(
       MessageType = serialized.MessageType,
       ScheduledFor = scheduledFor,
       Priority = declaredPriority,
+      SequenceHoldMilliseconds = _sequenceHoldMilliseconds(payload, payloadType, destination,
+        envelope.SequenceIntegrityOverride, envelope.SequenceHoldTimeOverride),
       CollectiveLinkType = CollectivePredecessorLink.TypeFor(payload)
     };
 

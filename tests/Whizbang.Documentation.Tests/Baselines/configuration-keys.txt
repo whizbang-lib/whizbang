@@ -74,6 +74,10 @@ Whizbang:Core:EmptyStreamIdPolicy
 Whizbang:Core:EnableTagProcessing
 Whizbang:Core:MaxMessagePayloadBytes
 Whizbang:Core:MessagePayloadWarningRatio
+Whizbang:Core:SequenceHoldSampleInterval
+Whizbang:Core:SequenceHoldTime
+Whizbang:Core:SequenceHoldWarningAge
+Whizbang:Core:SequenceIntegrity
 Whizbang:Core:ShutdownDeregistrationTimeout
 Whizbang:Core:TagProcessingMode
 Whizbang:Database
@@ -201,6 +205,7 @@ Whizbang:PerspectiveRowRetention:AutoAcknowledge
 Whizbang:PerspectiveRowRetention:Enabled
 Whizbang:PerspectiveRowRetention:Overrides:*
 Whizbang:Perspectives:ArchivedStreamRows:*
+Whizbang:Perspectives:Rebuild:StreamReadBatchSize
 Whizbang:Perspectives:Rewind:DebounceWindow
 Whizbang:Perspectives:Rewind:Enabled
 Whizbang:Perspectives:Rewind:MaxConcurrentRewinds
@@ -334,6 +339,7 @@ Whizbang:Storage:AzureBlob:Offloads:MaxDownloadBytes
 Whizbang:Storage:AzureBlob:Offloads:ProviderName
 Whizbang:Storage:AzureBlob:Offloads:ServiceUri
 Whizbang:Storage:AzureBlob:ServiceUri
+Whizbang:StreamIdOrderingViolationSeverity
 Whizbang:StreamIntegrity:AuditEnabled
 Whizbang:StreamIntegrity:AuditIntervalMinutes
 Whizbang:StreamIntegrity:AuditOnStartup
@@ -781,6 +787,10 @@ Whizbang:Workers:Perspective:RetryOptions:BackoffMultiplier
 Whizbang:Workers:Perspective:RetryOptions:EnableExponentialBackoff
 Whizbang:Workers:Perspective:RetryOptions:MaxBackoffSeconds
 Whizbang:Workers:Perspective:RetryOptions:RetryTimeoutSeconds
+Whizbang:Workers:Perspective:WriteBehind:MaxBatchesPerModel
+Whizbang:Workers:Perspective:WriteBehind:MaxBytes
+Whizbang:Workers:Perspective:WriteBehind:MaxFlushIntervalMilliseconds
+Whizbang:Workers:Perspective:WriteBehind:MaxModels
 Whizbang:Workers:Perspective:WriteMode
 Whizbang:Workers:PerspectiveAffinity:IdleEvictionWindow
 Whizbang:Workers:PerspectiveAffinity:LongHoldWarning

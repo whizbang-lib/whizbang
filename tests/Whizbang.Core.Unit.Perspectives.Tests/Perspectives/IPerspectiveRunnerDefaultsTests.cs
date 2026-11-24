@@ -203,6 +203,28 @@ public class IPerspectiveRunnerDefaultsTests {
       => throw new NotSupportedException();
   }
 
+  [Test]
+  public async Task ReadRebuildEventsAsync_Default_ReturnsNullAsync() {
+    IPerspectiveRunner runner = new MinimalRunner();
+
+    var read = await runner.ReadRebuildEventsAsync([Guid.NewGuid()], CancellationToken.None);
+
+    await Assert.That(read).IsNull().Because("a hand-written runner reads each stream of a rebuild on its own");
+  }
+
+  [Test]
+  public async Task RunRebuildWithEventsAsync_Default_RunsTheRebuildThatReadsItsOwnEventsAsync() {
+    IPerspectiveRunner runner = new MinimalRunner();
+    var streamId = Guid.NewGuid();
+
+    var completions = await runner.RunRebuildWithEventsAsync(streamId, "P", events: [], cancellationToken: CancellationToken.None);
+
+    // MinimalRunner's RunAsync reports Completed: the default ran RunRebuildAsync, which calls it.
+    await Assert.That(completions).Count().IsEqualTo(1);
+    await Assert.That(completions[0].StreamId).IsEqualTo(streamId);
+    await Assert.That(completions[0].Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+  }
+
   private sealed class MinimalRunner : IPerspectiveRunner {
     public int RewindCalls { get; private set; }
     public Guid? LastTriggerEventId { get; private set; }

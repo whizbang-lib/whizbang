@@ -556,7 +556,7 @@ function Find-DiffFindings {
       }
       if ($isLibrary -and $l.Text -match '\bGuid\.NewGuid\s*\(') {
         New-ReviewFinding -Id "code.tracked-guid:$where" -Rule 'code.tracked-guid' -Severity warning -Path $path -Line $l.Line `
-          -Body 'Use ``TrackedGuid.NewMedo()`` rather than ``Guid.NewGuid()``: it is time-ordered and records where it came from.'
+          -Body 'Use ``TrackedGuid.New()`` rather than ``Guid.NewGuid()``: it is time-ordered and records where it came from.'
       }
     }
   }

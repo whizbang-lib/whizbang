@@ -32,7 +32,7 @@ public class OutboxRecordCoverageTests {
   public async Task Scope_SetThenRead_RoundTripsAsync() {
     var scope = new PerspectiveScope { TenantId = "tenant-123", UserId = "user-456" };
     var record = new OutboxRecord {
-      MessageId = Guid.NewGuid(),
+      MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
       MessageType = "MyApp.Events.OrderCreated",
       MessageData = new OutboxMessageData { MessageId = MessageId.New(), Payload = JsonElement.Parse("{}"), Hops = [] },
       Metadata = new EnvelopeMetadata { MessageId = MessageId.New(), Hops = [] },
@@ -53,7 +53,7 @@ public class OutboxRecordCoverageTests {
   [Test]
   public async Task Scope_WhenNotSet_DefaultsToNullAsync() {
     var record = new OutboxRecord {
-      MessageId = Guid.NewGuid(),
+      MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
       MessageType = "MyApp.Events.OrderCreated",
       MessageData = new OutboxMessageData { MessageId = MessageId.New(), Payload = JsonElement.Parse("{}"), Hops = [] },
       Metadata = new EnvelopeMetadata { MessageId = MessageId.New(), Hops = [] },

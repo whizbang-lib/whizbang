@@ -126,6 +126,9 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     // value; #2124: and the superseding group, registered with the type so the write paths stamp it beside the key.
     var superseding = kind == EVENT_KIND ? SupersedingResolver.Resolve(typeSymbol) : default;
 
+    // #2542: the type's sequence integrity, read here so the runtime policy needs no reflection.
+    var sequenceIntegrity = _sequenceIntegrity(typeSymbol);
+
     return new MessageTypeCatalogEntryInfo(
         TypeName: fullTypeName,
         ClrTypeName: clrTypeName,
@@ -141,6 +144,8 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         IsComposite: _implementsInterface(typeSymbol, COMPOSITE_EVENT_INTERFACE),
         IsCompacted: _implementsInterface(typeSymbol, COMPACTED_EVENT_INTERFACE),
         MaxPayloadBytes: _maxPayloadBytes(typeSymbol),
+        SequenceIntegrity: sequenceIntegrity?.Mode,
+        SequenceHoldMilliseconds: sequenceIntegrity?.HoldMilliseconds ?? 0,
         DefaultRouting: _defaultRouting(typeSymbol),
         // WS-3 S4: a terminal event ends its stream. Only an event is stored on a stream, so only an event can be one.
         IsTerminal: kind == EVENT_KIND && _isTerminal(typeSymbol),
@@ -204,6 +209,33 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, MAX_PAYLOAD_SIZE_ATTRIBUTE));
       if (attribute?.ConstructorArguments.FirstOrDefault().Value is { } value) {
         return System.Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+      }
+    }
+    return null;
+  }
+
+  private const string SEQUENCE_INTEGRITY_ATTRIBUTE = "global::Whizbang.Core.Attributes.SequenceIntegrityAttribute";
+  private const string SEQUENCE_INTEGRITY = "global::Whizbang.Core.Messaging.SequenceIntegrity";
+
+  // The type's [SequenceIntegrity] (on it or the nearest base type that declares one; the attribute is inherited),
+  // rendered as the enum member and the hold time it names, or null when none does and the configured default applies.
+  private static (string Mode, int HoldMilliseconds)? _sequenceIntegrity(INamedTypeSymbol typeSymbol) {
+    for (var type = typeSymbol; type is not null; type = type.BaseType) {
+      var attribute = type.GetAttributes().FirstOrDefault(a =>
+        TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, SEQUENCE_INTEGRITY_ATTRIBUTE));
+      if (attribute?.ConstructorArguments.FirstOrDefault().Value is { } value) {
+        var mode = System.Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture);
+        var literal = mode switch {
+          0 => $"{SEQUENCE_INTEGRITY}.None",
+          1 => $"{SEQUENCE_INTEGRITY}.Bounded",
+          2 => $"{SEQUENCE_INTEGRITY}.UntilStamped",
+          _ => $"({SEQUENCE_INTEGRITY}){mode.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+        };
+        // The hold time is the optional second argument, which Roslyn supplies with its default when it is omitted.
+        var hold = attribute.ConstructorArguments.Skip(1)
+          .Select(a => System.Convert.ToInt32(a.Value, System.Globalization.CultureInfo.InvariantCulture))
+          .FirstOrDefault();
+        return (literal, hold);
       }
     }
     return null;
@@ -516,6 +548,12 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     if (info.MaxPayloadBytes is { } maxPayloadBytes) {
       initParts.Add($"MaxPayloadBytes = {maxPayloadBytes.ToString(System.Globalization.CultureInfo.InvariantCulture)}L");
     }
+    if (info.SequenceIntegrity is { } sequenceIntegrity) {
+      initParts.Add($"SequenceIntegrity = {sequenceIntegrity}");
+    }
+    if (info.SequenceHoldMilliseconds > 0) {
+      initParts.Add($"SequenceHoldMilliseconds = {info.SequenceHoldMilliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+    }
     if (info.DefaultRouting is { } defaultRouting) {
       initParts.Add($"DefaultRouting = {defaultRouting}");
     }
@@ -547,6 +585,8 @@ internal sealed record MessageTypeCatalogEntryInfo(
     bool IsComposite = false,
     bool IsCompacted = false,
     long? MaxPayloadBytes = null,
+    string? SequenceIntegrity = null,
+    int SequenceHoldMilliseconds = 0,
     string? DefaultRouting = null,
     bool IsTerminal = false,
     string? StreamEndOfLife = null,
