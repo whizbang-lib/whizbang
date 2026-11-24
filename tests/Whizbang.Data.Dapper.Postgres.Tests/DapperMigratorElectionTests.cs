@@ -435,6 +435,69 @@ public class DapperMigratorElectionTests {
     await Assert.That((await _registryRowAsync()).UpdatedAt).IsEqualTo(_untouched);
   }
 
+  private PostgresSchemaInitializer _thisBuild(bool applicationHeld = false) =>
+    new(_database.ConnectionString, _entries) { PerspectiveRegistry = [_registry], ApplicationHeld = applicationHeld };
+
+  private async Task _registryFromAnotherBuildAsync() {
+    await using var db = new NpgsqlConnection(_database.ConnectionString);
+    await db.ExecuteAsync("UPDATE wh_perspective_registry SET schema_hash = 'from-another-build'");
+  }
+
+  private async Task<string> _storedSchemaHashAsync() {
+    await using var db = new NpgsqlConnection(_database.ConnectionString);
+    return await db.ExecuteScalarAsync<string>(
+      "SELECT schema_hash FROM wh_perspective_registry WHERE clr_type_name = 'Tests.ElectionProbe'") ?? "";
+  }
+
+  /// <summary>
+  /// A start on a schema Assess found current runs no pass, so it checks the registry: one that matches this build is
+  /// left alone (it used to be reconciled, and every row stamped, on every start).
+  /// </summary>
+  [Test]
+  public async Task ACurrentStart_AgainstAMatchingRegistry_TouchesNothingAsync() {
+    await _migratedByThisBuildAsync();
+
+    await _thisBuild().ConvergeCurrentAsync(CancellationToken.None);
+
+    await Assert.That((await _registryRowAsync()).UpdatedAt).IsEqualTo(_untouched);
+  }
+
+  /// <summary>
+  /// A start on a schema Assess found current, over a registry another build wrote (a restored database: every hash
+  /// matches, and no hash covers the registry), reconciles it to this build.
+  /// </summary>
+  [Test]
+  public async Task ACurrentStart_AgainstARegistryNoHashCovers_ReconcilesItAsync() {
+    await _migratedByThisBuildAsync();
+    await _registryFromAnotherBuildAsync();
+
+    await _thisBuild().ConvergeCurrentAsync(CancellationToken.None);
+
+    await Assert.That(await _storedSchemaHashAsync()).IsEqualTo("probe-hash");
+  }
+
+  /// <summary>A waiter whose migrator finished converges, and reconciles a registry another build's migrator left.</summary>
+  [Test]
+  public async Task AWaitersConverge_AgainstARegistryNoHashCovers_ReconcilesItAsync() {
+    await _migratedByThisBuildAsync();
+    await _registryFromAnotherBuildAsync();
+
+    await _thisBuild().ConvergeMigratedAsync(CancellationToken.None);
+
+    await Assert.That(await _storedSchemaHashAsync()).IsEqualTo("probe-hash");
+  }
+
+  /// <summary>A start that holds the application's schema (#2553) leaves its registry as it is, differing or not.</summary>
+  [Test]
+  public async Task AStartHoldingTheApplication_LeavesTheRegistryAsItIsAsync() {
+    await _migratedByThisBuildAsync();
+    await _registryFromAnotherBuildAsync();
+
+    await _thisBuild(applicationHeld: true).ConvergeMigratedAsync(CancellationToken.None);
+
+    await Assert.That(await _storedSchemaHashAsync()).IsEqualTo("from-another-build");
+  }
+
   /// <summary>Completes once the schema lock has been reported contended the given number of times.</summary>
   private sealed class ContentionCounter(int waitFor) : ISchemaInitializationObserver {
     private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
