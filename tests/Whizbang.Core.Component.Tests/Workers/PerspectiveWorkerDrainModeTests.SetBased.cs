@@ -658,7 +658,9 @@ public partial class PerspectiveWorkerDrainModeTests {
       if (CaughtUp is { } caughtUp) {
         // #2551: caught up means the cursor stands on the stream's last event, a position; never an id that sorts higher.
         Coordinator.Cursors[caughtUp] = new PerspectiveCursorInfo {
-          StreamId = caughtUp, PerspectiveName = SET_BASED, LastEventId = events[caughtUp].MessageId.Value,
+          StreamId = caughtUp,
+          PerspectiveName = SET_BASED,
+          LastEventId = events[caughtUp].MessageId.Value,
         };
       }
       string[] perspectives = AlsoPerStream ? [SET_BASED, PER_STREAM] : [SET_BASED];
