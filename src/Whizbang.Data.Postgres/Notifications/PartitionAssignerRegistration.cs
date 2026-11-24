@@ -50,7 +50,7 @@ internal static class PartitionAssignerRegistration {
 
 /// <summary>
 /// Binds <see cref="PartitionAssignerOptions"/> from <c>Whizbang:Database:PartitionAssigner</c> (#2558):
-/// <c>AssignmentLease</c>, <c>RepublishInterval</c> and <c>SettleWindow</c>. <c>Enabled</c> is retired (#2559) and never
+/// <c>AssignmentLease</c>, <c>RepublishInterval</c>, <c>SettleWindow</c> and <c>HandoverDeadline</c> (#2557). <c>Enabled</c> is retired (#2559) and never
 /// bound. A key that is absent or does not parse leaves the default. Parsed by hand, as the role assignment's options are, so the binding needs no reflection.
 /// </summary>
 /// <docs>operations/configuration/configuration-reference#partition-assigner</docs>
@@ -68,6 +68,9 @@ internal sealed class ConfigurePartitionAssignerOptionsFromConfiguration(IConfig
     }
     if (TimeSpan.TryParse(section[nameof(PartitionAssignerOptions.SettleWindow)], CultureInfo.InvariantCulture, out var settle)) {
       options.SettleWindow = settle;
+    }
+    if (TimeSpan.TryParse(section[nameof(PartitionAssignerOptions.HandoverDeadline)], CultureInfo.InvariantCulture, out var deadline)) {
+      options.HandoverDeadline = deadline;
     }
   }
 }

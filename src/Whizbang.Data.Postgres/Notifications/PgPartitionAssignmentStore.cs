@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Globalization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -93,13 +94,14 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
 
   /// <inheritdoc />
   public async Task<PartitionAssignment?> PublishAsync(
-      string role, Guid instanceId, long epoch, PartitionMap map, TimeSpan lease, CancellationToken cancellationToken) {
+      string role, Guid instanceId, long epoch, PartitionMap map, TimeSpan lease, TimeSpan handoverDeadline,
+      CancellationToken cancellationToken) {
     ArgumentException.ThrowIfNullOrEmpty(role);
     ArgumentNullException.ThrowIfNull(map);
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
       await using var cmd = connection.CreateWhizbangCommand();
-      cmd.CommandText = "SELECT wh_publish_partition_assignment(@role, @instance, @epoch, @members, @lease, @owners)";
+      cmd.CommandText = "SELECT wh_publish_partition_assignment(@role, @instance, @epoch, @members, @lease, @owners, @deadline)";
       cmd.Parameters.AddWithValue(nameof(role), role);
       cmd.Parameters.AddWithValue("instance", instanceId);
       cmd.Parameters.AddWithValue(nameof(epoch), epoch);
@@ -109,6 +111,8 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
       cmd.Parameters.Add(new NpgsqlParameter("owners", NpgsqlDbType.Array | NpgsqlDbType.Smallint) {
         Value = map.Owners.Count == 0 ? DBNull.Value : (object)map.Owners.ToArray(),
       });
+      // #2557: in map mode a partition moving away from a live owner hands over for at most this long.
+      cmd.Parameters.Add(new NpgsqlParameter("deadline", NpgsqlDbType.Interval) { Value = handoverDeadline });
       try {
         _ = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
       } catch (PostgresException ex) when (ex.SqlState == FENCE_SQLSTATE) {
@@ -144,6 +148,23 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
     cmd.Parameters.AddWithValue(nameof(epoch), epoch);
     try {
       return (string?)await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    } catch (PostgresException ex) when (ex.SqlState == FENCE_SQLSTATE) {
+      return null;
+    }
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignmentSqlTests.cs:Store_CompleteExpiredHandovers_FlipsWhatIsPastItsDeadline_AndAnswersNullToADeposedAssignerAsync</tests>
+  public async Task<int?> CompleteExpiredHandoversAsync(Guid instanceId, long epoch, CancellationToken cancellationToken) {
+    var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
+    await using var connectionScope = connection.ConfigureAwait(false);
+    await using var cmd = connection.CreateWhizbangCommand();
+    cmd.CommandText = "SELECT wh_complete_expired_handovers(@role, @instance, @epoch)";
+    cmd.Parameters.AddWithValue("role", PartitionAssignerOptions.ROLE);
+    cmd.Parameters.AddWithValue("instance", instanceId);
+    cmd.Parameters.AddWithValue(nameof(epoch), epoch);
+    try {
+      return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), CultureInfo.InvariantCulture);
     } catch (PostgresException ex) when (ex.SqlState == FENCE_SQLSTATE) {
       return null;
     }

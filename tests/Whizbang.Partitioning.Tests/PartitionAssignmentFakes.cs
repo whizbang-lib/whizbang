@@ -18,6 +18,9 @@ internal sealed class FakePartitionAssignmentStore : IPartitionAssignmentStore {
   public TimeSpan LeaseRemaining { get; set; } = TimeSpan.FromSeconds(90);
   public List<(Guid Instance, long Epoch)> SwitchRequests { get; } = [];
   public string? SwitchAnswer { get; set; } = "opened";
+  public List<TimeSpan> HandoverDeadlines { get; } = [];
+  public List<(Guid Instance, long Epoch)> ExpiryRequests { get; } = [];
+  public int? ExpiryAnswer { get; set; } = 0;
 
   public Task<PartitionAssignmentRead?> ReadAsync(CancellationToken cancellationToken) {
     Reads++;
@@ -28,11 +31,13 @@ internal sealed class FakePartitionAssignmentStore : IPartitionAssignmentStore {
     Task.FromResult<IReadOnlyList<PartitionAssignmentCandidate>>([.. Candidates]);
 
   public Task<PartitionAssignment?> PublishAsync(
-      string role, Guid instanceId, long epoch, PartitionMap map, TimeSpan lease, CancellationToken cancellationToken) {
+      string role, Guid instanceId, long epoch, PartitionMap map, TimeSpan lease, TimeSpan handoverDeadline,
+      CancellationToken cancellationToken) {
     if (RefusePublish) {
       return Task.FromResult<PartitionAssignment?>(null);
     }
     Publishes.Add(map);
+    HandoverDeadlines.Add(handoverDeadline);
     var revision = Published?.Assignment.Epoch == epoch ? Published.Assignment.Revision + 1 : 1;
     var assignment = new PartitionAssignment(
       epoch, revision, instanceId, [.. map.Members], DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch + lease,
@@ -49,6 +54,11 @@ internal sealed class FakePartitionAssignmentStore : IPartitionAssignmentStore {
   public Task<string?> OpenOwnershipByMapAsync(Guid instanceId, long epoch, CancellationToken cancellationToken) {
     SwitchRequests.Add((instanceId, epoch));
     return Task.FromResult(SwitchAnswer);
+  }
+
+  public Task<int?> CompleteExpiredHandoversAsync(Guid instanceId, long epoch, CancellationToken cancellationToken) {
+    ExpiryRequests.Add((instanceId, epoch));
+    return Task.FromResult(ExpiryAnswer);
   }
 }
 

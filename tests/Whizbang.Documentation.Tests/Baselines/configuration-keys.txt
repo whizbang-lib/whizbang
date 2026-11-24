@@ -89,6 +89,7 @@ Whizbang:Database:ListenReconnectBackoffMultiplier
 Whizbang:Database:ListenReconnectInitialDelay
 Whizbang:Database:ListenReconnectMaxDelay
 Whizbang:Database:PartitionAssigner:AssignmentLease
+Whizbang:Database:PartitionAssigner:HandoverDeadline
 Whizbang:Database:PartitionAssigner:RepublishInterval
 Whizbang:Database:PartitionAssigner:SettleWindow
 Whizbang:Database:PollingFallbackInterval

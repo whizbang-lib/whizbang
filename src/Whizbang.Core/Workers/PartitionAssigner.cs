@@ -54,10 +54,26 @@ public sealed class PartitionAssignerOptions {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignerRegistrationTests.cs:AddWhizbangPostgresNotifications_BindsEveryAssignerKeyFromConfigurationAsync</tests>
   public TimeSpan SettleWindow { get; set; } = TimeSpan.FromSeconds(5);
 
+  /// <summary>
+  /// How long a moved partition may hand over before the assigner completes the move itself (#2557). In map mode a
+  /// partition moving away from a live owner first goes 'handing_over': nobody claims it while its old owner finishes its
+  /// in-flight batch, saves its write-behind models and releases the rest, then acknowledges. Past this deadline (an old
+  /// owner that is stuck, or cut off) the assigner flips the partition to its next owner itself; the old owner's late
+  /// writes are then fenced and its held models dropped. Judged on the database's clock. Default 30 seconds; bound from
+  /// <c>Whizbang:Database:PartitionAssigner:HandoverDeadline</c>.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#handover</docs>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerWorkerTests.cs:Tick_PublishesWithTheConfiguredHandoverDeadlineAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignerRegistrationTests.cs:AddWhizbangPostgresNotifications_BindsEveryAssignerKeyFromConfigurationAsync</tests>
+  public TimeSpan HandoverDeadline { get; set; } = TimeSpan.FromSeconds(30);
+
   /// <summary>Throws when the options cannot work together.</summary>
-  /// <exception cref="InvalidOperationException">The backstop is not positive, the lease is too short, or the settle
-  /// window is negative.</exception>
+  /// <exception cref="InvalidOperationException">The backstop is not positive, the lease is too short, the settle
+  /// window is negative, or the handover deadline is not positive.</exception>
   public void Validate() {
+    if (HandoverDeadline <= TimeSpan.Zero) {
+      throw new InvalidOperationException("PartitionAssigner.HandoverDeadline must be positive.");
+    }
     if (SettleWindow < TimeSpan.Zero) {
       throw new InvalidOperationException("PartitionAssigner.SettleWindow must not be negative.");
     }

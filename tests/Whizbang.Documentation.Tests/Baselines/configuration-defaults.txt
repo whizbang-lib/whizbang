@@ -54,6 +54,7 @@ Whizbang:Database:ListenReconnectBackoffMultiplier=2
 Whizbang:Database:ListenReconnectInitialDelay=00:00:01
 Whizbang:Database:ListenReconnectMaxDelay=00:00:30
 Whizbang:Database:PartitionAssigner:AssignmentLease=00:01:30
+Whizbang:Database:PartitionAssigner:HandoverDeadline=00:00:30
 Whizbang:Database:PartitionAssigner:RepublishInterval=00:05:00
 Whizbang:Database:PartitionAssigner:SettleWindow=00:00:05
 Whizbang:Database:PollingFallbackInterval=00:00:30

@@ -181,10 +181,24 @@ public interface IPartitionAssignmentStore {
   /// <param name="epoch">Its role epoch.</param>
   /// <param name="map">The members and the partition map (#2558); <see cref="PartitionMap.Empty"/> publishes no members.</param>
   /// <param name="lease">How long the assignment holds without renewal.</param>
+  /// <param name="handoverDeadline">In map mode, how long a partition moving away from a live owner may hand over before
+  /// the assigner completes the move itself (#2557).</param>
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>The assignment as published, or null when the caller no longer holds the role at that epoch.</returns>
   Task<PartitionAssignment?> PublishAsync(
-    string role, Guid instanceId, long epoch, PartitionMap map, TimeSpan lease, CancellationToken cancellationToken);
+    string role, Guid instanceId, long epoch, PartitionMap map, TimeSpan lease, TimeSpan handoverDeadline,
+    CancellationToken cancellationToken);
+
+  /// <summary>
+  /// Completes every handover past its deadline (#2557), fenced by the role epoch: each such partition flips to its next
+  /// owner at a raised epoch, and what the old owner held there is released, so the new owner replays it.
+  /// </summary>
+  /// <param name="instanceId">The assigner.</param>
+  /// <param name="epoch">Its role epoch.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>How many partitions it flipped, or null when the caller no longer holds the role at that epoch.</returns>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#handover</docs>
+  Task<int?> CompleteExpiredHandoversAsync(Guid instanceId, long epoch, CancellationToken cancellationToken);
 
   /// <summary>Extends the lease of the assignment the caller published at <paramref name="epoch"/>, while it holds the role.</summary>
   /// <param name="instanceId">The assigner.</param>

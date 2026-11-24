@@ -205,7 +205,8 @@ public sealed partial class PartitionAssignerWorker : BackgroundService {
     if (evaluation.Publishes) {
       var map = _map.Rebalance(members);
       var assignment = await _store.PublishAsync(
-        PartitionAssignerOptions.ROLE, self, epoch, map, _options.AssignmentLease, cancellationToken).ConfigureAwait(false);
+        PartitionAssignerOptions.ROLE, self, epoch, map, _options.AssignmentLease, _options.HandoverDeadline,
+        cancellationToken).ConfigureAwait(false);
       if (assignment is null) {
         LogFenced(_logger, epoch);
         _raiseEvaluated(evaluation);
@@ -222,12 +223,32 @@ public sealed partial class PartitionAssignerWorker : BackgroundService {
       // The alive-lock is this assigner's liveness, so its tick renews the lease; the heartbeat renews it as well.
       _ = await _store.RenewAsync(self, epoch, cancellationToken).ConfigureAwait(false);
     }
-    if (!await _openOwnershipByMapAsync(self, epoch, cancellationToken).ConfigureAwait(false)) {
+    if (!await _openOwnershipByMapAsync(self, epoch, cancellationToken).ConfigureAwait(false)
+        || !await _completeExpiredHandoversAsync(self, epoch, cancellationToken).ConfigureAwait(false)) {
       LogFenced(_logger, epoch);
       _raiseEvaluated(evaluation);
       return false;
     }
     _raiseEvaluated(evaluation);
+    return true;
+  }
+
+  /// <summary>
+  /// #2557: once the service owns by map, every tick completes the handovers past their deadline, so a partition whose
+  /// old owner is stuck or cut off moves after the deadline whether or not anything else changed. Returns false when the
+  /// fence refused the request (the tenure has ended).
+  /// </summary>
+  private async Task<bool> _completeExpiredHandoversAsync(Guid self, long epoch, CancellationToken cancellationToken) {
+    if (!Volatile.Read(ref _ownershipByMapOn)) {
+      return true;
+    }
+    var flipped = await _store.CompleteExpiredHandoversAsync(self, epoch, cancellationToken).ConfigureAwait(false);
+    if (flipped is null) {
+      return false;
+    }
+    if (flipped > 0) {
+      LogHandoversExpired(_logger, flipped.Value, _options.HandoverDeadline);
+    }
     return true;
   }
 
@@ -284,6 +305,10 @@ public sealed partial class PartitionAssignerWorker : BackgroundService {
     LogStoppedAssigning(_logger, epoch);
     OnStoppedAssigning?.Invoke(epoch);
   }
+
+  [LoggerMessage(EventId = 10, Level = LogLevel.Warning,
+    Message = "Completed {Count} partition handover(s) past their {Deadline} deadline: their old owner did not acknowledge, so its late writes are fenced and the new owner replays what it held.")]
+  static partial void LogHandoversExpired(ILogger logger, int count, TimeSpan deadline);
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "This instance is the partition assigner at epoch {Epoch}.")]
   static partial void LogBecameAssigner(ILogger logger, long epoch);

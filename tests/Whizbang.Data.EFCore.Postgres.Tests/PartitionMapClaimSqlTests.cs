@@ -65,7 +65,7 @@ public class PartitionMapClaimSqlTests : EFCoreTestBase {
     var epoch = await _electAsync(conn, _assigner);
     var map = PartitionMap.Initial([_assigner, _self, Guid.CreateVersion7()]).Rebalance([_assigner, _self]);
 
-    var published = await _store().PublishAsync(ROLE, _assigner, epoch, map, TimeSpan.FromSeconds(90), CancellationToken.None);
+    var published = await _store().PublishAsync(ROLE, _assigner, epoch, map, TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(30), CancellationToken.None);
     var read = await _store().ReadAsync(CancellationToken.None);
 
     await Assert.That(published!.Owners).IsEquivalentTo(map.Owners, TUnit.Assertions.Enums.CollectionOrdering.Matching);
@@ -78,7 +78,7 @@ public class PartitionMapClaimSqlTests : EFCoreTestBase {
     await using var conn = await _openAsync();
     var epoch = await _electAsync(conn, _assigner);
 
-    var published = await _store().PublishAsync(ROLE, _assigner, epoch, PartitionMap.Empty, TimeSpan.FromSeconds(90), CancellationToken.None);
+    var published = await _store().PublishAsync(ROLE, _assigner, epoch, PartitionMap.Empty, TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(30), CancellationToken.None);
 
     await Assert.That(published!.Members).IsEmpty();
     await Assert.That(published.Owners).IsNull();
