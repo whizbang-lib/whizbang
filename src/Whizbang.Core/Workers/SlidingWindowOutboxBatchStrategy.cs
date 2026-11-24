@@ -13,7 +13,8 @@ namespace Whizbang.Core.Workers;
 /// <summary>
 /// Default <see cref="IOutboxBatchStrategy"/> — per-stream-keyed sliding-window batcher. Each
 /// stream_id has its own bounded channel + drain task. Same-stream messages serialize through
-/// one buffer in MessageId order; different streams batch independently in parallel windows.
+/// one buffer in the order they were appended (emission order, never id order: #2551); different streams batch
+/// independently in parallel windows.
 /// </summary>
 /// <remarks>
 /// <para>Slice 9 of plans/pump-then-process.md (Half B — emit boundary).</para>
@@ -211,13 +212,10 @@ public sealed partial class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrat
       // takes no stop token, so a stop past its deadline still drains what was buffered, and reports it, rather than
       // discarding a half-filled batch (#1871).
       await foreach (var batch in batcher.ReadBatchesAsync(CancellationToken.None).ConfigureAwait(false)) {
-        // Sort by MessageId — locks the producer-side stream-affinity invariant. Concurrent
-        // appends to this stream's channel may complete in non-deterministic order; the sort
-        // restores message_id (UUIDv7 chronological) order before the SQL chain call.
+        // #2551: the batch is flushed in the order its messages were appended, which is the order the producer emitted
+        // them; the store versions the stream in that order. It is never sorted by id: an id is time-ordered, never a
+        // stream position, and an id derived from its cause can sort before an event emitted ahead of it.
         var array = batch.ToArray();
-        if (array.Length > 1) {
-          Array.Sort(array, static (a, b) => a.MessageId.CompareTo(b.MessageId));
-        }
         if (_stopCts.IsCancellationRequested || !await _storeOrReportAsync(buffer.Key, array).ConfigureAwait(false)) {
           (abandoned ??= []).AddRange(array);
         }

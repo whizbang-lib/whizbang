@@ -278,21 +278,22 @@ public class StreamSealingSqlTests : EFCoreTestBase {
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
     var stream = (Guid)TrackedGuid.New();
     var ids = _orderedIds(2);
-    var terminal = CreateTestOutboxMessage(ids[0], "sealing-topic", stream, isEvent: true) with {
+    // #2551: emitted terminal first, against the ids' order, so "after the terminal event" is by emission position.
+    var terminal = CreateTestOutboxMessage(ids[1], "sealing-topic", stream, isEvent: true) with {
       MessageType = TERMINAL_TYPE,
       Flags = EventFlags.Terminal,
       RaiseOnMixedStream = true,
     };
-    var after = CreateTestOutboxMessage(ids[1], "sealing-topic", stream, isEvent: true) with {
+    var after = CreateTestOutboxMessage(ids[0], "sealing-topic", stream, isEvent: true) with {
       MessageType = EVENT_TYPE,
       RaiseOnMixedStream = true,
     };
 
     var thrown = await Assert.That(async () =>
-        await coordinator.StoreOutboxMessagesAsync([after, terminal], partitionCount: 10000))
+        await coordinator.StoreOutboxMessagesAsync([terminal, after], partitionCount: 10000))
       .Throws<StreamSealedException>();
 
-    await Assert.That(thrown!.Reason).IsEqualTo($"Terminal event Probe.Contracts.AccountClosed (event {ids[0]})");
+    await Assert.That(thrown!.Reason).IsEqualTo($"Terminal event Probe.Contracts.AccountClosed (event {ids[1]})");
     var conn = await _openAsync(dbContext);
     await Assert.That(await _storedCountAsync(conn, stream)).IsEqualTo(0L)
       .Because("the awaited write rolls back whole, the terminal event with it");
