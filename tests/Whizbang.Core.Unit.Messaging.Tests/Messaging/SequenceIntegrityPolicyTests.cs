@@ -11,7 +11,7 @@ using Whizbang.Core.Messaging;
 namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
-/// Which sequence integrity an outgoing event is held under: the dispatch's own setting, else the type's
+/// Which sequence integrity an outgoing event is held under: the dispatch's own setting, else the ambient scope, else the type's
 /// <c>[SequenceIntegrity]</c>, else the configured default, else <see cref="SequenceIntegrity.Bounded"/> for one second.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Messaging/SequenceIntegrityPolicy.cs</code-under-test>
@@ -107,6 +107,40 @@ public class SequenceIntegrityPolicyTests {
     await Assert.That(policy.For(typeof(PlainEvent), null, TimeSpan.FromMilliseconds(700)))
       .IsEqualTo(new SequenceHold(SequenceIntegrity.Bounded, TimeSpan.FromMilliseconds(700)))
       .Because("a hold time on the dispatch alone still shortens the hold the type or the default chose");
+  }
+
+  [Test]
+  public async Task TheAmbientScope_BeatsTheTypeAndTheDefault_AndTheDispatchBeatsTheScopeAsync() {
+    var policy = _policy(new WhizbangCoreOptions { SequenceIntegrity = SequenceIntegrity.UntilStamped });
+
+    using (SequenceIntegrityContext.Enter(SequenceIntegrity.None)) {
+      await Assert.That(policy.For(typeof(PlainEvent)).Mode).IsEqualTo(SequenceIntegrity.None)
+        .Because("the scope is more specific than the configured default");
+      await Assert.That(policy.For(typeof(StampedEvent)).Mode).IsEqualTo(SequenceIntegrity.None)
+        .Because("the scope is more specific than the type's attribute");
+      await Assert.That(policy.For(typeof(PlainEvent), SequenceIntegrity.Bounded).Mode).IsEqualTo(SequenceIntegrity.Bounded)
+        .Because("the dispatch's own setting is the most specific of all");
+    }
+
+    await Assert.That(policy.For(typeof(StampedEvent)).Mode).IsEqualTo(SequenceIntegrity.UntilStamped)
+      .Because("outside the scope the type's attribute is back in charge");
+  }
+
+  [Test]
+  public async Task TheAmbientHoldTime_SitsBetweenTheDispatchsAndTheTypesAsync() {
+    var policy = _policy(new WhizbangCoreOptions { SequenceHoldTime = TimeSpan.FromSeconds(2) });
+
+    using (SequenceIntegrityContext.Enter(SequenceIntegrity.Bounded, TimeSpan.FromMilliseconds(150))) {
+      await Assert.That(policy.For(typeof(PatientEvent)).HoldTime).IsEqualTo(TimeSpan.FromMilliseconds(150));
+      await Assert.That(policy.For(typeof(PlainEvent)).HoldTime).IsEqualTo(TimeSpan.FromMilliseconds(150));
+      await Assert.That(policy.For(typeof(PlainEvent), SequenceIntegrity.Bounded, TimeSpan.FromMilliseconds(60)).HoldTime)
+        .IsEqualTo(TimeSpan.FromMilliseconds(60));
+    }
+    using (SequenceIntegrityContext.Enter(SequenceIntegrity.Bounded)) {
+      await Assert.That(policy.For(typeof(PatientEvent)).HoldTime).IsEqualTo(TimeSpan.FromSeconds(5))
+        .Because("a scope that names no hold time leaves the type's in charge");
+      await Assert.That(policy.For(typeof(PlainEvent)).HoldTime).IsEqualTo(TimeSpan.FromSeconds(2));
+    }
   }
 
   [Test]
