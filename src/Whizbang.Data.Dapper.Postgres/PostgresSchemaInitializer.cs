@@ -924,6 +924,18 @@ public sealed class PostgresSchemaInitializer {
         await _recordFailureAsync(connection, migration.Name, hash, versionId, failure, cancellationToken);
         ExceptionDispatchInfo.Capture(failure).Throw();   // halt migration
       }
+      await _stepCommittedAsync(schema, migration.Name, cancellationToken);
+    }
+  }
+
+  /// <summary>
+  /// One migration file committed (#2561), said as the EF Core driver says each of its steps: it is startup progress,
+  /// which keeps a migrator's duty alive through a long pass (#2165), and every observer is told.
+  /// </summary>
+  private async Task _stepCommittedAsync(string schema, string step, CancellationToken cancellationToken) {
+    StartupProgress.Note();
+    foreach (var observer in Observers) {
+      await observer.OnSchemaStepCommittedAsync(schema, step, cancellationToken);
     }
   }
 
