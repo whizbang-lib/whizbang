@@ -6551,66 +6551,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
       Value = (object?)maxBytes ?? DBNull.Value,
     });
 
+    // 579 (#2551): the function is new in 579 and returns its full column set, so there are no older shapes to
+    // tolerate here; its rows read as the continuation's do.
     var results = new List<OutboxBatchRow>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-    // Slice 26.6b: graceful fallback for the new commit_sequence / origin_* columns —
-    // matches the established pattern for older SQL functions that may not have them.
-    var hasCommitSequenceCol = false;
-    var commitSeqOrdinal = -1;
-    var originServiceOrdinal = -1;
-    var originSeqOrdinal = -1;
-    try {
-      commitSeqOrdinal = reader.GetOrdinal("commit_sequence");
-      originServiceOrdinal = reader.GetOrdinal("origin_service_id");
-      originSeqOrdinal = reader.GetOrdinal("origin_commit_sequence");
-      hasCommitSequenceCol = true;
-    } catch (IndexOutOfRangeException) {
-      // Older fetch_outbox_batch without slice 26.6b columns — leave as null.
-    }
-    // Slice 1 of release/v0.648.0-alpha.1 — same defensive ordinal-lookup pattern
-    // for the new error column. Older fetch_outbox_batch revisions (pre-Slice 1)
-    // don't return it; leave Error as null in that case.
-    var hasErrorCol = false;
-    var errorOrdinal = -1;
-    try {
-      errorOrdinal = reader.GetOrdinal("error");
-      hasErrorCol = true;
-    } catch (IndexOutOfRangeException) {
-      // Older fetch_outbox_batch without Slice 1's error column — leave Error null.
-    }
-    // Priority step 1 (151): the row's number; a fetch_outbox_batch that predates 151 leaves it undeclared and the
-    // drain falls back to the number stored inside the envelope.
-    var priorityOrdinal = _ordinalOrAbsent(reader, "priority");
-    var positionOrdinal = reader.GetOrdinal("stream_position");
     while (await reader.ReadAsync(cancellationToken)) {
-      results.Add(new OutboxBatchRow {
-        MessageId = reader.GetGuid(0),
-        StreamPosition = reader.GetInt64(positionOrdinal),
-        StreamId = await reader.IsDBNullAsync(1, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(1),
-        Destination = await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(2),
-        MessageType = reader.GetString(3),
-        EnvelopeType = await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(4),
-        EventData = reader.GetString(5),
-        Metadata = reader.GetString(6),
-        Scope = await reader.IsDBNullAsync(7, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(7),
-        Status = reader.GetInt32(8),
-        Attempts = reader.GetInt32(9),
-        PartitionNumber = await reader.IsDBNullAsync(10, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt32(10),
-        IsEvent = reader.GetBoolean(11),
-        CommitSequence = hasCommitSequenceCol && !await reader.IsDBNullAsync(commitSeqOrdinal, cancellationToken).ConfigureAwait(false)
-          ? reader.GetInt64(commitSeqOrdinal)
-          : null,
-        OriginServiceId = hasCommitSequenceCol && !await reader.IsDBNullAsync(originServiceOrdinal, cancellationToken).ConfigureAwait(false)
-          ? reader.GetGuid(originServiceOrdinal)
-          : null,
-        OriginCommitSequence = hasCommitSequenceCol && !await reader.IsDBNullAsync(originSeqOrdinal, cancellationToken).ConfigureAwait(false)
-          ? reader.GetInt64(originSeqOrdinal)
-          : null,
-        Error = hasErrorCol && !await reader.IsDBNullAsync(errorOrdinal, cancellationToken).ConfigureAwait(false)
-          ? reader.GetString(errorOrdinal)
-          : null,
-        Priority = priorityOrdinal >= 0 ? reader.GetInt32(priorityOrdinal) : Whizbang.Core.Priority.WorkPriority.UNDECLARED,
-      });
+      results.Add(await _readOutboxRowAsync(reader, cancellationToken));
     }
     // #2556: each fetched message is recorded under its stream's claimed tenure, which its result then names.
     TenureFill.RecordFetched(_tenures, results, r => r.MessageId, r => r.StreamId);
@@ -6652,19 +6598,21 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var results = new List<OutboxBatchRow>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
     while (await reader.ReadAsync(cancellationToken)) {
-      results.Add(await _readContinuedOutboxRowAsync(reader, cancellationToken));
+      results.Add(await _readOutboxRowAsync(reader, cancellationToken));
     }
     // #2556: as the fetch.
     TenureFill.RecordFetched(_tenures, results, r => r.MessageId, r => r.StreamId);
     return results;
   }
 
-  /// <summary>One row of <c>wh_continue_outbox_streams_in_emission_order</c>, in <c>fetch_outbox_batch_in_stream_order</c>'s column order.</summary>
-  private static async Task<OutboxBatchRow> _readContinuedOutboxRowAsync(
+  /// <summary>
+  /// One row of <c>fetch_outbox_batch_in_stream_order</c> or <c>wh_continue_outbox_streams_in_emission_order</c>, which
+  /// share one column order.
+  /// </summary>
+  private static async Task<OutboxBatchRow> _readOutboxRowAsync(
       System.Data.Common.DbDataReader reader, CancellationToken cancellationToken) => new() {
         MessageId = reader.GetGuid(0),
-        // Never NULL here: only a stream this instance owns is continued, so every row has one.
-        StreamId = reader.GetGuid(1),
+        StreamId = await _valueOrNullAsync(reader, 1, reader.GetGuid, cancellationToken),
         Destination = await _stringOrNullAsync(reader, 2, cancellationToken),
         MessageType = reader.GetString(3),
         EnvelopeType = await _stringOrNullAsync(reader, 4, cancellationToken),

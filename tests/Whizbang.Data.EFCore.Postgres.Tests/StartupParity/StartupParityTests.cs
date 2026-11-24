@@ -730,7 +730,8 @@ public class StartupParityTests {
     var lines = _overrideLines(log);
     await Assert.That(lines.Count).IsEqualTo(1).Because("logged once per start, loudly");
     await Assert.That(lines[0].Level).IsEqualTo(LogLevel.Error);
-    await Assert.That(lines[0].Id).IsEqualTo(3);
+    await Assert.That(lines[0].Id).IsEqualTo(4).Because("#2553: the side overridden is named, the W! migrations here");
+    await Assert.That(lines[0].Message).Contains("W! migrations");
     await Assert.That(lines[0].Message).Contains("StandDown");
     await Assert.That(lines[0].Message).Contains("(applied by library 999.0.0, application unknown)")
       .Because("the full reason, as the stand-down error carries it");

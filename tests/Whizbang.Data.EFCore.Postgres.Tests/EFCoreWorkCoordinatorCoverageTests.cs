@@ -177,68 +177,6 @@ public class EFCoreWorkCoordinatorCoverageTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task FetchOutboxBatchAsync_OlderSqlFunctionWithoutNewerColumns_FallsBackToLegacyDefaultsAsync() {
-    // Slice 26.6b (commit_sequence/origin_*) and the Slice 1 error column both arrived after this
-    // function's original shape. A drain against a database still on the older fetch_outbox_batch
-    // must keep publishing -- degrading the newer envelope-stamping fields to null -- rather than
-    // an ordinal lookup throwing and stalling the whole outbox drain for every stream in the batch.
-    await using var ctx = CreateDbContext();
-    var conn = await _openConnectionAsync(ctx);
-
-    var instanceId = Guid.NewGuid();
-    var streamId = Guid.NewGuid();
-    var messageId = Guid.NewGuid();
-
-    await using (var replace = conn.CreateCommand()) {
-      replace.CommandText = """
-        DROP FUNCTION IF EXISTS fetch_outbox_batch(uuid[], uuid, integer, bigint);
-        CREATE FUNCTION fetch_outbox_batch(
-          p_stream_ids UUID[],
-          p_instance_id UUID,
-          p_max_per_stream INTEGER DEFAULT 100,
-          p_max_bytes BIGINT DEFAULT NULL
-        ) RETURNS TABLE(
-          message_id UUID,
-          stream_id UUID,
-          destination VARCHAR(200),
-          message_type VARCHAR(500),
-          envelope_type VARCHAR(500),
-          event_data TEXT,
-          metadata JSONB,
-          scope JSONB,
-          status INTEGER,
-          attempts INTEGER,
-          partition_number INTEGER,
-          is_event BOOLEAN
-        ) AS $fn$
-          SELECT __MESSAGE_ID__::uuid, __STREAM_ID__::uuid, 'legacy-dest'::varchar,
-                 'Legacy.Message'::varchar, NULL::varchar, '{}'::text, '{}'::jsonb, NULL::jsonb,
-                 1, 0, 0, false
-        $fn$ LANGUAGE sql;
-        """
-        .Replace("__MESSAGE_ID__", $"'{messageId}'")
-        .Replace("__STREAM_ID__", $"'{streamId}'");
-      await replace.ExecuteNonQueryAsync();
-    }
-
-    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, JsonContextRegistry.CreateCombinedOptions());
-
-    var rows = await coordinator.FetchOutboxBatchAsync([streamId], instanceId);
-
-    await Assert.That(rows.Count).IsEqualTo(1);
-    await Assert.That(rows[0].MessageType).IsEqualTo("Legacy.Message")
-      .Because("basic row hydration must still succeed against the older column set");
-    await Assert.That(rows[0].CommitSequence).IsNull()
-      .Because("no commit_sequence/origin_* columns on this revision -- the publisher must fall " +
-               "back to publishing without the envelope stamp, never throw and drop the batch");
-    await Assert.That(rows[0].OriginServiceId).IsNull();
-    await Assert.That(rows[0].OriginCommitSequence).IsNull();
-    await Assert.That(rows[0].Error).IsNull()
-      .Because("no error column on this revision -- the pre-publish DLQ gate must fall back to " +
-               "the meta-message rather than fail the lookup");
-  }
-
-  [Test]
   public async Task FetchInboxBatchAsync_OlderSqlFunctionWithoutErrorColumn_FallsBackToLegacyDefaultAsync() {
     // The v0.651 inbox forensic-preservation slice added the error column after this function's
     // original shape. A drain against a database still on the older fetch_inbox_batch must keep

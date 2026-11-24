@@ -284,6 +284,45 @@ public class PerspectiveWritesAreFencedTests : EFCoreTestBase {
     await Assert.That(observer.Total()).IsEqualTo(1L);
   }
 
+  [Test]
+  public async Task TheEntityFrameworkWrite_InATransaction_HoldsThePartitionUntilItCommitsAsync() {
+    await using var conn = await _openAsync();
+    await _mapModeAsync(conn);
+    var (context, tenures, observer) = _context();
+    await using var _ = context;
+    using var __ = observer;
+    var stream = Guid.CreateVersion7();
+    _claim(tenures, stream, 6);
+    await using var transaction = await context.Database.BeginTransactionAsync();
+
+    await new EntityFrameworkOnlyStrategy().UpsertPerspectiveRowAsync(
+      context, ACTION_TABLE, stream, new ActionTestModel { Id = stream, Name = "current", Value = 1 }, _meta(), new PerspectiveScope());
+    var blockedWhileOpen = await _flipIsBlockedAsync(6);
+    await transaction.CommitAsync();
+
+    await Assert.That(blockedWhileOpen).IsTrue()
+      .Because("the hold is taken in the write's transaction, so a flip waits until the write commits");
+    await Assert.That(await _flipIsBlockedAsync(6)).IsFalse();
+    await Assert.That(await _rowExistsAsync(conn, stream)).IsTrue();
+  }
+
+  // Whether a flip of the partition would have to wait: NOWAIT answers at once instead of waiting.
+  private async Task<bool> _flipIsBlockedAsync(int partition) {
+    await using var flipper = await _openAsync();
+    await using var tx = await flipper.BeginTransactionAsync();
+    try {
+      await using var cmd = flipper.CreateCommand();
+      cmd.Transaction = tx;
+      cmd.CommandText = $"SELECT 1 FROM wh_partition_ownership WHERE partition_number = {partition} FOR NO KEY UPDATE NOWAIT";
+      await cmd.ExecuteScalarAsync();
+      return false;
+    } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.LockNotAvailable) {
+      return true;
+    } finally {
+      await tx.RollbackAsync();
+    }
+  }
+
   /// <summary>The upsert with its single-statement path off, so every write takes the Entity Framework path.</summary>
   private sealed class EntityFrameworkOnlyStrategy : PostgresUpsertStrategy {
     protected override bool UsesAtomicUpsert => false;

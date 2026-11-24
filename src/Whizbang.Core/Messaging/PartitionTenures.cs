@@ -203,14 +203,14 @@ public sealed class PartitionTenures {
   // One piece of the stream's perspective work ended.
   // Every piece of perspective work recorded is counted on its stream under its epoch, so both entries exist here.
   private void _release(Guid stream, long epoch) {
-    var held = _writes[stream];
-    var count = held.InFlight[epoch];
+    var (_, inFlight) = _writes[stream];
+    var count = inFlight[epoch];
     if (count > 1) {
-      held.InFlight[epoch] = count - 1;
+      inFlight[epoch] = count - 1;
       return;
     }
-    held.InFlight.Remove(epoch);
-    if (held.InFlight.Count == 0) {
+    inFlight.Remove(epoch);
+    if (inFlight.Count == 0) {
       _writes.Remove(stream);
     }
   }

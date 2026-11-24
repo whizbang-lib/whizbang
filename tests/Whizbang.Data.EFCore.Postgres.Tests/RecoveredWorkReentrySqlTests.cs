@@ -49,7 +49,7 @@ public class RecoveredWorkReentrySqlTests : EFCoreTestBase {
     await Assert.That(await _recoverAsync(connection, deadLetterId)).IsTrue();
 
     await Assert.That(await _outboxShapeAsync(connection, id)).IsEqualTo(stored)
-      .Because("everything but the arrival time and the lease is what the message was stored with");
+      .Because("everything but the arrival time, the lease and its place in the stream (a recovery is a new emission) is what the message was stored with");
     await Assert.That((await _deadLetterAsync(connection, deadLetterId)).Status).IsEqualTo((int)DeadLetterRecoveryStatus.Recovering)
       .Because("the store claims the dead letter, which reads Recovered only once the message is published");
   }
@@ -343,7 +343,8 @@ public class RecoveredWorkReentrySqlTests : EFCoreTestBase {
   /// <summary>The stored outbox row, without the arrival time, the lease and the dead letter it names.</summary>
   private static async Task<string> _outboxShapeAsync(NpgsqlConnection connection, Guid id) =>
     await _scalarAsync<string>(connection, """
-      SELECT (to_jsonb(o) - 'created_at' - 'instance_id' - 'lease_expiry' - 'recovered_from_dead_letter_id')::text
+      SELECT (to_jsonb(o) - 'created_at' - 'instance_id' - 'lease_expiry' - 'recovered_from_dead_letter_id'
+              - 'emission_position')::text
       FROM wh_outbox o WHERE o.message_id = @id
       """, id);
 
