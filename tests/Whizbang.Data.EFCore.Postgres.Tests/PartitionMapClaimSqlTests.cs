@@ -293,7 +293,7 @@ public class PartitionMapClaimSqlTests : EFCoreTestBase {
     await using (var ring = conn.CreateCommand()) {
       ring.Transaction = tx;
       ring.CommandText = "SELECT notify_instance_owners_with_payload('inbox', 'inbox', ARRAY[@stream]::uuid[])";
-      ring.Parameters.AddWithValue("stream", stream);
+      ring.Parameters.AddWithValue(nameof(stream), stream);
       _ = await ring.ExecuteNonQueryAsync();
     }
     var counts = new long[2];

@@ -371,7 +371,7 @@ public class PartitionAssignmentSqlTests : EFCoreTestBase {
     await _execAsync(conn,
       $"UPDATE wh_service_instances SET metadata = '{{\"partition_ownership_level\":1}}'::jsonb WHERE instance_id = '{assigner}'");
     var store = _store();
-    _ = await store.PublishAsync(ROLE, assigner, epoch, [assigner], TimeSpan.FromSeconds(90), CancellationToken.None);
+    _ = await store.PublishAsync(ROLE, assigner, epoch, PartitionMap.Initial([assigner]), TimeSpan.FromSeconds(90), CancellationToken.None);
 
     var refused = await store.OpenOwnershipByMapAsync(assigner, epoch + 1, CancellationToken.None);
     var opened = await store.OpenOwnershipByMapAsync(assigner, epoch, CancellationToken.None);
