@@ -4,6 +4,7 @@
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using TUnit.Assertions;
+using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Data.EFCore.Postgres.Functions;
@@ -522,7 +523,41 @@ public class WhizbangIdDocumentStorageTests {
     await Assert.That(await rows.Where(r => r.Data.Shipment.Carrier.CarrierId == carrierId).Select(r => r.Id).ToListAsync()).IsEquivalentTo([old.Id]);
     await Assert.That(await rows.Where(r => r.Data.Lines.Any(l => l.LineId == lineId)).Select(r => r.Id).ToListAsync()).IsEquivalentTo([old.Id]);
     await Assert.That(await rows.Where(r => r.Id == old.Id).Select(r => r.Data.ParentId).SingleAsync()).IsEqualTo(parent);
-    await Assert.That(await rows.OrderBy(r => r.Data.OrderId).Select(r => r.Id).CountAsync()).IsEqualTo(2);
+  }
+
+  /// <summary>
+  /// Ordering by an id sorts by the id itself whichever form a row holds it in, ascending and descending, with a null id
+  /// where PostgreSQL puts one: last ascending, first descending (#2518). The object-form row holds the lowest ids, so a
+  /// sort on the stored text, where <c>{</c> follows every hex digit, would put it last.
+  /// </summary>
+  [Test]
+  public async Task Whizbang_OrderingByAnIdSortsRowsInEitherStoredFormAsync() {
+    // Minted in order, so each is lower than the next.
+    var (lowOrder, middleOrder, highOrder) = (TestOrderId.New(), TestOrderId.New(), TestOrderId.New());
+    var (lowParent, highParent) = (TestOrderId.New(), TestOrderId.New());
+    var old = _row(lowOrder, lowParent, TestOrderId.New());
+    var orphan = _row(middleOrder, null, TestOrderId.New());
+    var current = _row(highOrder, highParent, TestOrderId.New());
+    await using (var structural = _context(o => new StructuralContext(o))) {
+      structural.Rows.Add(old);
+      await structural.SaveChangesAsync();
+    }
+    await using var db = _context(o => new WhizbangContext(o));
+    db.Rows.AddRange(orphan, current);
+    await db.SaveChangesAsync();
+    await Assert.That(await _storedTextAsync(old.Id)).Contains("\"OrderId\": {\"Value\"");
+    await Assert.That(await _storedTextAsync(current.Id)).Contains($"\"OrderId\": \"{highOrder.Value}\"");
+    var rows = db.Rows.AsNoTracking();
+
+    var byOrder = await rows.OrderBy(r => r.Data.OrderId).Select(r => r.Id).ToListAsync();
+    var byOrderDescending = await rows.OrderByDescending(r => r.Data.OrderId).Select(r => r.Id).ToListAsync();
+    var byParent = await rows.OrderBy(r => r.Data.ParentId).Select(r => r.Id).ToListAsync();
+    var byParentDescending = await rows.OrderByDescending(r => r.Data.ParentId).Select(r => r.Id).ToListAsync();
+
+    await Assert.That(byOrder).IsEquivalentTo([old.Id, orphan.Id, current.Id], CollectionOrdering.Matching);
+    await Assert.That(byOrderDescending).IsEquivalentTo([current.Id, orphan.Id, old.Id], CollectionOrdering.Matching);
+    await Assert.That(byParent).IsEquivalentTo([old.Id, current.Id, orphan.Id], CollectionOrdering.Matching);
+    await Assert.That(byParentDescending).IsEquivalentTo([orphan.Id, current.Id, old.Id], CollectionOrdering.Matching);
   }
 
   /// <summary>A collection of ids still in the object form is found by <c>Contains</c> (#2518).</summary>
