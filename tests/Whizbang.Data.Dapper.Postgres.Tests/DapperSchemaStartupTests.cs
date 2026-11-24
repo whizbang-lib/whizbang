@@ -108,6 +108,8 @@ public class DapperSchemaStartupTests {
       "Enter Preflight: the bootstrap closure is in place; registering this instance",
       "Enter Elect: voting for the migrator duty",
       "Enter Elect: this instance migrates the schema",
+      // #2563: Converge just before the managed-object reconcile, as on the EF Core driver.
+      "Enter Converge: analyzing new indexes and reconciling managed objects",
       "Enter Coordinate: recomputing partitions before the schema-ready gate opens",
     ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }

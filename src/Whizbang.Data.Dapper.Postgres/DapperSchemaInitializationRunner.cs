@@ -55,13 +55,13 @@ internal sealed class DapperSchemaInitializationRunner(
         await createInitializer().ServeAsItIsAsync(overridden, cancellationToken).ConfigureAwait(false);
         return;
       }
-      await createInitializer().ConvergeCurrentAsync(cancellationToken).ConfigureAwait(false);
+      await _reportingConverge(createInitializer()).ConvergeCurrentAsync(cancellationToken).ConfigureAwait(false);
       return;
     }
 
     // #2553: W! first. A held application schema (stood down, or served as it is by its own override) is left as it is,
     // and the pass applies the W! migrations alone.
-    var initializer = createInitializer();
+    var initializer = _reportingConverge(createInitializer());
     initializer.ApplicationHeld = assessment?.HoldsApplication == true;
     var (schema, bootstrap) = await initializer.ElectionClosureAsync(cancellationToken).ConfigureAwait(false);
     var commandTimeout = SchemaCommandTimeout.Resolve(connectionString);
@@ -99,5 +99,14 @@ internal sealed class DapperSchemaInitializationRunner(
       }
     }
     await retry.WaitForSchemaReadyAsync(connectionString, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// The initializer, reporting the Converge stage just before its managed-object reconcile, as the EF Core driver does
+  /// (#2563), so a host watching the stages sees the same sequence on either driver.
+  /// </summary>
+  private PostgresSchemaInitializer _reportingConverge(PostgresSchemaInitializer initializer) {
+    initializer.Converging = ct => SchemaInitializationStages.ConvergingAsync(services, ct);
+    return initializer;
   }
 }

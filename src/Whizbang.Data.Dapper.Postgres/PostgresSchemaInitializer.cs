@@ -204,6 +204,14 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>
+  /// Awaited just before the managed-object reconcile, on every start that converges: the runner that drives this
+  /// initializer reports the Converge stage here, as the EF Core driver reports it before its reconcile (#2563). Null
+  /// reports nothing, as a direct call with no host does.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs:EachDriver_EntersConverge_BeforeItsReconcileAsync</tests>
+  internal Func<CancellationToken, Task>? Converging { get; set; }
+
+  /// <summary>
   /// Initializes the Whizbang schema by generating SQL from C# schema definitions.
   /// Optionally executes perspective schema SQL if provided.
   /// Uses hash-based change detection to skip unchanged migrations.
@@ -429,6 +437,10 @@ public sealed class PostgresSchemaInitializer {
   /// settings. Neither takes the schema lock to wait.
   /// </summary>
   private async Task _convergeAsync(NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
+    // #2563: the Converge stage is entered on every start that converges, as on the EF Core driver, held or not.
+    if (Converging is { } converging) {
+      await converging(cancellationToken).ConfigureAwait(false);
+    }
     if (ApplicationHeld) {
       return;   // #2553: the registry, managed objects and storage settings are the application's, left as they are
     }

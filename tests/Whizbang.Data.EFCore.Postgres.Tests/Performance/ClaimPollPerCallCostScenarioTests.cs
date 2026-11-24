@@ -131,9 +131,16 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
   /// The scenario measures its code, not a draw (#2521). Two fills of one depth must be the same workload, or the cost the
   /// scenario reports is partly the luck of the ids it drew: the streams' ids decide their partitions, and so which streams
   /// a poll takes and which index pages it reads. Drawn at random, five fills of the 50-deep workload cost 7,624 to 8,125
-  /// blocks a call against a ceiling of 8,000, and the scenario failed about one run in two; the same fill five times cost
-  /// the same to within 0.1%.
+  /// blocks a call against a ceiling of 8,000, and the scenario failed about one run in two.
   /// </summary>
+  /// <remarks>
+  /// The same workload is asserted as the same fill and the same rows leased, both exact. Not as the same blocks to
+  /// within 1%, as it was: the claim's re-offer walk starts each lane at a stream drawn with gen_random_uuid (fairness
+  /// between streams), and where the draw lands decides how many probes the walk makes before it wraps. Two fills of one
+  /// workload measured 1,060 to 1,081 index scans and blocks up to 0.5% apart unloaded, 1.3% and 1.2% apart on loaded
+  /// full runs, with nothing different but the draw; on one loaded run the rows the walk fetched differed too (#2563).
+  /// The blocks are shown, not gated: an exact comparison needs the walk's start to be fixable in a measurement.
+  /// </remarks>
   [Test]
   [Timeout(1800000)]
   public async Task ClaimPollPerCallCost_TwoFillsOfOneDepth_AreOneWorkloadAtOneCostAsync(CancellationToken cancellationToken) {
@@ -153,10 +160,8 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
     await Assert.That(secondWorkload).IsEqualTo(firstWorkload)
       .Because("each fill of a depth is the same streams and events, so the scenario measures the claim and not the draw");
     await Assert.That(second.RowsLeasedPerCall).IsEqualTo(first.RowsLeasedPerCall)
-      .Because("the same workload, polled the same way, leases the same rows");
-    await Assert.That(Math.Abs(second.BlocksPerCall - first.BlocksPerCall)).IsLessThanOrEqualTo(first.BlocksPerCall / 100)
-      .Because($"the same workload costs the same blocks a call to within 1% ({first.BlocksPerCall:F1} and {second.BlocksPerCall:F1}); "
-        + "fills drawn at random differed by 6.5%");
+      .Because($"the same workload, polled the same way, leases the same rows ({first.BlocksPerCall:F1} and "
+        + $"{second.BlocksPerCall:F1} blocks a call, which the re-offer walk's random start moves)");
   }
 
   /// <summary>The streams, events and poller of the current fill, as one fingerprint.</summary>

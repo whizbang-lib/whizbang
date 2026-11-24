@@ -76,9 +76,10 @@ public class AliveLockRankCostScenarioTests : EFCoreTestBase {
     await holder.OpenAsync(cancellationToken);
     await _holdLocksAsync(holder, slowHalf);
 
-    // The first claim on a session compiles its statements and warms the catalog; a claimer pays that once.
-    _ = await _claimAsync(conn, cancellationToken);
+    // The first claim on a session compiles its statements and warms the catalog; a claimer pays that once. The vacuum
+    // comes before it, so whatever the vacuum leaves the next statement to rebuild is the warm-up's, not the measure's.
     await _settleAsync(conn);
+    _ = await _claimAsync(conn, cancellationToken);
     var (fresh, freshPartitions) = await _claimAsync(conn, cancellationToken);
     var freshRank = await _rankPlanAsync(conn, cancellationToken);
 
@@ -87,8 +88,8 @@ public class AliveLockRankCostScenarioTests : EFCoreTestBase {
     // both states, so the difference is the work the rule adds and not the fixture's own update.
     await _compactAsync(conn);
     var slowRegistryPages = await _registryPagesAsync(conn);
-    _ = await _claimAsync(conn, cancellationToken);
     await _settleAsync(conn);
+    _ = await _claimAsync(conn, cancellationToken);
     var (slow, slowPartitions) = await _claimAsync(conn, cancellationToken);
     var slowRank = await _rankPlanAsync(conn, cancellationToken);
 
@@ -196,10 +197,12 @@ public class AliveLockRankCostScenarioTests : EFCoreTestBase {
 
   /// <summary>
   /// Removes the row versions the earlier claims left. Every claim leases the outbox rows and rolls back, so each one
-  /// leaves a dead version of every row it leased and an index entry for it. The slow measurement follows three such
-  /// claims and the fresh one follows one, and whether a later read has already pruned them varies from run to run.
-  /// Vacuumed before each measured claim, both start from the same live rows. A plain vacuum keeps the relation's
-  /// file, so the plans the warm-up compiled stay valid.
+  /// leaves a dead version of every row it leased and an index entry for it. Without the vacuum the slow measurement
+  /// would follow three such claims and the fresh one one, and whether a later read has already pruned them varies from
+  /// run to run. Vacuumed before each warm-up claim, each measured claim follows exactly one rolled-back claim, in both
+  /// states. Not between the warm-up and the measure: a vacuum sometimes leaves the next statement something to rebuild
+  /// (about twenty buffers), depending on what the reads before it had already pruned, and when that landed on the slow
+  /// measure it outran the one-page allowance.
   /// </summary>
   private static async Task _settleAsync(NpgsqlConnection conn) {
     await using var cmd = conn.CreateCommand();

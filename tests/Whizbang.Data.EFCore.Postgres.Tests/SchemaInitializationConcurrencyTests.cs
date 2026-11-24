@@ -296,7 +296,6 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task SlowPath_WhenAnotherProcessHoldsTheSchemaLock_WaitsInsteadOfMigratingAsync(
       CancellationToken cancellationToken) {
     // The lock is worth nothing unless a DIFFERENT process computes the SAME key. That is exactly
@@ -327,16 +326,22 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
       await Assert.That(drifted).IsEqualTo(1); // guard: the arrangement must actually bite
     }
 
-    // Act — initialize with a deadline. Held lock ⇒ the inner loop backs off until the token fires.
+    // Act: initialize, and cancel it the moment it reports finding the lock held (the initializer's own signal, where
+    // it used to be a 5-second deadline that also canceled an initialization that had not reached the lock yet).
     await using var context = CreateDbContext();
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-    cts.CancelAfter(TimeSpan.FromSeconds(5));
+    var contention = new CancelOnLockContention(cts);
+    var services = new ServiceCollection();
+    services.AddSingleton<ISchemaInitializationObserver>(contention);
+    await using var provider = services.BuildServiceProvider();
 
-    // Assert — excluded, so it waited and was canceled rather than running DDL alongside the
+    // Assert: excluded, so it found the lock held, waited, and was canceled rather than running DDL alongside the
     // holder. On a per-process key it would take its own lock, sail through, and throw nothing.
     await Assert.That(async () =>
-        await context.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cts.Token))
+        await context.EnsureWhizbangDatabaseInitializedAsync(serviceProvider: provider, cancellationToken: cts.Token))
       .Throws<OperationCanceledException>();
+    await Assert.That(contention.Heard).IsTrue()
+      .Because("the cancellation came from the initializer reporting the held lock, not from anything earlier");
 
     // Cleanup — release the lock and let initialization complete, restoring the drifted hash.
     await using (var unlockCmd = holdingConn.CreateCommand()) {
@@ -938,21 +943,42 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   // Fast path hash comparison tests
   // ═══════════════════════════════════════════════════════════════════════════
 
+  /// <summary>
+  /// A schema whose every hash matches is not migrated again: the pass commits no step, and the ledger is left as it
+  /// was. Waited on the initializer's own signals: its observer hears every committed step
+  /// (<see cref="ISchemaInitializationObserver.OnSchemaStepCommittedAsync"/>), and the call's task completes when the
+  /// start is done. It used to time the call against 10 seconds; on a loaded full run the same fast path took 24, and
+  /// a quick call would not have shown that nothing was applied anyway.
+  /// </summary>
   [Test]
-  [Timeout(30000)]
   public async Task FastPath_WhenBothHashesMatch_SkipsInitializationAsync(CancellationToken cancellationToken) {
-    // Arrange — ensure database is fully initialized (done by EFCoreTestBase)
+    // Arrange: the database is fully initialized (a copy of the run's migrated template).
     await using var context = CreateDbContext();
+    var ledgerBefore = await _ledgerAsync(cancellationToken);
+    var steps = new CommandTimeoutAtEachStep(context);
+    var services = new ServiceCollection();
+    services.AddSingleton<ISchemaInitializationObserver>(steps);
+    await using var provider = services.BuildServiceProvider();
 
-    // Act — run initialization again (should hit fast path since all hashes match)
-    // The second call should be significantly faster because it skips DDL
-    var sw = System.Diagnostics.Stopwatch.StartNew();
-    await context.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken);
-    sw.Stop();
+    // Act: run initialization again, to completion.
+    await context.EnsureWhizbangDatabaseInitializedAsync(serviceProvider: provider, cancellationToken: cancellationToken);
 
-    // Assert — should complete quickly (fast path skips lock acquisition and DDL)
-    // Allow generous timeout for CI environments but expect it to be fast
-    await Assert.That(sw.ElapsedMilliseconds).IsLessThan(10_000);
+    // Assert: the fast path applied nothing.
+    await Assert.That(steps.Seen).IsEmpty().Because("every hash matches, so no step of the pass is committed");
+    await Assert.That(await _ledgerAsync(cancellationToken)).IsEqualTo(ledgerBefore)
+      .Because("a start that skips the pass writes no ledger row");
+  }
+
+  /// <summary>Every ledger row's name, hash, status and write time, as one string.</summary>
+  private async Task<string> _ledgerAsync(CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      SELECT string_agg(file_name || '|' || content_hash || '|' || status || '|' || updated_at::text, E'\n' ORDER BY file_name)
+      FROM wh_schema_migrations
+      """;
+    return (string)(await cmd.ExecuteScalarAsync(cancellationToken))!;
   }
 
   /// <summary>
@@ -1048,8 +1074,11 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   // Init connection string tests
   // ═══════════════════════════════════════════════════════════════════════════
 
+  /// <summary>
+  /// A whole start, awaited to completion on the call itself. It used to race a 30-second [Timeout], which a whole start
+  /// on a loaded run can outrun with nothing wrong (#2563).
+  /// </summary>
   [Test]
-  [Timeout(30000)]
   public async Task Initialization_WithInitConnectionString_UsesDirectConnectionAsync(CancellationToken cancellationToken) {
     // Arrange — use the test connection string as the "init" connection string
     // This simulates providing a direct Postgres connection (bypassing PgBouncer)
@@ -1063,8 +1092,11 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
       .ThrowsNothing();
   }
 
+  /// <summary>
+  /// A whole start, awaited to completion on the call itself. It used to race a 30-second [Timeout], which a whole start
+  /// on a loaded run can outrun with nothing wrong (#2563).
+  /// </summary>
   [Test]
-  [Timeout(30000)]
   public async Task Initialization_WithoutInitConnectionString_UsesNormalConnectionAsync(CancellationToken cancellationToken) {
     // Arrange — no init connection string (default behavior)
     await using var context = CreateDbContext();
@@ -1081,26 +1113,63 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   // Command timeout tests
   // ═══════════════════════════════════════════════════════════════════════════
 
+  /// <summary>
+  /// The pass raises the context's command timeout to the schema budget while its steps run, and puts it back when it
+  /// is done. Waited on the initializer's own signals: its observer hears each committed step
+  /// (<see cref="ISchemaInitializationObserver.OnSchemaStepCommittedAsync"/>), which runs inside the pass and reads the
+  /// timeout there, and the call's task completes when the pass is done. One recorded step is made stale, so the pass
+  /// runs that one step and not a whole install. It used to race a 30-second wall clock against a whole start on a
+  /// loaded server, and asserted only that a query worked afterwards, which it would with any timeout.
+  /// </summary>
   [Test]
-  [Timeout(30000)]
   public async Task Initialization_ResetCommandTimeout_AfterCompletionAsync(CancellationToken cancellationToken) {
-    // Arrange
+    // Arrange: the associations hash goes missing, so the pass runs (the only place the timeout is raised) for that step.
+    await using (var adminConn = new NpgsqlConnection(ConnectionString)) {
+      await adminConn.OpenAsync(cancellationToken);
+      await using var staleCmd = adminConn.CreateCommand();
+      staleCmd.CommandText = "DELETE FROM wh_schema_migrations WHERE file_name = 'associations:WorkCoordinationDbContext'";
+      await Assert.That(await staleCmd.ExecuteNonQueryAsync(cancellationToken)).IsEqualTo(1)
+        .Because("the arrangement has to bite: a schema with every hash current never enters the pass");
+    }
     await using var context = CreateDbContext();
+    var before = context.Database.GetCommandTimeout();
+    var during = new CommandTimeoutAtEachStep(context);
+    var services = new ServiceCollection();
+    services.AddSingleton<ISchemaInitializationObserver>(during);
+    await using var provider = services.BuildServiceProvider();
 
-    // Get the default timeout before initialization
-    _ = context.Database.GetDbConnection().ConnectionTimeout;
+    // Act: run initialization to completion.
+    await context.EnsureWhizbangDatabaseInitializedAsync(serviceProvider: provider, cancellationToken: cancellationToken);
 
-    // Act — run initialization (sets 600s timeout internally, should reset after)
-    await context.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken);
+    // Assert: raised to the schema budget inside the pass, and back to what it was once the pass is done.
+    await Assert.That(before).IsNull().Because("the context starts on the provider's default");
+    await Assert.That(during.Seen).IsNotEmpty().Because("the stale step is committed inside the pass");
+    await Assert.That(during.Seen.All(t => t == SchemaCommandTimeout.DEFAULT_SECONDS)).IsTrue()
+      .Because("every step runs under the schema budget, not the context's default");
+    await Assert.That(context.Database.GetCommandTimeout()).IsEqualTo(before)
+      .Because("the pass puts the context's command timeout back when it completes");
+  }
 
-    // Assert — the DbContext should still work normally after init (timeout was reset)
-    // Verify by running a simple query that would fail with an unreasonable timeout
-    await Assert.That(async () => {
-      await using var cmd = context.Database.GetDbConnection().CreateCommand();
-      cmd.CommandText = "SELECT 1";
-      await context.Database.OpenConnectionAsync(cancellationToken);
-      await cmd.ExecuteScalarAsync(cancellationToken);
-    }).ThrowsNothing();
+  /// <summary>Cancels the initialization it watches once that initialization reports the schema lock held.</summary>
+  private sealed class CancelOnLockContention(CancellationTokenSource cancel) : ISchemaInitializationObserver {
+    private int _heard;
+    public bool Heard => Volatile.Read(ref _heard) == 1;
+
+    public async ValueTask OnSchemaLockContendedAsync(string schema, CancellationToken cancellationToken) {
+      Interlocked.Exchange(ref _heard, 1);
+      await cancel.CancelAsync();
+    }
+  }
+
+  /// <summary>Reads the context's command timeout at every committed step of the pass.</summary>
+  private sealed class CommandTimeoutAtEachStep(DbContext context) : ISchemaInitializationObserver {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<int?> _seen = new();
+    public IReadOnlyCollection<int?> Seen => _seen;
+
+    public ValueTask OnSchemaStepCommittedAsync(string schema, string stepName, CancellationToken cancellationToken) {
+      _seen.Enqueue(context.Database.GetCommandTimeout());
+      return ValueTask.CompletedTask;
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
