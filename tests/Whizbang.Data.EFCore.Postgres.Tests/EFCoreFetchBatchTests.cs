@@ -365,13 +365,14 @@ public class EFCoreFetchBatchTests : EFCoreTestBase {
     var conn = await _openAsync(dbContext);
     await using (var replace = conn.CreateCommand()) {
       replace.CommandText = """
-        SELECT drop_all_overloads('fetch_inbox_batch');
-        CREATE FUNCTION fetch_inbox_batch(p_stream_ids UUID[], p_instance_id UUID, p_max_per_stream INTEGER, p_max_bytes BIGINT)
+        -- 583 (#2551): the drivers call the stream-ordered fetch, which always returns stream_position.
+        SELECT drop_all_overloads('fetch_inbox_batch_in_stream_order');
+        CREATE FUNCTION fetch_inbox_batch_in_stream_order(p_stream_ids UUID[], p_instance_id UUID, p_max_per_stream INTEGER, p_max_bytes BIGINT)
         RETURNS TABLE(message_id UUID, stream_id UUID, handler_name TEXT, message_type TEXT, event_data TEXT,
                       metadata TEXT, scope TEXT, status INTEGER, attempts INTEGER, partition_number INTEGER,
-                      is_event BOOLEAN)
+                      is_event BOOLEAN, stream_position BIGINT)
         LANGUAGE sql AS $$
-          SELECT p_stream_ids[1], p_stream_ids[1], 'MyHandler', 'MyType', '{}', '{}', NULL, 1, 0, 0, false
+          SELECT p_stream_ids[1], p_stream_ids[1], 'MyHandler', 'MyType', '{}', '{}', NULL, 1, 0, 0, false, 1::bigint
         $$;
         """;
       await replace.ExecuteNonQueryAsync();

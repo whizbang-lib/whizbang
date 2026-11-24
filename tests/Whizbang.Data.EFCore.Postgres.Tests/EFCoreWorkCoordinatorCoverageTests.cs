@@ -132,8 +132,8 @@ public class EFCoreWorkCoordinatorCoverageTests : EFCoreTestBase {
 
     await using (var replace = conn.CreateCommand()) {
       replace.CommandText = """
-        DROP FUNCTION IF EXISTS get_stream_events(uuid, uuid[], timestamptz, integer);
-        CREATE FUNCTION get_stream_events(
+        DROP FUNCTION IF EXISTS get_stream_events_in_stream_order(uuid, uuid[], timestamptz, integer);
+        CREATE FUNCTION get_stream_events_in_stream_order(
           p_instance_id UUID,
           p_stream_ids UUID[],
           p_now TIMESTAMPTZ DEFAULT NOW(),
@@ -145,10 +145,11 @@ public class EFCoreWorkCoordinatorCoverageTests : EFCoreTestBase {
           out_event_data TEXT,
           out_metadata TEXT,
           out_scope TEXT,
-          out_event_work_id UUID
+          out_event_work_id UUID,
+          out_version BIGINT
         ) AS $fn$
           SELECT __STREAM_ID__::uuid, __EVENT_ID__::uuid, 'Contracts.Legacy'::text,
-                 '{}'::text, NULL::text, NULL::text, __WORK_ID__::uuid
+                 '{}'::text, NULL::text, NULL::text, __WORK_ID__::uuid, 1::bigint
         $fn$ LANGUAGE sql;
         """
         .Replace("__STREAM_ID__", $"'{streamId}'")
@@ -252,8 +253,8 @@ public class EFCoreWorkCoordinatorCoverageTests : EFCoreTestBase {
 
     await using (var replace = conn.CreateCommand()) {
       replace.CommandText = """
-        DROP FUNCTION IF EXISTS fetch_inbox_batch(uuid[], uuid, integer, bigint);
-        CREATE FUNCTION fetch_inbox_batch(
+        DROP FUNCTION IF EXISTS fetch_inbox_batch_in_stream_order(uuid[], uuid, integer, bigint);
+        CREATE FUNCTION fetch_inbox_batch_in_stream_order(
           p_stream_ids UUID[],
           p_instance_id UUID,
           p_max_per_stream INTEGER DEFAULT 100,
@@ -269,10 +270,11 @@ public class EFCoreWorkCoordinatorCoverageTests : EFCoreTestBase {
           status INTEGER,
           attempts INTEGER,
           partition_number INTEGER,
-          is_event BOOLEAN
+          is_event BOOLEAN,
+          stream_position BIGINT
         ) AS $fn$
           SELECT __MESSAGE_ID__::uuid, __STREAM_ID__::uuid, 'LegacyHandler'::varchar,
-                 'Legacy.Message'::varchar, '{}'::text, '{}'::jsonb, NULL::jsonb, 1, 0, 0, false
+                 'Legacy.Message'::varchar, '{}'::text, '{}'::jsonb, NULL::jsonb, 1, 0, 0, false, 1::bigint
         $fn$ LANGUAGE sql;
         """
         .Replace("__MESSAGE_ID__", $"'{messageId}'")
