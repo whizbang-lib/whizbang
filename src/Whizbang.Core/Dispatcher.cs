@@ -810,6 +810,7 @@ public abstract partial class Dispatcher(
     }
   }
 
+  private const string ACTIVITY_DISPATCH = "Dispatch";
   private const string TAG_MESSAGE_TYPE = "whizbang.message.type";
   private const string TAG_MESSAGE_ID = "whizbang.message.id";
   private const string TAG_CORRELATION_ID = "whizbang.correlation.id";
@@ -1585,7 +1586,7 @@ public abstract partial class Dispatcher(
     // Start dispatch activity to serve as parent for handler traces
     // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
     var parentActivity = Activity.Current;
-    using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, "Dispatch", messageType);
+    using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, ACTIVITY_DISPATCH, messageType);
     if (dispatchActivity != null) {
       dispatchActivity.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
@@ -2139,7 +2140,7 @@ public abstract partial class Dispatcher(
 
       // Start dispatch activity to serve as parent for handler traces
       // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-      using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, "Dispatch", messageType);
+      using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, ACTIVITY_DISPATCH, messageType);
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
@@ -2201,7 +2202,7 @@ public abstract partial class Dispatcher(
 
       // Start dispatch activity to serve as parent for handler traces
       // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-      using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, "Dispatch", messageType);
+      using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, ACTIVITY_DISPATCH, messageType);
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
@@ -2389,7 +2390,7 @@ public abstract partial class Dispatcher(
         // Start dispatch activity to serve as parent for handler traces
         // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
         var parentActivity = Activity.Current;
-        using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, "Dispatch", messageType);
+        using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, ACTIVITY_DISPATCH, messageType);
         if (dispatchActivity != null) {
           dispatchActivity.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
           dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
@@ -2466,7 +2467,7 @@ public abstract partial class Dispatcher(
 
         // Start dispatch activity to serve as parent for handler traces
         // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-        using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, "Dispatch", messageType);
+        using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, ACTIVITY_DISPATCH, messageType);
         dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
         dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
@@ -2513,7 +2514,7 @@ public abstract partial class Dispatcher(
 
     // Start dispatch activity to serve as parent for handler traces
     // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-    using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, "Dispatch", messageType);
+    using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, ACTIVITY_DISPATCH, messageType);
     dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
 
     // Invoke synchronously, with the message's envelope registered for a receptor that looks it up
@@ -2567,7 +2568,7 @@ public abstract partial class Dispatcher(
 
         // Start dispatch activity to serve as parent for handler traces
         // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-        using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, "Dispatch", messageType);
+        using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, ACTIVITY_DISPATCH, messageType);
         dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
         dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
@@ -2821,7 +2822,7 @@ public abstract partial class Dispatcher(
 
       // Start dispatch activity to serve as parent for handler traces
       // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-      using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, "Dispatch", messageType);
+      using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, ACTIVITY_DISPATCH, messageType);
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
@@ -2874,7 +2875,7 @@ public abstract partial class Dispatcher(
 
       // Start dispatch activity to serve as parent for handler traces
       // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-      using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, "Dispatch", messageType);
+      using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, ACTIVITY_DISPATCH, messageType);
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
@@ -3042,7 +3043,7 @@ public abstract partial class Dispatcher(
         await _traceStore.StoreAsync(envelope);
       }
 
-      using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, "Dispatch", messageType);
+      using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, ACTIVITY_DISPATCH, messageType);
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
@@ -3101,7 +3102,7 @@ public abstract partial class Dispatcher(
         await _traceStore.StoreAsync(envelope, options.CancellationToken);
       }
 
-      using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, "Dispatch", messageType);
+      using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, ACTIVITY_DISPATCH, messageType);
       dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
@@ -5392,7 +5393,7 @@ public abstract partial class Dispatcher(
       // Start dispatch activity to serve as parent for handler traces (on receiving end)
       // The activity context will be propagated through the outbox message
       var parentActivity = Activity.Current;
-      using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, "Dispatch", messageType, "(Outbox)");
+      using var dispatchActivity = WhizbangActivitySource.StartForType(WhizbangActivitySource.Execution, ACTIVITY_DISPATCH, messageType, "(Outbox)");
       if (dispatchActivity != null) {
         dispatchActivity.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
