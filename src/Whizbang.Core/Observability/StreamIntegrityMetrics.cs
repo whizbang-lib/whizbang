@@ -30,6 +30,9 @@ public sealed class StreamIntegrityMetrics {
   /// <summary>OpenTelemetry meter name.</summary>
   public const string METER_NAME = "Whizbang.StreamIntegrity";
 
+  /// <summary>The tag naming the origin service a reading is about.</summary>
+  public const string ORIGIN_SERVICE_ID_TAG = "origin_service_id";
+
   /// <summary>The tag naming how a ledger bucket opened or closed (#2256).</summary>
   public const string HOW_TAG = "how";
 
@@ -557,7 +560,7 @@ public sealed class StreamIntegrityMetrics {
         var measurements = new Measurement<long>[unfilled.Count];
         for (var i = 0; i < unfilled.Count; i++) {
           measurements[i] = new Measurement<long>(unfilled[i].Unfilled,
-            new KeyValuePair<string, object?>("origin_service_id", unfilled[i].OriginServiceId.ToString()));
+            new KeyValuePair<string, object?>(ORIGIN_SERVICE_ID_TAG, unfilled[i].OriginServiceId.ToString()));
         }
         return measurements;
       },
@@ -619,7 +622,7 @@ public sealed class StreamIntegrityMetrics {
         var measurements = new Measurement<long>[seals.Count];
         for (var i = 0; i < seals.Count; i++) {
           measurements[i] = new Measurement<long>(seals[i].SealedThrough,
-            new KeyValuePair<string, object?>("origin_service_id", seals[i].OriginServiceId.ToString()));
+            new KeyValuePair<string, object?>(ORIGIN_SERVICE_ID_TAG, seals[i].OriginServiceId.ToString()));
         }
         return measurements;
       },
@@ -785,7 +788,7 @@ public sealed class StreamIntegrityMetrics {
     var measurements = new Measurement<double>[reading.Origins.Count];
     for (var i = 0; i < reading.Origins.Count; i++) {
       measurements[i] = new Measurement<double>(reading.Origins[i].Percent,
-        new KeyValuePair<string, object?>("origin_service_id", reading.Origins[i].OriginServiceId.ToString()));
+        new KeyValuePair<string, object?>(ORIGIN_SERVICE_ID_TAG, reading.Origins[i].OriginServiceId.ToString()));
     }
     return measurements;
   }
@@ -960,7 +963,7 @@ public sealed class StreamIntegrityMetrics {
     new(on ? 1 : 0, new KeyValuePair<string, object?>(CHECK_TAG, check));
 
   private static KeyValuePair<string, object?> _lane(LaneSeal lane) =>
-    new("origin_service_id", lane.OriginServiceId.ToString());
+    new(ORIGIN_SERVICE_ID_TAG, lane.OriginServiceId.ToString());
 
   /// <summary>The <c>reason</c> of <see cref="SealLowered"/>: the origin rewrote history this service had verified.</summary>
   public const string SEAL_LOWERED_REWRITE = Whizbang.Core.Messaging.IntegrityHistoryMoved.REWRITE;

@@ -287,7 +287,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
         INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status) VALUES ('{stream}', 'P1', '{last}', 2);
         INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status) VALUES ('{stream}', '__collective__', '{last}', 2);
         INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_version)
-        VALUES ('{stream}', 'P1', '{last}', '{"{}"}'::jsonb, 2, 2);
+        VALUES ('{stream}', 'P1', '{last}', jsonb_build_object(), 2, 2);
         """);
     }
 
