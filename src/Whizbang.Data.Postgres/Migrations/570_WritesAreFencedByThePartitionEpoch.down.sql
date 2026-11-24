@@ -429,7 +429,7 @@ BEGIN
     FROM jsonb_array_elements(p_results) AS elem;
     RETURN;
   EXCEPTION WHEN OTHERS THEN
-    -- #573: the fallback is legitimate, the silence was not. Capture WHY Tier 1 failed —
+    -- #573: the fallback is legitimate, the silence was not. Capture WHY Tier 1 failed:
     -- a deployment running permanently on the slow per-handler path was indistinguishable
     -- from a healthy one, and the diagnosis (the SQLSTATE) was discarded on every call.
     -- The reason rides on every Tier-2 row (the C# caller logs and counts it) and lands
@@ -441,7 +441,7 @@ BEGIN
   END;
 
   -- Tier 2: per-handler SAVEPOINT loop (rare path). Identical to the
-  -- pre-Option-D body — preserves the per-handler success/failure isolation
+  -- pre-Option-D body: preserves the per-handler success/failure isolation
   -- contract for the C# flusher.
   -- Same deterministic lock order as Tier 1 (see commit_handler_batch_bulk). The fallback loop takes
   -- the same row locks, so it must take them in the same sequence; sorting only the fast path would
@@ -473,7 +473,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__.commit_handler_batch IS
-'Two-tier (Option D) batched commit orchestrator. Tier 1: optimistic bulk attempt via commit_handler_batch_bulk — no savepoint overhead on the happy path. Tier 2: on any error, falls back to per-handler SAVEPOINT loop preserving isolated per-handler success/failure reporting. Returns per-handler (handler_id, success, error_message) for the C# flusher. Single fsync at outer commit on the happy path; bulk-then-loop on the rare failure path.';
+'Two-tier (Option D) batched commit orchestrator. Tier 1: optimistic bulk attempt via commit_handler_batch_bulk: no savepoint overhead on the happy path. Tier 2: on any error, falls back to per-handler SAVEPOINT loop preserving isolated per-handler success/failure reporting. Returns per-handler (handler_id, success, error_message) for the C# flusher. Single fsync at outer commit on the happy path; bulk-then-loop on the rare failure path.';
 
 SELECT __SCHEMA__.drop_all_overloads('_wh_handler_commit_is_fenced');
 SELECT __SCHEMA__.drop_all_overloads('_wh_fence_failures');

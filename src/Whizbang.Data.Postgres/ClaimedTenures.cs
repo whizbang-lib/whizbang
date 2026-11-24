@@ -16,8 +16,8 @@ public static class ClaimedTenures {
   /// claim's own statement (#2556): the epoch at which <paramref name="instanceParameter"/> owns the row's partition (the
   /// row's, or its stream's when the row names none), in either state; -1 when it does not own it; 0 for work without a
   /// partition; NULL with the service's switch off. The same answers as <c>wh_held_epoch</c>, computed set-wise: the
-  /// switch is read once and the ownership table is joined once, because a per-row call of the function was not inlined
-  /// and cost the claim about 0.1 ms a row.
+  /// switch is read once and each row's ownership is a primary-key probe, because a per-row call of the function was not
+  /// inlined and cost the claim about 0.1 ms a row.
   /// </summary>
   /// <param name="prefix">The schema prefix (<c>"svc".</c>), or empty.</param>
   /// <param name="columns">The claim's columns to return, each qualified <c>c.</c>.</param>
@@ -32,14 +32,18 @@ public static class ClaimedTenures {
   public static string ProjectEpochs(
       string prefix, string columns, string claimCall, string instanceParameter, string partitionCountParameter,
       string epochColumn = "partition_epoch", string partitionColumn = "tenure_partition") =>
-    $"WITH c AS MATERIALIZED (SELECT * FROM {claimCall}) "
+    // Both CTEs are materialized so the switch is read once: inlined, the planner evaluates it per row, and the
+    // function is not inlined itself. In map mode each row's ownership is one primary-key probe; off, none is made.
+    $"WITH c AS MATERIALIZED (SELECT * FROM {claimCall}), "
+    + $"m AS MATERIALIZED (SELECT {prefix}wh_partition_ownership_by_map() AS map_on) "
     + $"SELECT {columns}, "
-    + $"CASE WHEN m.map_on THEN CASE WHEN t.tp IS NULL THEN 0 ELSE COALESCE(o.epoch, -1) END END AS {epochColumn}, "
+    + "CASE WHEN m.map_on THEN CASE WHEN t.tp IS NULL THEN 0 ELSE COALESCE(("
+    + $"SELECT o.epoch FROM {prefix}wh_partition_ownership o "
+    + $"WHERE o.partition_number = t.tp % 10000 AND o.owner_instance_id = {instanceParameter}), -1) END END AS {epochColumn}, "
     + $"t.tp AS {partitionColumn} "
-    + $"FROM c CROSS JOIN (SELECT {prefix}wh_partition_ownership_by_map() AS map_on) m "
+    + "FROM c CROSS JOIN m "
     + "CROSS JOIN LATERAL (SELECT CASE WHEN m.map_on THEN COALESCE(c.partition_number, "
-    + $"{prefix}compute_partition(c.work_stream_id, {partitionCountParameter})) END AS tp) t "
-    + $"LEFT JOIN {prefix}wh_partition_ownership o ON o.partition_number = t.tp % 10000 AND o.owner_instance_id = {instanceParameter}";
+    + $"{prefix}compute_partition(c.work_stream_id, {partitionCountParameter})) END AS tp) t";
 
   /// <summary>
   /// The epoch of each stream that has one. A stream reported twice keeps the lower epoch, so a write under it can only be

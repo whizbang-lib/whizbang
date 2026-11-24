@@ -32,7 +32,7 @@
 --              adds one primary-key probe of wh_partition_ownership per row it renews.
 --
 -- Reversal: reversible (the down file restores 565's publish and 255's renewal, and drops the new functions)
--- Dependencies: 565 (wh_partition_ownership, wh_publish_partition_assignment's last word), 570 (wh_held_epoch), 255
+-- Dependencies: 565 (wh_partition_ownership, wh_partition_ownership_by_map, wh_publish_partition_assignment's last word), 255
 --               (wh_renew_held_leases), 316 (wh_live_instance_ids), 355 (wh_assert_role_epoch)
 -- Objects: _wh_release_partition_leases, wh_partitions_handing_over, wh_acknowledge_handover,
 --          wh_complete_expired_handovers, wh_publish_partition_assignment, wh_renew_held_leases
@@ -467,10 +467,13 @@ DECLARE
   v_new_expiry TIMESTAMPTZ := NOW() + (p_lease_seconds || ' seconds')::INTERVAL;
   v_renewed UUID[];
   v_streams UUID[];
+  -- 571 (#2557): whether the service owns by map, read once.
+  v_map BOOLEAN;
 BEGIN
   IF p_ids IS NULL OR array_length(p_ids, 1) IS NULL THEN
     RETURN ARRAY[]::UUID[];
   END IF;
+  v_map := __SCHEMA__.wh_partition_ownership_by_map();
 
   CASE p_category
     WHEN __CATEGORY_OUTBOX__ THEN
@@ -485,8 +488,11 @@ BEGIN
             WHERE l.message_id = ANY(p_ids)
               AND l.instance_id = p_instance_id
               AND l.processed_at IS NULL
-              -- 571 (#2557): in map mode, only while this instance owns the row's partition (either state).
-              AND COALESCE(__SCHEMA__.wh_held_epoch(l.partition_number, p_instance_id), 0) >= 0
+              -- 571 (#2557): in map mode, only while this instance owns the row's partition (either state): the
+              -- switch is read once, and the ownership is one primary-key probe per row.
+              AND (NOT v_map OR l.partition_number IS NULL OR EXISTS (
+                SELECT 1 FROM __SCHEMA__.wh_partition_ownership o
+                WHERE o.partition_number = l.partition_number % 10000 AND o.owner_instance_id = p_instance_id))
             ORDER BY l.stream_id, l.created_at, l.message_id
             FOR UPDATE OF l
           ) locked
@@ -503,8 +509,11 @@ BEGIN
           WHERE s.message_id = ANY(p_ids)
             AND s.instance_id = p_instance_id
             AND s.processed_at IS NULL
-            -- 571 (#2557): in map mode, only while this instance owns the row's partition (either state).
-            AND COALESCE(__SCHEMA__.wh_held_epoch(s.partition_number, p_instance_id), 0) >= 0
+            -- 571 (#2557): in map mode, only while this instance owns the row's partition (either state): the
+            -- switch is read once, and the ownership is one primary-key probe per row.
+            AND (NOT v_map OR s.partition_number IS NULL OR EXISTS (
+              SELECT 1 FROM __SCHEMA__.wh_partition_ownership o
+              WHERE o.partition_number = s.partition_number % 10000 AND o.owner_instance_id = p_instance_id))
           RETURNING s.message_id, s.stream_id
       )
       SELECT array_agg(r.message_id), array_agg(r.stream_id) FILTER (WHERE r.stream_id IS NOT NULL)
@@ -517,8 +526,11 @@ BEGIN
           WHERE pe.event_work_id = ANY(p_ids)
             AND pe.instance_id = p_instance_id
             AND pe.processed_at IS NULL
-            -- 571 (#2557): in map mode, only while this instance owns the row's partition (either state).
-            AND COALESCE(__SCHEMA__.wh_held_epoch(pe.partition_number, p_instance_id), 0) >= 0
+            -- 571 (#2557): in map mode, only while this instance owns the row's partition (either state): the
+            -- switch is read once, and the ownership is one primary-key probe per row.
+            AND (NOT v_map OR pe.partition_number IS NULL OR EXISTS (
+              SELECT 1 FROM __SCHEMA__.wh_partition_ownership o
+              WHERE o.partition_number = pe.partition_number % 10000 AND o.owner_instance_id = p_instance_id))
           RETURNING pe.event_work_id, pe.stream_id
       )
       SELECT array_agg(r.event_work_id), array_agg(r.stream_id) FILTER (WHERE r.stream_id IS NOT NULL)

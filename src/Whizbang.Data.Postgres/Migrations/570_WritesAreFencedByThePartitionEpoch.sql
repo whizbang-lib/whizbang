@@ -146,10 +146,17 @@ BEGIN
          count(*) FILTER (WHERE NOT n.kept)
     INTO v_kept, v_fenced
   FROM (
+    -- wh_epoch_is_current's rule, joined rather than called per id (a per-row call is not inlined). Each lookup is a
+    -- LATERAL with LIMIT 1, which the planner never flattens, so every id is one primary-key probe of the outbox and
+    -- one of the ownership table, whatever the statistics: never a scan of the outbox.
     SELECT i.id, i.ord,
-           o.message_id IS NULL OR __SCHEMA__.wh_epoch_is_current(o.partition_number, i.epoch) AS kept
+           o.present IS NULL OR i.epoch IS NULL OR (o.partition_number IS NULL AND i.epoch = 0) OR w.hit IS NOT NULL AS kept
     FROM unnest(p_ids, p_epochs) WITH ORDINALITY AS i(id, epoch, ord)
-    LEFT JOIN __SCHEMA__.wh_outbox o ON o.message_id = i.id
+    LEFT JOIN LATERAL (
+      SELECT TRUE AS present, x.partition_number FROM __SCHEMA__.wh_outbox x WHERE x.message_id = i.id LIMIT 1) o ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT TRUE AS hit FROM __SCHEMA__.wh_partition_ownership y
+      WHERE y.partition_number = o.partition_number % 10000 AND y.epoch = i.epoch LIMIT 1) w ON TRUE
     WHERE i.id IS NOT NULL
   ) n;
   PERFORM __SCHEMA__._wh_report_fenced('outbox_completion', v_fenced);
@@ -181,10 +188,15 @@ BEGIN
          count(*) FILTER (WHERE NOT n.kept)
     INTO v_kept, v_fenced
   FROM (
+    -- As _wh_fence_outbox_ids: one primary-key probe of each table per id, never a scan.
     SELECT i.id, i.ord,
-           e.event_work_id IS NULL OR __SCHEMA__.wh_epoch_is_current(e.partition_number, i.epoch) AS kept
+           e.present IS NULL OR i.epoch IS NULL OR (e.partition_number IS NULL AND i.epoch = 0) OR w.hit IS NOT NULL AS kept
     FROM unnest(p_ids, p_epochs) WITH ORDINALITY AS i(id, epoch, ord)
-    LEFT JOIN __SCHEMA__.wh_perspective_events e ON e.event_work_id = i.id
+    LEFT JOIN LATERAL (
+      SELECT TRUE AS present, x.partition_number FROM __SCHEMA__.wh_perspective_events x WHERE x.event_work_id = i.id LIMIT 1) e ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT TRUE AS hit FROM __SCHEMA__.wh_partition_ownership y
+      WHERE y.partition_number = e.partition_number % 10000 AND y.epoch = i.epoch LIMIT 1) w ON TRUE
     WHERE i.id IS NOT NULL
   ) n;
   PERFORM __SCHEMA__._wh_report_fenced('perspective_event_completion', v_fenced);
@@ -220,9 +232,15 @@ BEGIN
          count(*) FILTER (WHERE NOT n.kept)
     INTO v_kept, v_fenced
   FROM (
+    -- wh_epoch_is_current's rule, joined rather than called per item: a per-row call is not inlined.
     SELECT i.item, i.ord,
-           __SCHEMA__.wh_epoch_is_current((i.item ->> 'PartitionNumber')::INTEGER, (i.item ->> 'PartitionEpoch')::BIGINT) AS kept
+           t.epoch IS NULL OR (t.partition_number IS NULL AND t.epoch = 0) OR w.hit IS NOT NULL AS kept
     FROM jsonb_array_elements(p_items) WITH ORDINALITY AS i(item, ord)
+    CROSS JOIN LATERAL (SELECT (i.item ->> 'PartitionNumber')::INTEGER AS partition_number,
+                               (i.item ->> 'PartitionEpoch')::BIGINT AS epoch) t
+    LEFT JOIN LATERAL (
+      SELECT TRUE AS hit FROM __SCHEMA__.wh_partition_ownership y
+      WHERE y.partition_number = t.partition_number % 10000 AND y.epoch = t.epoch LIMIT 1) w ON TRUE
   ) n;
   PERFORM __SCHEMA__._wh_report_fenced(p_kind, v_fenced);
   RETURN v_kept;
@@ -793,7 +811,7 @@ BEGIN
     FROM jsonb_array_elements(p_results) AS elem;
     RETURN;
   EXCEPTION WHEN OTHERS THEN
-    -- #573: the fallback is legitimate, the silence was not. Capture WHY Tier 1 failed —
+    -- #573: the fallback is legitimate, the silence was not. Capture WHY Tier 1 failed:
     -- a deployment running permanently on the slow per-handler path was indistinguishable
     -- from a healthy one, and the diagnosis (the SQLSTATE) was discarded on every call.
     -- The reason rides on every Tier-2 row (the C# caller logs and counts it) and lands
@@ -805,7 +823,7 @@ BEGIN
   END;
 
   -- Tier 2: per-handler SAVEPOINT loop (rare path). Identical to the
-  -- pre-Option-D body — preserves the per-handler success/failure isolation
+  -- pre-Option-D body: preserves the per-handler success/failure isolation
   -- contract for the C# flusher.
   -- Same deterministic lock order as Tier 1 (see commit_handler_batch_bulk). The fallback loop takes
   -- the same row locks, so it must take them in the same sequence; sorting only the fast path would
@@ -837,4 +855,4 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__.commit_handler_batch(JSONB) IS
-'Two-tier (Option D) batched commit orchestrator. Tier 1: optimistic bulk attempt via commit_handler_batch_bulk — no savepoint overhead on the happy path. Tier 2: on any error, falls back to per-handler SAVEPOINT loop preserving isolated per-handler success/failure reporting. Returns per-handler (handler_id, success, error_message) for the C# flusher. Single fsync at outer commit on the happy path; bulk-then-loop on the rare failure path. 570 (#2556): in map mode, an item whose partition_epoch is no longer its inbox row''s partition''s commits nothing and is returned with tier 0 (fenced).';
+'Two-tier (Option D) batched commit orchestrator. Tier 1: optimistic bulk attempt via commit_handler_batch_bulk: no savepoint overhead on the happy path. Tier 2: on any error, falls back to per-handler SAVEPOINT loop preserving isolated per-handler success/failure reporting. Returns per-handler (handler_id, success, error_message) for the C# flusher. Single fsync at outer commit on the happy path; bulk-then-loop on the rare failure path. 570 (#2556): in map mode, an item whose partition_epoch is no longer its inbox row''s partition''s commits nothing and is returned with tier 0 (fenced).';
