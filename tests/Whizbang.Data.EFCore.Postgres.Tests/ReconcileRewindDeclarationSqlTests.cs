@@ -12,12 +12,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Reconcile self-declares the rewind at WORK-ITEM CREATION. A backfilled event keeps its
 /// ORIGINAL (older) event id, so the moment the inbox emit chain creates its perspective work
-/// item the system already knows the event slots BELOW the cursor in its origin's order (#2551: never by id) — no heuristic detection is
+/// item the system already knows the event slots BELOW the cursor in its origin's order (#2551: never by id): no heuristic detection is
 /// possible later (the backfill's local commit_sequence is fresh and above the cursor, so the
 /// inversion detector can never see it). The emit chain therefore flags the cursor
 /// RewindRequired with the straggler as trigger, and the worker's existing rewind routing does
 /// the rest. The pre-existing straggler check in complete_perspective_checkpoint runs only at
-/// completion time and only catches events the runner never saw — a reconciled event is seen,
+/// completion time and only catches events the runner never saw: a reconciled event is seen,
 /// applied in arrival order, and marked processed, so that check stays silent.
 /// </summary>
 /// <docs>fundamentals/perspectives/rewind#detection</docs>
@@ -124,7 +124,7 @@ public class ReconcileRewindDeclarationSqlTests : EFCoreTestBase {
     // cursor's: ids are time-ordered and never stream position.
     var cursorEventId = Guid.Parse("019e0000-0000-7000-8000-00000000cccc");
     var lateEventId = Guid.Parse("019f0000-0000-7000-8000-00000000aaaa");
-    // The cursor's last event must exist (FK) — the stream's normal history, applied and done.
+    // The cursor's last event must exist (FK): the stream's normal history, applied and done.
     await _driveInboxEventAsync(conn, streamId, cursorEventId, origin, 5);
     await _seedCursorAsync(conn, streamId, cursorEventId);
 
@@ -136,7 +136,7 @@ public class ReconcileRewindDeclarationSqlTests : EFCoreTestBase {
                + "reconcile must self-declare the rewind at creation time, because the backfill's fresh local "
                + "commit_sequence makes it invisible to every later inversion check");
     await Assert.That(trigger).IsEqualTo(lateEventId)
-      .Because("the straggler itself is the rewind trigger — the replay floor must sit below it");
+      .Because("the straggler itself is the rewind trigger: the replay floor must sit below it");
   }
 
   [Test]

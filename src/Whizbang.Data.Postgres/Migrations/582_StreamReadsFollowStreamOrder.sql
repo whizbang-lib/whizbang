@@ -270,7 +270,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_pending_perspective_events(
   out_event_id UUID,
   -- INNER JOIN wh_event_store + commit_sequence IS NOT NULL gate: rows whose post-commit
   -- stamper hasn't caught up are invisible to the drainer until they're stamped. Closes
-  -- the stamper-lag race at the SQL source — downstream filters can rely on every row
+  -- the stamper-lag race at the SQL source, downstream filters can rely on every row
   -- coming through here having an authoritative commit_sequence.
   out_commit_sequence BIGINT
 ) AS $$
@@ -308,7 +308,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_and_fetch_pending_perspective_events
   out_event_id UUID,
   -- INNER JOIN wh_event_store + commit_sequence IS NOT NULL gate on both the claim CTE
   -- and the return-fetch: rows whose post-commit stamper hasn't caught up are neither
-  -- leased nor returned. Closes the stamper-lag race at the SQL source — downstream
+  -- leased nor returned. Closes the stamper-lag race at the SQL source, downstream
   -- filters can rely on every row coming through here having an authoritative
   -- commit_sequence. Unstamped rows stay unowned until a later cycle (post-stamping).
   out_commit_sequence BIGINT
@@ -320,9 +320,9 @@ BEGIN
   --
   -- Deadlock prevention (slice 25 hotfix): inner CTE acquires row locks in
   -- deterministic event_work_id order via FOR UPDATE SKIP LOCKED. Concurrent
-  -- callers can't lock rows in conflicting orders — same-row contention turns
+  -- callers can't lock rows in conflicting orders, same-row contention turns
   -- into "the loser skips this row this cycle" instead of a 40P01 deadlock.
-  -- Slice 28: only UPDATE rows that actually NEED claiming — unowned or with expired
+  -- Slice 28: only UPDATE rows that actually NEED claiming, unowned or with expired
   -- lease. Rows already leased to us are returned by step 2's SELECT without re-extending
   -- the lease here; LeaseRenewalWorker handles in-flight renewals separately. Skipping the
   -- redundant own-row UPDATEs eliminates ~7x WAL write volume on wh_perspective_events
@@ -352,7 +352,7 @@ BEGIN
 
   -- Step 2: return all rows now claimed by us, in event_id ASC order.
   -- Within the same transaction so we see our own UPDATE writes.
-  -- Same stamper-lag gate as the claim CTE — defense in depth in case a row was
+  -- Same stamper-lag gate as the claim CTE, defense in depth in case a row was
   -- already leased to us before its commit_sequence got stamped.
   RETURN QUERY
   SELECT
