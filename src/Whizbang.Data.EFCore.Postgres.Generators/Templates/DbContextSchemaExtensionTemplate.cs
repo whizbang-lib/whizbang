@@ -169,13 +169,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // so a marked subset is applied first, in Preflight, by every instance in turn under the schema
     // lock (#1636). The bootstrap waits for that lock rather than skipping, retries a transient
     // failure itself, and throws a SchemaBootstrapException for any other, which fails this
-    // attempt in Preflight: it is deliberately outside the catch below. What follows it is not
+    // attempt in Preflight: it is deliberately outside the election's catch. What follows it is not
     // allowed to be fatal: every failure in the election ends with this instance migrating under
     // the advisory lock alone, which is exactly how it behaved before any of it existed.
     // ═══════════════════════════════════════════════════════════════════════════
-    var staging = new Whizbang.Data.Postgres.SchemaStaging(
-      Whizbang.Data.Postgres.SchemaStage.Unstaged, null, "staged startup was not attempted");
-    // The host's clock, for the migrator's keepalive and the long phases' progress lines.
+    // The host's clock, for the long phases' progress lines.
     var startupClock = serviceProvider?.GetService(typeof(TimeProvider)) as TimeProvider ?? TimeProvider.System;
     // #2127: the migrator duty this instance holds, from the election until this method returns, however it returns.
     // Holding a grant here starts its keepalive, which renews the lease on the role's renew interval through every
@@ -185,12 +183,15 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // #2165: the keepalive renews only while the schema work reports progress, so a migrator that is alive but stuck lets
     // its role lapse to another instance. Every committed step, phase announcement and counted batch this start reports
     // reaches the duty through the route below, for as long as this method runs.
-    await using var migratorDuty = new Whizbang.Data.Postgres.MigratorDuty(startupClock, logger,
-      Whizbang.Data.Postgres.MigratorDuty.StallLimitFor(
-        (serviceProvider?.GetService(typeof(Microsoft.Extensions.Options.IOptions<Whizbang.Core.Startup.RoleAssignmentOptions>))
-          as Microsoft.Extensions.Options.IOptions<Whizbang.Core.Startup.RoleAssignmentOptions>)?.Value,
-        _schemaCommandTimeoutSeconds));
+    await using var migratorDuty = Whizbang.Data.Postgres.MigratorElection.CreateDuty(
+      serviceProvider, _schemaCommandTimeoutSeconds, logger);
     using var migratorProgress = Whizbang.Data.Postgres.StartupProgress.ReportTo(migratorDuty.NoteProgress);
+    // #2561: the one migrator election both Postgres drivers run (the bootstrap, the registration, the vote, then the
+    // wait or the takeover before the schema lock), in shared runtime code so the drivers cannot drift.
+    // None on a Current schema, which has nothing to elect for, or with no connection of its own to elect on.
+    var election = segmentConnectionFactory is null || schemaIsCurrent ? null : new Whizbang.Data.Postgres.MigratorElectionRequest(
+      segmentConnectionFactory, "__SCHEMA__", lockId, GetBootstrapScripts(), _schemaCommandTimeoutSeconds,
+      (c, ct) => _isSchemaCurrentAsync(c, ct), incompatibilityOverride);
 
     if (schemaIsCurrent) {
       // Current (#1992): nothing to bootstrap, elect or migrate. This instance only joins the registry (no lock), so an
@@ -213,62 +214,13 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           "__SCHEMA__", logger, cancellationToken);
       }
       await Whizbang.Data.Postgres.SchemaInitializationStages.SchemaCurrentAsync(serviceProvider, cancellationToken);
-    } else if (segmentConnectionFactory is not null) {
-      // Phase 0: the bootstrap. Reports whether an election is actually possible now rather
-      // than whether the scripts appeared to work.
-      var canElect = await Whizbang.Data.Postgres.SchemaBootstrapPhase.ApplyAsync(
-        new Whizbang.Data.Postgres.SchemaBootstrapRequest(
-          segmentConnectionFactory, lockId, GetBootstrapScripts(), "__SCHEMA__", _schemaCommandTimeoutSeconds),
-        serviceProvider, TimeProvider.System, logger, cancellationToken);
-
-      try {
-        // Phase 1: join the registry, then contend for the duty. Registering is Preflight's last step
-        // (#1636): it comes after the bootstrap closure and the instance and role table DDL, so the row
-        // is written once its tables are ready, and the stages held until then (log-only before the row
-        // existed) are written with it. It has to precede the vote: the capability function refuses an
-        // instance it cannot find, and that refusal would say nothing about contention.
-        if (canElect
-            && serviceProvider?.GetService(typeof(Whizbang.Core.Observability.IServiceInstanceProvider))
-               is Whizbang.Core.Observability.IServiceInstanceProvider instanceProvider) {
-          await Whizbang.Data.Postgres.SchemaInitializationStages.RegisteringAsync(serviceProvider, cancellationToken);
-          var registered = await Whizbang.Data.Postgres.MigratorDutyStaging.RegisterAsync(
-            async ct => {
-              await Whizbang.Data.Postgres.SchemaBootstrapPhase.RegisterInstanceAsync(
-                segmentConnectionFactory, "__SCHEMA__", instanceProvider,
-                liveness: Whizbang.Data.Postgres.InstanceRegistrationLiveness.Of(serviceProvider), cancellationToken: ct);
-              // #2553: the application's schema served as it is by its own override, while the W! migrations still run.
-              if (incompatibilityOverride is not null) {
-                await Whizbang.Data.Postgres.SchemaBootstrapPhase.RecordIncompatibilityOverrideAsync(
-                  segmentConnectionFactory, "__SCHEMA__", instanceProvider.InstanceId, incompatibilityOverride, ct);
-              }
-              // The row exists now: the stage held until it did is written.
-              await Whizbang.Data.Postgres.SchemaInitializationStages.RegisteredAsync(serviceProvider, ct);
-            },
-            "__SCHEMA__", logger, cancellationToken);
-          if (registered) {
-            await Whizbang.Data.Postgres.SchemaInitializationStages.ElectingAsync(serviceProvider, cancellationToken);
-            staging = await Whizbang.Data.Postgres.MigratorDutyStaging.ElectAsync(
-              serviceProvider.GetService(typeof(Whizbang.Core.Startup.IDutyElector))
-                as Whizbang.Core.Startup.IDutyElector,
-              "__SCHEMA__", logger, cancellationToken);
-            await migratorDuty.HoldAsync(staging);
-          } else {
-            staging = new Whizbang.Data.Postgres.SchemaStaging(
-              Whizbang.Data.Postgres.SchemaStage.Unstaged, null, "this instance could not join the registry");
-          }
-        }
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-        // Belt and braces. The election already answers rather than throws; this catches anything
-        // it could not foresee and keeps it out of the startup path.
-        logger?.LogWarning(ex,
-          "Staged startup could not be arranged for schema {Schema}; this instance will migrate "
-          + "under the advisory lock alone", "__SCHEMA__");
-      }
-    }
-
-    // #1636: the election's outcome, or Elect skipped when no election was held (Current reported its own skip).
-    if (!schemaIsCurrent) {
-      await Whizbang.Data.Postgres.SchemaInitializationStages.ElectedAsync(serviceProvider, staging, cancellationToken);
+    } else if (election is not null) {
+      // Bootstrap, register, vote, and report Elect. The bootstrap fails the attempt loudly; nothing about the election
+      // is fatal, and every failure in it ends with this instance migrating under the advisory lock alone.
+      await Whizbang.Data.Postgres.MigratorElection.StageAsync(migratorDuty, election, serviceProvider, logger, cancellationToken);
+    } else {
+      // #1636: no election could be held (no connection of its own), so Elect is reported skipped.
+      await Whizbang.Data.Postgres.SchemaInitializationStages.ElectedAsync(serviceProvider, migratorDuty.Staging, cancellationToken);
     }
 
     // The stored-form rewrite, committed before the transaction that indexes its result. An index
@@ -417,43 +369,17 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         startupClock, logger, cancellationToken);
     }
 
-    if (segmentConnectionFactory is not null && !schemaIsCurrent) {
-      await Whizbang.Data.Postgres.MigratorPreLockPhase.RunAsync(
-        migratorDuty,
-        new Whizbang.Data.Postgres.PreLockPhaseSteps(
-          WaitAsync: async (stage, ct) => {
-            await using var waitConnection = segmentConnectionFactory();
-            await waitConnection.OpenAsync(ct);
-            var isWaiter = stage == Whizbang.Data.Postgres.SchemaStage.Waiter;
-            // A waiter watches the migrator: its assignment row, or, while an older release may be the migrator, the
-            // holding that release records (judged by the one liveness rule, #2044). Anyone else watches the schema lock.
-            global::System.Func<global::System.Threading.CancellationToken, global::System.Threading.Tasks.Task<bool>> isMigrating = isWaiter
-              ? c => Whizbang.Data.Postgres.MigratorWatch.IsMigratingElsewhereAsync(waitConnection, "__SCHEMA__", c)
-              : c => Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, c);
-            if (!isWaiter && !await Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, ct)) {
-              return true;
-            }
-            // Another instance is doing the schema work; this one waits for it, and says so first.
-            await Whizbang.Data.Postgres.SchemaInitializationStages.MigratingAsync(
-              serviceProvider, "waiting for the instance migrating the schema", ct);
-            await Whizbang.Data.Postgres.SchemaInitializationObservers.LockContendedAsync(serviceProvider, "__SCHEMA__", ct);
-            var waitOutcome = await Whizbang.Data.Postgres.SchemaMigrationDeferral.DeferAsync(
-              c => _isSchemaCurrentAsync(waitConnection, c), isMigrating, TimeProvider.System, "__SCHEMA__", logger, ct);
-            return !isWaiter || waitOutcome == Whizbang.Data.Postgres.SchemaDeferralOutcome.MigratingInstanceGone;
-          },
-          ElectAsync: ct => Whizbang.Data.Postgres.MigratorDutyStaging.ElectAsync(
-            serviceProvider?.GetService(typeof(Whizbang.Core.Startup.IDutyElector)) as Whizbang.Core.Startup.IDutyElector,
-            "__SCHEMA__", logger, ct),
-          // On the system clock, like the deferral's own polls: a host clock frozen by a test must not stall a vote.
-          PauseAsync: (vote, ct) => Task.Delay(Whizbang.Data.Postgres.MigratorPreLockPhase.ReelectionDelay(vote), TimeProvider.System, ct),
-          WorkAsync: async _ => {
-            await rollBackAsync(segmentConnectionFactory);
-            // #2553: a stored-form conversion is the application's: a held application schema is left as it is.
-            if (!applicationHeld) {
-              await rewriteStoredFormsAsync(segmentConnectionFactory);
-            }
-          }),
-        "__SCHEMA__", logger, cancellationToken);
+    if (election is not null) {
+      _ = await Whizbang.Data.Postgres.MigratorElection.RunPreLockAsync(
+        migratorDuty, election,
+        async _ => {
+          await rollBackAsync(segmentConnectionFactory!);
+          // #2553: a stored-form conversion is the application's: a held application schema is left as it is.
+          if (!applicationHeld) {
+            await rewriteStoredFormsAsync(segmentConnectionFactory!);
+          }
+        },
+        serviceProvider, logger, cancellationToken);
     }
 
     // The keepalive renews the migrator's assignment on the role's renew interval, so no phase loses it by running
@@ -760,6 +686,16 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // whose schema hash did not change, or dropped by hand, is found by reading the catalog, not the hash. After
     // the commit, on a connection of its own, because DROP INDEX CONCURRENTLY cannot run in a transaction.
     await _reconcileManagedObjectsAsync(dbContext, reconcileSettings, segmentConnectionFactory, serviceProvider, logger, cancellationToken);
+
+    // #2561: the perspective registry, at every start, the fast path included. No hash covers it, so a start that skips
+    // the pass's registries step (a hash-clean restart, a Current schema, a waiter behind a migrator of another build, a
+    // restored database) checks what is stored against what this build declares, and reconciles only when they differ,
+    // under the schema lock. Never fatal. Needs a connection of its own; without one, only the pass reconciles it.
+    if (segmentConnectionFactory is not null) {
+      _ = await Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ReconcileIfStaleAsync(
+        segmentConnectionFactory, "__SCHEMA__", _perspectiveRegistryPayloads(), _schemaCommandTimeoutSeconds, serviceProvider,
+        logger, cancellationToken);
+    }
 
     // Each perspective table's fillfactor and autovacuum settings follow its model at every start, the fast path
     // included, except on the tables listed in perspective_storage_manual_tables (#1747). One catalog read; a table
@@ -2531,6 +2467,17 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
           reader.GetString(1), reader.GetString(2), reader.GetString(3));
       }
     }
+  }
+
+  /// <summary>
+  /// This context's perspective registry, as every start checks it (#2561): the payload
+  /// <see cref="ReconcilePerspectiveRegistryAsync"/> reconciles, under this service's name; empty with no perspectives.
+  /// </summary>
+  private static global::System.Collections.Generic.IReadOnlyList<Whizbang.Core.Perspectives.PerspectiveRegistryPayload> _perspectiveRegistryPayloads() {
+    const string PerspectiveRegistryJson = __PERSPECTIVE_REGISTRY_JSON__;
+    return string.IsNullOrWhiteSpace(PerspectiveRegistryJson) || PerspectiveRegistryJson == "[]"
+      ? []
+      : [new Whizbang.Core.Perspectives.PerspectiveRegistryPayload("__SERVICE_NAME__", PerspectiveRegistryJson)];
   }
 
   /// <summary>

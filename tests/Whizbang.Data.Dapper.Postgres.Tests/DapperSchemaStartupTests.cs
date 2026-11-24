@@ -91,12 +91,12 @@ public class DapperSchemaStartupTests {
   }
 
   /// <summary>
-  /// The Dapper driver holds no election (#1636): its start reports Elect as skipped before it migrates, so the end
-  /// of Preflight is marked on this driver too, and what waits for it (the notification connection and its
-  /// alive-lock) starts there rather than only once the schema is ready.
+  /// #2561: the Dapper driver holds the migrator election the EF Core driver holds. Alone on an empty database, its start
+  /// ends Preflight by registering this instance, votes, wins, and reports Elect as won before it migrates; what waits for
+  /// the end of Preflight (the notification connection and its alive-lock) starts there.
   /// </summary>
   [Test]
-  public async Task HostStart_ReportsElectSkipped_BeforeItMigratesAsync() {
+  public async Task HostStart_RegistersVotesAndIsElectedMigrator_BeforeItMigratesAsync() {
     var stages = new RecordingStages();
     var services = _services();
     services.AddSingleton<Whizbang.Core.Startup.IStartupStageReporter>(stages);
@@ -105,7 +105,9 @@ public class DapperSchemaStartupTests {
     await _initializer(provider).StartAsync(CancellationToken.None);
 
     await Assert.That(stages.Calls).IsEquivalentTo([
-      "Skip Elect: no election could be held, so this instance migrates under the schema lock",
+      "Enter Preflight: the bootstrap closure is in place; registering this instance",
+      "Enter Elect: voting for the migrator duty",
+      "Enter Elect: this instance migrates the schema",
       "Enter Coordinate: recomputing partitions before the schema-ready gate opens",
     ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
@@ -190,30 +192,38 @@ public class DapperSchemaStartupTests {
   }
 
   /// <summary>
-  /// #2559: the Dapper driver elects its exclusive duties now, but not its migration. Two instances starting together
-  /// each migrate under the schema lock in turn, neither holds the migrator role, and neither opens its gate before the
-  /// schema is in place: the bootstrap is the one it was before role assignment.
+  /// #2561: each migration file the pass commits is reported as a committed step, to the observers and as startup
+  /// progress, as the EF Core driver reports each of its steps: the progress keeps a migrator's duty alive through a long
+  /// pass (#2165), and the step is where a test holds a migrator mid-migration.
   /// </summary>
   [Test]
-  public async Task TwoInstancesStarting_MigrateUnderTheSchemaLock_WithoutElectingAMigratorAsync() {
-    await using var first = _services().BuildServiceProvider();
-    await using var second = _services().BuildServiceProvider();
-    await Assert.That(first.GetRequiredService<Whizbang.Core.Startup.IDutyElector>().IsConfigured).IsTrue()
-      .Because("a positive control: role assignment is registered, so an election was there to be held");
+  public async Task ThePass_ReportsEachCommittedMigrationFile_AsAStepAndAsProgressAsync() {
+    var steps = new StepRecorder();
+    var initializer = new PostgresSchemaInitializer(_database.ConnectionString) { Observers = [steps] };
+    var expected = new PostgresMigrationProvider().GetMigrations()
+      .Select(m => m.Name).Where(n => !n.StartsWith("000", StringComparison.Ordinal)).ToList();
+    var progress = 0;
 
-    await Task.WhenAll(
-      _initializer(first).StartAsync(CancellationToken.None),
-      _initializer(second).StartAsync(CancellationToken.None));
+    using (StartupProgress.ReportTo(() => Interlocked.Increment(ref progress))) {
+      await initializer.InitializeSchemaAsync();
+    }
 
-    await Assert.That(first.GetRequiredService<ISchemaReadyGate>().IsReady).IsTrue();
-    await Assert.That(second.GetRequiredService<ISchemaReadyGate>().IsReady).IsTrue();
-    await Assert.That(await _tableExistsAsync("wh_event_store")).IsTrue()
-      .Because("whichever instance migrated second opened its gate on a migrated schema");
-    await using var db = new NpgsqlConnection(_database.ConnectionString);
-    await Assert.That(await db.ExecuteScalarAsync<long>(
-        "SELECT count(*) FROM wh_role_assignments WHERE role = @role AND holder_instance_id IS NOT NULL",
-        new { role = Whizbang.Core.Startup.StartupDuties.MIGRATOR }))
-      .IsEqualTo(0L).Because("the Dapper bootstrap stays unstaged: no instance is elected migrator");
+    await Assert.That(expected.Count).IsGreaterThan(100).Because("a positive control: the whole migration set applies");
+    await Assert.That(steps.Committed).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("every file an empty database owes is applied, in order, and each is reported once it commits");
+    await Assert.That(progress).IsGreaterThanOrEqualTo(expected.Count);
+  }
+
+  /// <summary>Records each committed step, in order.</summary>
+  private sealed class StepRecorder : ISchemaInitializationObserver {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _committed = new();
+
+    public List<string> Committed => [.. _committed];
+
+    public ValueTask OnSchemaStepCommittedAsync(string schema, string stepName, CancellationToken cancellationToken) {
+      _committed.Enqueue(stepName);
+      return ValueTask.CompletedTask;
+    }
   }
 
   [Test]
