@@ -216,6 +216,41 @@ public class DapperSchemaStartupTests {
       .IsEqualTo(0L).Because("the Dapper bootstrap stays unstaged: no instance is elected migrator");
   }
 
+  /// <summary>
+  /// #2561: each migration file the pass commits is reported as a committed step, to the observers and as startup
+  /// progress, as the EF Core driver reports each of its steps: the progress keeps a migrator's duty alive through a long
+  /// pass (#2165), and the step is where a test holds a migrator mid-migration.
+  /// </summary>
+  [Test]
+  public async Task ThePass_ReportsEachCommittedMigrationFile_AsAStepAndAsProgressAsync() {
+    var steps = new StepRecorder();
+    var initializer = new PostgresSchemaInitializer(_database.ConnectionString) { Observers = [steps] };
+    var expected = new PostgresMigrationProvider().GetMigrations()
+      .Select(m => m.Name).Where(n => !n.StartsWith("000", StringComparison.Ordinal)).ToList();
+    var progress = 0;
+
+    using (StartupProgress.ReportTo(() => Interlocked.Increment(ref progress))) {
+      await initializer.InitializeSchemaAsync();
+    }
+
+    await Assert.That(expected.Count).IsGreaterThan(100).Because("a positive control: the whole migration set applies");
+    await Assert.That(steps.Committed).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("every file an empty database owes is applied, in order, and each is reported once it commits");
+    await Assert.That(progress).IsGreaterThanOrEqualTo(expected.Count);
+  }
+
+  /// <summary>Records each committed step, in order.</summary>
+  private sealed class StepRecorder : ISchemaInitializationObserver {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _committed = new();
+
+    public List<string> Committed => [.. _committed];
+
+    public ValueTask OnSchemaStepCommittedAsync(string schema, string stepName, CancellationToken cancellationToken) {
+      _committed.Enqueue(stepName);
+      return ValueTask.CompletedTask;
+    }
+  }
+
   [Test]
   public async Task HostStart_WaitsForTheSchemaLock_WhileAnotherSessionHoldsItAsync() {
     var observer = new LockObserver();
