@@ -150,6 +150,14 @@ public sealed class PostgresSchemaInitializer {
   public IReadOnlyList<ISchemaInitializationObserver> Observers { get; init; } = [];
 
   /// <summary>
+  /// Awaited just before the managed-object reconcile, on every start that converges: the runner that drives this
+  /// initializer reports the Converge stage here, as the EF Core driver reports it before its reconcile (#2563). Null
+  /// reports nothing, as a direct call with no host does.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs:EachDriver_EntersConverge_BeforeItsReconcileAsync</tests>
+  internal Func<CancellationToken, Task>? Converging { get; set; }
+
+  /// <summary>
   /// Initializes the Whizbang schema by generating SQL from C# schema definitions.
   /// Optionally executes perspective schema SQL if provided.
   /// Uses hash-based change detection to skip unchanged migrations.
@@ -324,6 +332,9 @@ public sealed class PostgresSchemaInitializer {
   /// settings. Neither takes the schema lock to wait.
   /// </summary>
   private async Task _convergeAsync(NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
+    if (Converging is { } converging) {
+      await converging(cancellationToken).ConfigureAwait(false);
+    }
     // The managed-object reconcile, after the lock is released (it takes the same lock itself, with a try). Never
     // fatal, as on the EF Core driver: a reconcile that cannot finish leaves every object where it is, and the next
     // start tries again.

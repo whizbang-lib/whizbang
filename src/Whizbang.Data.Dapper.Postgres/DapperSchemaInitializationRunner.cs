@@ -43,7 +43,7 @@ internal sealed class DapperSchemaInitializationRunner(
         await createInitializer().ServeAsItIsAsync(overridden, cancellationToken).ConfigureAwait(false);
         return;
       }
-      await createInitializer().ConvergeCurrentAsync(cancellationToken).ConfigureAwait(false);
+      await _reportingConverge(createInitializer()).ConvergeCurrentAsync(cancellationToken).ConfigureAwait(false);
       return;
     }
     // #1636: this driver holds no election, so Preflight ends here, once the database answers, and Elect is reported
@@ -55,7 +55,16 @@ internal sealed class DapperSchemaInitializationRunner(
     if (assessment?.Rollback is { } rollback) {
       await createInitializer().RollBackSchemaAsync(rollback, cancellationToken).ConfigureAwait(false);
     }
-    await createInitializer().InitializeSchemaAsync(cancellationToken).ConfigureAwait(false);
+    await _reportingConverge(createInitializer()).InitializeSchemaAsync(cancellationToken).ConfigureAwait(false);
     await retry.WaitForSchemaReadyAsync(connectionString, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// The initializer, reporting the Converge stage just before its managed-object reconcile, as the EF Core driver does
+  /// (#2563), so a host watching the stages sees the same sequence on either driver.
+  /// </summary>
+  private PostgresSchemaInitializer _reportingConverge(PostgresSchemaInitializer initializer) {
+    initializer.Converging = ct => SchemaInitializationStages.ConvergingAsync(services, ct);
+    return initializer;
   }
 }

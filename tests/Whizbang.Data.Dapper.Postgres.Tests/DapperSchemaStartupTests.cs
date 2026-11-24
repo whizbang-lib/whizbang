@@ -106,6 +106,8 @@ public class DapperSchemaStartupTests {
 
     await Assert.That(stages.Calls).IsEquivalentTo([
       "Skip Elect: no election could be held, so this instance migrates under the schema lock",
+      // #2563: Converge just before the managed-object reconcile, as on the EF Core driver.
+      "Enter Converge: analyzing new indexes and reconciling managed objects",
       "Enter Coordinate: recomputing partitions before the schema-ready gate opens",
     ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
