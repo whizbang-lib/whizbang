@@ -10,6 +10,7 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -29,8 +30,8 @@ public sealed class PartitionHandoverWorkerLoopTests {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     using var worker = new PartitionHandoverWorker(
-      services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), new Instance(), new PartitionTenures(), [], null,
-      NullLogger<PartitionHandoverWorker>.Instance, time);
+      services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), new Instance(), new PartitionTenures(), [],
+      NullLogger<PartitionHandoverWorker>.Instance, new PartitionHandoverWorkerSettings { Time = time });
 
     await worker.StartAsync(cancellationToken);
     await coordinator.FirstAsked.WaitAsync(cancellationToken);
@@ -58,6 +59,30 @@ public sealed class PartitionHandoverWorkerLoopTests {
 
     await Assert.That(acknowledged).Count().IsEqualTo(1).Because("a stopping instance hands its partitions over before it deregisters");
     await Assert.That(coordinator.StatusReads).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task Leaving_BeforeTheHeartbeatsStartPoint_AsksTheDatabaseNothingAsync() {
+    var coordinator = new ScriptedCoordinator { FailFirstAsk = false };
+    var stages = new Stages(reached: false);
+    var worker = _worker(coordinator, new FakeTimeProvider(), stages: stages);
+
+    await worker.ReleaseHeldWorkAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.StatusReads).IsEqualTo(0)
+      .Because("an instance stopped before it was ever live was never given a partition, and its database may not be ready");
+    await Assert.That(stages.Asked).IsEqualTo(HeartbeatWorker.StartsAt);
+  }
+
+  [Test]
+  public async Task Leaving_PastTheHeartbeatsStartPoint_ReadsWhatItOwnsAsync() {
+    var coordinator = new ScriptedCoordinator { FailFirstAsk = false };
+    coordinator.Statuses.Enqueue(new PartitionLeaveStatus(0, 1));
+    var worker = _worker(coordinator, new FakeTimeProvider(), stages: new Stages(reached: true));
+
+    await worker.ReleaseHeldWorkAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.StatusReads).IsEqualTo(1);
   }
 
   [Test]
@@ -95,24 +120,35 @@ public sealed class PartitionHandoverWorkerLoopTests {
   [Test]
   public async Task TheWorker_RefusesMissingCollaboratorsAsync() {
     var scopes = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
-    await Assert.That(() => new PartitionHandoverWorker(null!, new Instance(), new PartitionTenures(), [], null, NullLogger<PartitionHandoverWorker>.Instance))
+    await Assert.That(() => new PartitionHandoverWorker(null!, new Instance(), new PartitionTenures(), [], NullLogger<PartitionHandoverWorker>.Instance))
       .Throws<ArgumentNullException>();
-    await Assert.That(() => new PartitionHandoverWorker(scopes, null!, new PartitionTenures(), [], null, NullLogger<PartitionHandoverWorker>.Instance))
+    await Assert.That(() => new PartitionHandoverWorker(scopes, null!, new PartitionTenures(), [], NullLogger<PartitionHandoverWorker>.Instance))
       .Throws<ArgumentNullException>();
-    await Assert.That(() => new PartitionHandoverWorker(scopes, new Instance(), null!, [], null, NullLogger<PartitionHandoverWorker>.Instance))
+    await Assert.That(() => new PartitionHandoverWorker(scopes, new Instance(), null!, [], NullLogger<PartitionHandoverWorker>.Instance))
       .Throws<ArgumentNullException>();
-    await Assert.That(() => new PartitionHandoverWorker(scopes, new Instance(), new PartitionTenures(), null!, null, NullLogger<PartitionHandoverWorker>.Instance))
+    await Assert.That(() => new PartitionHandoverWorker(scopes, new Instance(), new PartitionTenures(), null!, NullLogger<PartitionHandoverWorker>.Instance))
       .Throws<ArgumentNullException>();
-    await Assert.That(() => new PartitionHandoverWorker(scopes, new Instance(), new PartitionTenures(), [], null, null!))
+    await Assert.That(() => new PartitionHandoverWorker(scopes, new Instance(), new PartitionTenures(), [], null!))
       .Throws<ArgumentNullException>();
   }
 
-  private static PartitionHandoverWorker _worker(ScriptedCoordinator coordinator, FakeTimeProvider time, TimeSpan? leaveBudget = null) {
+  private static PartitionHandoverWorker _worker(
+      ScriptedCoordinator coordinator, FakeTimeProvider time, TimeSpan? leaveBudget = null, IStartupStageGate? stages = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     return new PartitionHandoverWorker(
-      services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), new Instance(), new PartitionTenures(), [], null,
-      NullLogger<PartitionHandoverWorker>.Instance, time, leaveBudget);
+      services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), new Instance(), new PartitionTenures(), [],
+      NullLogger<PartitionHandoverWorker>.Instance,
+      new PartitionHandoverWorkerSettings { Time = time, LeaveBudget = leaveBudget, Stages = stages });
+  }
+
+  private sealed class Stages(bool reached) : IStartupStageGate {
+    public StartupStage? Asked { get; private set; }
+    public bool HasReached(StartupStage stage) {
+      Asked = stage;
+      return reached;
+    }
+    public Task WaitForAsync(StartupStage stage, CancellationToken cancellationToken) => Task.CompletedTask;
   }
 
   private sealed class Instance : IServiceInstanceProvider {

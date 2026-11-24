@@ -50,6 +50,28 @@ public class CoordinatorNamesTheClaimedEpochTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task AFlushedCompletion_OfWorkFetchedBeforeThePartitionMoved_IsFenced_AndForgottenAsync() {
+    var stream = (Guid)TrackedGuid.New();
+    await using var conn = await _openAsync();
+    await _mapModeAsync(conn);
+    var message = await _outboxRowAsync(conn, stream);
+    var tenures = new PartitionTenures();
+    var (coordinator, observer) = _coordinator(tenures);
+
+    _ = await coordinator.ClaimWorkAsync(_claim());
+    _ = await coordinator.FetchOutboxBatchAsync([stream], _a, 10, null);
+    var fetchedUnder = tenures.OfWork(message);
+    await _moveOnAsync(conn, stream);
+    await coordinator.FlushCompletionsAsync(new FlushCompletionsRequest(OutboxIds: [message]));
+
+    await Assert.That(fetchedUnder.HasValue).IsTrue();
+    await Assert.That(await _countAsync(conn, "wh_outbox", "message_id", message)).IsEqualTo(1L)
+      .Because("the flush named the epoch the work was claimed under, so the stale completion landed nowhere");
+    await Assert.That(observer.Total()).IsEqualTo(1L);
+    await Assert.That(tenures.OfWork(message).HasValue).IsFalse().Because("written work is forgotten");
+  }
+
+  [Test]
   public async Task AnOutboxCompletion_WhileThePartitionIsStillOwned_LandsAsync() {
     var stream = (Guid)TrackedGuid.New();
     await using var conn = await _openAsync();
@@ -182,12 +204,12 @@ public class CoordinatorNamesTheClaimedEpochTests : EFCoreTestBase {
 
   // --- helpers --------------------------------------------------------------------------------------
 
-  private (EFCoreWorkCoordinator<WorkCoordinationDbContext> Coordinator, CounterObserver Observer) _coordinator() {
+  private (EFCoreWorkCoordinator<WorkCoordinationDbContext> Coordinator, CounterObserver Observer) _coordinator(PartitionTenures? tenures = null) {
     var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(
       meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
     var ctx = CreateDbContext();
     var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
-      ctx, JsonContextRegistry.CreateCombinedOptions(), metrics: metrics, tenures: new PartitionTenures());
+      ctx, JsonContextRegistry.CreateCombinedOptions(), metrics: metrics, tenures: tenures ?? new PartitionTenures());
     return (coordinator, new CounterObserver(metrics));
   }
 

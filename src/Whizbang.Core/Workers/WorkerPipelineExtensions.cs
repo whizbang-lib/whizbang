@@ -421,14 +421,20 @@ public static class WorkerPipelineExtensions {
         sp.GetRequiredService<Whizbang.Core.Messaging.IInboxDrainChannel>(),
         sp.GetRequiredService<Whizbang.Core.Messaging.IPerspectiveDrainChannel>())));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IPartitionHandoverParticipant, PerspectiveWorker>(sp => sp.GetRequiredService<PerspectiveWorker>()));
+    // The participants are resolved on the first pass that hands a partition over, not when the worker is built: a
+    // host that never owns by map never builds the perspective worker on its account.
     services.TryAddSingleton(sp => new PartitionHandoverWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
       sp.GetRequiredService<Whizbang.Core.Messaging.PartitionTenures>(),
-      sp.GetServices<IPartitionHandoverParticipant>(),
-      sp.GetService<IQueuedWritesLandedSignal>(),
+      _handoverParticipants(sp),
       sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PartitionHandoverWorker>>(),
-      leaveBudget: sp.GetService<Microsoft.Extensions.Options.IOptions<PartitionAssignerOptions>>()?.Value.HandoverDeadline));
+      new PartitionHandoverWorkerSettings {
+        Landed = sp.GetService<IQueuedWritesLandedSignal>(),
+        Stages = sp.GetService<Whizbang.Core.Startup.IStartupStageGate>(),
+        Time = sp.GetService<TimeProvider>(),
+        LeaveBudget = sp.GetService<Microsoft.Extensions.Options.IOptions<PartitionAssignerOptions>>()?.Value.HandoverDeadline,
+      }));
     // #2557 graceful leave: a stopping instance hands its partitions over after finishing its work in hand, before it
     // releases its roles and deregisters.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.RunControl.IReleasesHeldWork, PartitionHandoverWorker>(
@@ -1512,5 +1518,12 @@ public static class WorkerPipelineExtensions {
         metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
         interactiveReserve: gateOptions.InteractiveReserve);
     });
+  }
+
+  // Enumerated on each handover pass, so each participant is resolved only when a partition is handed over (#2557).
+  private static IEnumerable<IPartitionHandoverParticipant> _handoverParticipants(IServiceProvider sp) {
+    foreach (var participant in sp.GetServices<IPartitionHandoverParticipant>()) {
+      yield return participant;
+    }
   }
 }

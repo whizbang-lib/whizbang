@@ -37,6 +37,20 @@ public sealed class PartitionHandoverWorkerTests {
   }
 
   [Test]
+  public async Task NothingHandingOver_ResolvesNoParticipantAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(new FakeCoordinator());
+    var worker = new PartitionHandoverWorker(
+      services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      new FixedInstance(), new PartitionTenures(), _unresolvable(), NullLogger<PartitionHandoverWorker>.Instance);
+
+    var flipped = await worker.HandOverAsync(CancellationToken.None);
+
+    await Assert.That(flipped).IsEmpty()
+      .Because("a host that never owns by map never builds its participants, the perspective worker among them");
+  }
+
+  [Test]
   public async Task APartitionWithAStreamInFlight_Waits_AndTheOthersAreAcknowledgedAsync() {
     var (worker, coordinator, participant, tenures) = _create();
     var busy = (Guid)TrackedGuid.New();
@@ -65,12 +79,12 @@ public sealed class PartitionHandoverWorkerTests {
     _claim(tenures, kept, partition: 9, epoch: 2);
     coordinator.HandingOver.Add(new PartitionHandover(3, 5, _next));
     var events = new List<string>();
-    participant.OnSave = handsOver => events.Add($"save moved={handsOver(moved)} kept={handsOver(kept)}");
+    participant.OnSave = handsOver => events.Add($"save moved={handsOver(moved)} kept={handsOver(kept)} unknown={handsOver(Guid.Empty)}");
     coordinator.OnAcknowledge = () => events.Add("ack");
 
     _ = await worker.HandOverAsync(CancellationToken.None);
 
-    await Assert.That(events).IsEquivalentTo(["save moved=True kept=False", "ack"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+    await Assert.That(events).IsEquivalentTo(["save moved=True kept=False unknown=False", "ack"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("a clean handover saves what it holds for the moved partition, then acknowledges (design 3.4 steps 4-6)");
   }
 
@@ -136,6 +150,11 @@ public sealed class PartitionHandoverWorkerTests {
 
   // --- helpers --------------------------------------------------------------------------------------
 
+  private static IEnumerable<IPartitionHandoverParticipant> _unresolvable() {
+    yield return new FakeParticipant();
+    throw new InvalidOperationException("a participant was resolved although nothing is handed over");
+  }
+
   private static void _claim(PartitionTenures tenures, Guid stream, int partition, long epoch) =>
     tenures.RecordClaim(new Dictionary<Guid, long> { [stream] = epoch }, new Dictionary<Guid, int> { [stream] = partition });
 
@@ -148,7 +167,8 @@ public sealed class PartitionHandoverWorkerTests {
     services.AddSingleton<IWorkCoordinator>(coordinator);
     var worker = new PartitionHandoverWorker(
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
-      new FixedInstance(), tenures, [participant], landed, NullLogger<PartitionHandoverWorker>.Instance);
+      new FixedInstance(), tenures, [participant], NullLogger<PartitionHandoverWorker>.Instance,
+      new PartitionHandoverWorkerSettings { Landed = landed });
     return (worker, coordinator, participant, tenures);
   }
 

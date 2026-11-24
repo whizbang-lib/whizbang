@@ -44,6 +44,26 @@ public sealed class DrainChannelsHandoverParticipant(
   public Task SaveForHandoverAsync(Func<Guid, bool> handsOver, CancellationToken cancellationToken) => Task.CompletedTask;
 }
 
+/// <summary>The handover worker's optional collaborators (#2557).</summary>
+/// <docs>fundamentals/work-coordinator/partition-assignment#handover</docs>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PartitionHandoverWorkerLoopTests.cs</tests>
+public sealed record PartitionHandoverWorkerSettings {
+  /// <summary>The queued-writes signal, when the worker pipeline registers one; the acknowledgement waits on it.</summary>
+  public IQueuedWritesLandedSignal? Landed { get; init; }
+
+  /// <summary>
+  /// The startup stages, when registered: an instance that never reached the heartbeat's start point cannot have been
+  /// given a partition, so its graceful leave has nothing to hand over and asks the database nothing.
+  /// </summary>
+  public Whizbang.Core.Startup.IStartupStageGate? Stages { get; init; }
+
+  /// <summary>The clock the interval is waited on; the system clock when null.</summary>
+  public TimeProvider? Time { get; init; }
+
+  /// <summary>How long a graceful leave waits for its partitions to move; the handover deadline when null.</summary>
+  public TimeSpan? LeaveBudget { get; init; }
+}
+
 /// <summary>
 /// The old owner's side of a handover (#2557, design 3.4). Once a second, it asks which partitions it is handing over;
 /// for each one none of whose streams is still being worked, it has every participant save what it holds there, waits
@@ -61,8 +81,9 @@ public sealed partial class PartitionHandoverWorker : BackgroundService, Whizban
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instance;
   private readonly PartitionTenures _tenures;
-  private readonly IReadOnlyList<IPartitionHandoverParticipant> _participants;
+  private readonly IEnumerable<IPartitionHandoverParticipant> _participants;
   private readonly IQueuedWritesLandedSignal? _landed;
+  private readonly Whizbang.Core.Startup.IStartupStageGate? _stages;
   private readonly ILogger<PartitionHandoverWorker> _logger;
   private readonly TimeProvider _time;
   private readonly TimeSpan _leaveBudget;
@@ -71,28 +92,28 @@ public sealed partial class PartitionHandoverWorker : BackgroundService, Whizban
   /// <param name="scopeFactory">Scopes for the work coordinator.</param>
   /// <param name="instance">This instance.</param>
   /// <param name="tenures">The tenure ledger, which says each claimed stream's partition.</param>
-  /// <param name="participants">Everything that works or holds streams.</param>
-  /// <param name="landed">The queued-writes signal, when the worker pipeline registers one.</param>
+  /// <param name="participants">
+  /// Everything that works or holds streams, enumerated afresh on each pass, so a participant is resolved only once a
+  /// handover needs it.
+  /// </param>
   /// <param name="logger">The logger.</param>
-  /// <param name="time">The clock the interval is waited on.</param>
-  /// <param name="leaveBudget">How long a graceful leave waits for its partitions to move; the handover deadline.</param>
+  /// <param name="settings">The optional collaborators.</param>
   public PartitionHandoverWorker(
       IServiceScopeFactory scopeFactory,
       IServiceInstanceProvider instance,
       PartitionTenures tenures,
       IEnumerable<IPartitionHandoverParticipant> participants,
-      IQueuedWritesLandedSignal? landed,
       ILogger<PartitionHandoverWorker> logger,
-      TimeProvider? time = null,
-      TimeSpan? leaveBudget = null) {
+      PartitionHandoverWorkerSettings? settings = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instance = instance ?? throw new ArgumentNullException(nameof(instance));
     _tenures = tenures ?? throw new ArgumentNullException(nameof(tenures));
-    _participants = [.. participants ?? throw new ArgumentNullException(nameof(participants))];
-    _landed = landed;
+    _participants = participants ?? throw new ArgumentNullException(nameof(participants));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    _time = time ?? TimeProvider.System;
-    _leaveBudget = leaveBudget ?? new PartitionAssignerOptions().HandoverDeadline;
+    _landed = settings?.Landed;
+    _stages = settings?.Stages;
+    _time = settings?.Time ?? TimeProvider.System;
+    _leaveBudget = settings?.LeaveBudget ?? new PartitionAssignerOptions().HandoverDeadline;
   }
 
   /// <summary>
@@ -103,10 +124,14 @@ public sealed partial class PartitionHandoverWorker : BackgroundService, Whizban
   /// the assigner completes the moves itself.
   /// </summary>
   /// <param name="cancellationToken">The host's stop budget.</param>
-  /// <returns>A task that completes once nothing is owned, or the wait is over.</returns>
+  /// <returns>A task that completes once nothing is owned, or the wait is over; at once before the heartbeat's start point.</returns>
   /// <docs>fundamentals/work-coordinator/partition-assignment#graceful-leave</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PartitionHandoverWorkerLoopTests.cs</tests>
   public async Task ReleaseHeldWorkAsync(CancellationToken cancellationToken) {
+    if (_stages?.HasReached(HeartbeatWorker.StartsAt) == false) {
+      // Never live to the assigner, so never given a partition: a stop before then has nothing to hand over.
+      return;
+    }
     using var timer = new PeriodicTimer(Interval, _time);
     var started = _time.GetTimestamp();
     while (true) {
@@ -163,14 +188,15 @@ public sealed partial class PartitionHandoverWorker : BackgroundService, Whizban
     if (handingOver.Count == 0) {
       return [];
     }
-    var busy = _participants.SelectMany(p => p.StreamsInFlight).Select(_partitionOf).OfType<int>().ToHashSet();
+    var participants = _participants.ToList();
+    var busy = participants.SelectMany(p => p.StreamsInFlight).Select(_partitionOf).OfType<int>().ToHashSet();
     var ready = handingOver.Where(h => !busy.Contains(h.Partition)).ToList();
     if (ready.Count == 0) {
       return [];
     }
     var readyPartitions = ready.Select(h => h.Partition).ToHashSet();
     bool handsOver(Guid stream) => _partitionOf(stream) is { } partition && readyPartitions.Contains(partition);
-    foreach (var participant in _participants) {
+    foreach (var participant in participants) {
       await participant.SaveForHandoverAsync(handsOver, cancellationToken).ConfigureAwait(false);
     }
     // The finished batch's completions, and what the participants just saved, land under the old epoch before the

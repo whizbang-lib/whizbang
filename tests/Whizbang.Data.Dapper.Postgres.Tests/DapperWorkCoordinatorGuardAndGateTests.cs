@@ -226,6 +226,21 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
     await Assert.That(released).IsEqualTo(new UnstartedLeaseRelease(0, 0));
   }
 
+  [Test]
+  public async Task GatedCoordinator_HandoverCalls_ExecuteThroughGateAsync() {
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 2, logger: NullLogger<WorkCoordinatorGate>.Instance);
+    var c = new DapperWorkCoordinator(ConnectionString, _jsonOptions, NullLogger<DapperWorkCoordinator>.Instance, gate: gate);
+    var instanceId = (Guid)TrackedGuid.New();
+
+    var handingOver = await c.GetPartitionsHandingOverAsync(instanceId);
+    var status = await c.GetLeaveStatusAsync(instanceId);
+    var flipped = await c.AcknowledgeHandoverAsync(instanceId, [new PartitionHandover(3, 1, (Guid)TrackedGuid.New())]);
+
+    await Assert.That(handingOver).IsEmpty().Because("an instance that owns nothing hands nothing over");
+    await Assert.That(status.Owned).IsEqualTo(0);
+    await Assert.That(flipped).IsEmpty().Because("an acknowledgement of a partition this instance does not own flips nothing");
+  }
+
   // ----- WorkCoordinatorGate-provided branch of every gated method -----
 
   [Test]

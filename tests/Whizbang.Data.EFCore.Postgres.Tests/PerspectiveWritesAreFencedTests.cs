@@ -107,6 +107,24 @@ public class PerspectiveWritesAreFencedTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task TheFence_InsideTheWritesTransaction_OnAHostWithoutMetricsOrLogging_StillFencesAsync() {
+    await using var conn = await _openAsync();
+    await _mapModeAsync(conn);
+    var tenures = new PartitionTenures();
+    await using var host = new ServiceCollection().AddSingleton(tenures).BuildServiceProvider();
+    var options = new DbContextOptionsBuilder<WorkCoordinationDbContext>(DbContextOptions).UseApplicationServiceProvider(host).Options;
+    await using var context = new WorkCoordinationDbContext(options);
+    var stream = Guid.CreateVersion7();
+    _claim(tenures, stream, 5);
+    await _moveOnAsync(conn, 5);
+    await using var transaction = await context.Database.BeginTransactionAsync();
+
+    var stale = await EFCorePerspectiveWriteFence.StaleAsync(context, [stream], CancellationToken.None);
+
+    await Assert.That(stale).IsEquivalentTo([stream]).Because("the check runs in the write's own transaction, and fences without a meter or a logger");
+  }
+
+  [Test]
   public async Task TheException_CarriesItsStreamAndTheStandardConstructorsAsync() {
     await Assert.That(new PartitionOwnershipLostException().StreamId).IsEqualTo(Guid.Empty);
     await Assert.That(new PartitionOwnershipLostException("m").Message).IsEqualTo("m");

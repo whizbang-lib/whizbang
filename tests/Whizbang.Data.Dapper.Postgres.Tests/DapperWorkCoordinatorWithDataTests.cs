@@ -340,6 +340,27 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
       .Because("the drain publishes the row's number; a fetch that drops it ships every message undeclared");
   }
 
+  /// <summary>#2556: each fetched inbox row is recorded under its stream's claimed tenure, so its commit names that epoch.</summary>
+  [Test]
+  public async Task FetchInboxBatchAsync_RecordsEachRowUnderItsStreamsClaimedTenureAsync() {
+    var tenures = new PartitionTenures();
+    var c = new DapperWorkCoordinator(ConnectionString, _jsonOptions, NullLogger<DapperWorkCoordinator>.Instance, tenures: tenures);
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    await c.StoreInboxMessagesAsync([_makeInbox(msgId, streamId, _makeHops(streamId))], partitionCount: 100);
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await conn.ExecuteAsync(
+      "UPDATE wh_inbox_state SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes', chain_emitted_at = NOW() WHERE message_id = @m",
+      new { i = instanceId, m = msgId });
+    tenures.RecordClaim(new Dictionary<Guid, long> { [streamId] = 7 }, new Dictionary<Guid, int> { [streamId] = 42 });
+
+    _ = await c.FetchInboxBatchAsync([streamId], instanceId, maxPerStream: 10);
+
+    await Assert.That(tenures.OfWork(msgId)).IsEqualTo(new PartitionTenure(42, 7));
+  }
+
   [Test]
   public async Task FetchInboxBatchAsync_ReturnsTheRowsPriorityAsync() {
     var c = _build();

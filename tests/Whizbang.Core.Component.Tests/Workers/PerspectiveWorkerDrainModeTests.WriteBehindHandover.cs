@@ -52,6 +52,21 @@ public partial class PerspectiveWorkerDrainModeTests {
 
   [Test]
   [Timeout(30000)]
+  public async Task WriteBehind_AFencedFlush_OnAWorkerWithoutMetrics_StillDropsTheModelAsync(CancellationToken cancellationToken) {
+    await using var rig = new WriteBehindRig { WithoutMetrics = true };
+    var stream = Guid.NewGuid();
+    await rig.StartAsync(cancellationToken);
+    await rig.DrainAsync(stream, 1, cancellationToken);
+    rig.Sink.Outcome = PerspectiveWriteOutcome.Fenced;
+
+    await rig.Worker.FlushWriteBehindAsync(cancellationToken);
+
+    await Assert.That(rig.Worker.WriteBehindModels).IsEqualTo(0).Because("the drop does not depend on anything measuring it");
+    await Assert.That(rig.Runners.Completed).IsEmpty();
+  }
+
+  [Test]
+  [Timeout(30000)]
   public async Task WriteBehind_AHandover_OnAWorkerThatHoldsNothing_DoesNothingAsync(CancellationToken cancellationToken) {
     await using var rig = new WriteBehindRig();
     rig.Build();
