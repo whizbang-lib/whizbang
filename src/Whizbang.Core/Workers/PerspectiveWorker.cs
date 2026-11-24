@@ -101,7 +101,7 @@ public partial class PerspectiveWorker(
   // When a run of transient database failures escalates to one Error, and its recovery line (#1986); null takes the
   // defaults.
   DatabaseFailureEscalationOptions? databaseFailureEscalation = null
-) : BackgroundService, Whizbang.Core.Startup.IStartAbandonedObserver {
+) : BackgroundService, Whizbang.Core.Startup.IStartAbandonedObserver, IPartitionHandoverParticipant {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
 

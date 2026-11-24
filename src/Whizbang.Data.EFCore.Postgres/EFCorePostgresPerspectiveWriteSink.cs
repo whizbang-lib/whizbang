@@ -30,9 +30,27 @@ public sealed class EFCorePostgresPerspectiveWriteSink(DbContext context, TimePr
   public DbContext Context { get; } = context ?? throw new ArgumentNullException(nameof(context));
 
   /// <inheritdoc/>
-  public Task<IReadOnlyList<PerspectiveWriteOutcome>> WriteAsync(
-      IReadOnlyList<PendingPerspectiveWrite> writes, CancellationToken cancellationToken = default) =>
-    _onConnectionAsync(writes, static (c, t, w, clock, ct) => PostgresPerspectiveWriter.WriteAsync(c, t, w, clock, ct), cancellationToken);
+  /// <remarks>
+  /// #2556: a write whose stream's partition is no longer owned at the epoch its work was claimed under is not written; its
+  /// outcome is <see cref="PerspectiveWriteStatus.Fenced"/>, and the current owner applies it.
+  /// </remarks>
+  public async Task<IReadOnlyList<PerspectiveWriteOutcome>> WriteAsync(
+      IReadOnlyList<PendingPerspectiveWrite> writes, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(writes);
+    var stale = await EFCorePerspectiveWriteFence.StaleAsync(Context, writes.Select(w => w.StreamId), cancellationToken).ConfigureAwait(false);
+    if (stale.Count == 0) {
+      return await _onConnectionAsync(writes, static (c, t, w, clock, ct) => PostgresPerspectiveWriter.WriteAsync(c, t, w, clock, ct), cancellationToken)
+        .ConfigureAwait(false);
+    }
+    var kept = Enumerable.Range(0, writes.Count).Where(i => !stale.Contains(writes[i].StreamId)).ToList();
+    var written = await _onConnectionAsync([.. kept.Select(i => writes[i])],
+      static (c, t, w, clock, ct) => PostgresPerspectiveWriter.WriteAsync(c, t, w, clock, ct), cancellationToken).ConfigureAwait(false);
+    var outcomes = Enumerable.Repeat(PerspectiveWriteOutcome.Fenced, writes.Count).ToArray();
+    for (var k = 0; k < kept.Count; k++) {
+      outcomes[kept[k]] = written[k];
+    }
+    return outcomes;
+  }
 
   /// <inheritdoc/>
   /// <remarks>

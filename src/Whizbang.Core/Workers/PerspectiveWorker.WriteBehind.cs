@@ -97,6 +97,27 @@ public partial class PerspectiveWorker {
     }
   }
 
+  /// <inheritdoc />
+  /// <remarks>The perspective drain's in-flight streams are reported by its drain channel, so none are named here.</remarks>
+  public IEnumerable<Guid> StreamsInFlight => [];
+
+  /// <summary>
+  /// Saves the held models of the streams whose partition is being handed over (#2557), before the old owner
+  /// acknowledges: a clean handover writes what this owner would have written anyway, so the new owner replays nothing.
+  /// </summary>
+  /// <param name="handsOver">Whether a stream's partition is being handed over now.</param>
+  /// <param name="cancellationToken">Cancels the save; a batch it did not complete replays from its checkpoint.</param>
+  /// <returns>A task that completes once each such model is saved.</returns>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#handover</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeTests.WriteBehindHandover.cs</tests>
+  public Task SaveForHandoverAsync(Func<Guid, bool> handsOver, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(handsOver);
+    return _writeBehind is null
+      ? Task.CompletedTask
+      : _flushWriteBehindKeysAsync(
+          [.. _writeBehind.Keys().Where(k => handsOver(k.StreamId)).Select(k => (k, WriteBehindFlushReason.Handover))], cancellationToken);
+  }
+
   /// <summary>Whether a mode prepares its pairs in a set-based batch: set-based and write-behind both do.</summary>
   private static bool _isBatched(PerspectiveWriteMode mode) =>
     mode is PerspectiveWriteMode.SetBased or PerspectiveWriteMode.WriteBehind;
@@ -304,6 +325,13 @@ public partial class PerspectiveWorker {
       if (reason is not WriteBehindFlushReason.Interval) {
         _metrics?.WriteBehindForcedFlushes.Add(1, tag);
       }
+      if (outcomes[i].Status == PerspectiveWriteStatus.Fenced) {
+        // #2556: the model's partition is no longer owned at its epoch. It is dropped, never written: its held batches
+        // are released uncompleted by the flush, and the current owner replays them.
+        LogWriteBehindFenced(_logger, entries[i].Key.PerspectiveName, entries[i].Key.StreamId, entry.Holds.Count);
+        _metrics?.WriteBehindDropped.Add(1);
+        return;
+      }
       var outcome = _heldOutcome(outcomes[i]);
       foreach (var pair in entry.Holds.Select(h => h.Item)) {
         pair.BatchContext = pair.BatchContext with { BatchProcessedEvents = processed, BatchIsNewByEventId = isNew };
@@ -397,4 +425,8 @@ public partial class PerspectiveWorker {
   [LoggerMessage(EventId = 91, Level = LogLevel.Warning,
     Message = "Write-behind model of {PerspectiveName} on stream {StreamId} outlived its lease and is dropped unwritten; its {BatchCount} held batch(es) replay from the checkpoint wherever the stream is claimed next")]
   static partial void LogWriteBehindDropped(ILogger logger, string perspectiveName, Guid streamId, int batchCount);
+
+  [LoggerMessage(EventId = 92, Level = LogLevel.Debug,
+    Message = "Write-behind model of {PerspectiveName} on stream {StreamId} was fenced: its partition's ownership moved on, so it is dropped unwritten and its {BatchCount} held batch(es) are replayed by the current owner")]
+  static partial void LogWriteBehindFenced(ILogger logger, string perspectiveName, Guid streamId, int batchCount);
 }

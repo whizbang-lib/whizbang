@@ -741,6 +741,12 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       throw new ArgumentNullException(nameof(outcome), "A prepared write is completed with the outcome of its write.");
     }
     var status = mine.Write is null ? (global::Whizbang.Core.Perspectives.PerspectiveWriteStatus?)null : outcome!.Value.Status;
+    if (status == global::Whizbang.Core.Perspectives.PerspectiveWriteStatus.Fenced) {
+      // #2556: the partition's ownership moved on, so nothing was written; the apply ends without finishing and the
+      // current owner replays the stream. Never re-run per pair: that write would be fenced too.
+      state!.DisposeSnapshots();
+      throw new global::Whizbang.Core.Perspectives.PartitionOwnershipLostException(mine.StreamId);
+    }
     if (status is global::Whizbang.Core.Perspectives.PerspectiveWriteStatus.Conflict
         or global::Whizbang.Core.Perspectives.PerspectiveWriteStatus.Failed) {
       state!.DisposeSnapshots();

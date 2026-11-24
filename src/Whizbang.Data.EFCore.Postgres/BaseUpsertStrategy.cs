@@ -226,6 +226,11 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       UpsertRowArgs<TModel> args,
       CancellationToken cancellationToken)
       where TModel : class {
+    // #2556: a stream whose partition is no longer owned at the epoch its work was claimed under is not written; the
+    // apply ends, and the current owner applies it. Off map mode no stream has a tenure and this costs nothing.
+    if ((await EFCorePerspectiveWriteFence.StaleAsync(context, [args.Id], cancellationToken)).Count > 0) {
+      throw new PartitionOwnershipLostException(args.Id);
+    }
     var (planned, hookPlan, expiresAt, businessTime, mappedTable) = _planRowWrite(context, args);
     args = planned;
 

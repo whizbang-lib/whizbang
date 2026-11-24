@@ -64,6 +64,9 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     services.TryAddSingleton<Messaging.IConsumerRegistry>(sp => sp.GetRequiredService<Messaging.IReceptorRegistryQuery>());
     services.TryAddScoped<Messaging.ILifecycleContextAccessor, Messaging.AsyncLocalLifecycleContextAccessor>();
     services.TryAddSingleton<IStreamIdExtractor>(_ => Registry.StreamIdExtractorRegistry.GetComposite());
+    // #2556: one ledger of partition tenures per process, which every work coordinator records claims and fetches into
+    // and reads back on every write, so each write names the epoch its work was claimed under.
+    services.TryAddSingleton(_ => new Messaging.PartitionTenures());
     services.TryAddSingleton<IMessageTypeCatalog>(NullMessageTypeCatalog.Instance);
     services.TryAddSingleton<Notifications.INotifySignalingGate>(Notifications.NullNotifySignalingGate.Instance);
     services.TryAddSingleton<Routing.IEventNamespaceRegistry, Routing.StaticEventNamespaceRegistry>();

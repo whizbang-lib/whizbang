@@ -198,7 +198,9 @@ public static class ServiceCollectionExtensions {
         sp.GetService<ILogger<DapperWorkCoordinator>>(),
         guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>(),
         // #2554, #2556: the fenced writes and the claims that waited for a map are counted on the coordinator's meter.
-        metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>()));
+        metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
+        // #2556: the process's tenure ledger, so every write names the epoch its work was claimed under.
+        tenures: sp.GetService<Whizbang.Core.Messaging.PartitionTenures>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     // #2359: records past their own expiry are removed every maintenance cycle; the store's expiry had no caller.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep,
@@ -378,7 +380,9 @@ public static class ServiceCollectionExtensions {
         sp.GetService<ILogger<DapperWorkCoordinator>>(),
         guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>(),
         // #2554, #2556: the fenced writes and the claims that waited for a map are counted on the coordinator's meter.
-        metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>()));
+        metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
+        // #2556: the process's tenure ledger, so every write names the epoch its work was claimed under.
+        tenures: sp.GetService<Whizbang.Core.Messaging.PartitionTenures>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     // #2359: records past their own expiry are removed every maintenance cycle; the store's expiry had no caller.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep,

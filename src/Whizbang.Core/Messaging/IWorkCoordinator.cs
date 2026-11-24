@@ -541,6 +541,45 @@ public interface IWorkCoordinator {
     => CompletePerspectiveAsync(cursors, eventWorkIds, debugMode, cancellationToken);
 
   /// <summary>
+  /// The partitions <paramref name="instanceId"/> owns and is handing over (#2557), with the epoch each is handed over at.
+  /// Empty for a store that does not own partitions by map.
+  /// </summary>
+  /// <param name="instanceId">The old owner.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The partitions it hands over.</returns>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#handover</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorNamesTheClaimedEpochTests.cs:TheCoordinator_ListsWhatThisInstanceHandsOver_AndAcknowledgesItAsync</tests>
+  Task<IReadOnlyList<PartitionHandover>> GetPartitionsHandingOverAsync(Guid instanceId, CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<PartitionHandover>>([]);
+
+  /// <summary>
+  /// The old owner acknowledges the handovers it has finished (#2557): what it has not started there is released, and
+  /// each partition flips to its next owner at a raised epoch, fenced on the epoch named. Nothing for a store that does
+  /// not own partitions by map.
+  /// </summary>
+  /// <param name="instanceId">The old owner.</param>
+  /// <param name="handovers">The handovers it has finished.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The partitions flipped.</returns>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#handover</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorNamesTheClaimedEpochTests.cs:TheCoordinator_ListsWhatThisInstanceHandsOver_AndAcknowledgesItAsync</tests>
+  Task<IReadOnlyList<int>> AcknowledgeHandoverAsync(
+    Guid instanceId, IReadOnlyList<PartitionHandover> handovers, CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<int>>([]);
+
+  /// <summary>
+  /// What a leaving instance still owns, and whether another live instance could take it (#2557, graceful leave).
+  /// Nothing owned for a store that does not own partitions by map.
+  /// </summary>
+  /// <param name="instanceId">The leaving instance.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Its partitions owned and the other live candidates.</returns>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#graceful-leave</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorNamesTheClaimedEpochTests.cs:TheLeaveStatus_CountsWhatThisInstanceOwns_AndWhoElseCouldTakeItAsync</tests>
+  Task<PartitionLeaveStatus> GetLeaveStatusAsync(Guid instanceId, CancellationToken cancellationToken = default)
+    => Task.FromResult(default(PartitionLeaveStatus));
+
+  /// <summary>
   /// Extends <c>lease_expiry</c> for the supplied ids in the chosen category that <paramref name="instanceId"/> still
   /// holds, with the stream leases of their streams, and reports the ids it did not renew (#1852).
   /// </summary>

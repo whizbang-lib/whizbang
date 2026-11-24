@@ -280,7 +280,7 @@ public sealed class PerspectiveMetrics {
     WriteBehindForcedFlushes = meter.CreatePassiveCounter<long>("whizbang.perspective.write_behind.forced_flushes",
       description: "Held models flushed before their interval, by reason");
     WriteBehindDropped = meter.CreatePassiveCounter<long>("whizbang.perspective.write_behind.dropped",
-      description: "Held models dropped unwritten because their lease ran out");
+      description: "Held models dropped unwritten: their lease ran out, or their partition's ownership moved on (#2556)");
     meter.CreateObservableGauge("whizbang.perspective.write_behind.models",
       observeValue: () => Interlocked.Read(ref _writeBehindModelsValue),
       description: "Models the write-behind cache holds");
