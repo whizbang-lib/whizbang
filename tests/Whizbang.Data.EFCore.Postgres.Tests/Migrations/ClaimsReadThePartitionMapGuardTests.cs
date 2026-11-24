@@ -57,13 +57,13 @@ public partial class ClaimsReadThePartitionMapGuardTests {
 
   [Test]
   public async Task TheGuard_FindsTheBareModulo_InTheDefinitionsBeforeTheMapAsync() {
-    // The positive control: before migration 565, every one of these tested its partitions by a bare modulo. A guard that
+    // The positive control: before migration 566, every one of these tested its partitions by a bare modulo. A guard that
     // cannot find it there proves nothing by finding nothing now.
     foreach (var function in _claimFunctions) {
-      var body = _lastWordOf(function, name => string.CompareOrdinal(name, "565") < 0);
+      var body = _lastWordOf(function, name => string.CompareOrdinal(name, "566") < 0);
 
       await Assert.That(_bareModulo().IsMatch(body)).IsTrue()
-        .Because($"{function}'s definition before 565 ranks by modulo, which this guard must see");
+        .Because($"{function}'s definition before 566 ranks by modulo, which this guard must see");
     }
   }
 }

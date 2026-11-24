@@ -17,8 +17,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </summary>
 /// <remarks>
 /// <list type="bullet">
-/// <item>a partition-modulo test is allowed only as the legacy arm of the one sanctioned form,
-/// <c>CASE WHEN v_map THEN (the map's answer) ELSE (p % count) = rank END</c>;</item>
+/// <item>a partition test against the rank is allowed only as the legacy arm of the one sanctioned form,
+/// <c>CASE WHEN v_map THEN (the map's answer) ELSE wh_partition_in_share(p, rank, count, owners) END</c>, the
+/// published map's answer with the switch off (#2558); a bare modulo against the rank is an offense anywhere;</item>
 /// <item>ranking the live instances (<c>ROW_NUMBER() OVER (ORDER BY ... instance_id)</c>) is allowed only in a block
 /// opened by <c>IF NOT v_map AND ... THEN</c>.</item>
 /// </list>
@@ -45,8 +46,8 @@ public partial class ClaimPathsDecideThroughTheOwnershipTableGuardTests {
   [GeneratedRegex(@"--[^\n]*")]
   private static partial Regex LineComment();
 
-  // The map arm is anything without a CASE or an ELSE of its own; the legacy arm is the rank test alone.
-  [GeneratedRegex(@"CASE WHEN v_map THEN (?:(?!CASE |ELSE ).)*? ELSE \([\w.]+ % \w+\) = \w+ END")]
+  // The map arm is anything without a CASE or an ELSE of its own; the legacy arm is the map-aware rank test alone.
+  [GeneratedRegex(@"CASE WHEN v_map THEN (?:(?!CASE |ELSE ).)*? ELSE __SCHEMA__\.wh_partition_in_share\([\w.]+, \w+, \w+, \w+\) END")]
   private static partial Regex SanctionedRankTest();
 
   [GeneratedRegex(@"__SCHEMA__\.(wh_i_own|wh_partitions_i_own)\(")]
@@ -92,13 +93,18 @@ public partial class ClaimPathsDecideThroughTheOwnershipTableGuardTests {
           IF NOT v_map AND NOT v_assigned THEN
           SELECT ranked.instance_rank FROM (SELECT ROW_NUMBER() OVER (ORDER BY live.instance_id) FROM t live) ranked;
           END IF;
-          PERFORM 1 WHERE CASE WHEN v_map THEN __SCHEMA__.wh_i_own(e.partition_number, p) IS NOT NULL ELSE (e.partition_number % v_count) = v_rank END;
-          PERFORM 1 WHERE CASE WHEN v_map THEN (e.partition_number % 10000) IN (SELECT m.p FROM __SCHEMA__.wh_partitions_i_own(p) m) ELSE (e.partition_number % v_count) = v_rank END;
+          PERFORM 1 WHERE CASE WHEN v_map THEN __SCHEMA__.wh_i_own(e.partition_number, p) IS NOT NULL ELSE __SCHEMA__.wh_partition_in_share(e.partition_number, v_rank, v_count, v_owners) END;
+          PERFORM 1 WHERE CASE WHEN v_map THEN (e.partition_number % 10000) IN (SELECT m.p FROM __SCHEMA__.wh_partitions_i_own(p) m) ELSE __SCHEMA__.wh_partition_in_share(e.partition_number, v_rank, v_count, v_owners) END;
         END;
         $$ LANGUAGE plpgsql;
         CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_outbox(p UUID) RETURNS void AS $$
         BEGIN
           PERFORM 1 WHERE (s.partition_number % p_active_instance_count) = p_instance_rank;
+        END;
+        $$ LANGUAGE plpgsql;
+        CREATE OR REPLACE FUNCTION __SCHEMA__.wh_claim_multi_stream_work(p UUID) RETURNS void AS $$
+        BEGIN
+          PERFORM 1 WHERE CASE WHEN v_map THEN __SCHEMA__.wh_i_own(rs.partition_number, p) IS NOT NULL ELSE (rs.partition_number % v_count) = v_rank END;
         END;
         $$ LANGUAGE plpgsql;
         CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_inbox(p UUID) RETURNS void AS $$
@@ -118,6 +124,8 @@ public partial class ClaimPathsDecideThroughTheOwnershipTableGuardTests {
     await Assert.That(offenders).Contains("claim_orphaned_outbox: ranks by partition modulo outside the sanctioned form");
     await Assert.That(offenders).Contains("claim_orphaned_inbox: ranks the live instances outside IF NOT v_map");
     await Assert.That(offenders).Contains("claim_orphaned_perspective_events: has no definition");
+    await Assert.That(offenders).Contains("wh_claim_multi_stream_work: ranks by partition modulo outside the sanctioned form")
+      .Because("a legacy arm that ranks by the members' residue ignores the published map (#2558), whatever the switch says");
   }
 
   private static List<string> _offenders(IReadOnlyDictionary<string, string> latest) {

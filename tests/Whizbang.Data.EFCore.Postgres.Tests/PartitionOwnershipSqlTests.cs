@@ -244,6 +244,108 @@ public class PartitionOwnershipSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Publish_WritesOwnershipFromTheMap_NotTheResidueAsync() {
+    await using var conn = await _openAsync();
+    await _heartbeatAsync(conn, _a);
+    await _heartbeatAsync(conn, _b);
+    var epoch = await _voteAsync(conn, _a);
+
+    // The map that inverts the modulo: B (member 1) owns the even partitions, A the odd ones (#2558).
+    await _publishAsync(conn, _a, epoch, [_a, _b], _inverted());
+
+    await Assert.That(await _ownerAsync(conn, 0)).IsEqualTo(_b).Because("ownership is the map's answer, not members[p mod n]");
+    await Assert.That(await _ownerAsync(conn, 1)).IsEqualTo(_a);
+    await Assert.That(await _ownerAsync(conn, 9_998)).IsEqualTo(_b);
+    await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_partition_ownership WHERE epoch = 1")).IsEqualTo(PARTITIONS);
+  }
+
+  [Test]
+  public async Task Republish_OfTheSameMap_WritesNothing_AndAMovedPartitionAdvancesAloneAsync() {
+    await using var conn = await _openAsync();
+    await _heartbeatAsync(conn, _a);
+    await _heartbeatAsync(conn, _b);
+    var epoch = await _voteAsync(conn, _a);
+    var map = _inverted();
+    await _publishAsync(conn, _a, epoch, [_a, _b], map);
+
+    // The republish runs in a transaction of its own, so the transaction's table statistics count exactly its writes.
+    long written;
+    await using (var tx = await conn.BeginTransactionAsync()) {
+      await _publishAsync(conn, _a, epoch, [_a, _b], map);
+      written = await _scalarAsync<long>(conn,
+        "SELECT n_tup_upd + n_tup_ins FROM pg_stat_xact_user_tables WHERE relname = 'wh_partition_ownership' AND schemaname = current_schema()");
+      await tx.CommitAsync();
+    }
+    map[7] = 1;
+    long writtenForAMove;
+    await using (var tx = await conn.BeginTransactionAsync()) {
+      await _publishAsync(conn, _a, epoch, [_a, _b], map);
+      writtenForAMove = await _scalarAsync<long>(conn,
+        "SELECT n_tup_upd + n_tup_ins FROM pg_stat_xact_user_tables WHERE relname = 'wh_partition_ownership' AND schemaname = current_schema()");
+      await tx.CommitAsync();
+    }
+
+    await Assert.That(written).IsEqualTo(0L).Because("a republish of the same members and map writes no ownership row");
+    await Assert.That(writtenForAMove).IsEqualTo(1L).Because("the same count sees the one row a moved partition writes");
+    await Assert.That(await _ownerAsync(conn, 7)).IsEqualTo(_b);
+    await Assert.That(await _epochAsync(conn, 7)).IsEqualTo(2L).Because("the one partition the map moved advances its epoch");
+    await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_partition_ownership WHERE epoch = 2")).IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task Publish_InMapMode_AMapNamingAMemberThatDoesNotSupportTheMode_IsRefusedAsync() {
+    await using var conn = await _openAsync();
+    await _heartbeatAsync(conn, _a, SUPPORTS_MAP);
+    var epoch = await _voteAsync(conn, _a);
+    await _publishAsync(conn, _a, epoch, [_a]);
+    _ = await _openSwitchAsync(conn, _a, epoch);
+    await _heartbeatAsync(conn, _b);
+
+    var refused = await Assert.That(async () => await _publishAsync(conn, _a, epoch, [_a, _b], _inverted())).Throws<PostgresException>();
+
+    await Assert.That(refused!.SqlState).IsEqualTo("22023");
+    await Assert.That(await _scalarAsync<Guid[]>(conn, "SELECT members FROM wh_published_partition_assignment")).IsEquivalentTo([_a]);
+    await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_partition_ownership WHERE owner_instance_id = @b", ("b", _b)))
+      .IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task Candidates_InMapMode_LeaveOutAnInstanceThatDoesNotSupportTheMode_AndOffIncludeItAsync() {
+    await using var conn = await _openAsync();
+    await _heartbeatAsync(conn, _a, SUPPORTS_MAP);
+    await _heartbeatAsync(conn, _b);
+    const string candidates = "SELECT count(*) FROM wh_partition_assignment_candidates() WHERE instance_id = @b";
+    var offBefore = await _scalarAsync<long>(conn, candidates, ("b", _b));
+    // Before the switch: B, which does not support the mode, holds it off. Switch it on as a later assigner would once
+    // B had gone, then B returns.
+    await _execAsync(conn, "INSERT INTO wh_settings (setting_key, setting_value, value_type) VALUES ('partition_ownership_mode', 'map', 'string')");
+
+    var on = await _scalarAsync<long>(conn, candidates, ("b", _b));
+
+    await Assert.That(offBefore).IsEqualTo(1L).Because("with the switch off every eligible instance is a candidate, as before");
+    await Assert.That(on).IsEqualTo(0L).Because("once the service owns by map, an instance that does not support it is no candidate");
+    await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_partition_assignment_candidates() WHERE instance_id = @a", ("a", _a)))
+      .IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task Supports_ReadsTheLevelTheHeartbeatRecords_AndNothingElseAsync() {
+    await using var conn = await _openAsync();
+
+    var answers = await _scalarAsync<bool[]>(conn, """
+      SELECT ARRAY[
+        wh_supports_ownership_by_map('{"partition_ownership_level":1}'),
+        wh_supports_ownership_by_map('{"partition_ownership_level":2}'),
+        wh_supports_ownership_by_map('{"partition_ownership_level":0}'),
+        wh_supports_ownership_by_map('{"partition_ownership_level":"1"}'),
+        wh_supports_ownership_by_map('{}'),
+        wh_supports_ownership_by_map(NULL)]
+      """);
+
+    await Assert.That(answers).IsEquivalentTo([true, true, false, false, false, false], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  [Test]
   public async Task MapIsValid_WhileItsLeaseRunsAsync() {
     await using var conn = await _openAsync();
     await _heartbeatAsync(conn, _a);
@@ -311,9 +413,18 @@ public class PartitionOwnershipSqlTests : EFCoreTestBase {
     return Convert.ToInt64(await vote.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
   }
 
-  private static async Task _publishAsync(NpgsqlConnection conn, Guid assigner, long epoch, Guid[] members) {
+  /// <summary>The map that inverts the modulo for two members: member 1 owns the even partitions, member 0 the odd.</summary>
+  private static short[] _inverted() => [.. Enumerable.Range(0, PARTITIONS).Select(p => (short)(p % 2 == 0 ? 1 : 0))];
+
+  /// <summary>Publishes through the SQL function: the members-only call when <paramref name="owners"/> is null.</summary>
+  private static async Task _publishAsync(NpgsqlConnection conn, Guid assigner, long epoch, Guid[] members, short[]? owners = null) {
     await using var publish = conn.CreateCommand();
-    publish.CommandText = "SELECT wh_publish_partition_assignment(@role, @inst, @epoch, @members, INTERVAL '90 seconds')";
+    publish.CommandText = owners is null
+      ? "SELECT wh_publish_partition_assignment(@role, @inst, @epoch, @members, INTERVAL '90 seconds')"
+      : "SELECT wh_publish_partition_assignment(@role, @inst, @epoch, @members, INTERVAL '90 seconds', @owners)";
+    if (owners is not null) {
+      publish.Parameters.Add(new NpgsqlParameter(nameof(owners), NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Smallint) { Value = owners });
+    }
     publish.Parameters.AddWithValue("role", PartitionAssignerOptions.ROLE);
     publish.Parameters.AddWithValue("inst", assigner);
     publish.Parameters.AddWithValue(nameof(epoch), epoch);

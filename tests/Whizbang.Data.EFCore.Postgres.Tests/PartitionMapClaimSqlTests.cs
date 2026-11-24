@@ -10,6 +10,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres.Notifications;
 
@@ -211,6 +212,60 @@ public class PartitionMapClaimSqlTests : EFCoreTestBase {
     await Assert.That((await _claimedAsync(conn, "wh_outbox")).Order()).IsEquivalentTo([0, 1]);
   }
 
+  // --- the wake-up follows the map with the switch off too (#2554, #2558) ----------------------------
+
+  [Test]
+  public async Task WakeUp_WithTheSwitchOff_RingsTheMapsOwnerOfTheStreamsPartition_NotTheLiveResidueAsync() {
+    var stream = (Guid)TrackedGuid.New();
+    await using var conn = await _openAsync();
+    var epoch = await _electAsync(conn, _assigner);
+    await _heartbeatAsync(conn, _self);
+    _ = await _publishAsync(conn, epoch, [_assigner, _self], _inverted());
+    var partition = await _scalarAsync<int>(conn, $"SELECT compute_partition('{stream}'::uuid)");
+    // The map inverts the modulo, so the map's owner and the live list's residue are always different instances.
+    var mapOwner = partition % 2 == 0 ? _self : _assigner;
+    var residue = mapOwner == _self ? _assigner : _self;
+
+    var (toMapOwner, toResidue) = await _wakeUpAsync(conn, stream, mapOwner, residue);
+
+    await Assert.That(toMapOwner).IsEqualTo(1L).Because("an unclaimed stream's wake-up goes to its partition's owner in the published map");
+    await Assert.That(toResidue).IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task WakeUp_WithTheSwitchOff_AndNoMapPublished_RingsTheLiveResidueAsync() {
+    var stream = (Guid)TrackedGuid.New();
+    await using var conn = await _openAsync();
+    await _heartbeatAsync(conn, _assigner);
+    await _heartbeatAsync(conn, _self);
+    var partition = await _scalarAsync<int>(conn, $"SELECT compute_partition('{stream}'::uuid)");
+    // Live instances in id order: the assigner (rank 0), then this instance (rank 1).
+    var residue = partition % 2 == 0 ? _assigner : _self;
+    var other = residue == _self ? _assigner : _self;
+
+    var (toResidue, toOther) = await _wakeUpAsync(conn, stream, residue, other);
+
+    await Assert.That(toResidue).IsEqualTo(1L).Because("with no map the wake-up falls back to the rank a claimer with no map takes");
+    await Assert.That(toOther).IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task WakeUp_WithTheSwitchOff_AMapOwnerThatIsNotLive_FallsBackToTheLiveResidueAsync() {
+    var stream = (Guid)TrackedGuid.New();
+    await using var conn = await _openAsync();
+    var epoch = await _electAsync(conn, _assigner);
+    var gone = (Guid)TrackedGuid.New();
+    // Every partition belongs to an instance that never beat; the wake-up must not ring a dead instance.
+    var map = new short[P];
+    Array.Fill(map, (short)1);
+    _ = await _publishAsync(conn, epoch, [_assigner, gone], map);
+
+    var (toLive, toGone) = await _wakeUpAsync(conn, stream, _assigner, gone);
+
+    await Assert.That(toLive).IsEqualTo(1L).Because("a partition whose owner is not live wakes the live list's residue");
+    await Assert.That(toGone).IsEqualTo(0L);
+  }
+
   // --- helpers --------------------------------------------------------------------------------------
 
   private async Task<NpgsqlConnection> _openAsync() {
@@ -230,6 +285,33 @@ public class PartitionMapClaimSqlTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = sql;
     await cmd.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>Rings an inbox wake-up for the stream and counts the doorbells each instance got, then rolls it back.</summary>
+  private static async Task<(long First, long Second)> _wakeUpAsync(NpgsqlConnection conn, Guid stream, Guid first, Guid second) {
+    await using var tx = await conn.BeginTransactionAsync();
+    await using (var ring = conn.CreateCommand()) {
+      ring.Transaction = tx;
+      ring.CommandText = "SELECT notify_instance_owners_with_payload('inbox', 'inbox', ARRAY[@stream]::uuid[])";
+      ring.Parameters.AddWithValue("stream", stream);
+      _ = await ring.ExecuteNonQueryAsync();
+    }
+    var counts = new long[2];
+    Guid[] instances = [first, second];
+    for (var i = 0; i < 2; i++) {
+      await using var count = conn.CreateCommand();
+      count.Transaction = tx;
+      count.CommandText = $"SELECT count(*) FROM wh_doorbell_queue WHERE channel = 'wh_work_i_{instances[i]}'";
+      counts[i] = (long)(await count.ExecuteScalarAsync())!;
+    }
+    await tx.RollbackAsync();
+    return (counts[0], counts[1]);
+  }
+
+  private static async Task<T> _scalarAsync<T>(NpgsqlConnection conn, string sql) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = sql;
+    return (T)(await cmd.ExecuteScalarAsync())!;
   }
 
   private static async Task _heartbeatAsync(NpgsqlConnection conn, Guid instance) {
