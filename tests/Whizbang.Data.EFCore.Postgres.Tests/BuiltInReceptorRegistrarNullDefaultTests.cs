@@ -76,6 +76,22 @@ public class BuiltInReceptorRegistrarNullDefaultTests {
   }
 
   [Test]
+  public async Task OriginPosition_WhenTheRegistryIsTheNullDefault_StartsWithoutThrowingAsync() {
+    await using var sp = _hostWithoutReceptors();
+    var registrar = new OriginPositionReceptorRegistrar(
+      sp, sp.GetRequiredService<IServiceScopeFactory>(),
+      NullLogger<RequestOriginPositionsReceptor>.Instance,
+      NullLogger<OriginPositionsAnswerReceptor>.Instance);
+
+    await registrar.StartAsync(CancellationToken.None);
+    await registrar.StopAsync(CancellationToken.None);
+    await using var bare = new ServiceCollection().BuildServiceProvider();
+    await new OriginPositionReceptorRegistrar(bare, bare.GetRequiredService<IServiceScopeFactory>(),
+      NullLogger<RequestOriginPositionsReceptor>.Instance, NullLogger<OriginPositionsAnswerReceptor>.Instance)
+      .StartAsync(CancellationToken.None);
+  }
+
+  [Test]
   public async Task RedeliveryRequest_WhenTheRegistryIsTheNullDefault_StartsWithoutThrowingAsync() {
     await using var sp = _hostWithoutReceptors();
     var registrar = new RedeliveryRequestReceptorRegistrar(

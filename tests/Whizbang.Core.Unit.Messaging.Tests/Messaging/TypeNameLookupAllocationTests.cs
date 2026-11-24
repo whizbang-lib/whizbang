@@ -5,6 +5,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Tests.Helpers;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -16,6 +17,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Messaging/EventTypeMatchingHelper.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Messaging/ControlPlaneTypeRegistry.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Core/TypeNameFormatter.cs</code-under-test>
 [NotInParallel("AllocationMeasurement")]
 public class TypeNameLookupAllocationTests {
   private const int ITERATIONS = 1_000;
@@ -69,4 +71,41 @@ public class TypeNameLookupAllocationTests {
     await Assert.That(allocated).IsEqualTo(0L)
       .Because("the check runs on every received row");
   }
+
+  /// <summary>
+  /// The owned-domain filter reads a message type's namespace on every PreOutbox stage (#2548). The runtime keeps
+  /// <see cref="Type.Namespace"/> in a cache it holds weakly, so a read after a collection rebuilds it; the namespace is
+  /// resolved once per type instead, and a read after a collection allocates nothing.
+  /// </summary>
+  [Test]
+  public async Task NamespaceOf_AfterCollections_AllocatesNothingAsync() {
+    var extra = WeakNameCacheProbe.ExtraBytesAfterCollections(() => _ = TypeNameFormatter.NamespaceOf(typeof(IntegrityCheckpoint)));
+
+    await Assert.That(extra).IsEqualTo(0L);
+  }
+
+  /// <summary>Resolving the namespace once per type answers exactly what the type says, for every shape of type.</summary>
+  [Test]
+  [Arguments(typeof(IntegrityCheckpoint))]
+  [Arguments(typeof(NestedNamespaceProbe))]
+  [Arguments(typeof(List<int>))]
+  [Arguments(typeof(List<>))]
+  [Arguments(typeof(int[]))]
+  [Arguments(typeof(Dictionary<string, NestedNamespaceProbe>))]
+  public async Task NamespaceOf_IsTheTypesOwnNamespace_EveryTimeAsync(Type type) {
+    var first = TypeNameFormatter.NamespaceOf(type);
+    GC.Collect();
+    var second = TypeNameFormatter.NamespaceOf(type);
+
+    await Assert.That(first).IsEqualTo(type.Namespace);
+    await Assert.That(second).IsEqualTo(type.Namespace);
+  }
+
+  [Test]
+  public async Task NamespaceOf_ANullType_ThrowsAsync() {
+    await Assert.That(() => TypeNameFormatter.NamespaceOf(null!)).Throws<ArgumentNullException>();
+  }
+
+  /// <summary>A nested type, whose namespace is its declaring type's.</summary>
+  public sealed class NestedNamespaceProbe;
 }

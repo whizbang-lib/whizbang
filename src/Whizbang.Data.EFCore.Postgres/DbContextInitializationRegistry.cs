@@ -236,9 +236,11 @@ public static class DbContextInitializationRegistry {
       }
 
       foreach (var initializer in initializersCopy) {
-        var dbContextName = TypeNameFormatter.SimpleName(initializer.DbContextType);
-        if (logger is not null) {
-          DbContextInitializationLog.InitializingDbContext(logger, dbContextName);
+        // The context's name is read only when it is logged (#2548)
+        if (logger?.IsEnabled(LogLevel.Information) == true) {
+#pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through
+          DbContextInitializationLog.InitializingDbContext(logger, TypeNameFormatter.SimpleName(initializer.DbContextType));
+#pragma warning restore CA1873
         }
         await initializer.Callback(serviceProvider, logger, cancellationToken);
       }

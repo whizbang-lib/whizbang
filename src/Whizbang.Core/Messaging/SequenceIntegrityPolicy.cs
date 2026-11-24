@@ -32,8 +32,9 @@ public readonly record struct SequenceHold(SequenceIntegrity Mode, TimeSpan Hold
 
 /// <summary>
 /// Decides the sequence integrity of an outgoing event: the dispatch's own setting
-/// (<c>DispatchOptions.WithSequenceIntegrity</c>), else the event type's <c>[SequenceIntegrity]</c> from the generated
-/// catalog, else <see cref="WhizbangCoreOptions.SequenceIntegrity"/>. The hold time of a bounded hold comes from the
+/// (<c>DispatchOptions.WithSequenceIntegrity</c>), else the ambient scope (<see cref="SequenceIntegrityContext"/>, entered
+/// by the caller or inherited from the parent dispatch), else the event type's <c>[SequenceIntegrity]</c> from the
+/// generated catalog, else <see cref="WhizbangCoreOptions.SequenceIntegrity"/>. The hold time of a bounded hold comes from the
 /// most specific level that names one, else <see cref="WhizbangCoreOptions.SequenceHoldTime"/>.
 /// </summary>
 /// <remarks>
@@ -77,13 +78,13 @@ public sealed class SequenceIntegrityPolicy {
 
   /// <summary>The hold for an event of <paramref name="messageType"/>, given the dispatch's own settings.</summary>
   /// <param name="messageType">The event's type.</param>
-  /// <param name="callMode">The dispatch's own mode, or null to defer to the type and the configured default.</param>
+  /// <param name="callMode">The dispatch's own mode, or null to defer to the ambient scope, the type and the configured default.</param>
   /// <param name="callHoldTime">The dispatch's own hold time, or null.</param>
   public SequenceHold For(Type messageType, SequenceIntegrity? callMode = null, TimeSpan? callHoldTime = null) {
     ArgumentNullException.ThrowIfNull(messageType);
     var declared = _byType.TryGetValue(messageType, out var type) ? type : ((SequenceIntegrity Mode, int HoldMilliseconds)?)null;
-    var mode = callMode ?? declared?.Mode ?? _options.SequenceIntegrity;
-    var holdTime = callHoldTime
+    var mode = callMode ?? SequenceIntegrityContext.CurrentMode ?? declared?.Mode ?? _options.SequenceIntegrity;
+    var holdTime = callHoldTime ?? SequenceIntegrityContext.CurrentHoldTime
       ?? (declared is { HoldMilliseconds: > 0 } named ? TimeSpan.FromMilliseconds(named.HoldMilliseconds) : _options.SequenceHoldTime);
     return new SequenceHold(mode, holdTime);
   }

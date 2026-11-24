@@ -826,6 +826,59 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     await Assert.That(registry).Contains("IDebuggerAwareClock");
   }
 
+  /// <summary>
+  /// A traced receptor names its message type on every call while a tracer is registered, so the name comes from the
+  /// shared naming code, which keeps it per type, rather than from <c>Type.Name</c>, which the runtime rebuilds after
+  /// every garbage collection (#2548). Both the response and the void route.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_TracedRoutes_NameTheMessageTypeThroughTheSharedNamingCodeAsync() {
+    const string source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Tracing;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public record OrderCreated : IEvent {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public record AuditOrder : ICommand {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+[WhizbangTrace]
+public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public async ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default) {
+    return new OrderCreated { OrderId = message.OrderId };
+  }
+}
+
+[WhizbangTrace]
+public class AuditReceptor : IReceptor<AuditOrder> {
+  public ValueTask HandleAsync(AuditOrder message, CancellationToken ct = default) => ValueTask.CompletedTask;
+}
+";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs")!;
+    foreach (var message in new[] { "CreateOrder", "AuditOrder" }) {
+      var named = $"global::Whizbang.Core.TypeNameFormatter.SimpleName(typeof(global::MyApp.Receptors.{message}))";
+      await Assert.That(registry.Split(named).Length - 1).IsGreaterThanOrEqualTo(2)
+        .Because($"each {message} route names its type when the trace begins and when it ends");
+      await Assert.That(registry).DoesNotContain($"typeof(global::MyApp.Receptors.{message}).Name");
+    }
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithoutWhizbangTraceAttribute_DoesNotGenerateTracingCodeAsync() {

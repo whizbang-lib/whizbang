@@ -465,6 +465,32 @@ public class InboxDispatchWorkerBranchCoverageTests {
       .Because("the consumer side of report-only must be distinguishable from the origin's refusals");
   }
 
+  /// <summary>
+  /// The discard names the bundle's type in an information log, read only when that level is on (#2548); the test
+  /// above runs it with logging off.
+  /// </summary>
+  [Test]
+  public async Task RepairBundleDiscarded_WithInformationOn_NamesTheBundlesTypeAsync() {
+    var logger = new RecordingLogger();
+    var bundle = new RedeliveryComposite { OriginServiceId = (Guid)TrackedGuid.New() };
+    bundle.InnerPayloads.Add(JsonElement.Parse("{}"));
+    bundle.InnerTypeNames.Add(typeof(InnerImportEvent).AssemblyQualifiedName!);
+    bundle.InnerEventIds.Add((Guid)TrackedGuid.New());
+    var parts = new WorkerParts {
+      Deserializer = new FakeCompositeDeserializer(bundle),
+      IntegrityOptions = new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly },
+      Logger = logger,
+    };
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = parts.Build(sp);
+
+    await worker.ProcessOneInnerAsync(_makeWork(), CancellationToken.None);
+
+    await Assert.That(logger.Entries.Any(e => e.EventId == 30 && e.Message.Contains($"({nameof(RedeliveryComposite)})"))).IsTrue();
+  }
+
   // ============================================================
   // Composite metrics on the refusal and failure paths (lines 747, 770, 863)
   // ============================================================

@@ -49,6 +49,9 @@ public static class ControlPlaneTypeRegistry {
     Register(typeof(RequestRedeliveryCommand));
     // A paced backfill window's answer (#2092) travels with the window's bundles.
     Register(typeof(BackfillWindowAnswer));
+    // #2544: a request for missing origin positions and its answer.
+    Register(typeof(RequestOriginPositions));
+    Register(typeof(OriginPositionsAnswer));
     // An audit rebuild request (#1724) is the same kind of framework request to an origin, with no user behind it.
     Register(typeof(Whizbang.Core.Commands.System.RequestAuditRebuildCommand));
     // The BUNDLE the redelivery control plane ships back, not just the request for it. Missing it

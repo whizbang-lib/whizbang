@@ -284,6 +284,9 @@ public static class PostgresDriverExtensions {
         // TURNKEY: stream-integrity Phase A — runtime-register the manifest receptors so the deep
         // audit's request/response exchange works out of the box. Same rationale as above.
         selector.Services.AddHostedService<IntegrityManifestReceptorRegistrar>();
+        // TURNKEY: #2544: runtime-register the origin-position receptors, so a service can answer for the positions its
+        // consumers lack and fill the ones it lacks itself. Same rationale as above.
+        selector.Services.AddHostedService<OriginPositionReceptorRegistrar>();
 
         // TURNKEY: Auto-initialize database schema. Workers are hosted with the point they start at
         // (#1636), the schema-ready gate the initializer opens at the end of migrations or a later
@@ -409,6 +412,16 @@ public static class PostgresDriverExtensions {
         // <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MisattributedOriginCorrectionStep>(
           MisattributedOriginCorrectionStep.FromServices));
+        // TURNKEY: the maintenance step that names every seal this service holds for an origin it does not audit (#2544):
+        // such a seal cannot advance, so the cut gate no longer waits on it, and the missing checkpoint route is reported.
+        // <docs>resilience/stream-integrity#a-seal-nothing-audits</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, UnauditedSealReportStep>(
+          UnauditedSealReportStep.FromServices));
+        // TURNKEY: the maintenance step that asks origins for the commit sequences of the events this service received from
+        // them without one (#2544), in bounded batches, idle-gated and under the maintainer turn.
+        // <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, OriginPositionFillStep>(
+          OriginPositionFillStep.FromServices));
         // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
         selector.Services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
           new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));

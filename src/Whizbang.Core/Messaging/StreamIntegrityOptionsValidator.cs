@@ -83,6 +83,12 @@ public sealed class StreamIntegrityOptionsValidator : IValidateOptions<StreamInt
       + "including the brief ones every rollout makes (#2362)");
     _atLeastOne(failures, "FullHistoryCompare:MaxPerRun", options.FullHistoryCompare.MaxPerRun,
       "it bounds the streams one compare run heals, and a bound below one heals nothing, so the pass never ends (#2361)");
+    _atLeastOne(failures, "OriginPositionFill:BatchSize", options.OriginPositionFill.BatchSize,
+      "it is the events one position request names, and a batch below one asks for nothing (#2544)");
+    _atLeastOne(failures, "OriginPositionFill:MaxBatchesPerCycle", options.OriginPositionFill.MaxBatchesPerCycle,
+      "it bounds the position requests one maintenance cycle sends, and a bound below one sends none (#2544)");
+    _positive(failures, "OriginPositionFill:LapPause", options.OriginPositionFill.LapPause,
+      "it is the pause before a finished walk asks again, and an empty pause re-asks every cycle (#2544)");
     if (options.MaxOutstandingRepairAnswers < 0) {
       failures.Add(
         $"Whizbang:StreamIntegrity:MaxOutstandingRepairAnswers must not be negative (was {options.MaxOutstandingRepairAnswers}); " +
