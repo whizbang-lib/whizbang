@@ -234,12 +234,11 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
     }
 
     await _readReachAsync(allCollectives, cancellationToken).ConfigureAwait(false);
-    // #2551: the collectives in commit order, an unstamped one after them by its stream's version, never by id.
-    var orderedCollectives = allCollectives
-      .OrderBy(static e => e.LocalCommitSequence is null)
-      .ThenBy(static e => e.LocalCommitSequence)
-      .ThenBy(static e => e.LocalStreamVersion)
-      .ToList();
+    // Collectives of different streams share no stream position: the merge below places each by its commit sequence, and
+    // one without a commit sequence by its id (#2449), the replay's one fallback for an unstamped event (#2551). This
+    // starting order is that fallback, by the id's canonical text, the order Postgres gives a uuid; a key stream's own
+    // collectives are then put in its commit order.
+    var orderedCollectives = allCollectives.OrderBy(static e => e.MessageId.Value.ToString("D"), StringComparer.Ordinal).ToList();
     _putSharedStreamsInCommitOrder(orderedCollectives, byStream, positions);
     return _mergeIntoStreamOrder(streamEvents, orderedCollectives);
   }

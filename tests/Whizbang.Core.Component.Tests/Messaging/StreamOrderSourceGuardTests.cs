@@ -45,6 +45,8 @@ public partial class StreamOrderSourceGuardTests {
       "the same: a lower checkpoint the stream does not hold (#2381)"),
     ("InMemoryEventStore.cs", "(upTo is not null ? e.Version <= upTo.Version : e.EventId.CompareTo(upToEventId) <= 0)",
       "the same: an upper checkpoint the stream does not hold (#2381)"),
+    ("CollectiveReplayApplier.cs", "allCollectives.OrderBy(static e => e.MessageId.Value.ToString(\"D\"), StringComparer.Ordinal)",
+      "collectives of different streams share no stream position; an unstamped one is placed by id (#2449), the replay's fallback"),
     ("CollectiveReplayStart.cs", ": collective.MessageId.Value.CompareTo(after) > 0;",
       "a collective or a start with no commit sequence (unstamped) has no position across streams: the replay's fallback"),
     ("OutboxDrainWorker.cs", "List<OutboxBatchRow> rows = [.. rowsRaw.OrderBy(static r => r.MessageId)];",
