@@ -216,9 +216,13 @@ public class WhizbangIdDocumentStorageTests {
     }
   }
 
-  private T _context<T>(Func<DbContextOptions, T> create) where T : DbContext {
+  private T _context<T>(Func<DbContextOptions, T> create, SqlCapture? capture = null) where T : DbContext {
     var whizbang = typeof(T) == typeof(WhizbangContext) || typeof(T) == typeof(WhizbangListContext);
-    var options = new DbContextOptionsBuilder()
+    var builder = new DbContextOptionsBuilder();
+    if (capture is not null) {
+      builder.AddInterceptors(capture);
+    }
+    var options = builder
       .UseNpgsql(_dataSource!, npgsql => {
         if (whizbang) {
           npgsql.UseWhizbangFunctions();
@@ -227,6 +231,18 @@ public class WhizbangIdDocumentStorageTests {
       .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning))
       .Options;
     return create(options);
+  }
+
+  /// <summary>The text of every statement a context runs that returns no rows: an ExecuteUpdate or ExecuteDelete.</summary>
+  private sealed class SqlCapture : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor {
+    public List<string> Statements { get; } = [];
+
+    public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int>> NonQueryExecutingAsync(
+        System.Data.Common.DbCommand command, Microsoft.EntityFrameworkCore.Diagnostics.CommandEventData eventData,
+        Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int> result, CancellationToken cancellationToken = default) {
+      Statements.Add(command.CommandText);
+      return ValueTask.FromResult(result);
+    }
   }
 
   private static ProbeRow _row(TestOrderId orderId, TestOrderId? parentId, TestOrderId lineId, TestOrderId? carrierId = null) => new() {
@@ -258,6 +274,25 @@ public class WhizbangIdDocumentStorageTests {
     var stored = await _storedTextAsync(row.Id);
 
     await Assert.That(stored).Contains($"\"OrderId\": {{\"Value\": \"{orderId.Value}\"}}");
+  }
+
+  /// <summary>
+  /// What a release before #2518 does with a row in the UUID-string form: its Entity Framework mapping, the object form,
+  /// cannot materialize it. So the stored-form rewrite waits while such a release is live
+  /// (<c>StrongIdScalarRewriteIntegrationTests.TheRewrite_WaitsWhileAnOlderReleaseIsLive_AndRunsOnceNoneIsAsync</c>).
+  /// </summary>
+  [Test]
+  public async Task Structural_CannotReadARowInTheUuidStringFormAsync() {
+    var row = _row(TestOrderId.New(), null, TestOrderId.New());
+    await using (var current = _context(o => new WhizbangContext(o))) {
+      current.Rows.Add(row);
+      await current.SaveChangesAsync();
+    }
+    await using var earlier = _context(o => new StructuralContext(o));
+
+    var read = async () => await earlier.Rows.AsNoTracking().Where(r => r.Id == row.Id).ToListAsync();
+
+    await Assert.That(read).Throws<InvalidOperationException>().WithMessageContaining("Invalid token type: 'String'");
   }
 
   [Test]
@@ -558,6 +593,66 @@ public class WhizbangIdDocumentStorageTests {
     await Assert.That(byOrderDescending).IsEquivalentTo([current.Id, orphan.Id, old.Id], CollectionOrdering.Matching);
     await Assert.That(byParent).IsEquivalentTo([old.Id, current.Id, orphan.Id], CollectionOrdering.Matching);
     await Assert.That(byParentDescending).IsEquivalentTo([orphan.Id, current.Id, old.Id], CollectionOrdering.Matching);
+  }
+
+  /// <summary>
+  /// ExecuteUpdate sets an id inside a document as its UUID string, through a plain jsonb path rather than the expression
+  /// that reads either form, and an id predicate in it matches rows in both forms; the row reads back (#2518).
+  /// </summary>
+  [Test]
+  public async Task Whizbang_ExecuteUpdateSetsAnIdAsAUuidString_AndItsIdPredicateMatchesBothFormsAsync() {
+    var (oldOrder, currentOrder, newOrder, newParent) = (TestOrderId.New(), TestOrderId.New(), TestOrderId.New(), TestOrderId.New());
+    var old = _row(oldOrder, null, TestOrderId.New());
+    var current = _row(currentOrder, null, TestOrderId.New());
+    await using (var structural = _context(o => new StructuralContext(o))) {
+      structural.Rows.Add(old);
+      await structural.SaveChangesAsync();
+    }
+    var capture = new SqlCapture();
+    await using var db = _context(o => new WhizbangContext(o), capture);
+    db.Rows.Add(current);
+    await db.SaveChangesAsync();
+    capture.Statements.Clear();
+    TestOrderId? parent = newParent;
+
+    var both = await db.Rows.Where(r => r.Data.OrderId == oldOrder || r.Data.OrderId == currentOrder)
+      .ExecuteUpdateAsync(s => s.SetProperty(r => r.Data.ParentId, parent));
+    var one = await db.Rows.Where(r => r.Data.OrderId == oldOrder)
+      .ExecuteUpdateAsync(s => s.SetProperty(r => r.Data.OrderId, newOrder));
+
+    await Assert.That(both).IsEqualTo(2);
+    await Assert.That(one).IsEqualTo(1);
+    var setter = string.Join("\n", capture.Statements);
+    await Assert.That(setter).Contains("SET data = jsonb_set(").Because(setter);
+    await Assert.That(setter).DoesNotContain("SET data = CASE").Because(setter);
+    await Assert.That(await _storedTextAsync(old.Id)).Contains($"\"OrderId\": \"{newOrder.Value}\"");
+    await Assert.That(await _storedTextAsync(old.Id)).Contains($"\"ParentId\": \"{newParent.Value}\"");
+    await Assert.That(await _storedTextAsync(current.Id)).Contains($"\"ParentId\": \"{newParent.Value}\"");
+    var reread = await db.Rows.AsNoTracking().Where(r => r.Id == old.Id).Select(r => new { r.Data.OrderId, r.Data.ParentId }).SingleAsync();
+    await Assert.That(reread.OrderId).IsEqualTo(newOrder);
+    await Assert.That(reread.ParentId).IsEqualTo(parent);
+  }
+
+  /// <summary>ExecuteDelete with an id predicate deletes rows in either stored form (#2518).</summary>
+  [Test]
+  public async Task Whizbang_ExecuteDeleteWithAnIdPredicateMatchesBothFormsAsync() {
+    var (oldOrder, currentOrder) = (TestOrderId.New(), TestOrderId.New());
+    var old = _row(oldOrder, null, TestOrderId.New());
+    var current = _row(currentOrder, null, TestOrderId.New());
+    var kept = _row(TestOrderId.New(), null, TestOrderId.New());
+    await using (var structural = _context(o => new StructuralContext(o))) {
+      structural.Rows.Add(old);
+      await structural.SaveChangesAsync();
+    }
+    await using var db = _context(o => new WhizbangContext(o));
+    db.Rows.AddRange(current, kept);
+    await db.SaveChangesAsync();
+    var wanted = new[] { oldOrder, currentOrder };
+
+    var deleted = await db.Rows.Where(r => wanted.Contains(r.Data.OrderId)).ExecuteDeleteAsync();
+
+    await Assert.That(deleted).IsEqualTo(2);
+    await Assert.That(await db.Rows.AsNoTracking().Select(r => r.Id).ToListAsync()).IsEquivalentTo([kept.Id]);
   }
 
   /// <summary>A collection of ids still in the object form is found by <c>Contains</c> (#2518).</summary>
