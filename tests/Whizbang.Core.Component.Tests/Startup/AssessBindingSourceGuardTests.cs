@@ -54,7 +54,7 @@ public partial class AssessBindingSourceGuardTests {
 
     var verdict = core.IndexOf("StartupVerdictBinding.ReadAsync", StringComparison.Ordinal);
     await Assert.That(verdict).IsGreaterThan(0);
-    foreach (var applies in new[] { "SchemaBootstrapPhase.ApplyAsync", "MigratorDutyStaging.ElectAsync", "rewriteStoredFormsAsync(segmentConnectionFactory)", "_beginPassAsync(" }) {
+    foreach (var applies in new[] { "MigratorElection.StageAsync(", "MigratorElection.RunPreLockAsync(", "rewriteStoredFormsAsync(segmentConnectionFactory", "_beginPassAsync(" }) {
       await Assert.That(core.IndexOf(applies, StringComparison.Ordinal)).IsGreaterThan(verdict)
         .Because($"{applies} runs only once the verdict is read");
     }
