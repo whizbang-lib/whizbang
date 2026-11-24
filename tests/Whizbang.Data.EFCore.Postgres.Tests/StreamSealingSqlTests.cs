@@ -304,16 +304,17 @@ public class StreamSealingSqlTests : EFCoreTestBase {
     var stream = (Guid)TrackedGuid.New();
     var ids = _orderedIds(4);
 
-    // Out of order on purpose: version order is message id order, whatever order the batch arrives in.
+    // Emitted against their id order on purpose (#2551): "after the terminal event" is after it in emission order,
+    // the order the batch lists them. By id, ids[0] would come before the terminal event and ids[3] after it.
     await _emitOutboxAsync(conn, _t0,
       [ids[3], ids[1], ids[0], ids[2]],
       (stream, EVENT_TYPE, 0), (stream, TERMINAL_TYPE, FLAG_TERMINAL), (stream, EVENT_TYPE, 0), (stream, EVENT_TYPE, 0));
 
     var versions = await _versionsAsync(conn, stream);
-    List<(Guid, long)> expected = [(ids[0], 1L), (ids[1], 2L)];
+    List<(Guid, long)> expected = [(ids[3], 1L), (ids[1], 2L)];
     await Assert.That(versions).IsEquivalentTo(expected)
-      .Because("the terminal event ends the stream at its own version; what sorts after it is refused, not stored");
-    foreach (var refused in new[] { ids[2], ids[3] }) {
+      .Because("the terminal event ends the stream at its own version; what was emitted after it is refused, not stored");
+    foreach (var refused in new[] { ids[0], ids[2] }) {
       var dead = await _deadLetterAsync(conn, refused);
       await Assert.That(dead!.FailureReason).IsEqualTo(STREAM_SEALED_REASON);
       await Assert.That(dead.ErrorText).IsEqualTo(
