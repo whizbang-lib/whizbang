@@ -71,25 +71,32 @@ namespace Whizbang.Core;
 /// </para>
 /// <para>
 /// <strong>Grandfathered values:</strong>
-/// Every generated id declares <c>static partial void IsGrandfathered(Guid value, ref bool grandfathered)</c>. An id
-/// type whose stored data holds a few values that predate its version rule (hand-typed seed ids, well-known system
-/// identities) implements it to name them, and its checked entry points accept them while every other value keeps
-/// the rule. Left unimplemented, the compiler removes the call. <see cref="Guid.Empty"/> is never grandfathered, and
-/// <c>New()</c> mints UUIDv7 as always:
+/// A strict or allow-list id declares <c>static partial void _isGrandfathered(Guid value, ref bool grandfathered)</c>.
+/// An id type whose stored data holds a few values that predate its version rule (hand-typed seed ids, well-known
+/// system identities) implements it to name them, and its checked entry points accept them while every other value
+/// keeps the rule. Left unimplemented, the compiler removes the call. <c>New()</c> mints UUIDv7 as always:
 /// <code>
 /// [WhizbangId]
 /// public readonly partial struct ProductCatalogId {
 ///   // Seeded before ids were UUIDv7. Frozen: new values are always minted.
-///   private static readonly FrozenSet&lt;Guid&gt; _grandfathered = new[] {
+///   private static readonly FrozenSet&lt;Guid&gt; _grandfatheredValues = new[] {
 ///     new Guid("3f2504e0-4f89-41d3-9a0c-0305e82c3301"),
 ///   }.ToFrozenSet();
 ///
-///   static partial void IsGrandfathered(Guid value, ref bool grandfathered) =>
-///     grandfathered = _grandfathered.Contains(value);
+///   static partial void _isGrandfathered(Guid value, ref bool grandfathered) =>
+///     grandfathered = _grandfatheredValues.Contains(value);
 /// }
 /// </code>
-/// The hook runs for every value that breaks the rule, so keep it a set lookup. It is a void method with a
-/// <c>ref</c> result because only a void partial method may be left unimplemented.
+/// Implement it as declared, without an accessibility modifier: C# lets a partial method go unimplemented only when
+/// it has none, so the generated declaration has none, and an implementation that adds one (<c>private</c>, which
+/// IDE0040 may suggest) is CS8799. Without a modifier the method is private, which is why it is named in the
+/// <c>_camelCase</c> private methods take. It is a void method with a <c>ref</c> result for the same reason.
+/// </para>
+/// <para>
+/// The hook is asked only for a value that breaks the rule. It is never asked about <see cref="Guid.Empty"/>, which a
+/// strict or allow-list id always refuses. An <see cref="AcceptAnyVersion"/> id refuses nothing but the empty Guid, so
+/// it has no hook to ask: it declares none, and an implementation on one is a compile error (CS0759) rather than code
+/// that never runs. The hook runs for every value that breaks the rule, so keep it a set lookup.
 /// </para>
 /// </remarks>
 /// <example>
