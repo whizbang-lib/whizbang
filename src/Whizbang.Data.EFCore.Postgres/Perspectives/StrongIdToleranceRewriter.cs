@@ -62,35 +62,27 @@ internal sealed class StrongIdToleranceRewriter(
   protected override Expression VisitExtension(Expression node) {
     ArgumentNullException.ThrowIfNull(node);
 
-    switch (node) {
-      case ShapedQueryExpression shaped:
-        // The shaper is client code, not SQL: only the query half is ours.
-        return shaped.Update(Visit(shaped.QueryExpression), shaped.ShaperExpression);
+    return node switch {
+      // The shaper is client code, not SQL: only the query half is ours.
+      ShapedQueryExpression shaped => shaped.Update(Visit(shaped.QueryExpression), shaped.ShaperExpression),
 
-      case JsonScalarExpression { TypeMapping: WhizbangIdTypeMapping mapping } json:
-        return _eitherForm(
-          new JsonScalarExpression(Visit(json.Json) as SqlExpression ?? json.Json, json.Path, typeof(string), text, json.IsNullable),
-          json.Type,
-          mapping);
+      JsonScalarExpression { TypeMapping: WhizbangIdTypeMapping mapping } json => _eitherForm(
+        new JsonScalarExpression(Visit(json.Json) as SqlExpression ?? json.Json, json.Path, typeof(string), text, json.IsNullable),
+        json.Type,
+        mapping),
 
-      case PgTableValuedFunctionExpression recordSet when recordSet.ColumnInfos is { } columns
-          && columns.Any(c => c.TypeMapping is WhizbangIdTypeMapping):
-        return _readIdsAsText(recordSet, columns);
+      PgTableValuedFunctionExpression { ColumnInfos: { } columns } recordSet
+        when columns.Any(c => c.TypeMapping is WhizbangIdTypeMapping) => _readIdsAsText(recordSet, columns),
 
-      case ColumnExpression column when _recordSetIds.TryGetValue((column.TableAlias, column.Name), out var mapping):
-        return _eitherForm(
-          new ColumnExpression(column.Name, column.TableAlias, typeof(string), text, column.IsNullable),
-          column.Type,
-          mapping);
+      ColumnExpression column when _recordSetIds.TryGetValue((column.TableAlias, column.Name), out var mapping) =>
+        _eitherForm(new ColumnExpression(column.Name, column.TableAlias, typeof(string), text, column.IsNullable), column.Type, mapping),
 
-      case PgBinaryExpression { OperatorType: PgExpressionType.Contains } contains
-          when contains.Left.TypeMapping?.ElementTypeMapping is WhizbangIdTypeMapping
-            && contains.Right is SqlFunctionExpression { Name: "to_jsonb", Arguments: [var id] }:
-        return _eitherElementForm(contains, id);
+      PgBinaryExpression { OperatorType: PgExpressionType.Contains } contains
+        when contains.Left.TypeMapping?.ElementTypeMapping is WhizbangIdTypeMapping
+          && contains.Right is SqlFunctionExpression { Name: "to_jsonb", Arguments: [var id] } => _eitherElementForm(contains, id),
 
-      default:
-        return base.VisitExtension(node);
-    }
+      _ => base.VisitExtension(node),
+    };
   }
 
   /// <summary>

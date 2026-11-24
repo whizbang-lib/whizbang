@@ -7,8 +7,8 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
-using Whizbang.Data.EFCore.Postgres.Functions;
 using Whizbang.Data.EFCore.Postgres.ConventionIds.Fixtures;
+using Whizbang.Data.EFCore.Postgres.Functions;
 using Whizbang.Data.EFCore.Postgres.Ids.Fixtures;
 using Whizbang.Data.EFCore.Postgres.Perspectives;
 
