@@ -46,7 +46,7 @@ public class WhizbangIdInfoEqualityTests {
     await Assert.That(strict.GetHashCode()).IsNotEqualTo(v7OrV5.GetHashCode());
   }
 
-  /// <summary>Whether <c>Versions</c> is written decides whether WHIZ038 is reported, so it takes part too.</summary>
+  /// <summary>Whether <c>Versions</c> is written decides whether WHIZ039 is reported, so it takes part too.</summary>
   [Test]
   public async Task SameName_DifferentDeclaresVersions_IsNotEqualAsync() {
     var unwritten = new WhizbangIdInfo("OrderId", "Shop", DiscoverySource.ExplicitType, AcceptAnyVersion: true);

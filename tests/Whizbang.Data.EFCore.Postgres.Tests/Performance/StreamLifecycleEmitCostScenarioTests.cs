@@ -259,6 +259,127 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// A page pinned while the vacuum runs (#2521): the vacuum still marks every page holding the streams' rows
+  /// all-visible. Any backend can hold a pin on a page for a moment (the checkpointer or the background writer writing it
+  /// out, a reader whose snapshot is newer than the rows, which the wait above rightly ignores), and on a busy server one
+  /// is held while the vacuum reaches the page often enough to fail the scenario. The pinner here opens after the wait,
+  /// so its snapshot is newer than every row, and lets the page go only when the vacuum is seen waiting for it; a vacuum
+  /// that does not wait for the pin passes the page by, every time.
+  /// </summary>
+  [Test]
+  [Timeout(600000)]
+  public async Task TheVacuum_WaitsOutAPinOnAPage_AndMarksEveryPageAllVisibleAsync(CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await _disableAutovacuumAsync(conn);
+    await _executeAsync(conn, "CREATE EXTENSION IF NOT EXISTS pg_visibility");
+    var vacuumPid = await _scalarAsync(conn, "SELECT pg_backend_pid()");
+    var streams = await _seedWarmStreamsAsync(conn);
+    await Assert.That(await _flushCommitsAsync(conn)).IsTrue()
+      .Because("precondition: the WAL is flushed through every earlier commit, so the vacuum can hint their rows");
+    await using var pinner = new NpgsqlConnection(ConnectionString);
+    await pinner.OpenAsync(cancellationToken);
+    await using var watcher = new NpgsqlConnection(ConnectionString);
+    await watcher.OpenAsync(cancellationToken);
+    using var vacuumDone = new CancellationTokenSource();
+    Task<bool>? released = null;
+
+    await _vacuumOnceNoOlderSnapshotSeesTheRowsAsync(conn, cancellationToken, beforeVacuum: async () => {
+      // A cursor keeps the page of the row it last returned pinned until it moves on or its transaction ends.
+      await _executeAsync(pinner, "BEGIN; DECLARE pin CURSOR FOR SELECT * FROM wh_stream_lifecycle; FETCH 1 FROM pin;");
+      released = _releaseWhenTheVacuumWaitsForThePinAsync(watcher, pinner, vacuumPid, vacuumDone.Token);
+    });
+    await vacuumDone.CancelAsync();
+    var vacuumWaitedForThePin = await released!;
+
+    var (pages, notAllVisible) = await _pagesHoldingAsync(conn, streams);
+    await Assert.That(pages).IsGreaterThanOrEqualTo(1L).Because("precondition: the streams' rows are on some page");
+    await Assert.That(notAllVisible).IsEqualTo(0L)
+      .Because($"the vacuum waited for the pinned page instead of passing it by, so it marked all {pages} pages all-visible");
+    await Assert.That(vacuumWaitedForThePin).IsTrue().Because("the vacuum reached the pinned page and waited for it");
+  }
+
+  /// <summary>
+  /// A transaction of another session commits late into the commit-log group of the rows (#2521): the vacuum still marks
+  /// every page holding the streams' rows all-visible. A row's commit is hinted on its page only once the WAL is flushed
+  /// through the commit LSN the commit log records for it, and the log records one LSN per group of 32 transaction ids:
+  /// the latest commit in the group. On a shared server the neighbors of the rows' transaction ids belong to other
+  /// databases, commit asynchronously, and often do so after the rows' WAL was flushed; the vacuum then cannot hint the
+  /// rows and leaves their pages unmarked. Here the late transaction takes its id before the rows are written, so it
+  /// shares their group, and commits asynchronously when the vacuum's wait finds it.
+  /// </summary>
+  [Test]
+  [Timeout(600000)]
+  public async Task TheVacuum_HintsRowsWhoseCommitGroupATransactionCommittedIntoLate_AndMarksEveryPageAllVisibleAsync(
+      CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await _disableAutovacuumAsync(conn);
+    await _executeAsync(conn, "CREATE EXTENSION IF NOT EXISTS pg_visibility");
+    await _executeAsync(conn, "CREATE TABLE IF NOT EXISTS late_commit_probe (id int)");
+    await using var late = new NpgsqlConnection(ConnectionString);
+    await late.OpenAsync(cancellationToken);
+    // The late transaction takes the first id of a group, so the rows' transactions, a few ids later, share it. Other
+    // databases' transactions can take ids in between; the vacuum must hint the rows whichever group they land in.
+    while ((await _scalarAsync(conn, "SELECT pg_current_xact_id()::text::bigint") + 1) % CLOG_LSN_GROUP != 0) {
+      // Each call is a transaction of its own and takes one id.
+    }
+    var lateXid = await _scalarAsync(late, "BEGIN; SELECT pg_current_xact_id()::text::bigint");
+    var streams = await _seedWarmStreamsAsync(conn);
+    var rowXids = await _rowXidsAsync(conn, streams);
+    Console.WriteLine($"late transaction {lateXid}; the rows' transactions {string.Join(", ", rowXids)} (groups of {CLOG_LSN_GROUP})");
+    await Assert.That(await _flushCommitsAsync(conn)).IsTrue()
+      .Because("precondition: the WAL is flushed through every earlier commit");
+
+    var waited = false;
+    await _vacuumOnceNoOlderSnapshotSeesTheRowsAsync(conn, cancellationToken, onWaiting: async () => {
+      waited = true;
+      await _executeAsync(late, "SET LOCAL synchronous_commit = off; INSERT INTO late_commit_probe VALUES (1); COMMIT;");
+    });
+
+    var (pages, notAllVisible) = await _pagesHoldingAsync(conn, streams);
+    await Assert.That(waited).IsTrue().Because("the vacuum waits for the late transaction, which runs below its horizon");
+    await Assert.That(pages).IsGreaterThanOrEqualTo(1L).Because("precondition: the streams' rows are on some page");
+    await Assert.That(notAllVisible).IsEqualTo(0L)
+      .Because($"the WAL was flushed through the late commit before the vacuum, so it hinted the rows and marked all {pages} pages all-visible");
+  }
+
+  /// <summary>Transaction ids per commit-log LSN group (CLOG_XACTS_PER_LSN_GROUP).</summary>
+  private const long CLOG_LSN_GROUP = 32;
+
+  /// <summary>The transaction ids that wrote the streams' current rows.</summary>
+  private static async Task<long[]> _rowXidsAsync(NpgsqlConnection conn, Guid[] streams) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT DISTINCT xmin::text::bigint FROM wh_stream_lifecycle WHERE stream_id = ANY(@streams)";
+    cmd.Parameters.AddWithValue(nameof(streams), streams);
+    var xids = new List<long>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      xids.Add(reader.GetInt64(0));
+    }
+    return [.. xids];
+  }
+
+  /// <summary>
+  /// Ends <paramref name="pinner"/>'s transaction, releasing its pin, once the backend <paramref name="vacuumPid"/> is
+  /// seen waiting for a buffer pin; or, when <paramref name="vacuumDone"/> fires first, ends it then. Returns whether the
+  /// vacuum waited for the pin.
+  /// </summary>
+  private static async Task<bool> _releaseWhenTheVacuumWaitsForThePinAsync(
+      NpgsqlConnection watcher, NpgsqlConnection pinner, long vacuumPid, CancellationToken vacuumDone) {
+    var waited = false;
+    while (!vacuumDone.IsCancellationRequested) {
+      if (await _scalarAsync(watcher, $"SELECT count(*) FROM pg_stat_activity WHERE pid = {vacuumPid} AND wait_event = 'BufferPin'") > 0) {
+        waited = true;
+        break;
+      }
+      await _executeAsync(watcher, "SELECT pg_sleep(0.05)");
+    }
+    await _executeAsync(pinner, "COMMIT");
+    return waited;
+  }
+
+  /// <summary>
   /// Vacuums the ledger once no snapshot that could see an older version of a row on it remains (#2473). A vacuum marks a
   /// page all-visible only when every row on it is older than the oldest snapshot of this database, and one other
   /// session holding a snapshot during the vacuum leaves pages unmarked: an autovacuum worker analyzing a catalog of this
@@ -276,8 +397,9 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
   /// <param name="conn">The test's connection, outside any transaction.</param>
   /// <param name="cancellationToken">The test's cancellation.</param>
   /// <param name="onWaiting">Called once, the first time the wait finds a snapshot it must wait for.</param>
+  /// <param name="beforeVacuum">Called once the wait is over, just before the vacuum.</param>
   private static async Task _vacuumOnceNoOlderSnapshotSeesTheRowsAsync(
-      NpgsqlConnection conn, CancellationToken cancellationToken, Func<Task>? onWaiting = null) {
+      NpgsqlConnection conn, CancellationToken cancellationToken, Func<Task>? onWaiting = null, Func<Task>? beforeVacuum = null) {
     string horizon;
     await using (var next = conn.CreateCommand()) {
       next.CommandText = "SELECT pg_snapshot_xmax(pg_current_snapshot())::text";
@@ -294,7 +416,38 @@ public class StreamLifecycleEmitCostScenarioTests : EFCoreTestBase {
       }
       await _executeAsync(conn, "SELECT pg_sleep(0.05)");
     }
-    await _executeAsync(conn, "VACUUM wh_stream_lifecycle");
+    if (beforeVacuum is not null) {
+      await beforeVacuum();
+    }
+    await _flushThroughTheRowsCommitGroupsAsync(conn, long.Parse(horizon, CultureInfo.InvariantCulture), cancellationToken);
+    // FREEZE (#2521): a plain vacuum that cannot take a page's cleanup lock, because another backend holds a pin on it for
+    // the moment, prunes the page without marking it all-visible and moves on. An aggressive vacuum with every row due for
+    // freezing needs that lock for each page, so it waits for the pin to go (wait_event BufferPin) and marks every page.
+    // The pages end all-frozen as well, which an update reads in the visibility map exactly as it reads all-visible.
+    await _executeAsync(conn, "VACUUM (FREEZE) wh_stream_lifecycle");
+  }
+
+  /// <summary>
+  /// Makes every row older than <paramref name="horizon"/> hintable (#2521). A commit is hinted on a row only once the WAL
+  /// is flushed through the commit LSN the commit log records for it, which is one LSN per group of
+  /// <see cref="CLOG_LSN_GROUP"/> transaction ids: the latest commit in the group. The rows' groups can hold ids at or
+  /// above the horizon, which other sessions (other databases, on a shared server) commit asynchronously, any time. So:
+  /// every id of those groups is taken (by this session, one transaction each, when nobody else has), none of them is
+  /// still running, and then one synchronous commit flushes the WAL through every commit made so far. From there each
+  /// group's LSN is flushed and stays so, whatever commits afterwards: the groups are full and finished.
+  /// </summary>
+  private static async Task _flushThroughTheRowsCommitGroupsAsync(NpgsqlConnection conn, long horizon, CancellationToken cancellationToken) {
+    var groupsEnd = (horizon + CLOG_LSN_GROUP - 1) / CLOG_LSN_GROUP * CLOG_LSN_GROUP;
+    while (await _scalarAsync(conn, "SELECT pg_current_xact_id()::text::bigint") + 1 < groupsEnd) {
+      // Each call is a transaction of its own and takes one id.
+    }
+    while (await _scalarAsync(conn, "SELECT pg_snapshot_xmin(pg_current_snapshot())::text::bigint") < groupsEnd) {
+      await _executeAsync(conn, "SELECT pg_sleep(0.05)");
+      cancellationToken.ThrowIfCancellationRequested();
+    }
+    if (!await _flushCommitsAsync(conn)) {
+      throw new InvalidOperationException("The synchronous commit did not flush the WAL through the point written before it.");
+    }
   }
 
   /// <summary>

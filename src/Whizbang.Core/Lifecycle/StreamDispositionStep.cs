@@ -32,7 +32,9 @@ namespace Whizbang.Core.Lifecycle;
 /// names none: Archive writes the whole stream through the <see cref="IArchiveStore"/>; Delete purges it
 /// (<see cref="IStreamPurger"/>); Compact runs the registered <see cref="ICompactionHandler"/> and then purges;
 /// CryptoShred, and Compact with no handler, defer and log why. A disposition that ran clears the schedule and fires the
-/// PostDestruction hook; one that did not defers.
+/// PostDestruction hook; one that did not defers. An archive the seal gate holds (<c>awaiting_seal</c>) is recorded with
+/// <see cref="IWorkCoordinator.RecordCutAwaitingSealAsync"/> so it is counted as held back, and forgotten on any other
+/// answer (#2529).
 /// </para>
 /// <para>
 /// When <see cref="StreamLifecycleOptions.Enabled"/> is set and a stream type declares a trigger, the run then asks the
@@ -311,6 +313,13 @@ public sealed partial class StreamDispositionStep : IMaintenanceStep {
       case Disposition.Archive: {
           var written = await services.GetRequiredService<IArchiveStore>()
             .WriteAsync(ArchiveBatch.WholeStream(streamId), ct).ConfigureAwait(false);
+          // #2529: a whole-stream archive the seal gate holds is recorded as awaiting it, as the truncator records a
+          // prefix cut (#2365), so eligible_not_yet_deleted counts it; any other answer forgets the stream.
+          if (services.GetService<IWorkCoordinator>() is { } coordinator) {
+            await coordinator.RecordCutAwaitingSealAsync(streamId,
+              string.Equals(written.Status, ArchiveStatus.AWAITING_SEAL, StringComparison.Ordinal) ? "archive" : null,
+              _timeProvider.GetUtcNow(), ct).ConfigureAwait(false);
+          }
           if (!written.Archived) {
             LogArchiveRefused(_logger, streamId, written.Status);
           }

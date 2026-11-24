@@ -27,7 +27,8 @@ public class DapperSqliteEventStore(
   IDbConnectionFactory connectionFactory,
   IDbExecutor executor,
   JsonSerializerOptions jsonOptions,
-  IPolicyEngine policyEngine) : DapperEventStoreBase(connectionFactory, executor, jsonOptions) {
+  IPolicyEngine policyEngine,
+  Whizbang.Core.Validation.GuidOrderingValidator? guidOrdering = null) : DapperEventStoreBase(connectionFactory, executor, jsonOptions, guidOrdering) {
 #pragma warning restore CS9113, S1144
 
   /// <summary>
@@ -41,6 +42,7 @@ public class DapperSqliteEventStore(
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
   public override async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
+    GuidOrdering.ValidateAppend(streamId, envelope, "DapperSqliteEventStore.Append");
 
     const int maxRetries = 10;
     var lastException = default(Exception);

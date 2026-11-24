@@ -223,7 +223,6 @@ fundamentals/events/system-events#audit-shipping | no such heading on v1.0.0/fun
 fundamentals/events/system-events#perspective-index-advised | no such heading on v1.0.0/fundamentals/events/system-events.md
 fundamentals/events/system-events#subscribe-to-audit | no such heading on v1.0.0/fundamentals/events/system-events.md
 fundamentals/identity/whizbang-ids#suppress-interception | no such heading on v1.0.0/fundamentals/identity/whizbang-ids.md
-fundamentals/identity/whizbang-ids#suppress-ordering-validation | no such heading on v1.0.0/fundamentals/identity/whizbang-ids.md
 fundamentals/lenses/scoped-queries#scope-override | no such heading on v1.0.0/fundamentals/lenses/scoped-queries.md
 fundamentals/lifecycle/lifecycle-coordinator#context | no such heading on v1.0.0/fundamentals/lifecycle/lifecycle-coordinator.md
 fundamentals/lifecycle/lifecycle-coordinator#diagnostics | no such heading on v1.0.0/fundamentals/lifecycle/lifecycle-coordinator.md

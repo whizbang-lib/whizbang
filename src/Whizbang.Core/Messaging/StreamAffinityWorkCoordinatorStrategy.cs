@@ -33,8 +33,11 @@ public sealed class StreamAffinityWorkCoordinatorStrategy(
     Whizbang.Core.SystemEvents.SystemEventOptions? systemEventOptions = null,
     Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null,
     Whizbang.Core.SystemEvents.AuditTypeResolver? auditEventTypes = null,
-    Func<bool>? holdsOpenTransaction = null
+    Func<bool>? holdsOpenTransaction = null,
+    Whizbang.Core.Validation.GuidOrderingValidator? guidOrdering = null
 ) : IWorkCoordinatorStrategy, IWorkFlusher {
+  // #2528: the batcher route bypasses the inner strategy's queue, so it checks message ids itself.
+  private readonly Whizbang.Core.Validation.GuidOrderingValidator _guidOrdering = guidOrdering ?? Whizbang.Core.Validation.GuidOrderingValidator.Default;
   private readonly IWorkCoordinatorStrategy _inner = ArgumentGuard.NotNull(inner);
   private readonly IOutboxBatchStrategy _outboxBatch = ArgumentGuard.NotNull(outboxBatch);
   private readonly Whizbang.Core.SystemEvents.SystemEventOptions? _systemEventOptions = systemEventOptions;
@@ -69,6 +72,7 @@ public sealed class StreamAffinityWorkCoordinatorStrategy(
   /// </remarks>
   public async Task QueueOutboxMessageAsync(OutboxMessage message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
+    _guidOrdering.ValidateMessageId(message.MessageId, message.MessageType, "StreamAffinityStrategy.QueueOutbox");
     // Tag-bound coalescing: this route bypasses WorkCoordinatorQueues.AddOutboxMessage, so the
     // wrapper is a mint seam of its own — stamp group + max-delay floor before the append,
     // mirroring the inner path (same rule for the audit companion below).

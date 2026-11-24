@@ -58,4 +58,22 @@ public class PerspectiveWriteModesTests {
     await Assert.That(() => PerspectiveWriteModes.Register(" ", null)).Throws<ArgumentException>();
     await Assert.That(() => PerspectiveWriteModes.Resolve(null!, PerspectiveWriteMode.SetBased)).Throws<ArgumentNullException>();
   }
+
+  [Test]
+  public async Task DeclaredWith_NamesThePerspectivesThatDeclareTheModeAsync() {
+    var behind = $"Tests.WriteBehind{Guid.NewGuid():N}";
+    var other = $"Tests.SetBasedToo{Guid.NewGuid():N}";
+    PerspectiveWriteModes.Register(behind, PerspectiveWriteMode.WriteBehind);
+    PerspectiveWriteModes.Register(other, PerspectiveWriteMode.SetBased);
+
+    await Assert.That(PerspectiveWriteModes.DeclaredWith(PerspectiveWriteMode.WriteBehind)).Contains(behind);
+    await Assert.That(PerspectiveWriteModes.DeclaredWith(PerspectiveWriteMode.WriteBehind)).DoesNotContain(other);
+    await Assert.That(PerspectiveWriteModes.Resolve(behind, PerspectiveWriteMode.SetBased)).IsEqualTo(PerspectiveWriteMode.WriteBehind);
+  }
+
+  [Test]
+  public async Task WriteBehind_IsNeverTheDefaultAsync() {
+    await Assert.That(new PerspectiveWorkerOptions().WriteMode).IsNotEqualTo(PerspectiveWriteMode.WriteBehind)
+      .Because("write-behind holds models in memory: a service selects it explicitly (#2247)");
+  }
 }

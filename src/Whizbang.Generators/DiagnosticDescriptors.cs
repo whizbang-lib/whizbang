@@ -252,12 +252,12 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ037: Warning - A [WhizbangId] Versions list is narrowed by another [WhizbangId] for the same id (#2516).
+  /// WHIZ038: Warning - A [WhizbangId] Versions list is narrowed by another [WhizbangId] for the same id (#2516).
   /// </summary>
-  /// <docs>operations/diagnostics/whiz037</docs>
-  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:RoutesThatDisagree_TakeTheCommonVersionsAndReportWhiz037AtTheNarrowedListAsync</tests>
+  /// <docs>operations/diagnostics/whiz038</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:RoutesThatDisagree_TakeTheCommonVersionsAndReportWhiz038AtTheNarrowedListAsync</tests>
   public static readonly DiagnosticDescriptor WhizbangIdVersionsNarrowed = new(
-      id: "WHIZ037",
+      id: "WHIZ038",
       title: "WhizbangId Versions Narrowed",
       messageFormat: "The Versions on this [WhizbangId] are narrowed: the [WhizbangId] declarations for '{0}' list different versions, so the id accepts the ones they have in common, {1}. List the same Versions on every [WhizbangId] for this id.",
       category: CATEGORY,
@@ -267,12 +267,12 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ038: Error - A [WhizbangId] writes both AcceptAnyVersion = true and Versions (#2516).
+  /// WHIZ039: Error - A [WhizbangId] writes both AcceptAnyVersion = true and Versions (#2516).
   /// </summary>
-  /// <docs>operations/diagnostics/whiz038</docs>
-  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:AcceptAnyVersionAndVersions_ReportWhiz038AtTheAttributeAsync</tests>
+  /// <docs>operations/diagnostics/whiz039</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:AcceptAnyVersionAndVersions_ReportWhiz039AtTheAttributeAsync</tests>
   public static readonly DiagnosticDescriptor WhizbangIdAcceptAnyVersionWithVersions = new(
-      id: "WHIZ038",
+      id: "WHIZ039",
       title: "WhizbangId AcceptAnyVersion With Versions",
       messageFormat: "This [WhizbangId] for '{0}' writes both AcceptAnyVersion = true and Versions. Write Versions to list the accepted versions, or AcceptAnyVersion = true to accept any non-empty Guid, not both.",
       category: CATEGORY,
@@ -282,19 +282,34 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ039: Error - A [WhizbangId] accepts no UUID version (#2516).
+  /// WHIZ043: Error - A [WhizbangId] accepts no UUID version (#2516).
   /// </summary>
-  /// <docs>operations/diagnostics/whiz039</docs>
-  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:EmptyVersions_ReportWhiz039Async</tests>
-  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:RoutesWithNoVersionInCommon_ReportWhiz039Async</tests>
+  /// <docs>operations/diagnostics/whiz043</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:EmptyVersions_ReportWhiz043Async</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:RoutesWithNoVersionInCommon_ReportWhiz043Async</tests>
   public static readonly DiagnosticDescriptor WhizbangIdAcceptsNoVersion = new(
-      id: "WHIZ039",
+      id: "WHIZ043",
       title: "WhizbangId Accepts No Version",
       messageFormat: "'{0}' accepts no UUID version: {1}. List at least one version in Versions, the same on every [WhizbangId] for this id.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
       description: "A strongly-typed id must accept at least one UUID version through From, Parse, the explicit cast and JSON. Its Versions list is empty, or the [WhizbangId] declarations for it (the type, a property, a parameter) list no version in common."
+  );
+
+  /// <summary>
+  /// WHIZ044: Error - A [WhizbangId] Versions value has bits outside versions 1 to 8 (#2516).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz044</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:VersionsWithBitsOutsideOneToEight_ReportWhiz044Async</tests>
+  public static readonly DiagnosticDescriptor WhizbangIdVersionsOutOfRange = new(
+      id: "WHIZ044",
+      title: "WhizbangId Versions Outside 1 To 8",
+      messageFormat: "'{0}' lists bits {1} in Versions that name no UUID version. Use the UuidVersions flags (V1 to V8) only.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Each UuidVersions flag is the bit of its version number, 1 to 8. A cast such as (UuidVersions)1 or a bit above 8 names no version and would otherwise be dropped without a word, leaving an id that accepts fewer versions than written."
   );
 
   /// <summary>
@@ -564,11 +579,11 @@ public static class DiagnosticDescriptors {
   public static readonly DiagnosticDescriptor GuidNewGuidUsage = new(
       id: "WHIZ055",
       title: "Guid.NewGuid() Usage",
-      messageFormat: "Use TrackedGuid.New() or a [WhizbangId] type instead of Guid.NewGuid(). UUIDv4 is not time-ordered.",
+      messageFormat: "Use TrackedGuid.New() or a [WhizbangId] type instead of Guid.NewGuid(). UUIDv4 is not time-ordered; with interception on (the default) this call is replaced with TrackedGuid.New().", // review-checks:allow (the message names the call; it does not make one)
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "Guid.NewGuid() creates UUIDv4 which is not time-ordered. Use TrackedGuid.New() or a [WhizbangId] type for UUIDv7 with sub-millisecond precision."
+      description: "Guid.NewGuid() creates UUIDv4, which is not time-ordered. With Guid interception on (the default) the call is replaced with TrackedGuid.New(), a UUIDv7 with sub-millisecond precision; write TrackedGuid.New() or a [WhizbangId] type so the code says what it gets. [SuppressGuidInterception] keeps a deliberate v4." // review-checks:allow (the description names the call; it does not make one)
   );
 
   /// <summary>
@@ -580,26 +595,42 @@ public static class DiagnosticDescriptors {
   public static readonly DiagnosticDescriptor GuidCreateVersion7Usage = new(
       id: "WHIZ056",
       title: "Guid.CreateVersion7() Usage",
-      messageFormat: "Use TrackedGuid.New() for sub-millisecond precision instead of Guid.CreateVersion7()",
+      messageFormat: "Use TrackedGuid.New() for sub-millisecond precision instead of Guid.CreateVersion7(); with interception on (the default) this call is replaced with TrackedGuid.New()",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "Guid.CreateVersion7() only has millisecond precision. Use TrackedGuid.New() or a [WhizbangId] type for sub-millisecond precision."
+      description: "Guid.CreateVersion7() only has millisecond precision. With Guid interception on (the default) the call is replaced with TrackedGuid.New(), which orders within a millisecond by its counter; write TrackedGuid.New() or a [WhizbangId] type so the code says what it gets."
   );
 
   /// <summary>
-  /// WHIZ058: Info - Guid generation call intercepted and wrapped with TrackedGuid.
+  /// WHIZ037: Warning - a Guid built from bytes or a string, or parsed, flows into a message id, an event id or a
+  /// [StreamId] member (#2528). Interception cannot reach a constructor or a value from the wire.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz037</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/NonTimeOrderedIdAnalyzerTests.cs:FlaggedShape_ReportsWHIZ037WarningAsync</tests>
+  public static readonly DiagnosticDescriptor NonTimeOrderedIdFlowsIntoId = new(
+      id: "WHIZ037",
+      title: "A Constructed Or Parsed Guid Flows Into An Id",
+      messageFormat: "{0} flows into {1}; event and message ids must be UUIDv7 (time-ordered) and stream ids should be. Mint it with TrackedGuid.New() or a [WhizbangId] type, or derive it from a message id.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "A Guid built with new Guid(bytes) or new Guid(\"...\"), or read with Guid.Parse or Guid.TryParse, carries whatever version its source had. Event and message ids that are not UUIDv7 are refused at run time, and a stream id that is not costs index locality. Guid interception cannot reach a constructor or a value from the wire, so this warning names the flow at compile time."
+  );
+
+  /// <summary>
+  /// WHIZ058: Info - Guid generation call intercepted and replaced with TrackedGuid.New() (#2528).
   /// </summary>
   /// <docs>operations/diagnostics/whiz058</docs>
   /// <tests>tests/Whizbang.Generators.Tests/GuidInterceptorGeneratorTests.cs:Generator_InterceptedCall_ReportsWHIZ058DiagnosticAsync</tests>
   public static readonly DiagnosticDescriptor GuidCallIntercepted = new(
       id: "WHIZ058",
       title: "Guid Call Intercepted",
-      messageFormat: "Intercepted {0} at {1}:{2} - wrapped with TrackedGuid for metadata tracking",
+      messageFormat: "Intercepted {0} at {1}:{2} - replaced with TrackedGuid.New(), a time-ordered UUIDv7",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A Guid generation call was intercepted and wrapped with TrackedGuid to enable metadata tracking. This allows Whizbang to validate time-ordering requirements at runtime."
+      description: "A Guid generation call was intercepted and replaced with TrackedGuid.New(), a UUIDv7 with counter precision, so the id is time-ordered wherever it is used. Interception is on by default; WhizbangGuidInterceptionEnabled=false turns it off, which is strongly advised against, and [SuppressGuidInterception] keeps one deliberate v4."
   );
 
   /// <summary>

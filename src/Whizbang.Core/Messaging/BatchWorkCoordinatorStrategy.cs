@@ -37,6 +37,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   // shared drain helper so its metrics carry the same name.
   private const string STRATEGY_NAME = "batch";
 
+  private readonly Whizbang.Core.Validation.GuidOrderingValidator _guidOrdering;
   private readonly IWorkCoordinator? _coordinator;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly WorkCoordinatorOptions _options;
@@ -99,8 +100,11 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     DetachedLifecycleWork detachedWork,
     IDeferredOutboxChannel deferredChannel,
     WorkCoordinatorMetrics? metrics = null,
-    LifecycleMetrics? lifecycleMetrics = null) {
+    LifecycleMetrics? lifecycleMetrics = null,
+    Whizbang.Core.Validation.GuidOrderingValidator? guidOrdering = null) {
 #pragma warning restore S107
+    // #2528: a message id that is not a UUIDv7 is refused where it is queued, before it can join a batch and fail it.
+    _guidOrdering = guidOrdering ?? Whizbang.Core.Validation.GuidOrderingValidator.Default;
     _coordinator = coordinator;
     ArgumentNullException.ThrowIfNull(instanceProvider);
     _instanceProvider = instanceProvider;
@@ -138,6 +142,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   public void QueueOutboxMessage(OutboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "BatchStrategy.QueueOutbox", message.MessageType);
+    _guidOrdering.ValidateMessageId(message.MessageId, message.MessageType, "BatchStrategy.QueueOutbox");
 
     bool shouldFlush;
     lock (_lock) {
@@ -162,6 +167,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   public void QueueInboxMessage(InboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "BatchStrategy.QueueInbox", message.MessageType);
+    _guidOrdering.ValidateMessageId(message.MessageId, message.MessageType, "BatchStrategy.QueueInbox");
 
     bool shouldFlush;
     lock (_lock) {

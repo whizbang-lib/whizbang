@@ -430,7 +430,7 @@ public partial class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
 
   private ServiceProvider _services(
       Func<Task> beforeEachStream, Func<IServiceProvider, Task> onFirstRun, PgRoleElector? elector = null,
-      BlueGreenRebuildOptions? options = null) {
+      BlueGreenRebuildOptions? options = null, PerspectiveRebuildOptions? rebuildOptions = null, bool observed = true) {
     var services = new ServiceCollection();
     if (elector is not null) {
       services.AddSingleton<IDutyElector>(elector);
@@ -439,6 +439,9 @@ public partial class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
     services.AddLogging();
     if (options is not null) {
       services.AddSingleton(Options.Create(options));
+    }
+    if (rebuildOptions is not null) {
+      services.AddSingleton(Options.Create(rebuildOptions));
     }
     services.AddScoped(_ => new WorkCoordinationDbContext(DbContextOptions));
     services.AddScoped<DbContext>(s => s.GetRequiredService<WorkCoordinationDbContext>());
@@ -452,9 +455,21 @@ public partial class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
     var registryType = asm.GetTypes().Single(t => t.Name == "PerspectiveRunnerRegistry" &&
       t.Namespace == "Whizbang.Data.EFCore.Postgres.Tests.Generated");
     services.AddSingleton(registryType);
-    services.AddSingleton<IPerspectiveRunnerRegistry>(s =>
-      new ObservingRegistry((IPerspectiveRunnerRegistry)s.GetRequiredService(registryType), beforeEachStream,
-        () => onFirstRun(s)));
+    // An observed runner wraps the generated one and reads each stream on its own; an unobserved one is the generated
+    // runner itself, as a host runs it.
+    services.AddSingleton<IPerspectiveRunnerRegistry>(s => observed
+      ? new ObservingRegistry((IPerspectiveRunnerRegistry)s.GetRequiredService(registryType), beforeEachStream, () => onFirstRun(s))
+      : (IPerspectiveRunnerRegistry)s.GetRequiredService(registryType));
+    // What the driver registers beside the rebuild (#2513): the purge markers a missing row is probed in, and the state
+    // source that reads a batch's rows, markers and commit sequences with one statement each.
+    services.AddSingleton<IPerspectivePurgeMarkerStore>(_ =>
+      new Whizbang.Data.Postgres.PostgresPerspectivePurgeMarkerStore(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync));
+    services.AddSingleton<IPerspectiveStateSource, BatchedPerspectiveStateSource>();
+    // The write sinks the driver registers (#2246), unkeyed and under the context, which a rebuild in place writes each
+    // batch's rows through (#2522).
+    services.AddScoped<IPerspectiveWriteSink>(s => new EFCorePostgresPerspectiveWriteSink(s.GetRequiredService<WorkCoordinationDbContext>()));
+    services.AddKeyedScoped<IPerspectiveWriteSink>(typeof(WorkCoordinationDbContext), (s, _) =>
+      new EFCorePostgresPerspectiveWriteSink(s.GetRequiredService<WorkCoordinationDbContext>()));
     services.AddScoped<IPerspectiveCheckpointCompleter>(s =>
       new EFCorePostgresPerspectiveCheckpointCompleter(s.GetRequiredService<WorkCoordinationDbContext>()));
     services.AddSingleton<IPerspectiveTableSwapper>(s =>

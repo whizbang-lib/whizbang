@@ -476,6 +476,14 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<OutboxPublishWorker>();
     services.TryAddSingleton<InboxDispatchWorker>();
     services.TryAddSingleton<OutboxDrainWorker>();
+    services.TryAddSingleton<Whizbang.Core.Observability.SequenceHoldMetrics>();
+    services.TryAddSingleton(sp => new Whizbang.Core.Observability.SequenceHoldWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetService<Whizbang.Core.Configuration.WhizbangCoreOptions>() ?? new Whizbang.Core.Configuration.WhizbangCoreOptions(),
+      sp.GetRequiredService<Whizbang.Core.Observability.SequenceHoldMetrics>(),
+      sp.GetRequiredService<ILogger<Whizbang.Core.Observability.SequenceHoldWorker>>(),
+      sp.GetService<TimeProvider>()));
     services.TryAddSingleton<InboxDrainWorker>();
     services.TryAddSingleton<DeadLetterRecoveryWorker>();
     services.TryAddSingleton<TransportDeadLetterDrainWorker>();
@@ -685,6 +693,8 @@ public static class WorkerPipelineExtensions {
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<OutboxPublishWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<InboxDispatchWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<OutboxDrainWorker>());
+    // Sequence integrity (#2542): the age of the oldest outbox event this instance holds for its commit-order stamp.
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<Whizbang.Core.Observability.SequenceHoldWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<InboxDrainWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<DeadLetterRecoveryWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<TransportDeadLetterDrainWorker>());

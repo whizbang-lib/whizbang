@@ -21,6 +21,15 @@ public enum PerspectiveWriteMode {
 
   /// <summary>Each pair is read, folded and written on its own, with its own round trips: the path before set-based writes.</summary>
   PerStream = 1,
+
+  /// <summary>
+  /// Opt-in, never the default (#2247). Each folded model is held in memory across batches and written later with the
+  /// same set-based writer, so a hot stream's many batches cost one write. The model cache is bounded
+  /// (<c>PerspectiveWorkerOptions.WriteBehind</c>: <c>MaxModels</c> and <c>MaxBytes</c> are required, and a service that
+  /// selects this mode without them fails to start), a pair's checkpoint, lifecycle stages and sync signal follow its
+  /// flush, and a sync wait on a held event flushes its stream at once.
+  /// </summary>
+  WriteBehind = 2,
 }
 
 /// <summary>
@@ -59,6 +68,13 @@ public static class PerspectiveWriteModes {
     ArgumentException.ThrowIfNullOrWhiteSpace(perspectiveName);
     _declared[perspectiveName] = declared;
   }
+
+  /// <summary>The registered perspectives that declare <paramref name="mode"/>, in ordinal order.</summary>
+  /// <param name="mode">The declared mode.</param>
+  /// <returns>Their names.</returns>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveWriteModesTests.cs:DeclaredWith_NamesThePerspectivesThatDeclareTheModeAsync</tests>
+  public static IReadOnlyList<string> DeclaredWith(PerspectiveWriteMode mode) =>
+    [.. _declared.Where(d => d.Value == mode).Select(d => d.Key).Order(StringComparer.Ordinal)];
 
   /// <summary>The perspective's write mode: its declared one, else the service's, and per stream for a perspective with no generated runner.</summary>
   /// <param name="perspectiveName">The perspective's name.</param>

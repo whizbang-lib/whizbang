@@ -215,7 +215,7 @@ public class TransportPublishStrategyHookChainTests {
       ]
     };
     return new OutboxWork {
-      MessageId = Guid.NewGuid(),
+      MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
       MessageType = "MyApp.Events.SomeEvent, MyApp",
       Destination = "test-topic",
       EnvelopeType = envelope.GetType().AssemblyQualifiedName!,

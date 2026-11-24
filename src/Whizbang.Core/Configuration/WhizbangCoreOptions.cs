@@ -259,6 +259,39 @@ public sealed class WhizbangCoreOptions {
   /// </summary>
   /// <docs>fundamentals/messages/payload-size-limit</docs>
   public double MessagePayloadWarningRatio { get; set; } = 0.8;
+
+  /// <summary>
+  /// The sequence integrity of an outgoing event whose type declares none and whose dispatch sets none. Default
+  /// <see cref="Messaging.SequenceIntegrity.Bounded"/>. Bound from <c>Whizbang:Core:SequenceIntegrity</c>.
+  /// </summary>
+  /// <remarks>
+  /// An event published before the commit-order stamper reaches it carries no origin position, and a receiver can then
+  /// order it only approximately. A bounded hold waits for the stamp, which normally lands within milliseconds and wakes
+  /// the outbox at once, and publishes anyway once <see cref="SequenceHoldTime"/> passes.
+  /// </remarks>
+  /// <docs>fundamentals/messaging/sequence-integrity#the-configured-default</docs>
+  public Messaging.SequenceIntegrity SequenceIntegrity { get; set; } = Messaging.SequenceIntegrity.Bounded;
+
+  /// <summary>
+  /// The longest a <see cref="Messaging.SequenceIntegrity.Bounded"/> event is held for its stamp when neither its type
+  /// nor its dispatch names a hold time. Default 1 second. Bound from <c>Whizbang:Core:SequenceHoldTime</c>.
+  /// </summary>
+  /// <docs>fundamentals/messaging/sequence-integrity#the-configured-default</docs>
+  public TimeSpan SequenceHoldTime { get; set; } = TimeSpan.FromSeconds(1);
+
+  /// <summary>
+  /// The age past which the oldest outbox message held for its stamp is logged as a warning. Default 1 minute. Bound
+  /// from <c>Whizbang:Core:SequenceHoldWarningAge</c>.
+  /// </summary>
+  /// <docs>fundamentals/messaging/sequence-integrity#watching-held-messages</docs>
+  public TimeSpan SequenceHoldWarningAge { get; set; } = TimeSpan.FromMinutes(1);
+
+  /// <summary>
+  /// How often each instance measures the age of the oldest outbox message it holds for its stamp. Default 15 seconds;
+  /// zero or less turns the measurement off. Bound from <c>Whizbang:Core:SequenceHoldSampleInterval</c>.
+  /// </summary>
+  /// <docs>fundamentals/messaging/sequence-integrity#watching-held-messages</docs>
+  public TimeSpan SequenceHoldSampleInterval { get; set; } = TimeSpan.FromSeconds(15);
 }
 
 /// <summary>

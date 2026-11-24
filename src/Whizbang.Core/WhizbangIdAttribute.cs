@@ -196,9 +196,10 @@ public sealed class WhizbangIdAttribute(string? targetNamespace = null) : Attrib
   /// WHIZ029 is reported at each ignored opt-in.
   /// </para>
   /// <para>
-  /// Prefer <see cref="Versions"/> when the id's values are made in known ways, for example minted (v7) or derived
-  /// by name (v5): the id then still refuses a random v4 or a raw hash. Keep this option for ids issued outside the
-  /// application, whose version it does not control. Writing both is an error (WHIZ038).
+  /// Prefer <see cref="Versions"/> when the versions the id must hold are known, for example v7 for the ids the
+  /// application mints and v4 for ids imported from another system: the id then still refuses anything else, such as
+  /// a raw hash. Keep this option for ids issued outside the application, whose version it does not control. Writing
+  /// both is an error (WHIZ039).
   /// </para>
   /// </remarks>
   /// <example>
@@ -220,33 +221,43 @@ public sealed class WhizbangIdAttribute(string? targetNamespace = null) : Attrib
   /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs</tests>
   /// <remarks>
   /// <para>
-  /// An allow-list between the UUIDv7-only default and <see cref="AcceptAnyVersion"/>, for ids whose values are made
-  /// in more than one known way: minted with <c>New()</c> (v7) and derived without coordination from the same facts
-  /// with <c>NameBasedGuid.V5</c> (v5), for example. <c>From(Guid)</c>, <c>From(TrackedGuid)</c>, <c>Parse</c>, the
-  /// explicit cast, the transport JSON reader and the GraphQL scalar accept a Guid whose version is in the list and
-  /// throw <see cref="ArgumentException"/> naming the accepted versions otherwise. <see cref="Guid.Empty"/> has no
-  /// version and is always refused. <c>New()</c> still produces a UUIDv7, and the public constructor and the
-  /// <c>Value</c> initializer stay unchecked, as on every id.
+  /// An allow-list between the UUIDv7-only default and <see cref="AcceptAnyVersion"/>, for an id that must also hold
+  /// values the application did not make: ids that already exist in stored data, or that another system issues.
+  /// <c>From(Guid)</c>, <c>From(TrackedGuid)</c>, <c>Parse</c>, the explicit cast, the transport JSON reader and the
+  /// GraphQL scalar accept a Guid whose version is in the list and whose variant is RFC 9562's, and throw
+  /// <see cref="ArgumentException"/> naming the accepted versions otherwise. <see cref="Guid.Empty"/> has no version and
+  /// is always refused. The public constructor and the <c>Value</c> initializer stay unchecked, as on every id.
   /// </para>
   /// <para>
-  /// Only v7 values are time-ordered: for a value of another version, <c>IsTimeOrdered</c> is <c>false</c>,
-  /// <c>GetTimestamp()</c> returns no meaningful time, and comparisons do not order by creation time.
+  /// It is not needed for ids the application makes. Mint a new id with <c>New()</c>, and derive one through the
+  /// framework's derivations (<c>GeneratedStreamIdentity.Derive</c>, <c>EmissionIdentity.Derive</c>,
+  /// <c>CompositeChildIdentity.ForChild</c>): all of them produce UUIDv7, which the default accepts.
+  /// </para>
+  /// <para>
+  /// A value of another version costs what time-ordering gave. <c>IsTimeOrdered</c> is <c>false</c>,
+  /// <c>GetTimestamp()</c> returns no meaningful time, and <c>CompareTo</c> and the ordering operators no longer follow
+  /// creation order. Used as a stream id, it also loses the index locality time-ordered values give a database: new
+  /// rows land across the index rather than at its end. The framework's ordering guarantees are unaffected, since they
+  /// rely on the message and event ids it mints, and a stream id is only hashed for partitioning and sorted for lock
+  /// ordering.
   /// </para>
   /// <para>
   /// When the <c>[WhizbangId]</c> declarations for one id (the struct, a property, a parameter) list different
-  /// versions, the id accepts the versions they have in common and WHIZ037 is reported at each list that was
-  /// narrowed. An empty list, or declarations with no version in common, is an error (WHIZ039). Writing this
-  /// together with <c>AcceptAnyVersion = true</c> is an error (WHIZ038).
+  /// versions, the id accepts the versions they have in common and WHIZ038 is reported at each list that was
+  /// narrowed. An empty list, or declarations with no version in common, is an error (WHIZ043), as is a bit that
+  /// names no version, such as <c>(UuidVersions)1</c> (WHIZ044). Writing this together with
+  /// <c>AcceptAnyVersion = true</c> is an error (WHIZ039).
   /// </para>
   /// </remarks>
   /// <example>
   /// <code>
-  /// [WhizbangId(Versions = UuidVersions.V7 | UuidVersions.V5)]
-  /// public readonly partial struct ConnectorInstanceId;
+  /// // New customers are minted here; customers imported from the previous CRM keep their v4 ids.
+  /// [WhizbangId(Versions = UuidVersions.V7 | UuidVersions.V4)]
+  /// public readonly partial struct CustomerId;
   ///
-  /// var minted = ConnectorInstanceId.New();                                   // v7: accepted
-  /// var derived = ConnectorInstanceId.From(NameBasedGuid.V5(ns, "tenant/a")); // v5: accepted
-  /// var random = ConnectorInstanceId.From(Guid.NewGuid());                    // v4: ArgumentException
+  /// var minted = CustomerId.New();                                                     // v7: accepted
+  /// var imported = CustomerId.From(Guid.Parse("3f2504e0-4f89-41d3-9a0c-0305e82c3301")); // v4: accepted
+  /// var hashed = CustomerId.From(NameBasedGuid.V5(ns, "a"));                           // v5: ArgumentException
   /// </code>
   /// </example>
   public UuidVersions Versions { get; set; } = UuidVersions.V7;

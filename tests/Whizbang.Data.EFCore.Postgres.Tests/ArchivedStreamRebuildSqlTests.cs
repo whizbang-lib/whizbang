@@ -214,6 +214,49 @@ public class ArchivedStreamRebuildSqlTests : EFCoreTestBase {
       .IsEqualTo(0L);
   }
 
+  /// <summary>
+  /// A flush of rebuilt cursors is one statement, whatever its size (#2513): an archived stream's cursor parked, every hot
+  /// stream's written live, a completion with no event skipped, and a pair named twice taking the later completion, as
+  /// the one-cursor-at-a-time write left it.
+  /// </summary>
+  [Test]
+  public async Task Completer_WritesEveryCursorOfAFlush_WithOneStatement_ParkedAndLiveAlikeAsync() {
+    var whole = await _streamAsync(2);
+    var wholeEvents = await _eventIdsAsync(whole);
+    await Assert.That((await _archive().WriteAsync(ArchiveBatch.WholeStream(whole))).Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+    var hot = await _streamAsync(3);
+    var hotEvents = await _eventIdsAsync(hot);
+    var other = await _streamAsync(1);
+    var otherEvents = await _eventIdsAsync(other);
+    var untouched = await _streamAsync(1);
+    await using var ctx = CreateDbContext();
+    using var log = new Perspectives.NpgsqlStatementLog(ConnectionString);
+
+    await new EFCorePostgresPerspectiveCheckpointCompleter(ctx).CompleteAsync([
+      _completion(whole, PERSPECTIVE, wholeEvents[^1]),
+      _completion(hot, PERSPECTIVE, hotEvents[0]),
+      _completion(other, PERSPECTIVE, otherEvents[0]),
+      _completion(untouched, PERSPECTIVE, Guid.Empty),
+      _completion(hot, PERSPECTIVE, hotEvents[^1]),
+    ]);
+
+    await Assert.That(log.Matching("wh_complete_rebuilt_cursor").Count).IsEqualTo(1)
+      .Because("the flush writes every cursor with one statement, not one per cursor");
+    await Assert.That(await _scalarAsync<string>(
+        "SELECT cursor_row ->> 'last_event_id' FROM wh_event_archive_cursors WHERE stream_id = @s AND perspective_name = @p",
+        whole, PERSPECTIVE)).IsEqualTo(wholeEvents[^1].ToString());
+    await Assert.That(await _scalarAsync<Guid>(
+        "SELECT last_event_id FROM wh_perspective_cursors WHERE stream_id = @s AND perspective_name = @p", hot, PERSPECTIVE))
+      .IsEqualTo(hotEvents[^1]).Because("a pair named twice in one flush ends at its later completion");
+    await Assert.That(await _scalarAsync<Guid>(
+        "SELECT last_event_id FROM wh_perspective_cursors WHERE stream_id = @s AND perspective_name = @p", other, PERSPECTIVE))
+      .IsEqualTo(otherEvents[0]);
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_perspective_cursors WHERE stream_id = @s", untouched))
+      .IsEqualTo(0L).Because("a stream with no event folded has no cursor to write");
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_perspective_cursors WHERE stream_id = @s", whole))
+      .IsEqualTo(0L);
+  }
+
   // ===== Fixtures =====
 
   // A context with no model of its own: the driver's registration is what is under test.

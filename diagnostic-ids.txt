@@ -72,12 +72,14 @@ WHIZ033 | active | Whizbang.Generators | Perspective Model Missing StreamId
 WHIZ034 | active | Whizbang.Generators | InheritFrom Lists The Stream ID's Own Type
 WHIZ035 | active | Whizbang.Generators | IHasStreamId Is Written Instead Of A Strong-ID Stream ID
 WHIZ036 | active | Whizbang.Generators | Stream ID Is Ambiguous
-WHIZ037 | active | Whizbang.Generators | WhizbangId Versions Narrowed
-WHIZ038 | active | Whizbang.Generators | WhizbangId AcceptAnyVersion With Versions
-WHIZ039 | active | Whizbang.Generators | WhizbangId Accepts No Version
+WHIZ037 | active | Whizbang.Generators | A Constructed Or Parsed Guid Flows Into An Id
+WHIZ038 | active | Whizbang.Generators | WhizbangId Versions Narrowed
+WHIZ039 | active | Whizbang.Generators | WhizbangId AcceptAnyVersion With Versions
 WHIZ040 | active | Whizbang.Generators | User Service Discovered
 WHIZ041 | active | Whizbang.Generators | Abstract Class Skipped
 WHIZ042 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
+WHIZ043 | active | Whizbang.Generators | WhizbangId Accepts No Version
+WHIZ044 | active | Whizbang.Generators | WhizbangId Versions Outside 1 To 8
 WHIZ050 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
 WHIZ051 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
 WHIZ052 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused

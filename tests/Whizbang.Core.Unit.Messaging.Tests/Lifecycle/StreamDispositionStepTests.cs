@@ -193,7 +193,8 @@ public class StreamDispositionStepTests {
       Func<List<string>, IDestructionHook>? hookFor = null, string storeStatus = ArchiveStatus.ARCHIVED, bool withCompactor = false,
       IPerspectiveRunner? runner = null, IReadOnlyList<StreamCursorPosition>? cursors = null,
       StreamDispositionReadiness candidateReadiness = StreamDispositionReadiness.Ready, bool sealSucceeds = true,
-      Func<List<string>, IStreamPrefixTruncator>? truncatorFor = null, IBookClosingHandler? closingHandler = null, IBookCloser? closer = null) {
+      Func<List<string>, IStreamPrefixTruncator>? truncatorFor = null, IBookClosingHandler? closingHandler = null, IBookCloser? closer = null,
+      IWorkCoordinator? coordinator = null) {
     var log = new List<string>();
     var ledger = new Ledger(log, due ?? [new DueStreamDisposition(_stream, readiness)]) {
       Cursors = cursors ?? [new("Orders", _cursorEvent)],
@@ -225,6 +226,9 @@ public class StreamDispositionStepTests {
     }
     if (closer is not null) {
       services.AddSingleton(closer);
+    }
+    if (coordinator is not null) {
+      services.AddSingleton(coordinator);
     }
     return new Harness(log, ledger, store, purger, new ListLogger(), services.BuildServiceProvider());
   }
@@ -382,6 +386,40 @@ public class StreamDispositionStepTests {
     await Assert.That(h.Log).DoesNotContain("after").Because("nothing was destroyed, so nothing is announced");
     await Assert.That(h.Ledger.Moved).IsEquivalentTo([(_stream, (DateTimeOffset?)_now.AddSeconds(BACKOFF_SECONDS))]);
     await Assert.That(h.Logger.Entries.Exists(e => e.Message.Contains(ArchiveStatus.BLOCKED, StringComparison.Ordinal))).IsTrue();
+  }
+
+  private sealed class SealRecordingCoordinator : Whizbang.Core.Tests.Workers.NoOpWorkCoordinator, IWorkCoordinator {
+    public List<(Guid Stream, string? Task, DateTimeOffset Now)> Recorded { get; } = [];
+
+    Task IWorkCoordinator.RecordCutAwaitingSealAsync(Guid streamId, string? task, DateTimeOffset now, CancellationToken cancellationToken) {
+      Recorded.Add((streamId, task, now));
+      return Task.CompletedTask;
+    }
+  }
+
+  [Test]
+  public async Task AWholeStreamArchiveTheSealHolds_IsRecordedAsAwaitingIt_ForEligibleNotYetDeletedAsync() {
+    var coordinator = new SealRecordingCoordinator();
+    var h = _harness(hookFor: log => new Hook(log), storeStatus: ArchiveStatus.AWAITING_SEAL, coordinator: coordinator);
+
+    await h.RunAsync();
+
+    await Assert.That(coordinator.Recorded).IsEquivalentTo([(_stream, (string?)"archive", _now)])
+      .Because("#2529: a whole-stream archive the seal gate holds is counted, or the held-back streams stay invisible");
+    await Assert.That(h.Ledger.Moved).IsEquivalentTo([(_stream, (DateTimeOffset?)_now.AddSeconds(BACKOFF_SECONDS))]);
+  }
+
+  [Test]
+  [Arguments(ArchiveStatus.ARCHIVED)]
+  [Arguments(ArchiveStatus.BLOCKED)]
+  public async Task AWholeStreamArchiveAnsweredOtherwise_ForgetsTheStreamAsync(string status) {
+    var coordinator = new SealRecordingCoordinator();
+    var h = _harness(hookFor: log => new Hook(log), storeStatus: status, coordinator: coordinator);
+
+    await h.RunAsync();
+
+    await Assert.That(coordinator.Recorded).IsEquivalentTo([(_stream, (string?)null, _now)])
+      .Because("a stream is counted as held only while its last cut answered awaiting_seal");
   }
 
   [Test]

@@ -144,7 +144,7 @@ public class EventFlagsTransportTests {
   // ── Inline factories ──────────────────────────────────────────────────
 
   private static OutboxMessage _newOutboxMessage() => new() {
-    MessageId = Guid.NewGuid(),
+    MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
     Destination = "test",
     Envelope = _envelope(),
     Metadata = new EnvelopeMetadata { MessageId = MessageId.New(), Hops = [] },
@@ -153,7 +153,7 @@ public class EventFlagsTransportTests {
   };
 
   private static InboxMessage _newInboxMessage() => new() {
-    MessageId = Guid.NewGuid(),
+    MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
     HandlerName = "test-handler",
     Envelope = _envelope(),
     EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement]], Whizbang.Core",

@@ -209,6 +209,20 @@ public class PerspectiveApplyBatchTests {
   }
 
   [Test]
+  public async Task NoWriteBehind_PassesTheStateThrough_HoldsNothing_AndFlushesNothingAsync() {
+    // The hooks of a batch in which nothing writes behind (#2247): a set-based batch runs as it did before.
+    var hooks = PerspectiveApplyBatch.NoWriteBehind.Instance;
+    var state = new BatchedPerspectiveStateSource().BeginBatch([]);
+    var pair = _pair(Guid.NewGuid(), new FakeRunner(new ConcurrentQueue<string>()));
+    var flush = hooks.FlushBeforeWriteAsync([pair], CancellationToken.None);
+
+    await Assert.That(hooks.Wrap(state)).IsSameReferenceAs(state);
+    await Assert.That(hooks.Wrap(null)).IsNull();
+    await Assert.That(hooks.TryHold(pair)).IsFalse();
+    await Assert.That(flush.IsCompletedSuccessfully).IsTrue();
+  }
+
+  [Test]
   public async Task AnEmptyBatch_TakesNoLockAsync() {
     var log = new ConcurrentQueue<string>();
 
@@ -262,7 +276,7 @@ public class PerspectiveApplyBatchTests {
     var provider = sinks.BuildServiceProvider();
     return new PerspectiveApplyBatch.Services(
       provider.GetRequiredService<IServiceScopeFactory>(), coordinator, stateSource, policy ?? new FlushEveryBatchStrategy(),
-      Width: 4, NullLogger.Instance);
+      Width: 4, NullLogger.Instance, PerspectiveApplyBatch.NoWriteBehind.Instance);
   }
 
   private sealed class Prepared(Guid streamId, PendingPerspectiveWrite? write, PerspectivePerPairReason reason)

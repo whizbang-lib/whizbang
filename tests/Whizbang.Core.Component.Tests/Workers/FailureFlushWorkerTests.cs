@@ -65,7 +65,7 @@ public class FailureFlushWorkerTests {
   }
 
   private static MessageFailure _failure(string error = "boom") => new() {
-    MessageId = Guid.NewGuid(),
+    MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
     CompletedStatus = MessageProcessingStatus.None,
     Error = error,
   };

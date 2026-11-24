@@ -209,6 +209,39 @@ public sealed class DispatchOptions {
   }
 
   /// <summary>
+  /// This dispatch's own sequence integrity, overriding the event type's <c>[SequenceIntegrity]</c> and the configured
+  /// default. Null (the default) leaves those in charge. Applies to events only.
+  /// </summary>
+  /// <docs>fundamentals/messaging/sequence-integrity#per-dispatch</docs>
+  public Messaging.SequenceIntegrity? SequenceIntegrity { get; set; }
+
+  /// <summary>
+  /// This dispatch's own hold time for a <see cref="Messaging.SequenceIntegrity.Bounded"/> hold, or null (the default)
+  /// for the type's or the configured one.
+  /// </summary>
+  /// <docs>fundamentals/messaging/sequence-integrity#per-dispatch</docs>
+  public TimeSpan? SequenceHoldTime { get; set; }
+
+  /// <summary>
+  /// Sets <see cref="SequenceIntegrity"/>, and <see cref="SequenceHoldTime"/> when <paramref name="holdTime"/> is given.
+  /// Returns this instance for chaining.
+  /// </summary>
+  /// <param name="mode">The sequence integrity for this dispatch.</param>
+  /// <param name="holdTime">For a bounded hold, how long to hold at most; null keeps the type's or the configured one.</param>
+  /// <exception cref="ArgumentOutOfRangeException"><paramref name="holdTime"/> is negative.</exception>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatch/DispatchOptionsSequenceIntegrityTests.cs</tests>
+  public DispatchOptions WithSequenceIntegrity(Messaging.SequenceIntegrity mode, TimeSpan? holdTime = null) {
+    if (holdTime is { } time) {
+      if (time < TimeSpan.Zero) {
+        throw new ArgumentOutOfRangeException(nameof(holdTime), time, "A hold time cannot be negative.");
+      }
+      SequenceHoldTime = time;
+    }
+    SequenceIntegrity = mode;
+    return this;
+  }
+
+  /// <summary>
   /// This dispatch's own payload limit in bytes, overriding the message type's <c>[MaxPayloadSize]</c> and
   /// <see cref="Configuration.WhizbangCoreOptions.MaxMessagePayloadBytes"/>. Null (the default) leaves those
   /// in charge; zero or less turns the limit off for this call.
@@ -297,6 +330,12 @@ public sealed class DispatchOptions {
     }
     if (MaxPayloadBytes is not null) {
       return nameof(MaxPayloadBytes);
+    }
+    if (SequenceIntegrity is not null) {
+      return nameof(SequenceIntegrity);
+    }
+    if (SequenceHoldTime is not null) {
+      return nameof(SequenceHoldTime);
     }
     if (Policy is not null) {
       return nameof(Policy);

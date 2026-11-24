@@ -25,7 +25,7 @@ public class InboxMessageFlagsSerializationTests {
   public async Task InboxMessage_SerializedWithProductionOptions_CarriesReadableFlagsKeyAsync() {
     var options = JsonContextRegistry.CreateCombinedOptions();
     var message = new InboxMessage {
-      MessageId = Guid.NewGuid(),
+      MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
       HandlerName = "TestHandler",
       Envelope = null!,
       EnvelopeType = "irrelevant",

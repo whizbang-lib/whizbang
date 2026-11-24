@@ -97,7 +97,63 @@ public class DapperArchivedStreamRebuildTests : PostgresTestBase {
       .IsEqualTo(0L);
   }
 
+  /// <summary>
+  /// A flush of rebuilt cursors is one statement, whatever its size (#2513), as on the EF Core driver: an archived
+  /// stream's cursor parked, a hot stream's written live, a completion with no event skipped, and a pair named twice
+  /// taking the later completion.
+  /// </summary>
+  [Test]
+  public async Task Completer_WritesEveryCursorOfAFlush_WithOneStatement_ParkedAndLiveAlikeAsync() {
+    var whole = await _streamAsync(2);
+    var wholeLast = await _lastEventAsync(whole);
+    await Assert.That((await _archive().WriteAsync(ArchiveBatch.WholeStream(whole))).Status).IsEqualTo(ArchiveStatus.ARCHIVED);
+    var hot = await _streamAsync(2);
+    var hotFirst = await _firstEventAsync(hot);
+    var hotLast = await _lastEventAsync(hot);
+    var untouched = await _streamAsync(1);
+    var statements = new System.Collections.Concurrent.ConcurrentQueue<string>();
+    var database = new NpgsqlConnectionStringBuilder(ConnectionString).Database;
+    using (var listener = new System.Diagnostics.ActivityListener {
+      ShouldListenTo = source => source.Name == "Npgsql",
+      Sample = (ref System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext> _) =>
+        System.Diagnostics.ActivitySamplingResult.AllData,
+      ActivityStopped = activity => {
+        if (Equals(activity.GetTagItem("db.namespace"), database) && activity.GetTagItem("db.query.text") is string text) {
+          statements.Enqueue(text);
+        }
+      },
+    }) {
+      System.Diagnostics.ActivitySource.AddActivityListener(listener);
+      await new DapperPostgresPerspectiveCheckpointCompleter(ConnectionString).CompleteAsync([
+        _completion(whole, wholeLast),
+        _completion(hot, hotFirst),
+        _completion(untouched, Guid.Empty),
+        _completion(hot, hotLast),
+      ]);
+    }
+
+    await Assert.That(statements.Count(s => s.Contains("wh_complete_rebuilt_cursor", StringComparison.Ordinal))).IsEqualTo(1)
+      .Because("the flush writes every cursor with one statement, not one per cursor");
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await Assert.That(await conn.ExecuteScalarAsync<string>(
+        "SELECT cursor_row ->> 'last_event_id' FROM wh_event_archive_cursors WHERE stream_id = @whole AND perspective_name = @p",
+        new { whole, p = PERSPECTIVE })).IsEqualTo(wholeLast.ToString());
+    await Assert.That(await conn.ExecuteScalarAsync<Guid>(
+        "SELECT last_event_id FROM wh_perspective_cursors WHERE stream_id = @hot AND perspective_name = @p",
+        new { hot, p = PERSPECTIVE })).IsEqualTo(hotLast);
+    await Assert.That(await conn.ExecuteScalarAsync<long>(
+        "SELECT count(*) FROM wh_perspective_cursors WHERE stream_id = @untouched", new { untouched })).IsEqualTo(0L);
+  }
+
   // ===== Fixtures =====
+
+  private async Task<Guid> _firstEventAsync(Guid stream) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    return await conn.ExecuteScalarAsync<Guid>(
+      "SELECT event_id FROM wh_event_store WHERE stream_id = @stream ORDER BY version LIMIT 1", new { stream });
+  }
 
   private static PerspectiveCursorCompletion _completion(Guid stream, Guid lastEvent) => new() {
     StreamId = stream,

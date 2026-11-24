@@ -25,7 +25,7 @@ namespace Whizbang.Generators.Tests;
 [Category("SourceGenerators")]
 public class WhizbangIdAcceptAnyVersionTests {
 
-  private const string STRICT_FROM_GUARD = "if (value.Version != 7";
+  private const string STRICT_FROM_GUARD = "if (value.Version != 7 && !_isGrandfathered(value))";
   private const string STRICT_TRACKED_GUARD = "if (!tracked.IsTimeOrdered";
   private const string NON_EMPTY_GUARD = "_requireNonEmpty(";
 
@@ -279,5 +279,29 @@ public class WhizbangIdAcceptAnyVersionTests {
 
     await Assert.That(generated).Contains(STRICT_FROM_GUARD);
     await Assert.That(result.Diagnostics.Where(d => d.Id == "WHIZ029")).Count().IsEqualTo(2);
+  }
+
+  /// <summary>
+  /// An any-version id is registered as one at load, so a stream id of its type is never reported as not time-ordered
+  /// (#2528); a strict id is not registered.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Registration_RecordsOnlyTheAnyVersionIdsAsync() {
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      [WhizbangId(AcceptAnyVersion = true)]
+      public readonly partial struct ExternalKey;
+      [WhizbangId]
+      public readonly partial struct OrderId;
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<WhizbangIdGenerator>(source);
+    var registration = GeneratorTestHelper.GetRequiredGeneratedSource(result, "WhizbangIdProviderRegistration.g.cs");
+
+    await Assert.That(registration).Contains(
+      "global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterAcceptsAnyVersion<global::App.ExternalKey>();");
+    await Assert.That(registration).DoesNotContain("RegisterAcceptsAnyVersion<global::App.OrderId>");
   }
 }
