@@ -3451,32 +3451,61 @@ public abstract partial class Dispatcher(
     handling is CascadeEnvelopeWrapper { EmissionAnchor: { } nestedAnchor } ? nestedAnchor : handling.MessageId.Value;
 
   /// <summary>
-  /// The stream a <c>[GenerateStreamId]</c> message starts when nothing it carries derives one. Inside a receptor's
-  /// handling (<see cref="ReceptorHandling"/>) a message other than an event, a command sent from the body, derives it
+  /// The stream a <c>[GenerateStreamId]</c> message starts when nothing it carries derives one: the one path every
+  /// generation without a message id takes. Inside a receptor's handling (<see cref="ReceptorHandling"/>) it derives
   /// from the handling (<see cref="GeneratedStreamIdentity.DeriveInHandling"/>) at the handling's next ordinal for this
-  /// purpose, once per message (<see cref="GeneratedStreamAssignments"/>), so a redelivered handling sends on the
-  /// streams its first run started (#2537). Outside a handling, for a handling with no message id, and for an event,
-  /// whose stream derives from the event's own id once that id derives, a fresh stream is minted, once per message
-  /// instance: the envelopes one send builds (the local run's, the stored copy's, the one a local run of the copy is
-  /// registered under) all name the stream the first of them minted (#2539).
+  /// purpose, once per message (<see cref="GeneratedStreamAssignments"/>), so a redelivered handling sends commands on the
+  /// streams its first run started (#2537) and invokes events on them (#2552): a locally invoked event's void path builds
+  /// no envelope, so the event has no id to derive from when its stream is generated. A stream a publish or cascade
+  /// already derived from the message's own id (<see cref="_streamStartedBy"/>) is returned as it is. Outside a
+  /// handling, and for a handling with no message id, a fresh stream is minted, once per message instance: the
+  /// envelopes one send builds (the local run's, the stored copy's, the one a local run of the copy is registered
+  /// under) all name the stream the first of them minted (#2539). That path reads one ambient value and one table
+  /// entry and allocates nothing, so generating the stream costs the void local invoke nothing.
   /// </summary>
   /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
   /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDerivedIdentityInHandlingTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherLocalInvokeGeneratedStreamAllocationTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchTangentialParityComponentTests.cs</tests>
-  private Guid _generatedStreamOf(object message, Type messageType) {
-    if (message is IEvent || ReceptorHandling.Current is not { } handling) {
-      return GeneratedStreamAssignments.GetOrMint(message);
-    }
+  private Guid _generatedStreamOf(object message, Type messageType) =>
+    _streamAssigningHandling() is { } handling
+      ? _generatedStreamInHandling(handling, message, messageType)
+      : GeneratedStreamAssignments.GetOrMint(message);
+
+  /// <summary>
+  /// The stream <paramref name="message"/> starts in <paramref name="handling"/>, derived at the handling's next ordinal
+  /// once per message. A method of its own because the derivation's closure is allocated where its captured locals are
+  /// declared: inline, the compiler allocated it on entry to <see cref="_generatedStreamOf"/>, so the void local invoke
+  /// paid 56 bytes for it outside a handling, where it is never used.
+  /// </summary>
+  private Guid _generatedStreamInHandling(IMessageEnvelope handling, object message, Type messageType) {
     var cause = _emissionAnchor(handling);
-    if (cause == Guid.Empty) {
-      return GeneratedStreamAssignments.GetOrMint(message);
-    }
     var serviceName = _instanceProvider.ServiceName;
     var handlerName = handling.DispatchContext.HandlerName;
     var typeName = TypeNameFormatter.Format(messageType);
     return GeneratedStreamAssignments.GetOrAdd(handling, message,
       ordinal => GeneratedStreamIdentity.DeriveInHandling(cause, serviceName, handlerName, typeName, ordinal));
   }
+
+  /// <summary>
+  /// The stream a <c>[GenerateStreamId]</c> message starts when it has just been given the id
+  /// <paramref name="startedBy"/> (a publish, a cascade, #2274): derived from that id, and recorded as the stream the
+  /// instance names where <see cref="_generatedStreamOf"/> looks, so the envelope the same dispatch's local run builds
+  /// afterwards names it too instead of generating a second stream (#2552).
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDerivedIdentityInHandlingTests.cs</tests>
+  private static Guid _streamStartedBy(object message, Guid startedBy) {
+    var stream = GeneratedStreamIdentity.Derive(startedBy);
+    GeneratedStreamAssignments.Assign(_streamAssigningHandling(), message, stream);
+    return stream;
+  }
+
+  /// <summary>
+  /// The handling a generated stream is kept with: the ambient receptor handling when its envelope carries a message id
+  /// to derive from, otherwise null (outside a handling, or one with no message id), where a stream is minted.
+  /// </summary>
+  private static IMessageEnvelope? _streamAssigningHandling() =>
+    ReceptorHandling.Current is { } handling && _emissionAnchor(handling) != Guid.Empty ? handling : null;
 
   /// <summary>
   /// The id of every message a dispatch path creates: the one place the dispatcher makes a message id (#2543). Inside a
@@ -3524,7 +3553,7 @@ public abstract partial class Dispatcher(
     if (_streamIdExtractor is not null) {
       var (shouldGenerate, onlyIfEmpty) = _streamIdExtractor.GetGenerationPolicy(msg);
       if (shouldGenerate && (!onlyIfEmpty || streamId == Guid.Empty)) {
-        var minted = GeneratedStreamIdentity.Derive(startedBy);
+        var minted = _streamStartedBy(msg, startedBy);
         // A [StreamId] property as well as IHasStreamId, as the publish path sets it (#1410 follow-up)
         if (msg is IHasStreamId hasStreamId) {
           hasStreamId.StreamId = minted;
@@ -3564,7 +3593,7 @@ public abstract partial class Dispatcher(
 
     var streamId = _streamIdExtractor.ExtractStreamId(message, messageType) ?? Guid.Empty;
     if (!onlyIfEmpty || streamId == Guid.Empty) {
-      var newStreamId = startedBy is { } messageId ? GeneratedStreamIdentity.Derive(messageId) : _generatedStreamOf(message, messageType);
+      var newStreamId = startedBy is { } messageId ? _streamStartedBy(message, messageId) : _generatedStreamOf(message, messageType);
 
       // Try IHasStreamId first (direct interface), then fall back to generated setter
       if (message is IHasStreamId hasStreamId) {
