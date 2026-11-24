@@ -33,7 +33,14 @@ public sealed record MigratorElectionRequest(
   IReadOnlyList<(string Name, string Sql)> BootstrapScripts,
   int CommandTimeoutSeconds,
   Func<NpgsqlConnection, CancellationToken, Task<bool>> IsSchemaCurrentAsync,
-  string? IncompatibilityOverride = null);
+  string? IncompatibilityOverride = null) {
+  /// <summary>
+  /// This build's perspective registry payloads (#2561): a waiter whose migrator finished reconciles the stored
+  /// registry from them only when it differs, since no hash covers the registry and the migrator may be another build.
+  /// Null when the application's schema is held, or the driver has none, which reads nothing.
+  /// </summary>
+  public IReadOnlyList<Whizbang.Core.Perspectives.PerspectiveRegistryPayload>? PerspectiveRegistry { get; init; }
+}
 
 /// <summary>
 /// The one migrator election every Postgres driver runs (#2561): the bootstrap closure, this instance's registration,
