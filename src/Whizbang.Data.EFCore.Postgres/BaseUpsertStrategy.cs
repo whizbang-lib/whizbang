@@ -249,7 +249,27 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     }
 
     // #2556: the Entity Framework write cannot carry the fence in its statement, so the stream's partition is held at its
-    // claimed epoch in the write's transaction first. A stale owner's write ends here; the current owner applies it.
+    // claimed epoch in the write's transaction first, and a stale owner's write ends there. With work in flight and no
+    // transaction of the caller's, the write opens one under the context's execution strategy, so the hold spans it.
+    if (context.Database.CurrentTransaction is null && EFCorePerspectiveWriteFence.Holds(context, args.Id)) {
+      return await context.Database.CreateExecutionStrategy().ExecuteAsync(async ct => {
+        await using var transaction = await context.Database.BeginTransactionAsync(ct);
+        var landed = await _heldFallbackAsync(context, args, hookPlan, expiresAt, ct);
+        await transaction.CommitAsync(ct);
+        return landed;
+      }, cancellationToken);
+    }
+    return await _heldFallbackAsync(context, args, hookPlan, expiresAt, cancellationToken);
+  }
+
+  /// <summary>The Entity Framework write, after the stream's partition is held at its claimed epoch (#2556).</summary>
+  private async Task<bool> _heldFallbackAsync<TModel>(
+      DbContext context,
+      UpsertRowArgs<TModel> args,
+      PerEventApplyHookPlan hookPlan,
+      DateTimeOffset? expiresAt,
+      CancellationToken cancellationToken)
+      where TModel : class {
     await EFCorePerspectiveWriteFence.HoldAsync(context, args.Id, cancellationToken);
 
     if (args.ExpectedVersion.IsChecked) {

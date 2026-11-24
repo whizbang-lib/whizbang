@@ -34,6 +34,9 @@ internal static partial class EFCorePerspectiveWriteFence {
         PgIdentifier.QualifyPrefix(EFCoreWorkCoordinator<DbContext>.ResolveSchema(context.Model, typeof(OutboxRecord), logger: null)), tenures)
       : null;
 
+  /// <summary>Whether a write of <paramref name="streamId"/> on <paramref name="context"/> is fenced: its stream has work in flight.</summary>
+  internal static bool Holds(DbContext context, Guid streamId) => Of(context)?.TenureOf(streamId) is not null;
+
   /// <summary>
   /// Holds the stream's partition at the epoch its work in flight was claimed under, in the context's transaction, for
   /// the write paths that cannot carry the fence in their own statement (the Entity Framework change-tracker write). In

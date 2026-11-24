@@ -306,6 +306,50 @@ public class PerspectiveWritesAreFencedTests : EFCoreTestBase {
     await Assert.That(await _rowExistsAsync(conn, stream)).IsTrue();
   }
 
+  [Test]
+  [Timeout(60_000)]
+  public async Task TheEntityFrameworkWrite_WithNoTransaction_HoldsThePartitionUntilItsWriteCommitsAsync(CancellationToken cancellationToken) {
+    await using var conn = await _openAsync();
+    await _mapModeAsync(conn);
+    var (context, tenures, observer) = _context();
+    await using var _ = context;
+    using var __ = observer;
+    var stream = Guid.CreateVersion7();
+    await new EFCorePostgresPerspectiveWriteSink(context).WriteAsync([_write(context, Guid.CreateVersion7())], cancellationToken);
+    await new EntityFrameworkOnlyStrategy().UpsertPerspectiveRowAsync(
+      context, ACTION_TABLE, stream, new ActionTestModel { Id = stream, Name = "first", Value = 1 }, _meta(), new PerspectiveScope(),
+      cancellationToken);
+    _claim(tenures, stream, 6);
+    // Another session holds the row, so the write blocks once it has taken its hold and reached the row.
+    await using var rowHolder = await _openAsync();
+    await using var held = await rowHolder.BeginTransactionAsync(cancellationToken);
+    await _execOnAsync(rowHolder, held, $"SELECT 1 FROM {ACTION_TABLE} WHERE id = @id FOR UPDATE", stream);
+    var holderPid = Convert.ToInt32(await _scalarAsync(rowHolder, "SELECT pg_backend_pid()"), System.Globalization.CultureInfo.InvariantCulture);
+
+    var writing = new EntityFrameworkOnlyStrategy().UpsertPerspectiveRowAsync(
+      context, ACTION_TABLE, stream, new ActionTestModel { Id = stream, Name = "second", Value = 2 }, _meta(), new PerspectiveScope(),
+      cancellationToken);
+    while (!writing.IsCompleted && !(bool)(await _scalarAsync(conn,
+             "SELECT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE @holder = ANY(pg_blocking_pids(a.pid)))", ("holder", holderPid)))!) {
+      cancellationToken.ThrowIfCancellationRequested();
+    }
+    var flipBlockedDuringTheWrite = await _flipIsBlockedAsync(6);
+    await held.RollbackAsync(cancellationToken);
+    await writing;
+
+    await Assert.That(flipBlockedDuringTheWrite).IsTrue()
+      .Because("with no transaction of the caller's, the write opens one, so its hold spans the write and a flip waits for it");
+    await Assert.That(await _flipIsBlockedAsync(6)).IsFalse();
+  }
+
+  private static async Task _execOnAsync(NpgsqlConnection conn, NpgsqlTransaction tx, string sql, Guid id) {
+    await using var cmd = conn.CreateCommand();
+    cmd.Transaction = tx;
+    cmd.CommandText = sql;
+    cmd.Parameters.AddWithValue(nameof(id), id);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
   // Whether a flip of the partition would have to wait: NOWAIT answers at once instead of waiting.
   private async Task<bool> _flipIsBlockedAsync(int partition) {
     await using var flipper = await _openAsync();

@@ -109,6 +109,49 @@ public class OwnershipFencingSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  [Timeout(60_000)]
+  public async Task Flush_AnOutboxCompletion_AgainstAFlipThatCommitsWhileItWrites_WaitsForIt_AndIsFencedAsync(
+      CancellationToken cancellationToken) {
+    await using var conn = await _openAsync();
+    _ = await _mapModeAsync(conn);
+    var message = await _outboxRowAsync(conn);
+    await using var observer = await _openAsync();
+    var pid = await _scalarAsync<int>(conn, "SELECT pg_backend_pid()");
+    var (flipper, flip) = await _flipUncommittedAsync();
+    await using var flipperConnection = flipper;
+
+    var writing = _flushAsync(conn, outbox: [message], outboxEpochs: [FIRST_EPOCH]);
+    await _blockedOrDoneAsync(observer, pid, writing, cancellationToken);
+    await flip.CommitAsync(cancellationToken);
+    await writing;
+
+    await Assert.That(await _countAsync(conn, "wh_outbox", "message_id", message)).IsEqualTo(1L)
+      .Because("the completion holds its partition at the claimed epoch in its own statement: the flip committed first, so it is fenced");
+  }
+
+  [Test]
+  [Timeout(60_000)]
+  public async Task Flush_ACursorAdvance_AgainstAFlipThatCommitsWhileItWrites_WaitsForIt_AndIsFencedAsync(
+      CancellationToken cancellationToken) {
+    var stream = (Guid)TrackedGuid.New();
+    await using var conn = await _openAsync();
+    _ = await _mapModeAsync(conn);
+    var lastEvent = await _storedEventAsync(conn, stream);
+    await using var observer = await _openAsync();
+    var pid = await _scalarAsync<int>(conn, "SELECT pg_backend_pid()");
+    var (flipper, flip) = await _flipUncommittedAsync();
+    await using var flipperConnection = flipper;
+
+    var writing = _flushAsync(conn, cursors: _cursorJson(stream, lastEvent, FIRST_EPOCH));
+    await _blockedOrDoneAsync(observer, pid, writing, cancellationToken);
+    await flip.CommitAsync(cancellationToken);
+    await writing;
+
+    await Assert.That(await _countAsync(conn, "wh_perspective_cursors", "stream_id", stream)).IsEqualTo(0L)
+      .Because("a stale owner's cursor never moves the stream's position, however close to the flip it was written");
+  }
+
+  [Test]
   public async Task Flush_AnOutboxCompletionUnderTheCurrentEpoch_CompletesAsBeforeAsync() {
     await using var conn = await _openAsync();
     _ = await _mapModeAsync(conn);
@@ -321,6 +364,33 @@ public class OwnershipFencingSqlTests : EFCoreTestBase {
       throw new InvalidOperationException($"precondition: the switch did not turn on ({answer})");
     }
     return epoch;
+  }
+
+  /// <summary>The flip, open in its own transaction, so the test decides when it commits.</summary>
+  private async Task<(NpgsqlConnection Connection, NpgsqlTransaction Flip)> _flipUncommittedAsync() {
+    var connection = await _openAsync();
+    var flip = await connection.BeginTransactionAsync();
+    await using var cmd = connection.CreateCommand();
+    cmd.Transaction = flip;
+    cmd.CommandText = """
+      UPDATE wh_partition_ownership
+      SET owner_instance_id = @b, epoch = epoch + 1, state = 'active', next_owner_instance_id = NULL, handover_deadline = NULL
+      WHERE partition_number = @p
+      """;
+    cmd.Parameters.AddWithValue("b", _b);
+    cmd.Parameters.AddWithValue("p", PARTITION);
+    await cmd.ExecuteNonQueryAsync();
+    return (connection, flip);
+  }
+
+  /// <summary>Completes once the backend waits on a lock another session holds, or once the write finished without waiting.</summary>
+  private static async Task _blockedOrDoneAsync(NpgsqlConnection observer, int pid, Task write, CancellationToken cancellationToken) {
+    while (!write.IsCompleted) {
+      cancellationToken.ThrowIfCancellationRequested();
+      if (await _scalarAsync<bool>(observer, "SELECT cardinality(pg_blocking_pids(@pid)) > 0", ("pid", pid))) {
+        return;
+      }
+    }
   }
 
   /// <summary>The flip the handover ends with: the partition's owner becomes B and its epoch rises by one.</summary>
