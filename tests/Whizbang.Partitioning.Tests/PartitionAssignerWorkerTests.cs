@@ -306,12 +306,28 @@ public class PartitionAssignerWorkerTests {
 
   [Test]
   public async Task Tick_WithOwnershipByMapOff_NeverAsksForTheSwitchAsync() {
-    var (worker, store, _, _) = _create();
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = false });
 
     _ = await worker.TickAsync(new FakeDutyGrant(7), CancellationToken.None);
 
     await Assert.That(store.SwitchRequests).IsEmpty()
-      .Because("ownership by map stays off until a release turns it on (phase 5 of #2540), so the assigner never asks");
+      .Because("an operator who turns ownership by map off keeps the stored-owner rules, so the assigner never asks");
+  }
+
+  [Test]
+  public async Task Options_OwnershipByMap_DefaultsOn_AndTheDefaultStillWaitsForEveryInstanceAsync() {
+    var (worker, store, _, _) = _create();
+    store.SwitchAnswer = "closed (1 of 2 live instances support ownership by map)";
+    var grant = new FakeDutyGrant(7);
+
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+
+    await Assert.That(new PartitionAssignerOptions().OwnershipByMap).IsTrue()
+      .Because("#2556 and #2557 make a moved partition safe, so the published map is the owner of a stream by default");
+    await Assert.That(store.SwitchRequests).Count().IsEqualTo(2)
+      .Because("the default asks for the switch, and the database turns it on only once every live instance supports it");
+    await Assert.That(store.ExpiryRequests).IsEmpty().Because("while the switch stays off, nothing hands over");
   }
 
   [Test]

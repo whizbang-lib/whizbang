@@ -65,6 +65,7 @@ public class PartitionAssignerRegistrationTests {
       ["Whizbang:Database:PartitionAssigner:AssignmentLease"] = "00:02:00",
       ["Whizbang:Database:PartitionAssigner:RepublishInterval"] = "00:07:00",
       ["Whizbang:Database:PartitionAssigner:HandoverDeadline"] = "00:00:45",
+      ["Whizbang:Database:PartitionAssigner:OwnershipByMap"] = "false",
     });
 
     var options = sp.GetRequiredService<IOptions<PartitionAssignerOptions>>().Value;
@@ -75,6 +76,8 @@ public class PartitionAssignerRegistrationTests {
     await Assert.That(options.RepublishInterval).IsEqualTo(TimeSpan.FromMinutes(7));
     await Assert.That(options.HandoverDeadline).IsEqualTo(TimeSpan.FromSeconds(45))
       .Because("#2557: the handover deadline is measured on a deployed environment, so an operator must be able to set it");
+    await Assert.That(options.OwnershipByMap).IsFalse()
+      .Because("an operator can keep the stored-owner rules while a fleet's rollout is staged");
   }
 
   [Test]
@@ -89,6 +92,7 @@ public class PartitionAssignerRegistrationTests {
     await Assert.That(options.AssignmentLease).IsEqualTo(TimeSpan.FromSeconds(90));
     await Assert.That(options.RepublishInterval).IsEqualTo(TimeSpan.FromMinutes(5));
     await Assert.That(options.HandoverDeadline).IsEqualTo(TimeSpan.FromSeconds(30));
+    await Assert.That(options.OwnershipByMap).IsTrue();
   }
 
   [Test]
