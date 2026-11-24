@@ -45,6 +45,20 @@ public class RunnerBasePrepareCompleteTests {
   }
 
   [Test]
+  public async Task AFencedWrite_EndsTheApplyWithoutFinishing_AndNeverRunsPerPairAsync() {
+    var harness = new RbHarness();
+    harness.Rows.Prepares = true;
+    var marked = harness.Add(harness.Marked("a"));
+    var prepared = await harness.Runner.PrepareAsync(harness.StreamId, RbHarness.NAME, null, [marked], null);
+
+    var thrown = await Assert.ThrowsAsync<PartitionOwnershipLostException>(
+      async () => await harness.Runner.CompleteAsync(prepared, PerspectiveWriteOutcome.Fenced));
+
+    await Assert.That(thrown!.StreamId).IsEqualTo(harness.StreamId)
+      .Because("#2556: a write fenced by its partition's epoch is the current owner's to apply, never re-run here per pair");
+  }
+
+  [Test]
   public async Task APairTheBatchReadARowFor_FoldsOntoThatRowAsync() {
     var harness = new RbHarness();
     harness.Rows.Prepares = true;

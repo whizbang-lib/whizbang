@@ -177,6 +177,27 @@ public class OwnershipFencingSqlTests : EFCoreTestBase {
   // --- the direct paths ---------------------------------------------------------------------------
 
   [Test]
+  public async Task ReportedFailure_UnderAStaleEpoch_IsNotRecorded_AndOneThatNamesNoEpochIsAsync() {
+    await using var conn = await _openAsync();
+    _ = await _mapModeAsync(conn);
+    var stale = await _outboxRowAsync(conn);
+    var unnamed = await _outboxRowAsync(conn);
+    await _moveOnAsync(conn);
+    var items = $$"""
+      [{"MessageId":"{{stale}}","CompletedStatus":8,"Error":"stale","Reason":2,"PartitionNumber":{{PARTITION}},"PartitionEpoch":{{FIRST_EPOCH}}},
+       {"MessageId":"{{unnamed}}","CompletedStatus":8,"Error":"no epoch","Reason":2}]
+      """;
+
+    var fenced = await _withNoticesAsync(conn, () => _execAsync(conn, "SELECT wh_report_failures_fenced('outbox', @f::jsonb)", ("f", items)));
+
+    await Assert.That(await _scalarAsync<object>(conn, "SELECT error FROM wh_outbox WHERE message_id = @m", ("m", stale)))
+      .IsEqualTo(DBNull.Value);
+    await Assert.That(await _scalarAsync<object>(conn, "SELECT error FROM wh_outbox WHERE message_id = @m", ("m", unnamed)))
+      .IsEqualTo("no epoch").Because("a failure that names no epoch is reported as before");
+    await Assert.That(fenced).IsEquivalentTo(["outbox_failure=1"]);
+  }
+
+  [Test]
   public async Task PublishMark_UnderAStaleEpoch_AffectsNoRowAsync() {
     await using var conn = await _openAsync();
     _ = await _mapModeAsync(conn);

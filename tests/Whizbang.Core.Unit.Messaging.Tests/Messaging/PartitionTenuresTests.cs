@@ -75,6 +75,23 @@ public class PartitionTenuresTests {
   }
 
   [Test]
+  public async Task ForgottenPartitions_LoseTheirStreamsAndWork_ThroughTheirRemainder_AndOthersKeepTheirsAsync() {
+    var tenures = new PartitionTenures();
+    var moved = (Guid)TrackedGuid.New();
+    var kept = (Guid)TrackedGuid.New();
+    var work = (Guid)TrackedGuid.New();
+    tenures.RecordClaim(new Dictionary<Guid, long> { [moved] = 4, [kept] = 2 }, new Dictionary<Guid, int> { [moved] = 10_017, [kept] = 18 });
+    tenures.RecordFetched(work, moved);
+
+    tenures.ForgetPartitions([17]);
+    tenures.ForgetPartitions([]);
+
+    await Assert.That(tenures.OfStream(moved).HasValue).IsFalse().Because("a row's partition 10,017 is the table's partition 17");
+    await Assert.That(tenures.OfWork(work).HasValue).IsFalse();
+    await Assert.That(tenures.OfStream(kept).HasValue).IsTrue();
+  }
+
+  [Test]
   public async Task PastItsCapacity_TheLedgerKeepsTwoGenerations_AndDropsTheOldestAsync() {
     var tenures = new PartitionTenures(capacity: 2);
     var streams = Enumerable.Range(0, 5).Select(_ => (Guid)TrackedGuid.New()).ToArray();
@@ -84,8 +101,8 @@ public class PartitionTenuresTests {
     }
 
     await Assert.That(tenures.OfStream(streams[0])).IsNull().Because("the first generation was dropped");
-    await Assert.That(tenures.OfStream(streams[4])).IsNotNull();
-    await Assert.That(tenures.OfStream(streams[3])).IsNotNull().Because("the previous generation is still read");
+    await Assert.That(tenures.OfStream(streams[4]).HasValue).IsTrue();
+    await Assert.That(tenures.OfStream(streams[3]).HasValue).IsTrue().Because("the previous generation is still read");
   }
 
   [Test]

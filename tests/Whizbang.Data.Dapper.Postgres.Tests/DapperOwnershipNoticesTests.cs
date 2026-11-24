@@ -121,6 +121,58 @@ public class DapperOwnershipNoticesTests : PostgresTestBase {
       .IsEqualTo(1L).Because("the fenced perspective completion leaves the work for the current owner");
   }
 
+  [Test]
+  public async Task WorkFetchedBeforeThePartitionMoved_IsFencedThoughTheWorkerNamesNoEpochAsync() {
+    var stream = (Guid)TrackedGuid.New();
+    await using var conn = await _openAsync();
+    await _mapModeAsync(conn);
+    var eventId = (Guid)TrackedGuid.New();
+    await conn.ExecuteAsync("""
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
+      VALUES (@e, @s, @s, 'TestAggregate', 'TestEvent', 1, NOW() - INTERVAL '1 minute');
+      INSERT INTO wh_event_body (event_id, event_data, metadata) VALUES (@e, '{}', '{}')
+      """, new { e = eventId, s = stream });
+    var work = (Guid)TrackedGuid.New();
+    await conn.ExecuteAsync("""
+      INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at)
+      VALUES (@w, @s, 'Notices.Perspective', @e, compute_partition(@s, 10000), 0, 0, NOW() - INTERVAL '1 minute')
+      """, new { w = work, s = stream, e = eventId });
+    var metrics = _metrics();
+    using var observer = new CounterObserver(metrics, "whizbang.work_coordinator.fenced_writes");
+    var coordinator = new DapperWorkCoordinator(ConnectionString, new JsonSerializerOptions { TypeInfoResolver = InfrastructureJsonContext.Default },
+      metrics: metrics, tenures: new PartitionTenures());
+
+    _ = await coordinator.ClaimWorkAsync(new ClaimWorkRequest(_a, "test", "test-host", 1, MaxStreams: 10));
+    var fetched = await coordinator.GetStreamEventsAsync(_a, [stream]);
+    await conn.ExecuteAsync("UPDATE wh_partition_ownership SET owner_instance_id = @b, epoch = epoch + 1 WHERE partition_number = compute_partition(@s, 10000)",
+      new { b = _b, s = stream });
+    await coordinator.CompletePerspectiveAsync([], [work], debugMode: false);
+
+    await Assert.That(fetched.Select(e => e.EventWorkId)).Contains(work);
+    await Assert.That(observer.Total()).IsEqualTo(1L).Because("the coordinator named the epoch the work was claimed under");
+    await Assert.That(await conn.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_perspective_events WHERE event_work_id = @work", new { work }))
+      .IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task TheCoordinator_ListsWhatThisInstanceHandsOver_AndAcknowledgesItAsync() {
+    await using var conn = await _openAsync();
+    var epoch = await _mapModeAsync(conn);
+    await conn.ExecuteAsync("SELECT wh_publish_partition_assignment(@role, @a, @epoch, @members, INTERVAL '90 seconds')",
+      new { role = PartitionAssignerOptions.ROLE, a = _a, epoch, members = new[] { _a, _b } });
+    var coordinator = _build();
+
+    var handingOver = await coordinator.GetPartitionsHandingOverAsync(_a);
+    var flipped = await coordinator.AcknowledgeHandoverAsync(_a, [.. handingOver.Take(3)]);
+    var nothing = await coordinator.AcknowledgeHandoverAsync(_a, []);
+
+    await Assert.That(handingOver).Count().IsEqualTo(5_000);
+    await Assert.That(flipped).Count().IsEqualTo(3);
+    await Assert.That((await coordinator.GetLeaveStatusAsync(_a)).Owned).IsEqualTo(9_997)
+      .Because("A still owns its even partitions and those it has not yet handed over");
+    await Assert.That(nothing).IsEmpty();
+  }
+
   // --- helpers --------------------------------------------------------------------------------------
 
   private DapperWorkCoordinator _build(ILogger<DapperWorkCoordinator>? logger = null, WorkCoordinatorMetrics? metrics = null) =>

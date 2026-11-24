@@ -139,6 +139,47 @@ public class CoordinatorNamesTheClaimedEpochTests : EFCoreTestBase {
     await Assert.That(observer.Total()).IsEqualTo(1L);
   }
 
+  [Test]
+  public async Task TheCoordinator_ListsWhatThisInstanceHandsOver_AndAcknowledgesItAsync() {
+    await using var conn = await _openAsync();
+    await _mapModeAsync(conn);
+    await _publishAsync(conn, [_a, _b]);
+    var (coordinator, _) = _coordinator();
+
+    var handingOver = await coordinator.GetPartitionsHandingOverAsync(_a);
+    var none = await coordinator.GetPartitionsHandingOverAsync(_b);
+    var flipped = await coordinator.AcknowledgeHandoverAsync(_a, [.. handingOver.Take(2)]);
+
+    await Assert.That(handingOver).Count().IsEqualTo(5_000);
+    await Assert.That(handingOver.All(h => h.NextOwner == _b)).IsTrue();
+    await Assert.That(none).IsEmpty();
+    await Assert.That(flipped).IsEquivalentTo([.. handingOver.Take(2).Select(h => h.Partition)]);
+    await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_partition_ownership WHERE state = 'handing_over'"))
+      .IsEqualTo(4_998L);
+  }
+
+  [Test]
+  public async Task TheLeaveStatus_CountsWhatThisInstanceOwns_AndWhoElseCouldTakeItAsync() {
+    await using var conn = await _openAsync();
+    var (coordinator, _) = _coordinator();
+    var off = await coordinator.GetLeaveStatusAsync(_a);
+    await _mapModeAsync(conn);
+
+    var on = await coordinator.GetLeaveStatusAsync(_a);
+
+    await Assert.That(off.Owned).IsEqualTo(0).Because("off map mode nothing is owned by the table, so a leave waits for nothing");
+    await Assert.That(on).IsEqualTo(new PartitionLeaveStatus(10_000, 1)).Because("A owns every partition, and B could take them");
+  }
+
+  [Test]
+  public async Task AcknowledgingNothing_FlipsNothing_WithoutARoundTripAsync() {
+    var (coordinator, _) = _coordinator();
+
+    var flipped = await coordinator.AcknowledgeHandoverAsync(_a, []);
+
+    await Assert.That(flipped).IsEmpty();
+  }
+
   // --- helpers --------------------------------------------------------------------------------------
 
   private (EFCoreWorkCoordinator<WorkCoordinationDbContext> Coordinator, CounterObserver Observer) _coordinator() {
@@ -207,6 +248,17 @@ public class CoordinatorNamesTheClaimedEpochTests : EFCoreTestBase {
     }
   }
 
+  private static async Task _publishAsync(NpgsqlConnection conn, Guid[] members) {
+    var epoch = await _scalarAsync<long>(conn, "SELECT epoch FROM wh_published_partition_assignment WHERE singleton");
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT wh_publish_partition_assignment(@role, @a, @epoch, @members, INTERVAL '90 seconds')";
+    cmd.Parameters.AddWithValue("role", PartitionAssignerOptions.ROLE);
+    cmd.Parameters.AddWithValue("a", _a);
+    cmd.Parameters.AddWithValue(nameof(epoch), epoch);
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(members), NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = members });
+    await cmd.ExecuteNonQueryAsync();
+  }
+
   /// <summary>The flip the handover ends with, for the stream's partition: B owns it at the next epoch.</summary>
   private static Task _moveOnAsync(NpgsqlConnection conn, Guid stream) =>
     _execAsync(conn, """
@@ -230,7 +282,8 @@ public class CoordinatorNamesTheClaimedEpochTests : EFCoreTestBase {
     var eventId = (Guid)TrackedGuid.New();
     await _execAsync(conn, """
       INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
-      VALUES (@event, @s, @s, 'TestAggregate', 'TestEvent', 1, NOW() - INTERVAL '1 minute')
+      VALUES (@event, @s, @s, 'TestAggregate', 'TestEvent', 1, NOW() - INTERVAL '1 minute');
+      INSERT INTO wh_event_body (event_id, event_data, metadata) VALUES (@event, '{}', '{}')
       """, ("event", eventId), ("s", stream));
     await _execAsync(conn, """
       INSERT INTO wh_perspective_events
