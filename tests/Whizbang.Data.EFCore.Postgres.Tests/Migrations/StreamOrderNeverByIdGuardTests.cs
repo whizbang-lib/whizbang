@@ -63,6 +63,8 @@ public partial class StreamOrderNeverByIdGuardTests {
     "get_stream_events", "get_stream_events_in_stream_order", "wh_collective_sink_queue",
     "fetch_events_by_ids", "fetch_pending_perspective_events", "claim_and_fetch_pending_perspective_events",
     "complete_perspective_cursor_work", "wh_received_stream_order_window", "wh_resequence_stream",
+    // 578 (#2551): whether stored perspective work is behind its cursor is stream order too.
+    "store_perspective_events",
   };
 
   /// <summary>
@@ -75,6 +77,9 @@ public partial class StreamOrderNeverByIdGuardTests {
       + "origin's positioned events whose id sorts after its own; nothing positional exists for it"),
     ("_emit_event_store_chain_for_inbox", "se.event_id < applied.event_id",
       "the same fallback for the straggler: when either event carries no origin position, the replay places it by id"),
+    ("store_perspective_events", "ORDER BY pe.stream_id, pe.event_id",
+      "the emptiness probe (161): it asks whether the stream has any pending row, ordered by the index key so the index "
+      + "serves it; it takes one row, and orders nothing that is applied or dispatched"),
   ];
 
   [Test]
