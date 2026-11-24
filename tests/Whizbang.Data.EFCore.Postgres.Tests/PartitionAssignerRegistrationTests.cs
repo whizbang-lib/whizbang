@@ -64,6 +64,7 @@ public class PartitionAssignerRegistrationTests {
       ["Whizbang:Database:PartitionAssigner:SettleWindow"] = "00:00:09",
       ["Whizbang:Database:PartitionAssigner:AssignmentLease"] = "00:02:00",
       ["Whizbang:Database:PartitionAssigner:RepublishInterval"] = "00:07:00",
+      ["Whizbang:Database:PartitionAssigner:HandoverDeadline"] = "00:00:45",
     });
 
     var options = sp.GetRequiredService<IOptions<PartitionAssignerOptions>>().Value;
@@ -72,6 +73,8 @@ public class PartitionAssignerRegistrationTests {
       .Because("#2558: the settle window is measured on a deployed environment, so an operator must be able to set it");
     await Assert.That(options.AssignmentLease).IsEqualTo(TimeSpan.FromMinutes(2));
     await Assert.That(options.RepublishInterval).IsEqualTo(TimeSpan.FromMinutes(7));
+    await Assert.That(options.HandoverDeadline).IsEqualTo(TimeSpan.FromSeconds(45))
+      .Because("#2557: the handover deadline is measured on a deployed environment, so an operator must be able to set it");
   }
 
   [Test]
@@ -85,6 +88,7 @@ public class PartitionAssignerRegistrationTests {
     await Assert.That(options.SettleWindow).IsEqualTo(TimeSpan.FromSeconds(5));
     await Assert.That(options.AssignmentLease).IsEqualTo(TimeSpan.FromSeconds(90));
     await Assert.That(options.RepublishInterval).IsEqualTo(TimeSpan.FromMinutes(5));
+    await Assert.That(options.HandoverDeadline).IsEqualTo(TimeSpan.FromSeconds(30));
   }
 
   [Test]

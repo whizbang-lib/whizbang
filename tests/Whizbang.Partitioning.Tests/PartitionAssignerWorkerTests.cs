@@ -326,6 +326,57 @@ public class PartitionAssignerWorkerTests {
   }
 
   [Test]
+  public async Task Tick_PublishesWithTheConfiguredHandoverDeadlineAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { HandoverDeadline = TimeSpan.FromSeconds(45) });
+
+    _ = await worker.TickAsync(new FakeDutyGrant(7), CancellationToken.None);
+
+    await Assert.That(store.HandoverDeadlines).IsEquivalentTo([TimeSpan.FromSeconds(45)])
+      .Because("#2557: the deadline a moved partition may hand over for is the operator's, passed with every publish");
+  }
+
+  [Test]
+  public async Task Options_HandoverDeadline_DefaultsToThirtySeconds_AndANonPositiveOneIsRefusedAsync() {
+    await Assert.That(new PartitionAssignerOptions().HandoverDeadline).IsEqualTo(TimeSpan.FromSeconds(30));
+    await Assert.That(() => new PartitionAssignerOptions { HandoverDeadline = TimeSpan.Zero }.Validate())
+      .Throws<InvalidOperationException>();
+  }
+
+  [Test]
+  public async Task Tick_InMapMode_CompletesTheHandoversPastTheirDeadline_AtItsEpochAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = true });
+    store.ExpiryAnswer = 3;
+    var grant = new FakeDutyGrant(7);
+
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    var continues = await worker.TickAsync(grant, CancellationToken.None);
+
+    await Assert.That(continues).IsTrue();
+    await Assert.That(store.ExpiryRequests).IsEquivalentTo([(_self, 7L), (_self, 7L)])
+      .Because("#2557: once the service owns by map, every tick completes what is past its deadline, changed or not");
+  }
+
+  [Test]
+  public async Task Tick_BeforeMapMode_NeverCompletesAHandoverAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = true });
+    store.SwitchAnswer = "closed (1 of 2 live instances support ownership by map)";
+
+    _ = await worker.TickAsync(new FakeDutyGrant(7), CancellationToken.None);
+
+    await Assert.That(store.ExpiryRequests).IsEmpty().Because("off, a publish moves a partition at once, so nothing hands over");
+  }
+
+  [Test]
+  public async Task Tick_WhenTheExpiryIsFenced_EndsTheTenureAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = true });
+    store.ExpiryAnswer = null;
+
+    var continues = await worker.TickAsync(new FakeDutyGrant(7), CancellationToken.None);
+
+    await Assert.That(continues).IsFalse().Because("a deposed assigner completes no handover and gives the tenure up");
+  }
+
+  [Test]
   public async Task Tick_OnceTheSwitchIsOn_DoesNotAskAgainAsync() {
     var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = true });
     var grant = new FakeDutyGrant(7);

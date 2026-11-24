@@ -347,9 +347,9 @@ public class PartitionAssignmentSqlTests : EFCoreTestBase {
     var store = _store();
 
     var map = PartitionMap.Initial([assigner]);
-    var published = await store.PublishAsync(ROLE, assigner, epoch, map, TimeSpan.FromSeconds(90), CancellationToken.None);
+    var published = await store.PublishAsync(ROLE, assigner, epoch, map, TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(30), CancellationToken.None);
     var renewed = await store.RenewAsync(assigner, epoch, CancellationToken.None);
-    var refused = await store.PublishAsync(ROLE, assigner, epoch + 1, map, TimeSpan.FromSeconds(90), CancellationToken.None);
+    var refused = await store.PublishAsync(ROLE, assigner, epoch + 1, map, TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(30), CancellationToken.None);
     var read = await store.ReadAsync(CancellationToken.None);
 
     await Assert.That(published!.Revision).IsEqualTo(1);
@@ -371,7 +371,7 @@ public class PartitionAssignmentSqlTests : EFCoreTestBase {
     await _execAsync(conn,
       $"UPDATE wh_service_instances SET metadata = '{{\"partition_ownership_level\":1}}'::jsonb WHERE instance_id = '{assigner}'");
     var store = _store();
-    _ = await store.PublishAsync(ROLE, assigner, epoch, PartitionMap.Initial([assigner]), TimeSpan.FromSeconds(90), CancellationToken.None);
+    _ = await store.PublishAsync(ROLE, assigner, epoch, PartitionMap.Initial([assigner]), TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(30), CancellationToken.None);
 
     var refused = await store.OpenOwnershipByMapAsync(assigner, epoch + 1, CancellationToken.None);
     var opened = await store.OpenOwnershipByMapAsync(assigner, epoch, CancellationToken.None);
@@ -379,6 +379,26 @@ public class PartitionAssignmentSqlTests : EFCoreTestBase {
     await Assert.That(refused).IsNull().Because("the fence refuses an epoch the caller does not hold");
     await Assert.That(opened).IsEqualTo("opened");
     await Assert.That(await _scalarAsync<bool>(conn, "SELECT wh_partition_ownership_by_map()")).IsTrue();
+  }
+
+  [Test]
+  public async Task Store_CompleteExpiredHandovers_FlipsWhatIsPastItsDeadline_AndAnswersNullToADeposedAssignerAsync() {
+    var assigner = Guid.CreateVersion7();
+    var next = Guid.CreateVersion7();
+    await using var conn = await _openAsync();
+    var epoch = await _electAsync(conn, assigner);
+    var store = _store();
+    _ = await store.PublishAsync(ROLE, assigner, epoch, PartitionMap.Initial([assigner]), TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(30), CancellationToken.None);
+    await _execAsync(conn, $"UPDATE wh_partition_ownership SET state = 'handing_over', next_owner_instance_id = '{next}', "
+      + "handover_deadline = NOW() - INTERVAL '1 second' WHERE partition_number IN (1, 2)");
+
+    var refused = await store.CompleteExpiredHandoversAsync(assigner, epoch + 1, CancellationToken.None);
+    var flipped = await store.CompleteExpiredHandoversAsync(assigner, epoch, CancellationToken.None);
+
+    await Assert.That(refused).IsNull().Because("the fence refuses an epoch the caller does not hold");
+    await Assert.That(flipped).IsEqualTo(2);
+    await Assert.That(await _scalarAsync<long>(conn, $"SELECT count(*) FROM wh_partition_ownership WHERE owner_instance_id = '{next}'"))
+      .IsEqualTo(2L);
   }
 
   // --- helpers --------------------------------------------------------------------------------
