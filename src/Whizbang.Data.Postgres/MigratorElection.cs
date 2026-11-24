@@ -176,8 +176,17 @@ public static partial class MigratorElection {
           await workAsync(ct).ConfigureAwait(false);
         }),
       request.Schema, logger, cancellationToken).ConfigureAwait(false);
-    // Only a waiter returns without working, and only once it saw the schema current: the migrator finished it.
-    return !worked;
+    if (worked) {
+      return false;
+    }
+    // Only a waiter returns without working, and only once it saw the schema current: the migrator finished it. No hash
+    // covers the perspective registry, and the migrator may have been another build, so the waiter reconciles it, but
+    // only when it differs from what this build declares.
+    if (request.PerspectiveRegistry is { Count: > 0 } registry) {
+      _ = await PerspectiveRegistryCurrency.ReconcileIfStaleAsync(request, registry, services, logger, cancellationToken)
+        .ConfigureAwait(false);
+    }
+    return true;
   }
 
   /// <summary>Joins the registry, records an application override on the row, and writes the stage held until then.</summary>

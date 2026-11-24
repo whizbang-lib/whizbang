@@ -72,7 +72,10 @@ internal sealed class DapperSchemaInitializationRunner(
     using var progress = StartupProgress.ReportTo(duty.NoteProgress);
     var election = new MigratorElectionRequest(
       () => new NpgsqlConnection(connectionString), schema, SchemaInitializationLockKey.Compute(schema), bootstrap,
-      commandTimeout, (_, ct) => initializer.IsCurrentAsync(ct), assessment?.OverriddenReason);
+      commandTimeout, (_, ct) => initializer.IsCurrentAsync(ct), assessment?.OverriddenReason) {
+      // A waiter checks the stored registry against this build's; a held application schema is left as it is (#2553).
+      PerspectiveRegistry = initializer.ApplicationHeld ? null : initializer.PerspectiveRegistry,
+    };
     await MigratorElection.StageAsync(duty, election, services, logger, cancellationToken).ConfigureAwait(false);
 
     // #2122: a rollback Assess decided on runs on the instance doing the schema work, before the pass, so the pass

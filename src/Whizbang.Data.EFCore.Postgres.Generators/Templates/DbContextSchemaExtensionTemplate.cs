@@ -191,7 +191,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // None on a Current schema, which has nothing to elect for, or with no connection of its own to elect on.
     var election = segmentConnectionFactory is null || schemaIsCurrent ? null : new Whizbang.Data.Postgres.MigratorElectionRequest(
       segmentConnectionFactory, "__SCHEMA__", lockId, GetBootstrapScripts(), _schemaCommandTimeoutSeconds,
-      (c, ct) => _isSchemaCurrentAsync(c, ct), incompatibilityOverride);
+      (c, ct) => _isSchemaCurrentAsync(c, ct), incompatibilityOverride) {
+      // A waiter checks the stored perspective registry against this build's, which no hash covers (#2561); a held
+      // application schema is left as it is (#2553).
+      PerspectiveRegistry = applicationHeld ? null : _perspectiveRegistryPayloads(),
+    };
 
     if (schemaIsCurrent) {
       // Current (#1992): nothing to bootstrap, elect or migrate. This instance only joins the registry (no lock), so an
@@ -2457,6 +2461,17 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
           reader.GetString(1), reader.GetString(2), reader.GetString(3));
       }
     }
+  }
+
+  /// <summary>
+  /// This context's perspective registry, as the shared migrator election checks it (#2561): the payload
+  /// <see cref="ReconcilePerspectiveRegistryAsync"/> reconciles, under this service's name; empty with no perspectives.
+  /// </summary>
+  private static global::System.Collections.Generic.IReadOnlyList<Whizbang.Core.Perspectives.PerspectiveRegistryPayload> _perspectiveRegistryPayloads() {
+    const string PerspectiveRegistryJson = __PERSPECTIVE_REGISTRY_JSON__;
+    return string.IsNullOrWhiteSpace(PerspectiveRegistryJson) || PerspectiveRegistryJson == "[]"
+      ? []
+      : [new Whizbang.Core.Perspectives.PerspectiveRegistryPayload("__SERVICE_NAME__", PerspectiveRegistryJson)];
   }
 
   /// <summary>
