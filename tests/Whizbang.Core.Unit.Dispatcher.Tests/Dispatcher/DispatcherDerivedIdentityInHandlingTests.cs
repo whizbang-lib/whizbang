@@ -54,12 +54,15 @@ public class DispatcherDerivedIdentityInHandlingTests {
     public Guid SeenByReceptor { get; set; }
   }
 
-  /// <summary>An event that starts a stream of its own and is invoked locally (#2537).</summary>
+  /// <summary>An event that starts a stream of its own and is invoked locally (#2537, #2552).</summary>
   public class DerivedStreamLocalEvent : IEvent, IHasStreamId {
     /// <inheritdoc />
     [StreamId]
     [GenerateStreamId]
     public Guid StreamId { get; set; }
+
+    /// <summary>The stream the event's receptor saw.</summary>
+    public Guid SeenByReceptor { get; set; }
   }
 
   /// <summary>Records the stream the command carries when its receptor runs.</summary>
@@ -74,7 +77,10 @@ public class DispatcherDerivedIdentityInHandlingTests {
   /// <summary>Handles the locally invoked event.</summary>
   public class DerivedStreamLocalEventReceptor : IReceptor<DerivedStreamLocalEvent> {
     /// <inheritdoc />
-    public ValueTask HandleAsync(DerivedStreamLocalEvent message, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+    public ValueTask HandleAsync(DerivedStreamLocalEvent message, CancellationToken cancellationToken = default) {
+      message.SeenByReceptor = message.StreamId;
+      return ValueTask.CompletedTask;
+    }
   }
 
   /// <summary>The command receptor's answer.</summary>
@@ -353,22 +359,120 @@ public class DispatcherDerivedIdentityInHandlingTests {
     await Assert.That(first.StreamId).IsNotEqualTo(Guid.Empty);
   }
 
+  // ---- [GenerateStreamId] on an event invoked locally inside a handling (#2552) ----
+
   [Test]
-  public async Task LocalInvokeAsync_GenerateStreamIdEvent_InsideAHandling_StillMintsAsync() {
-    var (dispatcher, _) = _createDispatcher();
+  public async Task LocalInvokeAsync_GenerateStreamIdEvent_InsideAHandling_ARedeliveryStartsTheSameStreamAsync() {
+    var (dispatcher, serviceName) = _createDispatcher();
     var source = (Guid)TrackedGuid.New();
 
-    var first = new DerivedStreamLocalEvent();
+    var firstRun = new DerivedStreamLocalEvent();
     using (ReceptorHandling.Enter(_handling(source, HANDLER))) {
-      await dispatcher.LocalInvokeAsync(first);
+      await dispatcher.LocalInvokeAsync(firstRun);
     }
-    var second = new DerivedStreamLocalEvent();
+    var redelivery = new DerivedStreamLocalEvent();
     using (ReceptorHandling.Enter(_handling(source, HANDLER))) {
-      await dispatcher.LocalInvokeAsync(second);
+      await dispatcher.LocalInvokeAsync(redelivery);
     }
 
+    await Assert.That(redelivery.StreamId).IsEqualTo(firstRun.StreamId)
+      .Because("a redelivered handling invokes the event again; it must start the stream the first run started, not a second one");
+    await Assert.That(firstRun.StreamId).IsEqualTo(GeneratedStreamIdentity.DeriveInHandling(
+      source, serviceName, HANDLER, TypeNameFormatter.Format(typeof(DerivedStreamLocalEvent)), ordinal: 0))
+      .Because("the void path gives the event no id to derive from, so its stream derives from the handling, as a sent command's does");
+    await Assert.That(firstRun.SeenByReceptor).IsEqualTo(firstRun.StreamId);
+  }
+
+  [Test]
+  public async Task LocalInvokeAsync_GenerateStreamIdEvent_TheSameInstanceTwice_KeepsItsStreamAsync() {
+    var (dispatcher, serviceName) = _createDispatcher();
+    var source = (Guid)TrackedGuid.New();
+
+    var invoked = new DerivedStreamLocalEvent();
+    var another = new DerivedStreamLocalEvent();
+    Guid first;
+    using (ReceptorHandling.Enter(_handling(source, HANDLER))) {
+      await dispatcher.LocalInvokeAsync(invoked);
+      first = invoked.StreamId;
+      await dispatcher.LocalInvokeAsync(invoked);
+      await dispatcher.LocalInvokeAsync(another);
+    }
+
+    await Assert.That(invoked.StreamId).IsEqualTo(first)
+      .Because("one message instance names one stream in a handling, however often it is dispatched (#2537)");
+    await Assert.That(another.StreamId).IsEqualTo(GeneratedStreamIdentity.DeriveInHandling(
+      source, serviceName, HANDLER, TypeNameFormatter.Format(typeof(DerivedStreamLocalEvent)), ordinal: 1))
+      .Because("the instance invoked twice took one ordinal, so the next event takes the next one");
+  }
+
+  [Test]
+  public async Task LocalInvokeAsync_GenerateStreamIdEvent_OutsideAHandling_MintsOncePerInstanceAsync() {
+    var (dispatcher, _) = _createDispatcher();
+
+    var first = new DerivedStreamLocalEvent();
+    await dispatcher.LocalInvokeAsync(first);
+    var firstStream = first.StreamId;
+    await dispatcher.LocalInvokeAsync(first);
+    var second = new DerivedStreamLocalEvent();
+    await dispatcher.LocalInvokeAsync(second);
+
     await Assert.That(second.StreamId).IsNotEqualTo(first.StreamId)
-      .Because("an event's stream derives from the event's own id; until a locally invoked event's id derives, it mints");
+      .Because("with no handling there is nothing to derive from: each event starts a new stream, as before");
+    await Assert.That(first.StreamId).IsEqualTo(firstStream)
+      .Because("the same instance invoked twice keeps the stream it was minted (#2539)");
+    await Assert.That(first.StreamId.Version).IsEqualTo(7);
+  }
+
+  [Test]
+  public async Task LocalInvokeAsync_GenerateStreamIdEvent_DoesNotShiftTheHandlingsOtherIdsAsync() {
+    var (dispatcher, serviceName) = _createDispatcher();
+    var source = (Guid)TrackedGuid.New();
+
+    var command = new DerivedStreamProbeCommand();
+    Guid published;
+    Guid sent;
+    using (ReceptorHandling.Enter(_handling(source, HANDLER))) {
+      await dispatcher.LocalInvokeAsync(new DerivedStreamLocalEvent());
+      sent = (await dispatcher.SendAsync(command)).MessageId.Value;
+      published = (await dispatcher.PublishAsync(new DerivedPublishProbeEvent((Guid)TrackedGuid.New()))).MessageId.Value;
+    }
+
+    await Assert.That(command.StreamId).IsEqualTo(GeneratedStreamIdentity.DeriveInHandling(
+      source, serviceName, HANDLER, TypeNameFormatter.Format(typeof(DerivedStreamProbeCommand)), ordinal: 0))
+      .Because("an invoked event's stream has ordinals of its own, so a command's stream is what it was before the event was invoked");
+    await Assert.That(sent).IsEqualTo(SentMessageIdentity.Derive(
+      source, serviceName, HANDLER, TypeNameFormatter.Format(typeof(DerivedStreamProbeCommand)), ordinal: 0));
+    await Assert.That(published).IsEqualTo(
+      EmissionIdentity.Derive(source, serviceName, HANDLER, TypeNameFormatter.Format(typeof(DerivedPublishProbeEvent)), ordinal: 0))
+      .Because("the stream needs no event id, so the void path takes no emission ordinal and the handling's event ids do not move");
+  }
+
+  [Test]
+  public async Task PublishAsync_GenerateStreamIdEventWithALocalReceptor_TheReceptorSeesTheStreamDerivedFromThePublishedIdAsync() {
+    var (dispatcher, _) = _createDispatcher(withEnvelopeRegistry: true);
+
+    var published = new DerivedStreamLocalEvent();
+    IDeliveryReceipt receipt;
+    using (ReceptorHandling.Enter(_handling((Guid)TrackedGuid.New(), HANDLER))) {
+      receipt = await dispatcher.PublishAsync(published);
+    }
+
+    await Assert.That(published.StreamId).IsEqualTo(GeneratedStreamIdentity.Derive(receipt.MessageId.Value))
+      .Because("the local run's envelope must not generate a second stream after the publish derived one from the event's id");
+    await Assert.That(published.SeenByReceptor).IsEqualTo(published.StreamId);
+    await Assert.That(receipt.StreamId).IsEqualTo(published.StreamId);
+  }
+
+  [Test]
+  public async Task PublishAsync_GenerateStreamIdEventWithALocalReceptor_OutsideAHandling_TheReceptorSeesThePublishedStreamAsync() {
+    var (dispatcher, _) = _createDispatcher(withEnvelopeRegistry: true);
+
+    var published = new DerivedStreamLocalEvent();
+    var receipt = await dispatcher.PublishAsync(published);
+
+    await Assert.That(published.StreamId).IsEqualTo(GeneratedStreamIdentity.Derive(receipt.MessageId.Value));
+    await Assert.That(published.SeenByReceptor).IsEqualTo(published.StreamId)
+      .Because("one publish gives one event one stream, everywhere it goes (#2539)");
   }
 
   // ---- helpers ----
@@ -399,8 +503,15 @@ public class DispatcherDerivedIdentityInHandlingTests {
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local, HandlerName = HANDLER },
   };
 
-  private static (IDispatcher Dispatcher, string ServiceName) _createDispatcher() {
+  /// <summary>
+  /// The dispatcher under test. <paramref name="withEnvelopeRegistry"/> registers the envelope registry a host built with
+  /// <c>AddWhizbang</c> has, so a publish's local run builds the envelope its receptors look up, as it does in a host.
+  /// </summary>
+  private static (IDispatcher Dispatcher, string ServiceName) _createDispatcher(bool withEnvelopeRegistry = false) {
     var services = new ServiceCollection();
+    if (withEnvelopeRegistry) {
+      services.AddSingleton<IEnvelopeRegistry, EnvelopeRegistry>();
+    }
     var instance = new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build());
     services.AddSingleton<IServiceInstanceProvider>(instance);
     services.AddReceptors();

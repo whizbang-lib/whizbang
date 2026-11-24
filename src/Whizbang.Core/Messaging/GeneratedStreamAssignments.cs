@@ -57,6 +57,11 @@ internal static class GeneratedStreamAssignments {
     return state.Streams.GetValue(message, _ => new StrongBox<Guid>(derive(Interlocked.Increment(ref state.Next) - 1))).Value;
   }
 
+  /// <summary>Not yet implemented (#2552): records nothing.</summary>
+  internal static void Assign(IMessageEnvelope? handling, object message, Guid stream) {
+    _ = (handling, message, stream);
+  }
+
   private sealed class Handling {
     public readonly ConditionalWeakTable<object, StrongBox<Guid>> Streams = [];
     public int Next;
