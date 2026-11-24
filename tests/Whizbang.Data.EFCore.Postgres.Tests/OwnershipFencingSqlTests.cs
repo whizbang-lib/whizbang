@@ -138,9 +138,10 @@ public class OwnershipFencingSqlTests : EFCoreTestBase {
     var stream = (Guid)TrackedGuid.New();
     await using var conn = await _openAsync();
     _ = await _mapModeAsync(conn);
+    var lastEvent = await _storedEventAsync(conn, stream);
     await _moveOnAsync(conn);
 
-    var fenced = await _withNoticesAsync(conn, () => _flushAsync(conn, cursors: _cursorJson(stream, FIRST_EPOCH)));
+    var fenced = await _withNoticesAsync(conn, () => _flushAsync(conn, cursors: _cursorJson(stream, lastEvent, FIRST_EPOCH)));
 
     await Assert.That(await _countAsync(conn, "wh_perspective_cursors", "stream_id", stream)).IsEqualTo(0L)
       .Because("a stale owner's cursor never moves the stream's position");
@@ -152,8 +153,9 @@ public class OwnershipFencingSqlTests : EFCoreTestBase {
     var stream = (Guid)TrackedGuid.New();
     await using var conn = await _openAsync();
     _ = await _mapModeAsync(conn);
+    var lastEvent = await _storedEventAsync(conn, stream);
 
-    await _flushAsync(conn, cursors: _cursorJson(stream, FIRST_EPOCH));
+    await _flushAsync(conn, cursors: _cursorJson(stream, lastEvent, FIRST_EPOCH));
 
     await Assert.That(await _countAsync(conn, "wh_perspective_cursors", "stream_id", stream)).IsEqualTo(1L);
   }
@@ -368,8 +370,18 @@ public class OwnershipFencingSqlTests : EFCoreTestBase {
     return id;
   }
 
-  private static string _cursorJson(Guid stream, long epoch) => $$"""
-    [{"StreamId":"{{stream}}","PerspectiveName":"{{PERSPECTIVE}}","LastEventId":"{{(Guid)TrackedGuid.New()}}","Status":2,
+  /// <summary>One event on the stream in the event store, so a cursor naming it can be written.</summary>
+  private static async Task<Guid> _storedEventAsync(NpgsqlConnection conn, Guid stream) {
+    var eventId = (Guid)TrackedGuid.New();
+    await _execAsync(conn, """
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
+      VALUES (@event, @stream, @stream, 'TestAggregate', 'TestEvent', 1, NOW() - INTERVAL '1 minute')
+      """, ("event", eventId), ("stream", stream));
+    return eventId;
+  }
+
+  private static string _cursorJson(Guid stream, Guid lastEvent, long epoch) => $$"""
+    [{"StreamId":"{{stream}}","PerspectiveName":"{{PERSPECTIVE}}","LastEventId":"{{lastEvent}}","Status":2,
       "PartitionNumber":{{PARTITION}},"PartitionEpoch":{{epoch}}}]
     """;
 
