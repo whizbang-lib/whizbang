@@ -82,7 +82,10 @@ public sealed class LastInReplayOrder(Func<MessageEnvelope<IEvent>, bool>? alsoT
       }
       _byVersion = _atLeast(envelope, _byVersion, static e => e.LocalStreamVersion.GetValueOrDefault()) ? envelope : _byVersion;
       _byCommit = _atLeast(envelope, _byCommit, static e => e.LocalCommitSequence.GetValueOrDefault()) ? envelope : _byCommit;
-      _byId = _byId is null || envelope.MessageId.Value.CompareTo(_byId.MessageId.Value) >= 0 ? envelope : _byId;
+      // The replay's one id fallback, by the id's canonical text (the order Postgres gives a uuid), as ReplayEventOrder.
+      _byId = _byId is null
+        || string.CompareOrdinal(envelope.MessageId.Value.ToString("D"), _byId.MessageId.Value.ToString("D")) >= 0
+        ? envelope : _byId;
     }
 
     public MessageEnvelope<IEvent>? Pick(LastInReplayOrder order) {

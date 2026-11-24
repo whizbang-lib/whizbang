@@ -14,7 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Tests for <c>fetch_pending_perspective_events</c> — Phase H step 7 slice 1.
 /// The drainer's cheap ID-only prefetch query: returns (event_work_id, event_id) tuples
-/// for unprocessed rows leased to the caller, ordered by event_id ASC. Replaces the
+/// for unprocessed rows leased to the caller, in stream version order (#2551; was event_id ASC). Replaces the
 /// in-memory cursor-inversion check with a SQL-side filter that also feeds the cooldown
 /// cache and the conditional body fetch.
 /// </summary>
@@ -37,7 +37,7 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task FetchPendingPerspectiveEvents_ReturnsOrderedByEventIdAscAsync() {
+  public async Task FetchPendingPerspectiveEvents_ReturnsTheStreamInVersionOrder_NotByIdAsync() {
     await using var dbContext = CreateDbContext();
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (connection.State != System.Data.ConnectionState.Open) {
@@ -49,18 +49,16 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
     const string perspectiveName = "MyApp.Test+Projection";
     await _registerInstanceAsync(connection, instanceId);
 
-    // UUIDv7 is time-ordered, so creating in temporal order produces lex-ordered ids.
-    var event1 = (Guid)TrackedGuid.New();
-    await Task.Delay(2);
-    var event2 = (Guid)TrackedGuid.New();
-    await Task.Delay(2);
-    var event3 = (Guid)TrackedGuid.New();
+    // Ids in id order event1 < event2 < event3.
+    Guid[] ids = [.. Enumerable.Range(0, 3).Select(_ => (Guid)TrackedGuid.New()).Order()];
+    var (event1, event2, event3) = (ids[0], ids[1], ids[2]);
 
     var workId1 = (Guid)TrackedGuid.New();
     var workId2 = (Guid)TrackedGuid.New();
     var workId3 = (Guid)TrackedGuid.New();
 
-    // Insert in reverse order to prove sorting by event_id, not insert order.
+    // #2551: stored in the order event3, event1, event2 (each takes the next version), against the ids' order, so the
+    // stream's order is its versions and the ids decide nothing.
     await _insertPerspectiveEventAsync(connection, workId3, streamId, perspectiveName, event3, instanceId);
     await _insertPerspectiveEventAsync(connection, workId1, streamId, perspectiveName, event1, instanceId);
     await _insertPerspectiveEventAsync(connection, workId2, streamId, perspectiveName, event2, instanceId);
@@ -68,12 +66,12 @@ public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
     var fetched = await _fetchAsync(connection, streamId, perspectiveName, instanceId);
 
     await Assert.That(fetched.Count).IsEqualTo(3);
-    await Assert.That(fetched[0].EventId).IsEqualTo(event1);
-    await Assert.That(fetched[1].EventId).IsEqualTo(event2);
-    await Assert.That(fetched[2].EventId).IsEqualTo(event3);
-    await Assert.That(fetched[0].EventWorkId).IsEqualTo(workId1);
-    await Assert.That(fetched[1].EventWorkId).IsEqualTo(workId2);
-    await Assert.That(fetched[2].EventWorkId).IsEqualTo(workId3);
+    await Assert.That(fetched[0].EventId).IsEqualTo(event3);
+    await Assert.That(fetched[1].EventId).IsEqualTo(event1);
+    await Assert.That(fetched[2].EventId).IsEqualTo(event2);
+    await Assert.That(fetched[0].EventWorkId).IsEqualTo(workId3);
+    await Assert.That(fetched[1].EventWorkId).IsEqualTo(workId1);
+    await Assert.That(fetched[2].EventWorkId).IsEqualTo(workId2);
   }
 
   [Test]

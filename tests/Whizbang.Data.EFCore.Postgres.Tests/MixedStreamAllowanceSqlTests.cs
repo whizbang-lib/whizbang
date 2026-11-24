@@ -118,11 +118,12 @@ public class MixedStreamAllowanceSqlTests : EFCoreTestBase {
     await ((IWorkCoordinator)coordinator).SyncMixedStreamAllowancesAsync([new MixedStreamPair(PINGED, OPENED)]);
     var stream = (Guid)TrackedGuid.New();
     Guid[] ids = [.. Enumerable.Range(0, 3).Select(_ => (Guid)TrackedGuid.New()).Order()];
-    var pinged = _outbox(ids[0], stream, PINGED, EventFlags.Ephemeral);
-    var opened = _outbox(ids[1], stream, OPENED, EventFlags.None);
-    var closed = _outbox(ids[2], stream, CLOSED, EventFlags.None);
+    // #2551: emitted pinged, opened, closed, against the ids' order: the first event emitted decides the stream's kind.
+    var pinged = _outbox(ids[2], stream, PINGED, EventFlags.Ephemeral);
+    var opened = _outbox(ids[0], stream, OPENED, EventFlags.None);
+    var closed = _outbox(ids[1], stream, CLOSED, EventFlags.None);
 
-    await coordinator.StoreOutboxMessagesAsync([closed, opened, pinged], partitionCount: 10000);
+    await coordinator.StoreOutboxMessagesAsync([pinged, opened, closed], partitionCount: 10000);
 
     var conn = await _openAsync(dbContext);
     await Assert.That(await _storedIdsAsync(conn, stream)).IsEquivalentTo([pinged.MessageId, opened.MessageId])

@@ -38,7 +38,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task AppendAsync_SameStream_SingleBatchSortedByMessageIdAsync(CancellationToken cancellationToken) {
+  public async Task AppendAsync_SameStream_SingleBatchKeepsTheOrderAppendedAsync(CancellationToken cancellationToken) {
     var captured = new List<OutboxMessage[]>();
     var flushedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var streamId = _idProvider.NewGuid();
@@ -62,7 +62,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
     var m2 = _make(streamId);
     var m3 = _make(streamId);
 
-    // Enqueue out-of-order on purpose. Each append is drained, and its window armed, before the next one is made,
+    // Appended against their id order on purpose (#2551): the batch is the order the producer emitted, which is the
+    // order the chain versions the stream in. Each append is drained, and its window armed, before the next one is made,
     // so all three are in the open batch when the clock closes the window. The frozen clock is what keeps the window
     // open between appends; on the real clock a slow runner closed it early and split the batch.
     await sut.AppendAsync(m3, cancellationToken);
@@ -78,10 +79,10 @@ public class SlidingWindowOutboxBatchStrategyTests {
     await Assert.That(captured.Count).IsEqualTo(1);
     var batch = captured[0];
     await Assert.That(batch.Length).IsEqualTo(3);
-    // Batch must be ordered by MessageId — locks the producer-side stream affinity invariant.
-    await Assert.That(batch[0].MessageId).IsEqualTo(m1.MessageId);
-    await Assert.That(batch[1].MessageId).IsEqualTo(m2.MessageId);
-    await Assert.That(batch[2].MessageId).IsEqualTo(m3.MessageId);
+    // The batch keeps the order it was appended in, never the ids' order: an id is time-ordered, never a stream position.
+    await Assert.That(batch[0].MessageId).IsEqualTo(m3.MessageId);
+    await Assert.That(batch[1].MessageId).IsEqualTo(m1.MessageId);
+    await Assert.That(batch[2].MessageId).IsEqualTo(m2.MessageId);
   }
 
   // ===== cross-stream concurrency =====

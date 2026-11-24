@@ -44,7 +44,7 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
   // ============================================================================
 
   [Test]
-  public async Task EmitEventStoreChain_AssignsVersions_ByMessageIdOrder_NotCreatedAtAsync() {
+  public async Task EmitEventStoreChain_AssignsVersions_InTheOrderTheBatchListsThem_NotByIdOrCreatedAtAsync() {
     await using var dbContext = CreateDbContext();
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) {
@@ -55,27 +55,23 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
     var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
-    // Three message_ids in canonical UUIDv7 order: A < B < C.
-    var idA = (Guid)TrackedGuid.New();
-    await Task.Delay(2);
-    var idB = (Guid)TrackedGuid.New();
-    await Task.Delay(2);
-    var idC = (Guid)TrackedGuid.New();
-
-    // Deliberately INSERT in reverse-message-id order so the ROW_NUMBER OVER ORDER BY
-    // created_at would produce versions C=1, B=2, A=3 — i.e. version order DISAGREES with
-    // message_id order. With the fix, ORDER BY message_id pins versions to A=1, B=2, C=3.
+    // Three ids in id order A < B < C, emitted as B, C, A. Their created_at runs the other way again (C oldest), so
+    // neither the ids nor the row times can produce the emission order by accident.
+    var ids = _orderedIds(3);
+    var (idA, idB, idC) = (ids[0], ids[1], ids[2]);
     var nowOldest = DateTimeOffset.UtcNow.AddSeconds(-30);
-    await _insertOutboxEventAsync(conn, idC, streamId, instanceId, createdAt: nowOldest);                          // earliest created_at, latest message_id
+    await _insertOutboxEventAsync(conn, idC, streamId, instanceId, createdAt: nowOldest);
     await _insertOutboxEventAsync(conn, idB, streamId, instanceId, createdAt: nowOldest.AddSeconds(10));
-    await _insertOutboxEventAsync(conn, idA, streamId, instanceId, createdAt: nowOldest.AddSeconds(20));            // latest created_at, earliest message_id
+    await _insertOutboxEventAsync(conn, idA, streamId, instanceId, createdAt: nowOldest.AddSeconds(20));
 
-    await _callEmitEventStoreChainAsync(conn, instanceId, [idA, idB, idC]);
+    await _callEmitEventStoreChainAsync(conn, instanceId, [idB, idC, idA]);
 
     var versions = await _readVersionsAsync(conn, streamId);
-    await Assert.That(versions[idA]).IsLessThan(versions[idB])
-      .Because("UUIDv7 A < B → version(A) must be < version(B), regardless of created_at order");
-    await Assert.That(versions[idB]).IsLessThan(versions[idC]);
+    await Assert.That(versions[idB]).IsEqualTo(1)
+      .Because("#2551: a batch's events are versioned in the order they were emitted, which is the order the batch lists them");
+    await Assert.That(versions[idC]).IsEqualTo(2);
+    await Assert.That(versions[idA]).IsEqualTo(3)
+      .Because("the lowest id was emitted last; an id is time-ordered and never a stream position");
   }
 
   // ============================================================================
@@ -83,7 +79,10 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
   // ============================================================================
 
   [Test]
-  public async Task ClaimWorkInboxBackfill_AssignsVersions_ByMessageIdOrder_NotReceivedAtAsync() {
+  public async Task ClaimWorkInboxBackfill_EventsWithNoOriginPosition_FallBackToTheirIdOrder_NotReceivedAtAsync() {
+    // #2551: a received stream is versioned in its origin's order. These events carry no origin position (no source
+    // commit sequence), so nothing positional exists for them and the receive order falls back to their ids, the order
+    // a replay places them in (#2379). Their arrival times run the other way and decide nothing within one origin.
     await using var dbContext = CreateDbContext();
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) {
@@ -94,13 +93,9 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
     var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
-    var idA = (Guid)TrackedGuid.New();
-    await Task.Delay(2);
-    var idB = (Guid)TrackedGuid.New();
-    await Task.Delay(2);
-    var idC = (Guid)TrackedGuid.New();
+    var ids = _orderedIds(3);
+    var (idA, idB, idC) = (ids[0], ids[1], ids[2]);
 
-    // INSERT in reverse message_id order → received_at ascending DOES NOT match message_id ascending.
     var nowOldest = DateTimeOffset.UtcNow.AddSeconds(-30);
     await _insertInboxEventAsync(conn, idC, streamId, instanceId, receivedAt: nowOldest);
     await _insertInboxEventAsync(conn, idB, streamId, instanceId, receivedAt: nowOldest.AddSeconds(10));
@@ -111,7 +106,7 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
 
     var versions = await _readVersionsAsync(conn, streamId);
     await Assert.That(versions[idA]).IsLessThan(versions[idB])
-      .Because("inbox backfill must assign versions by message_id order so cursor monotonicity matches event_id monotonicity");
+      .Because("with no origin position, one origin's events fall back to their id order, as a replay places them");
     await Assert.That(versions[idB]).IsLessThan(versions[idC]);
   }
 
@@ -124,7 +119,7 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
   public async Task EmitChain_BatchOf50SameStream_AssignsContiguousVersionsAsync() {
     // Slice 11: SlidingWindowOutboxBatchStrategy will hand the chain a batch of up to 100
     // same-stream messages in a single call. Lock the contract: contiguous versions 1..N in
-    // message_id order, regardless of insertion order in wh_outbox.
+    // the order the batch lists them (#2551), regardless of their ids or insertion order in wh_outbox.
     await using var dbContext = CreateDbContext();
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) {
@@ -135,16 +130,11 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
     var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
-    var ids = new Guid[50];
-    for (var i = 0; i < 50; i++) {
-      ids[i] = (Guid)TrackedGuid.New();
-      await Task.Delay(1);
-    }
+    // Emitted in descending id order, and inserted in reverse emission order: neither the ids nor created_at
+    // agree with the emission order, so only numbering by the batch's own order passes.
+    var ids = _orderedIds(50).Reverse().ToArray();
 
     var nowOldest = DateTimeOffset.UtcNow.AddSeconds(-30);
-    // Insert in REVERSE message_id order — created_at sequence disagrees with message_id
-    // sequence, so any version assignment that doesn't ORDER BY message_id would violate
-    // the contract.
     for (var i = 49; i >= 0; i--) {
       await _insertOutboxEventAsync(conn, ids[i], streamId, instanceId, createdAt: nowOldest.AddMilliseconds(i));
     }
@@ -155,7 +145,7 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
     await Assert.That(versions.Count).IsEqualTo(50);
     for (var i = 0; i < 50; i++) {
       await Assert.That(versions[ids[i]]).IsEqualTo(i + 1)
-        .Because($"contiguous versions: ids[{i}] (UUIDv7 ordered) must get version {i + 1}");
+        .Because($"contiguous versions: the event listed at {i} must get version {i + 1}");
     }
   }
 
@@ -175,11 +165,11 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
     var streamB = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
-    // 5 messages per stream, interleaved A/B in message_id order.
+    // 5 messages per stream, interleaved A/B, emitted in descending id order.
+    var ordered = _orderedIds(10).Reverse().ToArray();
     var ids = new (Guid Id, Guid Stream)[10];
     for (var i = 0; i < 10; i++) {
-      ids[i] = ((Guid)TrackedGuid.New(), i % 2 == 0 ? streamA : streamB);
-      await Task.Delay(1);
+      ids[i] = (ordered[i], i % 2 == 0 ? streamA : streamB);
     }
 
     var nowOldest = DateTimeOffset.UtcNow.AddSeconds(-30);
@@ -205,11 +195,10 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task EmitChain_BatchedShuffledMessageIds_InsertsByMessageIdOrderAsync() {
-    // Slice 11: regression lock for the cursor-inversion case at batch scale. Producer-side
-    // sliding window may write same-stream messages to its bounded channel in non-deterministic
-    // order under contention; the strategy sorts before flush, but the chain must also
-    // independently ORDER BY message_id (defense in depth). 20 shuffled messages, single batch.
+  public async Task EmitChain_BatchedShuffledMessageIds_InsertsInTheBatchsOrderAsync() {
+    // #2551: the chain numbers a stream by each event's position in the batch, which is the order the producer emitted
+    // them. 20 events whose ids are shuffled against that order (seed 42, so a failure reproduces) take versions 1 to
+    // 20 in the order listed; sorting them by id would number them differently.
     await using var dbContext = CreateDbContext();
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) {
@@ -220,28 +209,22 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
     var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, instanceId);
 
-    var ordered = new Guid[20];
-    for (var i = 0; i < 20; i++) {
-      ordered[i] = (Guid)TrackedGuid.New();
-      await Task.Delay(1);
-    }
-
-    // Deterministic shuffle (seed 42) so test failures reproduce.
     var rng = new Random(42);
-    var shuffled = ordered.OrderBy(_ => rng.Next()).ToArray();
+    var emitted = _orderedIds(20).OrderBy(_ => rng.Next()).ToArray();
+    await Assert.That(emitted.Order().SequenceEqual(emitted)).IsFalse()
+      .Because("precondition: the emission order is not the id order, or the test could not tell the two apart");
     var nowOldest = DateTimeOffset.UtcNow.AddSeconds(-30);
-    foreach (var id in shuffled) {
+    foreach (var id in emitted) {
       await _insertOutboxEventAsync(conn, id, streamId, instanceId, createdAt: nowOldest);
     }
 
-    // Pass the SHUFFLED array to the chain — exercises the SQL ORDER BY explicitly.
-    await _callEmitEventStoreChainAsync(conn, instanceId, shuffled);
+    await _callEmitEventStoreChainAsync(conn, instanceId, emitted);
 
     var versions = await _readVersionsAsync(conn, streamId);
     await Assert.That(versions.Count).IsEqualTo(20);
     for (var i = 0; i < 20; i++) {
-      await Assert.That(versions[ordered[i]]).IsEqualTo(i + 1)
-        .Because("regardless of array order in the call, version assignment is ORDER BY message_id");
+      await Assert.That(versions[emitted[i]]).IsEqualTo(i + 1)
+        .Because("version assignment follows the position each event is listed at, never its id");
     }
   }
 
@@ -331,6 +314,9 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
   // ============================================================================
   // helpers
   // ============================================================================
+
+  private static Guid[] _orderedIds(int count) =>
+    [.. Enumerable.Range(0, count).Select(_ => (Guid)TrackedGuid.New()).Order()];
 
   private static async Task _callEmitEventStoreChainAsync(NpgsqlConnection conn, Guid instanceId, Guid[] messageIds) {
     await using var cmd = conn.CreateCommand();

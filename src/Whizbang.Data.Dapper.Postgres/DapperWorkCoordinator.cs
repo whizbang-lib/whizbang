@@ -481,7 +481,8 @@ public partial class DapperWorkCoordinator(
     var prefix = await _prefixAsync(connection, cancellationToken);
     var now = DateTimeOffset.UtcNow;
     var results = await connection.QueryAsync<StreamEventRow>(
-      $"SELECT * FROM {prefix}get_stream_events(@p_instance_id, @p_stream_ids, @p_now)",
+      // 583 (#2551): the read that carries each event's version, its stream position.
+      $"SELECT * FROM {prefix}get_stream_events_in_stream_order(@p_instance_id, @p_stream_ids, @p_now)",
       new { p_instance_id = instanceId, p_stream_ids = streamIds, p_now = now },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
@@ -496,6 +497,7 @@ public partial class DapperWorkCoordinator(
       EventWorkId = r.out_event_work_id,
       Attempts = r.out_attempts,
       Failures = r.out_failures,
+      Version = r.out_version,
     }).ToList(), r => r.EventWorkId, r => r.StreamId);
   }
 
@@ -587,7 +589,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
     var rows = await connection.QueryAsync<InboxBatchRowDto>(
-      $"SELECT * FROM {prefix}fetch_inbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
+      // 583 (#2551): the fetch that ranks each stream in stream order and returns the rank.
+      $"SELECT * FROM {prefix}fetch_inbox_batch_in_stream_order(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
       // NULL = count bound only, the pre-byte-budget behavior.
       new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream, p_max_bytes = maxBytes },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
@@ -607,6 +610,7 @@ public partial class DapperWorkCoordinator(
       IsEvent = r.is_event,
       Error = r.error,
       Priority = r.priority,
+      StreamPosition = r.stream_position,
     }).ToList(), r => r.MessageId, r => r.StreamId);
   }
 
@@ -787,6 +791,8 @@ public partial class DapperWorkCoordinator(
     public bool is_event { get; set; }
     public string? error { get; set; }
     public int priority { get; set; }
+    // 583 (#2551): the row's position in its stream.
+    public long stream_position { get; set; }
   }
 
   private sealed class PendingPerspectiveEventDto {
@@ -1680,6 +1686,10 @@ internal class StreamEventRow {
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3459:Unassigned members should be removed",
     Justification = "Hydrated by Dapper at runtime via column name mapping; not visible to static analysis.")]
   public int out_failures { get; set; }
+  // 583 (#2551): the event's version, its stream position.
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3459:Unassigned members should be removed",
+    Justification = "Hydrated by Dapper at runtime via column name mapping; not visible to static analysis.")]
+  public long? out_version { get; set; }
 }
 
 /// <summary>

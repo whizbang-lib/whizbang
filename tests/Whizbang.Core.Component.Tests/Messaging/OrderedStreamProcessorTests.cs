@@ -33,7 +33,8 @@ public class OrderedStreamProcessorTests {
     var streamId = _idProvider.NewGuid();
     var processedOrder = new List<Guid>();
 
-    // Create 5 messages with UUIDv7 temporal ordering
+    // #2551: five messages handed over against their id order (descending). The batch's order is the stream order the
+    // fetch returned; the processor keeps it and never re-sorts by id.
     var messages = new List<InboxWork> {
       _createInboxWork(streamId),
       _createInboxWork(streamId),
@@ -41,6 +42,7 @@ public class OrderedStreamProcessorTests {
       _createInboxWork(streamId),
       _createInboxWork(streamId)
     };
+    messages.Reverse();
 
     // Act
     await sut.ProcessInboxWorkAsync(
@@ -53,9 +55,8 @@ public class OrderedStreamProcessorTests {
       failureHandler: (_, _, _) => { }
     );
 
-    // Assert - Should process in MessageId (UUIDv7) ascending order
+    // Assert - processed in the order handed over, never by MessageId
     await Assert.That(processedOrder).Count().IsEqualTo(5);
-    // Verify messages were processed in creation order (UUIDv7 provides temporal ordering)
     await Assert.That(processedOrder[0]).IsEqualTo(messages[0].MessageId);
     await Assert.That(processedOrder[1]).IsEqualTo(messages[1].MessageId);
     await Assert.That(processedOrder[2]).IsEqualTo(messages[2].MessageId);
@@ -214,7 +215,8 @@ public class OrderedStreamProcessorTests {
     var streamId = _idProvider.NewGuid();
     var processedOrder = new List<Guid>();
 
-    // Create 5 messages with UUIDv7 temporal ordering
+    // #2551: five messages handed over against their id order (descending). The batch's order is the stream order the
+    // fetch returned; the processor keeps it and never re-sorts by id.
     var messages = new List<OutboxWork> {
       _createOutboxWork(streamId),
       _createOutboxWork(streamId),
@@ -222,6 +224,7 @@ public class OrderedStreamProcessorTests {
       _createOutboxWork(streamId),
       _createOutboxWork(streamId)
     };
+    messages.Reverse();
 
     // Act
     await sut.ProcessOutboxWorkAsync(
@@ -234,9 +237,8 @@ public class OrderedStreamProcessorTests {
       failureHandler: (_, _, _) => { }
     );
 
-    // Assert - Should process in MessageId (UUIDv7) ascending order
+    // Assert - processed in the order handed over, never by MessageId
     await Assert.That(processedOrder).Count().IsEqualTo(5);
-    // Verify messages were processed in creation order (UUIDv7 provides temporal ordering)
     await Assert.That(processedOrder[0]).IsEqualTo(messages[0].MessageId);
     await Assert.That(processedOrder[1]).IsEqualTo(messages[1].MessageId);
     await Assert.That(processedOrder[2]).IsEqualTo(messages[2].MessageId);
