@@ -264,6 +264,76 @@ public class DapperMigratorElectionTests {
     await Assert.That(stages.Calls).IsEquivalentTo(["Enter Preflight", "Enter Elect", "Skip Elect"]);
   }
 
+  /// <summary>
+  /// A waiter whose migrator is gone (no duty is held, the schema is still behind) votes before it works, pauses before
+  /// each vote after the first so a vote that keeps losing does not spin, and works once a vote leaves it free to.
+  /// </summary>
+  [Test]
+  [Timeout(120_000)]
+  public async Task AWaiterWhoseMigratorIsGone_VotesAgainUntilItMayWork_PausingBetweenVotesAsync(CancellationToken cancellationToken) {
+    var elector = new ScriptedElector(
+      DutyAttempt.Lost(DutyRefusal.Contended, "another instance won"),
+      DutyAttempt.Lost(DutyRefusal.Contended, "another instance won again"));
+    var services = new ServiceCollection();
+    services.AddSingleton<IDutyElector>(elector);
+    await using var host = services.BuildServiceProvider();
+    await using var duty = MigratorElection.CreateDuty(host, 600);
+    await duty.HoldAsync(new SchemaStaging(SchemaStage.Waiter, null, "another instance holds the migrator duty"));
+    var worked = 0;
+
+    var migratedElsewhere = await MigratorElection.RunPreLockAsync(
+      duty, _request([]), _ => { worked++; return Task.CompletedTask; }, host, logger: null, cancellationToken);
+
+    await Assert.That(elector.Votes).IsEqualTo(3)
+      .Because("two votes lost to another instance, and the third could not be decided, which leaves it unstaged");
+    await Assert.That(worked).IsEqualTo(1).Because("an unstaged instance does the work, once");
+    await Assert.That(migratedElsewhere).IsFalse().Because("this instance did the work, so its pass follows");
+  }
+
+  /// <summary>
+  /// An instance that could not be staged waits while another session holds the schema lock (a sibling's bootstrap or
+  /// DDL), says so, and works once the lock is released.
+  /// </summary>
+  [Test]
+  [Timeout(120_000)]
+  public async Task AnUnstagedInstance_WaitsWhileTheSchemaLockIsHeld_ThenWorksAsync(CancellationToken cancellationToken) {
+    var observer = new StepObserver(holdFrom: null);
+    var services = new ServiceCollection();
+    services.AddSingleton<ISchemaInitializationObserver>(observer);
+    await using var host = services.BuildServiceProvider();
+    await using var duty = MigratorElection.CreateDuty(host, 600);
+    await using var holder = new NpgsqlConnection(_database.ConnectionString);
+    await holder.OpenAsync(cancellationToken);
+    await using var held = await holder.BeginTransactionAsync(cancellationToken);
+    await holder.ExecuteAsync("SELECT pg_advisory_xact_lock(@key)", new { key = SchemaInitializationLockKey.Compute("public") }, held);
+    var worked = false;
+
+    var running = MigratorElection.RunPreLockAsync(
+      duty, _request([]), _ => { worked = true; return Task.CompletedTask; }, host, logger: null, cancellationToken);
+    await observer.Contended.WaitAsync(cancellationToken);
+    await Assert.That(worked).IsFalse().Because("the holder of the schema lock is doing the schema work right now");
+
+    await held.CommitAsync(cancellationToken);
+    var migratedElsewhere = await running;
+
+    await Assert.That(worked).IsTrue().Because("the wait ends when the lock is released, and the work follows");
+    await Assert.That(migratedElsewhere).IsFalse();
+  }
+
+  /// <summary>Answers each vote from a script; once the script runs out, it cannot be asked.</summary>
+  private sealed class ScriptedElector(params DutyAttempt[] answers) : IDutyElector {
+    private int _votes;
+
+    public int Votes => _votes;
+
+    public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
+      var vote = Interlocked.Increment(ref _votes);
+      return vote <= answers.Length
+        ? Task.FromResult(answers[vote - 1])
+        : throw new InvalidOperationException("the elector has no connection of its own");
+    }
+  }
+
   private sealed class Identity(string serviceName) : IServiceInstanceProvider {
     public Guid InstanceId { get; } = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     public string ServiceName => serviceName;
