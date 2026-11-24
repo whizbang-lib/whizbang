@@ -410,7 +410,7 @@ internal static class PostgresStartupAssessment {
   /// The stored-form conversions as changes (#2131): each conversion a known version applied, from the journal that records
   /// it (385). An application schema change, since the library converts what the application's model declares. Nothing
   /// on a journal older than the record, and a conversion nobody known applied is not read. Each carries the content hash
-  /// its journal recorded (570), and is identified by its name when it has none (#2553).
+  /// its journal recorded (568), and is identified by its name when it has none (#2553).
   /// </summary>
   private static string _conversions(string prefix, Probe probe) {
     var union = new StringBuilder();

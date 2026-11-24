@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 585_StampFenceSkipsAutovacuum.sql
+-- Migration: 569_StampFenceSkipsAutovacuum.sql
 -- Date: 2026-11-23
 -- Description: The commit-order stamper's fence no longer waits for an autovacuum worker (#2562).
 --
@@ -22,7 +22,7 @@
 --
 --              Cost: one more predicate on the same read of pg_stat_activity.
 --
---              Number 585: the number reserved for this change.
+--              Number 569: the next number after 568.
 --
 -- Reversal: reversible (the down file restores 559's definition)
 -- Dependencies: 559 (stamp_pending_commit_sequences, copied verbatim apart from the fence's autovacuum predicate)
@@ -74,7 +74,7 @@ DECLARE
 BEGIN
   -- The visibility fence (116): the oldest transaction id still in flight in THIS database that could still write
   -- its event store (prepared transactions included), or the snapshot's xmax when none is. Every row whose inserting
-  -- transaction is below it has committed or aborted, so nothing below it can still appear. 585 (#2562): an
+  -- transaction is below it has committed or aborted, so nothing below it can still appear. 569 (#2562): an
   -- autovacuum worker is not counted. It never inserts an event row, so its id cannot hide one, but it holds an id
   -- while it vacuums or analyzes (a shared catalog included, from whichever database it is connected to), and
   -- fencing on it held every newer event unstamped, unseen by perspectives and held by the outbox, until it finished.
@@ -248,4 +248,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.stamp_pending_commit_sequences(INTEGER, BOOLEAN) IS
-'248 supersedes 205. Stamps rows past the visibility horizon (585, #2562: an autovacuum worker''s transaction id does not hold it back, since such a worker never writes the event store): the walk, its own statement with sort off, range-scans insert_xid past the horizon, earliest transaction first and insertion order within one, and stops at the batch; each stream it reaches is stamped from its lowest unstamped version and stops at the first that is not yet eligible or is held elsewhere; values go out in insertion order across the batch and version order within each stream. No step joins the batch with itself and the update reaches each row by its key, so a call costs what it stamps under any statistics or plan. The post-stamp ring is 132''s; 559 (#2542) also rings the outbox owners of stamped streams with pending outbox rows, which releases the events held for their stamp. p_notify_owners is retained for signature compatibility and ignored. Returns count of rows stamped.';
+'248 supersedes 205. Stamps rows past the visibility horizon (569, #2562: an autovacuum worker''s transaction id does not hold it back, since such a worker never writes the event store): the walk, its own statement with sort off, range-scans insert_xid past the horizon, earliest transaction first and insertion order within one, and stops at the batch; each stream it reaches is stamped from its lowest unstamped version and stops at the first that is not yet eligible or is held elsewhere; values go out in insertion order across the batch and version order within each stream. No step joins the batch with itself and the update reaches each row by its key, so a call costs what it stamps under any statistics or plan. The post-stamp ring is 132''s; 559 (#2542) also rings the outbox owners of stamped streams with pending outbox rows, which releases the events held for their stamp. p_notify_owners is retained for signature compatibility and ignored. Returns count of rows stamped.';

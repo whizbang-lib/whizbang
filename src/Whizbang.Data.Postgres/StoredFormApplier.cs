@@ -75,7 +75,7 @@ public sealed record StoredFormApplier(string LibraryVersion, string Application
   /// The PL/pgSQL statement a conversion runs when it applied something: records the applier the rewrite phase
   /// carried on <paramref name="journal"/>'s row where <paramref name="keyColumn"/> is <paramref name="keyLiteral"/>,
   /// and what it applied (#2553, the statement's content hash). Nothing on a journal older than 385, and no hash on one
-  /// older than 570: the hash is written dynamically, so a statement planned against an older journal still runs.
+  /// older than 568: the hash is written dynamically, so a statement planned against an older journal still runs.
   /// </summary>
   /// <param name="journal">The journal, schema-qualified.</param>
   /// <param name="keyColumn">Its key column.</param>

@@ -27,7 +27,7 @@
 --              Rolling deploy: an older release writes the journals as before and never this column, so a conversion
 --              it applies records no hash and is judged by its name.
 --
---              Number 570: the range assigned to this change.
+--              Number 568: the next number after the bundle's 567.
 --
 -- Reversal: reversible (the column is dropped; the gate then judges every conversion by its name, as for rows recorded
 --           before this migration)
@@ -51,8 +51,8 @@ BEGIN
     ALTER TABLE __SCHEMA__.wh_stored_form_migrations ADD COLUMN IF NOT EXISTS content_hash TEXT;
 
     COMMENT ON COLUMN __SCHEMA__.wh_stored_form_migrations.content_hash IS
-      '570 (#2553): the SHA-256 of what the conversion that last converted rows applied; kept through a pass that '
-      'converted nothing. NULL on rows recorded before 570, which the rollback gate identifies by name.';
+      '568 (#2553): the SHA-256 of what the conversion that last converted rows applied; kept through a pass that '
+      'converted nothing. NULL on rows recorded before 568, which the rollback gate identifies by name.';
   END IF;
 
   IF NOT EXISTS (SELECT 1 FROM pg_attribute
@@ -62,8 +62,8 @@ BEGIN
     ALTER TABLE __SCHEMA__.wh_perspective_forms ADD COLUMN IF NOT EXISTS content_hash TEXT;
 
     COMMENT ON COLUMN __SCHEMA__.wh_perspective_forms.content_hash IS
-      '570 (#2553): the SHA-256 of the temporal rewrite that last converted a row of the table; kept through a pass that '
-      'converted nothing. NULL on rows recorded before 570, which the rollback gate identifies by name.';
+      '568 (#2553): the SHA-256 of the temporal rewrite that last converted a row of the table; kept through a pass that '
+      'converted nothing. NULL on rows recorded before 568, which the rollback gate identifies by name.';
   END IF;
 END $$;
 

@@ -446,7 +446,7 @@ public static class DeclaredKeySpellingPass {
           stamp.Parameters.AddWithValue(applier.LibraryVersion);
           stamp.Parameters.AddWithValue(applier.ApplicationVersion);
           await stamp.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-          // #2553: and what it applied, on a journal that records it (570).
+          // #2553: and what it applied, on a journal that records it (568).
           await using var hashed = _command(
             "SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($1) AND attname = 'content_hash' AND NOT attisdropped)");
           hashed.Parameters.AddWithValue(_journal);

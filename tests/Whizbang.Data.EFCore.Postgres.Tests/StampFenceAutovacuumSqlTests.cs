@@ -33,7 +33,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/585_StampFenceSkipsAutovacuum.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/569_StampFenceSkipsAutovacuum.sql</code-under-test>
 [Category("Shard1")]
 public class StampFenceAutovacuumSqlTests : EFCoreTestBase {
   private const string AUTOVACUUM_WORKER = "autovacuum worker";

@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 585_StampFenceSkipsAutovacuum.sql (#2562): stamp_pending_commit_sequences goes back to its 559
+-- The reverse of 569_StampFenceSkipsAutovacuum.sql (#2562): stamp_pending_commit_sequences goes back to its 559
 -- definition, whose fence counts an autovacuum worker's transaction id again.
 
 SELECT __SCHEMA__.drop_all_overloads('stamp_pending_commit_sequences');
