@@ -59,7 +59,8 @@ public partial class StreamOrderNeverByIdGuardTests {
 
   /// <summary>The store, dispatch and replay reads that order a stream's rows without inserting them.</summary>
   private static readonly HashSet<string> _roster = new(StringComparer.Ordinal) {
-    "store_outbox_messages", "store_inbox_messages", "fetch_inbox_batch", "get_stream_events", "wh_collective_sink_queue",
+    "store_outbox_messages", "store_inbox_messages", "fetch_inbox_batch", "fetch_inbox_batch_in_stream_order",
+    "get_stream_events", "get_stream_events_in_stream_order", "wh_collective_sink_queue",
     "fetch_events_by_ids", "fetch_pending_perspective_events", "claim_and_fetch_pending_perspective_events",
     "complete_perspective_cursor_work", "wh_received_stream_order_window", "wh_resequence_stream",
   };

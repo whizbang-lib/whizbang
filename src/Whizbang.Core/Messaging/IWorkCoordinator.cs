@@ -5528,7 +5528,7 @@ public record StreamEventData {
   public bool IsFirstInStream { get; init; }
 
   /// <summary>
-  /// The event's stream version (<c>get_stream_events.out_version</c>, #2551), its position in its stream. The drain
+  /// The event's stream version (<c>get_stream_events_in_stream_order.out_version</c>, #2551), its position in its stream. The drain
   /// carries it onto the envelope (<see cref="Observability.MessageEnvelope{T}.LocalStreamVersion"/>) and applies a
   /// stream in this order, never by id. Null for a driver or function revision that does not return it, and then the
   /// events keep the order the read returned them in.
@@ -5684,7 +5684,7 @@ public sealed record InboxBatchRow : Whizbang.Core.Priority.IPrioritized {
   public bool IsEvent { get; init; }
 
   /// <summary>
-  /// The row's position in its stream, as <c>fetch_inbox_batch</c> ranked it (#2551): a received event by its stored
+  /// The row's position in its stream, as <c>fetch_inbox_batch_in_stream_order</c> ranked it (#2551): a received event by its stored
   /// version (the receive order), a command by its arrival, each kind in the arrival slots it holds. The drain
   /// dispatches a stream in this order and never by id. 0 when the fetch predates the column, and then the rows keep the
   /// order the fetch returned them in.

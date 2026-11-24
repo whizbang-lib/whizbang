@@ -27,6 +27,8 @@
 -- ---------------------------------------------------------------------------------------------
 -- get_stream_events: copied from its last word (566_ClaimsDecideThroughTheOwnershipTable.sql), ordered by stream version, never by id (582).
 -- ---------------------------------------------------------------------------------------------
+SELECT __SCHEMA__.drop_all_overloads('get_stream_events');
+
 -- <docs>fundamentals/perspectives/perspectives-with-actions#no-row-contract</docs>
 -- <docs>fundamentals/work-coordinator/commit-sequence</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FirstEventInStreamReadTests.cs:GetStreamEvents_ReturnsWhetherEachEventIsTheFirstInItsStreamAsync</tests>

@@ -19,11 +19,16 @@
 --                                   writer still records an arrival. The pending rows already queued are given theirs
 --                                   once, here, in the order they were dispatched in until now (received_at, then id),
 --                                   so a backlog drains as it would have.
---                fetch_inbox_batch  ranks a stream by kind: its events by stored version, its commands by arrival,
+--                fetch_inbox_batch_in_stream_order
+--                                   ranks a stream by kind: its events by stored version, its commands by arrival,
 --                                   each kind dealt into the arrival slots it holds, and returns the rank as
 --                                   stream_position. The byte budget's running total and the output follow it.
---                get_stream_events  returns each event's version as out_version, so the perspective drain applies a
+--                get_stream_events_in_stream_order
+--                                   returns each event's version as out_version, so the perspective drain applies a
 --                                   stream by the version each event carries.
+--                Both are new names, because a function's result never changes under its name (454): fetch_inbox_batch
+--                and get_stream_events keep their results and now read through them, in the same order, for a caller
+--                built before them. The drivers call the new ones.
 --
 --              Cost: the store adds one sequence value per element and one column per row (no index). The fetch adds a
 --              primary-key probe of wh_event_store per leased row and three window passes over the rows it already
@@ -31,10 +36,11 @@
 --
 --              Number 583: reserved for this change (580 to 584).
 --
--- Reversal: reversible (the down file restores the three functions' previous last words, drops the column default and
---           the column, and the sequence)
+-- Reversal: reversible (the down file restores the three functions' previous last words, drops the two new
+--           functions, the column and the sequence)
 -- Dependencies: 567 (store_inbox_messages), 230 (fetch_inbox_batch), 582 (get_stream_events), 581 (receive order)
--- Objects: wh_inbox.arrival_position, wh_inbox_arrival_seq, store_inbox_messages, fetch_inbox_batch, get_stream_events
+-- Objects: wh_inbox.arrival_position, wh_inbox_arrival_seq, store_inbox_messages, fetch_inbox_batch_in_stream_order,
+--          fetch_inbox_batch, get_stream_events_in_stream_order, get_stream_events
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
 CREATE SEQUENCE IF NOT EXISTS __SCHEMA__.wh_inbox_arrival_seq;
@@ -435,9 +441,9 @@ COMMENT ON FUNCTION __SCHEMA__.store_inbox_messages(JSONB, UUID, TIMESTAMPTZ, TI
   'Stores received inbox messages with deduplication (121: every arrival counted), priority (149), the work-state row (162). 236 (#1664): a message recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead letter, is stored even though its id was seen, and its work-state row names the dead letter for the completion to settle. 242 (#1720): a message the consumer skipped on receive (DiscardedOnReceive) is stored settled: processed, Stored and Published, the reason in error, never claimed, copied or returned as new work. 368: and without its body (event_data and metadata stored empty), since nothing reads a settled row''s body and deduplication does not need it. 252 (#1843): a repair child (RestoreIfMissing) whose id was seen but which neither the event store nor the inbox holds is stored again as state only, or stored settled as refused when its stream had earlier history truncated. 460 (#2363): refuses a redelivered event of a purged stream, recording why in wh_inbox_state.error. 567 (#2555): with the service''s switch on, no stored owner is pinned or leased to; leased by partition (wh_i_own). 583 (#2551): records each message''s arrival (wh_inbox.arrival_position) in the order the delivery lists it.';
 
 -- ---------------------------------------------------------------------------------------------
--- fetch_inbox_batch: copied from its last word (230), ranked in stream order and returning the rank (583).
+-- fetch_inbox_batch_in_stream_order: fetch_inbox_batch's last word (230), ranked in stream order and returning the
+-- rank (583). A new name: a function's result never changes under its name (454).
 -- ---------------------------------------------------------------------------------------------
-SELECT __SCHEMA__.drop_all_overloads('fetch_inbox_batch');
 
 -- <docs>fundamentals/work-coordinator/claim-loop</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReceivedStreamOrderSqlTests.cs:AWaitingEvent_IsNotFetched_UntilItIsStoredAsync</tests>
@@ -449,7 +455,7 @@ SELECT __SCHEMA__.drop_all_overloads('fetch_inbox_batch');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FetchInboxBatchStreamOrderSqlTests.cs:Commands_AreFetchedInTheOrderTheyArrived_NotByIdAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FetchInboxBatchStreamOrderSqlTests.cs:AStreamsEventsAndCommands_EachKindKeepsItsOrder_InTheArrivalSlotsItHoldsAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/StreamOrderNeverByIdGuardTests.cs:NoStoreReceiveOrReplayFunction_OrdersAStreamById_InItsLatestDefinitionAsync</tests>
-CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_inbox_batch(
+CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_inbox_batch_in_stream_order(
   p_stream_ids UUID[],
   p_instance_id UUID,
   p_max_per_stream INTEGER DEFAULT 100,
@@ -578,12 +584,50 @@ BEGIN
   ORDER BY b.stream_id, b.rank_in_stream;
 END;
 $$ LANGUAGE plpgsql;
+COMMENT ON FUNCTION __SCHEMA__.fetch_inbox_batch_in_stream_order(UUID[], UUID, INTEGER, BIGINT) IS
+  '583 (#2551): fetch_inbox_batch with each row''s stream position: a stream''s events by stored version, its commands by arrival, each kind dealt into the arrival slots it holds; never by id. A new name, because a function''s result never changes under its name (migration 454).';
 
 -- ---------------------------------------------------------------------------------------------
--- get_stream_events: copied from its last word (582), returning each event's version (583).
+-- fetch_inbox_batch: its result unchanged, its rows now in stream order: the new function's, less the rank (583).
 -- ---------------------------------------------------------------------------------------------
-SELECT __SCHEMA__.drop_all_overloads('get_stream_events');
+SELECT __SCHEMA__.drop_all_overloads('fetch_inbox_batch');
 
+-- <docs>fundamentals/event-store/version-ordering#dispatch-order</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/StreamOrderNeverByIdGuardTests.cs:NoStoreReceiveOrReplayFunction_OrdersAStreamById_InItsLatestDefinitionAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_inbox_batch(
+  p_stream_ids UUID[],
+  p_instance_id UUID,
+  p_max_per_stream INTEGER DEFAULT 100,
+  p_max_bytes BIGINT DEFAULT NULL
+) RETURNS TABLE(
+  message_id UUID,
+  stream_id UUID,
+  handler_name VARCHAR(200),
+  message_type VARCHAR(500),
+  event_data TEXT,
+  metadata JSONB,
+  scope JSONB,
+  status INTEGER,
+  attempts INTEGER,
+  partition_number INTEGER,
+  is_event BOOLEAN,
+  error TEXT,
+  priority INTEGER
+) AS $$
+BEGIN
+  -- 583 (#2551): the same rows in the same stream order as fetch_inbox_batch_in_stream_order, for a caller built before
+  -- it; never ranked by id.
+  RETURN QUERY
+  SELECT f.message_id, f.stream_id, f.handler_name, f.message_type, f.event_data, f.metadata, f.scope, f.status,
+         f.attempts, f.partition_number, f.is_event, f.error, f.priority
+  FROM __SCHEMA__.fetch_inbox_batch_in_stream_order(p_stream_ids, p_instance_id, p_max_per_stream, p_max_bytes) f
+  ORDER BY f.stream_id, f.stream_position;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ---------------------------------------------------------------------------------------------
+-- get_stream_events_in_stream_order: get_stream_events' last word (582), returning each event's version (583).
+-- ---------------------------------------------------------------------------------------------
 -- <docs>fundamentals/perspectives/perspectives-with-actions#no-row-contract</docs>
 -- <docs>fundamentals/work-coordinator/commit-sequence</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FirstEventInStreamReadTests.cs:GetStreamEvents_ReturnsWhetherEachEventIsTheFirstInItsStreamAsync</tests>
@@ -597,7 +641,7 @@ SELECT __SCHEMA__.drop_all_overloads('get_stream_events');
 -- <docs>fundamentals/event-store/version-ordering#reads</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FetchInboxBatchStreamOrderSqlTests.cs:GetStreamEvents_CarriesEachEventsVersion_InStreamOrderAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/StreamOrderNeverByIdGuardTests.cs:NoStoreReceiveOrReplayFunction_OrdersAStreamById_InItsLatestDefinitionAsync</tests>
-CREATE OR REPLACE FUNCTION __SCHEMA__.get_stream_events(
+CREATE OR REPLACE FUNCTION __SCHEMA__.get_stream_events_in_stream_order(
   p_instance_id UUID,
   p_stream_ids UUID[],
   p_now TIMESTAMPTZ DEFAULT NOW(),
@@ -742,11 +786,40 @@ BEGIN
   ORDER BY pe.stream_id, es.commit_sequence ASC NULLS LAST, es.version;
 END;
 $$ LANGUAGE plpgsql;
+COMMENT ON FUNCTION __SCHEMA__.get_stream_events_in_stream_order(UUID, UUID[], TIMESTAMPTZ, INTEGER) IS
+  '583 (#2551): get_stream_events with each event''s version (out_version), its stream position, which the perspective drain applies a stream by. A new name, because a function''s result never changes under its name (migration 454).';
 
-COMMENT ON FUNCTION __SCHEMA__.get_stream_events(UUID, UUID[], TIMESTAMPTZ, INTEGER) IS
-  'Atomic claim+fetch of pending perspective work for the given streams (slice 25): claims unleased '
-  'or lapsed rows for the instance (bumping attempts), gates unstamped rows behind a grace window '
-  '(058) and streams owned by another live instance (059), then returns the rows leased to the '
-  'instance with their event bodies, commit sequence, attempts and failures (139), and whether each '
-  'event is the first in its stream (264). 536: the event, its body and the stream''s ledger row are each read by one '
-  'probe per work row, so a call reads what its batch holds and never the whole event store or ledger. 566 (#2554, #2555): with the service''s switch on (wh_partition_ownership_by_map), decided through wh_i_own alone.';
+-- ---------------------------------------------------------------------------------------------
+-- get_stream_events: its result unchanged, read through the new function, less the version (583).
+-- ---------------------------------------------------------------------------------------------
+SELECT __SCHEMA__.drop_all_overloads('get_stream_events');
+
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/StreamOrderNeverByIdGuardTests.cs:NoStoreReceiveOrReplayFunction_OrdersAStreamById_InItsLatestDefinitionAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.get_stream_events(
+  p_instance_id UUID,
+  p_stream_ids UUID[],
+  p_now TIMESTAMPTZ DEFAULT NOW(),
+  p_lease_seconds INTEGER DEFAULT 300
+) RETURNS TABLE(
+  out_stream_id UUID,
+  out_event_id UUID,
+  out_event_type TEXT,
+  out_event_data TEXT,
+  out_metadata TEXT,
+  out_scope TEXT,
+  out_event_work_id UUID,
+  out_perspective_name VARCHAR(200),
+  out_commit_sequence BIGINT,
+  out_attempts INTEGER,
+  out_failures INTEGER,
+  out_first_in_stream BOOLEAN
+) AS $$
+BEGIN
+  -- 583 (#2551): the same rows in the same order as get_stream_events_in_stream_order, for a caller built before it.
+  RETURN QUERY
+  SELECT g.out_stream_id, g.out_event_id, g.out_event_type, g.out_event_data, g.out_metadata, g.out_scope,
+         g.out_event_work_id, g.out_perspective_name, g.out_commit_sequence, g.out_attempts, g.out_failures,
+         g.out_first_in_stream
+  FROM __SCHEMA__.get_stream_events_in_stream_order(p_instance_id, p_stream_ids, p_now, p_lease_seconds) g;
+END;
+$$ LANGUAGE plpgsql;

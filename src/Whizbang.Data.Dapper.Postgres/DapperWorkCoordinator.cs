@@ -466,7 +466,8 @@ public partial class DapperWorkCoordinator(
     var prefix = await _prefixAsync(connection, cancellationToken);
     var now = DateTimeOffset.UtcNow;
     var results = await connection.QueryAsync<StreamEventRow>(
-      $"SELECT * FROM {prefix}get_stream_events(@p_instance_id, @p_stream_ids, @p_now)",
+      // 583 (#2551): the read that carries each event's version, its stream position.
+      $"SELECT * FROM {prefix}get_stream_events_in_stream_order(@p_instance_id, @p_stream_ids, @p_now)",
       new { p_instance_id = instanceId, p_stream_ids = streamIds, p_now = now },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
@@ -570,7 +571,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
     var rows = await connection.QueryAsync<InboxBatchRowDto>(
-      $"SELECT * FROM {prefix}fetch_inbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
+      // 583 (#2551): the fetch that ranks each stream in stream order and returns the rank.
+      $"SELECT * FROM {prefix}fetch_inbox_batch_in_stream_order(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
       // NULL = count bound only, the pre-byte-budget behavior.
       new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream, p_max_bytes = maxBytes },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);

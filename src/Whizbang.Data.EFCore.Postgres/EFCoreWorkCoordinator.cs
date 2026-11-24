@@ -6243,7 +6243,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var functionName = BuildSchemaQualifiedName(schema, "get_stream_events");
+    // 583 (#2551): the read that carries each event's version, its stream position.
+    var functionName = BuildSchemaQualifiedName(schema, "get_stream_events_in_stream_order");
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -6307,8 +6308,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // Pre-264 SQL function: no first-in-stream fact. Field stays false: an event whose position the read does not
       // know is never the first in its stream (#1878).
     }
-    // 583 (#2551): the event's version, its stream position; absent before 583, and then the events keep the read's order.
-    var versionOrdinal = _ordinalOrAbsent(reader, "out_version");
+    // 583 (#2551): the event's version, its stream position.
+    var versionOrdinal = reader.GetOrdinal("out_version");
     while (await reader.ReadAsync(cancellationToken)) {
       // AOT-safe: read columns by ordinal, parse event_data as string
       var metadataOrdinal = reader.GetOrdinal("out_metadata");
@@ -6334,9 +6335,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           ? reader.GetInt32(failuresOrdinal)
           : 0,
         IsFirstInStream = firstInStreamOrdinal >= 0 && reader.GetBoolean(firstInStreamOrdinal),
-        Version = versionOrdinal >= 0 && !await reader.IsDBNullAsync(versionOrdinal, cancellationToken).ConfigureAwait(false)
-          ? reader.GetInt64(versionOrdinal)
-          : null,
+        Version = reader.GetInt64(versionOrdinal),
       });
     }
 
@@ -6547,7 +6546,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var functionName = BuildSchemaQualifiedName(schema, "fetch_inbox_batch");
+    // 583 (#2551): the fetch that ranks each stream in stream order and returns the rank.
+    var functionName = BuildSchemaQualifiedName(schema, "fetch_inbox_batch_in_stream_order");
 
     var streamArr = AsArray(streamIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -6573,9 +6573,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // 149: the row's priority; a fetch_inbox_batch that predates the column leaves it undeclared, which the
     // dispatch worker reads as the standard band.
     var priorityOrdinal = _ordinalOrAbsent(reader, "priority");
-    // 583 (#2551): the row's position in its stream; a fetch that predates the column leaves 0, and the rows keep the
-    // order the fetch returned them in.
-    var streamPositionOrdinal = _ordinalOrAbsent(reader, "stream_position");
+    // 583 (#2551): the row's position in its stream.
+    var streamPositionOrdinal = reader.GetOrdinal("stream_position");
     while (await reader.ReadAsync(cancellationToken)) {
       results.Add(new InboxBatchRow {
         MessageId = reader.GetGuid(0),
@@ -6593,7 +6592,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           ? reader.GetString(errorOrdinal)
           : null,
         Priority = priorityOrdinal >= 0 ? reader.GetInt32(priorityOrdinal) : 0,
-        StreamPosition = streamPositionOrdinal >= 0 ? reader.GetInt64(streamPositionOrdinal) : 0,
+        StreamPosition = reader.GetInt64(streamPositionOrdinal),
       });
     }
     return results;

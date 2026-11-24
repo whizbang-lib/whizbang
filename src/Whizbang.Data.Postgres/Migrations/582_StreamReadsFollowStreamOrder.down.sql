@@ -6,6 +6,7 @@
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
 -- get_stream_events: its last word before 582 (566_ClaimsDecideThroughTheOwnershipTable.sql).
+SELECT __SCHEMA__.drop_all_overloads('get_stream_events');
 CREATE OR REPLACE FUNCTION __SCHEMA__.get_stream_events(
   p_instance_id UUID,
   p_stream_ids UUID[],

@@ -591,6 +591,8 @@ COMMENT ON FUNCTION __SCHEMA__.get_stream_events(UUID, UUID[], TIMESTAMPTZ, INTE
   'event is the first in its stream (264). 536: the event, its body and the stream''s ledger row are each read by one '
   'probe per work row, so a call reads what its batch holds and never the whole event store or ledger. 566 (#2554, #2555): with the service''s switch on (wh_partition_ownership_by_map), decided through wh_i_own alone.';
 
+DROP FUNCTION IF EXISTS __SCHEMA__.fetch_inbox_batch_in_stream_order(UUID[], UUID, INTEGER, BIGINT);
+DROP FUNCTION IF EXISTS __SCHEMA__.get_stream_events_in_stream_order(UUID, UUID[], TIMESTAMPTZ, INTEGER);
 -- Dropping the column drops its default; IF EXISTS keeps the file safe to run where 583 never ran.
 ALTER TABLE __SCHEMA__.wh_inbox DROP COLUMN IF EXISTS arrival_position;
 DROP SEQUENCE IF EXISTS __SCHEMA__.wh_inbox_arrival_seq;
