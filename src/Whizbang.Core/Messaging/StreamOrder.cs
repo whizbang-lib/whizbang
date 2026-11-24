@@ -34,6 +34,15 @@ public static class StreamOrder {
     return [.. rows.OrderBy(static r => r.StreamPosition <= 0 ? long.MaxValue : r.StreamPosition)];
   }
 
+  /// <summary>Orders fetched outbox rows by their emission position, the order their stream was emitted in (#2551).</summary>
+  /// <param name="rows">The rows of one stream, or of several streams grouped afterwards.</param>
+  /// <returns>The rows by <see cref="OutboxBatchRow.StreamPosition"/>, the fetch's own order breaking a tie.</returns>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/StreamOrderTests.cs:OutboxRows_AreOrderedByTheirEmissionPosition_NotByIdAsync</tests>
+  public static List<OutboxBatchRow> InStreamOrder(IEnumerable<OutboxBatchRow> rows) {
+    ArgumentNullException.ThrowIfNull(rows);
+    return [.. rows.OrderBy(static r => r.StreamPosition <= 0 ? long.MaxValue : r.StreamPosition)];
+  }
+
   /// <summary>Orders one stream's events by the version each carries.</summary>
   /// <param name="events">The events of one stream.</param>
   /// <returns>The events by <see cref="MessageEnvelope{T}.LocalStreamVersion"/>, the read's own order breaking a tie.</returns>

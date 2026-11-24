@@ -49,10 +49,6 @@ public partial class StreamOrderSourceGuardTests {
       "collectives of different streams share no stream position; an unstamped one is placed by id (#2449), the replay's fallback"),
     ("CollectiveReplayStart.cs", ": collective.MessageId.Value.CompareTo(after) > 0;",
       "a collective or a start with no commit sequence (unstamped) has no position across streams: the replay's fallback"),
-    ("OutboxDrainWorker.cs", "List<OutboxBatchRow> rows = [.. rowsRaw.OrderBy(static r => r.MessageId)];",
-      "publishing matches the outbox continuation, still an id cursor (#917, wh_continue_outbox_streams); a #2551 follow-up"),
-    ("OutboxDrainWorker.cs", "(_, prior) => row.MessageId.CompareTo(prior) > 0 ? row.MessageId : prior);",
-      "that continuation cursor: the largest id published; a #2551 follow-up"),
   ];
 
   // A sort keyed on an id, an id comparison, or the retired helper.

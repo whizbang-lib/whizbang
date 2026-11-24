@@ -456,8 +456,9 @@ public class OutboxStreamRunSqlTests : EFCoreTestBase {
   [Test]
   public async Task TheRunIndex_ServesTheRunWalkAndTheStoreEmptinessProbeAsync() {
     // idx_outbox_stream_run replaced idx_outbox_stream_unpublished (160). The probe that index was
-    // added for must still be answered from an index, and the run walk must be a range scan on the
-    // run index in its own order (no Sort), or the run is priced by the stream's backlog.
+    // added for must still be answered from an index, and the run walk must be a range scan on a
+    // run index in its own order (no Sort), or the run is priced by the stream's backlog. Since 579
+    // (#2551) the walk is in emission order, on idx_outbox_stream_emission.
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
     var stream = Guid.CreateVersion7();
@@ -471,11 +472,11 @@ public class OutboxStreamRunSqlTests : EFCoreTestBase {
     var walk = await _explainAsync(conn, @"
       SELECT o.message_id FROM wh_outbox o
       WHERE o.stream_id = @s AND o.processed_at IS NULL AND o.published_at IS NULL AND o.coalesce_group IS NULL
-      ORDER BY o.created_at, o.message_id
+      ORDER BY o.emission_position
       LIMIT 10", stream);
 
-    await Assert.That(probe).Contains("idx_outbox_stream_run");
-    await Assert.That(walk).Contains("idx_outbox_stream_run");
+    await Assert.That(probe).Contains("idx_outbox_stream_").Because("either run index answers the emptiness probe");
+    await Assert.That(walk).Contains("idx_outbox_stream_emission");
     await Assert.That(walk).DoesNotContain("Sort")
       .Because("the index is keyed in the walk's order, so the LIMIT stops the scan inside the index");
   }

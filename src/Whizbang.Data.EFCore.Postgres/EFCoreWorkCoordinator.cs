@@ -6534,7 +6534,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var functionName = BuildSchemaQualifiedName(schema, "fetch_outbox_batch");
+    // 579 (#2551): the stream-ordered fetch, which ranks each stream by emission position and returns it.
+    var functionName = BuildSchemaQualifiedName(schema, "fetch_outbox_batch_in_stream_order");
 
     var streamArr = AsArray(streamIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -6580,9 +6581,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // Priority step 1 (151): the row's number; a fetch_outbox_batch that predates 151 leaves it undeclared and the
     // drain falls back to the number stored inside the envelope.
     var priorityOrdinal = _ordinalOrAbsent(reader, "priority");
+    var positionOrdinal = reader.GetOrdinal("stream_position");
     while (await reader.ReadAsync(cancellationToken)) {
       results.Add(new OutboxBatchRow {
         MessageId = reader.GetGuid(0),
+        StreamPosition = reader.GetInt64(positionOrdinal),
         StreamId = await reader.IsDBNullAsync(1, cancellationToken).ConfigureAwait(false) ? null : reader.GetGuid(1),
         Destination = await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(2),
         MessageType = reader.GetString(3),
@@ -6627,18 +6630,19 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var functionName = BuildSchemaQualifiedName(schema, "wh_continue_outbox_streams");
+    // 579 (#2551): the continuation in emission order, after the last position the drain published.
+    var functionName = BuildSchemaQualifiedName(schema, "wh_continue_outbox_streams_in_emission_order");
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     await using var cmd = __scope.Connection.CreateCoordinatorCommand();
-    cmd.CommandText = $"SELECT * FROM {functionName}(@p_instance_id, @p_stream_ids, @p_after_ids, @p_run_length, @p_max_bytes)";
+    cmd.CommandText = $"SELECT * FROM {functionName}(@p_instance_id, @p_stream_ids, @p_after_positions, @p_run_length, @p_max_bytes)";
     cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
     cmd.Parameters.Add(new NpgsqlParameter(P_STREAM_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = streams.Select(s => s.StreamId).ToArray()
     });
-    cmd.Parameters.Add(new NpgsqlParameter("p_after_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
-      Value = streams.Select(s => s.LastPublishedMessageId).ToArray()
+    cmd.Parameters.Add(new NpgsqlParameter("p_after_positions", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+      Value = streams.Select(s => s.LastPublishedPosition).ToArray()
     });
     cmd.Parameters.Add(new NpgsqlParameter("p_run_length", runLength));
     cmd.Parameters.Add(new NpgsqlParameter("p_max_bytes", NpgsqlTypes.NpgsqlDbType.Bigint) { Value = (object?)maxBytes ?? DBNull.Value });
@@ -6655,7 +6659,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return results;
   }
 
-  /// <summary>One row of <c>wh_continue_outbox_streams</c>, in <c>fetch_outbox_batch</c>'s column order.</summary>
+  /// <summary>One row of <c>wh_continue_outbox_streams_in_emission_order</c>, in <c>fetch_outbox_batch_in_stream_order</c>'s column order.</summary>
   private static async Task<OutboxBatchRow> _readContinuedOutboxRowAsync(
       System.Data.Common.DbDataReader reader, CancellationToken cancellationToken) => new() {
         MessageId = reader.GetGuid(0),
@@ -6676,6 +6680,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         OriginCommitSequence = await _valueOrNullAsync(reader, 14, reader.GetInt64, cancellationToken),
         Error = await _stringOrNullAsync(reader, 15, cancellationToken),
         Priority = reader.GetInt32(16),
+        StreamPosition = reader.GetInt64(17),
       };
 
   private static async Task<string?> _stringOrNullAsync(

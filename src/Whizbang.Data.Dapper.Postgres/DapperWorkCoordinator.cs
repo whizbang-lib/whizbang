@@ -537,7 +537,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
     var rows = await connection.QueryAsync<OutboxBatchRowDto>(
-      $"SELECT * FROM {prefix}fetch_outbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
+      // 579 (#2551): the stream-ordered fetch, which ranks each stream by emission position and returns it.
+      $"SELECT * FROM {prefix}fetch_outbox_batch_in_stream_order(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
       new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream, p_max_bytes = maxBytes },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
@@ -560,17 +561,18 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var prefix = await _prefixAsync(__scope.Connection, cancellationToken);
     var rows = await __scope.Attributed.QueryAsync<OutboxBatchRowDto>(
-      $"SELECT * FROM {prefix}wh_continue_outbox_streams(@p_instance_id, @p_stream_ids, @p_after_ids, @p_run_length, @p_max_bytes)",
+      // 579 (#2551): the continuation in emission order, after the last position the drain published.
+      $"SELECT * FROM {prefix}wh_continue_outbox_streams_in_emission_order(@p_instance_id, @p_stream_ids, @p_after_positions, @p_run_length, @p_max_bytes)",
       new {
         p_instance_id = instanceId,
         p_stream_ids = streams.Select(s => s.StreamId).ToArray(),
-        p_after_ids = streams.Select(s => s.LastPublishedMessageId).ToArray(),
+        p_after_positions = streams.Select(s => s.LastPublishedPosition).ToArray(),
         p_run_length = runLength,
         p_max_bytes = maxBytes
       },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
-    // Mapped exactly as fetch_outbox_batch is, whose shape the continuation returns.
+    // Mapped exactly as fetch_outbox_batch_in_stream_order is, whose shape the continuation returns.
     // #2556: each fetched message is recorded under its stream's claimed tenure, which its result then names.
     return _recorded(rows.Select(_toOutboxBatchRow).ToList(), r => r.MessageId, r => r.StreamId);
   }
@@ -767,6 +769,7 @@ public partial class DapperWorkCoordinator(
     IsEvent = r.is_event,
     Error = r.error,
     Priority = r.priority,
+    StreamPosition = r.stream_position,
   };
 
   private sealed class OutboxBatchRowDto {
@@ -786,6 +789,8 @@ public partial class DapperWorkCoordinator(
     public string? error { get; set; }
     // Priority step 1 (151): absent from a fetch_outbox_batch that predates 151, which Dapper leaves at zero.
     public int priority { get; set; }
+    // 579 (#2551): the row's emission position, its place in its stream.
+    public long stream_position { get; set; }
   }
 
   private sealed class InboxBatchRowDto {

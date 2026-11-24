@@ -65,7 +65,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// Per drain cycle (#917): the last message published on each routable stream, the cursor a stream
   /// is continued from. Cleared at the start of each cycle and taken by each continuation round.
   /// </summary>
-  private readonly ConcurrentDictionary<Guid, Guid> _publishedThrough = new();
+  private readonly ConcurrentDictionary<Guid, OutboxStreamCursor> _publishedThrough = new();
 
   /// <summary>
   /// Per drain cycle (#917): the drain keys of streams on which a row failed to publish. A stream in
@@ -624,11 +624,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         return;
       }
 
-      // Published in id order because the stream's continuation is still an id cursor (#917): _markPublished keeps the
-      // largest id published, and wh_continue_outbox_streams returns the rows above it. Publishing in any other order
-      // could leave a row below the cursor unpublished. The one allowed id sort in the workers (StreamOrderSourceGuardTests),
-      // until the continuation carries a stream position (#2551 follow-up).
-      List<OutboxBatchRow> rows = [.. rowsRaw.OrderBy(static r => r.MessageId)];
+      // #2551: published in emission order, never by id. _markPublished keeps the last position published, and the
+      // continuation returns the rows after it, so a row emitted earlier is never left behind the cursor.
+      List<OutboxBatchRow> rows = StreamOrder.InStreamOrder(rowsRaw);
 
       var newRowList = new List<OutboxBatchRow>(rows.Count);
       foreach (var row in rows) {
@@ -1124,15 +1122,16 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private void _markStreamFailed(OutboxBatchRow row) => _failedStreams[_drainKey(row)] = 0;
 
   /// <summary>
-  /// Moves a routable stream's cursor to this row (#917). Rows of a stream publish in message-id order,
-  /// so the largest id published is the cursor; a singleton row has no stream to continue.
+  /// Moves a routable stream's cursor to this row (#917). Rows of a stream publish in emission order (#2551), so the
+  /// last position published is the cursor; a singleton row has no stream to continue.
   /// </summary>
   private void _markPublished(OutboxBatchRow row) {
     if (row.StreamId is not Guid streamId || streamId == Guid.Empty) {
       return;
     }
-    _publishedThrough.AddOrUpdate(streamId, row.MessageId,
-      (_, prior) => row.MessageId.CompareTo(prior) > 0 ? row.MessageId : prior);
+    var cursor = new OutboxStreamCursor(streamId, row.MessageId) { LastPublishedPosition = row.StreamPosition };
+    _publishedThrough.AddOrUpdate(streamId, cursor,
+      (_, prior) => cursor.LastPublishedPosition > prior.LastPublishedPosition ? cursor : prior);
   }
 
   /// <summary>
@@ -1162,7 +1161,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     for (var round = 0; round < _options.MaxContinuationRounds; round++) {
       var cursors = _publishedThrough
         .Where(kv => !_failedStreams.ContainsKey(kv.Key))
-        .Select(kv => new OutboxStreamCursor(kv.Key, kv.Value))
+        .Select(kv => kv.Value)
         .ToList();
       _publishedThrough.Clear();
       if (cursors.Count == 0) {

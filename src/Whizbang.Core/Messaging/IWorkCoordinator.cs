@@ -5710,7 +5710,15 @@ public sealed record PendingPerspectiveEvent(Guid EventWorkId, Guid EventId, lon
 /// <param name="StreamId">The outbox stream.</param>
 /// <param name="LastPublishedMessageId">The last message the drain published on the stream.</param>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
-public sealed record OutboxStreamCursor(Guid StreamId, Guid LastPublishedMessageId);
+public sealed record OutboxStreamCursor(Guid StreamId, Guid LastPublishedMessageId) {
+  /// <summary>
+  /// The stream position of the last row the drain published (<see cref="OutboxBatchRow.StreamPosition"/>, #2551): the
+  /// continuation returns the rows after it in emission order. 0 when nothing carries one.
+  /// </summary>
+  /// <docs>fundamentals/event-store/version-ordering#dispatch-order</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxEmissionOrderTests.cs:TheContinuation_ResumesAfterTheLastPositionPublished_NotTheLargestIdAsync</tests>
+  public long LastPublishedPosition { get; init; }
+}
 
 /// <summary>
 /// One leased outbox row returned from <see cref="IWorkCoordinator.FetchOutboxBatchAsync"/>.
@@ -5718,6 +5726,14 @@ public sealed record OutboxStreamCursor(Guid StreamId, Guid LastPublishedMessage
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
 public sealed record OutboxBatchRow : Whizbang.Core.Priority.IPrioritized {
+  /// <summary>
+  /// The row's position in its stream (#2551): its emission position, the order store_outbox_messages was handed the
+  /// stream's messages in. The drain publishes a stream in this order and never by id; 0 when the fetch predates it.
+  /// </summary>
+  /// <docs>fundamentals/event-store/version-ordering#dispatch-order</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxEmissionOrderTests.cs:AStreamsRows_AreFetchedInEmissionOrder_WithTheirPositions_ThoughTheirIdsSortOtherwiseAsync</tests>
+  public long StreamPosition { get; init; }
+
   /// <summary>Priority step 1: the number the producer declared, stored on the row (0 when the fetch predates the column).</summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MessagePrioritySqlTests.cs:FetchOutboxBatch_ReturnsTheRowsPriorityAsync</tests>
   public int Priority { get; init; }

@@ -28,6 +28,21 @@ public class StreamOrderTests {
   }
 
   [Test]
+  public async Task OutboxRows_AreOrderedByTheirEmissionPosition_NotByIdAsync() {
+    OutboxBatchRow[] rows = [_outbox(_ids[0], 3), _outbox(_ids[1], 1), _outbox(_ids[2], 0), _outbox(_ids[0], 2)];
+
+    var ordered = StreamOrder.InStreamOrder(rows);
+
+    await Assert.That(ordered.Select(r => r.StreamPosition)).IsEquivalentTo([1L, 2L, 3L, 0L],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("a stream is published in the order it was emitted; a row without a position keeps its place after them");
+    await Assert.That(() => StreamOrder.InStreamOrder((IEnumerable<OutboxBatchRow>)null!)).Throws<ArgumentNullException>();
+  }
+
+  private static OutboxBatchRow _outbox(Guid id, long position) =>
+    new() { MessageId = id, MessageType = "T", EventData = "{}", Metadata = "{}", StreamPosition = position };
+
+  [Test]
   public async Task InboxRows_WithoutAPosition_KeepTheFetchsOrder_AfterThePositionedOnesAsync() {
     InboxBatchRow[] rows = [_row(_ids[2], 0), _row(_ids[0], 0), _row(_ids[1], 5)];
 
