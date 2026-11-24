@@ -170,25 +170,23 @@ said so only at debug level.
 So the phase polls the try-lock with backoff for up to the schema command timeout, in a transaction
 of its own (transaction scope for the reason the next section gives), logs once at Information that
 it is waiting, and gives up with a warning naming the key. Giving up is safe: every reader tolerates
-the older forms, and the next start tries again. The two generated call sites (the migrator path and
-the waiter's takeover path) share one body, `rewriteStoredFormsAsync`, so they cannot drift.
+the older forms, and the next start tries again. The migrator path and the waiter's takeover path reach it through
+one call site, the work the shared election's `MigratorElection.RunPreLockAsync` runs (#2561), so they cannot drift.
 `CanonicalTemporalRewritePhaseTests.AnInstanceWaitsForTheLockAndAppliesOnceItIsReleasedAsync` and
-`CanonicalTemporalRewriteWiringTests.AWaiterThatTakesOverRunsTheRewriteBeforeTheDdlAsync` are the
-guards.
+`CanonicalTemporalRewriteWiringTests.TheRewriteRunsAfterTheElectionOnTheMigratorAsync` are the guards.
 
 The wait covers the race, not the queue. The budget is the schema command timeout, ten minutes, and
 an instance that could not be staged and started while a migrator held the key for a long migration
 sat inside the rewrite for the length of it: it logged nothing about deferring and never reached the
 deferral that watches the key and reports it, and the three `SchemaInitializationConcurrencyTests`
-deferral cases timed out on exactly that. So the generated initializer probes the key before it
+deferral cases timed out on exactly that. So the shared election (`MigratorElection`) probes the key before it
 rewrites (`AdvisoryLockProbe.IsHeldElsewhereAsync`), and an instance that finds it held goes into the
 same `SchemaMigrationDeferral.DeferAsync` a waiter uses, watching the schema key instead of the duty
 key. When that wait ends it rewrites either way: a settled no-op under a schema someone else brought
 up to date, and the fast path exits; the real thing over a schema whose holder released it still
 behind, and the loop then contends for the DDL lock as it always did. The phase's own wait still
 absorbs the race where a sibling takes the key between the probe and the rewrite.
-`CanonicalTemporalRewriteWiringTests.AnInstanceThatWouldRewriteBehindAHeldSchemaLockWaitsOnTheLockFirstAsync`
-pins the order; the deferral cases are the behavior.
+The deferral cases are the behavior, and they pin the order.
 
 ### Reassembling the key is not optional
 
