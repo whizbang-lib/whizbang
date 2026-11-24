@@ -30,6 +30,9 @@ public sealed class StreamIntegrityMetrics {
   /// <summary>OpenTelemetry meter name.</summary>
   public const string METER_NAME = "Whizbang.StreamIntegrity";
 
+  /// <summary>The tag naming the origin service a reading is about.</summary>
+  public const string ORIGIN_SERVICE_ID_TAG = "origin_service_id";
+
   /// <summary>The tag naming how a ledger bucket opened or closed (#2256).</summary>
   public const string HOW_TAG = "how";
 
@@ -267,6 +270,23 @@ public sealed class StreamIntegrityMetrics {
   /// the misattributed-origin correction. Each batch is also logged at Warning, per type, origin and owner.</summary>
   /// <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
   public PassiveCounter<long> MisattributedOriginsCorrected { get; }
+
+  /// <summary>#2544: events named in position requests sent to their origins, tagged by <c>origin</c>.</summary>
+  /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+  public PassiveCounter<long> OriginPositionsRequested { get; }
+
+  /// <summary>#2544: received events whose missing origin position an origin's answer filled, tagged by <c>origin</c>.</summary>
+  /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+  public PassiveCounter<long> OriginPositionsFilled { get; }
+
+  /// <summary>#2544: position answers that did not fill, tagged by <c>origin</c> and <c>answer</c>: <c>not_yet_stamped</c>
+  /// (asked again on the next lap) or <c>unknown</c> (never asked again).</summary>
+  /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+  public PassiveCounter<long> OriginPositionsUnfilled { get; }
+
+  /// <summary>#2544: perspective cursors rewound because a filled position changed the order of a stream they applied.</summary>
+  /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+  public PassiveCounter<long> OriginPositionRewinds { get; }
 
   /// <summary>Stored events received before origins were recorded that re-attribution gave their owner as origin.</summary>
   /// <docs>resilience/stream-integrity#re-attribution</docs>
@@ -521,6 +541,30 @@ public sealed class StreamIntegrityMetrics {
     MisattributedOriginsCorrected = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.misattributed_origins_corrected",
       description: "Stored events recorded under an origin that does not own their type, re-attributed to the owner");
+    OriginPositionsRequested = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.origin_positions_requested",
+      description: "Received events named in position requests sent to their origins; tagged by origin");
+    OriginPositionsFilled = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.origin_positions_filled",
+      description: "Received events whose missing origin position an origin's answer filled; tagged by origin");
+    OriginPositionsUnfilled = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.origin_positions_not_filled",
+      description: "Position answers that filled nothing; tagged by origin and answer (not_yet_stamped | unknown)");
+    OriginPositionRewinds = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.origin_position_rewinds",
+      description: "Perspective cursors rewound because a filled origin position changed a stream's order");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.origin_positions_unfilled",
+      () => {
+        var unfilled = _unfilledPositions;
+        var measurements = new Measurement<long>[unfilled.Count];
+        for (var i = 0; i < unfilled.Count; i++) {
+          measurements[i] = new Measurement<long>(unfilled[i].Unfilled,
+            new KeyValuePair<string, object?>(ORIGIN_SERVICE_ID_TAG, unfilled[i].OriginServiceId.ToString()));
+        }
+        return measurements;
+      },
+      description: "Received events still held without their origin's commit sequence, per origin (digest-eligible events)");
     OriginsReattributed = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.origins_reattributed",
       description: "Stored events received before origins were recorded that re-attribution gave their owner as origin");
@@ -551,6 +595,10 @@ public sealed class StreamIntegrityMetrics {
       "whizbang.stream_integrity.redelivery_answers_capped",
       description: "Redelivery answers stopped at the origin's event bound with more selected; tagged by kind (window | ordinary)");
     _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.unaudited_seals",
+      () => Volatile.Read(ref _unauditedSeals),
+      description: "Seals this service holds for origins it does not audit (no checkpoint, or none with a request address): they cannot advance and hold no cut");
+    _ = meter.CreateObservableGauge(
       "whizbang.stream_integrity.backfill_windows_in_flight",
       () => _backfill.WindowsInFlight,
       description: "Paced backfill windows requested and awaiting their answer");
@@ -574,7 +622,7 @@ public sealed class StreamIntegrityMetrics {
         var measurements = new Measurement<long>[seals.Count];
         for (var i = 0; i < seals.Count; i++) {
           measurements[i] = new Measurement<long>(seals[i].SealedThrough,
-            new KeyValuePair<string, object?>("origin_service_id", seals[i].OriginServiceId.ToString()));
+            new KeyValuePair<string, object?>(ORIGIN_SERVICE_ID_TAG, seals[i].OriginServiceId.ToString()));
         }
         return measurements;
       },
@@ -740,7 +788,7 @@ public sealed class StreamIntegrityMetrics {
     var measurements = new Measurement<double>[reading.Origins.Count];
     for (var i = 0; i < reading.Origins.Count; i++) {
       measurements[i] = new Measurement<double>(reading.Origins[i].Percent,
-        new KeyValuePair<string, object?>("origin_service_id", reading.Origins[i].OriginServiceId.ToString()));
+        new KeyValuePair<string, object?>(ORIGIN_SERVICE_ID_TAG, reading.Origins[i].OriginServiceId.ToString()));
     }
     return measurements;
   }
@@ -792,6 +840,29 @@ public sealed class StreamIntegrityMetrics {
   private static readonly string[] _cappedKinds = ["window", "ordinary"];
 
   private volatile BackfillGaugeSnapshot _backfill = BackfillGaugeSnapshot.Empty;
+
+  private long _unauditedSeals;
+
+  private volatile IReadOnlyList<(Guid OriginServiceId, long Unfilled)> _unfilledPositions = [];
+
+  /// <summary>
+  /// Publishes, per origin, how many received events this service still holds without the origin's commit sequence
+  /// (#2544), read each maintenance cycle by the position fill.
+  /// </summary>
+  /// <param name="unfilled">The count per origin; null resets to none.</param>
+  /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginPositionFillSqlTests.cs:Step_AsksEachOriginInBoundedBatches_CountsAndLogsEachAsync</tests>
+  public void UpdateUnfilledOriginPositions(IReadOnlyList<(Guid OriginServiceId, long Unfilled)>? unfilled) =>
+    _unfilledPositions = unfilled ?? [];
+
+  /// <summary>
+  /// Publishes how many seals this service holds for origins it does not audit (#2544): no checkpoint from the origin was
+  /// recorded, or none announced a request address, so the seal has no path to advance. Read each maintenance cycle.
+  /// </summary>
+  /// <param name="count">The seals nothing audits.</param>
+  /// <docs>resilience/stream-integrity#a-seal-nothing-audits</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutOfUnauditedOriginSqlTests.cs:Step_WarnsNamingEachUnauditedOrigin_AndGaugesHowManyThereAreAsync</tests>
+  public void UpdateUnauditedSeals(long count) => Volatile.Write(ref _unauditedSeals, count);
 
   /// <summary>Publishes the paced backfill's current state to its gauges (#2092), swapped atomically like the ledger's.</summary>
   /// <param name="snapshot">The reading; null resets to empty.</param>
@@ -892,7 +963,7 @@ public sealed class StreamIntegrityMetrics {
     new(on ? 1 : 0, new KeyValuePair<string, object?>(CHECK_TAG, check));
 
   private static KeyValuePair<string, object?> _lane(LaneSeal lane) =>
-    new("origin_service_id", lane.OriginServiceId.ToString());
+    new(ORIGIN_SERVICE_ID_TAG, lane.OriginServiceId.ToString());
 
   /// <summary>The <c>reason</c> of <see cref="SealLowered"/>: the origin rewrote history this service had verified.</summary>
   public const string SEAL_LOWERED_REWRITE = Whizbang.Core.Messaging.IntegrityHistoryMoved.REWRITE;

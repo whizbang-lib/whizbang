@@ -1,0 +1,161 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using Npgsql;
+using NpgsqlTypes;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives;
+
+namespace Whizbang.Data.Postgres;
+
+/// <summary>The next batch of missing origin positions to ask one origin for (#2544).</summary>
+/// <param name="OriginServiceId">The origin the events were received from.</param>
+/// <param name="EventIds">The events to ask for; empty when every row the batch read was answered unknown before.</param>
+/// <param name="LapEnded">True when the walk reached the end of the origin's held rows and pauses before the next lap.</param>
+/// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+public sealed record OriginPositionAsk(Guid OriginServiceId, IReadOnlyList<Guid> EventIds, bool LapEnded);
+
+/// <summary>What an origin answered for one asked event (#2544).</summary>
+/// <param name="EventId">The event.</param>
+/// <param name="State"><c>positioned</c>, <c>unstamped</c>, <c>archived</c> or <c>unknown</c>.</param>
+/// <param name="CommitSequence">The origin's commit sequence when it has one.</param>
+/// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+public sealed record OriginPositionLookup(Guid EventId, string State, long? CommitSequence);
+
+/// <summary>What applying one origin's position answer did (#2544).</summary>
+/// <param name="Filled">Positions filled (only ever NULL ones).</param>
+/// <param name="UnknownRecorded">Events recorded as unknown to the origin, never asked again.</param>
+/// <param name="StreamsReordered">Streams whose replay order the fill changed.</param>
+/// <param name="PerspectivesRewound">Perspective cursors flagged to replay those streams from their start.</param>
+/// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+public sealed record OriginPositionFillResult(int Filled, int UnknownRecorded, int StreamsReordered, int PerspectivesRewound);
+
+/// <summary>
+/// The database side of filling missing origin positions (#2544, migration 561): the receiver's walk over the events it
+/// holds without a position, the origin's lookup, and the receiver's fill. Reached through
+/// <see cref="PostgresArchiveConnection"/>, as the other maintenance-cycle integrity work is.
+/// </summary>
+/// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginPositionFillSqlTests.cs</tests>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "Only the schema prefix is formatted in, built by SqlText.Identifier; every value is a bound parameter.")]
+public sealed class OriginPositionStore {
+  /// <summary>The longest list of event ids one answer covers; the rest of a larger request is asked again on a later lap.</summary>
+  public const int MAX_EVENTS_PER_ANSWER = 10_000;
+
+  private readonly PostgresArchiveConnection _database;
+  private readonly string _prefix;
+
+  /// <summary>Creates the store over the service's own database.</summary>
+  /// <param name="database">How to reach it.</param>
+  public OriginPositionStore(PostgresArchiveConnection database) {
+    ArgumentNullException.ThrowIfNull(database);
+    _database = database;
+    _prefix = database.Schema is null ? string.Empty : SqlText.Identifier(database.Schema) + ".";
+  }
+
+  /// <summary>Takes the next batch to ask one origin for, advancing that origin's walk (<c>wh_origin_position_ask</c>).</summary>
+  /// <param name="batchSize">The most held rows the batch reads.</param>
+  /// <param name="lapPause">The pause before a walk that reached the end starts over.</param>
+  /// <param name="now">The clock.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The batch, or null when no origin is due.</returns>
+  public async Task<OriginPositionAsk?> AskAsync(int batchSize, TimeSpan lapPause, DateTimeOffset now, CancellationToken cancellationToken) {
+    await using var connection = await _database.Open(cancellationToken).ConfigureAwait(false);
+    await using var command = new NpgsqlCommand(
+      $"SELECT origin_service_id, event_ids, lap_ended FROM {_prefix}wh_origin_position_ask($1, $2, $3)", connection);
+    command.Parameters.AddWithValue(batchSize);
+    command.Parameters.AddWithValue(lapPause);
+    command.Parameters.AddWithValue(now);
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      return null;
+    }
+    return new OriginPositionAsk(reader.GetGuid(0), reader.GetFieldValue<Guid[]>(1), reader.GetBoolean(2));
+  }
+
+  /// <summary>The origin's side: what it can say about each asked event (<c>wh_origin_positions_of</c>).</summary>
+  /// <param name="eventIds">The asked events; at most <see cref="MAX_EVENTS_PER_ANSWER"/> are looked up.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>One lookup per distinct id looked up.</returns>
+  public async Task<IReadOnlyList<OriginPositionLookup>> PositionsOfAsync(IReadOnlyList<Guid> eventIds, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(eventIds);
+    await using var connection = await _database.Open(cancellationToken).ConfigureAwait(false);
+    await using var command = new NpgsqlCommand(
+      $"SELECT event_id, state, commit_sequence FROM {_prefix}wh_origin_positions_of($1)", connection);
+    var asked = eventIds.Take(MAX_EVENTS_PER_ANSWER).ToArray();
+    command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = asked });
+    var lookups = new List<OriginPositionLookup>();
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      lookups.Add(new OriginPositionLookup(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetInt64(2)));
+    }
+    return lookups;
+  }
+
+  /// <summary>
+  /// The receiver's side: applies one origin's answer in one transaction. The streams the fill touches are locked and
+  /// that origin's events of them read (<c>wh_origin_position_fill_plan</c>); a stream whose replay order the fill changes
+  /// (<see cref="ReceivedStreamOrder.FillChangesTheOrder"/>) is rewound; the positions are filled, NULL ones only, and the
+  /// unknown answers recorded (<c>wh_fill_origin_positions</c>).
+  /// </summary>
+  /// <param name="answer">The origin's answer.</param>
+  /// <param name="now">The clock.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>What the fill did.</returns>
+  public async Task<OriginPositionFillResult> FillAsync(OriginPositionsAnswer answer, DateTimeOffset now, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(answer);
+    var fills = new Dictionary<Guid, long>();
+    foreach (var position in answer.Positions) {
+      fills[position.EventId] = position.CommitSequence;
+    }
+    await using var connection = await _database.Open(cancellationToken).ConfigureAwait(false);
+    await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+    var streams = new Dictionary<Guid, List<StoredStreamEvent>>();
+    await using (var plan = new NpgsqlCommand(
+      $"SELECT stream_id, event_id, version, origin_commit_sequence FROM {_prefix}wh_origin_position_fill_plan($1, $2)",
+      connection, transaction)) {
+      plan.Parameters.AddWithValue(answer.OriginServiceId);
+      plan.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = fills.Keys.ToArray() });
+      await using var reader = await plan.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        var stream = reader.GetGuid(0);
+        if (!streams.TryGetValue(stream, out var events)) {
+          streams[stream] = events = [];
+        }
+        events.Add(new StoredStreamEvent(reader.GetGuid(1), reader.GetInt64(2), answer.OriginServiceId,
+          reader.IsDBNull(3) ? 0 : reader.GetInt64(3)));
+      }
+    }
+    var reordered = streams.Where(s => ReceivedStreamOrder.FillChangesTheOrder(s.Value, fills)).Select(s => s.Key).ToArray();
+    OriginPositionFillResult result;
+    await using (var fill = new NpgsqlCommand(
+      $"SELECT filled, unknown_recorded, perspectives_rewound FROM {_prefix}wh_fill_origin_positions($1, $2, $3, $4, $5, $6)",
+      connection, transaction)) {
+      fill.Parameters.AddWithValue(answer.OriginServiceId);
+      fill.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = fills.Keys.ToArray() });
+      fill.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Bigint, Value = fills.Values.ToArray() });
+      fill.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = answer.Unknown.ToArray() });
+      fill.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = reordered });
+      fill.Parameters.AddWithValue(now);
+      await using var reader = await fill.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+      result = new OriginPositionFillResult(reader.GetInt32(0), reader.GetInt32(1), reordered.Length, reader.GetInt32(2));
+    }
+    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    return result;
+  }
+
+  /// <summary>Per origin, the eligible received events still held without a position (<c>wh_origin_positions_unfilled</c>).</summary>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The count per origin; origins with none are left out.</returns>
+  public async Task<IReadOnlyList<(Guid OriginServiceId, long Unfilled)>> UnfilledAsync(CancellationToken cancellationToken) {
+    await using var connection = await _database.Open(cancellationToken).ConfigureAwait(false);
+    await using var command = new NpgsqlCommand($"SELECT origin_service_id, unfilled FROM {_prefix}wh_origin_positions_unfilled()", connection);
+    var counts = new List<(Guid, long)>();
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      counts.Add((reader.GetGuid(0), reader.GetInt64(1)));
+    }
+    return counts;
+  }
+}
