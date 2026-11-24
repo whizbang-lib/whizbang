@@ -191,11 +191,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // None on a Current schema, which has nothing to elect for, or with no connection of its own to elect on.
     var election = segmentConnectionFactory is null || schemaIsCurrent ? null : new Whizbang.Data.Postgres.MigratorElectionRequest(
       segmentConnectionFactory, "__SCHEMA__", lockId, GetBootstrapScripts(), _schemaCommandTimeoutSeconds,
-      (c, ct) => _isSchemaCurrentAsync(c, ct), incompatibilityOverride) {
-      // A waiter checks the stored perspective registry against this build's, which no hash covers (#2561); a held
-      // application schema is left as it is (#2553).
-      PerspectiveRegistry = applicationHeld ? null : _perspectiveRegistryPayloads(),
-    };
+      (c, ct) => _isSchemaCurrentAsync(c, ct), incompatibilityOverride);
 
     if (schemaIsCurrent) {
       // Current (#1992): nothing to bootstrap, elect or migrate. This instance only joins the registry (no lock), so an
@@ -690,6 +686,16 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // whose schema hash did not change, or dropped by hand, is found by reading the catalog, not the hash. After
     // the commit, on a connection of its own, because DROP INDEX CONCURRENTLY cannot run in a transaction.
     await _reconcileManagedObjectsAsync(dbContext, reconcileSettings, segmentConnectionFactory, serviceProvider, logger, cancellationToken);
+
+    // #2561: the perspective registry, at every start, the fast path included. No hash covers it, so a start that skips
+    // the pass's registries step (a hash-clean restart, a Current schema, a waiter behind a migrator of another build, a
+    // restored database) checks what is stored against what this build declares, and reconciles only when they differ,
+    // under the schema lock. Never fatal. Needs a connection of its own; without one, only the pass reconciles it.
+    if (segmentConnectionFactory is not null) {
+      _ = await Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ReconcileIfStaleAsync(
+        segmentConnectionFactory, "__SCHEMA__", _perspectiveRegistryPayloads(), _schemaCommandTimeoutSeconds, serviceProvider,
+        logger, cancellationToken);
+    }
 
     // Each perspective table's fillfactor and autovacuum settings follow its model at every start, the fast path
     // included, except on the tables listed in perspective_storage_manual_tables (#1747). One catalog read; a table
@@ -2464,7 +2470,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   }
 
   /// <summary>
-  /// This context's perspective registry, as the shared migrator election checks it (#2561): the payload
+  /// This context's perspective registry, as every start checks it (#2561): the payload
   /// <see cref="ReconcilePerspectiveRegistryAsync"/> reconciles, under this service's name; empty with no perspectives.
   /// </summary>
   private static global::System.Collections.Generic.IReadOnlyList<Whizbang.Core.Perspectives.PerspectiveRegistryPayload> _perspectiveRegistryPayloads() {

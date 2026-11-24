@@ -238,9 +238,10 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>
-  /// The start on a schema the <c>Assess</c> verdict found current (#1992): no schema lock and no pass. The perspective
-  /// registry is reconciled (its payload is not part of any hash this driver records), this instance joins the registry,
-  /// and the managed-object reconcile and the storage settings follow, as on every start.
+  /// The start on a schema the <c>Assess</c> verdict found current (#1992): no schema lock and no pass. This instance
+  /// joins the registry, and what follows every start follows: the perspective registry is checked against this build
+  /// and reconciled only when it differs (its payload is not part of any hash, #2561), then the managed-object reconcile
+  /// and the storage settings.
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>A task that completes once the instance is registered and the schema converged.</returns>
@@ -249,7 +250,6 @@ public sealed class PostgresSchemaInitializer {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
     var schema = await _targetSchemaAsync(connection, cancellationToken);
-    await _reconcilePerspectiveRegistryAsync(connection, schema, cancellationToken);
     if (Instance is { } instance) {
       await SchemaBootstrapPhase.RegisterInstanceAsync(
         () => new NpgsqlConnection(_connectionString), schema, instance, liveness: RegistrationLiveness,
@@ -430,8 +430,14 @@ public sealed class PostgresSchemaInitializer {
   /// </summary>
   private async Task _convergeAsync(NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
     if (ApplicationHeld) {
-      return;   // #2553: the managed objects and storage settings are the application's tables', left as they are
+      return;   // #2553: the registry, managed objects and storage settings are the application's, left as they are
     }
+    // #2561: the perspective registry, at every start. No hash covers it, so a start that ran no pass (a schema Assess
+    // found current, a waiter behind a migrator of another build, a restored database) checks what is stored against
+    // what this build declares, and reconciles only when they differ, under the schema lock. Never fatal.
+    _ = await PerspectiveRegistryCurrency.ReconcileIfStaleAsync(
+      () => new NpgsqlConnection(_connectionString), schema, PerspectiveRegistry ?? [],
+      SchemaCommandTimeout.Resolve(_connectionString), services: null, Logger, cancellationToken);
     // The managed-object reconcile, after the lock is released (it takes the same lock itself, with a try). Never
     // fatal, as on the EF Core driver: a reconcile that cannot finish leaves every object where it is, and the next
     // start tries again.

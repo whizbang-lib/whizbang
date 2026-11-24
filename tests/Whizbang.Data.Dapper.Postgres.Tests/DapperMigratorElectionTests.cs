@@ -341,15 +341,12 @@ public class DapperMigratorElectionTests {
       "SELECT updated_at, perspective_names FROM wh_perspective_registry WHERE clr_type_name = 'Tests.ElectionProbe'");
   }
 
-  /// <summary>A waiter whose migrator finished: the schema reads current, and the registry it carries is given.</summary>
-  private async Task<bool> _waitForAFinishedMigratorAsync(
-      IReadOnlyList<Whizbang.Core.Perspectives.PerspectiveRegistryPayload>? registry, IServiceProvider? host = null,
-      CancellationToken cancellationToken = default) {
-    await using var duty = MigratorElection.CreateDuty(host, 600);
-    await duty.HoldAsync(new SchemaStaging(SchemaStage.Waiter, null, "another instance holds the migrator duty"));
-    var request = _request([]) with { IsSchemaCurrentAsync = (_, _) => Task.FromResult(true), PerspectiveRegistry = registry };
-    return await MigratorElection.RunPreLockAsync(duty, request, _ => Task.CompletedTask, host, logger: null, cancellationToken);
-  }
+  /// <summary>The check every start's converge step runs, over this test's database.</summary>
+  private Task<bool> _checkRegistryAsync(
+      IReadOnlyList<Whizbang.Core.Perspectives.PerspectiveRegistryPayload> registry, IServiceProvider? host = null,
+      CancellationToken cancellationToken = default) =>
+    PerspectiveRegistryCurrency.ReconcileIfStaleAsync(
+      () => new NpgsqlConnection(_database.ConnectionString), "public", registry, 600, host, logger: null, cancellationToken);
 
   /// <summary>
   /// A waiter whose migrator was this build finds the stored registry already matching what it declares, and leaves it
@@ -360,9 +357,9 @@ public class DapperMigratorElectionTests {
   public async Task AWaiterBehindASameBuildMigrator_DoesNoRegistryReconcileAsync(CancellationToken cancellationToken) {
     await _migratedByThisBuildAsync();
 
-    var migratedElsewhere = await _waitForAFinishedMigratorAsync([_registry], cancellationToken: cancellationToken);
+    var reconciled = await _checkRegistryAsync([_registry], cancellationToken: cancellationToken);
 
-    await Assert.That(migratedElsewhere).IsTrue();
+    await Assert.That(reconciled).IsFalse();
     await Assert.That((await _registryRowAsync()).UpdatedAt).IsEqualTo(_untouched)
       .Because("the stored registry already matches this build, so nothing was reconciled");
   }
@@ -379,10 +376,10 @@ public class DapperMigratorElectionTests {
       await db.ExecuteAsync("UPDATE wh_perspective_registry SET perspective_names = ARRAY['FormerProbePerspective']");
     }
 
-    var migratedElsewhere = await _waitForAFinishedMigratorAsync([_registry], cancellationToken: cancellationToken);
+    var reconciled = await _checkRegistryAsync([_registry], cancellationToken: cancellationToken);
 
     var (updatedAt, names) = await _registryRowAsync();
-    await Assert.That(migratedElsewhere).IsTrue();
+    await Assert.That(reconciled).IsTrue();
     await Assert.That(names).IsEquivalentTo(["ElectionProbePerspective"]).Because("the waiter reconciled to its own build");
     await Assert.That(updatedAt).IsNotEqualTo(_untouched);
   }
@@ -398,7 +395,7 @@ public class DapperMigratorElectionTests {
     await using (var db = new NpgsqlConnection(_database.ConnectionString)) {
       await db.ExecuteAsync("UPDATE wh_perspective_registry SET perspective_names = ARRAY['FormerProbePerspective']");
     }
-    var contention = new ContentionCounter(waitFor: 2);
+    var contention = new ContentionCounter(waitFor: 1);
     var services = new ServiceCollection();
     services.AddSingleton<ISchemaInitializationObserver>(contention);
     await using var host = services.BuildServiceProvider();
@@ -408,7 +405,7 @@ public class DapperMigratorElectionTests {
     await other.OpenAsync(cancellationToken);
     await using var reconciling = await other.BeginTransactionAsync(cancellationToken);
     await other.ExecuteAsync("SELECT pg_advisory_xact_lock(@key)", new { key = SchemaInitializationLockKey.Compute("public") }, reconciling);
-    var waiting = _waitForAFinishedMigratorAsync([_registry], host, cancellationToken);
+    var waiting = _checkRegistryAsync([_registry], host, cancellationToken);
     await Assert.That(await Task.WhenAny(contention.Reached, waiting)).IsSameReferenceAs(contention.Reached)
       .Because("a stale registry is reconciled under the schema lock, so this waiter waits for the holder of it");
     var otherStamp = await other.ExecuteScalarAsync<DateTime>("SELECT now()", transaction: reconciling);
@@ -417,7 +414,7 @@ public class DapperMigratorElectionTests {
       reconciling);
     await reconciling.CommitAsync(cancellationToken);
 
-    await Assert.That(await waiting).IsTrue();
+    await Assert.That(await waiting).IsFalse();
     await Assert.That((await _registryRowAsync()).UpdatedAt).IsEqualTo(otherStamp)
       .Because("the other waiter's reconcile is the only one: this one found the registry current under the lock");
   }
@@ -428,10 +425,9 @@ public class DapperMigratorElectionTests {
   public async Task ARegistryThatCannotBeReconciled_IsNotFatalAsync(CancellationToken cancellationToken) {
     await _migratedByThisBuildAsync();
 
-    var migratedElsewhere = await _waitForAFinishedMigratorAsync(
-      [new("election-svc", "not json")], cancellationToken: cancellationToken);
+    var reconciled = await _checkRegistryAsync([new("election-svc", "not json")], cancellationToken: cancellationToken);
 
-    await Assert.That(migratedElsewhere).IsTrue();
+    await Assert.That(reconciled).IsFalse();
     await Assert.That((await _registryRowAsync()).UpdatedAt).IsEqualTo(_untouched);
   }
 

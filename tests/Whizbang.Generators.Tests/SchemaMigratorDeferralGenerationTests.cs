@@ -95,22 +95,28 @@ public class SchemaMigratorDeferralGenerationTests {
     await Assert.That(output).Contains("new Whizbang.Data.Postgres.MigratorElectionRequest(", StringComparison.Ordinal);
     await Assert.That(output).Contains("lockId, GetBootstrapScripts(), _schemaCommandTimeoutSeconds,", StringComparison.Ordinal)
       .Because("the bootstrap closure is applied first, so an election is possible on an empty database");
-    await Assert.That(output).Contains("(c, ct) => _isSchemaCurrentAsync(c, ct), incompatibilityOverride) {", StringComparison.Ordinal);
+    await Assert.That(output).Contains("(c, ct) => _isSchemaCurrentAsync(c, ct), incompatibilityOverride);", StringComparison.Ordinal);
   }
 
   /// <summary>
-  /// A waiter whose migrator finished checks the stored perspective registry against this build's (#2561): no hash
-  /// covers it, and the migrator may have been another build. The election is handed the payload the pass reconciles,
-  /// under this service's name, and none when the application's schema is held.
+  /// Every start checks the stored perspective registry against this build's (#2561), after the pass loop, beside the
+  /// managed-object reconcile: no hash covers the registry, so a hash-clean restart, a Current schema or a waiter that
+  /// skipped the pass's registries step would otherwise keep whatever registry it found. It is handed the payload the
+  /// pass reconciles, and is skipped, with the rest of the converge, when the application's schema is held.
   /// </summary>
   [Test]
-  public async Task TheElectionIsGivenThisBuildsPerspectiveRegistryAsync() {
+  public async Task EveryStartChecksThePerspectiveRegistryAgainstThisBuildAsync() {
     var output = await _generatedAsync(MINIMAL_CONTEXT);
 
-    await Assert.That(output).Contains(
-      "PerspectiveRegistry = applicationHeld ? null : _perspectiveRegistryPayloads(),", StringComparison.Ordinal);
+    var held = output.IndexOf("if (incompatibilityOverride is not null || applicationHeld) {", StringComparison.Ordinal);
+    var check = output.IndexOf("Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ReconcileIfStaleAsync(", StringComparison.Ordinal);
+    await Assert.That(held).IsGreaterThan(output.IndexOf("var retryAttempt = 0;", StringComparison.Ordinal))
+      .Because("the converge follows the pass loop, which every start reaches");
+    await Assert.That(check).IsGreaterThan(held).Because("a held application schema leaves its registry as it is");
+    await Assert.That(output[check..]).Contains(
+      "segmentConnectionFactory, \"", StringComparison.Ordinal);
+    await Assert.That(output).Contains("_perspectiveRegistryPayloads(), _schemaCommandTimeoutSeconds, serviceProvider,", StringComparison.Ordinal);
     var accessor = output.IndexOf("_perspectiveRegistryPayloads() {", StringComparison.Ordinal);
-    await Assert.That(accessor).IsGreaterThan(0);
     await Assert.That(output[accessor..]).Contains("new Whizbang.Core.Perspectives.PerspectiveRegistryPayload(", StringComparison.Ordinal);
     await Assert.That(output).DoesNotContain("__PERSPECTIVE_REGISTRY_JSON__", StringComparison.Ordinal)
       .Because("the accessor carries the registry JSON the generator embeds, as the pass's reconcile does");

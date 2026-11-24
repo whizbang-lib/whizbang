@@ -407,13 +407,14 @@ What differs per driver is only what the election is handed:
   Dapper's pass has no fast path, so `RunPreLockAsync` answers whether the migrator finished the schema, and a Dapper
   waiter then converges and serves without taking the schema lock.
 
-- **Neither driver's waiter assumes its migrator was the same build.** No hash covers the perspective registry, so a
-  waiter whose migrator finished hands the election this build's registry payload, and `PerspectiveRegistryCurrency`
-  compares what `reconcile_perspective_registry` would write (table name, schema JSON, schema hash, folding
-  perspectives) against what is stored. It reconciles only when they differ, under the schema lock, after checking
-  again once it holds it, so two waiters do not both reconcile. The reconcile stamps `updated_at` on every row it
-  touches, which is the witness the tests read. A hash-clean EF Core restart that is not a waiter still skips the
-  registries step, as before.
+- **No start trusts a registry it did not reconcile.** No hash covers the perspective registry, so every start's
+  converge step (EF Core: beside the managed-object reconcile after the pass loop; Dapper: `_convergeAsync`) runs
+  `PerspectiveRegistryCurrency.ReconcileIfStaleAsync`. It compares what `reconcile_perspective_registry` would write
+  (table name, schema JSON, schema hash, folding perspectives) against what is stored, with no lock, and reconciles only
+  when they differ, under the schema lock, after checking again once it holds it. That covers a hash-clean restart, a
+  schema Assess found current, a waiter behind a migrator of another build, and a restored database, on both drivers,
+  and a start that held the application's schema leaves the registry alone. The reconcile stamps `updated_at` on every
+  row it touches, which is the witness the tests read.
 
 The Dapper pass reports each committed migration file as a step (`OnSchemaStepCommittedAsync`) and as startup progress,
 so a Dapper migrator's keepalive renews through a long pass (#2165), and its connection's backend is marked as the
@@ -459,8 +460,9 @@ initializer derives it from the DbContext schema, and nothing but a test makes t
 | `DapperMigratorElectionTests.TwoInstancesStarting_OneMigrates_TheOtherWaitsForIt_ThenServesAsync` | the Dapper driver migrating on every instance in turn again |
 | `DapperMigratorElectionTests.AMigratorThatDiesMidMigration_HandsTheWorkToTheWaiterAsync` | a Dapper fleet stranded on a dead migrator |
 | `MigrationBootstrapClosureParityTests` | the run-time closure reader drifting from the generator's |
-| `DapperMigratorElectionTests.AWaiterBehindAMigratorWithAnotherRegistry_ReconcilesItAsync` | a waiter trusting a registry another build's migrator left |
-| `DapperMigratorElectionTests.AWaiterBehindASameBuildMigrator_DoesNoRegistryReconcileAsync` | every waiter reconciling a registry that already matches |
+| `PerspectiveRegistryRestartTests.ACleanHashRestart_AgainstARegistryNoHashCovers_ReconcilesItAsync` | a hash-clean or restored start keeping another build's registry |
+| `DapperMigratorElectionTests.AWaitersConverge_AgainstARegistryNoHashCovers_ReconcilesItAsync` | a waiter trusting a registry another build's migrator left |
+| `DapperMigratorElectionTests.ACurrentStart_AgainstAMatchingRegistry_TouchesNothingAsync` | every start re-stamping a registry that already matches |
 
 The integration witness is `wh_schema_migrations.updated_at`. Re-applying a migration stamps it
 `NOW()`, so a sentinel timestamp surviving the run is proof the deferring instance applied nothing,

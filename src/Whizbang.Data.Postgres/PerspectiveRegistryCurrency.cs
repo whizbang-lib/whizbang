@@ -11,8 +11,9 @@ namespace Whizbang.Data.Postgres;
 
 /// <summary>
 /// Whether the stored perspective registry says what this build declares, and the reconcile when it does not (#2561):
-/// what a waiter runs once its migrator finished, on either driver, since no hash covers the registry and the migrator
-/// may have been another build.
+/// what every start's converge step runs on either driver. No hash covers the registry, so a start that skips the pass
+/// (a hash-clean restart, a schema Assess found current, a waiter whose migrator may have been another build, a restored
+/// database) would otherwise keep whatever registry it found.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -30,12 +31,14 @@ namespace Whizbang.Data.Postgres;
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMigratorElectionTests.cs</tests>
-internal static partial class PerspectiveRegistryCurrency {
+public static partial class PerspectiveRegistryCurrency {
   /// <summary>
   /// Reconciles the stored registry from <paramref name="payloads"/> when, and only when, it differs from them.
   /// </summary>
-  /// <param name="request">The election's connection, schema, lock key and statement budget (also the lock wait's).</param>
+  /// <param name="connectionFactory">Opens a connection of its own.</param>
+  /// <param name="schema">The schema, unquoted; its schema initialization lock is the one taken.</param>
   /// <param name="payloads">This build's registry payloads.</param>
+  /// <param name="commandTimeoutSeconds">The budget for one statement, and for the wait on the lock.</param>
   /// <param name="services">Where the observers are registered; told when the lock is held elsewhere.</param>
   /// <param name="logger">Optional logger.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
@@ -44,13 +47,13 @@ internal static partial class PerspectiveRegistryCurrency {
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMigratorElectionTests.cs:AWaiterBehindAMigratorWithAnotherRegistry_ReconcilesItAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMigratorElectionTests.cs:AWaiterThatWaitsForAnothersReconcile_ChecksAgainUnderTheLock_AndDoesNothingAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMigratorElectionTests.cs:ARegistryThatCannotBeReconciled_IsNotFatalAsync</tests>
-  internal static async Task<bool> ReconcileIfStaleAsync(
-      MigratorElectionRequest request, IReadOnlyList<PerspectiveRegistryPayload> payloads, IServiceProvider? services,
-      ILogger? logger, CancellationToken cancellationToken) {
-    ArgumentNullException.ThrowIfNull(request);
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/PerspectiveRegistryRestartTests.cs</tests>
+  public static async Task<bool> ReconcileIfStaleAsync(
+      Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<PerspectiveRegistryPayload> payloads,
+      int commandTimeoutSeconds, IServiceProvider? services, ILogger? logger, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(payloads);
-    var (connectionFactory, schema, lockId, commandTimeoutSeconds) =
-      (request.ConnectionFactory, request.Schema, request.LockId, request.CommandTimeoutSeconds);
+    var lockId = SchemaInitializationLockKey.Compute(schema);
     var log = logger ?? NullLogger.Instance;
     try {
       await using var connection = connectionFactory();
