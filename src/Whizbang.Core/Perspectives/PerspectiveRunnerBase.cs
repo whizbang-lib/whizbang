@@ -101,6 +101,15 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     public bool KeepsRewindFloor { get; init; } = true;
 
     /// <summary>
+    /// True for a perspective that applies both ephemeral and durable events (#2463). Beside its floor, the reap-boundary
+    /// snapshot that only the reap moves, it keeps one tip snapshot that its live and rewind cadences write and that never
+    /// counts as a reap floor, so a rewind of it starts near the tip instead of replaying every durable event since the
+    /// last reap boundary.
+    /// </summary>
+    /// <docs>fundamentals/events/ephemeral-events#the-tip-snapshot</docs>
+    public bool KeepsTipSnapshot { get; init; }
+
+    /// <summary>
     /// True for a perspective marked [OverwriteOnly] (#1869), whose every Apply builds the row from its event alone, so a
     /// rewind applies only the stream's last event (_replayLastEventOnlyAsync).
     /// </summary>
@@ -2069,12 +2078,10 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     var snapshotEventId = snapshotAt.Position ?? state.LastSuccessfulEventId!.Value;
     var snapshotCommitSequence = await _eventStore.GetCommitSequenceAsync(
         snapshotEventId, cancellationToken);
-    await _snapshotStore!.CreateSnapshotAsync(
-        streamId, perspectiveName, snapshotEventId,
-        snapshotCommitSequence,
-        snapshotBeforeWrite ?? _toSnapshotJson(updatedModel), collectivesThroughSequence, cancellationToken);
-    await _snapshotStore.PruneOldSnapshotsAsync(
-        streamId, perspectiveName, snapshotRetention, cancellationToken);
+    await _writeCadenceSnapshotAsync(
+        streamId, perspectiveName,
+        new CadenceSnapshot(snapshotEventId, snapshotCommitSequence, snapshotBeforeWrite ?? _toSnapshotJson(updatedModel), collectivesThroughSequence),
+        snapshotRetention, cancellationToken);
     _eventsSinceLastSnapshot.TryRemove(streamId, out _);
   }
 
@@ -2685,6 +2692,10 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       CancellationToken cancellationToken = default) {
 
     var startedAt = DateTimeOffset.UtcNow;
+    if (_traits.KeepsTipSnapshot && _snapshotStore is not null) {
+      // #2463: a tip at or above the late event was taken without it, so a later rewind restoring it would lose it.
+      await _snapshotStore.DeleteTipSnapshotFromAsync(streamId, perspectiveName, triggeringEventId, cancellationToken);
+    }
     var floor = await _rewindFloorAsync(streamId, perspectiveName, triggeringEventId, triggeringCommitSequence, cancellationToken);
     var hasSnapshot = floor.HasSnapshot;
     // #1738: the snapshot's version when an archive covers the snapshot, so the replay reads the archived events after it.
@@ -2821,7 +2832,23 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       Guid streamId, string perspectiveName, Guid triggeringEventId, long? triggeringCommitSequence, CancellationToken cancellationToken) {
     var snapshot = await _snapshotStore!.GetSnapshotFloorAsync(
         streamId, perspectiveName, triggeringEventId, cancellationToken);
+    var placed = await _placeCandidateAsync(streamId, perspectiveName, triggeringEventId, triggeringCommitSequence, snapshot, cancellationToken);
+    if (snapshot is { IsTip: true } && placed.SnapshotModel is null) {
+      // #2463: a tip the rewind cannot restore gives way to the floor below it, which is judged by the same rules; the
+      // floor, not a dropped late event or a replay over reaped bodies, is what a tip was only ever a shortcut past.
+      var floor = await _snapshotStore.GetFloorSnapshotAsync(streamId, perspectiveName, triggeringEventId, cancellationToken);
+      placed = await _placeCandidateAsync(streamId, perspectiveName, triggeringEventId, triggeringCommitSequence, floor, cancellationToken);
+    }
+    return placed;
+  }
 
+  /// <summary>
+  /// Reads the candidate <see cref="_placeSnapshotAsync"/> was given and judges it (#2379), with the lines that announce
+  /// the replay from it.
+  /// </summary>
+  private async ValueTask<(global::Whizbang.Core.Perspectives.PerspectiveSnapshotFloor? Snapshot, TModel? SnapshotModel, Action AnnounceReplay)> _placeCandidateAsync(
+      Guid streamId, string perspectiveName, Guid triggeringEventId, long? triggeringCommitSequence,
+      global::Whizbang.Core.Perspectives.PerspectiveSnapshotFloor? snapshot, CancellationToken cancellationToken) {
     // #1738: a snapshot an archive covers, but that records no version, cannot say where the archive's events after it
     // begin, so it is not used: the replay starts from the stream's start, which reads through the archive by its gap.
     if (snapshot?.ArchivedThroughVersion is not null && snapshot.SnapshotVersion is null) {
@@ -3473,12 +3500,10 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       // intermediate snapshots finds the right restore point.
       var intermediateCommitSequence = await _eventStore.GetCommitSequenceAsync(
           prefixAt.MessageId.Value, cancellationToken);
-      await _snapshotStore!.CreateSnapshotAsync(
-          streamId, perspectiveName, prefixAt.MessageId.Value,
-          intermediateCommitSequence,
-          _toSnapshotJson(outcome.UpdatedModel!), run.HeldThrough.Mark, cancellationToken);
-      await _snapshotStore.PruneOldSnapshotsAsync(
-          streamId, perspectiveName, _snapshotOptions!.Value.MaxSnapshotsPerStream, cancellationToken);
+      await _writeCadenceSnapshotAsync(
+          streamId, perspectiveName,
+          new CadenceSnapshot(prefixAt.MessageId.Value, intermediateCommitSequence, _toSnapshotJson(outcome.UpdatedModel!), run.HeldThrough.Mark),
+          _snapshotOptions!.Value.MaxSnapshotsPerStream, cancellationToken);
       run.EventsSinceIntermediateSnapshot = 0;
     } catch (Exception snapshotEx) when (snapshotEx is not OperationCanceledException) {
       // Intermediate snapshots are best-effort - failures here don't break the rewind.
@@ -3666,12 +3691,10 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       var snapshotEventId = outcome.LastInStream.Position ?? lastSuccessfulEventId.Value;
       var afterReplayCommitSequence = await _eventStore.GetCommitSequenceAsync(
           snapshotEventId, cancellationToken);
-      await _snapshotStore.CreateSnapshotAsync(
-          streamId, perspectiveName, snapshotEventId,
-          afterReplayCommitSequence,
-          snapshotBeforeWrite ?? _toSnapshotJson(updatedModel), outcome.CollectivesHeldThrough, cancellationToken);
-      await _snapshotStore.PruneOldSnapshotsAsync(
-          streamId, perspectiveName, _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
+      await _writeCadenceSnapshotAsync(
+          streamId, perspectiveName,
+          new CadenceSnapshot(snapshotEventId, afterReplayCommitSequence, snapshotBeforeWrite ?? _toSnapshotJson(updatedModel), outcome.CollectivesHeldThrough),
+          _snapshotOptions.Value.MaxSnapshotsPerStream, cancellationToken);
       _eventsSinceLastSnapshot.TryRemove(streamId, out _);
       return null; // handed to the store
     }
@@ -4087,7 +4110,8 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.SnapshotsOff;
     }
 
-    var floor = await _snapshotStore.GetSnapshotFloorAsync(streamId, perspectiveName, boundaryEventId, cancellationToken);
+    // #2463: from the floor below the boundary, never a tip, so the floor never depends on a tip.
+    var floor = await _snapshotStore.GetFloorSnapshotAsync(streamId, perspectiveName, boundaryEventId, cancellationToken);
     var (refused, model) = await _bootstrapFloorModelAsync(streamId, perspectiveName, boundaryEventId, floor, cancellationToken);
     if (refused) {
       return global::Whizbang.Core.Perspectives.SnapshotBootstrapOutcome.Refused;
@@ -4228,8 +4252,36 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// event below the tip with no floor once the bodies under the boundary were reaped. A Sourced perspective's cadence is
   /// unchanged.
   /// </summary>
+  /// <remarks>
+  /// A perspective that keeps a tip snapshot (#2463) never gives way: its cadence writes the tip, beside the floor, and
+  /// the store keeps the tip only above the floor.
+  /// </remarks>
   private async Task<bool> _cadenceSnapshotSlotTakenAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken) =>
-      _traits.IsEphemeral && await _snapshotStore!.HasAnySnapshotAsync(streamId, perspectiveName, cancellationToken);
+      _traits.IsEphemeral && !_traits.KeepsTipSnapshot
+      && await _snapshotStore!.HasAnySnapshotAsync(streamId, perspectiveName, cancellationToken);
+
+  /// <summary>
+  /// Writes a snapshot the live apply or a replay takes on its cadence (#2463). A perspective that keeps a tip snapshot
+  /// writes it as the stream's tip, which replaces the previous tip and never counts as a reap floor, so its floor stays
+  /// where the reap-boundary bootstrap put it. Every other perspective writes it as before and prunes the stream to
+  /// <paramref name="retention"/>.
+  /// </summary>
+  private async Task _writeCadenceSnapshotAsync(
+      Guid streamId, string perspectiveName, CadenceSnapshot snapshot, int retention, CancellationToken cancellationToken) {
+    if (_traits.KeepsTipSnapshot) {
+      await _snapshotStore!.CreateTipSnapshotAsync(
+          streamId, perspectiveName, snapshot.EventId, snapshot.CommitSequence, snapshot.Data, snapshot.CollectivesThroughSequence,
+          cancellationToken);
+      return;
+    }
+    await _snapshotStore!.CreateSnapshotAsync(
+        streamId, perspectiveName, snapshot.EventId, snapshot.CommitSequence, snapshot.Data, snapshot.CollectivesThroughSequence,
+        cancellationToken);
+    await _snapshotStore.PruneOldSnapshotsAsync(streamId, perspectiveName, retention, cancellationToken);
+  }
+
+  /// <summary>A snapshot a cadence takes: its event, that event's commit sequence, the model and its collectives mark.</summary>
+  private readonly record struct CadenceSnapshot(Guid EventId, long? CommitSequence, JsonDocument Data, long? CollectivesThroughSequence);
 
   // The snapshot cadence: every how many applied events a run snapshots, and how many snapshots a stream keeps.
   // Ephemeral perspectives snapshot on their own aggressive, single-slot cadence so a fresh rewind floor exists

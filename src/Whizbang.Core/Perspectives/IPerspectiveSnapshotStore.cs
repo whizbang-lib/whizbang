@@ -228,6 +228,64 @@ public interface IPerspectiveSnapshotStore {
   /// <param name="perspectiveName">Perspective name</param>
   /// <param name="ct">Cancellation token</param>
   Task DeleteAllSnapshotsAsync(Guid streamId, string perspectiveName, CancellationToken ct = default);
+
+  /// <summary>
+  /// Writes the stream's tip snapshot (#2463): the one snapshot a perspective that applies both ephemeral and durable
+  /// events keeps near its cursor, beside its floor. The tip replaces the stream's previous tip, is kept only above the
+  /// stream's newest floor, never takes the place of a floor written at the same event, and never counts as a floor for
+  /// the reap. The default stores nothing: a store that keeps no tips leaves such a perspective with its floor alone, as
+  /// before.
+  /// </summary>
+  /// <param name="streamId">Stream the snapshot belongs to.</param>
+  /// <param name="perspectiveName">Perspective name.</param>
+  /// <param name="snapshotEventId">Last event included in this snapshot.</param>
+  /// <param name="snapshotCommitSequence">That event's commit sequence, or null.</param>
+  /// <param name="snapshotData">Serialized model state as JSON.</param>
+  /// <param name="collectivesThroughSequence">The commit sequence through which the row's collectives were complete, or
+  /// null for none recorded.</param>
+  /// <param name="ct">Cancellation token.</param>
+  /// <docs>fundamentals/events/ephemeral-events#the-tip-snapshot</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/TipSnapshotRunnerTests.cs</tests>
+  Task CreateTipSnapshotAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid snapshotEventId,
+      long? snapshotCommitSequence,
+      JsonDocument snapshotData,
+      long? collectivesThroughSequence,
+      CancellationToken ct = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// The floor a rewind or the reap-boundary bootstrap restores from, never a tip (#2463): the snapshot
+  /// <see cref="GetSnapshotFloorAsync"/> selects among the stream's floors alone. A rewind reads it when the tip placed
+  /// before its late event cannot be restored, and the reap-boundary bootstrap folds from it, so the floor never depends
+  /// on a tip. The default is <see cref="GetSnapshotFloorAsync"/>: a store that keeps no tips holds only floors.
+  /// </summary>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="perspectiveName">The perspective.</param>
+  /// <param name="beforeEventId">The event the floor must sit before.</param>
+  /// <param name="ct">Cancellation.</param>
+  /// <docs>fundamentals/events/ephemeral-events#the-tip-snapshot</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/TipSnapshotRunnerTests.cs</tests>
+  Task<PerspectiveSnapshotFloor?> GetFloorSnapshotAsync(
+      Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) =>
+    GetSnapshotFloorAsync(streamId, perspectiveName, beforeEventId, ct);
+
+  /// <summary>
+  /// Removes the stream's tip when it sits at or above <paramref name="eventId"/> in the stream (#2463): a tip taken
+  /// before a late event landed below it holds a fold without that event, so a later rewind restoring it would leave the
+  /// row short of it. A tip, or an event, the store cannot place in the stream is removed too. The default removes
+  /// nothing: a store that keeps no tips has none to remove.
+  /// </summary>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="perspectiveName">The perspective.</param>
+  /// <param name="eventId">The late event.</param>
+  /// <param name="ct">Cancellation.</param>
+  /// <docs>fundamentals/events/ephemeral-events#the-tip-snapshot</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/TipSnapshotRunnerTests.cs</tests>
+  Task DeleteTipSnapshotFromAsync(Guid streamId, string perspectiveName, Guid eventId, CancellationToken ct = default) =>
+    Task.CompletedTask;
 }
 
 /// <summary>
@@ -288,6 +346,13 @@ public sealed record PerspectiveSnapshotFloor(Guid SnapshotEventId, int? Snapsho
   /// </summary>
   /// <docs>fundamentals/perspectives/snapshots#collectives</docs>
   public long? CollectivesThroughSequence { get; init; }
+
+  /// <summary>
+  /// True when this is the stream's tip snapshot (#2463), the one a perspective applying both ephemeral and durable
+  /// events keeps near its cursor; false for a floor. A rewind that cannot restore a tip falls back to the floor.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events#the-tip-snapshot</docs>
+  public bool IsTip { get; init; }
 
   /// <summary>
   /// True when no archived event lies after the snapshot (#1734): no archive covers it, or it was taken at the last version

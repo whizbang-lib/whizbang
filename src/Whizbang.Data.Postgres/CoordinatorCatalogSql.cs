@@ -133,7 +133,7 @@ internal static class CoordinatorCatalogSql {
       "  AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version " +
       // 534 (#2456): as in the reap, a snapshot whose own event is still inside its grace window covers nothing, so the
       // bodies below a tip snapshot are a target and the bootstrap writes the floor at the reap boundary.
-      $"  AND {EphemeralSnapshotFloorSql.SnapshotEventPastGrace(prefix)}) " +
+      $"  AND {EphemeralSnapshotFloorSql.CoversAsAFloor(prefix)}) " +
       // 403 (#2294): a body at or before the perspective's purge event is covered by the purge (a purged row has nothing
       // to snapshot, and selecting it again every cycle only repeated a bootstrap that found no row). A body after it
       // stays a target: a stale marker can stand on a resurrected, live row. As in the reap.

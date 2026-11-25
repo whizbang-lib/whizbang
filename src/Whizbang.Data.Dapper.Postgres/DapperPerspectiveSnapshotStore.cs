@@ -4,7 +4,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Npgsql;
-using NpgsqlTypes;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.Postgres;
 
@@ -43,36 +42,11 @@ public sealed partial class DapperPerspectiveSnapshotStore(
     await using var connection = new NpgsqlConnection(connectionString);
     await connection.OpenAsync(ct);
 
-    // snapshot_version is read from the event the snapshot was taken at rather than passed in: the
-    // version is a property of that event, so every caller would otherwise look up the same number and
-    // one that forgot would write a row nothing can place in the stream. A snapshot_event_id with no row
-    // in the event store yields NULL, which selection and the reap gate both read as "cannot be placed".
-    const string sql = """
-      INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_commit_sequence, snapshot_version, collectives_through_sequence)
-      VALUES (@p_stream_id, @p_perspective_name, @p_snapshot_event_id, @p_snapshot_data::jsonb,
-        COALESCE(
-          (SELECT MAX(sequence_number) + 1 FROM wh_perspective_snapshots
-           WHERE stream_id = @p_stream_id AND perspective_name = @p_perspective_name), 1),
-        @p_snapshot_commit_sequence,
-        (SELECT es.version FROM wh_event_store es WHERE es.event_id = @p_snapshot_event_id),
-        @p_collectives_through_sequence)
-      ON CONFLICT (stream_id, perspective_name, snapshot_event_id) DO UPDATE
-      SET snapshot_data = EXCLUDED.snapshot_data,
-          snapshot_commit_sequence = COALESCE(EXCLUDED.snapshot_commit_sequence, wh_perspective_snapshots.snapshot_commit_sequence),
-          snapshot_version = COALESCE(EXCLUDED.snapshot_version, wh_perspective_snapshots.snapshot_version),
-          collectives_through_sequence = EXCLUDED.collectives_through_sequence,
-          created_at = NOW()
-      """;
-
-    await using var cmd = new NpgsqlCommand(sql, connection);
-    cmd.Parameters.AddWithValue(PARAM_STREAM_ID, streamId);
-    cmd.Parameters.AddWithValue(PARAM_PERSPECTIVE_NAME, perspectiveName);
-    cmd.Parameters.AddWithValue("p_snapshot_event_id", snapshotEventId);
-    cmd.Parameters.Add(new NpgsqlParameter("p_snapshot_data", NpgsqlDbType.Jsonb) { Value = snapshotData.RootElement.GetRawText() });
-    cmd.Parameters.Add(new NpgsqlParameter("p_snapshot_commit_sequence", NpgsqlDbType.Bigint) { Value = (object?)snapshotCommitSequence ?? DBNull.Value });
-    cmd.Parameters.Add(new NpgsqlParameter("p_collectives_through_sequence", NpgsqlDbType.Bigint) { Value = (object?)collectivesThroughSequence ?? DBNull.Value });
-
-    await cmd.ExecuteNonQueryAsync(ct);
+    // #2463: the write is shared with the other driver; a floor written at the tip's event takes its place.
+    await TipSnapshotSql.CreateFloorAsync(
+      connection,
+      new SnapshotWrite(streamId, perspectiveName, snapshotEventId, snapshotCommitSequence, snapshotData, collectivesThroughSequence),
+      ct);
 
     if (logger?.IsEnabled(LogLevel.Debug) == true) {
       LogSnapshotCreated(logger, perspectiveName, streamId, snapshotEventId);
@@ -185,29 +159,57 @@ public sealed partial class DapperPerspectiveSnapshotStore(
     return ScalarResult.IsTrue(result);
   }
 
+  /// <summary>
+  /// Keeps the newest <paramref name="keepCount"/> floors and removes a tip a floor has reached (#2463); a tip is not one
+  /// of the floors the retention counts.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events#the-tip-snapshot</docs>
   public async Task PruneOldSnapshotsAsync(Guid streamId, string perspectiveName, int keepCount, CancellationToken ct = default) {
     await using var connection = new NpgsqlConnection(connectionString);
     await connection.OpenAsync(ct);
 
-    const string sql = """
-      DELETE FROM wh_perspective_snapshots
-      WHERE stream_id = @p_stream_id AND perspective_name = @p_perspective_name
-        AND sequence_number NOT IN (
-          SELECT sequence_number FROM wh_perspective_snapshots
-          WHERE stream_id = @p_stream_id AND perspective_name = @p_perspective_name
-          ORDER BY sequence_number DESC
-          LIMIT @p_keep_count)
-      """;
-
-    await using var cmd = new NpgsqlCommand(sql, connection);
-    cmd.Parameters.AddWithValue(PARAM_STREAM_ID, streamId);
-    cmd.Parameters.AddWithValue(PARAM_PERSPECTIVE_NAME, perspectiveName);
-    cmd.Parameters.AddWithValue("p_keep_count", keepCount);
-
-    var deleted = await cmd.ExecuteNonQueryAsync(ct);
+    var deleted = await TipSnapshotSql.PruneAsync(connection, streamId, perspectiveName, keepCount, ct);
     if (deleted > 0 && logger?.IsEnabled(LogLevel.Debug) == true) {
       LogSnapshotsPruned(logger, deleted, perspectiveName, streamId, keepCount);
     }
+  }
+
+  /// <summary>
+  /// Writes the stream's tip (#2463): it replaces the previous tip and is kept only above the newest floor, at an event
+  /// the store can place. The write is shared with the other driver.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events#the-tip-snapshot</docs>
+  public async Task CreateTipSnapshotAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid snapshotEventId,
+      long? snapshotCommitSequence,
+      JsonDocument snapshotData,
+      long? collectivesThroughSequence,
+      CancellationToken ct = default) {
+    await using var connection = new NpgsqlConnection(connectionString);
+    await connection.OpenAsync(ct);
+    await TipSnapshotSql.CreateTipAsync(
+      connection,
+      new SnapshotWrite(streamId, perspectiveName, snapshotEventId, snapshotCommitSequence, snapshotData, collectivesThroughSequence),
+      ct);
+  }
+
+  /// <summary>The floor before the event, never a tip (#2463); the lookup is shared with the other driver.</summary>
+  /// <docs>fundamentals/events/ephemeral-events#the-tip-snapshot</docs>
+  public async Task<PerspectiveSnapshotFloor?> GetFloorSnapshotAsync(
+      Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) {
+    await using var connection = new NpgsqlConnection(connectionString);
+    await connection.OpenAsync(ct);
+    return await SnapshotStreamOrderLookup.FindFloorSnapshotAsync(connection, streamId, perspectiveName, beforeEventId, ct);
+  }
+
+  /// <summary>Removes the stream's tip at or above the late event (#2463); a floor is never removed.</summary>
+  /// <docs>fundamentals/events/ephemeral-events#the-tip-snapshot</docs>
+  public async Task DeleteTipSnapshotFromAsync(Guid streamId, string perspectiveName, Guid eventId, CancellationToken ct = default) {
+    await using var connection = new NpgsqlConnection(connectionString);
+    await connection.OpenAsync(ct);
+    await TipSnapshotSql.DeleteTipFromAsync(connection, streamId, perspectiveName, eventId, ct);
   }
 
   public async Task DeleteAllSnapshotsAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {

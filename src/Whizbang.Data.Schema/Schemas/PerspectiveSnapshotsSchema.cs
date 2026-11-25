@@ -86,6 +86,15 @@ public static class PerspectiveSnapshotsSchema {
         Name: Columns.COLLECTIVES_THROUGH_SEQUENCE,
         DataType: WhizbangDataType.BIG_INT,
         Nullable: true
+      ),
+      // Whether this is the stream's tip snapshot (#2463): the one a perspective applying ephemeral and durable events
+      // keeps near its cursor beside its floor, which never covers a body for the reap. False for a floor, which every
+      // snapshot written before the column is. Mig 620 adds it on existing databases.
+      new ColumnDefinition(
+        Name: Columns.IS_TIP,
+        DataType: WhizbangDataType.BOOLEAN,
+        Nullable: false,
+        DefaultValue: DefaultValue.Boolean(false)
       )
     ),
     Indexes: [
@@ -128,5 +137,7 @@ public static class PerspectiveSnapshotsSchema {
     public const string ARCHIVED_THROUGH_VERSION = "archived_through_version";
     /// <summary>The commit sequence through which the row's collectives were complete when the snapshot was taken (#1963).</summary>
     public const string COLLECTIVES_THROUGH_SEQUENCE = "collectives_through_sequence";
+    /// <summary>Whether the snapshot is the stream's tip rather than a floor (#2463).</summary>
+    public const string IS_TIP = "is_tip";
   }
 }
