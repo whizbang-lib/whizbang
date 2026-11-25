@@ -68,7 +68,8 @@ public sealed record PartitionHandoverWorkerSettings {
 /// The old owner's side of a handover (#2557, design 3.4). Once a second, it asks which partitions it is handing over;
 /// for each one none of whose streams is still being worked, it has every participant save what it holds there, waits
 /// for its queued writes to land under the old epoch, and acknowledges, which releases what it has not started and flips
-/// the partition to its next owner at a raised epoch. A partition whose batch is still in flight waits for a later pass;
+/// the partition to its next owner at a raised epoch. A partition whose batch is still in flight, or that a write holds
+/// when the acknowledgement runs (it flips only what is free, #2577), waits for a later pass;
 /// one that never finishes is completed by the assigner at its deadline. Nothing hands over unless the service owns
 /// partitions by map.
 /// </summary>
@@ -167,6 +168,7 @@ public sealed partial class PartitionHandoverWorker(
   }
 
   /// <summary>One pass: hands over every partition whose work is done, and returns the partitions flipped.</summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PartitionHandoverWorkerLoopTests.cs:AnAcknowledgementThatFlipsPartOfWhatItNamed_IsReAskedOnTheNextInterval_UntilTheRestMoveAsync</tests>
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>The partitions this pass flipped to their next owners.</returns>
   public async Task<IReadOnlyList<int>> HandOverAsync(CancellationToken cancellationToken) {
@@ -192,10 +194,12 @@ public sealed partial class PartitionHandoverWorker(
     if (_landed is not null) {
       await _landed.WaitForAllLandedAsync(cancellationToken).ConfigureAwait(false);
     }
+    // #2577: the acknowledgement flips only what no writer holds at this moment, so it may flip part of what it names;
+    // what it did not flip is still handing over and is asked for again on the next pass, until it moves.
     var flipped = await coordinator.AcknowledgeHandoverAsync(_instance.InstanceId, ready, cancellationToken).ConfigureAwait(false);
     // What this instance held there is no longer its to fence by.
     _tenures.ForgetPartitions(flipped);
-    LogHandedOver(_logger, flipped.Count, handingOver.Count - ready.Count);
+    LogHandedOver(_logger, flipped.Count, handingOver.Count - flipped.Count);
     return flipped;
   }
 
@@ -203,7 +207,7 @@ public sealed partial class PartitionHandoverWorker(
   private int? _partitionOf(Guid stream) => _tenures.OfStream(stream)?.Partition % 10000;
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
-    Message = "Handed over {Flipped} partition(s) to their next owners; {Waiting} still have work in flight")]
+    Message = "Handed over {Flipped} partition(s) to their next owners; {Waiting} still to move (work in flight or a write holding them), asked again next pass")]
   private static partial void LogHandedOver(ILogger logger, int flipped, int waiting);
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Information,
