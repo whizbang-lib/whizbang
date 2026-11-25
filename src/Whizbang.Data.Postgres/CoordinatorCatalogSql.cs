@@ -105,6 +105,7 @@ internal static class CoordinatorCatalogSql {
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperLifecycleAndCatalogTests.cs:EphemeralPairsNeedingSnapshot_APairWhoseRowThePerspectivePurged_IsNotATargetAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralOnlyReadModelReapSqlTests.cs:PairsNeedingSnapshot_AReadModelThatKeepsNoFloor_IsNotATarget_AndItsBodyIsOfferedForDestructionAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperLifecycleAndCatalogTests.cs:EphemeralPairsNeedingSnapshot_AReadModelThatKeepsNoRewindFloor_IsNotATargetAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralReapScanFloorSqlTests.cs:Scans_ACycleAfterTheFirst_ReadOnlyThePointersAboveTheFloorAsync</tests>
   internal static async Task<IReadOnlyList<EphemeralSnapshotTarget>> EphemeralPairsNeedingSnapshotAsync(
       DbCommand cmd, string prefix, CancellationToken cancellationToken) {
     cmd.CommandText =
@@ -120,6 +121,8 @@ internal static class CoordinatorCatalogSql {
       $"JOIN {prefix}wh_perspective_cursors c ON c.stream_id = es.stream_id AND c.perspective_name = ma.target_name " +
       // #13b4 safety gate: only EPHEMERAL events; consumed sourced bodies are never snapshot targets.
       "WHERE (es.flags & 8) = 8 " +
+      // 597 (#2574): from the oldest ephemeral event that still has a body, not every pointer the reap left behind.
+      $"AND {EphemeralReapScanFloorSql.AtOrAboveFloor(prefix)} " +
       "AND es.created_at < NOW() - (COALESCE(g.grace_seconds, " +
       $"    (SELECT setting_value::int FROM {prefix}wh_settings WHERE setting_key = 'ephemeral_rewind_grace_seconds'), 300) " +
       "  * INTERVAL '1 second') " +
