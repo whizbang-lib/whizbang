@@ -104,6 +104,7 @@ public partial class PerspectiveWorker(
 ) : BackgroundService, Whizbang.Core.Startup.IStartAbandonedObserver, IPartitionHandoverParticipant {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
+  private const string METRIC_TAG_REASON = "reason";
 
   /// <summary>
   /// The detached lifecycle stages this worker started and that are still running. Its stop waits for them, so they finish
@@ -1992,7 +1993,7 @@ public partial class PerspectiveWorker(
             LogOrphanedPerspectiveRowsReaped(_logger, reaped);
             _deadLetterMetrics?.Added.Add(reaped,
               new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.PERSPECTIVE_EVENTS),
-              new KeyValuePair<string, object?>("reason", "PerspectiveSourceEventMissing"));
+              new KeyValuePair<string, object?>(METRIC_TAG_REASON, "PerspectiveSourceEventMissing"));
           }
         } catch (Exception ex) when (ex is not OperationCanceledException) {
 #pragma warning disable CA1848
@@ -2123,7 +2124,7 @@ public partial class PerspectiveWorker(
           ct: cancellationToken).ConfigureAwait(false);
         _deadLetterMetrics?.Added.Add(1,
           new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.PERSPECTIVE_EVENTS),
-          new KeyValuePair<string, object?>("reason", nameof(MessageFailureReason.EventBodyMissing)));
+          new KeyValuePair<string, object?>(METRIC_TAG_REASON, nameof(MessageFailureReason.EventBodyMissing)));
         DeadLetterLog.MessageDeadLettered(_logger, _deadLetterLevel, exception: null, row.EventWorkId, row.EventType,
           nameof(MessageFailureReason.EventBodyMissing), error);
         LogReapedRowDeadLettered(_logger, row.PerspectiveName, row.StreamId, row.EventId, row.Version, row.EventType);
@@ -2397,7 +2398,7 @@ public partial class PerspectiveWorker(
             ct: cancellationToken).ConfigureAwait(false);
           _deadLetterMetrics?.Added.Add(1,
             new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.PERSPECTIVE_EVENTS),
-            new KeyValuePair<string, object?>("reason", "MaxAttemptsExceeded"));
+            new KeyValuePair<string, object?>(METRIC_TAG_REASON, "MaxAttemptsExceeded"));
           DeadLetterLog.MessageDeadLettered(_logger, _deadLetterLevel, exception: null, raw.EventWorkId, raw.EventType,
             nameof(Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded), errorText);
           // Row was DELETEd by move_to_dead_letters() inside the SQL function; do not
@@ -2775,7 +2776,7 @@ public partial class PerspectiveWorker(
     }
     _metrics?.ReadFailures.Add(1,
       new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName),
-      new KeyValuePair<string, object?>("reason", Whizbang.Core.Perspectives.StoredFormUnreadable.REASON));
+      new KeyValuePair<string, object?>(METRIC_TAG_REASON, Whizbang.Core.Perspectives.StoredFormUnreadable.REASON));
 
     var error = $"Stored form unreadable at {path}: {unreadable.Detail}";
     await _parkLeasedRowsAsync(workIds, error, MessageFailureReason.SerializationError, ct).ConfigureAwait(false);
