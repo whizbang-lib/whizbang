@@ -4,6 +4,7 @@
 using System;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace Whizbang.Core.Startup;
 
@@ -58,7 +59,14 @@ public static class RoleCatalogServiceCollectionExtensions {
   /// <returns>The same collection.</returns>
   public static IServiceCollection AddWhizbangRoleCatalog(this IServiceCollection services) {
     services.TryAddSingleton(sp => new RoleCatalog(sp.GetServices<RoleDeclaration>()));
+    // The options read the same catalog, so whether a role is episodic is the one declaration's answer.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IPostConfigureOptions<RoleAssignmentOptions>, ApplyRoleCatalog>());
     return services;
+  }
+
+  /// <summary>Applies the registered catalog to <see cref="RoleAssignmentOptions.Catalog"/>.</summary>
+  private sealed class ApplyRoleCatalog(RoleCatalog catalog) : IPostConfigureOptions<RoleAssignmentOptions> {
+    public void PostConfigure(string? name, RoleAssignmentOptions options) => options.Catalog = catalog;
   }
 
   private static void _declare(IServiceCollection services, RoleDeclaration declaration) {

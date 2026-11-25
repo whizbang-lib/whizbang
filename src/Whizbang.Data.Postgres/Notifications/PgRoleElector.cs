@@ -102,7 +102,7 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
   /// <param name="timeProvider">Optional clock for the renew throttle; the system clock when null.</param>
   /// <param name="metrics">Optional meters.</param>
   /// <param name="runPermit">The instance's run permit; a new open one when null.</param>
-  /// <param name="roleCatalog">The roles this elector may vote for (#2594); the framework's roles when null. A role in
+  /// <param name="roleCatalog">The roles this elector may vote for (#2594); the options' catalog when null. A role in
   /// <see cref="RoleAssignmentOptions.Roles"/> counts as declared either way.</param>
   /// <exception cref="ArgumentNullException">A required argument is null.</exception>
   /// <exception cref="ArgumentOutOfRangeException">The role options describe an unworkable lease.</exception>
@@ -138,7 +138,7 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     _metrics = metrics;
     _versionKey = LibraryVersionKey.From(libraryVersion?.LibraryVersion);
     RunPermit = runPermit ?? new Whizbang.Core.RunControl.WhizbangRunPermit();
-    _catalog = _withRoster(roleCatalog ?? new RoleCatalog([]), _roleOptions);
+    _catalog = _withRoster(roleCatalog ?? _roleOptions.Catalog, _roleOptions);
   }
 
   /// <summary>
