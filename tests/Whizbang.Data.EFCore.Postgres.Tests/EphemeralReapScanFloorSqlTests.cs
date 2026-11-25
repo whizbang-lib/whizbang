@@ -106,17 +106,23 @@ public class EphemeralReapScanFloorSqlTests : EFCoreTestBase {
       .Because("past the rescan interval the walk starts from the beginning, and finds the body below the old floor");
   }
 
+  // Both statistics states the planner can meet: freshly analyzed, and as a bulk insert leaves them before autovacuum
+  // has analyzed the table. The floor has to bound the scan in both, so it cannot rest on the planner guessing well.
   [Test]
+  [Arguments(true)]
+  [Arguments(false)]
   [Timeout(600000)]
-  public async Task Scans_ACycleAfterTheFirst_ReadOnlyThePointersAboveTheFloorAsync(CancellationToken cancellationToken) {
+  public async Task Scans_ACycleAfterTheFirst_ReadOnlyThePointersAboveTheFloorAsync(bool analyzed, CancellationToken cancellationToken) {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext, cancellationToken);
     await _execAsync(conn, $"""
       INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, commit_sequence, created_at, flags)
       SELECT x.id, x.id, x.id, 'TestAggregate', '{EVENT_TYPE}', 1, x.g, NOW() - INTERVAL '30 days' + x.g * INTERVAL '1 second', 8
       FROM (SELECT gen_random_uuid() AS id, g FROM generate_series(1, {REAPED_POINTERS}) g) x;
-      ANALYZE wh_event_store; ANALYZE wh_event_body;
       """, null, cancellationToken);
+    if (analyzed) {
+      await _execAsync(conn, "ANALYZE wh_event_store; ANALYZE wh_event_body;", null, cancellationToken);
+    }
     // The one body still stored, consumed and past its grace: the reap's only candidate.
     var live = Guid.NewGuid();
     await _pointerAsync(conn, live, daysAgo: 1, withBody: true, cancellationToken);
@@ -127,10 +133,22 @@ public class EphemeralReapScanFloorSqlTests : EFCoreTestBase {
 
     await Assert.That(secondOffered).IsEquivalentTo((List<Guid>)[live])
       .Because("the floor rests on the body still stored, so the scan still offers it");
-    await Assert.That(secondRead.Total).IsLessThan(REAPED_POINTERS / 10)
+    // The event store and its indexes only: what the floor bounds. The settings lookups each statement makes (the grace
+    // window, the floor's own keys) read wh_settings, whose size is the number of settings and not the retained set, and
+    // whose plan a small table leaves to the planner's choice of a sequential scan.
+    await Assert.That(_eventStoreRows(firstRead)).IsGreaterThanOrEqualTo(REAPED_POINTERS)
+      .Because($"the first cycle walks the reaped pointers once to place the floor. {firstRead}");
+    await Assert.That(_eventStoreRows(secondRead)).IsLessThan(REAPED_POINTERS / 10)
       .Because($"a cycle after the first reads the pointers above the floor, not the {REAPED_POINTERS} whose bodies are "
         + $"gone. {secondRead}");
   }
+
+  /// <summary>The rows read from <c>wh_event_store</c> and its indexes.</summary>
+  private static long _eventStoreRows(RowsReadResult read) =>
+    read.ByRelation
+      .Where(entry => entry.Relation.StartsWith("wh_event_store", StringComparison.Ordinal)
+        || entry.Relation.StartsWith("idx_event_store", StringComparison.Ordinal))
+      .Sum(entry => entry.Rows);
 
   /// <summary>Both candidate scans, as a maintenance cycle asks them, measured in rows read.</summary>
   private static async Task<(RowsReadResult Read, List<Guid> Offered)> _cycleAsync(
