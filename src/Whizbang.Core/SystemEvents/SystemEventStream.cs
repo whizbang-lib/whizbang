@@ -23,8 +23,8 @@ namespace Whizbang.Core.SystemEvents;
 /// </remarks>
 /// <docs>fundamentals/events/system-events#stream</docs>
 /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/ISystemEventTests.cs:SystemEventStreamName_IsConstant_ForDedicatedStreamAsync</tests>
-/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventStreamRoutingTests.cs:StreamFor_NamesTheLedgerForAuditKindsAndTheGlobalStreamForTheRestAsync</tests>
-/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventEmitterTests.cs:EmitAsync_WithEventAudited_WhenAuditEnabled_AppendsToTheNoTenantAuditLedgerAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventStreamRoutingTests.cs:StreamFor_NamesTheRecordsOwnIdForAuditKindsAndTheGlobalStreamForTheRestAsync</tests>
+/// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventEmitterTests.cs:EmitAsync_WithEventAudited_WhenAuditEnabled_AppendsOnTheRecordsOwnIdAsync</tests>
 public static class SystemEventStreams {
   /// <summary>
   /// The name of the dedicated system event stream.
@@ -53,7 +53,7 @@ public static class SystemEventStreams {
   /// <param name="systemEvent">The system event about to be stored.</param>
   /// <returns>The stream id to append it to.</returns>
   /// <docs>fundamentals/events/system-events#stream</docs>
-  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventStreamRoutingTests.cs:StreamFor_NamesTheLedgerForAuditKindsAndTheGlobalStreamForTheRestAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventStreamRoutingTests.cs:StreamFor_NamesTheRecordsOwnIdForAuditKindsAndTheGlobalStreamForTheRestAsync</tests>
   public static Guid StreamFor(ISystemEvent systemEvent) => systemEvent switch {
     EventAudited audited => AuditLedger.StreamFor(audited.TenantId),
     CommandAudited audited => AuditLedger.StreamFor(audited.TenantId),
