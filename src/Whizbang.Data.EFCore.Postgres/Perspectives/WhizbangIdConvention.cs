@@ -22,7 +22,9 @@ namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 /// </para>
 /// <para>
 /// Each id discovered as a complex property is removed and the same member added back as a property, with the id's
-/// converter and JSON reader/writer. A collection of ids is left as Entity Framework discovered it.
+/// converter and JSON reader/writer. Outside a document the property keeps the column the complex id had,
+/// <c>&lt;column&gt;_Value</c>, as <see cref="WhizbangIdColumnConvention"/> keeps it on a context with the extension. A
+/// collection of ids is left as Entity Framework discovered it.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/identity/whizbang-ids#stored-form</docs>
@@ -62,6 +64,9 @@ public static class WhizbangIdConvention {
       property.IsNullable = nullable || complex.ClrType != idType;
       if (jsonName is not null) {
         property.SetJsonPropertyName(jsonName);
+      } else if (!type.IsMappedToJson() && WhizbangIdColumnConvention.KeptColumn(property) is { } column) {
+        // Outside a document the id keeps the column it had as a complex type (WhizbangIdColumnConvention).
+        property.SetColumnName(column);
       }
     }
   }

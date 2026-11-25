@@ -92,10 +92,10 @@ public sealed class WhizbangIdTypeMapping : RelationalTypeMapping {
 
 /// <summary>The conversions a strongly-typed id's mapping is built from, named so Entity Framework can compile them.</summary>
 /// <typeparam name="TId">The id type.</typeparam>
-/// <docs>fundamentals/identity/whizbang-ids</docs>
+/// <docs>fundamentals/identity/whizbang-ids#stored-form</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/WhizbangIdTypeMappingTests.cs</tests>
-[SuppressMessage("Design", "CA1000:Do not declare static members on generic types",
-  Justification = "Entity Framework's converters and reader/writers are built per closed id type")]
+// CA1000: Entity Framework's converters and reader/writers are built per closed id type.
+#pragma warning disable CA1000
 public static class WhizbangIdValues<TId> where TId : struct, IWhizbangId {
   private static WhizbangIdForm<TId> _form =>
     WhizbangIdForms.TryGet(typeof(TId), out var form)
@@ -112,6 +112,7 @@ public static class WhizbangIdValues<TId> where TId : struct, IWhizbangId {
   /// <returns>Its Guid.</returns>
   public static Guid Store(TId id) => id.ToGuid();
 }
+#pragma warning restore CA1000
 
 /// <summary>
 /// Entity Framework's JSON reader and writer for a strongly-typed id: reads a UUID string or the object
@@ -119,10 +120,10 @@ public static class WhizbangIdValues<TId> where TId : struct, IWhizbangId {
 /// reads (#2518).
 /// </summary>
 /// <typeparam name="TId">The id type.</typeparam>
-/// <docs>fundamentals/identity/whizbang-ids</docs>
+/// <docs>fundamentals/identity/whizbang-ids#stored-form</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/WhizbangIdTypeMappingTests.cs</tests>
-[SuppressMessage("Design", "CA1000:Do not declare static members on generic types",
-  Justification = "Entity Framework's reader/writers are built per closed id type")]
+// CA1000: Entity Framework's reader/writers are built per closed id type.
+#pragma warning disable CA1000
 public sealed class WhizbangIdJsonReaderWriter<TId> : JsonValueReaderWriter<TId> where TId : struct, IWhizbangId {
   private const string VALUE = "Value";
 
@@ -181,6 +182,7 @@ public sealed class WhizbangIdJsonReaderWriter<TId> : JsonValueReaderWriter<TId>
   public override Expression ConstructorExpression =>
     Expression.Property(null, typeof(WhizbangIdJsonReaderWriter<TId>).GetProperty(nameof(Instance))!);
 }
+#pragma warning restore CA1000
 
 /// <summary>
 /// Answers Entity Framework's type mapping question for every registered strongly-typed id with

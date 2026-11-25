@@ -287,6 +287,8 @@ public class PostgresDriverExtensionsTests {
       .OfType<Whizbang.Data.EFCore.Postgres.Perspectives.StrongIdScalarRewriteStep>().ToList();
     await Assert.That(steps).Count().IsEqualTo(1);
     await Assert.That(steps[0].Name).IsEqualTo(Whizbang.Data.EFCore.Postgres.Perspectives.StrongIdScalarRewriteStep.STEP_NAME);
+    await Assert.That(steps[0].DbContextType).IsEqualTo(typeof(PostgresTestDbContext))
+      .Because("the step converts, and asks the gate of, the schema of the context the driver was configured for");
   }
 
   [Test]

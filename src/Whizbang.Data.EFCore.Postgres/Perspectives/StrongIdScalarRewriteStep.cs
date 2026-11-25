@@ -53,23 +53,25 @@ public sealed class StrongIdScalarRewriteStep(
   /// <summary>The context types whose tables are all settled, and whose schema's gate is open, in this process.</summary>
   private static readonly ConcurrentDictionary<Type, bool> _settled = new();
 
-  private readonly Type _dbContextType = dbContextType ?? throw new ArgumentNullException(nameof(dbContextType));
   private readonly ILogger _logger = (ILogger?)logger ?? NullLogger.Instance;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
   /// <inheritdoc />
   public string Name => STEP_NAME;
 
+  /// <summary>The DbContext whose perspectives the step converts, and whose schema's gate it asks.</summary>
+  public Type DbContextType { get; } = dbContextType ?? throw new ArgumentNullException(nameof(dbContextType));
+
   /// <inheritdoc />
   public async Task RunAsync(IServiceProvider services, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(services);
-    var context = (DbContext)services.GetRequiredService(_dbContextType);
+    var context = (DbContext)services.GetRequiredService(DbContextType);
     var schema = context.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
     schema = string.IsNullOrWhiteSpace(schema) ? "public" : schema;
 
     // The rewrite writes as the role startup migrations use, when one is configured.
-    var connectionString = SchemaInitConnection.For(services, _dbContextType) ?? context.Database.GetConnectionString()
-      ?? throw new InvalidOperationException($"{TypeNameFormatter.SimpleName(_dbContextType)} has no connection string to rewrite with.");
+    var connectionString = SchemaInitConnection.For(services, DbContextType) ?? context.Database.GetConnectionString()
+      ?? throw new InvalidOperationException($"{TypeNameFormatter.SimpleName(DbContextType)} has no connection string to rewrite with.");
 
     StrongIdDocumentGateAnswer gate;
     await using (var connection = new NpgsqlConnection(connectionString)) {
@@ -77,7 +79,7 @@ public sealed class StrongIdScalarRewriteStep(
       gate = await StrongIdDocumentGate.CheckAsync(connection, schema, _logger, cancellationToken).ConfigureAwait(false);
       StrongIdScalarRewriteStepLog.Gate(_logger, schema, gate.Status);
     }
-    if (_settled.ContainsKey(_dbContextType)) {
+    if (_settled.ContainsKey(DbContextType)) {
       return;
     }
 
@@ -103,7 +105,7 @@ public sealed class StrongIdScalarRewriteStep(
     // Done for the process only once the schema's gate is open too: a context with nothing to rewrite still opens the
     // process's write form, which every context in the process shares.
     if (run.Outcome == BatchedRewriteOutcome.Settled && gate.State is StrongIdDocumentGateState.Open or StrongIdDocumentGateState.Ready) {
-      _settled.TryAdd(_dbContextType, true);
+      _settled.TryAdd(DbContextType, true);
     }
   }
 }
