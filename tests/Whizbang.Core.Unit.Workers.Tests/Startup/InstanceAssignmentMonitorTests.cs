@@ -34,12 +34,12 @@ public class InstanceAssignmentMonitorTests {
     var other = InstanceAssignments.Row(Guid.CreateVersion7(), InstanceAssignmentKind.StandardWorker);
     reader.Answer(other, InstanceAssignments.Row(instance.InstanceId, InstanceAssignmentKind.StandardWorker));
     reader.Answer(other, InstanceAssignments.Row(instance.InstanceId, InstanceAssignmentKind.StandardWorker));
-    reader.Answer(InstanceAssignments.Row(instance.InstanceId, InstanceAssignmentKind.RoleHolder, map: 13,
-      roles: [Whizbang.Core.Notifications.CommitOrderStamperOptions.ROLE, PartitionAssignerOptions.ROLE]));
-    reader.Answer(InstanceAssignments.Row(instance.InstanceId, InstanceAssignmentKind.RoleHolder, owned: 3000, map: 13,
-      roles: [Whizbang.Core.Notifications.CommitOrderStamperOptions.ROLE, PartitionAssignerOptions.ROLE]));
-    reader.Answer(InstanceAssignments.Row(instance.InstanceId, InstanceAssignmentKind.RoleHolder, owned: 3000, map: 13,
-      roles: [PartitionAssignerOptions.ROLE]));
+    reader.Answer(InstanceAssignments.Row(instance.InstanceId, InstanceAssignmentKind.RoleHolder, 2500, 13,
+      Whizbang.Core.Notifications.CommitOrderStamperOptions.ROLE, PartitionAssignerOptions.ROLE));
+    reader.Answer(InstanceAssignments.Row(instance.InstanceId, InstanceAssignmentKind.RoleHolder, 3000, 13,
+      Whizbang.Core.Notifications.CommitOrderStamperOptions.ROLE, PartitionAssignerOptions.ROLE));
+    reader.Answer(InstanceAssignments.Row(instance.InstanceId, InstanceAssignmentKind.RoleHolder, 3000, 13,
+      PartitionAssignerOptions.ROLE));
 
     for (var i = 0; i < 5; i++) {
       _ = await monitor.ObserveAsync(CancellationToken.None);
@@ -133,7 +133,7 @@ public class InstanceAssignmentMonitorTests {
     await Assert.That(options.AwaitingShareGrace).IsEqualTo(TimeSpan.Zero);
     await Assert.That(options.GraceFor(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5))).IsEqualTo(TimeSpan.FromSeconds(15));
     await Assert.That(InstanceAssignments.Monitor(null, new FixedInstance(), new FakeTimeProvider()).AwaitingShareGrace)
-      .IsEqualTo(new PartitionAssignerOptions().SettleWindow * 2 + new RoleAssignmentOptions().RenewInterval);
+      .IsEqualTo((new PartitionAssignerOptions().SettleWindow * 2) + new RoleAssignmentOptions().RenewInterval);
 
     options.AwaitingShareGrace = TimeSpan.FromMinutes(2);
     await Assert.That(options.GraceFor(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5))).IsEqualTo(TimeSpan.FromMinutes(2));

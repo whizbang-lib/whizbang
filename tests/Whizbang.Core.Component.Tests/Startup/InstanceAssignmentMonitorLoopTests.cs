@@ -75,8 +75,9 @@ public class InstanceAssignmentMonitorLoopTests {
     await reading.Task.WaitAsync(cancellationToken);
     await monitor.StopAsync(cancellationToken);
 
-    await monitor.ExecuteTask!;
-    await Assert.That(monitor.ExecuteTask.IsCompletedSuccessfully).IsTrue()
+    var loop = monitor.ExecuteTask!;
+    await loop;
+    await Assert.That(loop.IsCompletedSuccessfully).IsTrue()
       .Because("a read canceled by the host's stop ends the loop, it is not a failure");
   }
 
