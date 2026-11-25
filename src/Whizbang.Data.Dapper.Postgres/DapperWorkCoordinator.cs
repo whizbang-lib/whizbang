@@ -497,21 +497,24 @@ public partial class DapperWorkCoordinator(
       new { p_instance_id = instanceId, p_stream_ids = streamIds, p_now = now },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
-    // #2556: each fetched piece of work is recorded under its stream's claimed tenure, which its result then names.
-    return _recordedPerspective(results.Select(r => new StreamEventData {
+    // #2591: a row without a body is named reaped (an ephemeral event) or missing (any other).
+    var rows = await Whizbang.Data.Postgres.MissingEventBodySql.NameAsync(__scope.Connection, prefix, [.. results.Select(r => new StreamEventData {
       StreamId = r.out_stream_id,
       EventId = r.out_event_id,
       EventType = r.out_event_type,
-      // #2591: a body the reap deleted reads as NULL; the row is named as unreadable rather than carrying a null body.
+      // #2591: a body that is gone reads as NULL; the row is named as unreadable rather than carrying a null body.
       EventData = r.out_event_data ?? string.Empty,
-      UnreadableReason = r.out_event_data is null ? StreamEventData.NO_STORED_BODY : null,
+      UnreadableReason = r.out_event_data is null ? StreamEventData.BODY_MISSING : null,
       Metadata = r.out_metadata,
       Scope = r.out_scope,
       EventWorkId = r.out_event_work_id,
       Attempts = r.out_attempts,
       Failures = r.out_failures,
       Version = r.out_version,
-    }).ToList(), r => r.EventWorkId, r => r.StreamId);
+    })], cancellationToken).ConfigureAwait(false);
+
+    // #2556: each fetched piece of work is recorded under its stream's claimed tenure, which its result then names.
+    return _recordedPerspective(rows, r => r.EventWorkId, r => r.StreamId);
   }
 
   /// <inheritdoc />

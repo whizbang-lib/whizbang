@@ -55,6 +55,10 @@ public class ReapedBodyBatchIsolationTests : EFCoreTestBase {
   private const int EPHEMERAL = 8;
   private const int MAX_FAILURES = 1;
   private const int BATCH_LOST_EVENT_ID = 68;
+  private const int REAPED_BODY_EVENT_ID = 84;
+  private const int MISSING_BODY_EVENT_ID = 85;
+  private const int DEAD_LETTER_RECORD_EVENT_ID = 1901;
+  private static readonly LogLevel[] _oneWarning = [LogLevel.Warning];
 
   /// <summary>
   /// The deployed shape: an ephemeral stream whose bodies were reaped shares a batch with healthy streams. The healthy
@@ -78,8 +82,12 @@ public class ReapedBodyBatchIsolationTests : EFCoreTestBase {
       .Because("the dead letter takes the row out of the work table, so no batch leases it again");
     var named = _linesNaming(pipeline, run);
     await Assert.That(named).IsNotEmpty().Because("the log names the stream, the perspective and the error");
-    await Assert.That(named.All(l => l.Level == LogLevel.Warning)).IsTrue()
+    await Assert.That(named.Where(l => l.EventId == REAPED_BODY_EVENT_ID).Select(l => l.Level)).IsEquivalentTo(_oneWarning)
       .Because("a reaped ephemeral body is the retention working as configured, not a defect");
+    await Assert.That(named.Any(l => l.EventId == MISSING_BODY_EVENT_ID)).IsFalse()
+      .Because("the Error line is for a body that should never have been deleted");
+    await Assert.That(named.Count(l => l.EventId == DEAD_LETTER_RECORD_EVENT_ID)).IsEqualTo(1)
+      .Because("the one dead-letter record, at the level DeadLetterLogging configures, as for every dead letter");
   }
 
   /// <summary>

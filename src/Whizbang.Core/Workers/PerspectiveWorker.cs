@@ -1404,8 +1404,9 @@ public partial class PerspectiveWorker(
         // and that is the statement a sibling instance's schema DDL deadlocked. Its failure costs the
         // drained streams their leases and nothing else: the claimed per-event work that shares this
         // batch still runs below, and the loop that owns this batch keeps going either way.
+        // #2591: one signal per event, so a stream can be listed more than once; it is reported and released once.
         await _recoverFailedBatchAsync(
-          ex, [.. workBatch.PerspectiveStreamIds], cancellationToken).ConfigureAwait(false);
+          ex, [.. workBatch.PerspectiveStreamIds.Distinct()], cancellationToken).ConfigureAwait(false);
       }
       if (!drainAppliedGroups.IsEmpty) {
         groupedWork = [.. groupedWork.Where(g => !drainAppliedGroups.ContainsKey(g.Key))];
@@ -2052,20 +2053,32 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
-  /// Fails each fetched row whose event the read could not return (<see cref="StreamEventData.UnreadableReason"/>, a body
-  /// the reap deleted), and returns the rest (#2591). Each such row is reported through the failure channel with
-  /// <see cref="MessageFailureReason.EventBodyMissing"/> and an error naming the perspective, the stream and the event, and
-  /// logged with the same; the database records the failure and backs the retry off, and the pre-apply dead-letter filter
-  /// (<see cref="FilterDeadLetteredAsync"/>) moves the row once its failures pass
-  /// <see cref="PerspectiveWorkerOptions.MaxPerspectiveEventAttempts"/>. The other rows of the batch, of every stream, are
-  /// applied as usual.
+  /// Takes each fetched row whose event the read could not return (<see cref="StreamEventData.UnreadableReason"/>) out of
+  /// the batch, alone and by name, and returns the rest in their order (#2591):
   /// </summary>
   /// <remarks>
+  /// <list type="bullet">
+  /// <item><description>
+  /// <b>An ephemeral event whose body was reaped</b> (<see cref="StreamEventData.BODY_REAPED"/>) is dead-lettered on
+  /// first sight with <see cref="MessageFailureReason.EventBodyMissing"/>, and logged at Warning (EventId 84): the body
+  /// never comes back, so a retry would only be spent. When this worker has no dead-letter store, or the move fails, the
+  /// row is failed for the bounded retry instead (EventId 86), so it is never leased again with nothing recorded.
+  /// </description></item>
+  /// <item><description>
+  /// <b>Any other event without a body</b> (<see cref="StreamEventData.BODY_MISSING"/>) is failed through the failure
+  /// channel with <see cref="MessageFailureReason.EventBodyMissing"/> and logged at Error (EventId 85): a Sourced body is
+  /// never reaped, so its absence means something else is wrong. The database backs the retry off, and the pre-apply
+  /// dead-letter filter (<see cref="FilterDeadLetteredAsync"/>) moves the row once its failures pass
+  /// <see cref="PerspectiveWorkerOptions.MaxPerspectiveEventAttempts"/>.
+  /// </description></item>
+  /// </list>
   /// Before, the read cast the missing body and threw, so the whole batch was lost, released, and leased again with the
   /// same row in it: nothing was ever recorded against the row, and every batch it joined failed.
   /// </remarks>
   /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReapedBodyBatchIsolationTests.cs:AReapedStreamSharingABatch_FailsOnlyItself_IsRetriedBoundedly_AndIsDeadLetteredAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerUnreadableFetchedRowTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReapedBodyBatchIsolationTests.cs:AReapedStreamSharingABatch_FailsOnlyItself_AndIsDeadLetteredOnFirstSightAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReapedBodyBatchIsolationTests.cs:AStreamMissingASourcedBody_FailsOnlyItself_IsRetriedBoundedly_AndIsDeadLetteredAtErrorAsync</tests>
   internal async Task<List<StreamEventData>> FailRowsReadWithoutTheirEventAsync(
       List<StreamEventData> rows, CancellationToken cancellationToken) {
     List<StreamEventData>? readable = null;
@@ -2078,21 +2091,78 @@ public partial class PerspectiveWorker(
       readable ??= rows.GetRange(0, i);
       var error = $"Perspective {row.PerspectiveName} cannot read event {row.EventId} (version {row.Version}, type {row.EventType}) "
         + $"of stream {row.StreamId}: {row.UnreadableReason}";
-      LogRowReadWithoutItsEvent(_logger, row.PerspectiveName, row.StreamId, row.EventId, row.Version, row.EventType,
-        row.UnreadableReason, row.Failures);
+      if (string.Equals(row.UnreadableReason, StreamEventData.BODY_REAPED, StringComparison.Ordinal)) {
+        if (await _tryDeadLetterReapedRowAsync(row, error, cancellationToken).ConfigureAwait(false)) {
+          continue;
+        }
+      } else {
+        LogRowWithoutItsBody(_logger, row.PerspectiveName, row.StreamId, row.EventId, row.Version, row.EventType,
+          row.UnreadableReason, row.Failures);
+      }
       await _parkLeasedRowsAsync([row.EventWorkId], error, MessageFailureReason.EventBodyMissing, cancellationToken).ConfigureAwait(false);
     }
     return readable ?? rows;
+  }
+
+  /// <summary>
+  /// Dead-letters a row whose ephemeral body was reaped, with the one dead-letter record and count. False, with a Warning
+  /// that says why, when this worker has no dead-letter store or the move fails: the caller then fails the row for retry.
+  /// </summary>
+  private async Task<bool> _tryDeadLetterReapedRowAsync(StreamEventData row, string error, CancellationToken cancellationToken) {
+    Exception? failure = null;
+    if (_deadLetterStore.IsConfigured) {
+      try {
+        await _deadLetterStore.MoveAsync(
+          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
+          sourceTable: DeadLetterSourceTable.PERSPECTIVE_EVENTS,
+          sourceId: row.EventWorkId,
+          failureReason: MessageFailureReason.EventBodyMissing,
+          errorText: error,
+          instanceId: _instanceProvider.InstanceId,
+          generation: _generationProvider.GetGeneration(),
+          ct: cancellationToken).ConfigureAwait(false);
+        _deadLetterMetrics?.Added.Add(1,
+          new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.PERSPECTIVE_EVENTS),
+          new KeyValuePair<string, object?>("reason", nameof(MessageFailureReason.EventBodyMissing)));
+        DeadLetterLog.MessageDeadLettered(_logger, _deadLetterLevel, exception: null, row.EventWorkId, row.EventType,
+          nameof(MessageFailureReason.EventBodyMissing), error);
+        LogReapedRowDeadLettered(_logger, row.PerspectiveName, row.StreamId, row.EventId, row.Version, row.EventType);
+        return true;
+      } catch (Exception ex) {
+        // Not swallowed: logged below with the exception, and the row is failed for retry by the caller.
+        failure = ex;
+      }
+    }
+    LogReapedRowNotDeadLettered(_logger, failure, row.PerspectiveName, row.StreamId, row.EventId, row.Version, row.EventType);
+    return false;
   }
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
     Justification = "A generated structured log message: each value is its own searchable property.")]
   [LoggerMessage(EventId = 84, Level = LogLevel.Warning,
     Message = "Perspective {PerspectiveName} cannot read event {EventId} (version {Version}, type {EventType}) of stream {StreamId}: "
-            + "{Reason}. The row is failed alone (failures before this one: {Failures}) and dead-lettered once its failures "
-            + "pass MaxPerspectiveEventAttempts; the rest of the batch is applied")]
-  static partial void LogRowReadWithoutItsEvent(ILogger logger, string? perspectiveName, Guid streamId, Guid eventId, long? version,
+            + "the event is ephemeral and its body was reaped past its retention. The row is dead-lettered on first sight; "
+            + "the rest of the batch is applied")]
+  static partial void LogReapedRowDeadLettered(ILogger logger, string? perspectiveName, Guid streamId, Guid eventId, long? version,
+    string eventType);
+
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
+    Justification = "A generated structured log message: each value is its own searchable property.")]
+  [LoggerMessage(EventId = 85, Level = LogLevel.Error,
+    Message = "Perspective {PerspectiveName} cannot read event {EventId} (version {Version}, type {EventType}) of stream {StreamId}: "
+            + "{Reason}. Something other than the ephemeral reap deleted it. The row is failed alone (failures before this "
+            + "one: {Failures}) and dead-lettered once its failures pass MaxPerspectiveEventAttempts; the rest of the batch is applied")]
+  static partial void LogRowWithoutItsBody(ILogger logger, string? perspectiveName, Guid streamId, Guid eventId, long? version,
     string eventType, string reason, int failures);
+
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
+    Justification = "A generated structured log message: each value is its own searchable property.")]
+  [LoggerMessage(EventId = 86, Level = LogLevel.Warning,
+    Message = "Perspective {PerspectiveName} cannot read event {EventId} (version {Version}, type {EventType}) of stream {StreamId}: "
+            + "the event is ephemeral and its body was reaped, but the row could not be dead-lettered (no dead-letter store "
+            + "is registered, or the move failed). It is failed for the bounded retry instead")]
+  static partial void LogReapedRowNotDeadLettered(ILogger logger, Exception? exception, string? perspectiveName, Guid streamId,
+    Guid eventId, long? version, string eventType);
 
   /// <summary>
   /// Reads the fetched rows into typed envelopes. When the read throws for the batch (a store or decorator that does not skip a row

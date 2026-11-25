@@ -95,11 +95,11 @@ public class PerspectiveWorkerUnreadableFetchedRowTests {
     List<StreamEventData> expected = [other];
     await Assert.That(kept).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(failures.Items).IsEmpty().Because("no retry is spent on a body that never comes back");
-    var move = store.Moves.Single();
-    await Assert.That(move.SourceId).IsEqualTo(reaped.EventWorkId);
-    await Assert.That(move.SourceTable).IsEqualTo(DeadLetterSourceTable.PERSPECTIVE_EVENTS);
-    await Assert.That(move.Reason).IsEqualTo(MessageFailureReason.EventBodyMissing);
-    await Assert.That(move.Error).Contains(reaped.StreamId.ToString()).And.Contains(PERSPECTIVE).And.Contains(StreamEventData.BODY_REAPED);
+    var (sourceId, sourceTable, reason, error) = store.Moves.Single();
+    await Assert.That(sourceId).IsEqualTo(reaped.EventWorkId);
+    await Assert.That(sourceTable).IsEqualTo(DeadLetterSourceTable.PERSPECTIVE_EVENTS);
+    await Assert.That(reason).IsEqualTo(MessageFailureReason.EventBodyMissing);
+    await Assert.That(error).Contains(reaped.StreamId.ToString()).And.Contains(PERSPECTIVE).And.Contains(StreamEventData.BODY_REAPED);
     var line = logs.Entries.Single(e => e.EventId == REAPED_BODY_EVENT_ID);
     await Assert.That(line.Level).IsEqualTo(LogLevel.Warning);
     await Assert.That(line.Message).Contains(reaped.StreamId.ToString()).And.Contains(PERSPECTIVE);

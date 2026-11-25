@@ -6479,7 +6479,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         EventId = reader.GetGuid(reader.GetOrdinal("out_event_id")),
         EventType = reader.GetString(reader.GetOrdinal("out_event_type")),
         EventData = bodyMissing ? string.Empty : reader.GetString(eventDataOrdinal),
-        UnreadableReason = bodyMissing ? StreamEventData.NO_STORED_BODY : null,
+        // Named reaped or missing by MissingEventBodySql below, once the read is done.
+        UnreadableReason = bodyMissing ? StreamEventData.BODY_MISSING : null,
         Metadata = await reader.IsDBNullAsync(metadataOrdinal, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(metadataOrdinal),
         Scope = await reader.IsDBNullAsync(scopeOrdinal, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(scopeOrdinal),
         EventWorkId = reader.GetGuid(reader.GetOrdinal("out_event_work_id")),
@@ -6499,6 +6500,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Version = reader.GetInt64(versionOrdinal),
       });
     }
+
+    await reader.CloseAsync().ConfigureAwait(false);
+    // #2591: a row without a body is named reaped (an ephemeral event) or missing (any other).
+    results = await Whizbang.Data.Postgres.MissingEventBodySql.NameAsync(
+      dbConnection, PgIdentifier.QualifyPrefix(schema), results, cancellationToken).ConfigureAwait(false);
 
     // #2556: each fetched piece of work is recorded under its stream's claimed tenure, which its result then names.
     TenureFill.RecordFetchedPerspective(_tenures, results, r => r.EventWorkId, r => r.StreamId);

@@ -1,8 +1,13 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 600_ARewindNeverReachesBelowTheReapFloor.sql (#2591): 590's rewind comes back verbatim and the floor
--- function goes.
+-- The reverse of 600_ARewindNeverReachesBelowTheReapFloor.sql (#2591): 590's rewind comes back verbatim, and the floor
+-- and repair functions and the repair's setting go.
+--
+-- What the repair changed is not restored. It cleared rewinds that could never complete (nothing they would replay has a
+-- body), moved others up to the first event that can still be read, and deleted queued replays of events without a body.
+-- Putting any of that back would bring back the stall the repair ended: a batch failing on an unreadable row, and a
+-- startup in Blocking mode waiting on a rewind that cannot finish.
 
 SELECT __SCHEMA__.drop_all_overloads('_wh_rewind_perspectives_from');
 -- <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
@@ -95,3 +100,5 @@ COMMENT ON FUNCTION __SCHEMA__._wh_rewind_perspectives_from(UUID[], TEXT[], UUID
 
 
 DROP FUNCTION IF EXISTS __SCHEMA__.wh_rewind_reap_floor(UUID[], TEXT[], UUID[]);
+DROP FUNCTION IF EXISTS __SCHEMA__._wh_repair_unreplayable_rewinds();
+DELETE FROM __SCHEMA__.wh_settings WHERE setting_key = 'rewind_reap_floor_repaired';

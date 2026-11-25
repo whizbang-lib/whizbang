@@ -23,14 +23,25 @@
 --              The fill's caller (OriginPositionStore) reads the floor itself before the fill, so it can report and
 --              count the rewinds that were skipped; any other caller of the rewind gets the same floor.
 --
+--                the repair    _wh_repair_unreplayable_rewinds, run once per database by this migration (gated on the
+--                              rewind_reap_floor_repaired setting, which records what it did), applies the same rule to
+--                              what a database already holds: every flagged cursor whose trigger has no floor has its
+--                              flag cleared (the rewind can never complete, and a startup in Blocking mode would wait on
+--                              it); one whose floor is above its trigger is moved to the floor and the floor queued. The
+--                              queued rows of those cursors whose event has no body are deleted. It raises a NOTICE with
+--                              the counts.
+--
 --              Cost: one walk per named rewind down the stream's version index from the trigger, probing the body by its
---              key, ending at the first event with a body (the trigger itself on a stream nothing was reaped from).
+--              key, ending at the first event with a body (the trigger itself on a stream nothing was reaped from). The
+--              repair reads the cursor table once (the flag has no index; the worker's startup scan makes the same pass
+--              on every start), then does that walk per flagged cursor, and touches only the flagged cursors' rows by key.
 --
 --              Number 600: 598 and 599 are taken by changes in flight.
 --
--- Reversal: reversible (590's rewind comes back; the floor function is dropped)
+-- Reversal: reversible (590's rewind comes back; the floor and repair functions and the repair's setting are dropped;
+--           what the repair cleared is not restored, since it was a rewind that could never complete)
 -- Dependencies: 590 (_wh_rewind_perspectives_from), 072 (wh_event_body), 455 (the cursor's rewind flag and replay frontier)
--- Objects: wh_rewind_reap_floor, _wh_rewind_perspectives_from
+-- Objects: wh_rewind_reap_floor, _wh_rewind_perspectives_from, _wh_repair_unreplayable_rewinds
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -184,3 +195,99 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__._wh_rewind_perspectives_from(UUID[], TEXT[], UUID[], TIMESTAMPTZ) IS
 '600 (#2591, from 590): each trigger floored first (wh_rewind_reap_floor), a triple with no floor skipped; then for each (stream, perspective, trigger) triple, deletes that perspective''s snapshots at the trigger''s version or above (or with no version), flags its cursor RewindRequired at the lower of the trigger and any it already had, clears its replay frontier and queues the trigger. Returns the cursors that were not flagged before.';
 
+-- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+-- Once per database: the floor applied to the rewinds already flagged. Cleared where nothing can be replayed, moved to
+-- the floor where it is above the trigger, and the queued replays of events without bodies deleted.
+SELECT __SCHEMA__.drop_all_overloads('_wh_repair_unreplayable_rewinds');
+-- <docs>resilience/stream-integrity#a-rewind-never-reaches-below-the-reap-floor</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OriginPositionFillSqlTests.cs:Repair_MovesAReapedTriggerToItsFloor_ClearsOneWithNone_LeavesTheRest_AndRunsOnceAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReapedBodyBatchIsolationTests.cs:Migration600_ClearsARewindThatCanNeverComplete_AndABlockingStartupIsNotHeldAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__._wh_repair_unreplayable_rewinds()
+RETURNS TABLE(cursors_cleared INTEGER, cursors_moved INTEGER, rows_deleted INTEGER) AS $$
+DECLARE
+  v_cleared INTEGER := 0;
+  v_moved INTEGER := 0;
+  v_deleted INTEGER := 0;
+  v_streams UUID[];
+  v_names TEXT[];
+  v_triggers UUID[];
+  v_fix_streams UUID[];
+  v_fix_names TEXT[];
+  v_fix_floors UUID[];
+BEGIN
+  -- Claimed first, in the migration's transaction: a failure rolls the claim back with the work.
+  INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description)
+  VALUES ('rewind_reap_floor_repaired', 'true', 'boolean',
+          '600 (#2591): the rewinds already flagged below the reap floor have been repaired.')
+  ON CONFLICT (setting_key) DO NOTHING;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT 0, 0, 0;
+    RETURN;
+  END IF;
+
+  SELECT array_agg(c.stream_id), array_agg(c.perspective_name::text), array_agg(c.rewind_trigger_event_id)
+  INTO v_streams, v_names, v_triggers
+  FROM __SCHEMA__.wh_perspective_cursors c
+  WHERE (c.status & 32) <> 0
+    AND c.rewind_trigger_event_id IS NOT NULL
+    AND c.perspective_name <> '__collective__';
+
+  -- The cursors whose floor is not their trigger: NULL where nothing can be replayed. A trigger the store no longer
+  -- holds has no floor row, and is left to the rewind as before.
+  SELECT array_agg(f.stream_id), array_agg(f.perspective_name), array_agg(f.trigger_event_id)
+  INTO v_fix_streams, v_fix_names, v_fix_floors
+  FROM __SCHEMA__.wh_rewind_reap_floor(
+    COALESCE(v_streams, ARRAY[]::UUID[]), COALESCE(v_names, ARRAY[]::TEXT[]), COALESCE(v_triggers, ARRAY[]::UUID[])) f
+  WHERE f.trigger_event_id IS DISTINCT FROM f.asked_trigger_event_id;
+
+  IF v_fix_streams IS NOT NULL THEN
+    DELETE FROM __SCHEMA__.wh_perspective_events pe
+    USING unnest(v_fix_streams, v_fix_names) AS r(sid, pname)
+    WHERE pe.stream_id = r.sid
+      AND pe.perspective_name = r.pname
+      AND pe.processed_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM __SCHEMA__.wh_event_body b WHERE b.event_id = pe.event_id);
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+
+    UPDATE __SCHEMA__.wh_perspective_cursors c
+    SET status = c.status & ~32,  -- RewindRequired flag (1 << 5) cleared
+        rewind_trigger_event_id = NULL,
+        rewind_flagged_at = NULL,
+        rewind_first_flagged_at = NULL
+    FROM unnest(v_fix_streams, v_fix_names, v_fix_floors) AS r(sid, pname, floor_id)
+    WHERE c.stream_id = r.sid AND c.perspective_name = r.pname AND r.floor_id IS NULL;
+    GET DIAGNOSTICS v_cleared = ROW_COUNT;
+
+    UPDATE __SCHEMA__.wh_perspective_cursors c
+    SET rewind_trigger_event_id = r.floor_id
+    FROM unnest(v_fix_streams, v_fix_names, v_fix_floors) AS r(sid, pname, floor_id)
+    WHERE c.stream_id = r.sid AND c.perspective_name = r.pname AND r.floor_id IS NOT NULL;
+    GET DIAGNOSTICS v_moved = ROW_COUNT;
+
+    -- The floor is queued, as the rewind queues its trigger; a processed row of it (debug mode) is made pending again.
+    INSERT INTO __SCHEMA__.wh_perspective_events (
+      event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at, priority)
+    SELECT gen_random_uuid(), r.sid, r.pname, r.floor_id, __SCHEMA__.compute_partition(r.sid, 10000), 1, 0, NOW(),
+           __PRIORITY_BACKGROUND__
+    FROM unnest(v_fix_streams, v_fix_names, v_fix_floors) AS r(sid, pname, floor_id)
+    WHERE r.floor_id IS NOT NULL
+    ON CONFLICT ON CONSTRAINT uq_perspective_event DO UPDATE
+      SET processed_at = NULL, status = EXCLUDED.status, attempts = 0, error = NULL, failure_reason = NULL,
+          instance_id = NULL, lease_expiry = NULL, claimed_at = NULL, scheduled_for = NULL
+      WHERE __SCHEMA__.wh_perspective_events.processed_at IS NOT NULL;
+  END IF;
+
+  UPDATE __SCHEMA__.wh_settings
+  SET description = format('600 (#2591): the rewinds already flagged below the reap floor have been repaired: %s cleared, %s moved to their floor, %s queued rows without a body deleted.',
+                           v_cleared, v_moved, v_deleted)
+  WHERE setting_key = 'rewind_reap_floor_repaired';
+  RAISE NOTICE '600 (#2591): % rewind(s) that could never complete cleared, % moved to their reap floor, % queued row(s) without a body deleted',
+    v_cleared, v_moved, v_deleted;
+  RETURN QUERY SELECT v_cleared, v_moved, v_deleted;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__._wh_repair_unreplayable_rewinds() IS
+'600 (#2591), once per database (the rewind_reap_floor_repaired setting): every flagged perspective cursor whose trigger has no reap floor is unflagged, one whose floor is above its trigger is moved to the floor and the floor queued, and those cursors'' queued rows whose event has no body are deleted. Returns the counts and raises them as a NOTICE.';
+
+SELECT * FROM __SCHEMA__._wh_repair_unreplayable_rewinds();
