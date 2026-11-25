@@ -22,7 +22,7 @@ public sealed class EphemeralSystemEventsOptions {
   /// from each event's stored creation time.
   /// </summary>
   /// <docs>fundamentals/events/ephemeral-events#framework-system-events</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Events/System/SystemEventRetentionTests.cs:SystemEventsTtl_DefaultsToThirtyDaysAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Events/System/SystemEventRetentionTests.cs:SystemEventsTtl_DefaultsToFourteenDaysAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Events/System/SystemEventRetentionTests.cs:SystemEventsTtl_BindsFromConfigurationAsync</tests>
   public TimeSpan Ttl { get; set; } = TimeSpan.FromSeconds(Whizbang.Core.Events.System.SystemEventRetention.DEFAULT_TTL_SECONDS);
 }
