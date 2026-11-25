@@ -201,6 +201,8 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
     var a = await _joinAsync(cancellationToken);
     var b = await _joinAsync(cancellationToken);
     _ = await _electAsync(a, cancellationToken);
+    // #2593: a live peer votes for the role, so the holder has a successor and its lapse is a verdict.
+    await _candidateAsync(b, cancellationToken);
     await _ageAsync(_lease + TimeSpan.FromSeconds(1), cancellationToken);
 
     var comeback = await _electAsync(a, cancellationToken);
@@ -221,6 +223,8 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
   public async Task Elect_ByALapsedHolder_AfterTheCooldown_IsGrantedAsync(CancellationToken cancellationToken) {
     var a = await _joinAsync(cancellationToken);
     var first = await _electAsync(a, cancellationToken);
+    // #2593: a live peer votes for the role, so the holder has a successor and its lapse is a verdict.
+    await _candidateAsync(await _joinAsync(cancellationToken), cancellationToken);
     await _ageAsync(_lease + TimeSpan.FromSeconds(1), cancellationToken);
     await Assert.That((await _electAsync(a, cancellationToken)).Outcome).IsEqualTo("cooling_down");
 
@@ -312,6 +316,8 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
     await Assert.That(await _renewAsync(a, vote.Epoch + 1, cancellationToken)).IsFalse()
       .Because("a renewal presents the epoch too; a different epoch is not this assignment");
 
+    // #2593: a live peer votes for the role, so the holder has a successor and its lapse is a verdict.
+    await _candidateAsync(await _joinAsync(cancellationToken), cancellationToken);
     await _ageAsync(_lease + TimeSpan.FromSeconds(1), cancellationToken);
     await Assert.That(await _renewAsync(a, vote.Epoch, cancellationToken)).IsFalse()
       .Because("a lapsed lease is void; the holder must win a new vote, not revive the old one");
@@ -415,6 +421,8 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
     await Assert.That(await fenceAsync(ROLE, b, vote.Epoch)).IsEqualTo("WHF01")
       .Because("an epoch reissued after a failover must still fail for the wrong holder");
     await Assert.That(await fenceAsync("no-such-role", a, vote.Epoch)).IsEqualTo("WHF01");
+    // #2593: a live peer votes for the role, so the holder has a successor and its lapse is a verdict.
+    await _candidateAsync(b, cancellationToken);
     await _ageAsync(_lease + TimeSpan.FromSeconds(1), cancellationToken);
     await Assert.That(await fenceAsync(ROLE, a, vote.Epoch)).IsEqualTo("WHF01")
       .Because("a lapsed lease fences its holder even before anyone re-votes");
@@ -617,11 +625,15 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
     await Assert.That(held.Epoch).IsEqualTo(vote.Epoch);
     await Assert.That(held.Elections).IsEqualTo(1L);
 
+    // #2593: a live peer votes for the role, so the holder has a successor and its lapse is a verdict.
+    var peer = await _joinAsync(cancellationToken);
+    await _candidateAsync(peer, cancellationToken);
     await _ageAsync(_lease + TimeSpan.FromSeconds(1), cancellationToken);
     await Assert.That((await statusAsync()).State).IsEqualTo("lapsed")
       .Because("a holder whose lease ran out holds nothing, even before the next vote records it");
 
     await _ageAsync(-(_lease + TimeSpan.FromSeconds(1)), cancellationToken);
+    await _executeAsync("DELETE FROM wh_role_candidates WHERE instance_id = @id", cancellationToken, ("id", peer));
     await _releaseAsync(a, vote.Epoch, cancellationToken);
     var vacant = await statusAsync();
     await Assert.That(vacant.State).IsEqualTo("vacant");
@@ -629,6 +641,12 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
     await Assert.That(vacant.Epoch).IsEqualTo(vote.Epoch)
       .Because("vacating keeps the epoch, so the next assignment is always epoch + 1");
   }
+
+  /// <summary>#2593: a live candidacy for the role, as a peer's own vote writes it, so a lapse has a successor.</summary>
+  private Task _candidateAsync(Guid instanceId, CancellationToken ct) => _executeAsync("""
+    INSERT INTO wh_role_candidates (role, instance_id, version_key, last_voted_at) VALUES (@role, @id, '{}', now())
+    ON CONFLICT (role, instance_id) DO UPDATE SET last_voted_at = EXCLUDED.last_voted_at
+    """, ct, ("role", ROLE), ("id", instanceId));
 
   private sealed record AssignmentStatus(string State, Guid? Holder, long Epoch, long Elections, string? LastReason);
 }

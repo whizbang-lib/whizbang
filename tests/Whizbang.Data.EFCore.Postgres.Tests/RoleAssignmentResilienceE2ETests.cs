@@ -170,6 +170,10 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
     await using var duty = await _openAsync(cancellationToken);
 
     var mark = await PgRoleElector.MarkDutyBackendAsync(duty, grant, cancellationToken);
+    // #2593: a live peer votes for the role, so the holder has a successor and its lapse is a verdict.
+    var peer = await _joinAsync(cancellationToken);
+    _ = await _scalarAsync("INSERT INTO wh_role_candidates (role, instance_id, version_key, last_voted_at) VALUES (@role, @id, '{}', now())",
+      cancellationToken, ("role", ROLE), ("id", peer.InstanceId));
     await _ageAsync(ROLE, _defaults.Lease + TimeSpan.FromSeconds(1), cancellationToken);
     var whileRunning = (string)(await _scalarOnAsync(duty, "SELECT state FROM wh_role_assignment_status() WHERE role = @role",
       cancellationToken, ("role", ROLE)))!;
