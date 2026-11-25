@@ -24,10 +24,10 @@ namespace Whizbang.Data.Postgres;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupMigrationStepsTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaStepRunnerTests.cs</tests>
 /// <param name="logger">Where the lines go; none when null.</param>
-/// <param name="time">The clock durations are measured on; the system clock when null.</param>
-internal sealed partial class MigrationPassProgress(ILogger? logger, TimeProvider? time) {
+/// <param name="time">The clock durations are measured on. Each driver passes its own, so there is no fallback.</param>
+internal sealed partial class MigrationPassProgress(ILogger? logger, TimeProvider time) {
   private readonly ILogger _logger = logger ?? NullLogger.Instance;
-  private readonly TimeProvider _time = time ?? TimeProvider.System;
+  private readonly TimeProvider _time = time;
   private long _passStarted;
 
   /// <summary>Every step of the pass, including those it skips; zero before the pass begins.</summary>
