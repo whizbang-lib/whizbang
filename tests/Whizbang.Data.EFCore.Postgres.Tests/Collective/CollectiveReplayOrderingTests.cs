@@ -91,19 +91,26 @@ public class CollectiveReplayOrderingTests {
   }
 
   [Test]
-  public async Task Interleave_TwoUnstampedCollectives_FoldInEventIdOrderAsync() {
+  public async Task Interleave_TwoUnstampedCollectives_FoldInStreamOrder_NotByIdAsync() {
+    // #2551: with no commit sequence to go by, the sink queue breaks the
+    // tie by the stream's version, and so does the replay. The ids run the other way (the earlier event has the higher id).
+    var earlier = _envelope(_earlierCommitId, "a");
+    earlier.LocalStreamVersion = 1;
+    var later = _envelope(_laterCommitId, "b");
+    later.LocalStreamVersion = 2;
     var (applier, _) = _applier(
       records: [
         _record(_keyStream, _earlierCommitId, typeof(FlipCollectiveEvent), commitSequence: null),
         _record(_keyStream, _laterCommitId, typeof(FlipCollectiveEvent), commitSequence: null),
       ],
-      streams: new() { [_keyStream] = [_envelope(_earlierCommitId, "a"), _envelope(_laterCommitId, "b")] });
+      streams: new() { [_keyStream] = [later, earlier] });
 
     var merged = await _interleaveAsync(applier, _perStream());
 
     await Assert.That(merged.Select(e => e.MessageId.Value)).IsEquivalentTo(
-      [_perStreamId, _laterCommitId, _earlierCommitId], TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("With no commit sequence to go by, the sink queue breaks the tie on event_id, and so does the replay.");
+      [_perStreamId, _earlierCommitId, _laterCommitId], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("With no commit sequence to go by, the sink queue breaks the tie on the stream's version, and so does the "
+        + "replay, never on the id.");
   }
 
   [Test]

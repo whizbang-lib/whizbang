@@ -73,6 +73,7 @@ public partial class CoordinationSourceGuardTests {
     ["src/Whizbang.Data.Postgres/SchemaBootstrapPhase.cs"] = EXCLUSION,
     ["src/Whizbang.Data.Postgres/CanonicalTemporalRewritePhase.cs"] = EXCLUSION,
     ["src/Whizbang.Data.Postgres/SchemaRollback.cs"] = EXCLUSION,
+    ["src/Whizbang.Data.Postgres/PerspectiveRegistryCurrency.cs"] = EXCLUSION,
     ["src/Whizbang.Data.Postgres/PostgresCapabilityProvisioner.cs"] = EXCLUSION,
     ["src/Whizbang.Data.EFCore.Postgres/SchemaStepRunner.cs"] = EXCLUSION,
     ["src/Whizbang.Data.EFCore.Postgres/Collective/EFCoreCollectiveAdapter.cs"] = EXCLUSION,
@@ -113,6 +114,8 @@ public partial class CoordinationSourceGuardTests {
     ["claim_work"] = "the partition assignment's lease: which partitions an instance owns, published by the assigner, whose role "
       + "is judged by the rule",
     ["wh_claim_multi_stream_work"] = "the partition assignment's lease, as claim_work reads it",
+    ["wh_partition_map_is_valid"] = "the published map's lease, and past it every member judged by the one liveness rule "
+      + "(wh_live_instance_ids, #2554)",
   };
 
   /// <summary>SQL functions (by their last definition) that may take a SESSION advisory lock.</summary>
@@ -167,8 +170,6 @@ public partial class CoordinationSourceGuardTests {
   private static readonly Dictionary<string, string> _overrideAllowlist = new(StringComparer.Ordinal) {
     ["src/Whizbang.Core/Versioning/UpgradeOrder.cs"] = "the setting's key, read once, beside the rule it overrides",
     ["src/Whizbang.Data.Postgres/PostgresStartupAssessment.cs"] = "THE verdict: the only place an incompatibility becomes a start",
-    ["src/Whizbang.Data.EFCore.Postgres/PostgresDriverExtensions.cs"] = "hands the setting to the EF Core driver's assessor",
-    ["src/Whizbang.Data.Dapper.Postgres/ServiceCollectionExtensions.cs"] = "hands the setting to the Dapper driver's assessor",
   };
 
   [GeneratedRegex(@"IsIncompatibilityOverridden\(|OverrideIncompatibility""|OverriddenReason\s*=(?!=)")]

@@ -73,7 +73,10 @@ public static class ReplayEventOrder {
     if (events.All(e => e.LocalCommitSequence.HasValue)) {
       return [.. events.OrderBy(e => e.LocalCommitSequence!.Value).ThenBy(TieBreak, StringComparer.Ordinal)];
     }
-    return [.. events.OrderByMessageId()];
+    // The one id fallback (#2551): nothing positional exists for an event that carries neither a version nor a commit
+    // sequence. The id's canonical text, compared ordinally, is the order Postgres gives a uuid, so this is the same
+    // comparison the receive order (574) uses for an event with no origin position.
+    return [.. events.OrderBy(static e => e.MessageId.Value.ToString("D"), StringComparer.Ordinal)];
   }
 
   // #2257: each origin's events dealt, in origin order, into the places that origin holds in the local order. #2379: an

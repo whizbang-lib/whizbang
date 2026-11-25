@@ -11,13 +11,18 @@ namespace Whizbang.Core.Messaging;
 /// <param name="OutboxIds">Outbox message ids to mark processed.</param>
 /// <param name="PerspectiveCursors">Cursor advancement specs.</param>
 /// <param name="PerspectiveEventWorkIds">perspective_event work ids to mark processed.</param>
-/// <param name="FailuresByCategory">Per-category failure batches.</param>
+/// <param name="FailuresByCategory">Per-category failure batches; each failure names its own partition epoch.</param>
+/// <param name="OutboxEpochs">The partition epoch each of <paramref name="OutboxIds"/> was claimed under, by position, in
+/// map mode (#2556); null names none. A completion under an epoch that moved on lands nowhere and is reported fenced.</param>
+/// <param name="PerspectiveEventWorkEpochs">The same for <paramref name="PerspectiveEventWorkIds"/>.</param>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
 public sealed record FlushCompletionsRequest(
   IReadOnlyList<Guid>? OutboxIds = null,
   IReadOnlyList<PerspectiveCursorCompletion>? PerspectiveCursors = null,
   IReadOnlyList<Guid>? PerspectiveEventWorkIds = null,
-  IReadOnlyList<CategoryFailures>? FailuresByCategory = null);
+  IReadOnlyList<CategoryFailures>? FailuresByCategory = null,
+  IReadOnlyList<long?>? OutboxEpochs = null,
+  IReadOnlyList<long?>? PerspectiveEventWorkEpochs = null);
 
 /// <summary>Per-category failure batch carried by <see cref="FlushCompletionsRequest"/>.</summary>
 /// <param name="Category">Which category these failures belong to.</param>

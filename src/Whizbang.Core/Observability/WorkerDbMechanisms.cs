@@ -128,6 +128,11 @@ namespace Whizbang.Core.Workers {
     public DbMechanism DbMechanism => DbMechanism.Role;
   }
 
+  public partial class PartitionHandoverWorker : IDbMechanismOwner {
+    /// <inheritdoc />
+    public DbMechanism DbMechanism => DbMechanism.Role;
+  }
+
   public partial class WhizbangShutdownService : IDbMechanismOwner {
     /// <inheritdoc />
     public DbMechanism DbMechanism => DbMechanism.Lifecycle;

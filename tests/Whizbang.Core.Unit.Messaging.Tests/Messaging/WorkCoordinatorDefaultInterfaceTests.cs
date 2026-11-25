@@ -36,6 +36,34 @@ public class WorkCoordinatorDefaultInterfaceTests {
     await Assert.That(oldest).IsNull();
   }
 
+  [Test]
+  public async Task CompleteOutboxPublishedAsync_WithEpochs_ByDefault_IsTheCompletionWithoutThemAsync() {
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.CompleteOutboxPublishedAsync([(Guid)TrackedGuid.New()], [1L], debugMode: false));
+
+    await Assert.That(message).Contains("CompleteOutboxPublishedAsync")
+      .Because("#2556: a store that does not fence ignores the epochs and completes as it always did");
+  }
+
+  [Test]
+  public async Task CompletePerspectiveAsync_WithEpochs_ByDefault_IsTheCompletionWithoutThemAsync() {
+    var message = await _captureNotImplementedMessageAsync(
+      () => _coordinator.CompletePerspectiveAsync([], [(Guid)TrackedGuid.New()], [1L], debugMode: false));
+
+    await Assert.That(message).Contains("CompletePerspectiveAsync")
+      .Because("#2556: a store that does not fence ignores the epochs and completes as it always did");
+  }
+
+  [Test]
+  public async Task Handover_ByDefault_NothingHandsOver_AndAnAcknowledgementFlipsNothingAsync() {
+    var handingOver = await _coordinator.GetPartitionsHandingOverAsync((Guid)TrackedGuid.New());
+    var flipped = await _coordinator.AcknowledgeHandoverAsync((Guid)TrackedGuid.New(), [new PartitionHandover(1, 1, (Guid)TrackedGuid.New())]);
+
+    await Assert.That(handingOver).IsEmpty().Because("#2557: a store that does not own partitions by map hands nothing over");
+    await Assert.That(await _coordinator.GetLeaveStatusAsync((Guid)TrackedGuid.New())).IsEqualTo(default);
+    await Assert.That(flipped).IsEmpty();
+  }
+
   // ========================================
   // Throwing defaults (Postgres-only surfaces)
   // ========================================

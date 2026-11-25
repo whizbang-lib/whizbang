@@ -46,17 +46,15 @@ public partial class PerspectiveWorker {
     public bool Released { get; set; }
   }
 
-  /// <summary>The events of a drain lap that one perspective applies, in id order (the collective sink takes the collective events).</summary>
+  /// <summary>The events of a drain lap that one perspective applies, in stream order (the collective sink takes the collective events).</summary>
   private List<MessageEnvelope<IEvent>> _drainEventsFor(
       string perspectiveName, List<MessageEnvelope<IEvent>> events, DrainBatchContext context) =>
     // The __collective__ sink has no registered IPerspectiveFor, so it can't be matched via
     // _perspectivesPerEventType, select the collective events directly. _processCollectiveSinkAsync
     // reloads them from the event store, but the list must be non-empty to clear the empty-skip gate.
     perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME
-      ? [.. events.Where(e => e.Payload is ICollectiveEvent).OrderByMessageId()]
-      : [.. events
-          .Where(e => _perspectivesFor(context.TypeNameCache, e.Payload).Contains(perspectiveName))
-          .OrderByMessageId()];
+      ? StreamOrder.InStreamOrder(events.Where(e => e.Payload is ICollectiveEvent))
+      : StreamOrder.InStreamOrder(events.Where(e => _perspectivesFor(context.TypeNameCache, e.Payload).Contains(perspectiveName)));
 
   /// <summary>One lap of a stream's drain, per pair: each perspective of the lap's events under its own affinity gate.</summary>
   private async Task _drainLapAsync(

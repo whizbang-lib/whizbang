@@ -13,6 +13,8 @@ using Whizbang.Core.Notifications;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres.Notifications;
 
+using Whizbang.Data.Postgres.TestSupport;
+
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
@@ -344,9 +346,10 @@ public class PartitionAssignmentSqlTests : EFCoreTestBase {
     var epoch = await _electAsync(conn, assigner);
     var store = _store();
 
-    var published = await store.PublishAsync(ROLE, assigner, epoch, [assigner], TimeSpan.FromSeconds(90), CancellationToken.None);
+    var map = PartitionMap.Initial([assigner]);
+    var published = await store.PublishAsync(ROLE, assigner, epoch, map, TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(30), CancellationToken.None);
     var renewed = await store.RenewAsync(assigner, epoch, CancellationToken.None);
-    var refused = await store.PublishAsync(ROLE, assigner, epoch + 1, [assigner], TimeSpan.FromSeconds(90), CancellationToken.None);
+    var refused = await store.PublishAsync(ROLE, assigner, epoch + 1, map, TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(30), CancellationToken.None);
     var read = await store.ReadAsync(CancellationToken.None);
 
     await Assert.That(published!.Revision).IsEqualTo(1);
@@ -354,8 +357,48 @@ public class PartitionAssignmentSqlTests : EFCoreTestBase {
     await Assert.That(refused).IsNull().Because("the fence refuses an epoch the caller does not hold");
     await Assert.That(read!.Assignment.Version).IsEqualTo(published.Version);
     await Assert.That(read.Assignment.Members).IsEquivalentTo(published.Members);
+    await Assert.That(read.Assignment.Owners).IsEquivalentTo(map.Owners, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("#2558: the published assignment carries the map, and the read returns it");
     await Assert.That(read.Assignment.LeaseExpiresAt).IsGreaterThan(published.LeaseExpiresAt)
       .Because("the renewal moved the lease on from the publish");
+  }
+
+  [Test]
+  public async Task Store_OpenOwnershipByMap_TurnsTheSwitchOn_AndAnswersNullToADeposedAssignerAsync() {
+    var assigner = Guid.CreateVersion7();
+    await using var conn = await _openAsync();
+    var epoch = await _electAsync(conn, assigner);
+    await _execAsync(conn,
+      $"UPDATE wh_service_instances SET metadata = '{{\"partition_ownership_level\":1}}'::jsonb WHERE instance_id = '{assigner}'");
+    var store = _store();
+    _ = await store.PublishAsync(ROLE, assigner, epoch, PartitionMap.Initial([assigner]), TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(30), CancellationToken.None);
+
+    var refused = await store.OpenOwnershipByMapAsync(assigner, epoch + 1, CancellationToken.None);
+    var opened = await store.OpenOwnershipByMapAsync(assigner, epoch, CancellationToken.None);
+
+    await Assert.That(refused).IsNull().Because("the fence refuses an epoch the caller does not hold");
+    await Assert.That(opened).IsEqualTo("opened");
+    await Assert.That(await _scalarAsync<bool>(conn, "SELECT wh_partition_ownership_by_map()")).IsTrue();
+  }
+
+  [Test]
+  public async Task Store_CompleteExpiredHandovers_FlipsWhatIsPastItsDeadline_AndAnswersNullToADeposedAssignerAsync() {
+    var assigner = Guid.CreateVersion7();
+    var next = Guid.CreateVersion7();
+    await using var conn = await _openAsync();
+    var epoch = await _electAsync(conn, assigner);
+    var store = _store();
+    _ = await store.PublishAsync(ROLE, assigner, epoch, PartitionMap.Initial([assigner]), TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(30), CancellationToken.None);
+    await _execAsync(conn, $"UPDATE wh_partition_ownership SET state = 'handing_over', next_owner_instance_id = '{next}', "
+      + "handover_deadline = NOW() - INTERVAL '1 second' WHERE partition_number IN (1, 2)");
+
+    var refused = await store.CompleteExpiredHandoversAsync(assigner, epoch + 1, CancellationToken.None);
+    var flipped = await store.CompleteExpiredHandoversAsync(assigner, epoch, CancellationToken.None);
+
+    await Assert.That(refused).IsNull().Because("the fence refuses an epoch the caller does not hold");
+    await Assert.That(flipped).IsEqualTo(2);
+    await Assert.That(await _scalarAsync<long>(conn, $"SELECT count(*) FROM wh_partition_ownership WHERE owner_instance_id = '{next}'"))
+      .IsEqualTo(2L);
   }
 
   // --- helpers --------------------------------------------------------------------------------
@@ -390,30 +433,14 @@ public class PartitionAssignmentSqlTests : EFCoreTestBase {
     return (T)Convert.ChangeType(await cmd.ExecuteScalarAsync(), typeof(T), CultureInfo.InvariantCulture)!;
   }
 
-  private static async Task _heartbeatAsync(NpgsqlConnection conn, Guid instance, string? mode) {
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT record_heartbeat(@inst, 'test', 'test-host', 1, '{}'::jsonb, NULL, NULL, NULL, @mode)";
-    cmd.Parameters.AddWithValue("inst", instance);
-    cmd.Parameters.Add(new NpgsqlParameter(nameof(mode), NpgsqlDbType.Text) { Value = (object?)mode ?? DBNull.Value });
-    await cmd.ExecuteNonQueryAsync();
-  }
+  private static Task _heartbeatAsync(NpgsqlConnection conn, Guid instance, string? mode) =>
+    PublishedPartitionMap.RegisterAsync(conn, instance, mode);
 
   /// <summary>Registers the instance and wins the assigner role for it; returns the epoch.</summary>
-  private static async Task<long> _electAsync(NpgsqlConnection conn, Guid instance) {
-    await _heartbeatAsync(conn, instance, InstanceConnectionModes.POOLED);
-    return await _scalarAsync<long>(conn,
-      $"SELECT epoch FROM wh_vote_role('{ROLE}', '{instance}'::uuid, INTERVAL '30 seconds', INTERVAL '5 seconds', NULL, ARRAY[1, 0], NULL) v WHERE v.outcome = 'granted'");
-  }
+  private static Task<long> _electAsync(NpgsqlConnection conn, Guid instance) => PublishedPartitionMap.ElectAsync(conn, instance);
 
-  private static async Task<long> _publishAsync(NpgsqlConnection conn, Guid instance, long epoch, Guid[] members) {
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT wh_publish_partition_assignment(@role, @inst, @epoch, @members, INTERVAL '90 seconds')";
-    cmd.Parameters.AddWithValue("role", ROLE);
-    cmd.Parameters.AddWithValue("inst", instance);
-    cmd.Parameters.AddWithValue(nameof(epoch), epoch);
-    cmd.Parameters.AddWithValue(nameof(members), members);
-    return Convert.ToInt64(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
-  }
+  private static Task<long> _publishAsync(NpgsqlConnection conn, Guid instance, long epoch, Guid[] members) =>
+    PublishedPartitionMap.PublishAtAsync(conn, instance, epoch, members, PublishedPartitionMap.DefaultLease);
 
   /// <summary>Two outbox rows on two unowned streams, partitions 0 and 1.</summary>
   private static async Task _seedOutboxAsync(NpgsqlConnection conn) =>

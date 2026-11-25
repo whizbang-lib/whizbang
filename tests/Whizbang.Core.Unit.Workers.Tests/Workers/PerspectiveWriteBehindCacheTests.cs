@@ -42,6 +42,7 @@ public class PerspectiveWriteBehindCacheTests {
       [WriteBehindFlushReason.Stop] = "stop",
       [WriteBehindFlushReason.Requested] = "requested",
       [WriteBehindFlushReason.Rebuild] = "rebuild",
+      [WriteBehindFlushReason.Handover] = "handover",
     }).Because("a reason added without a tag, or a tag out of the enum's order, fails here rather than at a flush");
   }
 

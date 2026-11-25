@@ -49,8 +49,9 @@ public class DapperOutboxStreamContinuationTests : PostgresTestBase {
       FROM unnest(@ids) WITH ORDINALITY AS m(id, ord);",
       new { inst = instance, stream, ids });
 
+    var publishedAt = await conn.ExecuteScalarAsync<long>("SELECT emission_position FROM wh_outbox WHERE message_id = @id", new { id = ids[1] });
     var rows = await coordinator.ContinueOutboxStreamsAsync(
-      [new OutboxStreamCursor(stream, ids[1])], instance, runLength: 3, maxBytes: null);
+      [new OutboxStreamCursor(stream, ids[1]) { LastPublishedPosition = publishedAt }], instance, runLength: 3, maxBytes: null);
 
     await Assert.That(rows.Select(r => r.MessageId)).IsEquivalentTo(ids.Skip(2).Take(3), TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the next run, in order, and never a published row awaiting its completion");

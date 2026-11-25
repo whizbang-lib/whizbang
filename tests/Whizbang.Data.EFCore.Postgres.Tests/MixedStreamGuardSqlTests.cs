@@ -90,13 +90,14 @@ public class MixedStreamGuardSqlTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var coordinator = _coordinator(dbContext);
     var streamId = (Guid)TrackedGuid.New();
-    // Version order is message id order, so the first event of the stream decides its kind.
+    // #2551: the first event the producer emitted decides the stream's kind, whatever the ids say. Emitted against
+    // their id order, so by id the Sourced event would come first and decide the other kind.
     var ids = _orderedIds(3);
-    var first = _ephemeral(streamId, ids[0]);
-    var sourced = _sourced(streamId, ids[1]);
-    var third = _ephemeral(streamId, ids[2]);
+    var first = _ephemeral(streamId, ids[2]);
+    var sourced = _sourced(streamId, ids[0]);
+    var third = _ephemeral(streamId, ids[1]);
 
-    await coordinator.StoreOutboxMessagesAsync([sourced, third, first], partitionCount: 10000);
+    await coordinator.StoreOutboxMessagesAsync([first, sourced, third], partitionCount: 10000);
 
     var conn = await _openAsync(dbContext);
     var expected = new List<(Guid EventId, long Version)> { (first.MessageId, 1L), (third.MessageId, 2L) };

@@ -39,7 +39,7 @@ namespace Whizbang.Core.Messaging;
 /// own position, or at its handling's when the message's id is minted). Each caller owns its canonical prefix, so the derivations never collide.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+/// <docs>fundamentals/dispatcher/message-cascade#every-dispatch-path-derives</docs>
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DerivedIdentityTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/DerivedIdentityPropertyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/EmissionIdentityTests.cs</tests>

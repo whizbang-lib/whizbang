@@ -42,6 +42,15 @@ public sealed record HandlerCommitRequest(
   /// <docs>fundamentals/work-coordinator/handler-commit</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxHandlerWorkerTests.cs</tests>
   public string? MessageType { get; init; }
+
+  /// <summary>
+  /// The partition epoch the handled message was claimed under (<see cref="WorkBatch.StreamEpochs"/>), when the service
+  /// owns partitions by map. The commit lands only while that epoch is still its partition's; otherwise nothing of it
+  /// commits and it is reported fenced (#2556). Null names none, and the commit is not fenced.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorOwnershipNoticesTests.cs:AHandlerCommitUnderAStaleEpoch_IsReportedFenced_NotFailedAsync</tests>
+  public long? PartitionEpoch { get; init; }
 }
 
 /// <summary>The inbox row being acknowledged by a handler.</summary>
@@ -57,4 +66,6 @@ public sealed record HandlerInboxCompletion(Guid MessageId, int Status);
 /// <param name="HandlerId">Mirrors HandlerCommitRequest.HandlerId for correlation.</param>
 /// <param name="Success">True if this handler's bundle committed.</param>
 /// <param name="ErrorMessage">SQLERRM text when Success is false; null otherwise.</param>
-public sealed record HandlerBatchResult(Guid HandlerId, bool Success, string? ErrorMessage);
+/// <param name="Fenced">True when nothing of the bundle committed because its partition's ownership moved on since the
+/// message was claimed (#2556): not a failure, the message stays for the partition's current owner.</param>
+public sealed record HandlerBatchResult(Guid HandlerId, bool Success, string? ErrorMessage, bool Fenced = false);

@@ -2662,6 +2662,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("      return dbContext is null ? null : await dbContext.IsWhizbangSchemaCurrentAsync(ct, scope.ServiceProvider);");
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();
+    // #2553: what this context's pass records, so the rollback gate judges a change it defines identically as current.
+    sb.AppendLine("    // Lets the rollback gate judge a recorded change this build defines identically as current, whoever applied it");
+    sb.AppendLine($"    DbContextInitializationRegistry.RegisterSchemaContent<{dbContext.FullyQualifiedName}>(");
+    sb.AppendLine("      (dbContext, sp) => dbContext.GetWhizbangSchemaContent(sp));");
+    sb.AppendLine();
   }
 
   /// <summary>

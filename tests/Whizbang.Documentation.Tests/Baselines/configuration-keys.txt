@@ -88,6 +88,11 @@ Whizbang:Database:ListenKeepaliveInterval
 Whizbang:Database:ListenReconnectBackoffMultiplier
 Whizbang:Database:ListenReconnectInitialDelay
 Whizbang:Database:ListenReconnectMaxDelay
+Whizbang:Database:PartitionAssigner:AssignmentLease
+Whizbang:Database:PartitionAssigner:HandoverDeadline
+Whizbang:Database:PartitionAssigner:OwnershipByMap
+Whizbang:Database:PartitionAssigner:RepublishInterval
+Whizbang:Database:PartitionAssigner:SettleWindow
 Whizbang:Database:PollingFallbackInterval
 Whizbang:Database:RoleAssignment:CooldownAfterLapse
 Whizbang:Database:RoleAssignment:MigratorStallLimit
@@ -316,8 +321,12 @@ Whizbang:SignalBus:ReProbeIntervalMilliseconds
 Whizbang:StandbyWatcher:ObsolescenceInterval
 Whizbang:StandbyWatcher:PollInterval
 Whizbang:Startup:AllowLossyRollback
+Whizbang:Startup:Application:AllowLossyRollback
+Whizbang:Startup:Application:OverrideIncompatibility
 Whizbang:Startup:LogSettings
 Whizbang:Startup:OverrideIncompatibility
+Whizbang:Startup:Platform:AllowLossyRollback
+Whizbang:Startup:Platform:OverrideIncompatibility
 Whizbang:Startup:RegistrationCollisions
 Whizbang:StartupStatusGraph:IncludeReasons
 Whizbang:Storage:AzureBlob:Archive:AccessTier

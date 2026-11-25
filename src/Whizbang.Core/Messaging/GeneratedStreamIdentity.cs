@@ -21,11 +21,13 @@ namespace Whizbang.Core.Messaging;
 /// record on it, so changing the layout changes the stream a retry across the deploy starts.
 /// </para>
 /// <para>
-/// A message sent inside a handling whose own id is still minted (a command a receptor body sends, #2537) cannot
-/// derive its stream from that id; <see cref="DeriveInHandling"/> derives it from the handling instead.
+/// A command a receptor body sends (#2537), and an event it invokes locally (#2552), generates its stream before its own
+/// id exists (the stream is set on the message before any envelope is built, and the void local invoke builds none), so
+/// <see cref="DeriveInHandling"/> derives it from the handling instead. A command's own id derives from the handling too
+/// since #2543 (<see cref="SentMessageIdentity"/>).
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+/// <docs>fundamentals/dispatcher/message-cascade#every-dispatch-path-derives</docs>
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/GeneratedStreamIdentityTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDerivedIdentityInHandlingTests.cs</tests>
 public static class GeneratedStreamIdentity {
@@ -43,12 +45,11 @@ public static class GeneratedStreamIdentity {
     return DerivedIdentity.AtTheSamePosition(messageId, $"{PREFIX}\n{messageId:N}");
   }
 
-  /// <summary>RED stub (#2537).</summary>
   /// <summary>
-  /// Derives the stream id a message starts when it is sent inside a handling under an id of its own that is still
-  /// minted (a command sent from a receptor body, #2537): from the handled message <paramref name="causeId"/>, the
-  /// service, the handler, the message type and <paramref name="ordinal"/>, the message's position among the streams
-  /// the handling starts this way. A redelivered handling sends again in the same order and starts the same streams.
+  /// Derives the stream id a message starts when it is dispatched inside a handling before its own id exists (a command
+  /// sent from a receptor body, #2537; an event invoked locally, #2552): from the handled message <paramref name="causeId"/>,
+  /// the service, the handler, the message type and <paramref name="ordinal"/>, the message's position among the streams
+  /// the handling starts this way (events and other messages count separately). A redelivered handling sends again in the same order and starts the same streams.
   /// </summary>
   /// <remarks>
   /// <strong>Layout:</strong> the shared derived layout (see <see cref="DerivedIdentity"/>) at the cause's position:

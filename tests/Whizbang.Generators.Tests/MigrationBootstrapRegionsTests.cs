@@ -57,6 +57,7 @@ public class MigrationBootstrapRegionsTests {
     "364_InstanceExitRetentionIsASetting.sql", // the exit record's retention as an operator setting, redefining 363's function (#2126)
     "385_StoredFormConversionsRecordWhoAppliedThem.sql", // the journals' applier columns the same rewrite phase writes (#2131)
     "544_DictionaryMembersStoredAsPairs.sql", // the functions the same rewrite phase calls to store a dictionary as pairs (#1911)
+    "568_StoredFormConversionsRecordWhatTheyApplied.sql", // the journals' content hash the same rewrite phase writes (#2553)
   ];
 
   /// <summary>The objects an election cannot happen without.</summary>

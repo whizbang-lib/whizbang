@@ -118,6 +118,9 @@ public class DispatcherCoverageSweepOutboxTests {
     public Task CallCascadeByRuntimeTypeAsync(IMessage message, Guid? eventId) =>
       CascadeByRuntimeTypeAsync(message, message.GetType(), sourceEnvelope: null, eventId, eventStoreOnly: false);
 
+    public MessageId CallCascadeMessageIdFor(IMessage message, IMessageEnvelope? sourceEnvelope, Guid? eventId) =>
+      CascadeMessageIdFor(message, sourceEnvelope, eventId);
+
     public Task CallPublishToOutboxDynamicAsync(IMessage eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false) =>
       PublishToOutboxDynamicAsync(eventData, eventType, messageId, sourceEnvelope, eventStoreOnly);
 
@@ -983,6 +986,47 @@ public class DispatcherCoverageSweepOutboxTests {
       .Throws<GuidOrderingException>();
     await Assert.That(strategy.Queued).Count().IsEqualTo(1).Because("nothing refused was queued");
   }
+
+  /// <summary>
+  /// The id generated cascade code writes a copy under when the dispatcher gave it none (#2543): the given id when there
+  /// is one; otherwise one derived from the cascade's source envelope, or from the receptor handling the cascade runs in,
+  /// and minted only outside both.
+  /// </summary>
+  [Test]
+  public async Task CascadeMessageIdFor_TakesTheGivenIdOrDerivesFromTheSourceOrTheHandlingAsync() {
+    var dispatcher = new SweepOutboxDispatcher(_buildProvider());
+    var serviceName = new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()).ServiceName;
+    var message = new SweepDynamicRegisteredEvent(Guid.NewGuid(), "fallthrough");
+    var type = TypeNameFormatter.Format(typeof(SweepDynamicRegisteredEvent));
+    var given = (Guid)TrackedGuid.New();
+    var source = (Guid)TrackedGuid.New();
+    var handled = (Guid)TrackedGuid.New();
+
+    var fromGiven = dispatcher.CallCascadeMessageIdFor(message, _sweepHandling(source), given);
+    var fromSource = dispatcher.CallCascadeMessageIdFor(message, _sweepHandling(source), eventId: null);
+    MessageId fromHandling;
+    using (ReceptorHandling.Enter(_sweepHandling(handled))) {
+      fromHandling = dispatcher.CallCascadeMessageIdFor(message, sourceEnvelope: null, eventId: null);
+    }
+    var outside = dispatcher.CallCascadeMessageIdFor(message, sourceEnvelope: null, eventId: null);
+
+    await Assert.That(fromGiven.Value).IsEqualTo(given);
+    await Assert.That(fromSource.Value).IsEqualTo(EmissionIdentity.Derive(source, serviceName, SWEEP_HANDLER, type, 0))
+      .Because("a cascade with a source envelope derives its id from it, so a retried handling writes the same copy");
+    await Assert.That(fromHandling.Value).IsEqualTo(EmissionIdentity.Derive(handled, serviceName, SWEEP_HANDLER, type, 0))
+      .Because("with no source envelope, the handling the cascade runs in is its cause");
+    await Assert.That(outside.Value.Version).IsEqualTo(7);
+    await Assert.That(outside.Value).IsNotEqualTo(fromHandling.Value);
+  }
+
+  private const string SWEEP_HANDLER = "SweepHandler";
+
+  private static MessageEnvelope<object> _sweepHandling(Guid id) => new() {
+    MessageId = MessageId.From(id),
+    Payload = "origin",
+    Hops = [],
+    DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local, HandlerName = SWEEP_HANDLER },
+  };
 
   /// <summary>
   /// A typed local invoke under a selected policy that sends the message on writes its copy marked as

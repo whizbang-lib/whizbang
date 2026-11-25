@@ -36,7 +36,7 @@ public class FetchEventsByIdsSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task FetchEventsByIds_ReturnsRowsForGivenIds_OrderedByEventIdAscAsync() {
+  public async Task FetchEventsByIds_ReturnsRowsForGivenIds_InStreamVersionOrder_NotByIdAsync() {
     await using var dbContext = CreateDbContext();
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (connection.State != System.Data.ConnectionState.Open) {
@@ -44,24 +44,21 @@ public class FetchEventsByIdsSqlTests : EFCoreTestBase {
     }
 
     var streamId = (Guid)TrackedGuid.New();
-    var event1 = (Guid)TrackedGuid.New();
-    await Task.Delay(2);
-    var event2 = (Guid)TrackedGuid.New();
-    await Task.Delay(2);
-    var event3 = (Guid)TrackedGuid.New();
+    Guid[] ids = [.. Enumerable.Range(0, 3).Select(_ => (Guid)TrackedGuid.New()).Order()];
+    var (event1, event2, event3) = (ids[0], ids[1], ids[2]);
 
-    // Insert event_store rows in reverse to prove ordering by event_id, not insert order.
-    await _insertEventStoreRowAsync(connection, event3, streamId, "TypeC", "{\"v\":3}", version: 3);
-    await _insertEventStoreRowAsync(connection, event1, streamId, "TypeA", "{\"v\":1}", version: 1);
+    // #2551: the versions run against the ids (event3 is version 1), so only stream order passes, not id order.
+    await _insertEventStoreRowAsync(connection, event3, streamId, "TypeC", "{\"v\":3}", version: 1);
+    await _insertEventStoreRowAsync(connection, event1, streamId, "TypeA", "{\"v\":1}", version: 3);
     await _insertEventStoreRowAsync(connection, event2, streamId, "TypeB", "{\"v\":2}", version: 2);
 
     var rows = await _fetchAsync(connection, [event1, event2, event3]);
 
     await Assert.That(rows.Count).IsEqualTo(3);
-    await Assert.That(rows[0].EventId).IsEqualTo(event1);
-    await Assert.That(rows[0].EventType).IsEqualTo("TypeA");
+    await Assert.That(rows[0].EventId).IsEqualTo(event3);
+    await Assert.That(rows[0].EventType).IsEqualTo("TypeC");
     await Assert.That(rows[1].EventId).IsEqualTo(event2);
-    await Assert.That(rows[2].EventId).IsEqualTo(event3);
+    await Assert.That(rows[2].EventId).IsEqualTo(event1);
   }
 
   [Test]

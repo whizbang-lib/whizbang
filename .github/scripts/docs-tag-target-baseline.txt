@@ -68,7 +68,6 @@ docs/transport-routing-architecture.md#transport-echo-suppression | no page
 features/debugger-aware-clock | no page
 features/vector-search#auto-config | no page
 fundamentals/dispatcher/projection-sync | no page
-fundamentals/event-store/version-ordering | no page
 fundamentals/events/carry-forward-tier2 | no page
 fundamentals/events/event-store-serialization | no page
 fundamentals/events/type-definition-fingerprint | no page
@@ -122,7 +121,6 @@ fundamentals/work-coordinator/stream-ownership | no page
 fundamentals/work-coordinator/transport-publish-strategy | no page
 fundamentals/work-coordinator/work-pump | no page
 internals/message-discard-policy | no page
-internals/ordering-invariant | no page
 internals/stream-affinity | no page
 lenses/lens-query-factory | no page
 messaging/dead-letters | no page
@@ -194,7 +192,6 @@ apis/graphql/scoping#claim-aggregation | no such heading on v1.0.0/apis/graphql/
 apis/graphql/scoping#middleware | no such heading on v1.0.0/apis/graphql/scoping.md
 apis/graphql/scoping#options | no such heading on v1.0.0/apis/graphql/scoping.md
 apis/graphql/setup#configuration | no such heading on v1.0.0/apis/graphql/setup.md
-data/turnkey-initialization#multi-instance | no such heading on v1.0.0/data/turnkey-initialization.md
 fundamentals/dispatcher/dispatcher#cascade-default-dispatch | no such heading on v1.0.0/fundamentals/dispatcher/dispatcher.md
 fundamentals/dispatcher/dispatcher#deferred-publishing | no such heading on v1.0.0/fundamentals/dispatcher/dispatcher.md
 fundamentals/dispatcher/dispatcher#local-invoke-and-sync-perspective | no such heading on v1.0.0/fundamentals/dispatcher/dispatcher.md
@@ -213,7 +210,6 @@ fundamentals/dispatcher/routing#envelope-versioning | no such heading on v1.0.0/
 fundamentals/dispatcher/routing#namespace-outbox | no such heading on v1.0.0/fundamentals/dispatcher/routing.md
 fundamentals/dispatcher/routing#topology-manifest | no such heading on v1.0.0/fundamentals/dispatcher/routing.md
 fundamentals/events/event-store#append-batch | no such heading on v1.0.0/fundamentals/events/event-store.md
-fundamentals/events/event-upcasting#a-new-field-with-a-fixed-default | no such heading on v1.0.0/fundamentals/events/event-upcasting.md
 fundamentals/events/stream-id#validation | no such heading on v1.0.0/fundamentals/events/stream-id.md
 fundamentals/events/system-events#audit-builder | no such heading on v1.0.0/fundamentals/events/system-events.md
 fundamentals/events/system-events#audit-mode | no such heading on v1.0.0/fundamentals/events/system-events.md
@@ -298,7 +294,6 @@ operations/configuration/configuration-reference#dead-letter-recovery | no such 
 operations/configuration/whizbang-options#banner | no such heading on v1.0.0/operations/configuration/whizbang-options.md
 operations/diagnostics/whiz070#suppression | no such heading on v1.0.0/operations/diagnostics/whiz070.md
 operations/infrastructure/capabilities#descriptor | no such heading on v1.0.0/operations/infrastructure/capabilities.md
-operations/infrastructure/migrations#migration-events | no such heading on v1.0.0/operations/infrastructure/migrations.md
 operations/infrastructure/partitioned-ledgers#lifecycle-completions | no such heading on v1.0.0/operations/infrastructure/partitioned-ledgers.md
 operations/observability/metrics#notify-debounce | no such heading on v1.0.0/operations/observability/metrics.md
 operations/observability/tracing#parent-context | no such heading on v1.0.0/operations/observability/tracing.md

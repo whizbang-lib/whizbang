@@ -200,12 +200,20 @@ internal sealed partial class WhizbangDatabaseInitializerService(
   private async Task _runInitializationAsync(CancellationToken cancellationToken) {
     // #1992: Assess is the first stage. The one verdict is produced before anything is applied, and every runner reads
     // that same verdict as its input. An unreadable version record throws here, before any runner, and fails the attempt.
-    if (await _assessAsync(cancellationToken) is { Verdict: Whizbang.Core.Startup.StartupVerdict.StandDown } standDown) {
-      await _standDownAsync(standDown, cancellationToken);
+    var assessment = await _assessAsync(cancellationToken);
+    if (assessment is { StandsDownWithoutMigrating: true }) {
+      await _standDownAsync(assessment, cancellationToken);
       return;
     }
 
     await _runMigrationsAsync(cancellationToken);
+
+    // #2553: W! first. The application's schema stood down: the runners applied the W! migrations alone, and the
+    // instance now stands down, since it serves only when both sides can.
+    if (assessment is { Verdict: Whizbang.Core.Startup.StartupVerdict.StandDown }) {
+      await _standDownAsync(assessment, cancellationToken);
+      return;
+    }
 
     // #1636: every driver's schema is in place; what follows is coordinated across the fleet and ends with the gate.
     await SchemaInitializationStages.CoordinatingAsync(_serviceProvider, cancellationToken);

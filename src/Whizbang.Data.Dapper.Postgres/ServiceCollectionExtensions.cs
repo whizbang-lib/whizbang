@@ -17,6 +17,7 @@ using Whizbang.Core.Sequencing;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.MultiStream;
+using Whizbang.Data.Postgres.Notifications;
 using Whizbang.Data.Postgres.Observability;
 using Whizbang.Data.Postgres.Schema;
 
@@ -195,7 +196,11 @@ public static class ServiceCollectionExtensions {
         connectionString,
         jsonOptions,
         sp.GetService<ILogger<DapperWorkCoordinator>>(),
-        guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>()));
+        guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>(),
+        // #2554, #2556: the fenced writes and the claims that waited for a map are counted on the coordinator's meter.
+        metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
+        // #2556: the process's tenure ledger, so every write names the epoch its work was claimed under.
+        tenures: sp.GetService<Whizbang.Core.Messaging.PartitionTenures>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     // #2359: records past their own expiry are removed every maintenance cycle; the store's expiry had no caller.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep,
@@ -245,6 +250,11 @@ public static class ServiceCollectionExtensions {
     _addDeadLetterRecoveryService(services, connectionString);
     _addPerspectiveTableSwapper(services, connectionString);
     _addTableStatistics(services, connectionString);
+
+    // #2559: role assignment and the elected partition assigner, through the one registration the EF Core driver calls
+    // too, so the drivers cannot drift: each exclusive duty is held by one instance, and claims present the published
+    // map. The schema bootstrap does not elect a migrator here; every instance migrates under the schema lock in turn.
+    services.AddWhizbangPostgresCoordination(connectionString);
 
     // #1358: multi-stream commands, over this connection string; the worker polls, as there is no listen connection.
     services.AddWhizbangMultiStreamCommands(connectionString);
@@ -368,7 +378,11 @@ public static class ServiceCollectionExtensions {
         connectionString,
         jsonOptions,
         sp.GetService<ILogger<DapperWorkCoordinator>>(),
-        guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>()));
+        guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>(),
+        // #2554, #2556: the fenced writes and the claims that waited for a map are counted on the coordinator's meter.
+        metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
+        // #2556: the process's tenure ledger, so every write names the epoch its work was claimed under.
+        tenures: sp.GetService<Whizbang.Core.Messaging.PartitionTenures>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     // #2359: records past their own expiry are removed every maintenance cycle; the store's expiry had no caller.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep,
@@ -422,6 +436,11 @@ public static class ServiceCollectionExtensions {
     _addPerspectiveTableSwapper(services, connectionString);
     _addTableStatistics(services, connectionString);
 
+    // #2559: role assignment and the elected partition assigner, through the one registration the EF Core driver calls
+    // too, so the drivers cannot drift: each exclusive duty is held by one instance, and claims present the published
+    // map. The schema bootstrap does not elect a migrator here; every instance migrates under the schema lock in turn.
+    services.AddWhizbangPostgresCoordination(connectionString);
+
     // #1358: multi-stream commands, over this connection string; the worker polls, as there is no listen connection.
     services.AddWhizbangMultiStreamCommands(connectionString);
 
@@ -457,8 +476,7 @@ public static class ServiceCollectionExtensions {
     new(connectionString, () => createInitializer(sp),
       sp.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>()?.ApplicationVersion.Recorded,
       sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>().InstanceId,
-      Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()),
-      Whizbang.Core.Versioning.UpgradeOrder.IsLossyRollbackAllowed(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
+      Whizbang.Core.Versioning.UpgradeOrder.ReadOverrides(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
 
   /// <summary>
   /// Records the schema work for host start: the shared schema initializer runs this driver's runner, then opens the

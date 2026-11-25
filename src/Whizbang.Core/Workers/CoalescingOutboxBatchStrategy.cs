@@ -162,7 +162,9 @@ public sealed partial class CoalescingOutboxBatchStrategy : IOutboxBatchStrategy
     // The batcher ends when the partition's channel is completed, which every stop does first; with no stop token of
     // its own it drains what was buffered even past the stop's deadline, and that is reported, never discarded.
     await foreach (var batch in batcher.ReadBatchesAsync(CancellationToken.None).ConfigureAwait(false)) {
-      var ordered = batch.OrderBy(static m => m.StreamId ?? Guid.Empty).ThenBy(static m => m.MessageId).ToArray();
+      // Grouped by stream for the store's lock order; the sort is stable, so each stream keeps the order its messages were
+      // appended in, the order they were emitted and are versioned in (#2551). Never sorted by id.
+      var ordered = batch.OrderBy(static m => m.StreamId ?? Guid.Empty).ToArray();
       if (_stopCts.IsCancellationRequested || !await _storeOrReportAsync(ordered).ConfigureAwait(false)) {
         (abandoned ??= []).AddRange(ordered);
       }

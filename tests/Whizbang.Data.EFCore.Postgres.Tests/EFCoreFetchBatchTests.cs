@@ -328,50 +328,20 @@ public class EFCoreFetchBatchTests : EFCoreTestBase {
   // A schema whose fetch functions predate the commit-sequence, origin, error and priority columns: the reader leaves
   // those fields unset rather than failing. Each test has a database of its own, so replacing the function here is local.
   [Test]
-  public async Task FetchOutboxBatchAsync_AnOlderFunctionWithoutTheLaterColumns_LeavesThemUnsetAsync() {
-    await using var dbContext = CreateDbContext();
-    var coord = Coord(dbContext);
-    var conn = await _openAsync(dbContext);
-    await using (var replace = conn.CreateCommand()) {
-      replace.CommandText = """
-        SELECT drop_all_overloads('fetch_outbox_batch');
-        CREATE FUNCTION fetch_outbox_batch(p_stream_ids UUID[], p_instance_id UUID, p_max_per_stream INTEGER, p_max_bytes BIGINT)
-        RETURNS TABLE(message_id UUID, stream_id UUID, destination TEXT, message_type TEXT, envelope_type TEXT,
-                      event_data TEXT, metadata TEXT, scope TEXT, status INTEGER, attempts INTEGER,
-                      partition_number INTEGER, is_event BOOLEAN)
-        LANGUAGE sql AS $$
-          SELECT p_stream_ids[1], p_stream_ids[1], 'topic', 'MyType', 'MyEnvelope', '{}', '{}', NULL, 1, 0, 0, false
-        $$;
-        """;
-      await replace.ExecuteNonQueryAsync();
-    }
-    var streamId = Guid.NewGuid();
-
-    var rows = await coord.FetchOutboxBatchAsync([streamId], Guid.NewGuid(), maxPerStream: 100);
-
-    await Assert.That(rows.Count).IsEqualTo(1);
-    var row = rows[0];
-    await Assert.That(row.CommitSequence.HasValue).IsFalse();
-    await Assert.That(row.OriginServiceId.HasValue).IsFalse();
-    await Assert.That(row.OriginCommitSequence.HasValue).IsFalse();
-    await Assert.That(row.Error).IsNull();
-    await Assert.That(row.Priority).IsEqualTo(Whizbang.Core.Priority.WorkPriority.UNDECLARED);
-  }
-
-  [Test]
   public async Task FetchInboxBatchAsync_AnOlderFunctionWithoutTheLaterColumns_LeavesThemUnsetAsync() {
     await using var dbContext = CreateDbContext();
     var coord = Coord(dbContext);
     var conn = await _openAsync(dbContext);
     await using (var replace = conn.CreateCommand()) {
       replace.CommandText = """
-        SELECT drop_all_overloads('fetch_inbox_batch');
-        CREATE FUNCTION fetch_inbox_batch(p_stream_ids UUID[], p_instance_id UUID, p_max_per_stream INTEGER, p_max_bytes BIGINT)
+        -- 576 (#2551): the drivers call the stream-ordered fetch, which always returns stream_position.
+        SELECT drop_all_overloads('fetch_inbox_batch_in_stream_order');
+        CREATE FUNCTION fetch_inbox_batch_in_stream_order(p_stream_ids UUID[], p_instance_id UUID, p_max_per_stream INTEGER, p_max_bytes BIGINT)
         RETURNS TABLE(message_id UUID, stream_id UUID, handler_name TEXT, message_type TEXT, event_data TEXT,
                       metadata TEXT, scope TEXT, status INTEGER, attempts INTEGER, partition_number INTEGER,
-                      is_event BOOLEAN)
+                      is_event BOOLEAN, stream_position BIGINT)
         LANGUAGE sql AS $$
-          SELECT p_stream_ids[1], p_stream_ids[1], 'MyHandler', 'MyType', '{}', '{}', NULL, 1, 0, 0, false
+          SELECT p_stream_ids[1], p_stream_ids[1], 'MyHandler', 'MyType', '{}', '{}', NULL, 1, 0, 0, false, 1::bigint
         $$;
         """;
       await replace.ExecuteNonQueryAsync();

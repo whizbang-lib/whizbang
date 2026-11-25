@@ -62,6 +62,26 @@ public class DbContextInitializationRegistryTests {
       .IsFalse().Because("one context with work to do makes the schema not current");
   }
 
+  // ── #2553: what each context's pass records, for the rollback gate ──────────────────────────────────
+
+  [Test]
+  public async Task SchemaContent_IsWhatTheContextsPassRecords_AndNothingForAnUnregisteredContextAsync() {
+    var services = new FakeServiceProvider();
+    IServiceProvider? seen = null;
+    DbContextInitializationRegistry.RegisterSchemaContent<FakeDbContextA>((_, sp) => {
+      seen = sp;
+      return new Dictionary<string, string>(StringComparer.Ordinal) { ["perspective:a"] = "aa11" };
+    });
+
+    await Assert.That(DbContextInitializationRegistry.SchemaContentOf(new FakeDbContextA(), services))
+      .IsEquivalentTo(new Dictionary<string, string>(StringComparer.Ordinal) { ["perspective:a"] = "aa11" });
+    await Assert.That(seen).IsSameReferenceAs(services).Because("the content is produced with the host's services");
+    await Assert.That(DbContextInitializationRegistry.SchemaContentOf(new FakeDbContextB(), services)).IsEmpty()
+      .Because("a context nothing registered defines nothing, and its changes are judged by who applied them, as before");
+    await Assert.That(() => DbContextInitializationRegistry.SchemaContentOf(null!, services)).Throws<ArgumentNullException>();
+    await Assert.That(() => DbContextInitializationRegistry.RegisterSchemaContent<FakeDbContextA>(null!)).Throws<ArgumentNullException>();
+  }
+
   [Test]
   public async Task IsSchemaCurrent_WhenNoContextIsRegisteredInTheHost_IsNotCurrentAsync() {
     DbContextInitializationRegistry.RegisterSchemaCurrencyCheck<FakeDbContextA>((_, _) => Task.FromResult<bool?>(null));

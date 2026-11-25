@@ -30,9 +30,20 @@ public sealed class EFCorePostgresPerspectiveWriteSink(DbContext context, TimePr
   public DbContext Context { get; } = context ?? throw new ArgumentNullException(nameof(context));
 
   /// <inheritdoc/>
-  public Task<IReadOnlyList<PerspectiveWriteOutcome>> WriteAsync(
-      IReadOnlyList<PendingPerspectiveWrite> writes, CancellationToken cancellationToken = default) =>
-    _onConnectionAsync(writes, static (c, t, w, clock, ct) => PostgresPerspectiveWriter.WriteAsync(c, t, w, clock, ct), cancellationToken);
+  /// <remarks>
+  /// #2556: a write of a stream whose work in flight was claimed under an epoch its partition no longer has is not
+  /// written; its outcome is <see cref="PerspectiveWriteStatus.Fenced"/>, and the current owner applies it. The fence is
+  /// in the statement that writes the row, so a flip cannot land between a check and the write.
+  /// </remarks>
+  public async Task<IReadOnlyList<PerspectiveWriteOutcome>> WriteAsync(
+      IReadOnlyList<PendingPerspectiveWrite> writes, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(writes);
+    var fence = EFCorePerspectiveWriteFence.Of(Context);
+    var outcomes = await _onConnectionAsync(writes,
+      (c, t, w, clock, ct) => PostgresPerspectiveWriter.WriteAsync(c, t, w, clock, ct, fence: fence), cancellationToken).ConfigureAwait(false);
+    EFCorePerspectiveWriteFence.Report(Context, outcomes.Count(o => o.Status == PerspectiveWriteStatus.Fenced));
+    return outcomes;
+  }
 
   /// <inheritdoc/>
   /// <remarks>

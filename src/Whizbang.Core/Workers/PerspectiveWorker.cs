@@ -101,7 +101,7 @@ public partial class PerspectiveWorker(
   // When a run of transient database failures escalates to one Error, and its recovery line (#1986); null takes the
   // defaults.
   DatabaseFailureEscalationOptions? databaseFailureEscalation = null
-) : BackgroundService, Whizbang.Core.Startup.IStartAbandonedObserver {
+) : BackgroundService, Whizbang.Core.Startup.IStartAbandonedObserver, IPartitionHandoverParticipant {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
 
@@ -892,6 +892,12 @@ public partial class PerspectiveWorker(
   /// them now rather than after the lease lapses.
   /// </summary>
   /// <remarks>
+  /// <para>
+  /// The release ends this instance's ownership of the streams, owner included (#2545), so each goes to
+  /// the live instance its partition is assigned to: a sibling when the partition is assigned to one (a
+  /// stream this instance kept across a change of assignment), and this instance again when it is assigned
+  /// to it, which then claims it at its next poll with the attempt refunded rather than waiting out the lease.
+  /// </para>
   /// <para>
   /// Best effort by design: a store that does not implement the release, and a release that fails
   /// against the same database that just failed, both leave the rows to their leases, which is what
@@ -2322,7 +2328,8 @@ public partial class PerspectiveWorker(
       .GroupBy(e => rawByEventId[e.MessageId.Value].First().StreamId)
       .ToDictionary(
         g => g.Key,
-        g => g.DistinctBy(e => e.MessageId.Value).OrderByMessageId().ToList());
+        // #2551: each stream by the version each event carries, never by id.
+        g => StreamOrder.InStreamOrder(g.DistinctBy(e => e.MessageId.Value)));
   }
 
   /// <summary>
@@ -4599,7 +4606,9 @@ public partial class PerspectiveWorker(
     // completion's last event, as the range read below returns them.
     List<MessageEnvelope<IEvent>> processedEvents = [];
     if (shouldLoadEvents && prefetched is { } batchRead) {
-      processedEvents = [.. batchRead.Upcoming.Where(e => e.MessageId.Value.CompareTo(result.LastEventId) <= 0)];
+      // #2551: the prefix of the stream, in stream order, through the completion's last event; never an id range.
+      var through = batchRead.Upcoming.FindIndex(e => e.MessageId.Value == result.LastEventId);
+      processedEvents = batchRead.Upcoming.GetRange(0, through + 1);
     } else if (shouldLoadEvents) {
       processedEvents = await _loadProcessedEventsAsync(eventStore!, streamId, perspectiveName, lastProcessedEventId, result.LastEventId, cancellationToken);
     }

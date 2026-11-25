@@ -527,6 +527,42 @@ public partial class InboxDrainWorkerGapTests {
   }
 
   /// <summary>
+  /// #2551: a stream's rows are dispatched by the stream position the fetch ranked them at (a received event's stored
+  /// version, a command's arrival), never by id. The fetch hands them back out of position, and their ids sort the other
+  /// way from their positions, so sorting by either the return order or the id fails.
+  /// </summary>
+  [Test]
+  public async Task ExecuteAsync_AStreamsRows_AreDispatchedByTheirStreamPosition_NeverByIdAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    Guid[] ids = [.. Enumerable.Range(0, 3).Select(_ => (Guid)TrackedGuid.New()).Order()];
+
+    var coord = new ScriptedCoordinator();
+    coord.RowsByStream[streamId] = [
+      _row(ids[1], streamId) with { StreamPosition = 2 },
+      _row(ids[0], streamId) with { StreamPosition = 3 },
+      _row(ids[2], streamId) with { StreamPosition = 1 },
+    ];
+
+    var drain = new RecordingDrainChannel();
+    var writer = new TestInboxWriter { TargetCount = 3 };
+
+    var worker = _buildWorker(coord, drain, writer,
+      new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 });
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drain.WriteAsync(streamId);
+
+    await writer.ReachedTarget.Task.WaitAsync(_timeout);
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(writer.Written.Select(w => w.MessageId)).IsEquivalentTo([ids[2], ids[1], ids[0]],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the drain dispatches a stream by the position each row carries, never by id");
+  }
+
+  /// <summary>
   /// Covers the batch-path seen-set dedup (lines 205-207): a fetch returning two rows with the
   /// same MessageId enqueues only one InboxWork, then signals via the else-if branch
   /// (lines 226-228) because the stream did not fill its per-stream cap.

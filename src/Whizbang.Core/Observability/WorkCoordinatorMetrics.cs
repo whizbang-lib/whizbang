@@ -146,6 +146,47 @@ public sealed class WorkCoordinatorMetrics {
   /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/BatchBufferTests.cs:ACallerHoldingATransactionOpen_GoesPastTheLimit_UpToTheCeiling_AndIsNamedAsync</tests>
   public PassiveCounter<long> BatchBufferCeilingOvershoots { get; }
 
+  /// <summary>Tag on <see cref="FencedWrites"/>: what was fenced (an outbox completion, a handler commit, a cursor, ...).</summary>
+  public const string KIND_TAG = "kind";
+
+  /// <summary>
+  /// Writes that landed nowhere because the partition epoch they were made under is no longer the partition's (#2556):
+  /// the partition's ownership moved on while this instance worked, so the result stays for the current owner. Tagged
+  /// <see cref="KIND_TAG"/>. Expected around a rebalance; sustained non-zero outside one means an instance keeps working
+  /// partitions it no longer owns.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorOwnershipNoticesTests.cs:AFencedWrite_IsCountedByKind_AndLoggedAsync</tests>
+  public PassiveCounter<long> FencedWrites { get; }
+
+  /// <summary>
+  /// Claims that claimed nothing because no valid partition map was published (#2554): in map mode an instance claims
+  /// only through the published map, and waits while there is none. Every such claim is counted; the warning is written
+  /// once per streak.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorOwnershipNoticesTests.cs:AClaimWithNoValidMap_IsCounted_AndWarnedOncePerStreakAsync</tests>
+  public PassiveCounter<long> PartitionMapUnavailableClaims { get; }
+
+  // 1 while the claims of this process find no valid partition map, so the warning is written once per streak.
+  private int _partitionMapUnavailable;
+
+  /// <summary>
+  /// Records whether a claim found a valid partition map, and answers whether it starts a streak without one: the first
+  /// claim with no map after one that had a map (or the first ever), which is the one to warn about.
+  /// </summary>
+  /// <param name="unavailable">Whether the claim reported no valid map.</param>
+  /// <returns>True when this claim starts a streak of claims without a map.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorOwnershipNoticesTests.cs:AClaimWithNoValidMap_IsCounted_AndWarnedOncePerStreakAsync</tests>
+  public bool RecordPartitionMapAvailability(bool unavailable) {
+    if (!unavailable) {
+      Interlocked.Exchange(ref _partitionMapUnavailable, 0);
+      return false;
+    }
+    PartitionMapUnavailableClaims.Add(1);
+    return Interlocked.Exchange(ref _partitionMapUnavailable, 1) == 0;
+  }
+
   private readonly Meter _meter;
 
   /// <summary>
@@ -236,5 +277,10 @@ public sealed class WorkCoordinatorMetrics {
       "How long an append waited for room in the batch buffer");
     BatchBufferCeilingOvershoots = meter.CreatePassiveCounter<long>("whizbang.batch_buffer.ceiling_overshoots",
       description: "Appends admitted past the batch buffer's limit because the caller held a database transaction open");
+
+    FencedWrites = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.fenced_writes",
+      description: "Writes that landed nowhere because the partition's ownership moved on since the work was claimed; tagged by kind");
+    PartitionMapUnavailableClaims = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.partition_map_unavailable",
+      description: "Claims that claimed nothing because no valid partition map was published (ownership by map)");
   }
 }

@@ -57,27 +57,69 @@ public class SchemaMigratorDeferralGenerationTests {
     return string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
   }
 
-  /// <summary>An instance that loses the lock waits on the winner instead of contending again.</summary>
-  [Test]
-  public async Task TheInitializerDefersToTheInstanceHoldingTheLockAsync() {
-    var output = await _generatedAsync(MINIMAL_CONTEXT);
-
-    await Assert.That(output).Contains("SchemaMigrationDeferral.DeferAsync", StringComparison.Ordinal)
-      .Because("winning the try-lock is the election; the losers have to be told to wait on it");
-  }
-
-  /// <summary>The wait is fed both questions, not just the schema's state.</summary>
+  /// <summary>
+  /// The initializer runs the shared migrator election (#2561): the bootstrap, the registration and the vote, then the
+  /// wait or the takeover before the schema lock, and only then the pass.
+  /// </summary>
   /// <remarks>
-  /// Whether the schema is current says when to stop waiting; whether anything still holds the lock
-  /// says whether there is anyone left to wait for. Given only the first, an instance whose
-  /// migrator died would wait for ever on a schema that will never advance.
+  /// The election itself (the waiter watching the migrator, anyone else the schema lock, a dead migrator taken over) is
+  /// <c>MigratorElection</c>, shared with the Dapper driver and tested there on a real database. What the generated code
+  /// owns is calling it, in this order, with the duty it holds for the whole initialization.
   /// </remarks>
   [Test]
-  public async Task TheDeferralIsGivenBothTheSchemaAndTheLockProbeAsync() {
+  public async Task TheInitializerRunsTheSharedMigratorElectionAsync() {
     var output = await _generatedAsync(MINIMAL_CONTEXT);
 
-    await Assert.That(output).Contains("_isSchemaCurrentAsync", StringComparison.Ordinal);
-    await Assert.That(output).Contains("AdvisoryLockProbe.IsHeldElsewhereAsync", StringComparison.Ordinal);
+    var stage = output.IndexOf(
+      "Whizbang.Data.Postgres.MigratorElection.StageAsync(migratorDuty, election, serviceProvider, logger, cancellationToken)",
+      StringComparison.Ordinal);
+    var preLock = output.IndexOf("Whizbang.Data.Postgres.MigratorElection.RunPreLockAsync(", StringComparison.Ordinal);
+    var pass = output.IndexOf("var retryAttempt = 0;", StringComparison.Ordinal);
+
+    await Assert.That(stage).IsGreaterThan(0)
+      .Because("winning the vote is the election; the losers have to be told to wait on it");
+    await Assert.That(preLock).IsGreaterThan(stage);
+    await Assert.That(pass).IsGreaterThan(preLock)
+      .Because("a waiter waits for the migrator before the pass, whose fast path then finds nothing to apply");
+  }
+
+  /// <summary>The election is given the bootstrap closure and both questions a waiter asks.</summary>
+  /// <remarks>
+  /// Whether the schema is current says when to stop waiting; the duty (or, for anyone else, the schema lock) says
+  /// whether there is anyone left to wait for. Given only the second, a migrator that committed reads as one that died.
+  /// </remarks>
+  [Test]
+  public async Task TheElectionIsGivenTheBootstrapClosureAndTheSchemaCheckAsync() {
+    var output = await _generatedAsync(MINIMAL_CONTEXT);
+
+    await Assert.That(output).Contains("new Whizbang.Data.Postgres.MigratorElectionRequest(", StringComparison.Ordinal);
+    await Assert.That(output).Contains("lockId, GetBootstrapScripts(), _schemaCommandTimeoutSeconds,", StringComparison.Ordinal)
+      .Because("the bootstrap closure is applied first, so an election is possible on an empty database");
+    await Assert.That(output).Contains("(c, ct) => _isSchemaCurrentAsync(c, ct), incompatibilityOverride);", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// Every start checks the stored perspective registry against this build's (#2561), after the pass loop, beside the
+  /// managed-object reconcile: no hash covers the registry, so a hash-clean restart, a Current schema or a waiter that
+  /// skipped the pass's registries step would otherwise keep whatever registry it found. It is handed the payload the
+  /// pass reconciles, and is skipped, with the rest of the converge, when the application's schema is held.
+  /// </summary>
+  [Test]
+  public async Task EveryStartChecksThePerspectiveRegistryAgainstThisBuildAsync() {
+    var output = await _generatedAsync(MINIMAL_CONTEXT);
+
+    var held = output.IndexOf("if (incompatibilityOverride is not null || applicationHeld) {", StringComparison.Ordinal);
+    var check = output.IndexOf("Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ReconcileIfStaleAsync(", StringComparison.Ordinal);
+    await Assert.That(held).IsGreaterThan(output.IndexOf("var retryAttempt = 0;", StringComparison.Ordinal))
+      .Because("the converge follows the pass loop, which every start reaches");
+    await Assert.That(check).IsGreaterThan(held).Because("a held application schema leaves its registry as it is");
+    await Assert.That(output[check..]).Contains(
+      "segmentConnectionFactory, \"", StringComparison.Ordinal);
+    await Assert.That(output).Contains("_perspectiveRegistryPayloads(), _schemaCommandTimeoutSeconds, serviceProvider,", StringComparison.Ordinal);
+    var accessor = output.IndexOf("_perspectiveRegistryPayloads() {", StringComparison.Ordinal);
+    await Assert.That(output[accessor..]).Contains("new Whizbang.Core.Perspectives.PerspectiveRegistryPayload(", StringComparison.Ordinal);
+    await Assert.That(output).DoesNotContain("__PERSPECTIVE_REGISTRY_JSON__", StringComparison.Ordinal)
+      .Because("the accessor carries the registry JSON the generator embeds, as the pass's reconcile does");
   }
 
   /// <summary>
@@ -146,47 +188,6 @@ public class SchemaMigratorDeferralGenerationTests {
     }
   }
 
-  /// <summary>The bootstrap runs before anything is elected.</summary>
-  /// <remarks>
-  /// Order is the whole point: the capability function the election needs is created by the
-  /// bootstrap, so electing first is refused for a reason that has nothing to do with contention.
-  /// </remarks>
-  [Test]
-  public async Task TheBootstrapRunsBeforeTheElectionAsync() {
-    var output = await _generatedAsync(MINIMAL_CONTEXT);
-
-    var bootstrap = output.IndexOf("SchemaBootstrapPhase.ApplyAsync", StringComparison.Ordinal);
-    var elect = output.IndexOf("MigratorDutyStaging.ElectAsync", StringComparison.Ordinal);
-
-    await Assert.That(bootstrap).IsGreaterThan(0);
-    await Assert.That(elect).IsGreaterThan(0);
-    await Assert.That(bootstrap).IsLessThan(elect);
-  }
-
-  /// <summary>An instance registers before it contends for the duty.</summary>
-  [Test]
-  public async Task TheInstanceRegistersBeforeContendingAsync() {
-    var output = await _generatedAsync(MINIMAL_CONTEXT);
-
-    await Assert.That(output).Contains("SchemaBootstrapPhase.RegisterInstanceAsync",
-      StringComparison.Ordinal)
-      .Because("record_capability refuses an instance that is not in the registry, so an election "
-        + "without a registration is refused for the wrong reason");
-  }
-
-  /// <summary>A non-holder waits on the migrator, not the schema lock.</summary>
-  /// <remarks>
-  /// Watching the schema lock would report the migrator as gone the moment it finished its bootstrap
-  /// and before it started migrating. The migrator is held by assignment (#966 phase 4), so the watch
-  /// reads its assignment row, and the duty's session lock for a migrator on an older release.
-  /// </remarks>
-  [Test]
-  public async Task AWaiterWatchesTheMigratorAsync() {
-    var output = await _generatedAsync(MINIMAL_CONTEXT);
-
-    await Assert.That(output).Contains("MigratorWatch.IsMigratingElsewhereAsync", StringComparison.Ordinal);
-  }
-
   /// <summary>
   /// The migrator keeps its assignment through the migration: its keepalive renews it from the election until the
   /// initializer returns (#2127), it verifies before each attempt, and it marks the DDL connection's backend, so one
@@ -196,11 +197,10 @@ public class SchemaMigratorDeferralGenerationTests {
   public async Task TheMigratorRenewsItsRole_AndMarksTheBackendRunningTheMigrationAsync() {
     var output = await _generatedAsync(MINIMAL_CONTEXT);
 
-    await Assert.That(output).Contains("await using var migratorDuty = new Whizbang.Data.Postgres.MigratorDuty(startupClock, logger,", StringComparison.Ordinal);
-    await Assert.That(output).Contains("Whizbang.Data.Postgres.MigratorDuty.StallLimitFor(", StringComparison.Ordinal)
-      .Because("the keepalive renews only while the schema work reports progress (#2165)");
+    await Assert.That(output).Contains(
+      "await using var migratorDuty = Whizbang.Data.Postgres.MigratorElection.CreateDuty(", StringComparison.Ordinal)
+      .Because("the duty, its keepalive and its stall limit (#2165) are the shared election's, held for the whole method");
     await Assert.That(output).Contains("Whizbang.Data.Postgres.StartupProgress.ReportTo(migratorDuty.NoteProgress)", StringComparison.Ordinal);
-    await Assert.That(output).Contains("await migratorDuty.HoldAsync(staging);", StringComparison.Ordinal);
     await Assert.That(output).Contains("migratorDuty.Grant.VerifyStillHeldAsync", StringComparison.Ordinal);
     await Assert.That(output).Contains("PgRoleElector.MarkDutyBackendAsync", StringComparison.Ordinal);
   }

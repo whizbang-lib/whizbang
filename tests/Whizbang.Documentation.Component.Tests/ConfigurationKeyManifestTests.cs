@@ -230,6 +230,12 @@ public class ConfigurationKeyManifestTests {
     // The lossy-rollback switch (#2122), read beside the override when a Postgres driver builds its assessor;
     // UpgradeOrderTests reads it.
     "Whizbang:Startup:AllowLossyRollback",
+    // The per-side overrides (#2553), read beside the shared ones through UpgradeOrder.ReadOverrides when a Postgres
+    // driver builds its assessor; UpgradeOrderTests reads them.
+    "Whizbang:Startup:Platform:OverrideIncompatibility",
+    "Whizbang:Startup:Application:OverrideIncompatibility",
+    "Whizbang:Startup:Platform:AllowLossyRollback",
+    "Whizbang:Startup:Application:AllowLossyRollback",
   ];
 
   /// <summary>

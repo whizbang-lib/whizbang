@@ -577,13 +577,13 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// Ordering invariant, at the apply boundary. A rebuild folds the whole stream it read, so it takes the replay
   /// order the rewind uses (origin, then stream version, then commit, then id; #1352): sorting it by id applied a
   /// stream's first committed event last whenever that event carried the highest id, and checkpointed on it (#1331).
-  /// The live drain keeps id order; an inversion there is the rewind's to correct.
+  /// The live drain applies the stream in its stream order, the version each event carries (#2551), never by id.
   /// </summary>
   private static IReadOnlyList<MessageEnvelope<IEvent>> _orderForApply(IReadOnlyList<MessageEnvelope<IEvent>> events) {
     if (events.Count > 1) {
       events = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild
           ? global::Whizbang.Core.Perspectives.ReplayEventOrder.Order(events)
-          : [.. events.OrderByMessageId()];
+          : global::Whizbang.Core.Messaging.StreamOrder.InStreamOrder(events);
     }
     return events;
   }
@@ -741,6 +741,12 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       throw new ArgumentNullException(nameof(outcome), "A prepared write is completed with the outcome of its write.");
     }
     var status = mine.Write is null ? (global::Whizbang.Core.Perspectives.PerspectiveWriteStatus?)null : outcome!.Value.Status;
+    if (status == global::Whizbang.Core.Perspectives.PerspectiveWriteStatus.Fenced) {
+      // #2556: the partition's ownership moved on, so nothing was written; the apply ends without finishing and the
+      // current owner replays the stream. Never re-run per pair: that write would be fenced too.
+      state!.DisposeSnapshots();
+      throw new global::Whizbang.Core.Perspectives.PartitionOwnershipLostException(mine.StreamId);
+    }
     if (status is global::Whizbang.Core.Perspectives.PerspectiveWriteStatus.Conflict
         or global::Whizbang.Core.Perspectives.PerspectiveWriteStatus.Failed) {
       state!.DisposeSnapshots();
@@ -1356,7 +1362,7 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   private async Task _foldAsync(ApplyState state, bool firePreLifecycle, CancellationToken cancellationToken) {
     var events = state.Events;
 
-    // Invoke PrePerspective lifecycle receptors (fires once per batch, not per event, and not again
+    // Invoke PrePerspective lifecycle receptors (once for each event of the batch, and not again
     // when a refused write re-runs the batch)
     if (firePreLifecycle && events.Count > 0) {
       await _firePrePerspectiveStagesAsync(state, cancellationToken);
@@ -1384,14 +1390,20 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   }
 
   /// <summary>
-  /// The pre-perspective stages of a batch: the detached one started on its own thread and handed to the batch's
-  /// background tasks, and the inline one awaited, each only when a receptor is registered for it.
+  /// The pre-perspective stages of a batch, for each of its events whose type has a receptor at the stage: the detached
+  /// one started on its own thread and handed to the batch's background tasks, and the inline one awaited, event by
+  /// event in the batch's order.
   /// </summary>
+  /// <remarks>
+  /// Each perspective stage fires once per event per perspective (fundamentals/receptors/exactly-once-firing), as the
+  /// per-pair path's coordinator fires it. Firing for the batch's first event alone skipped every later event's
+  /// receptors, which showed once the batch took its stream's order (#2551) and a stream's first event was no longer
+  /// the one a receptor waited on. The invoker's stage tracker keys each firing by message, stage and perspective, so an
+  /// event the worker already announced is not announced again.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowConflictRetryTests.cs:PreLifecycleReceptors_FireForEveryEventOfTheBatch_OncePerEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRowConflictRetryTests.cs:PreLifecycleReceptors_OnlyTheSecondEventsTypeHasOne_FireForThatEventAloneAsync</tests>
   private async Task _firePrePerspectiveStagesAsync(ApplyState state, CancellationToken cancellationToken) {
-    var firstEnvelope = state.Events[0];  // First envelope for receptor routing (envelope preserves security context)
-    var firstEnvelopeType = firstEnvelope.Payload.GetType();
-    var firstEnvelopeTypeName = PerspectiveRunnerTypeNames.ReceptorKey(firstEnvelopeType);
-
     // Slice 30A gates short-circuit when no receptor is registered. Original code consulted
     // only the source-generated compile-time WhizbangReceptorRegistryQuery, which has the
     // same blind spot as the InboxDispatchWorker / TransportConsumerWorker fixes: services
@@ -1413,16 +1425,15 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
       ProcessingMode = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
     };
 
-    // Slice 30A - gate the dedicated-OS-thread spawn on the source-gen receptor registry.
-    // When no receptor is registered for PrePerspectiveDetached on this event type the
-    // spawn is pure overhead: BackgroundStageDispatch.StartLongRunning creates an OS
-    // thread via TaskCreationOptions.LongRunning (~5-10 ms on Linux), and the drain
-    // awaits this task via backgroundTasks below. Production PERF data showed the spawn
-    // dominates per-drain wall time on perspectives with no Pre/Post detached receptors
-    // registered. Tag dispatch fires from the inline path below so skipping the spawn
-    // does not lose tag side-effects.
-    if (runtimeReceptorRegistry?.GetReceptorsFor(firstEnvelopeType, LifecycleStage.PrePerspectiveDetached).Count > 0
-        || global::Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(LifecycleStage.PrePerspectiveDetached, firstEnvelopeTypeName)) {
+    // Slice 30A - gate the dedicated-OS-thread spawn on the receptor registries. When no event
+    // of the batch has a PrePerspectiveDetached receptor the spawn is pure overhead:
+    // BackgroundStageDispatch.StartLongRunning creates an OS thread via
+    // TaskCreationOptions.LongRunning (~5-10 ms on Linux), and the drain awaits this task via
+    // backgroundTasks below. One thread announces every event that has one, so a batch never
+    // spawns a thread per event. Tag dispatch fires from the inline path below so skipping the
+    // spawn does not lose tag side-effects.
+    var detached = _eventsWithPreReceptors(state.Events, LifecycleStage.PrePerspectiveDetached, runtimeReceptorRegistry);
+    if (detached.Count > 0) {
       // Fire ASYNC hooks (non-blocking - runs concurrently with perspective processing).
       // Use BackgroundStageDispatch.StartLongRunning (dedicated thread) instead of Task.Run
       // (pooled thread) so this stage isn't starved when the ThreadPool is saturated by EF
@@ -1433,7 +1444,9 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
         await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
         var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
         if (receptorInvoker is not null) {
-          await receptorInvoker.InvokeAsync(firstEnvelope, LifecycleStage.PrePerspectiveDetached, context with { CurrentStage = LifecycleStage.PrePerspectiveDetached }, cancellationToken);
+          foreach (var envelope in detached) {
+            await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PrePerspectiveDetached, context with { CurrentStage = LifecycleStage.PrePerspectiveDetached }, cancellationToken);
+          }
         }
       }, cancellationToken);
       state.BackgroundTasks.Add(preAsyncTask);
@@ -1441,17 +1454,33 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
 
     // Slice 30A - same gate for inline PrePerspective. Inline cost is lower (no OS thread
     // spawn) but still includes a DI scope creation + IReceptorInvoker lookup + security
-    // context establishment. Skip when no inline receptors are registered.
-    if (runtimeReceptorRegistry?.GetReceptorsFor(firstEnvelopeType, LifecycleStage.PrePerspectiveInline).Count > 0
-        || global::Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(LifecycleStage.PrePerspectiveInline, firstEnvelopeTypeName)) {
+    // context establishment. Skip when no event of the batch has an inline receptor.
+    var inline = _eventsWithPreReceptors(state.Events, LifecycleStage.PrePerspectiveInline, runtimeReceptorRegistry);
+    if (inline.Count > 0) {
       // Fire INLINE hooks (blocking, transactional)
       await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
       var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
       if (receptorInvoker is not null) {
-        await receptorInvoker.InvokeAsync(firstEnvelope, LifecycleStage.PrePerspectiveInline, context with { CurrentStage = LifecycleStage.PrePerspectiveInline }, cancellationToken);
+        foreach (var envelope in inline) {
+          await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PrePerspectiveInline, context with { CurrentStage = LifecycleStage.PrePerspectiveInline }, cancellationToken);
+        }
       }
     }
   }
+
+  /// <summary>
+  /// The events of a batch whose type has a receptor at <paramref name="stage"/>, in the batch's order: by the runtime
+  /// registry, which includes the compile-time entries, or by the source-generated registry when no runtime one is
+  /// registered or it lists none.
+  /// </summary>
+  private static List<MessageEnvelope<IEvent>> _eventsWithPreReceptors(
+      IReadOnlyList<MessageEnvelope<IEvent>> events, LifecycleStage stage,
+      global::Whizbang.Core.Messaging.IReceptorRegistry? runtimeReceptorRegistry) =>
+    [.. events.Where(envelope => {
+      var type = envelope.Payload.GetType();
+      return runtimeReceptorRegistry?.GetReceptorsFor(type, stage).Count > 0
+        || global::Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasReceptors(stage, PerspectiveRunnerTypeNames.ReceptorKey(type));
+    })];
 
   /// <summary>
   /// Tags the current activity with how many events the batch applied and of which types, grouped with counts (e.g.

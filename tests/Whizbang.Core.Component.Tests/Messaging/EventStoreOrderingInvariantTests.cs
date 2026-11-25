@@ -14,11 +14,10 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
-/// In-memory layer regression tests for a production cursor-inversion symptom.
-/// Even if the producer (TrackedGuid) generates monotonic IDs, the event store must preserve
-/// that order on append + retrieval. These tests assert the in-memory <c>InMemoryEventStore</c>
-/// holds the ordering invariant for both single-threaded sequential appends and concurrent
-/// appends to the same stream.
+/// The in-memory event store returns a stream in stream order, the order its events were appended in (their versions),
+/// as the Postgres stores read it, never sorted by id (#2551). An id is time-ordered and never a stream position. These
+/// lock that for sequential appends, concurrent appends (each producer's events stay in the order it appended them), and
+/// appends whose ids run backward.
 /// </summary>
 public class EventStoreOrderingInvariantTests {
 
@@ -33,11 +32,10 @@ public class EventStoreOrderingInvariantTests {
     };
 
   /// <summary>
-  /// 1,000 sequential appends to one stream, then GetStreamEvents must return them in
-  /// monotonic event_id (UUIDv7) order. Locks the basic ordering invariant.
+  /// 1,000 sequential appends to one stream are returned in the order they were appended.
   /// </summary>
   [Test]
-  public async Task SequentialAppends_ReturnedInMonotonicEventIdOrderAsync() {
+  public async Task SequentialAppends_ReturnedInAppendOrderAsync() {
     var store = new InMemoryEventStore();
     var streamId = Guid.NewGuid();
     var appendedIds = new List<Guid>();
@@ -54,27 +52,16 @@ public class EventStoreOrderingInvariantTests {
     }
     var retrievedIds = retrievedList.Select(e => e.MessageId.Value).ToArray();
 
-    var inversions = 0;
-    for (var i = 1; i < retrievedIds.Length; i++) {
-      if (string.CompareOrdinal(retrievedIds[i].ToString("D"), retrievedIds[i - 1].ToString("D")) <= 0) {
-        inversions++;
-      }
-    }
-
-    await Assert.That(retrievedIds.Length).IsEqualTo(appendedIds.Count);
-    await Assert.That(inversions).IsEqualTo(0)
-      .Because("InMemoryEventStore.GetStreamEventsAsync must return events in monotonic event_id order for sequential appends.");
+    await Assert.That(retrievedIds.SequenceEqual(appendedIds)).IsTrue()
+      .Because("a stream is read in the order it was appended, its versions");
   }
 
   /// <summary>
-  /// Concurrent-append regression: 16 tasks each append 200 events to the SAME stream
-  /// concurrently. After all writes complete, GetStreamEvents must return events sorted
-  /// such that earlier UUIDv7 IDs come first. RED here = either UUIDv7 isn't monotonic
-  /// (caught by TrackedGuidMonotonicityTests) OR the store doesn't preserve insertion
-  /// order — both produce the same symptoms observed in production.
+  /// 16 tasks each append 200 events to the SAME stream concurrently. Every event is read back once, and each producer's
+  /// events come back in the order that producer appended them: the stream's order is its appends, never its ids.
   /// </summary>
   [Test]
-  public async Task ConcurrentAppendsToSameStream_RetrievedInMonotonicEventIdOrderAsync() {
+  public async Task ConcurrentAppendsToSameStream_EachProducersEventsKeepTheirAppendOrderAsync() {
     var store = new InMemoryEventStore();
     var streamId = Guid.NewGuid();
     const int taskCount = 16;
@@ -100,25 +87,22 @@ public class EventStoreOrderingInvariantTests {
 
     await Assert.That(retrievedIds.Length).IsEqualTo(taskCount * perTask);
 
-    var inversions = 0;
-    for (var i = 1; i < retrievedIds.Length; i++) {
-      if (string.CompareOrdinal(retrievedIds[i].ToString("D"), retrievedIds[i - 1].ToString("D")) < 0) {
-        inversions++;
-      }
+    var indexes = retrievedList.Select(e => e.Payload.Index).ToArray();
+    await Assert.That(indexes.Distinct().Count()).IsEqualTo(taskCount * perTask)
+      .Because("every appended event is read back once");
+    for (var t = 0; t < taskCount; t++) {
+      var producer = t;
+      var own = indexes.Where(i => i / perTask == producer).ToArray();
+      await Assert.That(own.SequenceEqual(own.Order())).IsTrue()
+        .Because($"producer {producer}'s events are read in the order it appended them");
     }
-
-    await Assert.That(inversions).IsEqualTo(0)
-      .Because($"After concurrent appends, GetStreamEvents must return events in monotonic event_id order. Found {inversions} inversions across {retrievedIds.Length} events. RED here = the same ordering bug observed in production at the in-memory event store layer.");
   }
 
   /// <summary>
-  /// Producer-supplied IDs that are already non-monotonic (simulating the production bug):
-  /// the store should still return events in event_id-sorted order, NOT insertion order. Locks
-  /// the contract that the store is responsible for preserving event_id ordering on retrieval
-  /// regardless of append timing.
+  /// Events appended with ids that run backward are read in the order they were appended, never sorted by id (#2551).
   /// </summary>
   [Test]
-  public async Task PreSortedRetrieval_WhenInsertedOutOfOrder_RetrievesInEventIdOrderAsync() {
+  public async Task Retrieval_WhenIdsRunBackward_ReturnsTheAppendOrder_NotIdOrderAsync() {
     var store = new InMemoryEventStore();
     var streamId = Guid.NewGuid();
 
@@ -134,9 +118,8 @@ public class EventStoreOrderingInvariantTests {
     }
     var retrievedIds = retrievedList.Select(e => e.MessageId.Value).ToArray();
 
-    // Expect ascending event_id order, NOT insertion order.
-    var sortedExpected = ids.OrderBy(g => g.ToString("D"), StringComparer.Ordinal).ToArray();
-    await Assert.That(retrievedIds.SequenceEqual(sortedExpected)).IsTrue()
-      .Because("GetStreamEvents must return events sorted by event_id, not insertion order. This is the contract that downstream cursor-comparison code relies on.");
+    var appendOrder = ids.Reverse().ToArray();
+    await Assert.That(retrievedIds.SequenceEqual(appendOrder)).IsTrue()
+      .Because("a stream is read in the order it was appended, whatever its ids say");
   }
 }

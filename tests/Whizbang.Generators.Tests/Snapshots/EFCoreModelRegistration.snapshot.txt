@@ -674,5 +674,9 @@ public static class GeneratedModelRegistration {
       return dbContext is null ? null : await dbContext.IsWhizbangSchemaCurrentAsync(ct, scope.ServiceProvider);
     });
 
+    // Lets the rollback gate judge a recorded change this build defines identically as current, whoever applied it
+    DbContextInitializationRegistry.RegisterSchemaContent<global::TestApp.TestDbContext>(
+      (dbContext, sp) => dbContext.GetWhizbangSchemaContent(sp));
+
   }
 }

@@ -91,12 +91,12 @@ public class DapperSchemaStartupTests {
   }
 
   /// <summary>
-  /// The Dapper driver holds no election (#1636): its start reports Elect as skipped before it migrates, so the end
-  /// of Preflight is marked on this driver too, and what waits for it (the notification connection and its
-  /// alive-lock) starts there rather than only once the schema is ready.
+  /// #2561: the Dapper driver holds the migrator election the EF Core driver holds. Alone on an empty database, its start
+  /// ends Preflight by registering this instance, votes, wins, and reports Elect as won before it migrates; what waits for
+  /// the end of Preflight (the notification connection and its alive-lock) starts there.
   /// </summary>
   [Test]
-  public async Task HostStart_ReportsElectSkipped_BeforeItMigratesAsync() {
+  public async Task HostStart_RegistersVotesAndIsElectedMigrator_BeforeItMigratesAsync() {
     var stages = new RecordingStages();
     var services = _services();
     services.AddSingleton<Whizbang.Core.Startup.IStartupStageReporter>(stages);
@@ -105,7 +105,11 @@ public class DapperSchemaStartupTests {
     await _initializer(provider).StartAsync(CancellationToken.None);
 
     await Assert.That(stages.Calls).IsEquivalentTo([
-      "Skip Elect: no election could be held, so this instance migrates under the schema lock",
+      "Enter Preflight: the bootstrap closure is in place; registering this instance",
+      "Enter Elect: voting for the migrator duty",
+      "Enter Elect: this instance migrates the schema",
+      // #2563: Converge just before the managed-object reconcile, as on the EF Core driver.
+      "Enter Converge: analyzing new indexes and reconciling managed objects",
       "Enter Coordinate: recomputing partitions before the schema-ready gate opens",
     ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
@@ -187,6 +191,41 @@ public class DapperSchemaStartupTests {
     await Assert.That(provider.GetRequiredService<ISchemaReadyGate>().IsReady).IsTrue()
       .Because("a schema provisioned out of band has nothing to wait for");
     await Assert.That(await _tableExistsAsync("wh_event_store")).IsFalse();
+  }
+
+  /// <summary>
+  /// #2561: each migration file the pass commits is reported as a committed step, to the observers and as startup
+  /// progress, as the EF Core driver reports each of its steps: the progress keeps a migrator's duty alive through a long
+  /// pass (#2165), and the step is where a test holds a migrator mid-migration.
+  /// </summary>
+  [Test]
+  public async Task ThePass_ReportsEachCommittedMigrationFile_AsAStepAndAsProgressAsync() {
+    var steps = new StepRecorder();
+    var initializer = new PostgresSchemaInitializer(_database.ConnectionString) { Observers = [steps] };
+    var expected = new PostgresMigrationProvider().GetMigrations()
+      .Select(m => m.Name).Where(n => !n.StartsWith("000", StringComparison.Ordinal)).ToList();
+    var progress = 0;
+
+    using (StartupProgress.ReportTo(() => Interlocked.Increment(ref progress))) {
+      await initializer.InitializeSchemaAsync();
+    }
+
+    await Assert.That(expected.Count).IsGreaterThan(100).Because("a positive control: the whole migration set applies");
+    await Assert.That(steps.Committed).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("every file an empty database owes is applied, in order, and each is reported once it commits");
+    await Assert.That(progress).IsGreaterThanOrEqualTo(expected.Count);
+  }
+
+  /// <summary>Records each committed step, in order.</summary>
+  private sealed class StepRecorder : ISchemaInitializationObserver {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _committed = new();
+
+    public List<string> Committed => [.. _committed];
+
+    public ValueTask OnSchemaStepCommittedAsync(string schema, string stepName, CancellationToken cancellationToken) {
+      _committed.Enqueue(stepName);
+      return ValueTask.CompletedTask;
+    }
   }
 
   [Test]

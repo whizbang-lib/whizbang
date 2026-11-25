@@ -31,6 +31,8 @@ public static class WhizbangHostExtensions {
   /// </summary>
   /// <param name="host">The IHost or WebApplication instance.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
+  /// <exception cref="Whizbang.Data.Postgres.SchemaStandDownException">The instance stood down: its W! migrations did,
+  /// and nothing was applied, or its application schema did, after the W! migrations ran (#2553).</exception>
   /// <docs>data/turnkey-initialization#idempotency</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangHostExtensionsTests.cs</tests>
   public static async Task EnsureWhizbangInitializedAsync(
@@ -49,5 +51,9 @@ public static class WhizbangHostExtensions {
         host.Services,
         logger,
         cancellationToken);
+
+    // #2553: the W! migrations ran first; when the application schema stood down the instance does not serve, and the
+    // call says so rather than return as though it did.
+    Whizbang.Data.Postgres.StartupVerdictBinding.ThrowIfStoodDown(host.Services);
   }
 }

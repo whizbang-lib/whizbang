@@ -14,11 +14,16 @@ namespace Whizbang.Data.Postgres;
 /// <param name="Schema">The schema, unquoted; empty for the connection's own.</param>
 /// <param name="LockId">The schema initialization lock (<see cref="SchemaInitializationLockKey"/>).</param>
 /// <param name="Own">This instance's versions and id.</param>
-/// <param name="AllowLossy">Whether a reversal that discards data may run.</param>
+/// <param name="Plan">The rollback Assess decided on (#2122): which sides it may reverse, and whether each may discard data
+/// (#2553). Under the lock it is decided again from the ledger, side by side, by the same rule.</param>
 /// <param name="CommandTimeoutSeconds">How long any one reverse script may run.</param>
+/// <param name="Defined">What this build defines (#2553), by the ledger's name, with each content hash: a change it defines
+/// identically is never rolled back, whoever applied it, exactly as Assess judged it.</param>
 /// <docs>operations/startup/rolling-upgrades#rolling-back</docs>
 public sealed record SchemaRollbackRequest(
-  Func<NpgsqlConnection> ConnectionFactory, string Schema, long LockId, VersionSighting Own, bool AllowLossy, int CommandTimeoutSeconds);
+  Func<NpgsqlConnection> ConnectionFactory, string Schema, long LockId, VersionSighting Own, Whizbang.Core.Startup.RollbackPlan Plan,
+  int CommandTimeoutSeconds,
+  IReadOnlyDictionary<string, string> Defined);
 
 /// <summary>
 /// Rolls a schema back to this instance's version (#2122, owner decision 4): runs the reverse scripts the newer version
@@ -71,17 +76,27 @@ public static partial class SchemaRollback {
     var probe = await PostgresStartupAssessment.ProbeAsync(connection, prefix, cancellationToken).ConfigureAwait(false);
     var changes = await PostgresStartupAssessment.ReadChangesAsync(connection, prefix, probe, withScripts: true, cancellationToken)
       .ConfigureAwait(false);
-    var since = UpgradeOrder.AppliedSince(request.Own, [.. changes.Select(c => c.Change)]);
-    if (since.Count == 0) {
+    // #2553: decided side by side, as Assess decided: only the sides this start runs, each with its own lossy setting.
+    var recorded = changes.Select(c => c.Change).ToList();
+    var sides = new[] { SchemaChangeKind.Platform, SchemaChangeKind.Application }
+      .Select(side => (Side: side, Runs: request.Plan.Reverses(side, out var lossy), AllowLossy: lossy))
+      .Where(s => s.Runs)
+      .Select(s => (s.Side, s.AllowLossy, Since: UpgradeOrder.AppliedSince(request.Own, recorded.Where(c => c.Kind == s.Side), request.Defined)))
+      .Where(s => s.Since.Count > 0)
+      .ToList();
+    if (sides.Count == 0) {
       return 0;
     }
     var online = await PostgresStartupAssessment.ReadOnlineAsync(connection, schema, cancellationToken).ConfigureAwait(false);
     if (UpgradeOrder.FindNewer(request.Own, online) is { } newer) {
       throw new InvalidOperationException($"The schema {schema} is not rolled back: {newer.Describe()}.");
     }
-    if (UpgradeOrder.WhyNotReversible(request.Own, since, request.AllowLossy) is { } refusal) {
-      throw new InvalidOperationException($"The schema {schema} is not rolled back: {refusal}.");
+    foreach (var (side, allowLossy, sideSince) in sides) {
+      if (UpgradeOrder.WhyNotReversible(request.Own, sideSince, allowLossy) is { } refusal) {
+        throw new InvalidOperationException($"The schema {schema} is not rolled back: {Whizbang.Core.Startup.SchemaSideVerdict.NameOf(side)}: {refusal}.");
+      }
     }
+    var since = sides.SelectMany(s => s.Since).ToList();
 
     var plan = changes.Where(c => since.Contains(c.Change))
       .OrderByDescending(c => c.AppliedVersionId.GetValueOrDefault())

@@ -64,6 +64,8 @@ public sealed class RunPermitAuditTests {
     "OutboxDrainWorker", "InboxDrainWorker", "PerspectiveWorker", "InboxDispatchWorker", "OutboxPublishWorker",
     "InboxHandlerWorker", "OutboxCompletionFlushWorker", "PerspectiveCompletionFlushWorker", "FailureFlushWorker",
     "LeaseRenewalWorker", "BatchStrategyShutdownFlush",
+    // Hands over the partitions this instance owns once their work in hand is done (#2557).
+    "PartitionHandoverWorker",
   };
 
   /// <summary>Takes no work for this instance.</summary>

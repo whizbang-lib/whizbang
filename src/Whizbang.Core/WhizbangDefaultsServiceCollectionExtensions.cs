@@ -64,6 +64,9 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     services.TryAddSingleton<Messaging.IConsumerRegistry>(sp => sp.GetRequiredService<Messaging.IReceptorRegistryQuery>());
     services.TryAddScoped<Messaging.ILifecycleContextAccessor, Messaging.AsyncLocalLifecycleContextAccessor>();
     services.TryAddSingleton<IStreamIdExtractor>(_ => Registry.StreamIdExtractorRegistry.GetComposite());
+    // #2556: one ledger of partition tenures per process, which every work coordinator records claims and fetches into
+    // and reads back on every write, so each write names the epoch its work was claimed under.
+    services.TryAddSingleton(_ => new Messaging.PartitionTenures());
     services.TryAddSingleton<IMessageTypeCatalog>(NullMessageTypeCatalog.Instance);
     services.TryAddSingleton<Notifications.INotifySignalingGate>(Notifications.NullNotifySignalingGate.Instance);
     services.TryAddSingleton<Routing.IEventNamespaceRegistry, Routing.StaticEventNamespaceRegistry>();
@@ -114,6 +117,8 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     services.TryAddSingleton<Minting.ICompositeFactory, Minting.CompositeFactory>();
     services.TryAddSingleton<Workers.IInstanceAliveLockSource>(Workers.NullInstanceAliveLockSource.Instance);
     services.TryAddSingleton<Workers.IInstanceConnectionModeSource>(Workers.NullInstanceConnectionModeSource.Instance);
+    // #2559: no assignment for a host with no storage driver; every Postgres driver registers the assigner's cache over it.
+    services.TryAddSingleton<Workers.IPartitionAssignmentSource>(Workers.NullPartitionAssignmentSource.Instance);
     services.TryAddSingleton<Workers.IOccurrencePublishGate, Workers.NoOpOccurrencePublishGate>();
     // The resolvers read the message-type catalog; over the null catalog they resolve nothing, which is
     // what "no resolver" meant before. Generated registrations supply the same types over a real catalog.
