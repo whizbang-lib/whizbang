@@ -1043,6 +1043,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     foreach (var (table, sql) in Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalRewrite.ForModel(dbContext.Model, documentOptions, "__SCHEMA__")) {
       content["temporal-form:" + table] = global::Whizbang.Data.Postgres.StoredFormApplier.ContentHash(sql);
     }
+    // #2518: the strong-id rewrite records the hash of its one-batch statement, which the maintenance cycle runs too.
+    foreach (var strongIds in Whizbang.Data.EFCore.Postgres.Perspectives.StrongIdScalarRewrite.ForModel(dbContext.Model, documentOptions, "__SCHEMA__")) {
+      content["stored-form:" + strongIds.Name] = global::Whizbang.Data.Postgres.StoredFormApplier.ContentHash(strongIds.Sql);
+    }
     return content;
   }
 

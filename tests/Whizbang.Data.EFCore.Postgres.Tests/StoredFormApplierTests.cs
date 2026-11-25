@@ -281,6 +281,8 @@ public class StoredFormApplierTests : EFCoreTestBase {
         .Select(t => ("stored-form:" + t.Name, "wh_stored_form_migrations", "name", t.Name, StoredFormApplier.ContentHash(t.Sql))),
       .. DeclaredKeyShapes.ForModel(context.Model, options)
         .Select(t => ("stored-form:" + t.JournalName, "wh_stored_form_migrations", "name", t.JournalName, t.ContentHash)),
+      .. StrongIdScalarRewrite.ForModel(context.Model, options, "public")
+        .Select(t => ("stored-form:" + t.Name, "wh_stored_form_migrations", "name", t.Name, StoredFormApplier.ContentHash(t.Sql))),
     ];
     return found;
   }
@@ -308,7 +310,9 @@ public class StoredFormApplierTests : EFCoreTestBase {
   [Timeout(60000)]
   public async Task ARestoredDatabase_WhoseConversionsThisBuildDeclares_ServesWhateverApplicationAppliedThemAsync(CancellationToken ct) {
     var library = (await _libraryAsync(ct))!;
-    await _restoreConversionsAsync(library, ct);
+    var declared = await _restoreConversionsAsync(library, ct);
+    await Assert.That(declared.Any(d => d.Name.StartsWith(StrongIdScalarRewrite.KIND + ":", StringComparison.Ordinal))).IsTrue()
+      .Because("the model's strong-id rewrite is one of the conversions this build declares (#2518)");
 
     var assessment = await _assessor(library, "0.0.0-preview.restored").AssessAsync(ct);
 

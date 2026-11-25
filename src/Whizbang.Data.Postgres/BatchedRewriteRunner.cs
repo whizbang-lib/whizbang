@@ -240,6 +240,12 @@ public static class BatchedRewriteRunner {
         await bound.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
       }
       await StoredFormApplier.StampAsync(connection, transaction, batch.Applier, cancellationToken).ConfigureAwait(false);
+      // #2553: what this statement applies, recorded beside who applied it, so the rollback gate judges the journal row
+      // by its content rather than by its name.
+      await using (var content = new NpgsqlCommand($"SELECT set_config('{StoredFormApplier.CONTENT_SETTING}', $1, true)", connection, transaction)) {
+        content.Parameters.AddWithValue(StoredFormApplier.ContentHash(rewrite.Sql));
+        await content.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      }
       await using (var run = new NpgsqlCommand(rewrite.Sql, connection, transaction) {
         CommandTimeout = batch.Request.CommandTimeoutSeconds,
       }) {

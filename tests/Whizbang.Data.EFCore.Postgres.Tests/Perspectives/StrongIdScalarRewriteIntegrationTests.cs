@@ -679,15 +679,17 @@ public class StrongIdScalarRewriteIntegrationTests {
 
   /// <summary>
   /// In a host with a library version, the step records it as the version that applied the conversion, as the rollback
-  /// gate counts a migration (#2131, #2518).
+  /// gate counts a migration (#2131, #2518), and what it applied as its statement's hash (#2553), so the gate judges the
+  /// row by its content, as for every other conversion.
   /// </summary>
   [Test]
-  public async Task TheMaintenanceStep_RecordsTheLibraryVersionThatAppliedItAsync() {
+  public async Task TheMaintenanceStep_RecordsWhoAppliedIt_AndWhatAsync() {
     await _createTableAsync();
     await _seedAsync(OLD_ROW, key: _key(1));
     await _fleetWritesUuidStringsAsync();
     await _executeAsync("""
-      ALTER TABLE wh_stored_form_migrations ADD COLUMN applied_library_version text, ADD COLUMN applied_application_version text
+      ALTER TABLE wh_stored_form_migrations ADD COLUMN applied_library_version text, ADD COLUMN applied_application_version text,
+        ADD COLUMN content_hash text
       """);
     var services = new ServiceCollection();
     var connectionString = _connectionString;
@@ -704,6 +706,7 @@ public class StrongIdScalarRewriteIntegrationTests {
     await Assert.That(await _journalAsync("applied_library_version")).IsEqualTo("0.4522.0-alpha.357");
     await Assert.That(await _journalAsync("applied_application_version")).IsEqualTo(SchemaLedgerVersion.UNKNOWN)
       .Because("a host without an application version records it as unknown");
+    await Assert.That(await _journalAsync("content_hash")).IsEqualTo(StoredFormApplier.ContentHash(_rewrites().Single().Sql));
   }
 
   // Contexts of their own type, so the step's per-process memory of a settled context is not another test's.
