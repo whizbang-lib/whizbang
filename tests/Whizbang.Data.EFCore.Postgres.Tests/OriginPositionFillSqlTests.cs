@@ -40,6 +40,13 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard4")]
 public class OriginPositionFillSqlTests : EFCoreTestBase {
   private const string TYPE = "Whizbang.Tests.PositionFillEvent, Whizbang.Tests";
+  private const string OTHER_TYPE = "Whizbang.Tests.PositionFillOtherEvent, Whizbang.Tests";
+  private const string READS_TYPE = "Reads";
+  private const string READS_ALL = "ReadsAll";
+  private static readonly string[] _bothTypes = [TYPE, OTHER_TYPE];
+  private static readonly long[] _atVersionOne = [1];
+  private static readonly long[] _atVersionsOneAndTwo = [1, 2];
+  private static readonly long[] _atVersionThree = [3];
   private const int REWIND_REQUIRED = 32;
   private static readonly DateTimeOffset _t0 = new(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
 
@@ -276,8 +283,10 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     var reordered = TrackedGuid.New().Value;
     var kept = TrackedGuid.New().Value;
     // Ids ascend with creation: the unplaced event sorts between the two positioned ones, as the origin minted it.
-    var r1 = await _seedAsync(conn, origin, 10, minutesAgo: 10, stream: reordered, version: 1);
-    var r2 = await _seedAsync(conn, origin, null, minutesAgo: 10, stream: reordered, version: 2);
+    // The unplaced event has the lowest id, so it replays first until its position (40) puts it last: the first slot
+    // changes, so the rewind starts at the stream's first event (#2571 rewinds from the first changed version).
+    var r1 = await _seedAsync(conn, origin, null, minutesAgo: 10, stream: reordered, version: 1);
+    var r2 = await _seedAsync(conn, origin, 20, minutesAgo: 10, stream: reordered, version: 2);
     _ = await _seedAsync(conn, origin, 30, minutesAgo: 10, stream: reordered, version: 3);
     var k1 = await _seedAsync(conn, origin, 10, minutesAgo: 10, stream: kept, version: 1);
     var k2 = await _seedAsync(conn, origin, null, minutesAgo: 10, stream: kept, version: 2);
@@ -293,7 +302,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
 
     var result = await _store().FillAsync(new OriginPositionsAnswer {
       OriginServiceId = origin,
-      Positions = [new(r2, 40), new(k2, 20)],
+      Positions = [new(r1, 40), new(k2, 20)],
     }, _t0, CancellationToken.None);
 
     await Assert.That(result).IsEqualTo(new OriginPositionFillResult(2, 0, 1, 1))
@@ -312,6 +321,169 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
       .IsEqualTo(0L).Because("a fill that leaves the order as it was rewinds nothing");
     await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_snapshots WHERE stream_id = '{kept}'")).IsEqualTo(1L);
     await Assert.That(k1).IsNotEqualTo(Guid.Empty);
+  }
+
+  // ── #2571: each perspective is rewound from where its own replay order changed ─────────
+
+  [Test]
+  public async Task FillReaders_NameEachCursorsAssociatedTypes_AndNoneForAPerspectiveWithoutAssociationsAsync() {
+    await using var conn = await _openAsync();
+    var stream = TrackedGuid.New().Value;
+    var elsewhere = TrackedGuid.New().Value;
+    var e = await _seedAsync(conn, TrackedGuid.New().Value, null, minutesAgo: 10, stream: stream);
+    await _cursorAsync(conn, stream, READS_TYPE, e);
+    await _cursorAsync(conn, stream, READS_ALL, e);
+    await _cursorAsync(conn, stream, "__collective__", e);
+    await _cursorAsync(conn, elsewhere, READS_TYPE, e);
+    await _associateAsync(conn, OTHER_TYPE, READS_TYPE);
+    await _associateAsync(conn, TYPE, READS_TYPE);
+
+    var rows = new List<(Guid Stream, string Perspective, string[]? Types)>();
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText = "SELECT stream_id, perspective_name, event_types FROM wh_origin_position_fill_readers(@s)";
+      cmd.Parameters.AddWithValue("s", new[] { stream });
+      await using var reader = await cmd.ExecuteReaderAsync();
+      while (await reader.ReadAsync()) {
+        rows.Add((reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetFieldValue<string[]>(2)));
+      }
+    }
+
+    await Assert.That(rows.Count).IsEqualTo(2).Because("the collective sink is never rewound, and another stream's cursor is not asked for");
+    await Assert.That(rows[0].Perspective).IsEqualTo(READS_TYPE);
+    await Assert.That(rows[0].Types).IsEquivalentTo(_bothTypes, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(rows[1]).IsEqualTo((stream, READS_ALL, (string[]?)null))
+      .Because("a perspective with no association rows is not known to read any subset: it falls back to every event");
+  }
+
+  [Test]
+  public async Task Fill_ThatReordersTheStream_ButNotAPerspectivesOwnEvents_LeavesThatPerspectiveAndItsSnapshotAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    // Ids ascend with seeding: P2 < U < P1. P1 (position 1) v1, P2 (position 2) v2, U (none) v3: the stream replays
+    // U, P1, P2 and, once U is filled with 3, P1, P2, U. A perspective reading only P2 and U sees P2, U both times.
+    var p2 = await _seedAsync(conn, origin, 2, minutesAgo: 10, stream: stream, version: 2, type: OTHER_TYPE);
+    var u = await _seedAsync(conn, origin, null, minutesAgo: 10, stream: stream, version: 3, type: OTHER_TYPE);
+    var p1 = await _seedAsync(conn, origin, 1, minutesAgo: 10, stream: stream, version: 1);
+    await _associateAsync(conn, OTHER_TYPE, READS_TYPE);
+    foreach (var perspective in new[] { READS_TYPE, READS_ALL }) {
+      await _cursorAsync(conn, stream, perspective, u);
+      await _snapshotAsync(conn, stream, perspective, u, 3);
+    }
+
+    var result = await _store().FillAsync(new OriginPositionsAnswer { OriginServiceId = origin, Positions = [new(u, 3)] },
+      _t0, CancellationToken.None);
+
+    await Assert.That(result).IsEqualTo(new OriginPositionFillResult(1, 0, 1, 1));
+    await Assert.That(await _flagAsync(conn, stream, READS_TYPE)).IsEqualTo(0L)
+      .Because("the perspective's own events fold in the same order, so it is not rewound");
+    await Assert.That(await _snapshotVersionsAsync(conn, stream, READS_TYPE)).IsEquivalentTo(_atVersionThree);
+    await Assert.That(await _triggerAsync(conn, stream, READS_ALL)).IsEqualTo(p1)
+      .Because("a perspective with no association rows reads every event, and the stream's first slot changed");
+    await Assert.That(await _snapshotVersionsAsync(conn, stream, READS_ALL)).IsEmpty();
+    await Assert.That(p2).IsNotEqualTo(Guid.Empty);
+  }
+
+  [Test]
+  public async Task Fill_ThatKeepsTheStreamsOrder_ButReordersAPerspectivesOwnEvents_RewindsThatPerspectiveAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    // Ids ascend with seeding: P2 < U < P1. P1 (position 2) v1, U (none) v2, P2 (position 3) v3, U filled with 1: the
+    // stream replays U, P1, P2 before and after, while a perspective reading only U and P2 goes from P2, U to U, P2.
+    var p2 = await _seedAsync(conn, origin, 3, minutesAgo: 10, stream: stream, version: 3, type: OTHER_TYPE);
+    var u = await _seedAsync(conn, origin, null, minutesAgo: 10, stream: stream, version: 2, type: OTHER_TYPE);
+    _ = await _seedAsync(conn, origin, 2, minutesAgo: 10, stream: stream, version: 1);
+    await _associateAsync(conn, OTHER_TYPE, READS_TYPE);
+    foreach (var perspective in new[] { READS_TYPE, READS_ALL }) {
+      await _cursorAsync(conn, stream, perspective, p2);
+      await _snapshotAsync(conn, stream, perspective, p2, 3);
+    }
+
+    var result = await _store().FillAsync(new OriginPositionsAnswer { OriginServiceId = origin, Positions = [new(u, 1)] },
+      _t0, CancellationToken.None);
+
+    await Assert.That(result).IsEqualTo(new OriginPositionFillResult(1, 0, 1, 1));
+    await Assert.That(await _triggerAsync(conn, stream, READS_TYPE)).IsEqualTo(u)
+      .Because("the perspective's fold changed at version 2, where U is stored; a stream-wide comparison misses it");
+    await Assert.That(await _snapshotVersionsAsync(conn, stream, READS_TYPE)).IsEmpty();
+    await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_events WHERE stream_id = '{stream}' AND perspective_name = '{READS_TYPE}' AND event_id = '{u}' AND processed_at IS NULL"))
+      .IsEqualTo(1L).Because("the trigger is queued so the rewind runs");
+    await Assert.That(await _flagAsync(conn, stream, READS_ALL)).IsEqualTo(0L)
+      .Because("reading every event, the order is the same before and after");
+    await Assert.That(await _snapshotVersionsAsync(conn, stream, READS_ALL)).IsEquivalentTo(_atVersionThree);
+  }
+
+  [Test]
+  public async Task Fill_RewindsFromTheFirstChangedVersion_KeepingTheSnapshotsBelowItAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    var e = await _fourEventStreamAsync(conn, origin, stream);
+    await _cursorAsync(conn, stream, READS_ALL, e[3], replayedThrough: 99);
+    for (var v = 0; v < 4; v++) {
+      await _snapshotAsync(conn, stream, READS_ALL, e[v], v + 1);
+    }
+    await _execAsync(conn, $"""
+      INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_version)
+      VALUES ('{stream}', '{READS_ALL}', '{TrackedGuid.New().Value}', jsonb_build_object(), 0, NULL)
+      """);
+
+    var result = await _store().FillAsync(new OriginPositionsAnswer { OriginServiceId = origin, Positions = [new(e[2], 40)] },
+      _t0, CancellationToken.None);
+
+    await Assert.That(result).IsEqualTo(new OriginPositionFillResult(1, 0, 1, 1));
+    await Assert.That(await _triggerAsync(conn, stream, READS_ALL)).IsEqualTo(e[2])
+      .Because("versions 1 and 2 fold the same events before and after; version 3 is the first that does not");
+    await Assert.That(await _snapshotVersionsAsync(conn, stream, READS_ALL)).IsEquivalentTo(_atVersionsOneAndTwo)
+      .Because("a snapshot below the first changed version holds the replay's fold and is kept; one at or above it, or "
+        + "one that records no version, goes");
+    await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_cursors WHERE stream_id = '{stream}' AND perspective_name = '{READS_ALL}' AND replayed_through_commit_sequence IS NULL"))
+      .IsEqualTo(1L).Because("the replay frontier is cleared, so the rewind is not taken as already read");
+  }
+
+  [Test]
+  public async Task Fill_RewindsALaggingCursorFromTheFirstChangedVersion_KeepingItsEarlierSnapshotAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    var e = await _fourEventStreamAsync(conn, origin, stream);
+    await _cursorAsync(conn, stream, READS_ALL, e[0]);
+    await _snapshotAsync(conn, stream, READS_ALL, e[0], 1);
+
+    var result = await _store().FillAsync(new OriginPositionsAnswer { OriginServiceId = origin, Positions = [new(e[2], 40)] },
+      _t0, CancellationToken.None);
+
+    await Assert.That(result.PerspectivesRewound).IsEqualTo(1);
+    await Assert.That(await _triggerAsync(conn, stream, READS_ALL)).IsEqualTo(e[2]);
+    await Assert.That(await _snapshotVersionsAsync(conn, stream, READS_ALL)).IsEquivalentTo(_atVersionOne)
+      .Because("the cursor has not reached the changed version, and its snapshot below it is kept");
+  }
+
+  [Test]
+  public async Task Fill_MergingWithAFlagAlreadySet_KeepsTheLowerTrigger_AndCountsOnlyNewlyFlaggedCursorsAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    var e = await _fourEventStreamAsync(conn, origin, stream);
+    await _cursorAsync(conn, stream, "Lower", e[3], flaggedAt: e[1]);
+    await _cursorAsync(conn, stream, "Higher", e[3], flaggedAt: e[3]);
+    await _cursorAsync(conn, stream, "Gone", e[3], flaggedAt: TrackedGuid.New().Value);
+    await _cursorAsync(conn, stream, "Fresh", e[3]);
+
+    var result = await _store().FillAsync(new OriginPositionsAnswer { OriginServiceId = origin, Positions = [new(e[2], 40)] },
+      _t0, CancellationToken.None);
+
+    await Assert.That(await _triggerAsync(conn, stream, "Lower")).IsEqualTo(e[1])
+      .Because("a rewind already due from version 2 replays version 3 too");
+    await Assert.That(await _triggerAsync(conn, stream, "Higher")).IsEqualTo(e[2]).Because("the lower trigger wins");
+    await Assert.That(await _triggerAsync(conn, stream, "Gone")).IsEqualTo(e[2])
+      .Because("a trigger the store no longer holds has no version to keep");
+    await Assert.That(await _triggerAsync(conn, stream, "Fresh")).IsEqualTo(e[2]);
+    await Assert.That(result.PerspectivesRewound).IsEqualTo(1)
+      .Because("the cursors an earlier flag already set are not counted again");
+    await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_events WHERE stream_id = '{stream}' AND perspective_name = 'Lower' AND event_id = '{e[1]}' AND processed_at IS NULL"))
+      .IsEqualTo(1L).Because("the kept trigger is the one queued");
   }
 
   [Test]
@@ -635,7 +807,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
   /// <summary>Writes one event straight to the store (the held-fold triggers fire; no digest is folded). Ids are minted in
   /// order, so a later call's event sorts after an earlier one's.</summary>
   private static async Task<Guid> _seedAsync(NpgsqlConnection conn, Guid? origin, long? originSequence, int minutesAgo,
-      Guid? stream = null, int version = 1) {
+      Guid? stream = null, int version = 1, string type = TYPE) {
     var id = TrackedGuid.New().Value;
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = """
@@ -646,7 +818,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("id", id);
     cmd.Parameters.AddWithValue("sid", stream ?? id);
     cmd.Parameters.AddWithValue("v", version);
-    cmd.Parameters.AddWithValue("t", TYPE);
+    cmd.Parameters.AddWithValue("t", type);
     cmd.Parameters.AddWithValue("ago", minutesAgo);
     cmd.Parameters.Add(new NpgsqlParameter("o", NpgsqlDbType.Uuid) { Value = (object?)origin ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("seq", NpgsqlDbType.Bigint) { Value = (object?)originSequence ?? DBNull.Value });
@@ -654,14 +826,68 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     return id;
   }
 
+  /// <summary>Four events of one origin, ids ascending: positions 10, 20, none, 30 at versions 1 to 4. Filling the third
+  /// with 40 moves it past the fourth, so the first changed slot is version 3.</summary>
+  private static async Task<Guid[]> _fourEventStreamAsync(NpgsqlConnection conn, Guid origin, Guid stream) => [
+    await _seedAsync(conn, origin, 10, minutesAgo: 10, stream: stream, version: 1),
+    await _seedAsync(conn, origin, 20, minutesAgo: 10, stream: stream, version: 2),
+    await _seedAsync(conn, origin, null, minutesAgo: 10, stream: stream, version: 3),
+    await _seedAsync(conn, origin, 30, minutesAgo: 10, stream: stream, version: 4)];
+
+  private static Task _cursorAsync(NpgsqlConnection conn, Guid stream, string perspective, Guid last, Guid? flaggedAt = null,
+      long? replayedThrough = null) =>
+    _execAsync(conn, $"""
+      INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id,
+                                          rewind_flagged_at, rewind_first_flagged_at, replayed_through_commit_sequence)
+      VALUES ('{stream}', '{perspective}', '{last}', {(flaggedAt is null ? 2 : 2 | REWIND_REQUIRED)},
+              {(flaggedAt is null ? "NULL" : $"'{flaggedAt}'")}, NULL, NULL, {(replayedThrough is null ? "NULL" : replayedThrough.Value.ToString(CultureInfo.InvariantCulture))})
+      """);
+
+  private static Task _snapshotAsync(NpgsqlConnection conn, Guid stream, string perspective, Guid at, int version) =>
+    _execAsync(conn, $"""
+      INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_version)
+      VALUES ('{stream}', '{perspective}', '{at}', jsonb_build_object(), {version}, {version})
+      """);
+
+  private static Task _associateAsync(NpgsqlConnection conn, string eventType, string perspective) =>
+    _execAsync(conn, $"""
+      INSERT INTO wh_message_associations
+        (id, message_type, association_type, target_name, service_name, normalized_message_type, created_at, updated_at)
+      VALUES (gen_random_uuid(), '{eventType}', 'perspective', '{perspective}', 'test-service', '{eventType}', NOW(), NOW())
+      ON CONFLICT DO NOTHING
+      """);
+
+  private static Task<long> _flagAsync(NpgsqlConnection conn, Guid stream, string perspective) =>
+    _scalarAsync(conn, $"SELECT status & {REWIND_REQUIRED} FROM wh_perspective_cursors WHERE stream_id = '{stream}' AND perspective_name = '{perspective}'");
+
+  private static async Task<Guid?> _triggerAsync(NpgsqlConnection conn, Guid stream, string perspective) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT rewind_trigger_event_id FROM wh_perspective_cursors WHERE stream_id = '{stream}' AND perspective_name = '{perspective}' AND status & {REWIND_REQUIRED} <> 0";
+    var value = await cmd.ExecuteScalarAsync();
+    return value is Guid id ? id : null;
+  }
+
+  private static async Task<long[]> _snapshotVersionsAsync(NpgsqlConnection conn, Guid stream, string perspective) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT snapshot_version FROM wh_perspective_snapshots WHERE stream_id = '{stream}' AND perspective_name = '{perspective}' ORDER BY snapshot_version";
+    var versions = new List<long>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      versions.Add(reader.IsDBNull(0) ? -1 : reader.GetInt32(0));
+    }
+    return [.. versions];
+  }
+
   private static async Task _fillAsync(NpgsqlConnection conn, Guid origin, Guid[] ids, long[] sequences, Guid[] unknown) {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT * FROM wh_fill_origin_positions(@o, @ids, @seqs, @unknown, @rewind, NOW())";
+    cmd.CommandText = "SELECT * FROM wh_fill_origin_positions(@o, @ids, @seqs, @unknown, @rewind, @names, @triggers, NOW())";
     cmd.Parameters.AddWithValue("o", origin);
     cmd.Parameters.AddWithValue(nameof(ids), ids);
     cmd.Parameters.AddWithValue("seqs", sequences);
     cmd.Parameters.AddWithValue(nameof(unknown), unknown);
     cmd.Parameters.AddWithValue("rewind", Array.Empty<Guid>());
+    cmd.Parameters.AddWithValue("names", Array.Empty<string>());
+    cmd.Parameters.AddWithValue("triggers", Array.Empty<Guid>());
     await using var reader = await cmd.ExecuteReaderAsync();
     while (await reader.ReadAsync()) {
       // Drained.

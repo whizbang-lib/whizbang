@@ -231,6 +231,26 @@ public class CoordinatorNamesTheClaimedEpochTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task AcknowledgingThroughAGatedCoordinator_FlipsThePartition_AndReleasesTheGateAsync() {
+    await using var conn = await _openAsync();
+    await _mapModeAsync(conn);
+    await _publishAsync(conn, [_a, _b]);
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 1,
+      logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorGate>.Instance);
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      CreateDbContext(), JsonContextRegistry.CreateCombinedOptions(), gate: gate, tenures: new PartitionTenures());
+
+    var handingOver = await coordinator.GetPartitionsHandingOverAsync(_a);
+    var flipped = await coordinator.AcknowledgeHandoverAsync(_a, [handingOver[0]]);
+
+    await Assert.That(flipped).IsEquivalentTo([handingOver[0].Partition])
+      .Because("the acknowledgement takes a gate permit like every coordinator call, and still flips the partition");
+    await Assert.That(gate.SnapshotHolders()).IsEmpty().Because("the permit is returned once the acknowledgement finishes");
+    await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_partition_ownership WHERE state = 'handing_over'"))
+      .IsEqualTo(4_999L);
+  }
+
+  [Test]
   public async Task AcknowledgingNothing_FlipsNothing_WithoutARoundTripAsync() {
     var (coordinator, _) = _coordinator();
 
