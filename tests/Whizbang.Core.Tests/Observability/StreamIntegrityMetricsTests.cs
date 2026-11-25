@@ -79,6 +79,8 @@ public class StreamIntegrityMetricsTests {
     await Assert.That(metrics.RedeliveryRequestsReceived).IsNotNull();
     await Assert.That(metrics.RedeliveredChildrenReattributed).IsNotNull();
     await Assert.That(metrics.MisattributedOriginsCorrected).IsNotNull();
+    await Assert.That(metrics.WrittenHereOriginsRestored).IsNotNull();
+    await Assert.That(metrics.WrittenHereRestorationAmbiguous).IsNotNull();
   }
 
   [Test]
@@ -135,6 +137,9 @@ public class StreamIntegrityMetricsTests {
     // #2116: events recorded under an origin that does not own their type, on receipt and in stored history.
     await Assert.That(observed).Contains("whizbang.stream_integrity.redelivered_children_reattributed");
     await Assert.That(observed).Contains("whizbang.stream_integrity.misattributed_origins_corrected");
+    // #2573: events written here returned to the local lane by the one-off restoration, and the rows it could not prove.
+    await Assert.That(observed).Contains("whizbang.stream_integrity.written_here_origins_restored");
+    await Assert.That(observed).Contains("whizbang.stream_integrity.written_here_restoration_ambiguous");
     // Certification progress: the per-origin verified watermark.
     await Assert.That(observed).Contains("whizbang.stream_integrity.sealed_through");
   }

@@ -350,8 +350,10 @@ public class WrittenHereOriginRestorationSqlTests : EFCoreTestBase {
     await Assert.That(logger.Entries.Count(e => e.Level == LogLevel.Warning && e.Message.Contains("ambiguous", StringComparison.Ordinal)))
       .IsEqualTo(1).Because("a row the evidence does not prove is reported, so an operator knows what is left");
     listener.RecordObservableInstruments();
-    await Assert.That(restored).IsEquivalentTo([(1L, (string?)"reaction"), (1L, (string?)"return")]).Because("and counted, by shape");
-    await Assert.That(ambiguous).IsEquivalentTo([1L]);
+    // A passive counter also observes its untagged running total, which nothing here adds to.
+    await Assert.That(restored.Where(r => r.Value > 0)).IsEquivalentTo([(1L, (string?)"reaction"), (1L, (string?)"return")])
+      .Because("and counted, by shape");
+    await Assert.That(ambiguous.Where(v => v > 0)).IsEquivalentTo([1L]);
     await Assert.That(step.Name).IsEqualTo("written-here-origin-restoration");
   }
 
