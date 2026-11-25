@@ -353,9 +353,19 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       return (column, "to_jsonb(" + column + ")");
     }
     parameters["p" + idx] = a.JsonValue;
-    var comparison = "(data->'" + cmp.ComparedProperty + "')" + JSONB_CAST + " " + cmp.SqlOperator + " @p" + idx + JSONB_CAST;
+    var (stored, value) = ("(data->'" + cmp.ComparedProperty + "')" + JSONB_CAST, "@p" + idx + JSONB_CAST);
+    if (cmp.ComparesStrongIds) {
+      (stored, value) = (_strongIdScalar(stored), _strongIdScalar(value));
+    }
+    var comparison = stored + " " + cmp.SqlOperator + " " + value;
     return ("(" + comparison + ")", "to_jsonb(" + comparison + ")");
   }
+
+  // A strongly-typed id's UUID string, from the object {"Value": ...} an earlier release stored or the string itself
+  // (#2518), so a comparison matches a row in either form. Inline rather than the schema's _wh_strong_id_scalar: the
+  // statement does not name the schema.
+  private static string _strongIdScalar(string json) =>
+    "(CASE WHEN jsonb_typeof(" + json + ") = 'object' THEN " + json + " -> 'Value' ELSE " + json + " END)";
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "Collective apply {CollectiveEventId} on {Table} updated {AffectedRows} rows in {Batches} batch(es)")]

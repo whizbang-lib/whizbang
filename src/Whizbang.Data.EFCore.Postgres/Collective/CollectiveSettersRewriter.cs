@@ -91,8 +91,10 @@ internal static class CollectiveSettersRewriter {
   /// jsonb-to-jsonb comparison of the row's <see cref="ComparedProperty"/> against the assignment's
   /// (constant) <c>JsonValue</c>, wrapped by the adapter as
   /// <c>to_jsonb((data-&gt;'ComparedProperty')::jsonb &lt;op&gt; @value::jsonb)</c>. Null for constant setters.
+  /// <see cref="ComparesStrongIds"/> says the compared property is a strongly-typed id, which a document stores as the
+  /// object <c>{"Value": ...}</c> or as its UUID string (#2518), so the adapter compares the UUID each side holds.
   /// </summary>
-  public sealed record CollectiveComputedComparison(string ComparedProperty, string SqlOperator);
+  public sealed record CollectiveComputedComparison(string ComparedProperty, string SqlOperator, bool ComparesStrongIds = false);
 
   /// <summary>
   /// Walk the spec setters and return each top-level assignment as (property name, JSON-serialized value,
@@ -225,7 +227,9 @@ internal static class CollectiveSettersRewriter {
       if (lambda.Body is BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } bin
           && _tryComparedProperty(bin.Left) is { } comparedProperty) {
         var op = bin.NodeType == ExpressionType.Equal ? "=" : "<>";
-        return (new CollectiveComputedComparison(comparedProperty.Name, op), _evaluateValue(_stripConvert(bin.Right)));
+        var comparesStrongIds = typeof(IWhizbangId).IsAssignableFrom(
+          Nullable.GetUnderlyingType(comparedProperty.PropertyType) ?? comparedProperty.PropertyType);
+        return (new CollectiveComputedComparison(comparedProperty.Name, op, comparesStrongIds), _evaluateValue(_stripConvert(bin.Right)));
       }
       throw new NotSupportedException(
         "CollectiveSettersRewriter supports computed SetProperty only as a property-vs-constant comparison " +

@@ -662,6 +662,64 @@ public class WhizbangIdDocumentStorageTests {
     await Assert.That(reread.ParentId).IsEqualTo(parent);
   }
 
+  /// <summary>
+  /// While the fleet's gate is closed, ExecuteUpdate sets an id inside a document in the object form, the same as
+  /// SaveChanges, so an instance of an earlier release still reads the row; a null id is set as JSON null (#2518).
+  /// </summary>
+  [Test]
+  public async Task Whizbang_ExecuteUpdateWhileTheGateIsClosed_SetsAnIdInTheObjectFormAsync() {
+    using var form = WhizbangIdDocumentForm.ScopeTo(uuidString: false);
+    var (order, newOrder, newParent) = (TestOrderId.New(), TestOrderId.New(), TestOrderId.New());
+    var row = _row(order, TestOrderId.New(), TestOrderId.New());
+    var capture = new SqlCapture();
+    await using var db = _context(o => new WhizbangContext(o), capture);
+    db.Rows.Add(row);
+    await db.SaveChangesAsync();
+    await Assert.That(await _storedTextAsync(row.Id)).Contains($"\"OrderId\": {{\"Value\": \"{order.Value}\"}}");
+    capture.Statements.Clear();
+    TestOrderId? parent = newParent;
+
+    await db.Rows.Where(r => r.Id == row.Id).ExecuteUpdateAsync(s => s.SetProperty(r => r.Data.OrderId, newOrder));
+    await db.Rows.Where(r => r.Id == row.Id).ExecuteUpdateAsync(s => s.SetProperty(r => r.Data.ParentId, parent));
+    var afterSet = await _storedTextAsync(row.Id);
+    TestOrderId? none = null;
+    await db.Rows.Where(r => r.Id == row.Id).ExecuteUpdateAsync(s => s.SetProperty(r => r.Data.ParentId, none));
+
+    var setter = string.Join("\n", capture.Statements);
+    await Assert.That(afterSet).Contains($"\"OrderId\": {{\"Value\": \"{newOrder.Value}\"}}").Because(setter);
+    await Assert.That(afterSet).Contains($"\"ParentId\": {{\"Value\": \"{newParent.Value}\"}}").Because(setter);
+    await Assert.That(await _storedTextAsync(row.Id)).Contains("\"ParentId\": null").Because(setter);
+    var reread = await db.Rows.AsNoTracking().Where(r => r.Id == row.Id).Select(r => new { r.Data.OrderId, r.Data.ParentId }).SingleAsync();
+    await Assert.That(reread.OrderId).IsEqualTo(newOrder);
+    await Assert.That(reread.ParentId).IsNull();
+  }
+
+  /// <summary>
+  /// The setter's form is decided when the statement runs, not when it is compiled: one cached ExecuteUpdate writes the
+  /// object form while the gate is closed and the UUID string once it opens (#2518).
+  /// </summary>
+  [Test]
+  public async Task Whizbang_OneCompiledExecuteUpdate_FollowsTheGateWhenItRunsAsync() {
+    var (closedOrder, openOrder) = (TestOrderId.New(), TestOrderId.New());
+    var row = _row(TestOrderId.New(), null, TestOrderId.New());
+    await using var db = _context(o => new WhizbangContext(o));
+    db.Rows.Add(row);
+    await db.SaveChangesAsync();
+    async Task setAsync(TestOrderId id) =>
+      await db.Rows.Where(r => r.Id == row.Id).ExecuteUpdateAsync(s => s.SetProperty(r => r.Data.OrderId, id));
+
+    using (WhizbangIdDocumentForm.ScopeTo(uuidString: false)) {
+      await setAsync(closedOrder);
+    }
+    var closed = await _storedTextAsync(row.Id);
+    using (WhizbangIdDocumentForm.ScopeTo(uuidString: true)) {
+      await setAsync(openOrder);
+    }
+
+    await Assert.That(closed).Contains($"\"OrderId\": {{\"Value\": \"{closedOrder.Value}\"}}");
+    await Assert.That(await _storedTextAsync(row.Id)).Contains($"\"OrderId\": \"{openOrder.Value}\"");
+  }
+
   /// <summary>ExecuteDelete with an id predicate deletes rows in either stored form (#2518).</summary>
   [Test]
   public async Task Whizbang_ExecuteDeleteWithAnIdPredicateMatchesBothFormsAsync() {

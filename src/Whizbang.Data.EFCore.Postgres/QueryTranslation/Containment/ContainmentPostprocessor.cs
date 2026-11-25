@@ -51,10 +51,12 @@ public sealed class ContainmentPostprocessor(
     // Unconditional (#2518): a strong id read in SQL takes either stored form, so a row the stored-form rewrite has
     // not reached, or one an earlier release wrote after it settled, is found rather than failing the statement.
     var mappings = RelationalDependencies.TypeMappingSource;
-    return new StrongIdToleranceRewriter(
-      mappings.FindMapping(typeof(string))!,
-      mappings.FindMapping(typeof(string), "jsonb")!,
-      mappings.FindMapping(typeof(bool))!).Rewrite(translated);
+    var (text, jsonb, boolean) =
+      (mappings.FindMapping(typeof(string))!, mappings.FindMapping(typeof(string), "jsonb")!, mappings.FindMapping(typeof(bool))!);
+    translated = new StrongIdToleranceRewriter(text, jsonb, boolean).Rewrite(translated);
+
+    // Unconditional (#2518): ExecuteUpdate sets a strong id in the form the fleet reads, decided when it runs.
+    return new StrongIdSetterFormRewriter(QueryCompilationContext, text, jsonb, boolean).Visit(translated);
   }
 
 }
