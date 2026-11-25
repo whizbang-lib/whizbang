@@ -445,9 +445,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     // from ReceptorInvoker.OnReceptorFiredAsync after every receptor invocation completes.
     // Replaces the prior receptor-TCS pattern (fragile under shared-fixture state +
     // parallel CI scheduling). See LifecycleStageFiringObserver for rationale.
-    builder.Services.AddSingleton<ECommerce.Integration.TestUtilities.Fixtures.LifecycleStageFiringObserver>();
-    builder.Services.AddSingleton<Whizbang.Core.Messaging.IReceptorFiringObserver>(sp =>
-      sp.GetRequiredService<ECommerce.Integration.TestUtilities.Fixtures.LifecycleStageFiringObserver>());
+    ECommerce.Integration.TestUtilities.Fixtures.LifecycleStageFiringObserverServiceCollectionExtensions
+      .AddLifecycleStageFiringObserver(builder.Services);
 
     // Configure security to allow anonymous messages for testing
     // This is required because lifecycle receptors in PerspectiveWorker need security context
@@ -602,9 +601,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
 
     // Lifecycle stage firing observer — see InventoryHost rationale.
-    builder.Services.AddSingleton<ECommerce.Integration.TestUtilities.Fixtures.LifecycleStageFiringObserver>();
-    builder.Services.AddSingleton<Whizbang.Core.Messaging.IReceptorFiringObserver>(sp =>
-      sp.GetRequiredService<ECommerce.Integration.TestUtilities.Fixtures.LifecycleStageFiringObserver>());
+    ECommerce.Integration.TestUtilities.Fixtures.LifecycleStageFiringObserverServiceCollectionExtensions
+      .AddLifecycleStageFiringObserver(builder.Services);
 
     // Configure security to allow anonymous messages for testing
     // This is required because lifecycle receptors in PerspectiveWorker need security context

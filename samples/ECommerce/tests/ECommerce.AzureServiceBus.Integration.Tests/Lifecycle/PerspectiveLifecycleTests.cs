@@ -403,26 +403,32 @@ public class PerspectiveLifecycleTests {
     h.WaitForPostPerspectiveInlineAsync(messageFilter: f, expectedFirings: n, cancellationToken: ct);
 
   /// <summary>
-  /// Sends two products and requires each stage to fire once per event per perspective: one wait per stage and product,
-  /// each filtered to its product and expecting one firing per perspective.
+  /// Sends two products and requires each stage to fire once per event per perspective. One wait per stage covers both
+  /// products (the firing observer counts every test receptor a stage invokes, so two waits at one stage would count
+  /// each firing twice), and each product's own firings are counted from what the receptor recorded.
   /// </summary>
   private async Task _assertEveryEventFiresOncePerPerspectiveAsync(_stageWait[] stages, CancellationToken cancellationToken) {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     CreateProductCommand[] commands = [_command(), _command()];
     var perspectives = fixture.BffHost.PerspectivesFolding<ProductCreatedEvent>();
+    var ids = commands.Select(c => c.ProductId.Value).ToHashSet();
 
     // Armed before the sends, so no firing of these products can be missed.
-    var waits = commands
-      .SelectMany(command => stages.Select(stage => (command, wait: stage(
-        fixture.BffHost, e => e.ProductId == command.ProductId.Value, perspectives, cancellationToken))))
+    var waits = stages
+      .Select(stage => stage(fixture.BffHost, e => ids.Contains(e.ProductId), commands.Length * perspectives, cancellationToken))
       .ToArray();
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
     }
-    await Task.WhenAll(waits.Select(w => w.wait));
+    var receptors = await Task.WhenAll(waits);
 
-    foreach (var (command, wait) in waits) {
-      await _assertOncePerPerspectiveAsync(await wait, perspectives, command, "each stage");
+    foreach (var receptor in receptors) {
+      await Assert.That(receptor.InvocationCount).IsEqualTo(commands.Length * perspectives)
+        .Because("each stage fires once per event per perspective that folds it");
+      foreach (var id in ids) {
+        await Assert.That(receptor.CountedMessages.Count(m => m.ProductId == id)).IsEqualTo(perspectives)
+          .Because($"product {id}'s event reaches the stage once per perspective, not another product's share");
+      }
     }
   }
 
