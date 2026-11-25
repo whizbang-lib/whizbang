@@ -149,9 +149,7 @@ public class ClaimReofferWalkCostSqlTests : EFCoreTestBase {
   private async Task _prepareAsync(CancellationToken cancellationToken) {
     await using var setup = new NpgsqlConnection(ConnectionString);
     await setup.OpenAsync(cancellationToken);
-    foreach (var table in _measuredTables) {
-      await _executeAsync(setup, $"ALTER TABLE {table} SET (autovacuum_enabled = false)", cancellationToken);
-    }
+    await HeldHorizon.DisableAutovacuumAsync(setup, _measuredTables, cancellationToken);
     await _registerAsync(setup, cancellationToken);
     // As the maintenance step builds them after the migrations, before the first poll.
     foreach (var index in ConcurrentIndexBuild.FrameworkIndexes.Where(i => i.Table == "wh_inbox_state")) {
@@ -176,10 +174,10 @@ public class ClaimReofferWalkCostSqlTests : EFCoreTestBase {
       // version the fill or the acquisition writes is removable, by a vacuum or by a scan, and no page the fill writes
       // is marked all-visible, whatever snapshot another session holds. On a shared server those decisions otherwise
       // follow whatever else is running.
-      await _holdSnapshotAsync(horizon, cancellationToken);
+      await HeldHorizon.HoldAsync(horizon, cancellationToken);
       if (disturb) {
         // Another session's open snapshot, as a loaded server has: the horizon stays where it was before the fill.
-        await _holdSnapshotAsync(elsewhere, cancellationToken);
+        await HeldHorizon.HoldAsync(elsewhere, cancellationToken);
       }
       await fill(setup, streams, cancellationToken);
       await _executeAsync(setup, "VACUUM ANALYZE wh_perspective_events, wh_inbox_state, wh_inbox, wh_active_streams, wh_event_store, wh_event_body", cancellationToken);
@@ -204,16 +202,6 @@ public class ClaimReofferWalkCostSqlTests : EFCoreTestBase {
     }, commit: true, cancellationToken);
     await Assert.That(offered).IsEqualTo(streams).Because($"the claim re-offers every held stream ({source}), or it measured nothing");
     return read;
-  }
-
-  /// <summary>
-  /// Opens a repeatable-read transaction on <paramref name="conn"/> and takes its snapshot, which it holds until the
-  /// connection closes: no row version that commits after it is removable, by a vacuum or by a scan, in this database.
-  /// </summary>
-  private static async Task _holdSnapshotAsync(NpgsqlConnection conn, CancellationToken cancellationToken) {
-    await conn.OpenAsync(cancellationToken);
-    await _executeAsync(conn, "BEGIN ISOLATION LEVEL REPEATABLE READ", cancellationToken);
-    await _executeAsync(conn, "SELECT 1", cancellationToken);
   }
 
   /// <summary>
