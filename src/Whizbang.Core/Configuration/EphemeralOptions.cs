@@ -45,7 +45,7 @@ public sealed class EphemeralOptions {
 
   /// <summary>
   /// The retention of the framework's own rewind and rebuild events, under <c>Whizbang:Ephemeral:SystemEvents</c>
-  /// (#2320). Default 30 days.
+  /// (#2320). Default 14 days (#2585).
   /// </summary>
   /// <docs>fundamentals/events/ephemeral-events#framework-system-events</docs>
   /// <tests>tests/Whizbang.Core.Tests/Events/System/SystemEventRetentionTests.cs:SystemEventsTtl_BindsFromConfigurationAsync</tests>

@@ -128,6 +128,18 @@ public sealed class PgScheduleManager(
     _transitionAsync(scheduleId, STATUS_CANCELED, expectedVersion, cancellationToken);
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BranchCoverage/SecondPass/PgScheduleManagerAllOutcomesTests.cs:CancelByKey_OfAKeyedSchedule_CancelsIt_AndASecondCancelIsANoOpAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BranchCoverage/SecondPass/PgScheduleManagerAllOutcomesTests.cs:CancelByKey_OfAnUnknownKey_IsANoOpAsync</tests>
+  public Task<bool> CancelByKeyAsync(string key, CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(key);
+    // The same transition as CancelAsync, on the schedule the key names; an unknown key gives a NULL id, which matches
+    // no row, so the transition answers false.
+    return _transitionAsync(
+      "SELECT o_updated FROM wh_transition_schedule((SELECT schedule_id FROM wh_schedules WHERE schedule_key = @id), @target, @ver)",
+      new NpgsqlParameter("id", NpgsqlDbType.Text) { Value = key }, STATUS_CANCELED, expectedVersion: null, cancellationToken);
+  }
+
+  /// <inheritdoc />
   public async Task<Guid?> TriggerNowAsync(Guid scheduleId, CancellationToken cancellationToken = default) {
     await using var conn = await _openAsync(cancellationToken).ConfigureAwait(false);
     if (conn is null) {
@@ -207,14 +219,20 @@ public sealed class PgScheduleManager(
     return new ScheduleUpdateResult(nextFire, version);
   }
 
-  private async Task<bool> _transitionAsync(Guid scheduleId, short targetStatus, long? expectedVersion, CancellationToken cancellationToken) {
+  private Task<bool> _transitionAsync(Guid scheduleId, short targetStatus, long? expectedVersion, CancellationToken cancellationToken) =>
+    _transitionAsync(
+      "SELECT o_updated FROM wh_transition_schedule(@id, @target, @ver)",
+      new NpgsqlParameter("id", NpgsqlDbType.Uuid) { Value = scheduleId }, targetStatus, expectedVersion, cancellationToken);
+
+  private async Task<bool> _transitionAsync(
+      string commandText, NpgsqlParameter id, short targetStatus, long? expectedVersion, CancellationToken cancellationToken) {
     await using var conn = await _openAsync(cancellationToken).ConfigureAwait(false);
     if (conn is null) {
       return false;
     }
     await using var cmd = conn.CreateWhizbangCommand();
-    cmd.CommandText = "SELECT o_updated FROM wh_transition_schedule(@id, @target, @ver)";
-    cmd.Parameters.Add(new NpgsqlParameter("id", NpgsqlDbType.Uuid) { Value = scheduleId });
+    cmd.CommandText = commandText;
+    cmd.Parameters.Add(id);
     cmd.Parameters.Add(new NpgsqlParameter("target", NpgsqlDbType.Smallint) { Value = targetStatus });
     cmd.Parameters.Add(new NpgsqlParameter("ver", NpgsqlDbType.Bigint) { Value = (object?)expectedVersion ?? DBNull.Value });
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);

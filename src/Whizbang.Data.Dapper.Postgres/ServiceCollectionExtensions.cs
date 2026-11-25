@@ -613,6 +613,9 @@ public static class ServiceCollectionExtensions {
     // #2116: the maintenance step that re-attributes stored events recorded under an origin that does not own their type.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MisattributedOriginCorrectionStep>(
       MisattributedOriginCorrectionStep.FromServices));
+    // #2573: the one-off maintenance step that returns events written here, stored under another origin, to the local lane.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, WrittenHereOriginRestorationStep>(
+      WrittenHereOriginRestorationStep.FromServices));
     // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
     services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
       new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));

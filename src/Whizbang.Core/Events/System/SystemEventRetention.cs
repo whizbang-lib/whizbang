@@ -13,8 +13,8 @@ namespace Whizbang.Core.Events.System;
 /// <docs>fundamentals/events/ephemeral-events#framework-system-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Events/System/SystemEventRetentionTests.cs</tests>
 public static class SystemEventRetention {
-  /// <summary>The default retention of a rewind or rebuild event: 30 days, in seconds.</summary>
-  public const int DEFAULT_TTL_SECONDS = 30 * 24 * 60 * 60;
+  /// <summary>The default retention of a rewind or rebuild event: 14 days, in seconds (30 days before #2585).</summary>
+  public const int DEFAULT_TTL_SECONDS = 14 * 24 * 60 * 60;
 
   /// <summary>
   /// The ephemeral mode a type has once the configured retention is applied: for a framework system event

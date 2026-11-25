@@ -23,6 +23,8 @@ public class SagaDeadlineSchedulerTests {
       LastDefinition = definition;
       return Task.FromResult(new ScheduleHandle(definition.ScheduleId ?? Guid.Empty, definition.StartAt ?? default, true));
     }
+    public Task<bool> CancelByKeyAsync(string key, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
     public Task<bool> CancelAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) {
       LastCanceledId = scheduleId;
       return Task.FromResult(true);
