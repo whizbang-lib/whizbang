@@ -253,7 +253,7 @@ public class StoredFormApplierTests : EFCoreTestBase {
     await _execAsync($$"""INSERT INTO {{TABLE}} VALUES ('{{Guid.CreateVersion7()}}', '{"Status": 123, "At": "2026-01-02T03:04:05Z", "Name": "a"}', NULL)""", ct);
     var migration = StoredFormMigrationSql.Generated("public", TABLE, "applier:Status", StoredFormStep.ToText("Status"));
     var temporal = CanonicalTemporalRewrite.StatementFor("public", TABLE,
-      ImmutableArray.Create(new TemporalPath("data", ["At"], StoredTemporalKind.Instant)));
+      [new TemporalPath("data", ["At"], StoredTemporalKind.Instant)]);
     var declared = new DeclaredKeyTable(TABLE, [new DeclaredKeyColumn("data", DeclaredKeyShape.ForObject(new DeclaredMember("name")))]);
 
     using (StoredFormApplier.ScopeTo(_newer)) {

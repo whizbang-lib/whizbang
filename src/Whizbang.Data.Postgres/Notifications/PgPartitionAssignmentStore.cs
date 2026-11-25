@@ -25,6 +25,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionMapClaimSqlTests.cs:Publish_OfTheEmptyMap_StoresNoMembersAndNoMapAsync</tests>
 public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
   private const string FENCE_SQLSTATE = "WHF01";
+  private const string INSTANCE_PARAMETER = "instance";
 
   private readonly WhizbangNotificationOptions _options;
   private readonly IConfiguration _configuration;
@@ -103,7 +104,7 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
       await using var cmd = connection.CreateWhizbangCommand();
       cmd.CommandText = "SELECT wh_publish_partition_assignment(@role, @instance, @epoch, @members, @lease, @owners, @deadline)";
       cmd.Parameters.AddWithValue(nameof(role), role);
-      cmd.Parameters.AddWithValue("instance", instanceId);
+      cmd.Parameters.AddWithValue(INSTANCE_PARAMETER, instanceId);
       cmd.Parameters.AddWithValue(nameof(epoch), epoch);
       cmd.Parameters.Add(new NpgsqlParameter("members", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = map.Members.ToArray() });
       cmd.Parameters.Add(new NpgsqlParameter(nameof(lease), NpgsqlDbType.Interval) { Value = lease });
@@ -131,7 +132,7 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
     await using var connectionScope = connection.ConfigureAwait(false);
     await using var cmd = connection.CreateWhizbangCommand();
     cmd.CommandText = "SELECT wh_renew_partition_assignment(@instance, @epoch)";
-    cmd.Parameters.AddWithValue("instance", instanceId);
+    cmd.Parameters.AddWithValue(INSTANCE_PARAMETER, instanceId);
     cmd.Parameters.AddWithValue(nameof(epoch), epoch);
     return ScalarResult.IsTrue(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
   }
@@ -144,7 +145,7 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
     await using var cmd = connection.CreateWhizbangCommand();
     cmd.CommandText = "SELECT wh_open_partition_ownership_by_map(@role, @instance, @epoch)";
     cmd.Parameters.AddWithValue("role", PartitionAssignerOptions.ROLE);
-    cmd.Parameters.AddWithValue("instance", instanceId);
+    cmd.Parameters.AddWithValue(INSTANCE_PARAMETER, instanceId);
     cmd.Parameters.AddWithValue(nameof(epoch), epoch);
     try {
       return (string?)await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
@@ -161,7 +162,7 @@ public sealed class PgPartitionAssignmentStore : IPartitionAssignmentStore {
     await using var cmd = connection.CreateWhizbangCommand();
     cmd.CommandText = "SELECT wh_complete_expired_handovers(@role, @instance, @epoch)";
     cmd.Parameters.AddWithValue("role", PartitionAssignerOptions.ROLE);
-    cmd.Parameters.AddWithValue("instance", instanceId);
+    cmd.Parameters.AddWithValue(INSTANCE_PARAMETER, instanceId);
     cmd.Parameters.AddWithValue(nameof(epoch), epoch);
     try {
       return Convert.ToInt32(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), CultureInfo.InvariantCulture);
