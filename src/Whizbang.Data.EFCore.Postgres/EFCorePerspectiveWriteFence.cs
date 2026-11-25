@@ -39,9 +39,9 @@ internal static partial class EFCorePerspectiveWriteFence {
 
   /// <summary>
   /// Holds the stream's partition at the epoch its work in flight was claimed under, in the context's transaction, for
-  /// the write paths that cannot carry the fence in their own statement (the Entity Framework change-tracker write). In
-  /// an ambient transaction the hold lasts until it commits, as the statement's would; nothing when the stream has no
-  /// work in flight.
+  /// the write paths that cannot carry the fence in their own statement (the Entity Framework change-tracker write). The
+  /// write runs in a transaction (the caller's, or one it opens for the hold), so the hold lasts until it commits, as the
+  /// statement's would; nothing when the stream has no work in flight.
   /// </summary>
   /// <exception cref="PartitionOwnershipLostException">The partition's epoch moved on.</exception>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "The schema prefix cannot be a bind parameter, so it is interpolated; it is built by PgIdentifier, which doubles any embedded quote. Every value is a bound parameter.")]
@@ -53,7 +53,8 @@ internal static partial class EFCorePerspectiveWriteFence {
     await context.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
     try {
       await using var cmd = connection.CreateCommand();
-      cmd.Transaction = context.Database.CurrentTransaction?.GetDbTransaction() as NpgsqlTransaction;
+      // Always in a transaction: the caller's, or the one the write opened for the hold (BaseUpsertStrategy).
+      cmd.Transaction = (NpgsqlTransaction)context.Database.CurrentTransaction!.GetDbTransaction();
       cmd.CommandText = "SELECT " + fence.Hold("@p", "@e");
       cmd.Parameters.Add(PerspectiveWriteFence.PartitionParameter("p", tenure));
       cmd.Parameters.Add(PerspectiveWriteFence.EpochParameter("e", tenure));
