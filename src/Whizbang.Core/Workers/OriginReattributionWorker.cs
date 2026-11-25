@@ -21,7 +21,10 @@ namespace Whizbang.Core.Workers;
 /// gives each such row its owner as origin, moves its digest to the owner's lane, refolds sealed local epochs and
 /// re-arms the owner's repair ledger buckets the rows land in. Ownership is the primary signal: a row whose stored first
 /// hop names a third service is a disagreement, logged and left. A non-owned type with no known owner is counted as
-/// unattributed and left; it is out of the local lane logically, because the lane follows ownership.
+/// unattributed and left; it is out of the local lane logically, because the lane follows ownership. An event this
+/// service wrote is never moved, whatever its type: the store reads the first hop's service from the row, the event's
+/// route or its staged full form, and a row written after origins were recorded that names no service anywhere is this
+/// service's own (#2573).
 /// </summary>
 /// <remarks>
 /// Runs on the instance holding the maintainer duty, under the housekeeping idle gate like the rest of integrity work
@@ -33,6 +36,7 @@ namespace Whizbang.Core.Workers;
 /// owner learned later. A service with no owned domains registered is left exactly as it was.
 /// </remarks>
 /// <docs>resilience/stream-integrity#re-attribution</docs>
+/// <docs>resilience/stream-integrity#events-written-here-stay-local</docs>
 /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/OriginReattributionWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OriginReattributionWorkerLoopTests.cs</tests>
 public sealed partial class OriginReattributionWorker(

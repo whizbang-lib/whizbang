@@ -25,8 +25,9 @@ public sealed record OriginPositionLookup(Guid EventId, string State, long? Comm
 /// <summary>What applying one origin's position answer did (#2544).</summary>
 /// <param name="Filled">Positions filled (only ever NULL ones).</param>
 /// <param name="UnknownRecorded">Events recorded as unknown to the origin, never asked again.</param>
-/// <param name="StreamsReordered">Streams whose replay order the fill changed.</param>
-/// <param name="PerspectivesRewound">Perspective cursors flagged to replay those streams from their start.</param>
+/// <param name="StreamsReordered">Streams where the fill changed the replay order of at least one perspective's events.</param>
+/// <param name="PerspectivesRewound">Perspective cursors newly flagged to replay their stream from the first version their
+/// own replay order changed at; a cursor an earlier fill already flagged is not counted again.</param>
 /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
 public sealed record OriginPositionFillResult(int Filled, int UnknownRecorded, int StreamsReordered, int PerspectivesRewound);
 
@@ -94,9 +95,11 @@ public sealed class OriginPositionStore {
 
   /// <summary>
   /// The receiver's side: applies one origin's answer in one transaction. The streams the fill touches are locked and
-  /// that origin's events of them read (<c>wh_origin_position_fill_plan</c>); a stream whose replay order the fill changes
-  /// (<see cref="ReceivedStreamOrder.FillChangesTheOrder"/>) is rewound; the positions are filled, NULL ones only, and the
-  /// unknown answers recorded (<c>wh_fill_origin_positions</c>).
+  /// that origin's events of them read (<c>wh_origin_position_fill_plan</c>), with the cursors that read those streams and
+  /// the event types each one's perspective handles (<c>wh_origin_position_fill_readers</c>). Each cursor whose own events'
+  /// replay order the fill changes (<see cref="ReceivedStreamOrder.FirstSlotTheFillChanges"/>) is rewound from the first
+  /// changed version (#2571); the positions are filled, NULL ones only, and the unknown answers recorded
+  /// (<c>wh_fill_origin_positions</c>).
   /// </summary>
   /// <param name="answer">The origin's answer.</param>
   /// <param name="now">The clock.</param>
@@ -110,9 +113,9 @@ public sealed class OriginPositionStore {
     }
     await using var connection = await _database.Open(cancellationToken).ConfigureAwait(false);
     await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-    var streams = new Dictionary<Guid, List<StoredStreamEvent>>();
+    var streams = new Dictionary<Guid, List<(StoredStreamEvent Event, string Type)>>();
     await using (var plan = new NpgsqlCommand(
-      $"SELECT stream_id, event_id, version, origin_commit_sequence FROM {_prefix}wh_origin_position_fill_plan($1, $2)",
+      $"SELECT stream_id, event_id, version, origin_commit_sequence, event_type FROM {_prefix}wh_origin_position_fill_plan($1, $2)",
       connection, transaction)) {
       plan.Parameters.AddWithValue(answer.OriginServiceId);
       plan.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = fills.Keys.ToArray() });
@@ -122,28 +125,51 @@ public sealed class OriginPositionStore {
         if (!streams.TryGetValue(stream, out var events)) {
           streams[stream] = events = [];
         }
-        events.Add(new StoredStreamEvent(reader.GetGuid(1), reader.GetInt64(2), answer.OriginServiceId,
-          reader.IsDBNull(3) ? 0 : reader.GetInt64(3)));
+        events.Add((new StoredStreamEvent(reader.GetGuid(1), reader.GetInt64(2), answer.OriginServiceId,
+          reader.IsDBNull(3) ? 0 : reader.GetInt64(3)), reader.GetString(4)));
       }
     }
-    var reordered = streams.Where(s => ReceivedStreamOrder.FillChangesTheOrder(s.Value, fills)).Select(s => s.Key).ToArray();
+    var rewinds = new List<(Guid Stream, string Perspective, Guid Trigger)>();
+    if (streams.Count > 0) {
+      await using var readers = new NpgsqlCommand(
+        $"SELECT stream_id, perspective_name, event_types FROM {_prefix}wh_origin_position_fill_readers($1)", connection, transaction);
+      readers.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = streams.Keys.ToArray() });
+      await using var reader = await readers.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        var stream = reader.GetGuid(0);
+        var types = reader.IsDBNull(2) ? null : reader.GetFieldValue<string[]>(2);
+        if (ReceivedStreamOrder.FirstSlotTheFillChanges(_eventsRead(streams[stream], types), fills) is StoredStreamEvent first) {
+          rewinds.Add((stream, reader.GetString(1), first.EventId));
+        }
+      }
+    }
     OriginPositionFillResult result;
     await using (var fill = new NpgsqlCommand(
-      $"SELECT filled, unknown_recorded, perspectives_rewound FROM {_prefix}wh_fill_origin_positions($1, $2, $3, $4, $5, $6)",
+      $"SELECT filled, unknown_recorded, perspectives_rewound FROM {_prefix}wh_fill_origin_positions($1, $2, $3, $4, $5, $6, $7, $8)",
       connection, transaction)) {
       fill.Parameters.AddWithValue(answer.OriginServiceId);
       fill.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = fills.Keys.ToArray() });
       fill.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Bigint, Value = fills.Values.ToArray() });
       fill.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = answer.Unknown.ToArray() });
-      fill.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = reordered });
+      fill.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = rewinds.Select(r => r.Stream).ToArray() });
+      fill.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = rewinds.Select(r => r.Perspective).ToArray() });
+      fill.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = rewinds.Select(r => r.Trigger).ToArray() });
       fill.Parameters.AddWithValue(now);
       await using var reader = await fill.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-      result = new OriginPositionFillResult(reader.GetInt32(0), reader.GetInt32(1), reordered.Length, reader.GetInt32(2));
+      result = new OriginPositionFillResult(reader.GetInt32(0), reader.GetInt32(1), rewinds.Select(r => r.Stream).Distinct().Count(),
+        reader.GetInt32(2));
     }
     await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     return result;
   }
+
+  // #2571: the origin's events a perspective replays, those of the types its association rows name; every one of them
+  // when it has no association rows, since nothing then says which subset it reads.
+  private static StoredStreamEvent[] _eventsRead(List<(StoredStreamEvent Event, string Type)> events, string[]? types) =>
+    types is null
+      ? [.. events.Select(e => e.Event)]
+      : [.. events.Where(e => Array.IndexOf(types, e.Type) >= 0).Select(e => e.Event)];
 
   /// <summary>Per origin, the eligible received events still held without a position (<c>wh_origin_positions_unfilled</c>).</summary>
   /// <param name="cancellationToken">Cancellation.</param>

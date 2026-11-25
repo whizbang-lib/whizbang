@@ -505,4 +505,69 @@ public class EphemeralPointerPruneSqlTests : EFCoreTestBase {
       .Because("debug_mode retains forensic rows, so the pointer prune is skipped entirely — like the tier-1 reaper.");
     await Assert.That(await _pointerCountAsync(connection, e1)).IsEqualTo(1L);
   }
+  // #2574: a perspective's cursor rests on the last event IT applied, which is often not the newest pointer of its stream
+  // (a later event another perspective applies, or a sourced event, sits above it). fk_perspective_cursors_event is
+  // RESTRICT, so pruning that pointer failed the whole call, the watermark claim rolled back with it, and the prune
+  // failed again on every cycle while no pointer was ever removed.
+  [Test]
+  public async Task Prune_APointerACursorRestsOn_IsKept_AndTheRestOfTheBatchPrunesAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var streamId = Guid.NewGuid();
+    var e1 = Guid.NewGuid();
+    var e2 = Guid.NewGuid();
+    var e3 = Guid.NewGuid();
+    var e4 = Guid.NewGuid();
+    await _commitAsync(connection, e1, streamId, PRUNE_CURSOR_TYPE, flags: 8);
+    await _commitAsync(connection, e2, streamId, PRUNE_CURSOR_TYPE, flags: 8);
+    await _commitAsync(connection, e3, streamId, PRUNE_CURSOR_TYPE, flags: 8);
+    await _commitAsync(connection, e4, streamId, "Whizbang.Tests.PruneCursorOther", flags: 8);
+    foreach (var e in new[] { e1, e2, e3, e4 }) {
+      await _reapBodyAsync(connection, e);
+      await _agePointerAsync(connection, e, 200);
+    }
+    // The perspective that applies only the first type rests on e2; e4, another perspective's, is the stream's newest.
+    await _execAsync(connection,
+      "INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status, processed_at) VALUES (@s, 'CursorPerspective', @e, 2, NOW())",
+      ("s", streamId), ("e", e2));
+    await _enableDeepMaintenanceAsync(connection, true);
+
+    var (rows, status) = await _pruneAsync(connection);
+
+    await Assert.That(status).IsEqualTo("ok");
+    await Assert.That(rows).IsEqualTo(2L).Because("e1 and e3 prune; e2 is the cursor's and e4 is the stream's newest");
+    await Assert.That(await _remainingVersionsAsync(connection, streamId)).IsEquivalentTo((List<int>)[2, 4]);
+  }
+
+  // #2574: a rewind restores a snapshot and moves the cursor onto the snapshot's event, so a pointer a snapshot rests on
+  // is kept for the same reason as the cursor's own (as the superseded-copy reaper keeps it, 532).
+  [Test]
+  public async Task Prune_APointerASnapshotRestsOn_IsKeptAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var streamId = Guid.NewGuid();
+    var e1 = Guid.NewGuid();
+    var e2 = Guid.NewGuid();
+    var e3 = Guid.NewGuid();
+    await _commitAsync(connection, e1, streamId, PRUNE_CURSOR_TYPE, flags: 8);
+    await _commitAsync(connection, e2, streamId, PRUNE_CURSOR_TYPE, flags: 8);
+    await _commitAsync(connection, e3, streamId, PRUNE_CURSOR_TYPE, flags: 8);
+    foreach (var e in new[] { e1, e2, e3 }) {
+      await _reapBodyAsync(connection, e);
+      await _agePointerAsync(connection, e, 200);
+    }
+    await _execAsync(connection,
+      "INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_version) " +
+      "VALUES (@s, 'SnapshotPerspective', @e, '{}'::jsonb, 1, 1)",
+      ("s", streamId), ("e", e1));
+    await _enableDeepMaintenanceAsync(connection, true);
+
+    var (rows, status) = await _pruneAsync(connection);
+
+    await Assert.That(status).IsEqualTo("ok");
+    await Assert.That(rows).IsEqualTo(1L).Because("only e2 prunes: e1 is the snapshot's and e3 is the stream's newest");
+    await Assert.That(await _remainingVersionsAsync(connection, streamId)).IsEquivalentTo((List<int>)[1, 3]);
+  }
+
+  private const string PRUNE_CURSOR_TYPE = "Whizbang.Tests.PruneCursor";
 }
