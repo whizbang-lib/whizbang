@@ -415,6 +415,19 @@ What differs per driver is only what the election is handed:
   schema Assess found current, a waiter behind a migrator of another build, and a restored database, on both drivers,
   and a start that held the application's schema leaves the registry alone. The reconcile stamps `updated_at` on every
   row it touches, which is the witness the tests read.
+- **Whatever the connection registration (#2578).** An EF Core context configured over a connection of its own leaves
+  `SchemaBoundaryConnections.Resolve` nothing to open a second one with. The check then runs on the context's own
+  connection (the `ReconcileIfStaleAsync` overload that borrows a connection: opened only when closed, closed again,
+  never disposed). It used to be skipped there, so such a host reconciled its registry only inside the pass.
+  `SchemaMigratorDeferralGenerationTests.TheRegistryCheck_RunsWithOrWithoutASeparateConnectionAsync` fails if the call is
+  guarded by the factory again.
+
+Both passes write their step lines (`Migration X of Y - Started`, `Succeeded`, `Skipped`, `Failed`, then
+`Migration complete` or `Migration stopped at`) through one reporter, `MigrationPassProgress` in `Whizbang.Data.Postgres`,
+and both enter Migrate with how many steps the pass owes (`SchemaInitializationStages.ApplyingAsync`; on Dapper through
+the runner's `Applying` hook) (#2579). EF Core counts the migration files, the perspective tables and its five fixed steps;
+Dapper counts the migration files and the perspective tables. `StartupParityTests.AFreshStart_EntersMigrate_AndLogsEveryStep_OnEitherDriverAsync`
+fails if either driver stops emitting them.
 
 The Dapper pass reports each committed migration file as a step (`OnSchemaStepCommittedAsync`) and as startup progress,
 so a Dapper migrator's keepalive renews through a long pass (#2165), and its connection's backend is marked as the
@@ -463,6 +476,8 @@ initializer derives it from the DbContext schema, and nothing but a test makes t
 | `PerspectiveRegistryRestartTests.ACleanHashRestart_AgainstARegistryNoHashCovers_ReconcilesItAsync` | a hash-clean or restored start keeping another build's registry |
 | `DapperMigratorElectionTests.AWaitersConverge_AgainstARegistryNoHashCovers_ReconcilesItAsync` | a waiter trusting a registry another build's migrator left |
 | `DapperMigratorElectionTests.ACurrentStart_AgainstAMatchingRegistry_TouchesNothingAsync` | every start re-stamping a registry that already matches |
+| `PerspectiveRegistryRestartTests.ACleanHashRestart_WithNoSeparateConnection_ReconcilesARegistryNoHashCoversAsync` | an EF host with no separate connection keeping another build's registry |
+| `StartupParityTests.AFreshStart_EntersMigrate_AndLogsEveryStep_OnEitherDriverAsync` | a driver migrating without a Migrate stage or step lines |
 
 The integration witness is `wh_schema_migrations.updated_at`. Re-applying a migration stamps it
 `NOW()`, so a sentinel timestamp surviving the run is proof the deferring instance applied nothing,

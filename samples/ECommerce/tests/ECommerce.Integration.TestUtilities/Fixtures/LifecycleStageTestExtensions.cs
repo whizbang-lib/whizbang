@@ -1,21 +1,43 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using ECommerce.Integration.Tests.Fixtures;
 using ECommerce.Integration.TestUtilities.Fixtures;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives;
 
-namespace ECommerce.RabbitMQ.Integration.Tests.Fixtures;
+namespace ECommerce.Integration.Tests.Fixtures;
 
 /// <summary>
 /// Extension methods for testing all 18 lifecycle stages in integration tests.
 /// Provides deterministic synchronization by waiting for lifecycle stage completion instead of polling.
 /// </summary>
+/// <remarks>
+/// One helper for every transport's suite (#2581): the RabbitMQ and Service Bus suites once kept a copy each, and only
+/// one of them could wait for a perspective stage once per perspective. The host it waits on must register
+/// <see cref="LifecycleStageFiringObserver"/> (<c>AddLifecycleStageFiringObserver</c>).
+/// </remarks>
 /// <docs>testing/lifecycle-synchronization</docs>
 public static class LifecycleStageTestExtensions {
+
+  /// <summary>
+  /// How many of the host's perspectives fold <typeparamref name="TEvent"/>: the number of times each perspective stage
+  /// fires for one such event, one per perspective. Read from the host's own runner registry, never counted by hand.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">No perspective of the host folds the event, so a stage count would
+  /// prove nothing.</exception>
+  public static int PerspectivesFolding<TEvent>(this IHost host) where TEvent : IEvent {
+    ArgumentNullException.ThrowIfNull(host);
+    var eventType = TypeNameFormatter.Format(typeof(TEvent));
+    var count = host.Services.GetRequiredService<IPerspectiveRunnerRegistry>()
+      .GetRegisteredPerspectives()
+      .Count(p => p.EventTypes.Contains(eventType, StringComparer.Ordinal));
+    return count > 0
+      ? count
+      : throw new InvalidOperationException($"No perspective of the host folds {eventType}; the stage counts would prove nothing.");
+  }
 
   /// <summary>
   /// Waits for ImmediateDetached lifecycle stage to complete.

@@ -32,7 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.StartupParity;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres.Generators/Templates/DbContextSchemaExtensionTemplate.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard2")]
-public class StartupParityTests {
+public partial class StartupParityTests {
   private PerTestDatabase _database;
   private readonly List<ServiceProvider> _instances = [];
 
@@ -244,6 +244,74 @@ public class StartupParityTests {
     await Assert.That(converge.RetiredWhenEntered).IsTrue()
       .Because("Converge is entered before the reconcile, which is what drops the retired index");
     await Assert.That(await _existsAsync(driver.Retired)).IsFalse().Because("the reconcile that followed dropped it");
+  }
+
+  /// <summary>
+  /// Both drivers report a migrating start the same way (#2579): the Migrate stage is entered with how many steps the pass
+  /// owes, every one of those steps says it started and succeeded as one of that many, and one summary ends the pass. The
+  /// lines come from the one shared reporter, so an operator watching either driver's start sees the pass move.
+  /// </summary>
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  [Timeout(300000)]
+  public async Task AFreshStart_EntersMigrate_AndLogsEveryStep_OnEitherDriverAsync(string driverName, CancellationToken cancellationToken) {
+    var driver = StartupDriver.For(driverName);
+    var stages = new StageLog();
+    var log = new StepLog();
+    var instance = _compose(driver, configure: s => {
+      s.AddSingleton<IStartupStageReporter>(stages);
+      s.AddLogging(b => b.AddProvider(log));
+    });
+
+    await _initializer(instance).StartAsync(cancellationToken);
+
+    var migrate = stages.Calls.Where(c => c.StartsWith("Enter Migrate: ", StringComparison.Ordinal)).ToList();
+    await Assert.That(migrate).Count().IsEqualTo(1).Because(string.Join(" | ", stages.Calls));
+    var total = int.Parse(
+      _migrateEntry().Match(migrate[0]).Groups[1].Value,
+      System.Globalization.CultureInfo.InvariantCulture);
+    await Assert.That(total).IsGreaterThan(100).Because("a fresh database owes every migration file");
+    var lines = log.Lines;
+    for (var x = 1; x <= total; x++) {
+      await Assert.That(lines).Contains(l => l.StartsWith($"Migration {x} of {total} - Started : ", StringComparison.Ordinal))
+        .Because($"step {x} says it started");
+      await Assert.That(lines).Contains(l => l.StartsWith($"Migration {x} of {total} - Succeeded : ", StringComparison.Ordinal))
+        .Because($"step {x} says it succeeded");
+    }
+    await Assert.That(lines).Contains(l => l.StartsWith($"Migration complete: {total} of {total} succeeded ({total} applied, 0 skipped) in ", StringComparison.Ordinal));
+    var migrateAt = stages.Calls.IndexOf(migrate[0]);
+    await Assert.That(stages.Calls.FindIndex(c => c.StartsWith("Enter Converge: ", StringComparison.Ordinal))).IsGreaterThan(migrateAt)
+      .Because("Migrate comes before Converge");
+  }
+
+  [System.Text.RegularExpressions.GeneratedRegex(@"^Enter Migrate: (\d+) migration steps to apply$")]
+  private static partial System.Text.RegularExpressions.Regex _migrateEntry();
+
+  /// <summary>The migration step lines a start logs, as written.</summary>
+  private sealed class StepLog : ILoggerProvider {
+    private readonly Lock _lock = new();
+    private readonly List<string> _lines = [];
+
+    public List<string> Lines { get { lock (_lock) { return [.. _lines]; } } }
+
+    public ILogger CreateLogger(string categoryName) => new Writer(this);
+
+    public void Dispose() { }
+
+    private sealed class Writer(StepLog log) : ILogger {
+      public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+      public bool IsEnabled(LogLevel logLevel) => true;
+      public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+          Func<TState, Exception?, string> formatter) {
+        var line = formatter(state, exception);
+        if (line.StartsWith("Migration ", StringComparison.Ordinal)) {
+          lock (log._lock) {
+            log._lines.Add(line);
+          }
+        }
+      }
+    }
   }
 
   /// <summary>Records, when Converge is entered, whether the retired index is still there.</summary>
