@@ -68,8 +68,10 @@ public class PartitionHandoverSqlTests : EFCoreTestBase {
       ("p", MOVED))).IsTrue();
   }
 
+  // #2577 changed this contract: before 610 the partition moved at once, and 571 and 581 still link this test as
+  // Publish_InMapMode_AMovedPartitionWhoseOwnerIsNotLive_FlipsAtOnceAsync.
   [Test]
-  public async Task Publish_InMapMode_AMovedPartitionWhoseOwnerIsNotLive_FlipsAtOnceAsync() {
+  public async Task Publish_InMapMode_AMovedPartitionWhoseOwnerIsNotLive_HandsOverWithAnImmediateDeadline_AndTheSweepFlipsItAsync() {
     await using var conn = await _openAsync();
     await _heartbeatAsync(conn, _c);
     var role = await _mapModeAsync(conn);
@@ -79,12 +81,45 @@ public class PartitionHandoverSqlTests : EFCoreTestBase {
     await _execAsync(conn, "UPDATE wh_service_instances SET last_heartbeat_at = NOW() - INTERVAL '1 hour' WHERE instance_id = @c", ("c", _c));
 
     await _publishAsync(conn, role, [_a, _b]);
-
+    var published = await _ownershipAsync(conn, MOVED);
+    var dueAtOnce = await _scalarAsync<bool>(conn,
+      "SELECT handover_deadline <= clock_timestamp() FROM wh_partition_ownership WHERE partition_number = @p", ("p", MOVED));
+    var swept = await _expireAsync(conn, role);
     var after = await _ownershipAsync(conn, MOVED);
+
     await Assert.That(before.Owner).IsEqualTo(_c);
-    await Assert.That(after.State).IsEqualTo("active").Because("an owner that is not live finishes nothing, so nothing waits for it");
-    await Assert.That(after.Owner).IsEqualTo(_b);
+    await Assert.That(published.State).IsEqualTo("handing_over")
+      .Because("#2577: a publish in map mode never raises an epoch itself, so it never waits on a writer holding one");
+    await Assert.That(published.Owner).IsEqualTo(_c);
+    await Assert.That(published.Epoch).IsEqualTo(before.Epoch);
+    await Assert.That(published.Next).IsEqualTo(_b);
+    await Assert.That(dueAtOnce).IsTrue().Because("an owner that is not live finishes nothing, so nothing waits for it");
+    await Assert.That(swept).IsGreaterThan(0);
+    await Assert.That(after.State).IsEqualTo("active");
+    await Assert.That(after.Owner).IsEqualTo(_b).Because("the sweep moves it on the same assigner tick");
     await Assert.That(after.Epoch).IsEqualTo(before.Epoch + 1).Because("its late writes are fenced by the new epoch");
+  }
+
+  [Test]
+  public async Task Publish_InMapMode_APartitionHandingOverWhoseOwnerIsNoLongerLive_IsDueAtOnceAsync() {
+    await using var conn = await _openAsync();
+    await _heartbeatAsync(conn, _c);
+    var role = await _mapModeAsync(conn);
+    await _publishAsync(conn, role, [_a, _b]);
+    var handingOver = await _ownershipAsync(conn, MOVED);
+    await _execAsync(conn, "UPDATE wh_service_instances SET last_heartbeat_at = NOW() - INTERVAL '1 hour' WHERE instance_id = @a", ("a", _a));
+
+    await _publishAsync(conn, role, [_a, _c]);
+    var redirected = await _ownershipAsync(conn, MOVED);
+    var dueAtOnce = await _scalarAsync<bool>(conn,
+      "SELECT handover_deadline <= clock_timestamp() FROM wh_partition_ownership WHERE partition_number = @p", ("p", MOVED));
+
+    await Assert.That(handingOver.State).IsEqualTo("handing_over");
+    await Assert.That(redirected.State).IsEqualTo("handing_over");
+    await Assert.That(redirected.Owner).IsEqualTo(_a);
+    await Assert.That(redirected.Epoch).IsEqualTo(handingOver.Epoch).Because("the publish raises no epoch, even for a dead owner");
+    await Assert.That(redirected.Next).IsEqualTo(_c);
+    await Assert.That(dueAtOnce).IsTrue().Because("its owner is no longer live, so its deadline is brought forward to now");
   }
 
   [Test]

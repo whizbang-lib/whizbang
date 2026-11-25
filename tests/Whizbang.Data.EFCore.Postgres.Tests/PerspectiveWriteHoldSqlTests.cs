@@ -12,7 +12,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
 /// The hold a fenced perspective write takes in its own statement (#2556, migration 577): the ownership row at the
-/// claimed epoch, FOR SHARE until the write's transaction ends, so a flip waits for the write; an epoch that moved on
+/// claimed epoch, FOR KEY SHARE until the write's transaction ends (610, #2577), so a flip that raises the epoch waits for the write
+/// and a change that keeps it does not; an epoch that moved on
 /// raises WHF02; a write that names no epoch holds nothing.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
@@ -42,10 +43,13 @@ public class PerspectiveWriteHoldSqlTests : EFCoreTestBase {
 
     var held = await _scalarAsync(writer, tx, "SELECT wh_hold_partition_epoch(10005, 1)");
     var blockedWhileOpen = await _flipIsBlockedAsync(5);
+    var handoverBlockedWhileOpen = await _flipIsBlockedAsync(5, keyChange: false);
     await tx.CommitAsync();
 
     await Assert.That((bool)held!).IsTrue().Because("a row's partition past the table is held through its remainder");
-    await Assert.That(blockedWhileOpen).IsTrue().Because("the flip's UPDATE waits for the write's FOR SHARE");
+    await Assert.That(blockedWhileOpen).IsTrue().Because("a flip raises the epoch, a key change, which waits for the write's FOR KEY SHARE");
+    await Assert.That(handoverBlockedWhileOpen).IsFalse()
+      .Because("#2577: a change that keeps the epoch (a handover, a cancel, a redirect) never waits for a writer");
     await Assert.That(await _flipIsBlockedAsync(5)).IsFalse().Because("the hold ends with the write's transaction");
   }
 
@@ -72,12 +76,13 @@ public class PerspectiveWriteHoldSqlTests : EFCoreTestBase {
     await Assert.That(await _scalarAsync(writer, null, $"SELECT wh_held_stream('{stream}', 5, NULL)")).IsEqualTo(stream);
   }
 
-  // Whether a flip of the partition would have to wait: NOWAIT answers at once instead of waiting.
-  private async Task<bool> _flipIsBlockedAsync(int partition) {
+  // Whether a flip of the partition would have to wait: NOWAIT answers at once instead of waiting. A flip raises the
+  // epoch, a key column since 610, so it locks FOR UPDATE; a change that keeps the epoch locks FOR NO KEY UPDATE.
+  private async Task<bool> _flipIsBlockedAsync(int partition, bool keyChange = true) {
     await using var flipper = await _openAsync();
     await using var tx = await flipper.BeginTransactionAsync();
     try {
-      await _scalarAsync(flipper, tx, $"SELECT 1 FROM wh_partition_ownership WHERE partition_number = {partition} FOR NO KEY UPDATE NOWAIT");
+      await _scalarAsync(flipper, tx, $"SELECT 1 FROM wh_partition_ownership WHERE partition_number = {partition} FOR {(keyChange ? "UPDATE" : "NO KEY UPDATE")} NOWAIT");
       return false;
     } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.LockNotAvailable) {
       return true;

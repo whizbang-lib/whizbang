@@ -22,6 +22,8 @@ namespace Whizbang.Core.Tests.Workers;
 /// <docs>fundamentals/work-coordinator/partition-assignment#handover</docs>
 /// <code-under-test>src/Whizbang.Core/Workers/PartitionHandoverWorker.cs</code-under-test>
 public sealed class PartitionHandoverWorkerLoopTests {
+  private static readonly int[][] _askedThenReAsked = [[3, 5], [5]];
+
   [Test]
   [Timeout(30000)]
   public async Task AFailedPass_IsRetriedOnTheNextInterval_AndThenHandsOverAsync(CancellationToken cancellationToken) {
@@ -41,6 +43,25 @@ public sealed class PartitionHandoverWorkerLoopTests {
 
     await Assert.That(acknowledged).IsEquivalentTo([new PartitionHandover(3, 5, Guid.Empty)])
       .Because("the pass after the failed one hands the partition over");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task AnAcknowledgementThatFlipsPartOfWhatItNamed_IsReAskedOnTheNextInterval_UntilTheRestMoveAsync(
+      CancellationToken cancellationToken) {
+    // #2577: the database flips only the partitions no writer holds and leaves the rest handing over.
+    var coordinator = new PartialCoordinator([3, 5]) { HeldOnFirstAsk = 5 };
+    var time = new FakeTimeProvider();
+    var worker = _worker(coordinator, time);
+
+    await worker.StartAsync(cancellationToken);
+    await coordinator.FirstAcknowledged.WaitAsync(cancellationToken);
+    time.Advance(PartitionHandoverWorker.Interval);
+    await coordinator.NothingLeft.WaitAsync(cancellationToken);
+    await worker.StopAsync(cancellationToken);
+
+    await Assert.That(coordinator.Asked).IsEquivalentTo(_askedThenReAsked)
+      .Because("the pass after a partial acknowledgement asks again for exactly what did not move");
   }
 
   [Test]
@@ -133,7 +154,7 @@ public sealed class PartitionHandoverWorkerLoopTests {
   }
 
   private static PartitionHandoverWorker _worker(
-      ScriptedCoordinator coordinator, FakeTimeProvider time, TimeSpan? leaveBudget = null, IStartupStageGate? stages = null) {
+      IWorkCoordinator coordinator, FakeTimeProvider time, TimeSpan? leaveBudget = null, IStartupStageGate? stages = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     return new PartitionHandoverWorker(
@@ -157,6 +178,53 @@ public sealed class PartitionHandoverWorkerLoopTests {
     public string HostName => "test-host";
     public int ProcessId => 1;
     public ServiceInstanceInfo ToInfo() => new() { InstanceId = InstanceId, ServiceName = "test", HostName = "test-host", ProcessId = 1 };
+  }
+
+  /// <summary>A database whose first acknowledgement leaves one partition handing over, as a writer holding it would.</summary>
+  private sealed class PartialCoordinator(IEnumerable<int> handingOver) : IWorkCoordinator {
+    private readonly HashSet<int> _handingOver = [.. handingOver];
+    private readonly TaskCompletionSource _firstAcknowledged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _nothingLeft = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public int? HeldOnFirstAsk { get; init; }
+    public List<int[]> Asked { get; } = [];
+    public Task FirstAcknowledged => _firstAcknowledged.Task;
+    public Task NothingLeft => _nothingLeft.Task;
+
+    public Task<IReadOnlyList<PartitionHandover>> GetPartitionsHandingOverAsync(Guid instanceId, CancellationToken cancellationToken = default) {
+      lock (_handingOver) {
+        return Task.FromResult<IReadOnlyList<PartitionHandover>>(
+          [.. _handingOver.Order().Select(p => new PartitionHandover(p, 1, Guid.Empty))]);
+      }
+    }
+
+    public Task<IReadOnlyList<int>> AcknowledgeHandoverAsync(
+        Guid instanceId, IReadOnlyList<PartitionHandover> handovers, CancellationToken cancellationToken = default) {
+      lock (_handingOver) {
+        var first = Asked.Count == 0;
+        Asked.Add([.. handovers.Select(h => h.Partition)]);
+        var flipped = handovers.Select(h => h.Partition).Where(p => !(first && p == HeldOnFirstAsk)).ToList();
+        _handingOver.ExceptWith(flipped);
+        if (first) {
+          _firstAcknowledged.TrySetResult();
+        }
+        if (_handingOver.Count == 0) {
+          _nothingLeft.TrySetResult();
+        }
+        return Task.FromResult<IReadOnlyList<int>>(flipped);
+      }
+    }
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
   private sealed class ScriptedCoordinator : IWorkCoordinator {
