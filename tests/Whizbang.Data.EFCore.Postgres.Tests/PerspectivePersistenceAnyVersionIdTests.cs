@@ -31,11 +31,15 @@ public class PerspectivePersistenceAnyVersionIdTests {
     var id = TestAnyVersionId.From(Guid.Parse(text));
     var typeInfo = _options().GetTypeInfo(typeof(TestAnyVersionId));
 
-    var json = JsonSerializer.Serialize(id, typeInfo);
-    var fromObject = (TestAnyVersionId)JsonSerializer.Deserialize(json, typeInfo)!;
-    var fromScalar = (TestAnyVersionId)JsonSerializer.Deserialize($"\"{text}\"", typeInfo)!;
+    string json;
+    using (Whizbang.Core.Perspectives.WhizbangIdDocumentForm.ScopeTo(uuidString: true)) {
+      json = JsonSerializer.Serialize(id, typeInfo);
+    }
+    var fromScalar = (TestAnyVersionId)JsonSerializer.Deserialize(json, typeInfo)!;
+    var fromObject = (TestAnyVersionId)JsonSerializer.Deserialize($"{{\"Value\":\"{text}\"}}", typeInfo)!;
 
-    await Assert.That(json).IsEqualTo($"{{\"Value\":\"{text}\"}}");
+    // The UUID string once the fleet reads it (#2518); the object form an earlier release stored still reads.
+    await Assert.That(json).IsEqualTo($"\"{text}\"");
     await Assert.That(fromObject).IsEqualTo(id);
     await Assert.That(fromScalar).IsEqualTo(id);
   }

@@ -42,11 +42,19 @@ public sealed class ContainmentPostprocessor(
 
     // Asked per compilation rather than cached, so a deployment can change mechanism without a
     // release, and asked for this mechanism in particular so that only one of the two ever acts.
-    if (!JsonbContainmentSwitch.ReshapesTranslatedTree || !ProviderCapabilities.ContainmentRewriteRequired) {
-      return translated;
+    // Before the strong-id rewrite: the reshape matches an equality on the member itself, and builds a containment
+    // test that takes either stored form of an id (#2518).
+    if (JsonbContainmentSwitch.ReshapesTranslatedTree && ProviderCapabilities.ContainmentRewriteRequired) {
+      translated = new ContainmentSqlRewriter(JsonIndexRegistry.HasOrderedForTable).Visit(translated);
     }
 
-    return new ContainmentSqlRewriter(JsonIndexRegistry.HasOrderedForTable).Visit(translated);
+    // Unconditional (#2518): a strong id read in SQL takes either stored form, so a row the stored-form rewrite has
+    // not reached, or one an earlier release wrote after it settled, is found rather than failing the statement.
+    var mappings = RelationalDependencies.TypeMappingSource;
+    return new StrongIdToleranceRewriter(
+      mappings.FindMapping(typeof(string))!,
+      mappings.FindMapping(typeof(string), "jsonb")!,
+      mappings.FindMapping(typeof(bool))!).Rewrite(translated);
   }
 
 }

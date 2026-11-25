@@ -26,12 +26,22 @@ public sealed class OrderEntity {
 
 /// <summary>
 /// The two ways an id reaches PostgreSQL through Entity Framework Core: inside a perspective row's document, mapped
-/// the way the generated perspective configuration maps it (<c>ComplexProperty().ToJson()</c>), and as a column with
-/// a value converter.
+/// the way the generated perspective configuration maps it (<c>ComplexProperty().ToJson()</c>, with the id a uuid
+/// scalar, #2518), and as a column with a value converter.
 /// </summary>
+/// <remarks>
+/// The id's scalar mapping is <c>WhizbangIdTypeMapping</c> in the Entity Framework package, which this project does not
+/// reference; a pre-convention converter gives Entity Framework the same model for the id.
+/// </remarks>
 public sealed class IdFilterDbContext(DbContextOptions<IdFilterDbContext> options) : DbContext(options) {
   public DbSet<PerspectiveRow<OrderDocument>> OrderRows => Set<PerspectiveRow<OrderDocument>>();
   public DbSet<OrderEntity> Orders => Set<OrderEntity>();
+
+  protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder) =>
+    configurationBuilder.Properties<GraphQLOrderId>().HaveConversion<GraphQLOrderIdToGuid>();
+
+  private sealed class GraphQLOrderIdToGuid() : Microsoft.EntityFrameworkCore.Storage.ValueConversion.ValueConverter<GraphQLOrderId, Guid>(
+    id => id.Value, guid => new GraphQLOrderId(guid));
 
   protected override void OnModelCreating(ModelBuilder modelBuilder) {
     modelBuilder.Entity<PerspectiveRow<OrderDocument>>(entity => {
@@ -126,18 +136,18 @@ public class WhizbangIdFilterTranslationTests {
   }
 
   [Test]
-  public async Task LensRow_Eq_ComparesTheGuidInsideTheIdInTheDocumentInSqlAsync() {
+  public async Task LensRow_Eq_ComparesTheIdInTheDocumentAsAUuidInSqlAsync() {
     var sql = await _sqlAsync($"{{ orderRows(where: {{ data: {{ id: {{ eq: \"{_first.Value}\" }} }} }}) {{ version }} }}");
 
-    await Assert.That(sql).Contains("WHERE (CAST(w.data #>> '{Id,Value}' AS uuid)) = @p");
+    await Assert.That(sql).Contains("WHERE (CAST(w.data ->> 'Id' AS uuid)) = @p");
     await Assert.That(sql).Contains($"@p='{_first.Value}'");
   }
 
   [Test]
-  public async Task LensRow_Neq_ComparesTheGuidInsideTheIdInTheDocumentInSqlAsync() {
+  public async Task LensRow_Neq_ComparesTheIdInTheDocumentAsAUuidInSqlAsync() {
     var sql = await _sqlAsync($"{{ orderRows(where: {{ data: {{ id: {{ neq: \"{_first.Value}\" }} }} }}) {{ version }} }}");
 
-    await Assert.That(sql).Contains("WHERE (CAST(w.data #>> '{Id,Value}' AS uuid)) <> @p");
+    await Assert.That(sql).Contains("WHERE (CAST(w.data ->> 'Id' AS uuid)) <> @p");
   }
 
   [Test]
@@ -149,8 +159,8 @@ public class WhizbangIdFilterTranslationTests {
 
     await Assert.That(inSql).Contains($"@p='{_first.Value}'");
     await Assert.That(inSql).Contains($"@p0='{_second.Value}'");
-    await Assert.That(inSql).Contains("WHERE (CAST(w.data #>> '{Id,Value}' AS uuid)) = @p OR (CAST(w.data #>> '{Id,Value}' AS uuid)) = @p0");
-    await Assert.That(ninSql).Contains("WHERE (CAST(w.data #>> '{Id,Value}' AS uuid)) <> @p AND (CAST(w.data #>> '{Id,Value}' AS uuid)) <> @p0");
+    await Assert.That(inSql).Contains("WHERE (CAST(w.data ->> 'Id' AS uuid)) = @p OR (CAST(w.data ->> 'Id' AS uuid)) = @p0");
+    await Assert.That(ninSql).Contains("WHERE (CAST(w.data ->> 'Id' AS uuid)) <> @p AND (CAST(w.data ->> 'Id' AS uuid)) <> @p0");
   }
 
   [Test]

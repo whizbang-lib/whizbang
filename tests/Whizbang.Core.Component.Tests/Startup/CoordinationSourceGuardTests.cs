@@ -72,6 +72,8 @@ public partial class CoordinationSourceGuardTests {
     ["src/Whizbang.Data.Postgres/SchemaInitializationLock.cs"] = EXCLUSION,
     ["src/Whizbang.Data.Postgres/SchemaBootstrapPhase.cs"] = EXCLUSION,
     ["src/Whizbang.Data.Postgres/CanonicalTemporalRewritePhase.cs"] = EXCLUSION,
+    ["src/Whizbang.Data.Postgres/BatchedRewriteRunner.cs"] = EXCLUSION + ": one batch of a stored-form rewrite, under the "
+      + "rewrite's own key (#2518)",
     ["src/Whizbang.Data.Postgres/SchemaRollback.cs"] = EXCLUSION,
     ["src/Whizbang.Data.Postgres/PerspectiveRegistryCurrency.cs"] = EXCLUSION,
     ["src/Whizbang.Data.Postgres/PostgresCapabilityProvisioner.cs"] = EXCLUSION,

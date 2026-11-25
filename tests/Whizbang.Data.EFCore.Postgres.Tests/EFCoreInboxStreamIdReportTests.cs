@@ -33,6 +33,7 @@ public class EFCoreInboxStreamIdReportTests : EFCoreTestBase {
   private const string ENTRY_POINT = "EFCoreWorkCoordinator.InboxWrite";
   private static readonly string _strictName = TypeNameFormatter.Format(typeof(EFCoreStrictStreamInboxNoted));
   private static readonly string _anyVersionName = TypeNameFormatter.Format(typeof(EFCoreAnyVersionStreamInboxNoted));
+  private static readonly string _versionsName = TypeNameFormatter.Format(typeof(EFCoreVersionsStreamInboxNoted));
 
   [Test]
   public async Task NonV7StreamId_ByDefault_IsStoredReportedOnceAndCountedAsync() {
@@ -83,6 +84,28 @@ public class EFCoreInboxStreamIdReportTests : EFCoreTestBase {
     await Assert.That(probe.Warnings).IsEmpty();
   }
 
+  /// <summary>
+  /// A stream id typed by an id whose <c>Versions</c> list holds its version is stored at Error and never reported; one
+  /// of a version the list does not hold is refused (#2516).
+  /// </summary>
+  [Test]
+  public async Task VersionsStrongStreamId_AListedVersionIsStored_AndAnUnlistedOneRefusedAtErrorAsync() {
+    using var probe = new GuidOrderingProbe(GuidOrderingSeverity.Error);
+    var listed = _uniqueNonV7Stream();
+    var unlisted = _uniqueNonV7Stream(version: 5);
+    var refused = (Guid)TrackedGuid.New();
+
+    await _coordinator(probe.Validator).StoreInboxMessagesAsync(
+      [_inbox((Guid)TrackedGuid.New(), listed, _versionsName)], partitionCount: 100);
+    await Assert.That(async () => await _coordinator(probe.Validator).StoreInboxMessagesAsync(
+        [_inbox(refused, unlisted, _versionsName)], partitionCount: 100))
+      .Throws<GuidOrderingException>();
+
+    await Assert.That(await _countAsync("SELECT count(*) FROM wh_inbox WHERE stream_id = @id", listed)).IsEqualTo(1L);
+    await Assert.That(probe.Warnings).IsEmpty();
+    await _assertNothingStoredAsync(unlisted, refused);
+  }
+
   [Test]
   public async Task UnresolvableMessageType_IsReportedNotSkippedAsync() {
     using var probe = new GuidOrderingProbe(GuidOrderingSeverity.Error);
@@ -98,10 +121,10 @@ public class EFCoreInboxStreamIdReportTests : EFCoreTestBase {
   }
 
   // A distinct v4 stream per test, so the once-per-stream memory of one test never hides another's report
-  private static Guid _uniqueNonV7Stream() {
+  private static Guid _uniqueNonV7Stream(int version = 4) {
     Span<byte> bytes = stackalloc byte[16];
     Guid.NewGuid().TryWriteBytes(bytes);
-    bytes[7] = (byte)((bytes[7] & 0x0F) | 0x40);
+    bytes[7] = (byte)((bytes[7] & 0x0F) | (version << 4));
     return new Guid(bytes);
   }
 
@@ -176,6 +199,17 @@ public sealed record EFCoreAnyVersionStreamInboxNoted : IEvent {
 /// <summary>A strong stream id that takes any non-empty Guid version (#2549).</summary>
 [WhizbangId(AcceptAnyVersion = true)]
 public readonly partial struct EFCoreAnyVersionStreamKey;
+
+/// <summary>An event whose stream id is a strong id declared with a <c>Versions</c> list (#2516).</summary>
+public sealed record EFCoreVersionsStreamInboxNoted : IEvent {
+  /// <summary>The stream.</summary>
+  [StreamId]
+  public required EFCoreVersionsStreamKey StreamId { get; init; }
+}
+
+/// <summary>A strong stream id that takes UUIDv7 or UUIDv4 (#2516).</summary>
+[WhizbangId(Versions = UuidVersions.V7 | UuidVersions.V4)]
+public readonly partial struct EFCoreVersionsStreamKey;
 
 /// <summary>A validator with its own logger and counters, read back without any other test's measurements.</summary>
 internal sealed class GuidOrderingProbe : IDisposable {

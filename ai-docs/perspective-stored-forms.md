@@ -209,6 +209,28 @@ stored as `[{"Key":..,"Value":..}]` in the dictionary's order (a jsonb object wo
 Not handled: `SortedDictionary`, `ImmutableDictionary`, `ConcurrentDictionary` and custom dictionary types (not
 registered, so EF still refuses them); the Dapper driver writes with the options the app gives it and has no rewrite.
 
+## Strong ids: a UUID string (#2518)
+
+A `[WhizbangId]` in a perspective document is stored as its UUID string, like a `Guid` and like the transport writes
+it, not as the object `{"Value":".."}` Entity Framework discovers for a struct. Pieces:
+
+| Piece | What it does |
+|---|---|
+| `WhizbangIdForms.Register<TId>(guid => new TId(guid))` (Core), emitted by `WhizbangIdGenerator` in each id's module initializer | The registry of id types, with the unchecked load (the constructor) and a visitor so the EF side builds typed converters without reflection. `TryGet` runs a missing id's module initializer (`RuntimeHelpers.RunModuleConstructor`) and looks again, so a model built before any code of the ids' assembly has run still maps them as scalars (pinned by `WhizbangIdModelTimingTests`) |
+| `WhizbangIdTypeMappingSourcePlugin` / `WhizbangIdTypeMapping` (EF) | A type mapping, as for dictionaries: EF asks while discovering a complex type's members, which is where it would make the id a complex type. `uuid` store type, `TId <-> Guid` converter through the constructor, and `WhizbangIdJsonReaderWriter<TId>` (writes the string, reads the string or the object form, counted). Rides `UseWhizbangFunctions` |
+| `WhizbangIdConvention.Apply` (EF), called by the generated `OnModelCreating` | A context without the options extension (a pooled factory registered by hand) still discovers ids as complex types; `Apply` removes each and adds the member back as a property with the id mapping. A collection of ids is left as discovered |
+| Persistence JSON context (`_{T}DocumentConverter`) | The atomic upsert's writer: the UUID string; reads either form, counting the object form on `whizbang.perspective.identifier_form_fallbacks` (`StoredFormFallbacks.ObjectFormIdentifierRead`) |
+| `JsonbContainmentRewriter` / `JsonbContainment` (EF) | An id equality goes through the `Guid` marker: the member unboxed through `object` (stripped around the JSON member at translation), the value converted to its Guid; `Emit` drops that conversion and gives the parameter the member's id mapping, so the document is `jsonb_build_object('OrderId', @id)` and the GIN index answers it. For an id, `Emit` and `EmitSet` add a second containment arm for the object form (`{"OrderId":{"Value":@id}}`, and `jsonb_strong_id_containment_set` for `in`); the index answers both. `StoredFormIsNatural` accepts the id-to-Guid converter |
+| `StrongIdToleranceRewriter` (EF), in `ContainmentPostprocessor`, last (after the temporal rewriter and, in `TranslatedTree` mode, `ContainmentSqlRewriter`, whose `JsonbContainmentSql.TryBuild` adds the object-form arm itself) | Every id read in SQL takes either form: a `JsonScalarExpression` with the id mapping becomes `CAST(CASE WHEN t LIKE '{%' THEN jsonb_extract_path_text(CAST(t AS jsonb), 'Value') ELSE t END AS uuid)` over the text `t`; a `jsonb_to_recordset` id column is read as text and then the same way; `ids @> to_jsonb(@id)` gains `OR ids @> jsonb_build_array(jsonb_build_object('Value', @id))` |
+| `StrongIdScalarRewrite` (EF) + `BatchedRewriteRunner` + `StrongIdScalarRewriteStep` + migration 557 | Object-form ids (EF-mapped documents, opaque jsonb columns, dictionary keys and values) are rewritten one primary-key batch per statement, each batch its own transaction under the schema lock (`pg_try_advisory_xact_lock`; a held lock ends the run), the journal row locked `FOR UPDATE` and carrying `resume_key` and `pass_rows_converted`. Rewrites take batches in turn; a failed batch rolls back and the others go on. A pass reaching the end settles the row if it converted nothing, else a new pass starts. Startup runs one slice after the phase (`BatchedRewriteBudget.ForStartup`, four fifths of the command timeout); the maintenance step carries on (`ForMaintenance`, 30 s) and remembers a settled context per process. Held while `FleetVersions.OlderLiveLibraryVersionsAsync` names a live instance of an older library version (the old EF mapping throws `Invalid token type: 'String'` on the new form). Not in `StoredFormSettlement`: the fast path does not wait on it |
+| `WhizbangIdFilterHandler` (HotChocolate) | Compares the id itself everywhere; the inner `Value` it used to read in a document is no longer a mapped member |
+
+Correctness does not wait on the rewrite: a table it has not finished, or a row an instance of an earlier release writes
+during a rolling deploy after the table settled, is read and queried in either form (pinned by
+`Whizbang_EveryIdQueryFindsARowStillInTheObjectFormAsync`, the rewrite's rolling-deploy test and
+`EqAndIn_FindARowStillInTheObjectForm_ThroughTheDocumentIndexAsync`). The rewrite is what lets that tolerance go in a
+later release. Hand-written SQL that matched `{"Value": ...}` has to match the string.
+
 ## Objects a consumer owns over a temporal key
 
 Anything a consumer creates over a perspective document's temporal key reads the canonical number:
@@ -236,8 +258,8 @@ the last microsecond. A date key is the same number at midnight UTC; a duration 
 ## Tolerance, and when it goes
 
 Readers are strict about units and, for now, tolerant of renderings: a rendering is read as the value
-it renders and counted on `whizbang.perspective.temporal_form_fallbacks{kind}` (identifiers on
-`whizbang.perspective.identifier_form_fallbacks{type}`), announced once per kind at Warning by
+it renders and counted on `whizbang.perspective.temporal_form_fallbacks{kind}` (identifiers read in the object form
+on `whizbang.perspective.identifier_form_fallbacks{type}`), announced once per kind at Warning by
 `StoredFormFallbacks`. The rendering branch is removed once the counter reads zero across a release
 cycle. Removing it earlier makes a row the rewrite did not reach a stopped feature again.
 

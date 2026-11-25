@@ -143,14 +143,7 @@ public static class CanonicalTemporalRewritePhase {
 
     // #2131: who applies what this transaction converts, carried as transaction settings so every conversion records it
     // without being handed it. Empty outside any scope: a conversion then records nobody.
-    var applier = StoredFormApplier.Current;
-    await using (var stamp = new NpgsqlCommand(
-        $"SELECT set_config('{StoredFormApplier.LIBRARY_SETTING}', $1, true), set_config('{StoredFormApplier.APPLICATION_SETTING}', $2, true)",
-        connection, transaction)) {
-      stamp.Parameters.AddWithValue(applier?.LibraryVersion ?? string.Empty);
-      stamp.Parameters.AddWithValue(applier?.ApplicationVersion ?? string.Empty);
-      await stamp.ExecuteNonQueryAsync(cancellationToken);
-    }
+    await StoredFormApplier.StampAsync(connection, transaction, StoredFormApplier.Current, cancellationToken);
 
     // What a statement says about itself, such as how many rows it touched, comes back as a notice.
     // Relayed while this phase runs the statements, and only then.

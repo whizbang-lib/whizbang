@@ -15,3 +15,36 @@ public readonly partial struct AnyVersionTestId;
 /// <summary>An id with the default rule: UUIDv7 only.</summary>
 [WhizbangId]
 public readonly partial struct StrictVersionTestId;
+
+/// <summary>An id minted as UUIDv7 or derived by name as UUIDv5, and nothing else (#2516).</summary>
+[WhizbangId(Versions = UuidVersions.V7 | UuidVersions.V5)]
+public readonly partial struct MintedOrNamedTestId;
+
+/// <summary>A UUIDv7 id with two values seeded before the rule, frozen in place (#2517).</summary>
+[WhizbangId]
+public readonly partial struct GrandfatheredTestId {
+  /// <summary>A v4 seeded before ids were UUIDv7.</summary>
+  public static readonly Guid SeededV4 = new("3f2504e0-4f89-41d3-9a0c-0305e82c3301");
+
+  /// <summary>A v8 seeded before ids were UUIDv7.</summary>
+  public static readonly Guid SeededV8 = new("a1b2c3d4-e5f6-8789-8abc-def012345678");
+
+  private static readonly System.Collections.Frozen.FrozenSet<Guid> _grandfatheredValues =
+    System.Collections.Frozen.FrozenSet.ToFrozenSet([SeededV4, SeededV8, Guid.Empty]);
+
+  /// <summary>Whether the hook's set names the empty Guid, which the generated code refuses whatever the hook says.</summary>
+  public static bool NamesTheEmptyGuid => _grandfatheredValues.Contains(Guid.Empty);
+
+  // Implemented as declared: no accessibility modifier, and the _camelCase name of a private method.
+  static partial void _isGrandfathered(Guid value, ref bool grandfathered) =>
+    grandfathered = _grandfatheredValues.Contains(value);
+}
+
+/// <summary>An allow-list id (v7 or v5) with one grandfathered v4 (#2516, #2517).</summary>
+[WhizbangId(Versions = UuidVersions.V7 | UuidVersions.V5)]
+public readonly partial struct GrandfatheredAllowListTestId {
+  /// <summary>A v4 seeded before the rule.</summary>
+  public static readonly Guid SeededV4 = new("3f2504e0-4f89-41d3-9a0c-0305e82c3301");
+
+  static partial void _isGrandfathered(Guid value, ref bool grandfathered) => grandfathered = value == SeededV4;
+}

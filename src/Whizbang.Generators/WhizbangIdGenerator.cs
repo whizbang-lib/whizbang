@@ -178,7 +178,10 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         SuppressDuplicateWarning: suppressWarning,
         // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
         Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
-        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr)
+        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr),
+        Versions: _versionsOf(whizbangIdAttr),
+        DeclaresVersions: _declaresVersions(whizbangIdAttr),
+        OutOfRangeVersionBits: _outOfRangeVersionBitsOf(whizbangIdAttr)
     );
 
     return (idInfo, null, null);
@@ -207,6 +210,26 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// <summary>Whether <c>[WhizbangId(AcceptAnyVersion = true)]</c> is written: the id takes any non-empty Guid (#2071).</summary>
   private static bool _acceptsAnyVersion(AttributeData attribute) =>
     attribute.NamedArguments.FirstOrDefault(kvp => kvp.Key == "AcceptAnyVersion").Value.Value is true;
+
+  /// <summary>
+  /// The versions <c>[WhizbangId(Versions = ...)]</c> lists, as a <see cref="UuidVersionMask"/>; UUIDv7 when it is not
+  /// written (#2516). Bits outside versions 1 to 8 name no version and take no part; they are reported (WHIZ044).
+  /// </summary>
+  private static int _versionsOf(AttributeData attribute) =>
+    attribute.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Versions").Value.Value is int mask
+      ? mask & UuidVersionMask.ALL
+      : UuidVersionMask.V7;
+
+  /// <summary>The bits of a written <c>Versions</c> outside versions 1 to 8, such as <c>(UuidVersions)1</c> or
+  /// <c>1 &lt;&lt; 9</c>; zero when it is not written or has none.</summary>
+  private static int _outOfRangeVersionBitsOf(AttributeData attribute) =>
+    attribute.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Versions").Value.Value is int mask
+      ? mask & ~UuidVersionMask.ALL
+      : 0;
+
+  /// <summary>Whether <c>Versions</c> is written on the attribute at all, whatever its value.</summary>
+  private static bool _declaresVersions(AttributeData attribute) =>
+    attribute.NamedArguments.Any(kvp => kvp.Key == "Versions");
 
   private static (WhizbangIdInfo?, Location?, string?)? _extractPropertyBasedId(
       GeneratorSyntaxContext context,
@@ -255,7 +278,10 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         SuppressDuplicateWarning: suppressWarning,
         // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
         Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
-        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr)
+        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr),
+        Versions: _versionsOf(whizbangIdAttr),
+        DeclaresVersions: _declaresVersions(whizbangIdAttr),
+        OutOfRangeVersionBits: _outOfRangeVersionBitsOf(whizbangIdAttr)
     );
 
     return (idInfo, null, null);
@@ -312,7 +338,10 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         SuppressDuplicateWarning: suppressWarning,
         // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
         Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
-        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr)
+        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr),
+        Versions: _versionsOf(whizbangIdAttr),
+        DeclaresVersions: _declaresVersions(whizbangIdAttr),
+        OutOfRangeVersionBits: _outOfRangeVersionBitsOf(whizbangIdAttr)
     );
 
     return (idInfo, null, null);
@@ -444,27 +473,90 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// The one id that the routes discovering the same type resolve to. When every route agrees on
-  /// <c>AcceptAnyVersion</c>, the first is kept, as before. When they disagree, the id keeps the UUIDv7 rule (a
-  /// route without the option is kept) whatever the discovery order, and WHIZ029 is reported at each opt-in that
-  /// is ignored (#2071).
+  /// The one id that the routes discovering the same type resolve to: the strictest version rule they have in common,
+  /// whatever the discovery order. When every route agrees, the first is kept, as before. Otherwise a route without
+  /// <c>AcceptAnyVersion</c> is kept, its <c>Versions</c> narrowed to the versions every such route lists, and each
+  /// route whose rule was narrowed is reported: WHIZ029 at an ignored <c>AcceptAnyVersion</c> opt-in (#2071), WHIZ038
+  /// at a narrowed <c>Versions</c> list (#2516). A rule that accepts no version is WHIZ043, and
+  /// <c>AcceptAnyVersion = true</c> written with <c>Versions</c> is WHIZ039.
   /// </summary>
   private static WhizbangIdInfo _resolveRoutes(SourceProductionContext context, IEnumerable<WhizbangIdInfo> routes) {
     var all = routes.ToList();
-    var strict = all.Find(id => !id.AcceptAnyVersion);
-    if (strict is null) {
+    _reportVersionDeclarationErrors(context, all);
+
+    var listed = all.Where(id => !id.AcceptAnyVersion).ToList();
+    if (listed.Count == 0) {
       return all[0];
     }
 
-    foreach (var ignoredOptIn in all.Where(id => id.AcceptAnyVersion)) {
+    var common = listed.Aggregate(UuidVersionMask.ALL, (mask, id) => mask & id.Versions);
+    // No version in common is an error already, so the default rule is generated rather than an id nothing can enter.
+    var resolved = common == 0 ? UuidVersionMask.V7 : common;
+    var description = UuidVersionMask.Describe(resolved);
+    foreach (var route in all) {
+      if (route.AcceptAnyVersion) {
+        context.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.WhizbangIdAcceptAnyVersionDisagrees,
+            route.Location,
+            route.FullyQualifiedName,
+            description
+        ));
+      } else if (common != 0 && route.Versions != common) {
+        context.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.WhizbangIdVersionsNarrowed,
+            route.Location,
+            route.FullyQualifiedName,
+            description
+        ));
+      }
+    }
+
+    // An empty list is reported where it is written; lists that only fail together are reported at one that was
+    // written, not at a declaration that took the default.
+    if (common == 0 && listed.All(id => id.Versions != 0)) {
+      var written = listed.FirstOrDefault(id => id.DeclaresVersions) ?? listed[0];
       context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.WhizbangIdAcceptAnyVersionDisagrees,
-          ignoredOptIn.Location,
-          ignoredOptIn.FullyQualifiedName
+          DiagnosticDescriptors.WhizbangIdAcceptsNoVersion,
+          written.Location,
+          written.FullyQualifiedName,
+          "its [WhizbangId] declarations list no version in common"
       ));
     }
 
-    return strict;
+    return listed[0] with { Versions = resolved };
+  }
+
+  /// <summary>
+  /// Reports the declarations whose version rule is wrong on its own: <c>AcceptAnyVersion = true</c> together with
+  /// <c>Versions</c> (WHIZ039), an empty <c>Versions</c> list (WHIZ043), and bits of <c>Versions</c> outside versions
+  /// 1 to 8 (WHIZ044).
+  /// </summary>
+  private static void _reportVersionDeclarationErrors(SourceProductionContext context, List<WhizbangIdInfo> routes) {
+    foreach (var route in routes.Where(id => id.OutOfRangeVersionBits != 0)) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.WhizbangIdVersionsOutOfRange,
+          route.Location,
+          route.FullyQualifiedName,
+          $"0x{route.OutOfRangeVersionBits:X}"
+      ));
+    }
+
+    foreach (var route in routes.Where(id => id.DeclaresVersions)) {
+      if (route.AcceptAnyVersion) {
+        context.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.WhizbangIdAcceptAnyVersionWithVersions,
+            route.Location,
+            route.FullyQualifiedName
+        ));
+      } else if (route.Versions == 0) {
+        context.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.WhizbangIdAcceptsNoVersion,
+            route.Location,
+            route.FullyQualifiedName,
+            "its Versions list is empty"
+        ));
+      }
+    }
   }
 
   /// <summary>
@@ -588,9 +680,13 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
     if (id.AcceptAnyVersion) {
       _appendAnyVersionFactories(sb, id.TypeName);
-    } else {
+    } else if (id.Versions == UuidVersionMask.V7) {
       _appendUuidV7Factories(sb, id.TypeName);
+    } else {
+      _appendAllowListFactories(sb, id.TypeName, id.Versions);
     }
+
+    _appendGrandfatheredHook(sb, id);
 
     // New factory method using TrackedGuid.New() - generates new UUIDv7 with tracking
     sb.AppendLine("  /// <summary>Creates a new instance with sub-millisecond precision from the framework's UUIDv7 generator. Preserves tracking metadata.</summary>");
@@ -683,16 +779,16 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
-  /// <summary>What a generated id refuses, for its doc comments: a non-v7 Guid, or only the empty one.</summary>
+  /// <summary>What a generated id refuses, for its doc comments: a Guid of a version it does not list, or only the empty one.</summary>
   private static string _rejected(WhizbangIdInfo id) =>
-    id.AcceptAnyVersion ? "the Guid is empty" : "not UUIDv7";
+    id.AcceptAnyVersion ? "the Guid is empty" : $"not {UuidVersionMask.Describe(id.Versions)}";
 
   /// <summary>The default factories: <c>From</c> takes UUIDv7 only.</summary>
   private static void _appendUuidV7Factories(StringBuilder sb, string typeName) {
     // From(TrackedGuid) factory method - preserves tracking metadata
     sb.AppendLine("  /// <summary>Creates an instance from a TrackedGuid, preserving tracking metadata.</summary>");
     sb.AppendLine($"  public static {typeName} From(TrackedGuid tracked) {{");
-    sb.AppendLine("    if (!tracked.IsTimeOrdered)");
+    sb.AppendLine("    if (!tracked.IsTimeOrdered && !_grandfathers(tracked.Value))");
     sb.AppendLine($"      throw new ArgumentException(\"{typeName} requires UUIDv7 (time-ordered) but received a non-v7 Guid\", nameof(tracked));");
     sb.AppendLine("    return new(tracked);");
     sb.AppendLine("  }");
@@ -701,9 +797,74 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     // From(Guid) factory method - validates v7, creates untracked
     sb.AppendLine("  /// <summary>Creates an instance from a Guid value. Throws if not UUIDv7.</summary>");
     sb.AppendLine($"  public static {typeName} From(Guid value) {{");
-    sb.AppendLine("    if (value.Version != 7)");
+    sb.AppendLine("    if (value.Version != 7 && !_grandfathers(value))");
     sb.AppendLine($"      throw new ArgumentException($\"{typeName} requires UUIDv7 but received version {{value.Version}}\", nameof(value));");
     sb.AppendLine("    return new(TrackedGuid.FromExternal(value));");
+    sb.AppendLine("  }");
+  }
+
+  /// <summary>
+  /// The grandfathered-values hook a strict or allow-list id declares (#2517): <c>_isGrandfathered</c>, a void partial
+  /// method the id type may implement to name values that predate its version rule, and the helper the checked
+  /// factories ask when a value breaks the rule. A void partial method without an accessibility modifier is the only
+  /// kind C# lets go unimplemented, and then the compiler removes the call, so an id without exceptions pays nothing.
+  /// Without a modifier it is private, so it is named as the repository names a private method. An any-version id
+  /// refuses only the empty Guid, so it declares no hook: implementing one there is CS0759 rather than code that never
+  /// runs. <see cref="Guid.Empty"/> is never grandfathered.
+  /// </summary>
+  private static void _appendGrandfatheredHook(StringBuilder sb, WhizbangIdInfo id) {
+    if (id.AcceptAnyVersion) {
+      return;
+    }
+
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
+    sb.AppendLine("  /// Implement to let the checked entry points (From, Parse, the explicit cast, JSON, the GraphQL scalar) accept");
+    sb.AppendLine("  /// a frozen set of values that predate this id's version rule: set <paramref name=\"grandfathered\"/> to true for");
+    sb.AppendLine("  /// them. Implement it without an accessibility modifier, as declared here: with one, C# requires every id to");
+    sb.AppendLine("  /// implement it. Asked only for a value that breaks the rule, and never for Guid.Empty, which is always refused.");
+    sb.AppendLine("  /// Keep it a set lookup: it runs on every refused value.");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
+    sb.AppendLine("  static partial void _isGrandfathered(Guid value, ref bool grandfathered);");
+    sb.AppendLine();
+    sb.AppendLine("  /// <summary>Whether the id type grandfathers a value that breaks its version rule. Never the empty Guid.</summary>");
+    sb.AppendLine("  private static bool _grandfathers(Guid value) {");
+    sb.AppendLine("    if (value == Guid.Empty)");
+    sb.AppendLine("      return false;");
+    sb.AppendLine("    var grandfathered = false;");
+    sb.AppendLine("    _isGrandfathered(value, ref grandfathered);");
+    sb.AppendLine("    return grandfathered;");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+  }
+
+  /// <summary>
+  /// The factories of an id declared with a <c>Versions</c> allow-list other than UUIDv7 alone: <c>From</c> takes a
+  /// Guid whose version is listed and whose variant is RFC 9562's (#2516), or one the id grandfathers (#2517).
+  /// <see cref="Guid.Empty"/> has version 0, which no list holds, so it is refused with the rest. The constructor and
+  /// the <c>Value</c> initializer stay unchecked, as on every id.
+  /// </summary>
+  private static void _appendAllowListFactories(StringBuilder sb, string typeName, int versions) {
+    var accepted = UuidVersionMask.Describe(versions);
+
+    sb.AppendLine($"  /// <summary>Creates an instance from a TrackedGuid, preserving tracking metadata. Throws if not {accepted}.</summary>");
+    sb.AppendLine($"  public static {typeName} From(TrackedGuid tracked) {{");
+    sb.AppendLine("    _requireAcceptedVersion(tracked.Value, nameof(tracked));");
+    sb.AppendLine("    return new(tracked);");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+
+    sb.AppendLine($"  /// <summary>Creates an instance from a Guid value. Throws if not {accepted}.</summary>");
+    sb.AppendLine($"  public static {typeName} From(Guid value) => new(TrackedGuid.FromExternal(_requireAcceptedVersion(value, nameof(value))));");
+    sb.AppendLine();
+
+    sb.AppendLine($"  /// <summary>Returns the Guid, or throws if its version is not {accepted}.</summary>");
+    sb.AppendLine("  private static Guid _requireAcceptedVersion(Guid value, string parameterName) {");
+    // The RFC 9562 variant as well as the version: a hash or random bytes carry a version nibble by chance, and the
+    // variant, the top two bits of octet 8 (10xx), is what says the bytes are a UUID at all. A grandfathered value is
+    // accepted either way (#2517).
+    sb.AppendLine($"    if ((value.Version is not {UuidVersionMask.Pattern(versions)} || (value.Variant & 0xC) != 0x8) && !_grandfathers(value))");
+    sb.AppendLine($"      throw new ArgumentException($\"{typeName} requires {accepted} (RFC 9562 variant) but received version {{value.Version}}, variant {{value.Variant:X}}\", parameterName);");
+    sb.AppendLine("    return value;");
     sb.AppendLine("  }");
   }
 
@@ -899,16 +1060,21 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterGuidConversion<global::{id.FullyQualifiedName}>(" +
         $"global::{id.FullyQualifiedName}.From);"
       );
-      // The id's Value as a member read the compiler builds, so a query over the id can compare its Guid without a
-      // lookup by name (#2073).
+      // The id's stored form, loaded through its unchecked constructor, so a storage integration can map the id as a
+      // Guid without reflection (#2518).
       guidConversions.AppendLine(
-        $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterValueMember<global::{id.FullyQualifiedName}>(" +
-        "static id => id.Value);"
+        $"    global::Whizbang.Core.WhizbangIdForms.Register<global::{id.FullyQualifiedName}>(" +
+        $"static guid => new global::{id.FullyQualifiedName}(guid));"
       );
-      // An id that takes any version is never reported as a stream id that is not time-ordered (#2528).
+      // An id that takes any version is never reported as a stream id that is not time-ordered (#2528), and one with a
+      // Versions list is not reported for a version it lists (#2516).
       if (id.AcceptAnyVersion) {
         guidConversions.AppendLine(
           $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterAcceptsAnyVersion<global::{id.FullyQualifiedName}>();");
+      } else if (id.Versions != UuidVersionMask.V7) {
+        guidConversions.AppendLine(
+          $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterAcceptedVersions<global::{id.FullyQualifiedName}>(" +
+          $"{id.Versions.ToString(System.Globalization.CultureInfo.InvariantCulture)});");
       }
     }
     template = TemplateUtilities.ReplaceRegion(
@@ -1054,9 +1220,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("    // This allows InfrastructureJsonContext's TryGetTypeInfoForRuntimeCustomConverter");
     sb.AppendLine("    // to find them when deserializing MessageHop properties (MessageId?, CorrelationId?).");
     sb.AppendLine("    // Scoped to the Default (transport / event-store) profile: these write WhizbangId as a");
-    sb.AppendLine("    // scalar string. The Persistence profile uses object-mode JsonTypeInfo instead (EF Core 10");
-    sb.AppendLine("    // jsonb byte format), and STJ consults options.Converters before the resolver chain — so a");
-    sb.AppendLine("    // scalar converter in scope would shadow the object-mode resolver. Default-scoping keeps them apart.");
+    sb.AppendLine("    // scalar string, read through the id's version rule. The Persistence profile reads a stored row");
+    sb.AppendLine("    // unchecked and in either form instead, and STJ consults options.Converters before the resolver");
+    sb.AppendLine("    // chain, so a transport converter in scope would shadow it. Default-scoping keeps them apart.");
     foreach (var id in ids) {
       sb.AppendLine($"    JsonContextRegistry.RegisterConverter(new {id.FullyQualifiedName}JsonConverter(), priority: 0, profile: global::Whizbang.Core.Serialization.SerializationProfile.Default);");
     }

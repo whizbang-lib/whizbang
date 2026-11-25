@@ -93,8 +93,12 @@ public class WhizbangIdRegistrationGenerationTests {
       "global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterGuidConversion<global::MyApp.Ids.OrderId>(global::MyApp.Ids.OrderId.From);");
     await Assert.That(registrationSource).Contains(
       "global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterGuidConversion<global::MyApp.Ids.ExternalUserId>(global::MyApp.Ids.ExternalUserId.From);");
+    await Assert.That(registrationSource).DoesNotContain("RegisterValueMember");
+    // The stored form loads through the unchecked constructor, on a strict id and an any-version id alike (#2518).
     await Assert.That(registrationSource).Contains(
-      "global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterValueMember<global::MyApp.Ids.OrderId>(static id => id.Value);");
+      "global::Whizbang.Core.WhizbangIdForms.Register<global::MyApp.Ids.OrderId>(static guid => new global::MyApp.Ids.OrderId(guid));");
+    await Assert.That(registrationSource).Contains(
+      "global::Whizbang.Core.WhizbangIdForms.Register<global::MyApp.Ids.ExternalUserId>(static guid => new global::MyApp.Ids.ExternalUserId(guid));");
   }
 
   [Test]

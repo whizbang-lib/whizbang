@@ -210,6 +210,14 @@ public static class PostgresDriverExtensions {
         selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
             new UnsequencedDigestCompactionStep(dbContextType, sp.GetService<ILogger<UnsequencedDigestCompactionStep>>()));
 
+        // TURNKEY: the strong-id stored-form rewrite carried on from where startup left it, a slice per cycle, until every
+        // table is settled (#2518). One per DbContext; each batch takes the schema lock, so instances never overlap.
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new Perspectives.StrongIdScalarRewriteStep(
+                dbContextType,
+                sp.GetService<ILogger<Perspectives.StrongIdScalarRewriteStep>>(),
+                sp.GetService<TimeProvider>()));
+
         // TURNKEY: the partition manager (#1611). It converts wh_log, wh_signals and wh_lifecycle_completions once
         // (#1646) and keeps the framework's partitioned tables while Whizbang:Workers:Maintenance:Partitioning:Enabled
         // is true, and is idle otherwise. One per DbContext, since each context's schema has its own tables.

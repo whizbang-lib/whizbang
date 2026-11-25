@@ -4,7 +4,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -39,9 +38,11 @@ public static class WhizbangIdProviderRegistry {
   private static readonly Dictionary<Type, Func<IWhizbangIdProvider, object>> _factories = [];
   private static readonly List<Action<IServiceCollection, IWhizbangIdProvider>> _diRegistrations = [];
   private static readonly Dictionary<Type, Func<Guid, object>> _guidConversions = [];
-  private static readonly Dictionary<Type, MemberInfo> _valueMembers = [];
   private static readonly Lock _lock = new();
   private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, byte> _anyVersionIds = new();
+
+  /// <summary>The UUID versions each id type declared with a <c>Versions</c> list accepts, bit n for version n (#2516).</summary>
+  private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, int> _acceptedVersions = new();
 
   /// <summary>
   /// Registers a factory for creating IWhizbangIdProvider{TId} instances.
@@ -187,6 +188,55 @@ public static class WhizbangIdProviderRegistry {
   public static bool AcceptsAnyVersion(Type? idType) => idType is not null && _anyVersionIds.ContainsKey(idType);
 
   /// <summary>
+  /// Records the UUID versions an id type declared with a <c>Versions</c> list other than UUIDv7 alone accepts, so a
+  /// stream id of that type carrying one of them is not reported as not time-ordered (#2516).
+  /// Called automatically by generated ModuleInitializer - users should not call this directly.
+  /// </summary>
+  /// <typeparam name="TId">The WhizbangId struct type</typeparam>
+  /// <param name="versions">The accepted versions: bit n is version n, as <c>UuidVersions</c> lays them out.</param>
+  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingStreamIdByTypeTests.cs:ReportStreamId_AVersionTheIdTypeLists_IsNeverReportedAsync</tests>
+  public static void RegisterAcceptedVersions<TId>(int versions) where TId : struct, IWhizbangId =>
+    _acceptedVersions[typeof(TId)] = versions;
+
+  /// <summary>
+  /// Whether <paramref name="idType"/>'s own rule accepts <paramref name="value"/>, so a stream id of that type carrying it
+  /// is never reported as not time-ordered (#2528, #2516, #2517): an id declared to accept any version, one whose
+  /// <c>Versions</c> list holds the value's version with the RFC 9562 variant, or one whose rule accepts the value
+  /// otherwise (a grandfathered value). The last is asked of the id's <c>From</c> only when the first two say no, which a
+  /// value the rule refuses reaches anyway. Not for <see cref="Guid.Empty"/>, which the caller refuses first.
+  /// </summary>
+  /// <param name="idType">The stream id's declared type, or null when unknown.</param>
+  /// <param name="value">The stream id.</param>
+  /// <returns>True when the type's rule accepts the value; false for a null or unregistered type.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingStreamIdByTypeTests.cs</tests>
+  public static bool AcceptsStreamId(Type? idType, Guid value) {
+    if (idType is null) {
+      return false;
+    }
+    if (_anyVersionIds.ContainsKey(idType)) {
+      return true;
+    }
+    if (_acceptedVersions.TryGetValue(idType, out var versions)
+        && (versions & (1 << value.Version)) != 0 && (value.Variant & 0xC) == 0x8) {
+      return true;
+    }
+    Func<Guid, object>? from;
+    lock (_lock) {
+      _guidConversions.TryGetValue(idType, out from);
+    }
+    if (from is null) {
+      return false;
+    }
+    try {
+      _ = from(value);
+      return true;
+    } catch (ArgumentException) {
+      // The id's own rule refuses the value: the report is the answer.
+      return false;
+    }
+  }
+
+  /// <summary>
   /// Gets the Guid conversion of every id type that has one, recorded by <see cref="RegisterGuidConversion{TId}"/>:
   /// every generated WhizbangId in the loaded assemblies. Each conversion returns the boxed id and throws
   /// <see cref="ArgumentException"/> for a Guid the id refuses.
@@ -195,39 +245,6 @@ public static class WhizbangIdProviderRegistry {
   public static IReadOnlyDictionary<Type, Func<Guid, object>> GetGuidConversions() {
     lock (_lock) {
       return new Dictionary<Type, Func<Guid, object>>(_guidConversions);
-    }
-  }
-
-  /// <summary>
-  /// Records the id's <c>Value</c> property, read from a member access the compiler builds, so that an integration
-  /// that composes queries over the id (a GraphQL filter comparing the Guid inside a perspective document) can read
-  /// the Guid without looking the property up by name.
-  /// Called automatically by generated ModuleInitializer - users should not call this directly.
-  /// </summary>
-  /// <typeparam name="TId">The WhizbangId struct type</typeparam>
-  /// <param name="value">The read of the id's Guid, <c>id =&gt; id.Value</c></param>
-  /// <exception cref="ArgumentNullException">Thrown when value is null</exception>
-  /// <exception cref="ArgumentException">Thrown when value is not a member read</exception>
-  public static void RegisterValueMember<TId>(Expression<Func<TId, Guid>> value)
-    where TId : struct, IWhizbangId {
-    ArgumentNullException.ThrowIfNull(value);
-    if (value.Body is not MemberExpression read) {
-      throw new ArgumentException($"The read of {TypeNameFormatter.SimpleName(typeof(TId))}'s Guid has to be a member read, such as id => id.Value.", nameof(value));
-    }
-
-    lock (_lock) {
-      _valueMembers[typeof(TId)] = read.Member;
-    }
-  }
-
-  /// <summary>
-  /// Gets the <c>Value</c> member of every id type that has one, recorded by
-  /// <see cref="RegisterValueMember{TId}"/>: every generated WhizbangId in the loaded assemblies.
-  /// </summary>
-  /// <returns>The members by id type, as a snapshot</returns>
-  public static IReadOnlyDictionary<Type, MemberInfo> GetValueMembers() {
-    lock (_lock) {
-      return new Dictionary<Type, MemberInfo>(_valueMembers);
     }
   }
 

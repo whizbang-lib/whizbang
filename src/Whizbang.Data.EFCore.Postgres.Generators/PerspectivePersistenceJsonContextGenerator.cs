@@ -13,22 +13,22 @@ using CancellationToken = System.Threading.CancellationToken;
 namespace Whizbang.Data.EFCore.Postgres.Generators;
 
 /// <summary>
-/// Source generator that emits a per-assembly <c>PerspectivePersistenceJsonContext</c> —
-/// an AOT-safe <see cref="System.Text.Json.Serialization.Metadata.IJsonTypeInfoResolver"/>
-/// that serializes <c>[WhizbangId]</c> struct types in OBJECT mode (<c>{"Value":"&lt;guid&gt;"}</c>)
-/// rather than the value-converter mode used by <c>WhizbangIdJsonContext</c>.
+/// Source generator that emits a per-assembly <c>PerspectivePersistenceJsonContext</c>: an AOT-safe
+/// <see cref="System.Text.Json.Serialization.Metadata.IJsonTypeInfoResolver"/> for the documents the atomic upsert
+/// writes, whose <c>[WhizbangId]</c> struct types write the form the whole fleet reads (the UUID string once every live
+/// instance does, the object <c>{"Value":"&lt;guid&gt;"}</c> until then) and read either.
 /// </summary>
 /// <remarks>
 /// <para>
-/// EF Core 10's <c>ComplexProperty().ToJson()</c> writer treats every non-primitive
-/// property as a structural type — a <c>[WhizbangId]</c> property is serialized as
-/// <c>{"Value":"&lt;guid&gt;"}</c>. The standard <c>WhizbangIdJsonContext</c> emitted by
-/// <c>WhizbangIdGenerator</c> flattens it to a primitive string via <c>CreateValueInfo</c> +
-/// <c>WhizbangIdConverter</c>. Those two byte formats diverge.
+/// Entity Framework writes a <c>[WhizbangId]</c> in a <c>ToJson()</c> document through the id's scalar type mapping
+/// (#2518), in the form <c>WhizbangIdDocumentForm</c> says, and so does this. The transport's <c>WhizbangIdJsonContext</c> writes the same string but reads through
+/// the id's <c>From</c>, which applies its version rule, and knows nothing of the object form. A stored row is
+/// whatever was persisted, so the document read goes through the id's unchecked constructor and takes either form,
+/// counting the object one until the stored-form rewrite has reached every row.
 /// </para>
 /// <para>
 /// To support the atomic <c>INSERT … ON CONFLICT DO UPDATE</c> path in
-/// <c>BaseUpsertStrategy</c>, we need an options chain whose resolver returns object-mode
+/// <c>BaseUpsertStrategy</c>, we need an options chain whose resolver returns this document
 /// <c>JsonTypeInfo</c> for <c>[WhizbangId]</c> types. This generator emits exactly that
 /// context, plus a <c>CreateOptions()</c> factory that wires the resolver chain in the
 /// right order: the persistence context first, then <c>MessageJsonContext</c> for
@@ -191,8 +191,8 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     sb.AppendLine($"namespace {assemblyName}.Generated;");
     sb.AppendLine();
     sb.AppendLine("/// <summary>");
-    sb.AppendLine("/// Source-generated JsonTypeInfoResolver that emits object-mode JsonTypeInfo");
-    sb.AppendLine("/// for [WhizbangId] structs (matches EF Core 10's ComplexProperty().ToJson() byte format).");
+    sb.AppendLine("/// Source-generated JsonTypeInfoResolver for the documents of perspective persistence: a [WhizbangId]");
+    sb.AppendLine("/// struct is written in the form the whole fleet reads, as Entity Framework writes it, and read in either form.");
     sb.AppendLine("/// Used by BaseUpsertStrategy's atomic INSERT...ON CONFLICT DO UPDATE path.");
     sb.AppendLine("/// </summary>");
     sb.AppendLine("public sealed class PerspectivePersistenceJsonContext : IJsonTypeInfoResolver {");
@@ -222,9 +222,9 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     sb.AppendLine();
     sb.AppendLine("  /// <summary>");
     sb.AppendLine("  /// Creates JsonSerializerOptions wired with the persistence resolver chain.");
-    sb.AppendLine("  /// Chain order: this context (object-mode [WhizbangId]) — first, so it wins for WhizbangId types;");
+    sb.AppendLine("  /// Chain order: this context (the document form of [WhizbangId]) first, so it wins for WhizbangId types;");
     sb.AppendLine("  /// then any other resolver caller chooses to add. Deliberately does NOT include");
-    sb.AppendLine("  /// WhizbangIdJsonContext or its value-converter, which would re-flatten WhizbangId structs.");
+    sb.AppendLine("  /// WhizbangIdJsonContext or its value-converter, whose read applies the id's version rule and refuses the object form.");
     sb.AppendLine("  /// Based on the persistence profile's own options, so the profile's converters (the canonical");
     sb.AppendLine("  /// temporal form among them) apply to a document serialized with these directly, exactly as");
     sb.AppendLine("  /// they apply to one the upsert writes.");
@@ -301,9 +301,9 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     sb.AppendLine("#pragma warning restore CA2255");
     sb.AppendLine("  internal static void Initialize() {");
     sb.AppendLine("    // Join the cross-assembly serialization union under the Persistence profile at high");
-    sb.AppendLine("    // priority, so object-mode WhizbangId JsonTypeInfo out-ranks the scalar WhizbangIdJsonContext");
-    sb.AppendLine("    // resolver there. CreateCombinedOptions(Persistence) then carries object-mode WhizbangId");
-    sb.AppendLine("    // (EF Core 10 jsonb byte format) for every assembly's perspectives, not just this one.");
+    sb.AppendLine("    // priority, so the document form of WhizbangId out-ranks the transport's WhizbangIdJsonContext");
+    sb.AppendLine("    // resolver there. CreateCombinedOptions(Persistence) then carries the document form of WhizbangId");
+    sb.AppendLine("    // (the fleet's form written, either form read) for every assembly's perspectives, not just this one.");
     sb.AppendLine("    global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterContext(");
     sb.AppendLine("      PerspectivePersistenceJsonContext.Default,");
     sb.AppendLine("      priority: 1000,");
@@ -322,28 +322,27 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
   }
 
   /// <summary>
-  /// Emits the per-WhizbangId factory method pair: object-mode JsonTypeInfo and its nullable counterpart.
-  /// The object-mode form writes the struct as a single-property object, <c>{"Value":"&lt;guid&gt;"}</c>,
-  /// the JSON shape EF Core 10's writer produces for the same property, and reads that shape or the
-  /// scalar string a row written under the default profile holds.
+  /// Emits the per-WhizbangId factory method pair: the document JsonTypeInfo and its nullable counterpart.
+  /// It writes the id as Entity Framework's writer does for the same property under the id's scalar type mapping
+  /// (#2518): the UUID string once every live instance reads it, the object <c>{"Value":"&lt;guid&gt;"}</c> until then
+  /// (<c>WhizbangIdDocumentForm</c>). It reads either.
   /// </summary>
   /// <remarks>
-  /// A converter rather than object metadata, because object metadata reads the object form and
-  /// nothing else. A document stored as one value once took its identifiers in the scalar form when
-  /// the atomic path was unavailable and Entity Framework wrote it under the default profile; those
-  /// rows are still rows. The scalar read is counted, so the tolerance can go once nothing needs it.
+  /// The object read is counted, so the tolerance can go once the stored-form rewrite has reached every row.
+  /// The read goes through the id's unchecked constructor: a stored row is whatever was persisted.
   /// </remarks>
   private static void _emitWhizbangIdFactory(StringBuilder sb, WhizbangIdInfo info) {
     var fqn = info.FullyQualifiedName;
     sb.AppendLine($"  private sealed class _{info.TypeName}DocumentConverter : JsonConverter<{fqn}> {{");
     sb.AppendLine($"    public override {fqn} Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {{");
     sb.AppendLine("      if (reader.TokenType == JsonTokenType.String) {");
-    sb.AppendLine($"        global::Whizbang.Core.Perspectives.StoredFormFallbacks.ScalarIdentifierRead(\"{info.TypeName}\");");
     sb.AppendLine($"        return new {fqn}(reader.GetGuid());");
     sb.AppendLine(CLOSE_BRACE_INDENT_6);
     sb.AppendLine("      if (reader.TokenType != JsonTokenType.StartObject) {");
-    sb.AppendLine($"        throw new JsonException($\"A stored {info.TypeName} must be an object holding a Value or a string, but the document holds {{reader.TokenType}}\");");
+    sb.AppendLine($"        throw new JsonException($\"A stored {info.TypeName} must be a UUID string or an object holding a Value, but the document holds {{reader.TokenType}}\");");
     sb.AppendLine(CLOSE_BRACE_INDENT_6);
+    // Tagged as the type mapping's reader tags it, so one id type is one series whichever reader met the row.
+    sb.AppendLine($"      global::Whizbang.Core.Perspectives.StoredFormFallbacks.ObjectFormIdentifierRead(global::Whizbang.Core.TypeNameFormatter.SimpleName(typeof({fqn})));");
     sb.AppendLine("      global::System.Guid value = default;");
     sb.AppendLine("      var found = false;");
     sb.AppendLine("      while (reader.Read() && reader.TokenType != JsonTokenType.EndObject) {");
@@ -362,6 +361,11 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();
     sb.AppendLine($"    public override void Write(Utf8JsonWriter writer, {fqn} value, JsonSerializerOptions options) {{");
+    // The UUID string once every live instance reads it, the object form every release reads until then (#2518).
+    sb.AppendLine("      if (global::Whizbang.Core.Perspectives.WhizbangIdDocumentForm.WritesUuidString) {");
+    sb.AppendLine("        writer.WriteStringValue(value.Value);");
+    sb.AppendLine("        return;");
+    sb.AppendLine(CLOSE_BRACE_INDENT_6);
     sb.AppendLine("      writer.WriteStartObject();");
     sb.AppendLine("      writer.WriteString(\"Value\", value.Value);");
     sb.AppendLine("      writer.WriteEndObject();");

@@ -3,6 +3,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Whizbang.Core\Whizbang.Core.csproj" />
     <ProjectReference Include="..\..\src\Whizbang.Data.EFCore.Postgres\Whizbang.Data.EFCore.Postgres.csproj" />
+    <ProjectReference Include="..\Whizbang.Data.EFCore.Postgres.ConventionIds.Fixtures\Whizbang.Data.EFCore.Postgres.ConventionIds.Fixtures.csproj" />
+    <ProjectReference Include="..\Whizbang.Data.EFCore.Postgres.Ids.Fixtures\Whizbang.Data.EFCore.Postgres.Ids.Fixtures.csproj" />
     <ProjectReference Include="..\..\src\Whizbang.Data.Postgres\Whizbang.Data.Postgres.csproj" />
     <!-- The startup parity suite runs the same scenarios against both Postgres drivers. -->
     <ProjectReference Include="..\..\src\Whizbang.Data.Dapper.Postgres\Whizbang.Data.Dapper.Postgres.csproj" />

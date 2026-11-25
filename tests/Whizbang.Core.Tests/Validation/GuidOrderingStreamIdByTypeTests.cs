@@ -99,6 +99,63 @@ public class GuidOrderingStreamIdByTypeTests {
     await Assert.That(logger.Entries).IsEmpty();
   }
 
+  /// <summary>
+  /// A stream id of a type declared with a <c>Versions</c> list is not reported for a version the list holds, at Error
+  /// either (#2516): the id's own rule accepts it, so the only cost is index locality.
+  /// </summary>
+  [Test]
+  [Arguments(GuidOrderingSeverity.Error)]
+  [Arguments(GuidOrderingSeverity.Warning)]
+  public async Task ReportStreamId_AVersionTheIdTypeLists_IsNeverReportedAsync(GuidOrderingSeverity streamSeverity) {
+    var logger = new CollectingLogger();
+    var validator = new GuidOrderingValidator(new WhizbangOptions { StreamIdOrderingViolationSeverity = streamSeverity }, logger);
+
+    validator.ReportStreamId(NonTimeOrderedGuidShapes.V5, typeof(Whizbang.Core.Tests.ValueObjects.MintedOrNamedTestId),
+      typeof(StreamIdAllocationProbeNoted), ENTRY_POINT);
+
+    await Assert.That(logger.Entries).IsEmpty().Because("MintedOrNamedTestId lists UUIDv5, registered by its generated module initializer");
+  }
+
+  /// <summary>A version the type's <c>Versions</c> list does not hold is still reported, and refused at Error (#2516).</summary>
+  [Test]
+  public async Task ReportStreamId_AVersionTheIdTypeDoesNotList_IsRefusedAtErrorAsync() {
+    var validator = new GuidOrderingValidator(
+      new WhizbangOptions { StreamIdOrderingViolationSeverity = GuidOrderingSeverity.Error }, new CollectingLogger());
+
+    await Assert.That(() => validator.ReportStreamId(NonTimeOrderedGuidShapes.V4,
+        typeof(Whizbang.Core.Tests.ValueObjects.MintedOrNamedTestId), typeof(StreamIdAllocationProbeNoted), ENTRY_POINT))
+      .Throws<GuidOrderingException>();
+  }
+
+  /// <summary>
+  /// A value the type grandfathers is accepted by its own rule, so it is not reported either (#2517); another value of
+  /// the same version is.
+  /// </summary>
+  [Test]
+  public async Task ReportStreamId_AGrandfatheredValue_IsNeverReported_AndAnotherOfItsVersionIsAsync() {
+    var logger = new CollectingLogger();
+    var validator = new GuidOrderingValidator(
+      new WhizbangOptions { StreamIdOrderingViolationSeverity = GuidOrderingSeverity.Warning }, logger);
+    var type = typeof(Whizbang.Core.Tests.ValueObjects.GrandfatheredTestId);
+
+    validator.ReportStreamId(Whizbang.Core.Tests.ValueObjects.GrandfatheredTestId.SeededV4, type, typeof(StreamIdAllocationProbeNoted), ENTRY_POINT);
+    await Assert.That(logger.Entries).IsEmpty();
+
+    validator.ReportStreamId(NonTimeOrderedGuidShapes.V4, type, typeof(StreamIdAllocationProbeNoted), ENTRY_POINT);
+    await Assert.That(logger.Entries).Count().IsEqualTo(1);
+  }
+
+  /// <summary>A listed version with a variant other than RFC 9562's is not accepted by the list (#2516).</summary>
+  [Test]
+  public async Task AcceptsStreamId_AListedVersionWithAnotherVariant_IsNotAcceptedAsync() {
+    var nonRfcV5 = Guid.Parse("886313e1-3b8a-5372-1b90-0c9aee199e5d");
+
+    await Assert.That(WhizbangIdProviderRegistry.AcceptsStreamId(typeof(Whizbang.Core.Tests.ValueObjects.MintedOrNamedTestId), nonRfcV5)).IsFalse();
+    await Assert.That(WhizbangIdProviderRegistry.AcceptsStreamId(typeof(Whizbang.Core.Tests.ValueObjects.MintedOrNamedTestId), NonTimeOrderedGuidShapes.V5)).IsTrue();
+    await Assert.That(WhizbangIdProviderRegistry.AcceptsStreamId(null, NonTimeOrderedGuidShapes.V5)).IsFalse();
+    await Assert.That(WhizbangIdProviderRegistry.AcceptsStreamId(typeof(Guid), NonTimeOrderedGuidShapes.V5)).IsFalse();
+  }
+
   [Test]
   public async Task ReportStreamId_ByANullType_ThrowsAsync() {
     var validator = new GuidOrderingValidator(new WhizbangOptions(), new CollectingLogger());

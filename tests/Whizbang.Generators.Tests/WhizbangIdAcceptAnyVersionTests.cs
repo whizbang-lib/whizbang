@@ -25,8 +25,8 @@ namespace Whizbang.Generators.Tests;
 [Category("SourceGenerators")]
 public class WhizbangIdAcceptAnyVersionTests {
 
-  private const string STRICT_FROM_GUARD = "if (value.Version != 7)";
-  private const string STRICT_TRACKED_GUARD = "if (!tracked.IsTimeOrdered)";
+  private const string STRICT_FROM_GUARD = "if (value.Version != 7 && !_grandfathers(value))";
+  private const string STRICT_TRACKED_GUARD = "if (!tracked.IsTimeOrdered";
   private const string NON_EMPTY_GUARD = "_requireNonEmpty(";
 
   [RequiresAssemblyFiles()]

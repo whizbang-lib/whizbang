@@ -26,6 +26,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 [Category("Shard1")]
 public class GraphQLWhizbangIdFilterIntegrationTests : EFCoreTestBase {
   private const string TABLE = "wh_per_order";
+  // The id as Entity Framework reads it: either stored form, the UUID string or an earlier release's {"Value": ...}.
+  private const string _EITHER_FORM_ORDER_ID =
+    "CAST(CASE\n    WHEN w.data ->> 'OrderId' LIKE '{%' THEN jsonb_extract_path_text(CAST(w.data ->> 'OrderId' AS jsonb), 'Value')\n    ELSE w.data ->> 'OrderId'\nEND AS uuid)";
 
   private static readonly DateTime _seededAt = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
@@ -74,7 +77,7 @@ public class GraphQLWhizbangIdFilterIntegrationTests : EFCoreTestBase {
     await Assert.That(json).Contains("\"second\"").Because(json);
     await Assert.That(json).DoesNotContain("\"first\"").Because(json);
     await Assert.That(json).DoesNotContain("\"third\"").Because(json);
-    await Assert.That(sql).Contains("WHERE (CAST(w.data #>> '{OrderId,Value}' AS uuid)) = @").Because(sql);
+    await Assert.That(sql).Contains($"WHERE {_EITHER_FORM_ORDER_ID} = @").Because(sql);
   }
 
   [Test]
@@ -84,7 +87,7 @@ public class GraphQLWhizbangIdFilterIntegrationTests : EFCoreTestBase {
     await Assert.That(json).Contains("\"first\"").Because(json);
     await Assert.That(json).DoesNotContain("\"second\"").Because(json);
     await Assert.That(json).Contains("\"third\"").Because(json);
-    await Assert.That(sql).Contains("WHERE (CAST(w.data #>> '{OrderId,Value}' AS uuid)) <> @").Because(sql);
+    await Assert.That(sql).Contains($"WHERE {_EITHER_FORM_ORDER_ID} <> @").Because(sql);
   }
 
   [Test]

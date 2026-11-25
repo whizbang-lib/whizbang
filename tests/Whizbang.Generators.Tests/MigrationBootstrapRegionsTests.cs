@@ -57,6 +57,7 @@ public class MigrationBootstrapRegionsTests {
     "364_InstanceExitRetentionIsASetting.sql", // the exit record's retention as an operator setting, redefining 363's function (#2126)
     "385_StoredFormConversionsRecordWhoAppliedThem.sql", // the journals' applier columns the same rewrite phase writes (#2131)
     "544_DictionaryMembersStoredAsPairs.sql", // the functions the same rewrite phase calls to store a dictionary as pairs (#1911)
+    "562_StrongIdsStoredAsUuidStrings.sql", // the functions the same rewrite phase calls to store a strong id as its UUID string (#2518)
     "568_StoredFormConversionsRecordWhatTheyApplied.sql", // the journals' content hash the same rewrite phase writes (#2553)
     "615_ALapseNeedsASuccessor.sql", // the successor check the vote judges a holder through: the migrator is won by that vote (#2593)
   ];

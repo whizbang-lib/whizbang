@@ -168,6 +168,11 @@ internal static class MappedDocumentReadFailure {
     if (CanonicalTemporalConvention.KindOf(property.ClrType) is not null) {
       return null;
     }
+    // A strong id likewise: stored as its UUID string, its reader also takes the object {"Value": ...} an earlier
+    // release wrote, and that this release writes until the whole fleet reads the UUID string (#2518).
+    if (property.GetTypeMapping() is WhizbangIdTypeMapping) {
+      return null;
+    }
     var name = $"{TypeNameFormatter.ForLog(property.DeclaringType.ClrType)}.{property.Name}";
     if (property.IsPrimitiveCollection) {
       return value.ValueKind == JsonValueKind.Array ? null : new Mismatch(path, value.ValueKind, name, "an array");

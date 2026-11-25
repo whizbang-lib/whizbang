@@ -14,7 +14,9 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.EFCore.Postgres.Functions;
 using Whizbang.Data.EFCore.Postgres.QueryTranslation;
+using Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
 using Whizbang.Generators.Shared.Utilities;
 using Whizbang.Testing.Containers;
 using Whizbang.Transports.HotChocolate;
@@ -28,16 +30,15 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// </summary>
 /// <remarks>
 /// <para>
-/// A strong id cannot carry an index over its own extraction: its document form is an object, which no declared
-/// cast reaches (WHIZ303). The index that answers an equality on it is the whole-document GIN index a model asks for
-/// with <c>[PerspectiveQueries(MatchOnAnyField = true)]</c>, through the containment rewrite, which turns an equality
-/// on a value inside the document into <c>data @&gt; ...</c>. The rewrite answers the id's inner <c>Value</c>, not the
-/// id object, so the filter compares that.
+/// The index that answers an equality on a strong id is the whole-document GIN index a model asks for with
+/// <c>[PerspectiveQueries(MatchOnAnyField = true)]</c>, through the containment rewrite, which turns an equality on a
+/// value inside the document into <c>data @&gt; ...</c>. Since #2518 the id is a uuid scalar stored as its UUID string,
+/// so the rewrite compares the id itself through its Guid.
 /// </para>
 /// <para>
 /// The index is built from the schema's own declaration of it (<see cref="SchemaRegistry.Indexes"/>, the
 /// decisions the table DDL makes), the context runs the shipped query pipeline (<c>UseWhizbangPhysicalFields</c>,
-/// <c>UseWhizbangJsonbContainment</c>), and the query comes from the GraphQL filter, so a change on either side that
+/// <c>UseWhizbangJsonbContainment</c>, <c>UseWhizbangFunctions</c>), and the query comes from the GraphQL filter, so a change on either side that
 /// stops the index from answering fails here rather than as a slower query in production. Sequential scans are
 /// switched off for the plan, so the planner takes the index whenever it can answer the filter at all.
 /// </para>
@@ -56,6 +57,9 @@ public class GraphQLWhizbangIdFilterIndexTests {
   private readonly TestOrderId _first = TestOrderId.New();
   private readonly TestOrderId _second = TestOrderId.New();
   private readonly TestOrderId _third = TestOrderId.New();
+
+  /// <summary>A row still in the object form an earlier release wrote (#2518).</summary>
+  private readonly TestOrderId _old = TestOrderId.New();
 
   private string _databaseName = null!;
   private DbContextOptions<IdFilterIndexDbContext> _options = null!;
@@ -86,6 +90,8 @@ public class GraphQLWhizbangIdFilterIndexTests {
       });
 
       modelBuilder.UseWhizbangJsonbContainment();
+      // The id is a uuid scalar, as every generated context's OnModelCreating makes it (#2518).
+      global::Whizbang.Data.EFCore.Postgres.Perspectives.WhizbangIdConvention.Apply(modelBuilder);
     }
   }
 
@@ -162,7 +168,9 @@ public class GraphQLWhizbangIdFilterIndexTests {
       """);
 
     _options = new DbContextOptionsBuilder<IdFilterIndexDbContext>()
-      .UseNpgsql(connectionString)
+      // UseWhizbangFunctions, as every generated context: it registers the postprocessor the strong-id rewrite and the
+      // translated-tree reshape run in.
+      .UseNpgsql(connectionString, npgsql => npgsql.UseWhizbangFunctions())
       .UseWhizbangPhysicalFields()
       .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
       .Options;
@@ -192,6 +200,11 @@ public class GraphQLWhizbangIdFilterIndexTests {
              shape.metadata, shape.scope
       FROM generate_series(1, {ROWS}) g
       CROSS JOIN (SELECT created_at, updated_at, metadata, scope FROM {TABLE} LIMIT 1) shape;
+      INSERT INTO {TABLE} (id, created_at, updated_at, version, data, metadata, scope)
+      SELECT '{_old.Value}', shape.created_at, shape.updated_at, 1,
+             jsonb_build_object('OrderId', jsonb_build_object('Value', '{_old.Value}'), 'Status', 'old'),
+             shape.metadata, shape.scope
+      FROM (SELECT created_at, updated_at, metadata, scope FROM {TABLE} LIMIT 1) shape;
       ANALYZE {TABLE};
       """);
   }
@@ -244,5 +257,56 @@ public class GraphQLWhizbangIdFilterIndexTests {
     await Assert.That(json).DoesNotContain("\"second\"").Because(json);
     await Assert.That(json).Contains("\"third\"").Because(json);
     await Assert.That(plan).Contains(_documentIndex.Name).Because(plan);
+  }
+
+  /// <summary>
+  /// A row still in the object form is found by <c>eq</c> and <c>in</c>, and the document index still answers both: the
+  /// containment test carries a second document for the object form (#2518).
+  /// </summary>
+  [Test]
+  public async Task EqAndIn_FindARowStillInTheObjectForm_ThroughTheDocumentIndexAsync() {
+    var (eq, eqPlan) = await _filterAsync($"{{ eq: \"{_old.Value}\" }}");
+    var (inSet, inPlan) = await _filterAsync($"{{ in: [\"{_first.Value}\", \"{_old.Value}\"] }}");
+
+    await Assert.That(eq).Contains("\"old\"").Because(eq);
+    await Assert.That(eqPlan).Contains(_documentIndex.Name).Because(eqPlan);
+    await Assert.That(inSet).Contains("\"old\"").Because(inSet);
+    await Assert.That(inSet).Contains("\"first\"").Because(inSet);
+    await Assert.That(inPlan).Contains(_documentIndex.Name).Because(inPlan);
+  }
+
+  /// <summary>
+  /// An id equality written in LINQ finds a row in either stored form through the document index, in each containment
+  /// mechanism: the tree rewrite (the default) and the reshape of the translated query, which runs before the strong-id
+  /// rewrite and builds a containment test for both forms (#2518).
+  /// </summary>
+  [Test]
+  [NotInParallel] // Switches the process-wide containment mode every perspective query compiles under: runs alone.
+  [Arguments(ContainmentMode.ExpressionTree)]
+  [Arguments(ContainmentMode.TranslatedTree)]
+  public async Task IdEquality_FindsBothFormsThroughTheDocumentIndex_InEitherContainmentModeAsync(ContainmentMode mode) {
+    JsonbContainmentSwitch.SetMode(mode);
+    try {
+      foreach (var (id, status) in new[] { (_old, "old"), (_second, "second") }) {
+        var capture = new PlanCapture();
+        var options = new DbContextOptionsBuilder<IdFilterIndexDbContext>(_options).AddInterceptors(capture).Options;
+        await using var context = new IdFilterIndexDbContext(options);
+        var rows = context.Set<PerspectiveRow<IdFilterDocument>>();
+        // A literal per mode, so neither mode answers from a query the other compiled.
+        var query = mode == ContainmentMode.TranslatedTree
+          ? rows.Where(r => r.Data.OrderId == id && r.Data.Status != "translated-tree")
+          : rows.Where(r => r.Data.OrderId == id && r.Data.Status != "expression-tree");
+        var sql = query.ToQueryString();
+
+        var found = await query.Select(r => r.Data.Status).ToListAsync();
+
+        await Assert.That(found).IsEquivalentTo([status]).Because(sql);
+        await Assert.That(sql).Contains("@>").Because(sql);
+        await Assert.That(sql).Contains("'Value'").Because(sql);
+        await Assert.That(capture.Plan).Contains(_documentIndex.Name).Because(capture.Plan);
+      }
+    } finally {
+      JsonbContainmentSwitch.Reset();
+    }
   }
 }
