@@ -190,7 +190,7 @@ BEGIN
   v_default_width := COALESCE(v_default_width, 100000);
 
   -- #515: stall escape window (settings table, live-tunable). A lane whose frontier has not
-  -- advanced for longer than this closes its blocked epoch anyway — the verify sweep refolds
+  -- advanced for longer than this closes its blocked epoch anyway: the verify sweep refolds
   -- on drift, so a late straggler is corrected by the existing backstop instead of pinning
   -- the lane forever. Non-positive disables the escape.
   SELECT setting_value::int INTO v_max_stall
@@ -313,7 +313,7 @@ BEGIN
             AND es.created_at >= p_now - make_interval(secs => p_settle_seconds)
         ) INTO v_blocked;
       END IF;
-      -- #515: a stalled lane forces its FIRST blocked epoch through (once per call — the
+      -- #515: a stalled lane forces its FIRST blocked epoch through (once per call: the
       -- escape is a trickle, not an open gate); an unstalled blocked lane waits as before.
       EXIT WHEN v_blocked AND NOT v_stalled;
       IF v_blocked THEN
