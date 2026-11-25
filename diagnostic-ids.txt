@@ -80,6 +80,7 @@ WHIZ041 | active | Whizbang.Generators | Abstract Class Skipped
 WHIZ042 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
 WHIZ043 | active | Whizbang.Generators | WhizbangId Accepts No Version
 WHIZ044 | active | Whizbang.Generators | WhizbangId Versions Outside 1 To 8
+WHIZ045 | active | Whizbang.Generators | WhizbangId Declares IsAccepted
 WHIZ050 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
 WHIZ051 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
 WHIZ052 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused

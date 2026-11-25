@@ -181,7 +181,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr),
         Versions: _versionsOf(whizbangIdAttr),
         DeclaresVersions: _declaresVersions(whizbangIdAttr),
-        OutOfRangeVersionBits: _outOfRangeVersionBitsOf(whizbangIdAttr)
+        OutOfRangeVersionBits: _outOfRangeVersionBitsOf(whizbangIdAttr),
+        DeclaresIsAccepted: _declaresIsAccepted(structSymbol)
     );
 
     return (idInfo, null, null);
@@ -226,6 +227,16 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     attribute.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Versions").Value.Value is int mask
       ? mask & ~UuidVersionMask.ALL
       : 0;
+
+  /// <summary>
+  /// Whether the id type, as written, declares a member named <c>IsAccepted</c>: the generated id declares one for its
+  /// version rule (WHIZ045). The generator's own output is not in the compilation it reads, so only the user's count.
+  /// </summary>
+  private static bool _declaresIsAccepted(ISymbol type) =>
+    type is INamespaceOrTypeSymbol declared && declared.GetMembers(IS_ACCEPTED).Length > 0;
+
+  /// <summary>The name of the generated member that says whether the id's rule accepts a value.</summary>
+  private const string IS_ACCEPTED = "IsAccepted";
 
   /// <summary>Whether <c>Versions</c> is written on the attribute at all, whatever its value.</summary>
   private static bool _declaresVersions(AttributeData attribute) =>
@@ -281,7 +292,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr),
         Versions: _versionsOf(whizbangIdAttr),
         DeclaresVersions: _declaresVersions(whizbangIdAttr),
-        OutOfRangeVersionBits: _outOfRangeVersionBitsOf(whizbangIdAttr)
+        OutOfRangeVersionBits: _outOfRangeVersionBitsOf(whizbangIdAttr),
+        DeclaresIsAccepted: _declaresIsAccepted(propertySymbol.Type)
     );
 
     return (idInfo, null, null);
@@ -341,7 +353,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr),
         Versions: _versionsOf(whizbangIdAttr),
         DeclaresVersions: _declaresVersions(whizbangIdAttr),
-        OutOfRangeVersionBits: _outOfRangeVersionBitsOf(whizbangIdAttr)
+        OutOfRangeVersionBits: _outOfRangeVersionBitsOf(whizbangIdAttr),
+        DeclaresIsAccepted: _declaresIsAccepted(parameterSymbol.Type)
     );
 
     return (idInfo, null, null);
@@ -483,6 +496,13 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   private static WhizbangIdInfo _resolveRoutes(SourceProductionContext context, IEnumerable<WhizbangIdInfo> routes) {
     var all = routes.ToList();
     _reportVersionDeclarationErrors(context, all);
+    if (all.FirstOrDefault(id => id.DeclaresIsAccepted) is { } collides) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.WhizbangIdDeclaresIsAccepted,
+          collides.Location,
+          collides.FullyQualifiedName
+      ));
+    }
 
     var listed = all.Where(id => !id.AcceptAnyVersion).ToList();
     if (listed.Count == 0) {

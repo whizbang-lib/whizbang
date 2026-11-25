@@ -257,6 +257,33 @@ public class WhizbangIdVersionsTests {
     await Assert.That(whiz043[0].GetMessage(CultureInfo.InvariantCulture)).Contains("ProductId");
   }
 
+  /// <summary>
+  /// An id type that declares a member named IsAccepted collides with the one every generated id declares, so the
+  /// generator says so and names the type, rather than leaving only the compiler's duplicate-member error (#2516).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task AnIdThatDeclaresIsAccepted_ReportsWhiz045Async() {
+    const string source = """
+      using System;
+      using Whizbang.Core;
+      namespace MyApp.Domain;
+      [WhizbangId]
+      public readonly partial struct ProductId {
+        public bool IsAccepted => true;
+      }
+      [WhizbangId]
+      public readonly partial struct OrderId;
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<WhizbangIdGenerator>(source);
+    var whiz045 = result.Diagnostics.Where(d => d.Id == "WHIZ045").ToList();
+
+    await Assert.That(whiz045).Count().IsEqualTo(1).Because("only ProductId declares IsAccepted");
+    await Assert.That(whiz045[0].Severity).IsEqualTo(DiagnosticSeverity.Error);
+    await Assert.That(whiz045[0].GetMessage(CultureInfo.InvariantCulture)).Contains("MyApp.Domain.ProductId");
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task RoutesWithNoVersionInCommon_ReportWhiz043Async() {

@@ -282,6 +282,21 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
+  /// WHIZ045: Error - A [WhizbangId] type declares a member named IsAccepted, which the generated id declares (#2516).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz045</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs:AnIdThatDeclaresIsAccepted_ReportsWhiz045Async</tests>
+  public static readonly DiagnosticDescriptor WhizbangIdDeclaresIsAccepted = new(
+      id: "WHIZ045",
+      title: "WhizbangId Declares IsAccepted",
+      messageFormat: "'{0}' declares a member named IsAccepted, which the generated id declares to say whether its version rule accepts a value. Rename the member.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Every generated WhizbangId declares public static bool IsAccepted(Guid), which the stream-id report and an allow-list id's From use. A member of the same name on the id type, as written, collides with it."
+  );
+
+  /// <summary>
   /// WHIZ043: Error - A [WhizbangId] accepts no UUID version (#2516).
   /// </summary>
   /// <docs>operations/diagnostics/whiz043</docs>
