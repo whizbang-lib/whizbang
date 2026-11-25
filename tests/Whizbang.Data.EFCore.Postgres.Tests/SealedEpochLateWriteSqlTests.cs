@@ -326,13 +326,17 @@ public class SealedEpochLateWriteSqlTests : EFCoreTestBase {
     await _execAsync(conn, "SELECT close_digest_epochs(NOW(), 3600, 100)");
   }
 
-  /// <summary>The local lane, as <see cref="_sealReceivedLaneAsync"/> seals a received one.</summary>
+  /// <summary>The local lane, as <see cref="_sealReceivedLaneAsync"/> seals a received one. Asserts epoch 0 sealed with
+  /// its two events, so no test of the local lane can pass against a lane that never closed.</summary>
   private static async Task _sealLocalLaneAsync(NpgsqlConnection conn) {
     await _setAsync(conn, "integrity_epoch_width", WIDTH.ToString(CultureInfo.InvariantCulture));
     foreach (var seq in new long[] { 1, 2, 15, 25 }) {
-      await _insertAsync(conn, null, originSequence: null, commitSequence: seq, settled: true);
+      var id = await _insertAsync(conn, null, originSequence: null, commitSequence: seq, settled: true);
+      // The local lane is found through its digest buckets, as the emit chain leaves them.
+      await EmitChainDigestFold.FoldAsync(conn, id);
     }
     await _execAsync(conn, "SELECT close_digest_epochs(NOW(), 3600, 100)");
+    await Assert.That(await _storedCountAsync(conn, _zero, 0)).IsEqualTo(2L).Because("the local lane's epoch 0 is sealed");
   }
 
   private static async Task<Guid> _insertAsync(NpgsqlConnection conn, Guid? origin, long? originSequence, long? commitSequence,
