@@ -33,6 +33,14 @@ public sealed partial class PgScheduleClaimer(
   INotificationConnectionStringFallback? connectionStringFallback = null,
   INotificationDataSource? notificationDataSource = null) : IScheduleClaimer {
 #pragma warning restore S107
+  // #2575: the claim's ownership rule (SchedulePredicate), built once.
+  private static readonly string _nextFireSql = @"
+      SELECT MIN(sc.next_fire_at)
+      FROM wh_schedules sc
+      LEFT JOIN wh_active_streams s ON s.stream_id = sc.stream_id
+      WHERE sc.status = 0
+        AND " + SchedulePredicate.OWNED_BY_INSTANCE.Replace(SchedulePredicate.INSTANCE_PARAMETER, "@i", StringComparison.Ordinal);
+
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -89,14 +97,10 @@ public sealed partial class PgScheduleClaimer(
 
     await using var conn = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
     await using var cmd = conn.CreateWhizbangCommand();
-    // #2575: the claim's ownership rule (wh_schedule_owner_admits), so the wake is armed for every schedule the
-    // claim would take, a stream no live instance holds included.
-    cmd.CommandText = @"
-      SELECT MIN(sc.next_fire_at)
-      FROM wh_schedules sc
-      LEFT JOIN wh_active_streams s ON s.stream_id = sc.stream_id
-      WHERE sc.status = 0
-        AND wh_schedule_owner_admits(s.assigned_instance_id, @i, ARRAY(SELECT l.instance_id FROM wh_live_instance_ids() l))";
+    // #2575: the claim's ownership rule, so the wake is armed for every schedule the claim would take: in map mode the
+    // schedule's partition owner (wh_i_own), otherwise the stream's stored owner or, when no live instance holds the
+    // stream, anyone (wh_schedule_owner_admits). The switch and the live set are each read once per statement.
+    cmd.CommandText = _nextFireSql;
     cmd.Parameters.Add(new NpgsqlParameter("i", NpgsqlDbType.Uuid) { Value = _instanceProvider.InstanceId });
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     if (result is null or DBNull) {
