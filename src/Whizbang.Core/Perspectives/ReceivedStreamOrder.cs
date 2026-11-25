@@ -79,21 +79,8 @@ public static class ReceivedStreamOrder {
   /// <exception cref="ArgumentNullException">An argument is null.</exception>
   /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ReceivedStreamOrderTests.cs</tests>
-  public static bool FillChangesTheOrder(IReadOnlyList<StoredStreamEvent> stream, IReadOnlyDictionary<Guid, long> fills) {
-    ArgumentNullException.ThrowIfNull(stream);
-    ArgumentNullException.ThrowIfNull(fills);
-    var stored = stream.OrderBy(e => e.Version).ToArray();
-    var filled = stored
-      .Select(e => e.OriginCommitSequence <= 0 && fills.TryGetValue(e.EventId, out var position) && position > 0
-        ? e with { OriginCommitSequence = position }
-        : e)
-      .ToArray();
-    var before = ReplayEventOrder.InOriginOrderWithinTheirSlots(
-      stored, e => e.OriginServiceId, e => e.OriginCommitSequence, e => e.EventId);
-    var after = ReplayEventOrder.InOriginOrderWithinTheirSlots(
-      filled, e => e.OriginServiceId, e => e.OriginCommitSequence, e => e.EventId);
-    return !before.Select(e => e.EventId).SequenceEqual(after.Select(e => e.EventId));
-  }
+  public static bool FillChangesTheOrder(IReadOnlyList<StoredStreamEvent> stream, IReadOnlyDictionary<Guid, long> fills) =>
+    FirstSlotTheFillChanges(stream, fills) is not null;
 
   /// <summary>
   /// Where filling missing origin positions first changes the order a replay folds <paramref name="stream"/> in (#2571):
@@ -125,6 +112,22 @@ public static class ReceivedStreamOrder {
   public static StoredStreamEvent? FirstSlotTheFillChanges(IReadOnlyList<StoredStreamEvent> stream, IReadOnlyDictionary<Guid, long> fills) {
     ArgumentNullException.ThrowIfNull(stream);
     ArgumentNullException.ThrowIfNull(fills);
+    var stored = stream.OrderBy(e => e.Version).ToArray();
+    var filled = stored
+      .Select(e => e.OriginCommitSequence <= 0 && fills.TryGetValue(e.EventId, out var position) && position > 0
+        ? e with { OriginCommitSequence = position }
+        : e)
+      .ToArray();
+    // Both are dealt in place, into copies: stored keeps the version order the slots are read from.
+    var before = ReplayEventOrder.InOriginOrderWithinTheirSlots(
+      (StoredStreamEvent[])stored.Clone(), e => e.OriginServiceId, e => e.OriginCommitSequence, e => e.EventId);
+    var after = ReplayEventOrder.InOriginOrderWithinTheirSlots(
+      filled, e => e.OriginServiceId, e => e.OriginCommitSequence, e => e.EventId);
+    for (var slot = 0; slot < stored.Length; slot++) {
+      if (before[slot].EventId != after[slot].EventId) {
+        return stored[slot];
+      }
+    }
     return null;
   }
 }

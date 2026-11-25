@@ -276,18 +276,20 @@ public class ReceivedStreamOrderTests {
     // replay's own rule. The oracle is the replay itself (ReplayEventOrder.Order over the perspective's events, every
     // origin and the local event included), compared before and after the fill: null exactly when the two agree, and
     // otherwise the version of the first slot where they differ, every slot below it folding the same event.
+    // The origin's events hold the issue's missed case (9 at position 2, 5 with none, 2 at position 3, 5 filled with 1)
+    // among others: a second unpositioned event, another origin and a local event, of two types.
     StoredStreamEvent[] events = [
-      _from(_originA, 1, 0), _from(_originA, 2, 0, sequence: 3), _from(_originA, 3, 0), _from(_originA, 4, 0, sequence: 1),
-      _from(_originB, 6, 0, sequence: 1), _local(5, 0)];
-    var typeX = new HashSet<Guid> { _id(1), _id(3), _id(6) };
+      _from(_originA, 9, 0, sequence: 2), _from(_originA, 5, 0), _from(_originA, 2, 0, sequence: 3), _from(_originA, 7, 0),
+      _from(_originB, 6, 0, sequence: 1), _local(4, 0)];
+    var typeX = new HashSet<Guid> { _id(9), _id(7), _id(6) };
     bool[][] typeSubsets = [[true, false], [false, true], [true, true]];
-    long[] fillValues = [0, 2, 4];
+    long[] fillValues = [0, 1, 4];
     int checkedCases = 0, rewound = 0, wholeStreamRewoundOnlyPerspectiveKept = 0, wholeStreamKeptPerspectiveRewound = 0;
     foreach (var versions in _permutations([1, 2, 3, 4, 5, 6])) {
       var stream = events.Select((e, i) => e with { Version = versions[i] }).ToArray();
       foreach (var fillFirst in fillValues) {
         foreach (var fillThird in fillValues) {
-          var fills = new Dictionary<Guid, long> { [_id(1)] = fillFirst, [_id(3)] = fillThird };
+          var fills = new Dictionary<Guid, long> { [_id(5)] = fillFirst, [_id(7)] = fillThird };
           var wholeStream = ReceivedStreamOrder.FirstSlotTheFillChanges([.. stream.Where(e => e.OriginServiceId == _originA)], fills);
           foreach (var subset in typeSubsets) {
             var reads = stream.Where(e => typeX.Contains(e.EventId) ? subset[0] : subset[1]).ToArray();
