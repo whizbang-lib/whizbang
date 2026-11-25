@@ -41,7 +41,7 @@ public class IntegritySweepScheduleRemovalTests {
 
     public Task<ScheduleHandle> CreateAsync(ScheduleDefinition definition, CancellationToken cancellationToken = default) {
       Created.Add(definition);
-      return Task.FromResult(new ScheduleHandle(TrackedGuid.New().Value, DateTimeOffset.UtcNow, WasCreated: true));
+      return Task.FromResult(new ScheduleHandle(TrackedGuid.New().Value, new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero), WasCreated: true));
     }
 
     public Task<bool> CancelByKeyAsync(string key, CancellationToken cancellationToken = default) {
@@ -128,10 +128,10 @@ public class IntegritySweepScheduleRemovalTests {
 
     await scheduler.StartAsync(CancellationToken.None);
 
-    await Assert.That(manager.CanceledKeys).IsEquivalentTo(new[] { removedKey })
+    await Assert.That(manager.CanceledKeys).IsEquivalentTo([removedKey])
       .Because("a schedule left behind keeps firing: a no-op for a check that is off, a second run for one on the counter");
     await Assert.That(manager.Stored).DoesNotContain(removedKey);
-    await Assert.That(manager.Created.Select(d => d.Key!)).IsEquivalentTo(new[] { keptKey })
+    await Assert.That(manager.Created.Select(d => d.Key!)).IsEquivalentTo([keptKey])
       .Because("the other check is on with a cron and registers as before");
     var removal = logger.Entries.Single(e => e.EventId == 101);
     await Assert.That(removal.Level).IsEqualTo(LogLevel.Information);
@@ -144,7 +144,7 @@ public class IntegritySweepScheduleRemovalTests {
 
     await scheduler.StartAsync(CancellationToken.None);
 
-    await Assert.That(manager.CanceledKeys).IsEquivalentTo(new[] { COMPARE_KEY, RECHECK_KEY })
+    await Assert.That(manager.CanceledKeys).IsEquivalentTo([COMPARE_KEY, RECHECK_KEY])
       .Because("both checks are off by default, so both keys must end inactive");
     await Assert.That(manager.Created).IsEmpty();
     await Assert.That(logger.Entries).IsEmpty()
@@ -165,7 +165,7 @@ public class IntegritySweepScheduleRemovalTests {
     await scheduler.StartAsync(CancellationToken.None);
 
     await Assert.That(manager.CanceledKeys).IsEmpty();
-    await Assert.That(manager.Created.Select(d => d.Key!)).IsEquivalentTo(new[] { COMPARE_KEY, RECHECK_KEY });
+    await Assert.That(manager.Created.Select(d => d.Key!)).IsEquivalentTo([COMPARE_KEY, RECHECK_KEY]);
     await Assert.That(state.CronActive).IsTrue();
     await Assert.That(state.SealRecheckCronActive).IsTrue();
   }
@@ -193,7 +193,7 @@ public class IntegritySweepScheduleRemovalTests {
 
     await scheduler.StartAsync(CancellationToken.None);
 
-    await Assert.That(manager.CanceledKeys).IsEquivalentTo(new[] { COMPARE_KEY, });
+    await Assert.That(manager.CanceledKeys).IsEquivalentTo([COMPARE_KEY,]);
     await Assert.That(manager.Created).IsEmpty()
       .Because("registering needs the instance to run as; removing does not");
     await Assert.That(state.SealRecheckCronActive).IsFalse();
