@@ -315,7 +315,8 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     await using (connection.ConfigureAwait(false)) {
       await using var cmd = connection.CreateWhizbangCommand();
       cmd.CommandText = "SELECT role, state, holder_instance_id, epoch, assigned_at, renewed_at, lease_remaining, election_count, "
-        + "void_reason, last_holder_instance_id, last_vacated_at, last_vacated_reason, pending_work, drain_requested_at, duty_backend_active "
+        + "void_reason, last_holder_instance_id, last_vacated_at, last_vacated_reason, pending_work, drain_requested_at, duty_backend_active, "
+        + "stalled_without_successor "
         + "FROM wh_role_assignment_status()";
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
@@ -335,8 +336,13 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
           reader.GetInt64(12)) {
           DrainRequestedAt = await _instantAsync(reader, 13, cancellationToken).ConfigureAwait(false),
           DutyBackendActive = reader.GetBoolean(14),
+          StalledWithoutSuccessor = reader.GetBoolean(15),
         });
       }
+    }
+    foreach (var stalled in snapshots.Where(s => s.StalledWithoutSuccessor)) {
+      // #2593: kept because no peer can take the role; counted per read that sees it, so a rate above zero is a stuck holder.
+      _metrics?.StalledWithoutSuccessor.Add(1, RoleAssignmentMetrics.RoleTag(stalled.Role));
     }
     return snapshots;
   }

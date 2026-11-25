@@ -102,6 +102,8 @@ public class RoleHolderLivenessSqlTests : EFCoreTestBase {
     var epoch = await _grantAsync(conn, a, cancellationToken);
     _ = await _declareAsync(conn, a, epoch, _window, cancellationToken);
     await using var aliveLock = await _holdAliveLockAsync(a, cancellationToken);
+    // #2593: b is a live candidate, so the stuck holder has a successor; without one it would keep the role.
+    await Assert.That(await _voteAsync(conn, b, cancellationToken)).IsEqualTo("contended");
     await _ageRoleAsync(conn, _window + TimeSpan.FromSeconds(1), cancellationToken);
 
     await Assert.That(await _heldAsync(conn, a, epoch, cancellationToken)).IsFalse();

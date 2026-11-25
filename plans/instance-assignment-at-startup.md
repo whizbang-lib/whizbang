@@ -232,3 +232,17 @@ fail), and its plan is checked with `EXPLAIN ANALYZE` against a candidates table
    (a) Phase 4 of this plan, under #1328. (b) Its own issue, with the fleet-wide startup permit, linked from #1328.
    **Recommendation: (b).** The roster gives the boot work an owner, but measuring what is expensive and capping
    concurrent starts is its own workstream; keeping it separate lets #1328 close on phases 1 to 3.
+
+## 9. Progress
+
+Owner decisions recorded on #1328 (2026-11-25): quorum is at least one other live candidate; a stalled sole holder
+keeps the role and is reported Degraded (a healthy sole holder is Healthy); no Running gate; storm control split to
+#2596.
+
+- **Phase 1, #2593 (done):** migration `615_ALapseNeedsASuccessor.sql`. `_role_has_successor` (a candidacy within the
+  role's lease, not tombstoned, live by the one rule); `_role_lapse_reason` asks it last, inside the lapsed branch; the
+  fence (`wh_assert_role_epoch`) accepts a live sole holder; `wh_vote_role` answers `cooling_down` only while a
+  successor exists; `wh_role_assignment_status()` gains `stalled_without_successor`. `RoleAssignmentSnapshot`
+  carries it, the `roles` health component reports it Degraded, and `whizbang.roles.stalled_without_successor` counts
+  each read that sees it. Locked by `RoleLapseNeedsASuccessorSqlTests`, `RoleAssignmentHealthSourceTests` and
+  `RoleAssignmentElectorE2ETests`.

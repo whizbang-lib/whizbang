@@ -82,6 +82,15 @@ public sealed class RoleAssignmentHealthSource : IWhizbangHealthSource {
         "role unassigned: " + string.Join("; ", unassigned) + " — its duty work waits until an instance holds it");
     }
 
+    var stalled = managed
+      .Where(role => byRole.TryGetValue(role, out var s) && s.State == RoleAssignmentState.Held && s.StalledWithoutSuccessor)
+      .Select(role => _describeHeld(byRole[role]) + ", stalled with no peer to take over")
+      .ToList();
+    if (stalled.Count > 0) {
+      // #2593: the holder keeps the role (no peer could take it), so the duty is not unassigned; it is stuck, and seen.
+      return new ComponentHealth(ComponentState.Degraded, "role stalled: " + string.Join("; ", stalled));
+    }
+
     var held = managed.Select(role => byRole.TryGetValue(role, out var s) && s.State == RoleAssignmentState.Held
       ? _describeHeld(s)
       : $"'{role}' idle (held only while it runs)");
