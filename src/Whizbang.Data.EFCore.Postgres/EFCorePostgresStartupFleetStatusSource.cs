@@ -11,14 +11,15 @@ namespace Whizbang.Data.EFCore.Postgres;
 
 /// <summary>
 /// The Postgres fleet source for the startup status surface: reads <c>wh_service_instances</c> so
-/// the fleet section can report every live instance and how long since each was last heard from.
+/// the fleet section can report every live instance and how long since each was last heard from, and each
+/// instance's assignment (#2595), through the reader the Dapper driver shares (<c>PostgresFleetStatus</c>).
 /// Supplied by the driver because the fleet lives in the database and only a driver knows how to
 /// reach it; the surface treats a throw as "fleet unavailable", stated with a reason — during a
 /// cold-boot migration this table may not exist yet, and that is an honest answer, not an error.
 /// </summary>
 /// <docs>operations/startup/startup-status</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupFleetStatusSourceTests.cs</tests>
-public sealed class EFCorePostgresStartupFleetStatusSource : IStartupFleetStatusSource {
+public sealed class EFCorePostgresStartupFleetStatusSource : IStartupFleetStatusSource, IInstanceAssignmentReader {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly Type _dbContextType;
 
@@ -31,51 +32,21 @@ public sealed class EFCorePostgresStartupFleetStatusSource : IStartupFleetStatus
   }
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<FleetInstanceStatus>> GetFleetAsync(CancellationToken cancellationToken) {
+  public Task<IReadOnlyList<FleetInstanceStatus>> GetFleetAsync(CancellationToken cancellationToken) =>
+    _readAsync(Whizbang.Data.Postgres.PostgresFleetStatus.ReadFleetAsync, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<IReadOnlyList<InstanceAssignment>> ReadAssignmentsAsync(CancellationToken cancellationToken) =>
+    _readAsync(Whizbang.Data.Postgres.PostgresFleetStatus.ReadAssignmentsAsync, cancellationToken);
+
+  /// <summary>Runs one shared read (#2595) over the context's connection, in the context's schema.</summary>
+  private async Task<T> _readAsync<T>(Func<NpgsqlConnection, string, CancellationToken, Task<T>> read, CancellationToken cancellationToken) {
     using var scope = _scopeFactory.CreateScope();
     var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
-
     var schema = dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
-    var prefix = Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema);
-
     await using var connectionScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
       (NpgsqlConnection)dbContext.Database.GetDbConnection(), cancellationToken).ConfigureAwait(false);
-    await using var cmd = connectionScope.Connection.CreateCommand();
-#pragma warning disable S2077 // schema is escaped through PgIdentifier; values are bound parameters
-    // Capabilities ride along as a join, not a fan-out — "which instance is the migrator right
-    // now" answered from the recorded holdings (derived state: the lock decides, the row reports).
-    cmd.CommandText = $@"
-      SELECT i.instance_id, i.service_name, i.host_name, i.last_heartbeat_at,
-             COALESCE(array_agg(c.capability ORDER BY c.capability) FILTER (WHERE c.capability IS NOT NULL), '{{}}') AS capabilities,
-             i.lifecycle_phase, i.library_version,
-             (e.instance_id IS NOT NULL) AS evicted,
-             -- #2027: the one liveness rule. It is Preflight's (316's bootstrap region), so it exists before the
-             -- handshake reads the fleet, ahead of this release's main pass.
-             {prefix}wh_instance_is_live(i.instance_id) AS is_live
-      FROM {prefix}wh_service_instances i
-      LEFT JOIN {prefix}wh_instance_capabilities c ON c.instance_id = i.instance_id
-      LEFT JOIN {prefix}wh_instance_evictions e ON e.instance_id = i.instance_id
-      GROUP BY i.instance_id, i.service_name, i.host_name, i.last_heartbeat_at, i.lifecycle_phase, i.library_version, e.instance_id
-      ORDER BY i.last_heartbeat_at DESC
-      LIMIT 200";
-#pragma warning restore S2077
-
-    var rows = new List<FleetInstanceStatus>();
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      rows.Add(new FleetInstanceStatus(
-        reader.GetGuid(0),
-        reader.GetString(1),
-        reader.GetString(2),
-        await reader.GetFieldValueAsync<DateTime>(3, cancellationToken) is { } heardAt
-          ? new DateTimeOffset(DateTime.SpecifyKind(heardAt, DateTimeKind.Utc))
-          : DateTimeOffset.MinValue,
-        await reader.GetFieldValueAsync<string[]>(4, cancellationToken),
-        await reader.IsDBNullAsync(5, cancellationToken) ? null : reader.GetString(5),
-        await reader.IsDBNullAsync(6, cancellationToken) ? null : reader.GetString(6),
-        reader.GetBoolean(7),
-        reader.GetBoolean(8)));
-    }
-    return rows;
+    return await read(connectionScope.Connection, Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema), cancellationToken)
+      .ConfigureAwait(false);
   }
 }

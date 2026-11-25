@@ -232,3 +232,41 @@ fail), and its plan is checked with `EXPLAIN ANALYZE` against a candidates table
    (a) Phase 4 of this plan, under #1328. (b) Its own issue, with the fleet-wide startup permit, linked from #1328.
    **Recommendation: (b).** The roster gives the boot work an owner, but measuring what is expensive and capping
    concurrent starts is its own workstream; keeping it separate lets #1328 close on phases 1 to 3.
+
+## 9. Progress
+
+Owner decisions recorded on #1328 (2026-11-25): quorum is at least one other live candidate; a stalled sole holder
+keeps the role and is reported Degraded (a healthy sole holder is Healthy); no Running gate; storm control split to
+#2596.
+
+- **Phase 1, #2593 (done):** migration `615_ALapseNeedsASuccessor.sql`. `_role_has_successor` (a candidacy within the
+  role's lease, not tombstoned, live by the one rule); `_role_lapse_reason` asks it last, inside the lapsed branch; the
+  fence (`wh_assert_role_epoch`) accepts a live sole holder; `wh_vote_role` answers `cooling_down` only while a
+  successor exists; `wh_role_assignment_status()` gains `stalled_without_successor`. `RoleAssignmentSnapshot`
+  carries it, the `roles` health component reports it Degraded, and `whizbang.roles.stalled_without_successor` counts
+  each read that sees it. Locked by `RoleLapseNeedsASuccessorSqlTests`, `RoleAssignmentHealthSourceTests` and
+  `RoleAssignmentElectorE2ETests`.
+- **Phase 2, #2594 (done):** `RoleCatalog` (`RoleKind` Standing or Episodic, `RoleDeclaration` by name or prefix)
+  declares the framework's roles in one list; `AddWhizbangRole` / `AddWhizbangRolePrefix` declare a host's, and a
+  standing one joins `RoleAssignmentOptions.Roles`. `PgRoleElector` votes only for declared roles (a role in
+  `RoleAssignmentOptions.Roles` counts as declared) and refuses the rest before any statement. Locked by
+  `RoleCatalogTests`, `RoleDeclarationGuardTests` (every acquire call names a declared constant or is a listed
+  forwarder; each framework standing role has exactly one holding loop) and `RoleAssignmentElectorE2ETests`. Then
+  `RoleAssignmentOptions.IsEpisodic` reads the catalog (`RoleAssignmentOptions.Catalog`, applied from the registered
+  catalog), while `LeaseFor` keeps the longer default lease for the migrator alone, so a perspective rebuild's lease is
+  unchanged. Not done from 3.4: the stamper's and assigner's roster entries stay their own post-configures, since the
+  stamper's is conditional on its options.
+- **Phase 3, #2595 (done):** migration `616_EachInstanceAssignmentIsOneFact.sql` (`wh_instance_assignments()`,
+  outside the bootstrap region); `InstanceAssignment`, `InstanceAssignmentKind` and `IInstanceAssignmentReader` in
+  Core; `PostgresFleetStatus` in `Whizbang.Data.Postgres` is the one reader both drivers call
+  (`EFCorePostgresStartupFleetStatusSource`, the new `DapperPostgresStartupFleetStatusSource`); the fleet read checks
+  the function exists first, so the Preflight read of a cold boot still works. `FleetInstanceStatus` gains `Assignment`
+  and `OwnedPartitions`. Locked by `InstanceAssignmentsSqlTests` and `InstanceAssignmentDriverParityTests`. Then
+  `InstanceAssignmentMonitor` (hosted from Coordinate, every `ObserveInterval`) logs "Assigned: ..." on first sight and
+  on every change, and the `assignment` health component (`InstanceAssignmentHealthSource`) reports it, Degraded past
+  `AwaitingShareGrace` (`InstanceAssignmentOptions`, bound from `Whizbang:Database:InstanceAssignment`; zero derives
+  two settle windows plus one renew interval). Registered for both drivers by `PostgresCoordinationRegistration`. A fresh instance not yet
+  observed reads Operational ("not yet observed") and turns Degraded only when no read has succeeded by the end of the
+  grace measured from the monitor's start.
+  Locked by `InstanceAssignmentMonitorTests`, `InstanceAssignmentHealthSourceTests`, `InstanceAssignmentMonitorLoopTests`
+  and the parity test.

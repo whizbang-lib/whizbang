@@ -53,7 +53,9 @@ public class RoleHolderLivenessE2ETests : EFCoreTestBase {
     pod,
     NullLogger<PgRoleElector>.Instance,
     libraryVersion: null,
-    timeProvider: time);
+    timeProvider: time,
+    // #2594: the second role these tests vote for is declared, as a host declares its own.
+    roleCatalog: new RoleCatalog([new RoleDeclaration("liveness-other-role", RoleKind.Standing)]));
 
   private async Task<Pod> _joinAsync(CancellationToken ct) {
     var pod = new Pod();

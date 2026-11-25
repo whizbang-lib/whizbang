@@ -55,6 +55,14 @@ public sealed record RoleAssignmentSnapshot(
 
   /// <summary>Whether the backend the holder marked for its duty is running a statement now (the lease backstop).</summary>
   public bool DutyBackendActive { get; init; }
+
+  /// <summary>
+  /// Whether the holder is past its lease, its marked backend's statement and its progress window, and keeps the role
+  /// only because no other live instance can take it (#2593). The roles health component reports it Degraded; a holder
+  /// that renews is never stalled, whether or not it has a peer.
+  /// </summary>
+  /// <docs>operations/startup/capabilities-and-duties#a-lapse-needs-a-successor</docs>
+  public bool StalledWithoutSuccessor { get; init; }
 }
 
 /// <summary>Reads every role's assignment, for health, metrics and operators.</summary>

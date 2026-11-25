@@ -143,6 +143,30 @@ public class RoleAssignmentHealthSourceTests {
     await Assert.That(health.Detail).Contains("2 owed, draining");
   }
 
+  /// <summary>
+  /// #2593: a sole holder stalled past its progress window keeps its role, because no peer could take it, and the
+  /// component says so: Degraded, never Faulted, naming the holder. Restarting it is the operator's call.
+  /// </summary>
+  [Test]
+  public async Task AStalledSoleHolder_IsDegraded_StalledWithNoPeerToTakeOverAsync() {
+    var health = await _reportAsync(new RoleAssignmentOptions(),
+      _snapshot(StartupDuties.MAINTAINER, RoleAssignmentState.Held) with { StalledWithoutSuccessor = true });
+
+    await Assert.That(health.State).IsEqualTo(ComponentState.Degraded).Because("a stuck process is surfaced, not masked");
+    await Assert.That(health.Detail)
+      .IsEqualTo($"role stalled: 'maintainer' held by {_holder} at epoch 4, 2 owed, stalled with no peer to take over");
+  }
+
+  /// <summary>#2593: having no peer is never itself a fault, so a healthy single-instance service reads Operational.</summary>
+  [Test]
+  public async Task AHealthySoleHolder_IsOperationalAsync() {
+    var health = await _reportAsync(new RoleAssignmentOptions(),
+      _snapshot(StartupDuties.MAINTAINER, RoleAssignmentState.Held) with { StalledWithoutSuccessor = false });
+
+    await Assert.That(health.State).IsEqualTo(ComponentState.Operational);
+    await Assert.That(health.Detail).DoesNotContain("stalled");
+  }
+
   [Test]
   public async Task AReadThatFails_IsDegraded_NotThrownAsync() {
     var reader = new IRoleAssignmentReaderCreateExpectations();

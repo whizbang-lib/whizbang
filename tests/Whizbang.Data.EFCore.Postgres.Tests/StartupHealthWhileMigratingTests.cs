@@ -135,8 +135,8 @@ public sealed class StartupHealthWhileMigratingTests {
   /// host starts, so no win is missed.
   /// </summary>
   private static Task _standingRolesHeld(WebApplication app) {
-    var roles = app.Services.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value.Roles
-      .Where(role => !RoleAssignmentOptions.IsEpisodic(role));
+    var options = app.Services.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value;
+    var roles = options.Roles.Where(role => !options.IsEpisodic(role));
     var held = roles.ToDictionary(role => role, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
     void won(string role) {
       if (held.TryGetValue(role, out var signal)) {

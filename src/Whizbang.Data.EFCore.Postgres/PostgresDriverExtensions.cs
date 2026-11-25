@@ -156,10 +156,15 @@ public static class PostgresDriverExtensions {
         // TURNKEY: the startup status surface's fleet section reads wh_service_instances through
         // this source. The surface itself is opt-in; registering the source merely makes the
         // fleet section answerable when a host mounts it.
-        selector.Services.TryAddSingleton<Whizbang.Core.Startup.IStartupFleetStatusSource>(sp =>
+        selector.Services.TryAddSingleton(sp =>
             new EFCorePostgresStartupFleetStatusSource(
                 sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
                 dbContextType));
+        selector.Services.TryAddSingleton<Whizbang.Core.Startup.IStartupFleetStatusSource>(sp =>
+            sp.GetRequiredService<EFCorePostgresStartupFleetStatusSource>());
+        // #2595: each instance's assignment as one fact, read by the same shared reader as the Dapper driver's.
+        selector.Services.TryAddSingleton<Whizbang.Core.Startup.IInstanceAssignmentReader>(sp =>
+            sp.GetRequiredService<EFCorePostgresStartupFleetStatusSource>());
 
         // TURNKEY: the Assess verdict machinery — this binary's version against every version
         // the migration ledger records, decided on every instance before the migration barrier.

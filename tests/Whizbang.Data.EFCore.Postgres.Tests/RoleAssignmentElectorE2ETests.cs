@@ -55,14 +55,15 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
 
   private WhizbangNotificationOptions _notificationOptions() => new() { DirectConnectionString = ConnectionString };
 
-  private PgRoleElector _electorFor(Pod pod, TimeProvider? time = null) => new(
+  private PgRoleElector _electorFor(Pod pod, TimeProvider? time = null, RoleCatalog? catalog = null) => new(
     Options.Create(_notificationOptions()),
     Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero }),
     new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
     pod,
     NullLogger<PgRoleElector>.Instance,
     libraryVersion: null,
-    timeProvider: time);
+    timeProvider: time,
+    roleCatalog: catalog);
 
   private async Task<Pod> _joinAsync(CancellationToken ct) {
     var pod = new Pod();
@@ -353,6 +354,10 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var a = await _joinAsync(cancellationToken);
     _ = (await _electorFor(a).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
     await _ageAsync(_defaults.Lease + TimeSpan.FromSeconds(1), cancellationToken);
+    // #2593: a live peer votes for the role, so the holder has a successor and its lapse is a verdict.
+    var b = await _joinAsync(cancellationToken);
+    await _executeAsync("INSERT INTO wh_role_candidates (role, instance_id, version_key, last_voted_at) VALUES (@role, @id, '{}', now())",
+      cancellationToken, ("role", ROLE), ("id", b.InstanceId));
 
     // The same instance after a restart: a fresh elector with no tenure of its own.
     var attempt = await _electorFor(a).TryAcquireAsync(ROLE, cancellationToken);
@@ -381,14 +386,16 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var a = await _joinAsync(cancellationToken);
     var b = await _joinAsync(cancellationToken);
 
-    var attempt = await _electorFor(a).TryAcquireAsync("host-duty", cancellationToken);
+    var catalog = new RoleCatalog([new RoleDeclaration("host-duty", RoleKind.Episodic)]);
+    var attempt = await _electorFor(a, catalog: catalog).TryAcquireAsync("host-duty", cancellationToken);
 
     await Assert.That(attempt.Grant).IsNotNull();
     await Assert.That(attempt.Grant!.Epoch).IsEqualTo(1L)
       .Because("every duty carries a fencing token, so a deposed holder's writes are refused");
-    await Assert.That((await _electorFor(b).TryAcquireAsync("host-duty", cancellationToken)).Refusal).IsEqualTo(DutyRefusal.Contended);
+    await Assert.That((await _electorFor(b, catalog: catalog).TryAcquireAsync("host-duty", cancellationToken)).Refusal)
+      .IsEqualTo(DutyRefusal.Contended);
     await attempt.Grant.DisposeAsync();
-    await using var next = (await _electorFor(b).TryAcquireAsync("host-duty", cancellationToken)).Grant;
+    await using var next = (await _electorFor(b, catalog: catalog).TryAcquireAsync("host-duty", cancellationToken)).Grant;
     await Assert.That(next?.Epoch).IsEqualTo(2L).Because("a release hands the duty off at once");
   }
 
@@ -546,6 +553,76 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
 
   [Test]
   [Timeout(120000)]
+  public async Task TryAcquire_ARoleTheCatalogDoesNotDeclare_IsRefused_AndCastsNoVoteAsync(CancellationToken cancellationToken) {
+    // #2594: an undeclared name never reaches the vote, alone or in a batch; declaring it is what lets it through.
+    var a = await _joinAsync(cancellationToken);
+    PgRoleElector electorWith(RoleCatalog catalog) => new(
+      Options.Create(_notificationOptions()), Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero }),
+      new ConfigurationBuilder().AddInMemoryCollection([]).Build(), a,
+      NullLogger<PgRoleElector>.Instance, libraryVersion: null, roleCatalog: catalog);
+    var undeclared = electorWith(new RoleCatalog([]));
+
+    var alone = await undeclared.TryAcquireAsync("nightly-report", cancellationToken);
+    await Assert.That(alone.Grant).IsNull();
+    await Assert.That(alone.Refusal).IsEqualTo(DutyRefusal.Refused);
+    await Assert.That(alone.Detail!).Contains("AddWhizbangRole");
+    var batch = await undeclared.TryAcquireManyAsync(["nightly-report", ROLE], cancellationToken);
+    await Assert.That(batch[0].Refusal).IsEqualTo(DutyRefusal.Refused);
+    await using (var held = batch[1].Grant!) {
+      await Assert.That(held.Duty).IsEqualTo(ROLE).Because("a declared role in the same batch is voted for as usual");
+    }
+    await using (var conn = await _openAsync(cancellationToken)) {
+      await using var cmd = conn.CreateCommand();
+      cmd.CommandText = "SELECT count(*) FROM wh_role_candidates WHERE role = 'nightly-report'";
+      await Assert.That((long)(await cmd.ExecuteScalarAsync(cancellationToken))!).IsEqualTo(0L)
+        .Because("the refusal is decided before any statement, so no candidacy is written");
+    }
+
+    var declared = electorWith(new RoleCatalog([new RoleDeclaration("nightly-report", RoleKind.Standing)]));
+    await using var grant = (await declared.TryAcquireAsync("nightly-report", cancellationToken)).Grant;
+    await Assert.That(grant).IsNotNull();
+
+    // A role put in the managed roster directly is a standing role the holder loop holds, so it counts as declared,
+    // beside the catalog's own declarations.
+    var rostered = new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero };
+    rostered.Roles.Add("rostered-role");
+    var fromRoster = new PgRoleElector(
+      Options.Create(_notificationOptions()), Options.Create(rostered),
+      new ConfigurationBuilder().AddInMemoryCollection([]).Build(), a,
+      NullLogger<PgRoleElector>.Instance, libraryVersion: null,
+      roleCatalog: new RoleCatalog([new RoleDeclaration("nightly-export", RoleKind.Episodic)]));
+    await using var rosteredGrant = (await fromRoster.TryAcquireAsync("rostered-role", cancellationToken)).Grant;
+    await Assert.That(rosteredGrant).IsNotNull();
+    await using var exportGrant = (await fromRoster.TryAcquireAsync("nightly-export", cancellationToken)).Grant;
+    await Assert.That(exportGrant).IsNotNull().Because("the catalog's own declarations are kept beside the roster's");
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task ReadAssignments_CountsAStalledSoleHolder_OnTheStalledWithoutSuccessorMeterAsync(CancellationToken cancellationToken) {
+    // #2593: the meter counts each read that found a holder kept only because no peer can take its role.
+    await using var provider = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    var metrics = new RoleAssignmentMetrics(new WhizbangMetrics(provider.GetRequiredService<IMeterFactory>()));
+    using var reader = new MeterReader(metrics.Elections.Meter);
+    var a = await _joinAsync(cancellationToken);
+    var elector = new PgRoleElector(
+      Options.Create(_notificationOptions()), Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero }),
+      new ConfigurationBuilder().AddInMemoryCollection([]).Build(), a,
+      NullLogger<PgRoleElector>.Instance, libraryVersion: null, metrics: metrics);
+    await using var grant = (await elector.TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+
+    _ = await elector.ReadAssignmentsAsync(cancellationToken);
+    await Assert.That(reader.Total("whizbang.roles.stalled_without_successor")).IsEqualTo(0)
+      .Because("a holder inside its lease is healthy, peer or no peer");
+
+    await _ageAsync(_defaults.Lease + TimeSpan.FromSeconds(1), cancellationToken);
+    _ = await elector.ReadAssignmentsAsync(cancellationToken);
+    await Assert.That(reader.Total("whizbang.roles.stalled_without_successor", RoleAssignmentMetrics.ROLE_TAG, ROLE)).IsEqualTo(1);
+    await _ageAsync(-(_defaults.Lease + TimeSpan.FromSeconds(1)), cancellationToken);
+  }
+
+  [Test]
+  [Timeout(120000)]
   public async Task ReadAssignments_ReportsHolderEpochStateAndOwedWorkAsync(CancellationToken cancellationToken) {
     // Requirements 9 and 10 through the C# reader.
     var a = await _joinAsync(cancellationToken);
@@ -564,10 +641,23 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     await Assert.That(held.ElectionCount).IsEqualTo(1L);
     await Assert.That(held.PendingWork).IsEqualTo(1L);
 
+    await Assert.That(held.StalledWithoutSuccessor).IsFalse();
+
+    // Past its lease with no peer, the sole holder keeps the role and is reported stalled (#2593).
     await _ageAsync(_defaults.Lease + TimeSpan.FromSeconds(1), cancellationToken);
+    var stalled = (await elector.ReadAssignmentsAsync(cancellationToken)).Single();
+    await Assert.That(stalled.State).IsEqualTo(RoleAssignmentState.Held);
+    await Assert.That(stalled.StalledWithoutSuccessor).IsTrue();
+
+    // A live peer that votes for the role is a successor, so the same holder has lapsed.
+    var b = await _joinAsync(cancellationToken);
+    await _executeAsync("INSERT INTO wh_role_candidates (role, instance_id, version_key, last_voted_at) VALUES (@role, @id, '{}', now())",
+      cancellationToken, ("role", ROLE), ("id", b.InstanceId));
     var lapsed = (await elector.ReadAssignmentsAsync(cancellationToken)).Single();
     await Assert.That(lapsed.State).IsEqualTo(RoleAssignmentState.Lapsed);
     await Assert.That(lapsed.VoidReason).IsEqualTo("lapsed");
+    await Assert.That(lapsed.StalledWithoutSuccessor).IsFalse();
+    await _executeAsync("DELETE FROM wh_role_candidates WHERE instance_id = @id", cancellationToken, ("id", b.InstanceId));
 
     await _ageAsync(-(_defaults.Lease + TimeSpan.FromSeconds(1)), cancellationToken);
     await grant.DisposeAsync();
