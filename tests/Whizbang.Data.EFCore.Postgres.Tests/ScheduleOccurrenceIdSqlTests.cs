@@ -447,7 +447,8 @@ public class ScheduleOccurrenceIdSqlTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT fired_at FROM wh_schedule_runs WHERE occurrence_id = @o";
     cmd.Parameters.AddWithValue("o", occurrenceId);
-    return (DateTimeOffset)(await cmd.ExecuteScalarAsync())!;
+    var firedAt = (DateTime)(await cmd.ExecuteScalarAsync())!;
+    return new DateTimeOffset(DateTime.SpecifyKind(firedAt, DateTimeKind.Utc), TimeSpan.Zero);
   }
 
   private (ServiceProvider Provider, System.Text.Json.JsonSerializerOptions JsonOptions) _createService() {
