@@ -110,7 +110,7 @@ public sealed record HeartbeatRequest(
   /// <returns>The metadata as JSON text.</returns>
   /// <docs>data/event-store#trim-gate</docs>
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/HeartbeatRequestStoredFormLevelTests.cs</tests>
-  public string MetadataJson() => MetadataJson(Whizbang.Core.Perspectives.WhizbangIdDocumentForm.ProcessWritesUuidString);
+  public string MetadataJson() => MetadataJson(Whizbang.Core.Perspectives.WhizbangIdDocumentForm.WritesUuidString);
 
   /// <summary>The metadata, saying the given strong-id document form.</summary>
   /// <param name="writesUuidStrings">Whether this process writes strongly-typed ids as UUID strings.</param>

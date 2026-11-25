@@ -53,9 +53,11 @@ internal sealed class DapperSchemaInitializationRunner(
         // #2022: started past an incompatibility verdict. It serves the schema as it is: it registers and records the
         // override on its row, and converges nothing.
         await createInitializer().ServeAsItIsAsync(overridden, cancellationToken).ConfigureAwait(false);
+        await _checkStrongIdDocumentGateAsync(cancellationToken).ConfigureAwait(false);
         return;
       }
       await _reportingStages(createInitializer()).ConvergeCurrentAsync(cancellationToken).ConfigureAwait(false);
+      await _checkStrongIdDocumentGateAsync(cancellationToken).ConfigureAwait(false);
       return;
     }
 
@@ -99,6 +101,23 @@ internal sealed class DapperSchemaInitializationRunner(
       }
     }
     await retry.WaitForSchemaReadyAsync(connectionString, cancellationToken).ConfigureAwait(false);
+    await _checkStrongIdDocumentGateAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Asks the schema's strong-id document gate, which sets the form this process writes a strongly-typed id in (#2518),
+  /// as the Entity Framework driver's generated start does. Never fatal: a gate that cannot be asked holds the schema,
+  /// so the process keeps the form every release reads until the maintenance cycle asks again.
+  /// </summary>
+  private async Task _checkStrongIdDocumentGateAsync(CancellationToken cancellationToken) {
+    await using var connection = new NpgsqlConnection(connectionString);
+    try {
+      await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+      await StrongIdDocumentGate.CheckAsync(connection, "public", logger, cancellationToken).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      StrongIdDocumentGate.HoldUnasked(connection.Database, "public");
+      DapperSchemaInitializationRunnerLog.GateUnasked(logger, ex);
+    }
   }
 
   /// <summary>
@@ -111,4 +130,13 @@ internal sealed class DapperSchemaInitializationRunner(
     initializer.Converging = ct => SchemaInitializationStages.ConvergingAsync(services, ct);
     return initializer;
   }
+}
+
+/// <summary>Source-generated logging for the Dapper schema initialization runner.</summary>
+internal static partial class DapperSchemaInitializationRunnerLog {
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "Could not ask the strong-id document gate; strongly-typed ids in documents are written in the form every "
+      + "release reads until the maintenance cycle can")]
+  public static partial void GateUnasked(ILogger logger, Exception exception);
 }

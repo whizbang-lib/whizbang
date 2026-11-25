@@ -596,6 +596,10 @@ public static class ServiceCollectionExtensions {
     // #2323: the trim gate, ahead of the history conversion, so the cycle that opens it starts trimming history.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataTrimGateStep>(
       MetadataTrimGateStep.FromServices));
+    // #2518: the strong-id document gate, asked each cycle, so this instance's heartbeat says it writes strong ids as
+    // UUID strings once the fleet reads them, and an Entity Framework instance's rewrite in the same schema is not held.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, StrongIdDocumentGateStep>(
+      StrongIdDocumentGateStep.FromServices));
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
       MetadataHistoryConversionStep.FromServices));
     // #2326: the maintenance step that converts audit records written before the pointer default to the pointer form.
