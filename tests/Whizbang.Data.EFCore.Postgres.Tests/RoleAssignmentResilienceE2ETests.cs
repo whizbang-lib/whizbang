@@ -55,14 +55,14 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
 
   private PgRoleElector _electorFor(
       Pod pod, string? version = null, TimeProvider? time = null,
-      Action<RoleAssignmentOptions>? configure = null, string? connectionString = null) {
+      Action<RoleAssignmentOptions>? configure = null, string? connectionString = null, RoleCatalog? catalog = null) {
     var options = new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero };
     options.Roles.Add(OTHER);
     configure?.Invoke(options);
     return new PgRoleElector(
       Options.Create(_notification(connectionString)), Options.Create(options), _config(), pod,
       NullLogger<PgRoleElector>.Instance, version is null ? null : new LibraryVersionProvider(version),
-      timeProvider: time);
+      timeProvider: time, roleCatalog: catalog);
   }
 
   private async Task<Pod> _joinAsync(CancellationToken ct) {
@@ -172,9 +172,9 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
     var mark = await PgRoleElector.MarkDutyBackendAsync(duty, grant, cancellationToken);
     // #2593: a live peer votes for the role, so the holder has a successor and its lapse is a verdict.
     var peer = await _joinAsync(cancellationToken);
+    await _ageAsync(ROLE, _defaults.Lease + TimeSpan.FromSeconds(1), cancellationToken);
     _ = await _scalarAsync("INSERT INTO wh_role_candidates (role, instance_id, version_key, last_voted_at) VALUES (@role, @id, '{}', now())",
       cancellationToken, ("role", ROLE), ("id", peer.InstanceId));
-    await _ageAsync(ROLE, _defaults.Lease + TimeSpan.FromSeconds(1), cancellationToken);
     var whileRunning = (string)(await _scalarOnAsync(duty, "SELECT state FROM wh_role_assignment_status() WHERE role = @role",
       cancellationToken, ("role", ROLE)))!;
     await Assert.That(whileRunning).IsEqualTo("held").Because("the marked backend is running a statement");
@@ -277,7 +277,8 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
   [Timeout(120000)]
   public async Task TryAcquireMany_VotesForEveryUnheldRoleInOneStatement_AndAsksTheRestOneByOneAsync(CancellationToken cancellationToken) {
     var a = await _joinAsync(cancellationToken);
-    var elector = _electorFor(a, "0.2607.0", configure: o => o.RoleLeases[OTHER] = TimeSpan.FromMinutes(1));
+    var elector = _electorFor(a, "0.2607.0", configure: o => o.RoleLeases[OTHER] = TimeSpan.FromMinutes(1),
+      catalog: new RoleCatalog([new RoleDeclaration("not-a-role", RoleKind.Episodic)]));
 
     var first = await elector.TryAcquireManyAsync([ROLE, OTHER, "not-a-role"], cancellationToken);
 
@@ -285,7 +286,7 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
     await Assert.That(first[1].Grant).IsNotNull();
     await Assert.That(first[2].Grant).IsNotNull();
     await Assert.That(first[2].Grant!.Epoch).IsEqualTo(1L)
-      .Because("#2044: a duty the holder loop does not hold is still voted in the role table, in the same statement");
+      .Because("#2044: a declared duty the holder loop does not hold is still voted in the role table, in the same statement");
     var lease = (TimeSpan)(await _scalarAsync("SELECT lease FROM wh_role_assignments WHERE role = @role", cancellationToken, ("role", OTHER)))!;
     await Assert.That(lease).IsEqualTo(TimeSpan.FromMinutes(1)).Because("each role is granted its own declared lease");
 

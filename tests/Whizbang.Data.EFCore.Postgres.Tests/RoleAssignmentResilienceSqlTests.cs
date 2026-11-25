@@ -313,9 +313,9 @@ public class RoleAssignmentResilienceSqlTests : EFCoreTestBase {
     var older = await _joinAsync(cancellationToken);
     var newer = await _joinAsync(cancellationToken);
     _ = await _voteAsync(newer, cancellationToken, version: _new);
+    await _ageAsync(ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
     // #2593: a live peer votes for the role, so the holder has a successor and its lapse is a verdict.
     await _candidateAsync(ROLE, older, cancellationToken);
-    await _ageAsync(ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
     // The newer holder lapsed (no other role bears witness, so it is its own lapse) and is cooling down.
     await Assert.That((await _voteAsync(newer, cancellationToken, version: _new)).Outcome).IsEqualTo("cooling_down");
 
@@ -501,11 +501,11 @@ public class RoleAssignmentResilienceSqlTests : EFCoreTestBase {
     // Both holders renewing: each was renewed after the other was assigned, as a healthy fleet's are.
     _ = await _voteAsync(a, cancellationToken, ROLE);
     _ = await _voteAsync(b, cancellationToken, OTHER_ROLE);
+    await _ageAsync(ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
+    await _ageAsync(OTHER_ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
     // #2593: a live peer votes for the role, so the holder has a successor and its lapse is a verdict.
     await _candidateAsync(ROLE, b, cancellationToken);
     await _candidateAsync(OTHER_ROLE, a, cancellationToken);
-    await _ageAsync(ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
-    await _ageAsync(OTHER_ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
 
     var again = await _voteAsync(a, cancellationToken, ROLE);
     var againOther = await _voteAsync(b, cancellationToken, OTHER_ROLE);
@@ -529,9 +529,9 @@ public class RoleAssignmentResilienceSqlTests : EFCoreTestBase {
     // The other role has been held for an hour and is live now, so it was renewed through the window.
     _ = await _scalarAsync("UPDATE wh_role_assignments SET assigned_at = assigned_at - interval '1 hour' WHERE role = @role",
       cancellationToken, ("role", OTHER_ROLE));
+    await _ageAsync(ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
     // #2593: a live peer votes for the role, so the holder has a successor and its lapse is a verdict.
     await _candidateAsync(ROLE, b, cancellationToken);
-    await _ageAsync(ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
 
     var again = await _voteAsync(a, cancellationToken, ROLE);
 
@@ -546,9 +546,9 @@ public class RoleAssignmentResilienceSqlTests : EFCoreTestBase {
     var b = await _joinAsync(cancellationToken);
     _ = await _voteAsync(a, cancellationToken, ROLE);
     _ = await _voteAsync(b, cancellationToken, OTHER_ROLE);
+    await _ageAsync(ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
     // #2593: a live peer votes for the role, so the holder has a successor and its lapse is a verdict.
     await _candidateAsync(ROLE, b, cancellationToken);
-    await _ageAsync(ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
     // The other role was held from the start and has lapsed too, which alone would read as fleet-wide.
     // An instance vacated it inside this holder's final lease, though, so the database was reachable then.
     _ = await _scalarAsync("""

@@ -187,8 +187,8 @@ public class InstanceAssignmentsSqlTests : EFCoreTestBase {
   private static async Task<long> _grantAsync(NpgsqlConnection conn, Guid id, string role, CancellationToken ct) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT outcome, epoch FROM wh_vote_role(@role, @id, interval '15 seconds', interval '15 seconds', NULL, NULL, NULL)";
-    cmd.Parameters.AddWithValue("role", role);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(role), role);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     await using var reader = await cmd.ExecuteReaderAsync(ct);
     _ = await reader.ReadAsync(ct);
     if (reader.GetString(0) != "granted") {

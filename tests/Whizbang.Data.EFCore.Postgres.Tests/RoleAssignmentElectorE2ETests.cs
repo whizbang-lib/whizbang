@@ -354,6 +354,10 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var a = await _joinAsync(cancellationToken);
     _ = (await _electorFor(a).TryAcquireAsync(ROLE, cancellationToken)).Grant!;
     await _ageAsync(_defaults.Lease + TimeSpan.FromSeconds(1), cancellationToken);
+    // #2593: a live peer votes for the role, so the holder has a successor and its lapse is a verdict.
+    var b = await _joinAsync(cancellationToken);
+    await _executeAsync("INSERT INTO wh_role_candidates (role, instance_id, version_key, last_voted_at) VALUES (@role, @id, '{}', now())",
+      cancellationToken, ("role", ROLE), ("id", b.InstanceId));
 
     // The same instance after a restart: a fresh elector with no tenure of its own.
     var attempt = await _electorFor(a).TryAcquireAsync(ROLE, cancellationToken);
@@ -577,6 +581,20 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var declared = electorWith(new RoleCatalog([new RoleDeclaration("nightly-report", RoleKind.Standing)]));
     await using var grant = (await declared.TryAcquireAsync("nightly-report", cancellationToken)).Grant;
     await Assert.That(grant).IsNotNull();
+
+    // A role put in the managed roster directly is a standing role the holder loop holds, so it counts as declared,
+    // beside the catalog's own declarations.
+    var rostered = new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero };
+    rostered.Roles.Add("rostered-role");
+    var fromRoster = new PgRoleElector(
+      Options.Create(_notificationOptions()), Options.Create(rostered),
+      new ConfigurationBuilder().AddInMemoryCollection([]).Build(), a,
+      NullLogger<PgRoleElector>.Instance, libraryVersion: null,
+      roleCatalog: new RoleCatalog([new RoleDeclaration("nightly-export", RoleKind.Episodic)]));
+    await using var rosteredGrant = (await fromRoster.TryAcquireAsync("rostered-role", cancellationToken)).Grant;
+    await Assert.That(rosteredGrant).IsNotNull();
+    await using var exportGrant = (await fromRoster.TryAcquireAsync("nightly-export", cancellationToken)).Grant;
+    await Assert.That(exportGrant).IsNotNull().Because("the catalog's own declarations are kept beside the roster's");
   }
 
   [Test]

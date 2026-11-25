@@ -65,6 +65,9 @@ public class RoleCatalogTests {
     await Assert.That(() => new RoleCatalog([new RoleDeclaration(StartupDuties.MIGRATOR, RoleKind.Standing)]))
       .Throws<InvalidOperationException>()
       .Because("one role is held one way; two kinds for one name is a configuration that cannot work");
+    await Assert.That(() => new RoleCatalog([new RoleDeclaration(PerspectiveRebuildDuty.DUTY_PREFIX, RoleKind.Episodic)]))
+      .Throws<InvalidOperationException>().WithMessageContaining("as a family held Episodic and as a role held Episodic")
+      .Because("a name is a role or the start of a family, never both");
   }
 
   [Test]
