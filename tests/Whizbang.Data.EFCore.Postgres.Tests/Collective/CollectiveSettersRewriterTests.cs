@@ -7,8 +7,8 @@ using System.Linq.Expressions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
-using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Data.EFCore.Postgres.Collective;
 using Whizbang.Data.Postgres;
 
