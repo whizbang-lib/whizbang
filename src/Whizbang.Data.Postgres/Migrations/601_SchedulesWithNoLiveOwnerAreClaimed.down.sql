@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 598_SchedulesWithNoLiveOwnerAreClaimed.sql (#2575): wh_claim_due_schedules goes back to 579's
+-- The reverse of 601_SchedulesWithNoLiveOwnerAreClaimed.sql (#2575): wh_claim_due_schedules goes back to 579's
 -- definition, whose legacy branch claims only schedules on streams pinned to the caller, and the rule goes.
 
 SELECT __SCHEMA__.drop_all_overloads('wh_claim_due_schedules');

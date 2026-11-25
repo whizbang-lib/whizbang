@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 598_SchedulesWithNoLiveOwnerAreClaimed.sql
+-- Migration: 601_SchedulesWithNoLiveOwnerAreClaimed.sql
 -- Date: 2026-11-25
 -- Description: A due schedule whose stream no live instance holds is claimed (#2575).
 --
@@ -27,7 +27,7 @@
 --              Cost: in the legacy mode one read of the live instances per claim (an array built once, not per row);
 --              none in map mode. The due scan is still the partial index idx_wh_schedules_due.
 --
---              Number 598: develop ends at 581, and 590 to 597 are taken by a change in flight.
+--              Number 601: 590 to 599 are on develop and 600 is taken by a change in flight.
 --
 -- Reversal: reversible (the down file restores 579's claim and drops the rule)
 -- Dependencies: 579 (wh_claim_due_schedules, last word), 565 (wh_i_own, wh_partition_ownership_by_map), 316
@@ -57,7 +57,7 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_schedule_owner_admits(UUID, UUID, UUID[]) IS
-  '598 (#2575): whether a schedule on a stream assigned to p_assigned_instance_id is p_instance_id''s to fire: the '
+  '601 (#2575): whether a schedule on a stream assigned to p_assigned_instance_id is p_instance_id''s to fire: the '
   'stream is unassigned (or has no row, which a LEFT JOIN reads as NULL), is the caller''s, or its owner is not among '
   'the live instances the caller read (wh_live_instance_ids).';
 
@@ -104,7 +104,7 @@ DECLARE
   v_now TIMESTAMPTZ := COALESCE(p_now, NOW());
   -- 566 (#2554, #2555): the service's switch, read once: on, the partition ownership table alone decides.
   v_map BOOLEAN := __SCHEMA__.wh_partition_ownership_by_map();
-  -- 598 (#2575): the legacy mode's live instances, read once per claim (the alive-lock read is not per row). Map mode
+  -- 601 (#2575): the legacy mode's live instances, read once per claim (the alive-lock read is not per row). Map mode
   -- does not read them.
   v_live UUID[] := CASE WHEN v_map THEN NULL
                         ELSE ARRAY(SELECT l.instance_id FROM __SCHEMA__.wh_live_instance_ids() l) END;
@@ -115,7 +115,7 @@ BEGIN
     -- 566 (#2555): in map mode a schedule fires on the owner of its stream's partition (wh_i_own), the schedule's own
     -- number (compute_partition for a row without one). The stored owner is the legacy mode's test, and a stream with no
     -- ledger row fires nowhere in it, as before.
-    -- 598 (#2575): in the legacy mode a stream no live instance holds (no ledger row, an unassigned row, or an owner the
+    -- 601 (#2575): in the legacy mode a stream no live instance holds (no ledger row, an unassigned row, or an owner the
     -- liveness rule calls dead) is any live claimer's (wh_schedule_owner_admits); the row lock below keeps the fire
     -- exactly-once, and the fire pins the stream. A stream another live instance holds stays that instance's.
     LEFT JOIN __SCHEMA__.wh_active_streams s ON s.stream_id = sc.stream_id
@@ -214,5 +214,5 @@ COMMENT ON FUNCTION __SCHEMA__.wh_claim_due_schedules(UUID, TIMESTAMPTZ, INTEGER
   'Temporal engine authoritative fire: leases due Active schedules this instance may fire (SKIP LOCKED), spawns each '
   'occurrence into the outbox, advances next_fire_at (wh_schedule_next_fire + until/max bounds; completion => status 2), '
   'and logs a wh_schedule_runs row, all atomically (exactly-once creation). 566: in map mode the owner of the schedule''s '
-  'partition (wh_i_own). 598 (#2575): otherwise the stream''s stored owner, or any instance when no live instance holds '
+  'partition (wh_i_own). 601 (#2575): otherwise the stream''s stored owner, or any instance when no live instance holds '
   'the stream (wh_schedule_owner_admits).';

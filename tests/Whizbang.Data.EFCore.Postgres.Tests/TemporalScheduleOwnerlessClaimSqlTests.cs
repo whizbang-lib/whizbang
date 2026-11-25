@@ -17,13 +17,13 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// write to it, and a schedule's first occurrence is that write, so a schedule on a fresh stream (the framework's own
 /// integrity schedules use a control stream nothing else writes to) had no <c>wh_active_streams</c> row, the claim's
 /// inner join never saw it, and it never fired. The same held for a stream whose owner had died. The rule now
-/// (<c>wh_schedule_owner_admits</c>, migration 598): a schedule is the caller's when its stream is pinned to the
+/// (<c>wh_schedule_owner_admits</c>, migration 601): a schedule is the caller's when its stream is pinned to the
 /// caller, or when no live instance holds it (no row, an unassigned row, or an owner the liveness rule calls dead). A
 /// stream pinned to another live instance stays that instance's. The row lock and the atomic advance keep the fire
 /// exactly-once whoever claims it, and the first fire pins the stream to the claimer.
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine#which-instance-fires-a-schedule</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/598_SchedulesWithNoLiveOwnerAreClaimed.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/601_SchedulesWithNoLiveOwnerAreClaimed.sql</code-under-test>
 [Category("Shard2")]
 public class TemporalScheduleOwnerlessClaimSqlTests : EFCoreTestBase {
   private const int PARTITION_COUNT = 16;
