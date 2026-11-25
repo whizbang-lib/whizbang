@@ -37,6 +37,77 @@ public class PgScheduleClaimerIntegrationTests : EFCoreTestBase {
     return (claimer, instance);
   }
 
+  private PgScheduleManager _createManager(IServiceInstanceProvider instance) =>
+    new(Options.Create(new WhizbangNotificationOptions { DirectConnectionString = ConnectionString }),
+      new ConfigurationBuilder().AddInMemoryCollection([]).Build(), instance,
+      Options.Create(new ClaimWorkerOptions()),
+      Options.Create(new TemporalOptions()),
+      NullLogger<PgScheduleManager>.Instance);
+
+  /// <summary>
+  /// A live instance row (#2575): a stream pinned to an instance stays that instance's only while the liveness rule
+  /// calls it live, so a test of "owned by another instance" registers that instance.
+  /// </summary>
+  private async Task<Guid> _registerLiveInstanceAsync(Guid? instanceId = null) {
+    var id = instanceId ?? Guid.NewGuid();
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = new NpgsqlCommand(@"
+      INSERT INTO wh_service_instances
+        (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, connection_mode, liveness_window_seconds)
+      VALUES (@id, 'utest-svc', 'utest-host', 1, NOW(), NOW(), 'pooled', 30)", conn);
+    cmd.Parameters.AddWithValue("id", id);
+    await cmd.ExecuteNonQueryAsync();
+    return id;
+  }
+
+  private async Task _makeDueAsync(Guid scheduleId) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = new NpgsqlCommand(
+      "UPDATE wh_schedules SET next_fire_at = NOW() - INTERVAL '1 minute' WHERE schedule_id = @id", conn);
+    cmd.Parameters.AddWithValue("id", scheduleId);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  [Test]
+  public async Task ACronScheduleCreatedOnAFreshStream_FiresOnceAcrossTwoInstancesAsync() {
+    // #2575, the deployed shape: the schedule is created through the management API on a control stream nothing has
+    // written to, by one of two live instances of the service. Nothing pins that stream until the first fire, and the
+    // claim used to require the pin, so no instance ever fired it and nothing said so.
+    var (first, firstInstance) = _create();
+    var (second, secondInstance) = _create();
+    _ = await _registerLiveInstanceAsync(firstInstance.InstanceId);
+    _ = await _registerLiveInstanceAsync(secondInstance.InstanceId);
+    var handle = await _createManager(firstInstance).CreateAsync(new ScheduleDefinition {
+      Key = "fresh-stream-cron",
+      StreamId = Guid.NewGuid(),
+      Kind = RecurrenceKind.Cron,
+      Cron = "30 4 * * *",
+      EventType = "FreshStreamOcc",
+      AuthorityPrincipalId = firstInstance.InstanceId,
+    });
+    await _makeDueAsync(handle.ScheduleId);
+
+    var fired = await second.ClaimDueSchedulesAsync(100) + await first.ClaimDueSchedulesAsync(100);
+
+    await Assert.That(fired).IsEqualTo(1)
+      .Because("one of the two instances fires the due schedule, and only one: the claim's row lock and advance decide");
+    await Assert.That(await _countOutboxAsync("FreshStreamOcc")).IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task GetNextFireTime_IncludesASchedulePinnedToNoLiveInstanceAsync() {
+    // The precise wake must see what the claim can take, or an ownerless schedule fires only at backstop latency.
+    var (claimer, _) = _create();
+    var stream = Guid.NewGuid();
+    await _insertScheduleAsync(stream, "10 minutes", "NextFireOwnerless");
+
+    var next = await claimer.GetNextFireTimeAsync();
+
+    await Assert.That(next).IsEqualTo(await _fireAtForStreamAsync(stream));
+  }
+
   private async Task _pinStreamAsync(Guid streamId, Guid instanceId) {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -150,7 +221,7 @@ public class PgScheduleClaimerIntegrationTests : EFCoreTestBase {
     var mine = Guid.NewGuid();
     var theirs = Guid.NewGuid();
     await _pinStreamAsync(mine, instance.InstanceId);
-    await _pinStreamAsync(theirs, Guid.NewGuid());
+    await _pinStreamAsync(theirs, await _registerLiveInstanceAsync());
     await _insertScheduleAsync(mine, "30 minutes", "NextFireMine");
     await _insertScheduleAsync(theirs, "1 minute", "NextFireTheirs");
 
@@ -168,11 +239,11 @@ public class PgScheduleClaimerIntegrationTests : EFCoreTestBase {
     // Returning a value here would arm a timer for a schedule that will never be claimed.
     var (claimer, _) = _create();
     var theirs = Guid.NewGuid();
-    await _pinStreamAsync(theirs, Guid.NewGuid());
+    await _pinStreamAsync(theirs, await _registerLiveInstanceAsync());
     await _insertScheduleAsync(theirs, "5 minutes", "NextFireNotMine");
 
     await Assert.That(await claimer.GetNextFireTimeAsync()).IsNull()
-      .Because("nothing is assigned to this instance, so there is no moment worth waking for");
+      .Because("the only schedule is held by another live instance, so there is no moment worth waking for");
   }
 
   [Test]

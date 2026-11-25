@@ -113,11 +113,39 @@ public class PgScheduleDuePollSourceIntegrationTests : EFCoreTestBase {
       .Because("a schedule whose next_fire_at is in the future is not due");
   }
 
+  /// <summary>A live instance row (#2575): only a live owner keeps its streams from the other instances.</summary>
+  private async Task<Guid> _registerLiveInstanceAsync() {
+    var id = Guid.NewGuid();
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = new NpgsqlCommand(@"
+      INSERT INTO wh_service_instances
+        (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, connection_mode, liveness_window_seconds)
+      VALUES (@id, 'utest-svc', 'utest-host', 1, NOW(), NOW(), 'pooled', 30)", conn);
+    cmd.Parameters.AddWithValue("id", id);
+    await cmd.ExecuteNonQueryAsync();
+    return id;
+  }
+
+  [Test]
+  public async Task DueScheduleOnAStreamNoInstanceHolds_TickRaisesAsync() {
+    // #2575: a schedule on a stream nothing has written to has no active-stream row; the claim takes it, so the
+    // backstop must ring for it too.
+    var (source, _) = _createSource();
+    await _insertScheduleAsync(Guid.NewGuid(), "-1 minute", status: 0);
+
+    var sink = new CountingSink();
+    await source.StartAsync(sink);
+    await source.TickForTestsAsync(CancellationToken.None);
+
+    await Assert.That(sink.Received).IsEqualTo(1);
+  }
+
   [Test]
   public async Task DueScheduleForOtherInstance_TickDoesNotRaiseAsync() {
     var (source, _) = _createSource();
     var streamId = Guid.NewGuid();
-    await _pinStreamToInstanceAsync(streamId, Guid.NewGuid());   // owned by a DIFFERENT instance
+    await _pinStreamToInstanceAsync(streamId, await _registerLiveInstanceAsync());   // owned by a DIFFERENT live instance
     await _insertScheduleAsync(streamId, "-1 minute", status: 0);
 
     var sink = new CountingSink();
