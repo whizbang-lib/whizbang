@@ -99,6 +99,13 @@ public class WhizbangIdRegistrationGenerationTests {
       "global::Whizbang.Core.WhizbangIdForms.Register<global::MyApp.Ids.OrderId>(static guid => new global::MyApp.Ids.OrderId(guid));");
     await Assert.That(registrationSource).Contains(
       "global::Whizbang.Core.WhizbangIdForms.Register<global::MyApp.Ids.ExternalUserId>(static guid => new global::MyApp.Ids.ExternalUserId(guid));");
+    // The stream-id report asks each id's own rule through IsAccepted, which never throws (#2516, #2517).
+    await Assert.That(registrationSource).Contains(
+      "global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterAcceptance<global::MyApp.Ids.OrderId>(global::MyApp.Ids.OrderId.IsAccepted);");
+    await Assert.That(registrationSource).Contains(
+      "global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterAcceptance<global::MyApp.Ids.ExternalUserId>(global::MyApp.Ids.ExternalUserId.IsAccepted);");
+    await Assert.That(registrationSource).Contains(
+      "global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterAcceptsAnyVersion<global::MyApp.Ids.ExternalUserId>();");
   }
 
   [Test]

@@ -41,8 +41,8 @@ public static class WhizbangIdProviderRegistry {
   private static readonly Lock _lock = new();
   private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, byte> _anyVersionIds = new();
 
-  /// <summary>The UUID versions each id type declared with a <c>Versions</c> list accepts, bit n for version n (#2516).</summary>
-  private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, int> _acceptedVersions = new();
+  /// <summary>Each id type's own rule, as its generated <c>IsAccepted</c>: never throws for a value it refuses (#2516, #2517).</summary>
+  private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, Func<Guid, bool>> _acceptance = new();
 
   /// <summary>
   /// Registers a factory for creating IWhizbangIdProvider{TId} instances.
@@ -188,22 +188,24 @@ public static class WhizbangIdProviderRegistry {
   public static bool AcceptsAnyVersion(Type? idType) => idType is not null && _anyVersionIds.ContainsKey(idType);
 
   /// <summary>
-  /// Records the UUID versions an id type declared with a <c>Versions</c> list other than UUIDv7 alone accepts, so a
-  /// stream id of that type carrying one of them is not reported as not time-ordered (#2516).
+  /// Records an id type's own rule, its generated <c>IsAccepted</c>, so a stream id of that type is never reported for a
+  /// value the rule accepts: a version its <c>Versions</c> list holds (#2516) or a grandfathered value (#2517).
   /// Called automatically by generated ModuleInitializer - users should not call this directly.
   /// </summary>
   /// <typeparam name="TId">The WhizbangId struct type</typeparam>
-  /// <param name="versions">The accepted versions: bit n is version n, as <c>UuidVersions</c> lays them out.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingStreamIdByTypeTests.cs:ReportStreamId_AVersionTheIdTypeLists_IsNeverReportedAsync</tests>
-  public static void RegisterAcceptedVersions<TId>(int versions) where TId : struct, IWhizbangId =>
-    _acceptedVersions[typeof(TId)] = versions;
+  /// <param name="isAccepted">The id's <c>IsAccepted(Guid)</c>, which never throws for a value it refuses.</param>
+  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingStreamIdByTypeTests.cs</tests>
+  public static void RegisterAcceptance<TId>(Func<Guid, bool> isAccepted) where TId : struct, IWhizbangId {
+    ArgumentNullException.ThrowIfNull(isAccepted);
+    _acceptance[typeof(TId)] = isAccepted;
+  }
 
   /// <summary>
   /// Whether <paramref name="idType"/>'s own rule accepts <paramref name="value"/>, so a stream id of that type carrying it
-  /// is never reported as not time-ordered (#2528, #2516, #2517): an id declared to accept any version, one whose
-  /// <c>Versions</c> list holds the value's version with the RFC 9562 variant, or one whose rule accepts the value
-  /// otherwise (a grandfathered value). The last is asked of the id's <c>From</c> only when the first two say no, which a
-  /// value the rule refuses reaches anyway. Not for <see cref="Guid.Empty"/>, which the caller refuses first.
+  /// is never reported as not time-ordered (#2528, #2516, #2517): an id declared to accept any version, or one whose
+  /// <c>IsAccepted</c> says yes. Lock-free and without exceptions: it is asked on every append of a stream id that is not
+  /// UUIDv7. A grandfathered-values hook that throws is the id type's fault, not the append's: the value counts as not
+  /// accepted and is reported. Not for <see cref="Guid.Empty"/>, which the caller refuses first.
   /// </summary>
   /// <param name="idType">The stream id's declared type, or null when unknown.</param>
   /// <param name="value">The stream id.</param>
@@ -216,22 +218,13 @@ public static class WhizbangIdProviderRegistry {
     if (_anyVersionIds.ContainsKey(idType)) {
       return true;
     }
-    if (_acceptedVersions.TryGetValue(idType, out var versions)
-        && (versions & (1 << value.Version)) != 0 && (value.Variant & 0xC) == 0x8) {
-      return true;
-    }
-    Func<Guid, object>? from;
-    lock (_lock) {
-      _guidConversions.TryGetValue(idType, out from);
-    }
-    if (from is null) {
+    if (!_acceptance.TryGetValue(idType, out var isAccepted)) {
       return false;
     }
     try {
-      _ = from(value);
-      return true;
-    } catch (ArgumentException) {
-      // The id's own rule refuses the value: the report is the answer.
+      return isAccepted(value);
+    } catch (Exception ex) when (ex is not OutOfMemoryException) {
+      // The id type's own hook threw: the report says what the rule could not, and the append goes on.
       return false;
     }
   }

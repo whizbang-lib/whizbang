@@ -48,3 +48,16 @@ public readonly partial struct GrandfatheredAllowListTestId {
 
   static partial void _isGrandfathered(Guid value, ref bool grandfathered) => grandfathered = value == SeededV4;
 }
+
+/// <summary>A UUIDv7 id whose grandfathered-values hook throws for one value: a consumer bug the report survives.</summary>
+[WhizbangId]
+public readonly partial struct ThrowingHookTestId {
+  /// <summary>The value the hook throws for.</summary>
+  public static readonly Guid Throws = new("3f2504e0-4f89-41d3-9a0c-0305e82c3302");
+
+  static partial void _isGrandfathered(Guid value, ref bool grandfathered) {
+    if (value == Throws) {
+      throw new InvalidOperationException("the hook's lookup failed");
+    }
+  }
+}

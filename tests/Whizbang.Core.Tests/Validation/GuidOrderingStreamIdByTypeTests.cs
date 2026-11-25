@@ -156,6 +156,41 @@ public class GuidOrderingStreamIdByTypeTests {
     await Assert.That(WhizbangIdProviderRegistry.AcceptsStreamId(typeof(Guid), NonTimeOrderedGuidShapes.V5)).IsFalse();
   }
 
+  /// <summary>
+  /// The report asks the id's own IsAccepted, which never throws, rather than calling From and catching what it throws:
+  /// a grandfathered value, a listed version and a v7 one are accepted; a refused value is answered false (#2516, #2517).
+  /// </summary>
+  [Test]
+  public async Task AcceptsStreamId_AsksTheIdsOwnRule_WithoutAnExceptionAsync() {
+    var grandfathered = typeof(Whizbang.Core.Tests.ValueObjects.GrandfatheredTestId);
+
+    await Assert.That(WhizbangIdProviderRegistry.AcceptsStreamId(grandfathered, Whizbang.Core.Tests.ValueObjects.GrandfatheredTestId.SeededV4)).IsTrue();
+    await Assert.That(WhizbangIdProviderRegistry.AcceptsStreamId(grandfathered, NonTimeOrderedGuidShapes.V5)).IsFalse();
+    await Assert.That(Whizbang.Core.Tests.ValueObjects.GrandfatheredTestId.IsAccepted(Whizbang.Core.Tests.ValueObjects.GrandfatheredTestId.SeededV8)).IsTrue();
+    await Assert.That(Whizbang.Core.Tests.ValueObjects.GrandfatheredTestId.IsAccepted(Guid.Empty)).IsFalse()
+      .Because("the empty Guid is never grandfathered, whatever the hook says");
+    await Assert.That(Whizbang.Core.Tests.ValueObjects.MintedOrNamedTestId.IsAccepted(NonTimeOrderedGuidShapes.V5)).IsTrue();
+    await Assert.That(Whizbang.Core.Tests.ValueObjects.StrictVersionTestId.IsAccepted(NonTimeOrderedGuidShapes.V5)).IsFalse();
+    await Assert.That(Whizbang.Core.Tests.ValueObjects.AnyVersionTestId.IsAccepted(Guid.Empty)).IsFalse();
+  }
+
+  /// <summary>
+  /// A grandfathered-values hook that throws is the id type's bug, not the append's: the stream id is answered as not
+  /// accepted, so it is reported, and nothing escapes to fail the append.
+  /// </summary>
+  [Test]
+  public async Task AcceptsStreamId_AHookThatThrows_ReportsTheStreamIdRatherThanFailingTheAppendAsync() {
+    var id = typeof(Whizbang.Core.Tests.ValueObjects.ThrowingHookTestId);
+    var logger = new CollectingLogger();
+    var validator = new GuidOrderingValidator(new WhizbangOptions(), logger);
+
+    var accepted = WhizbangIdProviderRegistry.AcceptsStreamId(id, Whizbang.Core.Tests.ValueObjects.ThrowingHookTestId.Throws);
+    validator.ReportStreamId(Whizbang.Core.Tests.ValueObjects.ThrowingHookTestId.Throws, id, typeof(StreamIdAllocationProbeNoted), ENTRY_POINT);
+
+    await Assert.That(accepted).IsFalse();
+    await Assert.That(logger.Entries).IsNotEmpty().Because("the stream id is reported");
+  }
+
   [Test]
   public async Task ReportStreamId_ByANullType_ThrowsAsync() {
     var validator = new GuidOrderingValidator(new WhizbangOptions(), new CollectingLogger());

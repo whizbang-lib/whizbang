@@ -678,15 +678,28 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine($"  public {id.TypeName}(Guid Value) => _tracked = TrackedGuid.FromExternal(Value);");
     sb.AppendLine();
 
+    // The id's version rule: its checked factories, IsAccepted (the same rule, without throwing), and the grandfathered
+    // hook. The parts this rule added (#2516, #2517) come from WhizbangIdRuleSnippets.
     if (id.AcceptAnyVersion) {
       _appendAnyVersionFactories(sb, id.TypeName);
+      sb.AppendLine();
+      sb.Append(_ruleSnippet("IS_ACCEPTED_ANY_VERSION", id));
     } else if (id.Versions == UuidVersionMask.V7) {
       _appendUuidV7Factories(sb, id.TypeName);
+      sb.AppendLine();
+      sb.Append(_ruleSnippet("IS_ACCEPTED_UUID_V7", id));
     } else {
-      _appendAllowListFactories(sb, id.TypeName, id.Versions);
+      sb.Append(_ruleSnippet("ALLOW_LIST_FACTORIES", id));
+      sb.AppendLine();
+      sb.Append(_ruleSnippet("IS_ACCEPTED_ALLOW_LIST", id));
     }
 
-    _appendGrandfatheredHook(sb, id);
+    // An any-version id refuses only the empty Guid, so it declares no hook: implementing one there is CS0759 rather
+    // than code that never runs.
+    if (!id.AcceptAnyVersion) {
+      sb.Append(_ruleSnippet("GRANDFATHERED_HOOK", id));
+      sb.AppendLine();
+    }
 
     // New factory method using TrackedGuid.New() - generates new UUIDv7 with tracking
     sb.AppendLine("  /// <summary>Creates a new instance with sub-millisecond precision from the framework's UUIDv7 generator. Preserves tracking metadata.</summary>");
@@ -803,70 +816,36 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("  }");
   }
 
-  /// <summary>
-  /// The grandfathered-values hook a strict or allow-list id declares (#2517): <c>_isGrandfathered</c>, a void partial
-  /// method the id type may implement to name values that predate its version rule, and the helper the checked
-  /// factories ask when a value breaks the rule. A void partial method without an accessibility modifier is the only
-  /// kind C# lets go unimplemented, and then the compiler removes the call, so an id without exceptions pays nothing.
-  /// Without a modifier it is private, so it is named as the repository names a private method. An any-version id
-  /// refuses only the empty Guid, so it declares no hook: implementing one there is CS0759 rather than code that never
-  /// runs. <see cref="Guid.Empty"/> is never grandfathered.
-  /// </summary>
-  private static void _appendGrandfatheredHook(StringBuilder sb, WhizbangIdInfo id) {
-    if (id.AcceptAnyVersion) {
-      return;
-    }
-
-    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
-    sb.AppendLine("  /// Implement to let the checked entry points (From, Parse, the explicit cast, JSON, the GraphQL scalar) accept");
-    sb.AppendLine("  /// a frozen set of values that predate this id's version rule: set <paramref name=\"grandfathered\"/> to true for");
-    sb.AppendLine("  /// them. Implement it without an accessibility modifier, as declared here: with one, C# requires every id to");
-    sb.AppendLine("  /// implement it. Asked only for a value that breaks the rule, and never for Guid.Empty, which is always refused.");
-    sb.AppendLine("  /// Keep it a set lookup: it runs on every refused value.");
-    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
-    sb.AppendLine("  static partial void _isGrandfathered(Guid value, ref bool grandfathered);");
-    sb.AppendLine();
-    sb.AppendLine("  /// <summary>Whether the id type grandfathers a value that breaks its version rule. Never the empty Guid.</summary>");
-    sb.AppendLine("  private static bool _grandfathers(Guid value) {");
-    sb.AppendLine("    if (value == Guid.Empty)");
-    sb.AppendLine("      return false;");
-    sb.AppendLine("    var grandfathered = false;");
-    sb.AppendLine("    _isGrandfathered(value, ref grandfathered);");
-    sb.AppendLine("    return grandfathered;");
-    sb.AppendLine("  }");
-    sb.AppendLine();
-  }
+  private const string RULE_SNIPPETS_FILE = "WhizbangIdRuleSnippets.cs";
 
   /// <summary>
-  /// The factories of an id declared with a <c>Versions</c> allow-list other than UUIDv7 alone: <c>From</c> takes a
-  /// Guid whose version is listed and whose variant is RFC 9562's (#2516), or one the id grandfathers (#2517).
-  /// <see cref="Guid.Empty"/> has version 0, which no list holds, so it is refused with the rest. The constructor and
-  /// the <c>Value</c> initializer stay unchecked, as on every id.
+  /// One region of <c>WhizbangIdRuleSnippets.cs</c>, its placeholders replaced, indented as a member of the generated
+  /// struct, ending in a newline:
+  /// <list type="bullet">
+  /// <item><c>GRANDFATHERED_HOOK</c>: the grandfathered-values hook a strict or allow-list id declares (#2517),
+  /// <c>_isGrandfathered</c>, a void partial method the id type may implement to name values that predate its version
+  /// rule, and the helper the checked factories ask. A void partial method without an accessibility modifier is the
+  /// only kind C# lets go unimplemented, and then the compiler removes the call, so an id without exceptions pays
+  /// nothing. <see cref="Guid.Empty"/> is never grandfathered.</item>
+  /// <item><c>ALLOW_LIST_FACTORIES</c>: the factories of an id declared with a <c>Versions</c> list other than UUIDv7
+  /// alone (#2516). The constructor and the <c>Value</c> initializer stay unchecked, as on every id.</item>
+  /// <item><c>IS_ACCEPTED_*</c>: the id's rule as a method that never throws, which the stream-id report asks.</item>
+  /// </list>
   /// </summary>
-  private static void _appendAllowListFactories(StringBuilder sb, string typeName, int versions) {
-    var accepted = UuidVersionMask.Describe(versions);
-
-    sb.AppendLine($"  /// <summary>Creates an instance from a TrackedGuid, preserving tracking metadata. Throws if not {accepted}.</summary>");
-    sb.AppendLine($"  public static {typeName} From(TrackedGuid tracked) {{");
-    sb.AppendLine("    _requireAcceptedVersion(tracked.Value, nameof(tracked));");
-    sb.AppendLine("    return new(tracked);");
-    sb.AppendLine("  }");
-    sb.AppendLine();
-
-    sb.AppendLine($"  /// <summary>Creates an instance from a Guid value. Throws if not {accepted}.</summary>");
-    sb.AppendLine($"  public static {typeName} From(Guid value) => new(TrackedGuid.FromExternal(_requireAcceptedVersion(value, nameof(value))));");
-    sb.AppendLine();
-
-    sb.AppendLine($"  /// <summary>Returns the Guid, or throws if its version is not {accepted}.</summary>");
-    sb.AppendLine("  private static Guid _requireAcceptedVersion(Guid value, string parameterName) {");
-    // The RFC 9562 variant as well as the version: a hash or random bytes carry a version nibble by chance, and the
-    // variant, the top two bits of octet 8 (10xx), is what says the bytes are a UUID at all. A grandfathered value is
-    // accepted either way (#2517).
-    sb.AppendLine($"    if ((value.Version is not {UuidVersionMask.Pattern(versions)} || (value.Variant & 0xC) != 0x8) && !_grandfathers(value))");
-    sb.AppendLine($"      throw new ArgumentException($\"{typeName} requires {accepted} (RFC 9562 variant) but received version {{value.Version}}, variant {{value.Variant:X}}\", parameterName);");
-    sb.AppendLine("    return value;");
-    sb.AppendLine("  }");
+  private static string _ruleSnippet(string region, WhizbangIdInfo id) {
+    var snippet = TemplateUtilities.ExtractSnippet(typeof(WhizbangIdGenerator).Assembly, RULE_SNIPPETS_FILE, region)
+      .Replace("__TYPE_NAME__", id.TypeName)
+      .Replace("__ACCEPTED__", UuidVersionMask.Describe(id.Versions))
+      .Replace("__VERSION_PATTERN__", UuidVersionMask.Pattern(id.Versions))
+      .TrimEnd();
+    return TemplateUtilities.IndentCode(snippet, "  ") + "\n";
   }
+
+  /// <summary>One registration line of <c>WhizbangIdRuleSnippets.cs</c> for the module initializer.</summary>
+  private static string _registrationSnippet(System.Reflection.Assembly assembly, string region, WhizbangIdInfo id) =>
+    "    " + TemplateUtilities.ExtractSnippet(assembly, RULE_SNIPPETS_FILE, region)
+      .Replace("__FULLY_QUALIFIED_NAME__", id.FullyQualifiedName)
+      .Trim() + "\n";
 
   /// <summary>
   /// The factories of an id declared with <c>AcceptAnyVersion = true</c>: <c>From</c> takes any Guid but the empty
@@ -1066,16 +1045,12 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         $"    global::Whizbang.Core.WhizbangIdForms.Register<global::{id.FullyQualifiedName}>(" +
         $"static guid => new global::{id.FullyQualifiedName}(guid));"
       );
-      // An id that takes any version is never reported as a stream id that is not time-ordered (#2528), and one with a
-      // Versions list is not reported for a version it lists (#2516).
+      // A stream id of this type is never reported for a value its own rule accepts (#2528, #2516, #2517): the report
+      // asks the id's IsAccepted, which never throws.
       if (id.AcceptAnyVersion) {
-        guidConversions.AppendLine(
-          $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterAcceptsAnyVersion<global::{id.FullyQualifiedName}>();");
-      } else if (id.Versions != UuidVersionMask.V7) {
-        guidConversions.AppendLine(
-          $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterAcceptedVersions<global::{id.FullyQualifiedName}>(" +
-          $"{id.Versions.ToString(System.Globalization.CultureInfo.InvariantCulture)});");
+        guidConversions.Append(_registrationSnippet(assembly, "REGISTER_ACCEPTS_ANY_VERSION", id));
       }
+      guidConversions.Append(_registrationSnippet(assembly, "REGISTER_ACCEPTANCE", id));
     }
     template = TemplateUtilities.ReplaceRegion(
       template,

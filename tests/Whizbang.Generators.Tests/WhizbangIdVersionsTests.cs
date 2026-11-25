@@ -22,7 +22,7 @@ namespace Whizbang.Generators.Tests;
 public class WhizbangIdVersionsTests {
 
   private const string STRICT_FROM_GUARD = "if (value.Version != 7 && !_grandfathers(value))";
-  private const string ALLOW_LIST_GUARD = "if ((value.Version is not (5 or 7) || (value.Variant & 0xC) != 0x8) && !_grandfathers(value))";
+  private const string ALLOW_LIST_GUARD = "(value.Version is (5 or 7) && (value.Variant & 0xC) == 0x8) || _grandfathers(value);";
   private const string NON_EMPTY_GUARD = "_requireNonEmpty(";
 
   [RequiresAssemblyFiles()]
@@ -92,9 +92,10 @@ public class WhizbangIdVersionsTests {
 
   /// <summary>
   /// The default rule generates, byte for byte, what the generator produced before <c>Versions</c> existed, apart from
-  /// the grandfathered-values hook (#2517): <c>Snapshots/WhizbangIdDefault.snapshot.txt</c> is develop's output for this
-  /// source, captured before #2516, and the output with the hook's declaration, its helper and its two guard clauses
-  /// taken out is that snapshot. Anything else that changes the default output fails here.
+  /// the grandfathered-values hook (#2517) and <c>IsAccepted</c>: <c>Snapshots/WhizbangIdDefault.snapshot.txt</c> is
+  /// develop's output for this source, captured before #2516, and the output with the hook's declaration, its helper,
+  /// its two guard clauses and <c>IsAccepted</c> taken out is that snapshot. Anything else that changes the default
+  /// output fails here.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
@@ -109,8 +110,15 @@ public class WhizbangIdVersionsTests {
     var hookStart = generated.IndexOf("  /// <summary>\n  /// Implement to let the checked entry points", StringComparison.Ordinal);
     var hookEnd = generated.IndexOf("    return grandfathered;\n  }\n\n", StringComparison.Ordinal) + "    return grandfathered;\n  }\n\n".Length;
 
+    const string IS_ACCEPTED_START = "\n  /// <summary>\n  /// Whether <c>From</c> accepts";
+    const string IS_ACCEPTED_END = "public static bool IsAccepted(Guid value) => value.Version == 7 || _grandfathers(value);\n";
+    var acceptedStart = generated.IndexOf(IS_ACCEPTED_START, StringComparison.Ordinal);
+    var acceptedEnd = generated.IndexOf(IS_ACCEPTED_END, StringComparison.Ordinal) + IS_ACCEPTED_END.Length;
+
     await Assert.That(hookStart).IsGreaterThan(0);
-    var withoutHook = (generated[..hookStart] + generated[hookEnd..])
+    await Assert.That(acceptedStart).IsGreaterThan(0);
+    await Assert.That(hookStart).IsEqualTo(acceptedEnd).Because("IsAccepted comes just before the hook");
+    var withoutHook = (generated[..acceptedStart] + generated[hookEnd..])
       .Replace(" && !_grandfathers(tracked.Value)", "", StringComparison.Ordinal)
       .Replace(" && !_grandfathers(value)", "", StringComparison.Ordinal);
 
@@ -138,7 +146,8 @@ public class WhizbangIdVersionsTests {
 
     var generated = _generatedId(source);
 
-    await Assert.That(generated).Contains("if ((value.Version is not (5) || (value.Variant & 0xC) != 0x8) && !_grandfathers(value))");
+    await Assert.That(generated).Contains("(value.Version is (5) && (value.Variant & 0xC) == 0x8) || _grandfathers(value);");
+    await Assert.That(generated).Contains("    if (!IsAccepted(value))");
     await Assert.That(generated).Contains("ProductId requires UUIDv5 (RFC 9562 variant) but received version");
   }
 

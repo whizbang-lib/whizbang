@@ -63,7 +63,8 @@ public class WhizbangIdGrandfatheredTests {
     var generated = _generatedId(source);
 
     await Assert.That(generated).Contains(HOOK_DECLARATION);
-    await Assert.That(generated).Contains("if ((value.Version is not (5 or 7) || (value.Variant & 0xC) != 0x8) && !_grandfathers(value))");
+    await Assert.That(generated).Contains("(value.Version is (5 or 7) && (value.Variant & 0xC) == 0x8) || _grandfathers(value);");
+    await Assert.That(generated).Contains("    if (!IsAccepted(value))");
   }
 
   /// <summary>An any-version id refuses only the empty Guid, which is never grandfathered, so it never asks.</summary>
