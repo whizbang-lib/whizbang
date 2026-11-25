@@ -211,7 +211,19 @@ public static class WhizbangIdProviderRegistry {
   /// <param name="value">The stream id.</param>
   /// <returns>True when the type's rule accepts the value; false for a null or unregistered type.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingStreamIdByTypeTests.cs</tests>
-  public static bool AcceptsStreamId(Type? idType, Guid value) {
+  public static bool AcceptsStreamId(Type? idType, Guid value) => AcceptsStreamId(idType, value, out _);
+
+  /// <summary>
+  /// Whether <paramref name="idType"/>'s own rule accepts <paramref name="value"/>, as
+  /// <see cref="AcceptsStreamId(Type, Guid)"/>, and what the id type's hook threw when it threw, so the caller can say so.
+  /// </summary>
+  /// <param name="idType">The stream id's declared type, or null when unknown.</param>
+  /// <param name="value">The stream id.</param>
+  /// <param name="hookFailure">What the id type's <c>IsAccepted</c> threw, or null.</param>
+  /// <returns>True when the type's rule accepts the value; false for a null or unregistered type, or a hook that threw.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingStreamIdByTypeTests.cs:AcceptsStreamId_AHookThatThrows_IsLoggedAtWarningNamingTheIdTypeAndStreamIdAsync</tests>
+  public static bool AcceptsStreamId(Type? idType, Guid value, out Exception? hookFailure) {
+    hookFailure = null;
     if (idType is null) {
       return false;
     }
@@ -224,7 +236,9 @@ public static class WhizbangIdProviderRegistry {
     try {
       return isAccepted(value);
     } catch (Exception ex) when (ex is not OutOfMemoryException) {
-      // The id type's own hook threw: the report says what the rule could not, and the append goes on.
+      // The id type's own hook threw: the report says what the rule could not, the caller logs what failed, and the
+      // append goes on.
+      hookFailure = ex;
       return false;
     }
   }

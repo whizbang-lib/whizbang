@@ -52,6 +52,7 @@ public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logg
   private readonly GuidOrderingMetrics? _metrics = metrics;
   private readonly ConcurrentDictionary<Guid, byte> _reportedMessageIds = new();
   private readonly ConcurrentDictionary<Guid, byte> _reportedStreamIds = new();
+  private readonly ConcurrentDictionary<Guid, byte> _hookFailedStreamIds = new();
 
   /// <summary>
   /// Creates a new GuidOrderingValidator.
@@ -155,7 +156,7 @@ public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logg
   /// <param name="entryPoint">The entry point reporting it, for the report.</param>
   /// <exception cref="GuidOrderingException">The stream id is not v7 and stream ids are raised to Error.</exception>
   public void ReportStreamId(Guid streamId, Type? streamIdType, string messageType, string entryPoint) {
-    if (streamId.Version == 7 || streamId == Guid.Empty || WhizbangIdProviderRegistry.AcceptsStreamId(streamIdType, streamId)) {
+    if (streamId.Version == 7 || streamId == Guid.Empty || _acceptedByItsType(streamIdType, streamId)) {
       return;
     }
     _reportNonV7StreamId(streamId, messageType, entryPoint);
@@ -176,7 +177,7 @@ public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logg
   /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingStreamIdByTypeTests.cs</tests>
   public void ReportStreamId(Guid streamId, Type? streamIdType, Type messageType, string entryPoint) {
     ArgumentNullException.ThrowIfNull(messageType);
-    if (streamId.Version == 7 || streamId == Guid.Empty || WhizbangIdProviderRegistry.AcceptsStreamId(streamIdType, streamId)) {
+    if (streamId.Version == 7 || streamId == Guid.Empty || _acceptedByItsType(streamIdType, streamId)) {
       return;
     }
     _reportNonV7StreamId(streamId, TypeNameFormatter.SimpleName(messageType), entryPoint);
@@ -202,6 +203,20 @@ public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logg
       ? Registry.StreamIdExtractorRegistry.GetStreamIdType(type)
       : null;
     ReportStreamId(streamId, streamIdType, messageType, entryPoint);
+  }
+
+  /// <summary>
+  /// Whether the stream id type's own rule accepts the value. A grandfathered-values hook that throws is logged at Warning
+  /// once per stream id, naming the id type, the stream id and what it threw, and the value counts as not accepted.
+  /// </summary>
+  private bool _acceptedByItsType(Type? streamIdType, Guid streamId) {
+    if (WhizbangIdProviderRegistry.AcceptsStreamId(streamIdType, streamId, out var hookFailure)) {
+      return true;
+    }
+    if (hookFailure is not null && _firstSighting(_hookFailedStreamIds, streamId)) {
+      LogStreamIdHookFailed(_logger, TypeNameFormatter.SimpleName(streamIdType!), streamId, hookFailure);
+    }
+    return false;
   }
 
   private void _reportNonV7StreamId(Guid streamId, string messageType, string entryPoint) {
@@ -332,6 +347,11 @@ public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logg
       Level = LogLevel.Information,
       Message = "{EntryPoint} saw stream id {StreamId} for {MessageType}: version {Version}, not UUIDv7. A stream id is never read for its time; a non-v7 one costs only index locality.")]
   private static partial void LogStreamIdInfo(ILogger logger, string entryPoint, Guid streamId, string messageType, int version);
+
+  [LoggerMessage(
+      Level = LogLevel.Warning,
+      Message = "{IdType}.IsAccepted threw for stream id {StreamId}; the stream id is reported as not accepted, and the append goes on. Fix the id type's grandfathered-values hook.")]
+  private static partial void LogStreamIdHookFailed(ILogger logger, string idType, Guid streamId, Exception exception);
 
   [LoggerMessage(
       Level = LogLevel.Error,

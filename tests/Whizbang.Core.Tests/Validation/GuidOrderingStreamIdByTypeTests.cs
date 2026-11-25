@@ -191,6 +191,30 @@ public class GuidOrderingStreamIdByTypeTests {
     await Assert.That(logger.Entries).IsNotEmpty().Because("the stream id is reported");
   }
 
+  /// <summary>
+  /// A hook that throws is logged at Warning, once per stream id, naming the id type, the stream id and what it threw,
+  /// and the out overload hands back what it threw.
+  /// </summary>
+  [Test]
+  public async Task AcceptsStreamId_AHookThatThrows_IsLoggedAtWarningNamingTheIdTypeAndStreamIdAsync() {
+    var id = typeof(Whizbang.Core.Tests.ValueObjects.ThrowingHookTestId);
+    var value = Whizbang.Core.Tests.ValueObjects.ThrowingHookTestId.Throws;
+    var logger = new CollectingLogger();
+    var validator = new GuidOrderingValidator(new WhizbangOptions(), logger);
+
+    var accepted = WhizbangIdProviderRegistry.AcceptsStreamId(id, value, out var failure);
+    validator.ReportStreamId(value, id, typeof(StreamIdAllocationProbeNoted), ENTRY_POINT);
+    validator.ReportStreamId(value, id, typeof(StreamIdAllocationProbeNoted), ENTRY_POINT);
+
+    var hookLogs = logger.Entries.Where(e => e.Message.Contains("IsAccepted threw", StringComparison.Ordinal)).ToList();
+    await Assert.That(accepted).IsFalse();
+    await Assert.That(failure).IsNotNull();
+    await Assert.That(hookLogs.Count).IsEqualTo(1).Because("logged once per stream id");
+    await Assert.That(hookLogs[0].Level).IsEqualTo(LogLevel.Warning);
+    await Assert.That(hookLogs[0].Message).Contains($"ThrowingHookTestId.IsAccepted threw for stream id {value}");
+    await Assert.That(hookLogs[0].Exception).IsNotNull();
+  }
+
   [Test]
   public async Task ReportStreamId_ByANullType_ThrowsAsync() {
     var validator = new GuidOrderingValidator(new WhizbangOptions(), new CollectingLogger());
@@ -200,14 +224,14 @@ public class GuidOrderingStreamIdByTypeTests {
   }
 
   private sealed class CollectingLogger : ILogger {
-    public List<(LogLevel Level, string Message)> Entries { get; } = [];
+    public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
     public bool IsEnabled(LogLevel logLevel) => true;
 
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
-        Func<TState, Exception?, string> formatter) => Entries.Add((logLevel, formatter(state, exception)));
+        Func<TState, Exception?, string> formatter) => Entries.Add((logLevel, formatter(state, exception), exception));
   }
 }
 
