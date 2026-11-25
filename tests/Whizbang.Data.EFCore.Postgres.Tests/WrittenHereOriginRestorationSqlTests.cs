@@ -381,8 +381,13 @@ public class WrittenHereOriginRestorationSqlTests : EFCoreTestBase {
   public async Task Step_WithOnlyTheDatabaseAndTheServiceName_UsesTheDefaults_AndRestoresAsync() {
     await using var conn = await _openAsync();
     var reaction = await _emitHereAsync(conn, StoredMetadataCorpus.Orders);
+    var returned = await _emitHereAsync(conn, StoredMetadataCorpus.Orders);
+    await _settingAsync(conn, WRITE_FORM, "Slim");
+    var unproven = await _emitHereAsync(conn, StoredMetadataCorpus.Orders);
     await _distillAsync(conn);
     await _misattributeAsync(conn, reaction, _billing, null);
+    await _misattributeAsync(conn, returned, _billing, 7);
+    await _misattributeAsync(conn, unproven, _billing, null);
     var bare = new ServiceCollection()
       .AddSingleton(_connection(schema: null))
       .AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(Guid.Empty, _ordersName, "host", 1))
@@ -390,8 +395,11 @@ public class WrittenHereOriginRestorationSqlTests : EFCoreTestBase {
 
     var result = await new WrittenHereOriginRestorationStep(NullLogger.Instance).RestoreAsync(bare, CancellationToken.None);
 
-    await Assert.That(result).IsEqualTo(new WrittenHereOriginRestorationResult(1, 1, 0, 0, "caught-up"));
+    // No metrics are registered, so every shape (reaction, return, ambiguous) is recorded without a counter.
+    await Assert.That(result).IsEqualTo(new WrittenHereOriginRestorationResult(1, 1, 1, 1, "caught-up"));
     await Assert.That((await _originOfAsync(conn, reaction)).Origin).IsNull();
+    await Assert.That((await _originOfAsync(conn, returned)).Origin).IsNull();
+    await Assert.That((await _originOfAsync(conn, unproven)).Origin).IsEqualTo(_billing);
   }
 
   [Test]
