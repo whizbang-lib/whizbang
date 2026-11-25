@@ -1,14 +1,17 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 598_SchedulesWithNoLiveOwnerAreClaimed.sql (#2575): wh_claim_due_schedules goes back to 068's
--- definition, which claims only schedules on streams pinned to the caller, and the rule goes.
+-- The reverse of 598_SchedulesWithNoLiveOwnerAreClaimed.sql (#2575): wh_claim_due_schedules goes back to 579's
+-- definition, whose legacy branch claims only schedules on streams pinned to the caller, and the rule goes.
 
 SELECT __SCHEMA__.drop_all_overloads('wh_claim_due_schedules');
 
 -- <docs>fundamentals/temporal/temporal-engine</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TemporalScheduleClaimSqlTests.cs:DueOwned_SpawnsOccurrence_AdvancesNextFire_LogsRunAsync</tests>
-
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TemporalScheduleClaimSqlTests.cs:NotOwned_NotClaimedAsync</tests>
+-- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapClaimSqlTests.cs:Schedules_FireOnThePartitionsOwner_NotTheStoredOwnerAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ClaimPathsDecideThroughTheOwnershipTableGuardTests.cs:EveryClaimFunction_DecidesThroughWhIOwn_AndRanksOnlyInTheLegacyBranchAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_claim_due_schedules(
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,
@@ -34,12 +37,19 @@ DECLARE
   v_skipped BOOLEAN;
   -- DB clock is authority for the due decision (avoids multi-instance skew). p_now is a test seam.
   v_now TIMESTAMPTZ := COALESCE(p_now, NOW());
+  -- 566 (#2554, #2555): the service's switch, read once: on, the partition ownership table alone decides.
+  v_map BOOLEAN := __SCHEMA__.wh_partition_ownership_by_map();
 BEGIN
   FOR v_sched IN
     SELECT sc.*
     FROM __SCHEMA__.wh_schedules sc
-    JOIN __SCHEMA__.wh_active_streams s ON s.stream_id = sc.stream_id
-    WHERE s.assigned_instance_id = p_instance_id
+    -- 566 (#2555): in map mode a schedule fires on the owner of its stream's partition (wh_i_own), the schedule's own
+    -- number (compute_partition for a row without one). The stored owner is the legacy mode's test, and a stream with no
+    -- ledger row fires nowhere in it, as before.
+    LEFT JOIN __SCHEMA__.wh_active_streams s ON s.stream_id = sc.stream_id
+    WHERE CASE WHEN v_map
+               THEN __SCHEMA__.wh_i_own(COALESCE(sc.partition_number, __SCHEMA__.compute_partition(sc.stream_id, p_partition_count)), p_instance_id) IS NOT NULL
+               ELSE s.assigned_instance_id = p_instance_id END
       AND sc.status = 0
       AND sc.next_fire_at <= v_now
     ORDER BY sc.next_fire_at
@@ -95,7 +105,7 @@ BEGIN
     v_completed := (v_next IS NULL);
 
     IF v_skipped THEN
-      -- No occurrence spawned — record the misfire so the skip stays auditable.
+      -- No occurrence spawned: record the misfire so the skip stays auditable.
       INSERT INTO __SCHEMA__.wh_schedule_runs
         (schedule_id, occurrence_id, fired_at, status, instance_id)
       VALUES (v_sched.schedule_id, v_occurrence_id, v_now, 2, p_instance_id);   -- 2 = Skipped (misfire)
@@ -108,7 +118,7 @@ BEGIN
         0::SMALLINT, v_sched.authority_principal_id, v_sched.authority_claims);
     END IF;
 
-    -- Advance the schedule. Completed schedules keep their (past) next_fire_at — status 2 excludes
+    -- Advance the schedule. Completed schedules keep their (past) next_fire_at; status 2 excludes
     -- them from the due-detect/notify queries so they never re-fire, satisfying the NOT NULL column.
     UPDATE __SCHEMA__.wh_schedules
     SET last_fire_at = CASE WHEN v_skipped THEN last_fire_at ELSE v_now END,
@@ -127,10 +137,5 @@ BEGIN
   END LOOP;
 END;
 $$ LANGUAGE plpgsql;
-
-COMMENT ON FUNCTION __SCHEMA__.wh_claim_due_schedules IS
-  'Temporal engine authoritative fire: leases due Active owned schedules (SKIP LOCKED), spawns each '
-  'occurrence into the outbox, advances next_fire_at (wh_schedule_next_fire + until/max bounds; '
-  'completion => status 2), and logs a wh_schedule_runs row — all atomically (exactly-once creation).';
 
 DROP FUNCTION IF EXISTS __SCHEMA__.wh_schedule_owner_admits(UUID, UUID, UUID[]);

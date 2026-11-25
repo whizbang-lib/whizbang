@@ -5,8 +5,8 @@
 -- Date: 2026-11-25
 -- Description: A due schedule whose stream no live instance holds is claimed (#2575).
 --
---              wh_claim_due_schedules (068) took a due schedule only through an inner join to wh_active_streams on
---              the caller's id. A stream gets its row the first time something is written to it, and a schedule's
+--              wh_claim_due_schedules (068; 566 and 579 keep the test as the legacy mode's) took a due schedule, with the
+--              service's ownership-by-map switch off, only when wh_active_streams assigned its stream to the caller. A stream gets its row the first time something is written to it, and a schedule's
 --              first occurrence is that write, so a schedule created on a fresh stream (the framework's own
 --              integrity schedules use a control stream nothing else writes to) was seen by no instance: it never
 --              fired, and nothing reported it. A stream pinned to an instance that has since died was stuck the
@@ -15,19 +15,23 @@
 --              The rule, wh_schedule_owner_admits: a schedule is the caller's when its stream is pinned to the
 --              caller, or when no live instance holds it (no row, an unassigned row, or an owner the liveness rule,
 --              wh_live_instance_ids, calls dead). A stream pinned to another live instance stays that instance's.
+--              Only the legacy branch changes. In map mode (566) the partition ownership table decides through wh_i_own,
+--              which already answers for a stream with no ledger row (the schedule's own partition number), so its rule
+--              is left as it is; an orphaned partition there is the assigner's to republish.
+--
 --              Ownership only spreads the work: the claim's FOR UPDATE SKIP LOCKED and the advance in the same
 --              transaction keep each fire exactly-once whichever instance takes it, and the first fire pins the
---              stream to the claimer (store_outbox_messages), which owns it from then on. The same rule answers
---              the next-fire-time query and the due poll in the provider, which read wh_live_instance_ids the
---              same way.
+--              stream to the claimer (store_outbox_messages), which owns it from then on. The provider's
+--              next-fire-time query and due poll apply the same switch and the same two rules.
 --
---              Cost: one read of the live instances per claim (an array built once, not per row) and a LEFT JOIN
---              in place of the inner join; the due scan is still the partial index idx_wh_schedules_due.
+--              Cost: in the legacy mode one read of the live instances per claim (an array built once, not per row);
+--              none in map mode. The due scan is still the partial index idx_wh_schedules_due.
 --
---              Number 598: 590 to 597 are taken by changes in flight.
+--              Number 598: develop ends at 581, and 590 to 597 are taken by a change in flight.
 --
--- Reversal: reversible (the down file restores 068's claim and drops the rule)
--- Dependencies: 068 (wh_claim_due_schedules), 316 (wh_live_instance_ids)
+-- Reversal: reversible (the down file restores 579's claim and drops the rule)
+-- Dependencies: 579 (wh_claim_due_schedules, last word), 565 (wh_i_own, wh_partition_ownership_by_map), 316
+--               (wh_live_instance_ids)
 -- Objects: wh_schedule_owner_admits, wh_claim_due_schedules
 
 -- ---------------------------------------------------------------------------------------------
@@ -58,17 +62,21 @@ COMMENT ON FUNCTION __SCHEMA__.wh_schedule_owner_admits(UUID, UUID, UUID[]) IS
   'the live instances the caller read (wh_live_instance_ids).';
 
 -- ---------------------------------------------------------------------------------------------
--- wh_claim_due_schedules: copied from 068, the inner join to the caller's streams replaced by the rule.
+-- wh_claim_due_schedules: copied from its last word (579), the legacy branch's stored-owner test replaced by the rule.
 -- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('wh_claim_due_schedules');
 
 -- <docs>fundamentals/temporal/temporal-engine#which-instance-fires-a-schedule</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TemporalScheduleClaimSqlTests.cs:DueOwned_SpawnsOccurrence_AdvancesNextFire_LogsRunAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TemporalScheduleOwnerlessClaimSqlTests.cs:DueSchedule_OnAStreamNothingHasWritten_FiresOnce_AndPinsItsStreamToTheClaimerAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TemporalScheduleOwnerlessClaimSqlTests.cs:DueSchedule_WhoseStreamOwnerIsNotLive_IsTakenOverByALiveInstanceAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TemporalScheduleOwnerlessClaimSqlTests.cs:DueSchedule_WhoseStreamIsPinnedToAnotherLiveInstance_IsLeftToThatInstanceAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TemporalScheduleOwnerlessClaimSqlTests.cs:OwnerlessSchedule_ClaimedConcurrently_FiresExactlyOnceAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TemporalScheduleClaimSqlTests.cs:DueOwned_SpawnsOccurrence_AdvancesNextFire_LogsRunAsync</tests>
-
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapClaimSqlTests.Schedules.cs:InMapMode_AScheduleWithNoLedgerRow_FiresOnItsPartitionsOwnerOnlyAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TemporalScheduleClaimSqlTests.cs:NotOwned_NotClaimedAsync</tests>
+-- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapClaimSqlTests.cs:Schedules_FireOnThePartitionsOwner_NotTheStoredOwnerAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ClaimPathsDecideThroughTheOwnershipTableGuardTests.cs:EveryClaimFunction_DecidesThroughWhIOwn_AndRanksOnlyInTheLegacyBranchAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_claim_due_schedules(
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,
@@ -94,16 +102,26 @@ DECLARE
   v_skipped BOOLEAN;
   -- DB clock is authority for the due decision (avoids multi-instance skew). p_now is a test seam.
   v_now TIMESTAMPTZ := COALESCE(p_now, NOW());
-  -- 598 (#2575): the live instances, read once per claim (the alive-lock read is not per row).
-  v_live UUID[] := ARRAY(SELECT l.instance_id FROM __SCHEMA__.wh_live_instance_ids() l);
+  -- 566 (#2554, #2555): the service's switch, read once: on, the partition ownership table alone decides.
+  v_map BOOLEAN := __SCHEMA__.wh_partition_ownership_by_map();
+  -- 598 (#2575): the legacy mode's live instances, read once per claim (the alive-lock read is not per row). Map mode
+  -- does not read them.
+  v_live UUID[] := CASE WHEN v_map THEN NULL
+                        ELSE ARRAY(SELECT l.instance_id FROM __SCHEMA__.wh_live_instance_ids() l) END;
 BEGIN
   FOR v_sched IN
     SELECT sc.*
     FROM __SCHEMA__.wh_schedules sc
-    -- 598 (#2575): LEFT JOIN, and the one ownership rule. A stream no live instance holds (no row, an unassigned
-    -- row, an owner the liveness rule calls dead) is anyone's; the row lock below keeps the fire exactly-once.
+    -- 566 (#2555): in map mode a schedule fires on the owner of its stream's partition (wh_i_own), the schedule's own
+    -- number (compute_partition for a row without one). The stored owner is the legacy mode's test, and a stream with no
+    -- ledger row fires nowhere in it, as before.
+    -- 598 (#2575): in the legacy mode a stream no live instance holds (no ledger row, an unassigned row, or an owner the
+    -- liveness rule calls dead) is any live claimer's (wh_schedule_owner_admits); the row lock below keeps the fire
+    -- exactly-once, and the fire pins the stream. A stream another live instance holds stays that instance's.
     LEFT JOIN __SCHEMA__.wh_active_streams s ON s.stream_id = sc.stream_id
-    WHERE __SCHEMA__.wh_schedule_owner_admits(s.assigned_instance_id, p_instance_id, v_live)
+    WHERE CASE WHEN v_map
+               THEN __SCHEMA__.wh_i_own(COALESCE(sc.partition_number, __SCHEMA__.compute_partition(sc.stream_id, p_partition_count)), p_instance_id) IS NOT NULL
+               ELSE __SCHEMA__.wh_schedule_owner_admits(s.assigned_instance_id, p_instance_id, v_live) END
       AND sc.status = 0
       AND sc.next_fire_at <= v_now
     ORDER BY sc.next_fire_at
@@ -159,7 +177,7 @@ BEGIN
     v_completed := (v_next IS NULL);
 
     IF v_skipped THEN
-      -- No occurrence spawned — record the misfire so the skip stays auditable.
+      -- No occurrence spawned: record the misfire so the skip stays auditable.
       INSERT INTO __SCHEMA__.wh_schedule_runs
         (schedule_id, occurrence_id, fired_at, status, instance_id)
       VALUES (v_sched.schedule_id, v_occurrence_id, v_now, 2, p_instance_id);   -- 2 = Skipped (misfire)
@@ -172,7 +190,7 @@ BEGIN
         0::SMALLINT, v_sched.authority_principal_id, v_sched.authority_claims);
     END IF;
 
-    -- Advance the schedule. Completed schedules keep their (past) next_fire_at — status 2 excludes
+    -- Advance the schedule. Completed schedules keep their (past) next_fire_at; status 2 excludes
     -- them from the due-detect/notify queries so they never re-fire, satisfying the NOT NULL column.
     UPDATE __SCHEMA__.wh_schedules
     SET last_fire_at = CASE WHEN v_skipped THEN last_fire_at ELSE v_now END,
@@ -192,8 +210,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION __SCHEMA__.wh_claim_due_schedules IS
-  'Temporal engine authoritative fire: leases due Active schedules the caller owns or no live instance holds '
-  '(598, wh_schedule_owner_admits; SKIP LOCKED), spawns each '
-  'occurrence into the outbox, advances next_fire_at (wh_schedule_next_fire + until/max bounds; '
-  'completion => status 2), and logs a wh_schedule_runs row — all atomically (exactly-once creation).';
+COMMENT ON FUNCTION __SCHEMA__.wh_claim_due_schedules(UUID, TIMESTAMPTZ, INTEGER, INTEGER, TIMESTAMPTZ) IS
+  'Temporal engine authoritative fire: leases due Active schedules this instance may fire (SKIP LOCKED), spawns each '
+  'occurrence into the outbox, advances next_fire_at (wh_schedule_next_fire + until/max bounds; completion => status 2), '
+  'and logs a wh_schedule_runs row, all atomically (exactly-once creation). 566: in map mode the owner of the schedule''s '
+  'partition (wh_i_own). 598 (#2575): otherwise the stream''s stored owner, or any instance when no live instance holds '
+  'the stream (wh_schedule_owner_admits).';
