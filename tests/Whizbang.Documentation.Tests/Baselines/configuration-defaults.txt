@@ -312,6 +312,7 @@ Whizbang:Temporal:BackstopIntervalMilliseconds=5000
 Whizbang:Temporal:ClaimBatchLimit=100
 Whizbang:Temporal:Enabled=true
 Whizbang:Temporal:LeaseDurationSeconds=300
+Whizbang:Temporal:OverdueWarningMilliseconds=60000
 Whizbang:ThrottleRetry:BackoffMultiplier=2
 Whizbang:ThrottleRetry:BaseDelay=00:00:00.2500000
 Whizbang:ThrottleRetry:MaxAttempts=5

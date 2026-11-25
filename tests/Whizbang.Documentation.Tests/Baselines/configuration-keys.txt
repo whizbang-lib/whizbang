@@ -486,6 +486,7 @@ Whizbang:Temporal:BackstopIntervalMilliseconds
 Whizbang:Temporal:ClaimBatchLimit
 Whizbang:Temporal:Enabled
 Whizbang:Temporal:LeaseDurationSeconds
+Whizbang:Temporal:OverdueWarningMilliseconds
 Whizbang:ThrottleRetry:BackoffMultiplier
 Whizbang:ThrottleRetry:BaseDelay
 Whizbang:ThrottleRetry:MaxAttempts
