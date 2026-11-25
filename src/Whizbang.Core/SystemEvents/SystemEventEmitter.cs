@@ -15,9 +15,9 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.SystemEvents;
 
 /// <summary>
-/// Default implementation of <see cref="ISystemEventEmitter"/>. An audit record is appended to its
-/// tenant's audit ledger (<see cref="AuditLedger.StreamFor"/>); every other system event to the global
-/// <c>$wb-system</c> stream (see <see cref="SystemEventStreams.StreamFor"/>).
+/// Default implementation of <see cref="ISystemEventEmitter"/>. An audit record is appended on its own
+/// id, the stream a receiver stores a record on that the audit writers ship; every other system event
+/// to the global <c>$wb-system</c> stream (see <see cref="SystemEventStreams.StreamFor"/>).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -170,7 +170,7 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
       Scope = scope
     };
 
-    // Emit to the tenant's audit ledger (SystemEventStreams.StreamFor routes it). No enablement check:
+    // Stored on the record's own id (SystemEventStreams.StreamFor routes it). No enablement check:
     // event audit is on to get here, and an audit record is always stored while any audit is on.
     // The record is caused by the event it audits, so the trail can be walked back from the envelope as well as
     // from the payload's OriginalEventId. Taken from the audited envelope, where it is already a message id.
@@ -216,7 +216,7 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
       CorrelationId: context?.CorrelationId.ToString(),
       CausationId: null));
 
-    // Emit to the tenant's audit ledger (SystemEventStreams.StreamFor routes it)
+    // Stored on the record's own id (SystemEventStreams.StreamFor routes it)
     await EmitAsync(auditEvent, cancellationToken);
   }
 
@@ -273,8 +273,8 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
     };
 
-    // One envelope construction for every kind; only the stream differs. An audit record goes to its
-    // tenant's ledger, as on the outbox path (#1485); the global kinds stay on $wb-system (#1555).
+    // One envelope construction for every kind; only the stream differs. An audit record is stored on its
+    // own id, where a receiver stores one the outbox path ships (#2331); the global kinds stay on $wb-system (#1555).
     await session.AppendAsync(SystemEventStreams.StreamFor(systemEvent), envelope, cancellationToken);
   }
 

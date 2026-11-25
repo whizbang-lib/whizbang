@@ -6,15 +6,15 @@ using Whizbang.Core.Observability;
 namespace Whizbang.Core.SystemEvents;
 
 /// <summary>
-/// Emits system events: audit records to their tenant's audit ledger, every other kind to the
+/// Emits system events: each audit record on a stream of its own, every other kind to the
 /// global system stream. Used by decorators and pipeline behaviors to emit audit and monitoring events.
 /// </summary>
 /// <remarks>
 /// <para>
 /// System events are stored apart from domain events. The global kinds (security and advisory)
-/// go to the <c>$wb-system</c> stream; an audit record goes to its tenant's ledger
-/// (<see cref="AuditLedger.StreamFor"/>), the same stream the outbox path writes it to
-/// (<see cref="SystemEventStreams.StreamFor"/>). The emitter respects <see cref="SystemEventOptions"/> configuration.
+/// go to the <c>$wb-system</c> stream; an audit record is stored on its own id
+/// (<see cref="SystemEventStreams.StreamFor"/>), the stream a receiver stores a record on that the
+/// outbox path ships on its tenant's ledger (<see cref="AuditLedger.StreamFor"/>). The emitter respects <see cref="SystemEventOptions"/> configuration.
 /// </para>
 /// <para>
 /// Events with <c>[AuditEvent(Exclude = true)]</c> are not re-audited to prevent

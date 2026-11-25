@@ -5,7 +5,7 @@ namespace Whizbang.Core.SystemEvents;
 
 /// <summary>
 /// The streams system events are stored on: the global <c>$wb-system</c> stream for facts about the
-/// system as a whole, and the per-tenant audit ledger for audit records.
+/// system as a whole, and a stream of its own (its own id) for each audit record.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -16,9 +16,12 @@ namespace Whizbang.Core.SystemEvents;
 /// <c>$wb-system</c> holds only the global kinds: the security facts (<c>AccessDenied</c>,
 /// <c>AccessGranted</c>, <c>PermissionChanged</c>, <c>ScopeContextEstablished</c>) and the advisories
 /// (<see cref="PerspectiveIndexAdvised"/>, <see cref="PerspectiveScanAdvised"/>). An audit record
-/// (<see cref="EventAudited"/>, <see cref="CommandAudited"/>) is a ledger entry about a domain event
-/// and is written on its tenant's ledger (<see cref="AuditLedger.StreamFor"/>), whichever path produced
-/// it (#1555). <see cref="StreamFor"/> is the one place that decides.
+/// (<see cref="EventAudited"/>, <see cref="CommandAudited"/>) is stored on its own id, whichever path
+/// produced it: the stream a receiver stores a record on that the outbox path shipped on its tenant's
+/// ledger (<see cref="AuditLedger.StreamFor"/>), the lane records travel and are ordered on (#1555,
+/// #1798, #2331). Stored on the ledger, every record of a tenant would fold onto one perspective row and
+/// every append of the tenant would take one stream lock. <see cref="StreamFor"/> is the one place that
+/// decides for a record stored locally.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/system-events#stream</docs>
@@ -47,16 +50,17 @@ public static class SystemEventStreams {
   public static Guid StreamId { get; } = new Guid("00000000-0000-0000-0000-000000000001");
 
   /// <summary>
-  /// The stream a system event is stored on: its tenant's audit ledger for an audit record, the global
+  /// The stream a system event is stored on: its own id for an audit record, the global
   /// <see cref="StreamId"/> for every other kind.
   /// </summary>
   /// <param name="systemEvent">The system event about to be stored.</param>
   /// <returns>The stream id to append it to.</returns>
-  /// <docs>fundamentals/events/system-events#stream</docs>
+  /// <docs>fundamentals/security/audit-logging#record-storage</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/AuditRecordStorageStreamTests.cs:AnEventAuditTheEmitterStoresLocally_IsStoredOnItsOwnIdAsync</tests>
   /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/SystemEventStreamRoutingTests.cs:StreamFor_NamesTheRecordsOwnIdForAuditKindsAndTheGlobalStreamForTheRestAsync</tests>
   public static Guid StreamFor(ISystemEvent systemEvent) => systemEvent switch {
-    EventAudited audited => AuditLedger.StreamFor(audited.TenantId),
-    CommandAudited audited => AuditLedger.StreamFor(audited.TenantId),
+    EventAudited audited => audited.Id,
+    CommandAudited audited => audited.Id,
     _ => StreamId,
   };
 }
