@@ -6,6 +6,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Data.EFCore.Postgres.Perspectives;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 
@@ -66,7 +67,7 @@ public class WhizbangIdTypeMappingTests {
   public async Task JsonReaderWriter_WritesTheUuidStringAndReadsBothFormsAsync() {
     var readerWriter = WhizbangIdJsonReaderWriter<TestOrderId>.Instance;
     var id = TestOrderId.New();
-    using var form = Whizbang.Core.Perspectives.WhizbangIdDocumentForm.ScopeTo(uuidString: true);
+    using var form = global::Whizbang.Data.Postgres.StrongIdDocumentForms.ScopeTo(uuidString: true);
 
     var json = readerWriter.ToJsonString(id);
     var fromString = (TestOrderId)readerWriter.FromJsonString(json);
@@ -84,7 +85,7 @@ public class WhizbangIdTypeMappingTests {
   public async Task JsonReaderWriter_WhileTheGateIsClosed_WritesTheObjectFormAsync() {
     var readerWriter = WhizbangIdJsonReaderWriter<TestOrderId>.Instance;
     var id = TestOrderId.New();
-    using var form = Whizbang.Core.Perspectives.WhizbangIdDocumentForm.ScopeTo(uuidString: false);
+    using var form = global::Whizbang.Data.Postgres.StrongIdDocumentForms.ScopeTo(uuidString: false);
 
     var json = readerWriter.ToJsonString(id);
 

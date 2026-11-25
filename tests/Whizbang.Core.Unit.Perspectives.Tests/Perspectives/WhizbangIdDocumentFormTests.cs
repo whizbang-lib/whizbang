@@ -74,6 +74,38 @@ public class WhizbangIdDocumentFormTests {
     await Assert.That(state.WritesUuidString).IsTrue();
   }
 
+  /// <summary>
+  /// A schema with no gate is forgotten rather than held, so it does not hold the schemas that have one for the life of
+  /// the process (#2518).
+  /// </summary>
+  [Test]
+  public async Task AForgottenSchema_NoLongerHoldsTheProcess_ButAnOpenOneStaysOpenAsync() {
+    var state = new WhizbangIdDocumentFormState();
+    state.Open("db", "orders");
+    state.Hold("db", "no_gate");
+    var held = state.WritesUuidString;
+
+    state.Forget("db", "no_gate");
+    state.Forget("db", "orders");
+
+    await Assert.That(held).IsFalse();
+    await Assert.That(state.WritesUuidString).IsTrue();
+    await Assert.That(state.IsHeld("db", "no_gate")).IsFalse();
+    await Assert.That(state.IsOpen("db", "orders")).IsTrue().Because("an open schema is never forgotten");
+  }
+
+  [Test]
+  public async Task ForgettingEveryHeldSchema_LeavesNothingKnown_SoTheObjectFormAsync() {
+    var state = new WhizbangIdDocumentFormState();
+    state.Hold("db", "no_gate");
+
+    state.Forget("db", "no_gate");
+    state.Forget("db", "never_seen");
+
+    await Assert.That(state.WritesUuidString).IsFalse();
+    await Assert.That(state.IsHeld("db", "no_gate")).IsFalse();
+  }
+
   [Test]
   public async Task AScope_SetsTheFormForItsFlow_AndRestoresTheOneBeforeAsync() {
     var processForm = WhizbangIdDocumentForm.ProcessWritesUuidString;

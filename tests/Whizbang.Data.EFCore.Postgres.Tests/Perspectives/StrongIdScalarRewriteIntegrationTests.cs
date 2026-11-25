@@ -194,12 +194,13 @@ public class StrongIdScalarRewriteIntegrationTests {
       int batchSize = StrongIdScalarRewrite.BATCH_SIZE, int maxBatches = int.MaxValue,
       Func<NpgsqlConnection, CancellationToken, Task<string?>>? hold = null,
       IReadOnlyList<(string Name, string Sql)>? rewrites = null,
-      ILogger? logger = null) =>
+      ILogger? logger = null,
+      TimeSpan? maxDuration = null) =>
     await BatchedRewriteRunner.RunAsync(
       new BatchedRewriteRequest(
         () => new NpgsqlConnection(_connectionString), "public", _lockId,
         rewrites ?? [.. _rewrites(batchSize).Select(t => (t.Name, t.Sql))], TIMEOUT_SECONDS),
-      new BatchedRewriteBudget(maxBatches, TimeSpan.FromDays(1)),
+      new BatchedRewriteBudget(maxBatches, maxDuration ?? TimeSpan.FromDays(1)),
       hold,
       applier: null,
       new FakeTimeProvider(),
@@ -210,13 +211,14 @@ public class StrongIdScalarRewriteIntegrationTests {
   /// reads and writes the UUID string: the fleet the rewrite runs for.
   /// </summary>
   private async Task _fleetWritesUuidStringsAsync() => await _executeAsync("""
-    CREATE TABLE wh_service_instances (instance_id uuid PRIMARY KEY, metadata jsonb);
+    CREATE TABLE wh_service_instances (instance_id uuid PRIMARY KEY, service_name text, host_name text, metadata jsonb);
     CREATE TABLE wh_settings (setting_key text PRIMARY KEY, setting_value text, value_type text, description text,
       updated_at timestamptz, updated_by text);
     CREATE FUNCTION wh_live_instance_ids() RETURNS TABLE (instance_id uuid) LANGUAGE sql
       AS 'SELECT instance_id FROM wh_service_instances';
-    INSERT INTO wh_service_instances VALUES
-      ('00000000-0000-0000-0000-000000000001', '{"stored_form_level":2,"strong_id_document_form":"uuid-string"}');
+    INSERT INTO wh_service_instances (instance_id, service_name, host_name, metadata) VALUES
+      ('00000000-0000-0000-0000-000000000001', 'svc', 'host',
+       '{"stored_form_level":2,"strong_id_document_form":"uuid-string"}');
     """);
 
   private async Task<string> _journalAsync(string column, string? name = null) =>
@@ -485,6 +487,82 @@ public class StrongIdScalarRewriteIntegrationTests {
   }
 
   /// <summary>
+  /// The hold is asked before every batch, not once a run: a reason given part way stops the run before the next batch,
+  /// with what it did so far kept (#2518).
+  /// </summary>
+  [Test]
+  public async Task AHoldThatGivesAReasonPartWay_StopsTheRunBeforeTheNextBatchAsync() {
+    await _createTableAsync();
+    for (var n = 1; n <= 3; n++) {
+      await _seedAsync(OLD_ROW, key: _key(n));
+    }
+    var asked = 0;
+
+    var run = await _runAsync(batchSize: 1, hold: (_, _) =>
+      Task.FromResult<string?>(++asked > 1 ? "strong-id document gate open (1 of 2 live instances write strong ids as UUID strings)" : null));
+
+    await Assert.That(run.Outcome).IsEqualTo(BatchedRewriteOutcome.HeldForFleet);
+    await Assert.That(run.Batches).IsEqualTo(1);
+    await Assert.That(asked).IsEqualTo(2);
+    await Assert.That(await _objectFormKeysAsync()).IsEqualTo("02,03").Because("the first batch converted the first row and kept it");
+  }
+
+  /// <summary>
+  /// An instance of an earlier release that joins while the rewrite runs stops it before the next batch: the strong-id
+  /// gate behind the hold is asked per batch, and that instance cannot read the rows converted from then on (#2518).
+  /// </summary>
+  [Test]
+  public async Task AnEarlierInstanceJoiningDuringARun_StopsItBeforeTheNextBatchAsync() {
+    await _createTableAsync();
+    for (var n = 1; n <= 3; n++) {
+      await _seedAsync(OLD_ROW, key: _key(n));
+    }
+    await _fleetWritesUuidStringsAsync();
+    await using (var latch = new NpgsqlConnection(_connectionString)) {
+      await latch.OpenAsync();
+      await Assert.That((await StrongIdDocumentGate.CheckAsync(latch, "public")).Status).IsEqualTo("opened");
+    }
+    var asked = 0;
+
+    var run = await _runAsync(batchSize: 1, hold: async (connection, ct) => {
+      if (++asked == 2) {
+        // Between the first batch and the second, an instance of an earlier release starts.
+        await using var join = new NpgsqlCommand(
+          "INSERT INTO wh_service_instances (instance_id, service_name, host_name, metadata) "
+          + "VALUES ('00000000-0000-0000-0000-000000000002', 'svc', 'old-host', '{\"stored_form_level\":1}')", connection);
+        await join.ExecuteNonQueryAsync(ct);
+      }
+      return await StrongIdDocumentGate.RewriteHoldAsync(connection, "public", ct);
+    });
+
+    await Assert.That(run.Outcome).IsEqualTo(BatchedRewriteOutcome.HeldForFleet);
+    await Assert.That(run.Batches).IsEqualTo(1);
+    await Assert.That(await _objectFormKeysAsync()).IsEqualTo("02,03");
+  }
+
+  /// <summary>
+  /// The last batch is cut off at what is left of the run's budget, not run for a whole command timeout past it: the
+  /// statement is canceled, the batch rolled back as the budget spent rather than failed, and the next run tries again.
+  /// </summary>
+  [Test]
+  public async Task ABatchThatOutrunsTheBudget_IsCutOffAtWhatIsLeftOfItAsync() {
+    await _createTableAsync();
+    var logger = new TestLogger<StrongIdScalarRewriteIntegrationTests>();
+    var levels = new List<LogLevel>();
+
+    var run = await _runAsync(
+      rewrites: [("strong-id-scalar:slow:0", $"SELECT pg_sleep({TIMEOUT_SECONDS})")],
+      logger: new LevelRecorder(levels, logger),
+      maxDuration: TimeSpan.FromMilliseconds(200));
+
+    await Assert.That(run.Outcome).IsEqualTo(BatchedRewriteOutcome.Unfinished);
+    await Assert.That(run.Batches).IsEqualTo(0);
+    await Assert.That(run.Unsettled).IsEquivalentTo(["strong-id-scalar:slow:0"]);
+    await Assert.That(levels).DoesNotContain(LogLevel.Warning).Because("a batch the budget cut off has not failed");
+    await Assert.That(logger.LoggedMessages).Contains(m => m.Contains("reached the end of the run's budget", StringComparison.Ordinal));
+  }
+
+  /// <summary>
   /// A batch takes the rewrite's own lock, never the schema lock: while a batch runs, a starting instance's probe of the
   /// schema lock finds it free and goes on with its schema pass instead of waiting for the slice (#2518).
   /// </summary>
@@ -520,8 +598,8 @@ public class StrongIdScalarRewriteIntegrationTests {
   }
 
   /// <summary>
-  /// The maintenance step finishes what startup's slice left, from the recorded key, and once every table is settled does
-  /// nothing more in the process (#2518).
+  /// The maintenance step finishes what startup's slice left, from the recorded key, and once every table is settled runs
+  /// no more rewrite in the process, while still asking the gate each cycle (#2518).
   /// </summary>
   [Test]
   public async Task TheMaintenanceStep_FinishesWhatStartupLeft_ThenDoesNothingAsync() {
@@ -554,6 +632,20 @@ public class StrongIdScalarRewriteIntegrationTests {
 
     await Assert.That(await _objectFormKeysAsync()).IsEqualTo("09")
       .Because("a settled context is remembered for the process; queries read the row in either form");
+
+    // Settled, it still asks the gate each cycle, so an instance of an earlier release that joins is reported.
+    await _executeAsync("""
+      INSERT INTO wh_service_instances (instance_id, service_name, host_name, metadata)
+      VALUES ('00000000-0000-0000-0000-000000000002', 'svc', 'old-host', '{"stored_form_level":1}')
+      """);
+    var logger = new TestLogger<StrongIdScalarRewriteStep>();
+    await using (var scope = provider.CreateAsyncScope()) {
+      await new StrongIdScalarRewriteStep(typeof(RewriteDbContext), logger, new FakeTimeProvider())
+        .RunAsync(scope.ServiceProvider, CancellationToken.None);
+    }
+
+    await Assert.That(logger.LoggedMessages)
+      .Contains(m => m.Contains("00000000-0000-0000-0000-000000000002 (svc on old-host, level 1)", StringComparison.Ordinal));
   }
 
   /// <summary>
@@ -628,6 +720,20 @@ public class StrongIdScalarRewriteIntegrationTests {
       .UseNpgsql(connectionString, npgsql => npgsql.UseWhizbangFunctions())
       .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
       .Options;
+
+  /// <summary>A logger that records each message's level and passes it on.</summary>
+  private sealed class LevelRecorder(List<LogLevel> levels, ILogger inner) : ILogger {
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      levels.Add(logLevel);
+      inner.Log(logLevel, eventId, state, exception, formatter);
+    }
+  }
 
   /// <summary>A logger that completes <see cref="Raised"/> when a message carrying the given notice is logged.</summary>
   private sealed class NoticeSignal(string notice) : ILogger {

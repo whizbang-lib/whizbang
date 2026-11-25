@@ -8,6 +8,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -32,7 +33,7 @@ public class PerspectivePersistenceAnyVersionIdTests {
     var typeInfo = _options().GetTypeInfo(typeof(TestAnyVersionId));
 
     string json;
-    using (Whizbang.Core.Perspectives.WhizbangIdDocumentForm.ScopeTo(uuidString: true)) {
+    using (global::Whizbang.Data.Postgres.StrongIdDocumentForms.ScopeTo(uuidString: true)) {
       json = JsonSerializer.Serialize(id, typeInfo);
     }
     var fromScalar = (TestAnyVersionId)JsonSerializer.Deserialize(json, typeInfo)!;

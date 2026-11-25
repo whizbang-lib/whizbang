@@ -14,8 +14,12 @@ namespace Whizbang.Data.Postgres;
 
 /// <summary>How much of a batched rewrite one run does: at most so many batches, and for at most so long.</summary>
 /// <param name="MaxBatches">The batches the run stops after.</param>
-/// <param name="MaxDuration">The time the run stops after, checked between batches.</param>
-/// <docs>fundamentals/identity/whizbang-ids#stored-form</docs>
+/// <param name="MaxDuration">
+/// The time the run stops after: checked between batches, and the last batch's statement is cut off at what is left of
+/// it, so a run never goes past it by a whole command timeout.
+/// </param>
+/// <docs>fundamentals/identity/whizbang-ids#stored-form-rewrite</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/StrongIdScalarRewriteIntegrationTests.cs:ABatchThatOutrunsTheBudget_IsCutOffAtWhatIsLeftOfItAsync</tests>
 public sealed record BatchedRewriteBudget(int MaxBatches, TimeSpan MaxDuration) {
   /// <summary>
   /// The slice startup runs: four fifths of the command timeout, so starting is delayed by no more than a schema pass
@@ -31,6 +35,8 @@ public sealed record BatchedRewriteBudget(int MaxBatches, TimeSpan MaxDuration) 
 }
 
 /// <summary>What one run of a batched rewrite came to.</summary>
+/// <docs>fundamentals/identity/whizbang-ids#stored-form-rewrite</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/StrongIdScalarRewriteIntegrationTests.cs</tests>
 public enum BatchedRewriteOutcome {
   /// <summary>Every rewrite is settled; nothing is left to run.</summary>
   Settled,
@@ -40,7 +46,7 @@ public enum BatchedRewriteOutcome {
 
   /// <summary>
   /// The fleet is not ready for the form the rewrite writes (a live instance cannot read it, or still writes the form it
-  /// replaces): nothing ran.
+  /// replaces): asked before every batch, so the run stopped before the batch it was not ready for.
   /// </summary>
   HeldForFleet,
 }
@@ -49,6 +55,8 @@ public enum BatchedRewriteOutcome {
 /// <param name="Outcome">What it came to.</param>
 /// <param name="Batches">The batches it ran.</param>
 /// <param name="Unsettled">The rewrites still unsettled after it, by journal name.</param>
+/// <docs>fundamentals/identity/whizbang-ids#stored-form-rewrite</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/StrongIdScalarRewriteIntegrationTests.cs</tests>
 public sealed record BatchedRewriteRun(BatchedRewriteOutcome Outcome, int Batches, IReadOnlyList<string> Unsettled);
 
 /// <summary>The rewrites a batched run works on, and where.</summary>
@@ -84,7 +92,8 @@ public sealed record BatchedRewriteRequest(
 /// key the first recorded.
 /// </para>
 /// <para>
-/// A conversion the fleet is not ready for waits: <c>hold</c> is asked first, and when it gives a reason nothing runs.
+/// A conversion the fleet is not ready for waits: <c>hold</c> is asked before every batch, and when it gives a reason the
+/// run stops there, so an instance that cannot read the new form and joins during a run stops it before the next batch.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/identity/whizbang-ids#stored-form</docs>
@@ -94,8 +103,8 @@ public static class BatchedRewriteRunner {
   /// <param name="request">The rewrites, and where.</param>
   /// <param name="budget">How much this run does.</param>
   /// <param name="hold">
-  /// Why the fleet is not ready for the conversion, asked before anything runs: null when it is. A null function
-  /// holds nothing.
+  /// Why the fleet is not ready for the conversion, asked before each batch: null when it is. A null function holds
+  /// nothing.
   /// </param>
   /// <param name="applier">Who the conversions record as applying them.</param>
   /// <param name="timeProvider">The clock the budget is measured on.</param>
@@ -129,16 +138,14 @@ public static class BatchedRewriteRunner {
       return new BatchedRewriteRun(BatchedRewriteOutcome.Settled, 0, []);
     }
 
-    var reason = hold is null ? null : await hold(connection, cancellationToken).ConfigureAwait(false);
-    if (reason is not null) {
-      BatchedRewriteLog.HeldForFleet(log, pending.Count, reason);
-      return new BatchedRewriteRun(BatchedRewriteOutcome.HeldForFleet, 0, [.. pending.Select(p => p.Name)]);
-    }
-
-    var batches = await _roundsAsync(batch, pending, budget, timeProvider, cancellationToken).ConfigureAwait(false);
+    var (batches, held) = await _roundsAsync(batch, pending, budget, hold, timeProvider, cancellationToken).ConfigureAwait(false);
     var unsettled = await _unsettledAsync(batch, cancellationToken).ConfigureAwait(false);
     if (unsettled.Count == 0) {
       return new BatchedRewriteRun(BatchedRewriteOutcome.Settled, batches, []);
+    }
+    if (held is not null) {
+      BatchedRewriteLog.HeldForFleet(log, unsettled.Count, held);
+      return new BatchedRewriteRun(BatchedRewriteOutcome.HeldForFleet, batches, [.. unsettled.Select(p => p.Name)]);
     }
     BatchedRewriteLog.Unfinished(log, batches, unsettled.Count);
     return new BatchedRewriteRun(BatchedRewriteOutcome.Unfinished, batches, [.. unsettled.Select(p => p.Name)]);
@@ -152,16 +159,18 @@ public static class BatchedRewriteRunner {
     Converted,
     Settled,
     LockHeldElsewhere,
+    BudgetSpent,
     Failed,
   }
 
   /// <summary>
-  /// Gives each unsettled rewrite one batch per round until all settle, the budget is spent or the lock is held
-  /// elsewhere, then analyzes the tables the batches converted rows in.
+  /// Gives each unsettled rewrite one batch per round until all settle, the budget is spent, the lock is held elsewhere
+  /// or the hold gives a reason, then analyzes the tables the batches converted rows in.
   /// </summary>
-  /// <returns>The batches run.</returns>
-  private static async Task<int> _roundsAsync(
-      Batch batch, List<(string Name, string Sql)> pending, BatchedRewriteBudget budget, TimeProvider timeProvider,
+  /// <returns>The batches run, and the hold's reason when it stopped the run.</returns>
+  private static async Task<(int Batches, string? Held)> _roundsAsync(
+      Batch batch, List<(string Name, string Sql)> pending, BatchedRewriteBudget budget,
+      Func<NpgsqlConnection, CancellationToken, Task<string?>>? hold, TimeProvider timeProvider,
       CancellationToken cancellationToken) {
     var started = timeProvider.GetTimestamp();
     var batches = 0;
@@ -172,9 +181,14 @@ public static class BatchedRewriteRunner {
     try {
       var queue = new Queue<(string Name, string Sql)>(pending);
       while (queue.Count > 0 && !spent()) {
+        // Asked before every batch: an instance that cannot read the new form can join while the run is going.
+        if (hold is not null && await hold(batch.Connection, cancellationToken).ConfigureAwait(false) is { } reason) {
+          return (batches, reason);
+        }
         var rewrite = queue.Dequeue();
-        var (step, marked) = await _batchAsync(batch, rewrite, cancellationToken).ConfigureAwait(false);
-        if (step == Step.LockHeldElsewhere) {
+        var left = budget.MaxDuration - timeProvider.GetElapsedTime(started);
+        var (step, marked) = await _batchAsync(batch, rewrite, left, cancellationToken).ConfigureAwait(false);
+        if (step is Step.LockHeldElsewhere or Step.BudgetSpent) {
           break;
         }
         // Back of the queue while unsettled, so each rewrite gets a batch in turn. A failed batch is reported and rolled
@@ -185,7 +199,7 @@ public static class BatchedRewriteRunner {
           queue.Enqueue(rewrite);
         }
       }
-      return batches;
+      return (batches, null);
     } finally {
       batch.Connection.Notice -= relay;
       await _analyzeAsync(batch, converted).ConfigureAwait(false);
@@ -202,9 +216,13 @@ public static class BatchedRewriteRunner {
     }
   }
 
-  /// <summary>One batch of one rewrite, in its own transaction under the schema lock, and the tables it marked.</summary>
+  /// <summary>
+  /// One batch of one rewrite, in its own transaction under the rewrite's lock, and the tables it marked. When less of
+  /// the budget is left than a command timeout, the statement is cut off at what is left (a transaction-local
+  /// <c>statement_timeout</c>), and a batch cut off that way is rolled back as the budget spent, not as a failure.
+  /// </summary>
   private static async Task<(Step Step, IReadOnlyList<string> Marked)> _batchAsync(
-      Batch batch, (string Name, string Sql) rewrite, CancellationToken cancellationToken) {
+      Batch batch, (string Name, string Sql) rewrite, TimeSpan left, CancellationToken cancellationToken) {
     var connection = batch.Connection;
     await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
     await using (var take = new NpgsqlCommand("SELECT pg_try_advisory_xact_lock($1)", connection, transaction)) {
@@ -214,7 +232,13 @@ public static class BatchedRewriteRunner {
       }
     }
 
+    var bounded = left < TimeSpan.FromSeconds(batch.Request.CommandTimeoutSeconds);
     try {
+      if (bounded) {
+        await using var bound = new NpgsqlCommand("SELECT set_config('statement_timeout', $1, true)", connection, transaction);
+        bound.Parameters.AddWithValue(Math.Max(1L, (long)left.TotalMilliseconds).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        await bound.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      }
       await StoredFormApplier.StampAsync(connection, transaction, batch.Applier, cancellationToken).ConfigureAwait(false);
       await using (var run = new NpgsqlCommand(rewrite.Sql, connection, transaction) {
         CommandTimeout = batch.Request.CommandTimeoutSeconds,
@@ -235,6 +259,10 @@ public static class BatchedRewriteRunner {
       // #2165: each batch is progress, so a long startup slice keeps the migrator's role.
       StartupProgress.Note();
       return (settled ? Step.Settled : Step.Converted, marked);
+    } catch (PostgresException ex) when (bounded && ex.SqlState == PostgresErrorCodes.QueryCanceled) {
+      await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+      BatchedRewriteLog.BudgetSpent(batch.Log, rewrite.Name);
+      return (Step.BudgetSpent, []);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
       BatchedRewriteLog.BatchFailed(batch.Log, ex, rewrite.Name);
@@ -277,6 +305,12 @@ internal static partial class BatchedRewriteLog {
       Message = "Batched stored-form rewrite of {Pending} table(s) waits for the fleet: {Reason}; queries read both forms "
               + "meanwhile")]
   public static partial void HeldForFleet(ILogger logger, int pending, string reason);
+
+  [LoggerMessage(
+      Level = LogLevel.Information,
+      Message = "A batch of the stored-form rewrite {Rewrite} reached the end of the run's budget and was rolled back; the "
+              + "next run tries it again")]
+  public static partial void BudgetSpent(ILogger logger, string rewrite);
 
   [LoggerMessage(
       Level = LogLevel.Warning,

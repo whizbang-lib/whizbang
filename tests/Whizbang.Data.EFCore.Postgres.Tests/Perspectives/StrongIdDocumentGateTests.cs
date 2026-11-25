@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Diagnostics.Metrics;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using TUnit.Assertions;
@@ -47,7 +48,7 @@ public class StrongIdDocumentGateTests : EFCoreTestBase {
     await Assert.That(await _scalarAsync(conn, "SELECT metadata ->> 'stored_form_level' FROM wh_service_instances LIMIT 1"))
       .IsEqualTo("2").Because("the EF Core driver's heartbeat wrote this build's level");
     await Assert.That(await _flagAsync(conn)).IsEqualTo("true");
-    await Assert.That(WhizbangIdDocumentForm.IsOpen(conn.Database, "public")).IsTrue()
+    await Assert.That(StrongIdDocumentForms.IsOpen(conn.Database, "public")).IsTrue()
       .Because("this process's writes switch with the gate");
   }
 
@@ -70,7 +71,7 @@ public class StrongIdDocumentGateTests : EFCoreTestBase {
 
     await Assert.That(gate.State).IsEqualTo(StrongIdDocumentGateState.Closed);
     await Assert.That(gate.Status).IsEqualTo("closed (1 of 2 live instances read strong ids as UUID strings)");
-    await Assert.That(WhizbangIdDocumentForm.IsOpen(conn.Database, "public")).IsFalse()
+    await Assert.That(StrongIdDocumentForms.IsOpen(conn.Database, "public")).IsFalse()
       .Because($"an instance of {earlier} is live, whose Entity Framework reader cannot read the UUID string");
     await Assert.That(WhizbangIdDocumentForm.ProcessWritesUuidString).IsFalse()
       .Because("a schema this process writes to is held, so the process writes the object form");
@@ -83,7 +84,7 @@ public class StrongIdDocumentGateTests : EFCoreTestBase {
     var after = await StrongIdDocumentGate.CheckAsync(conn, "public");
 
     await Assert.That(after.Status).IsEqualTo("opened").Because("the last instance that could not read it has left");
-    await Assert.That(WhizbangIdDocumentForm.IsOpen(conn.Database, "public")).IsTrue();
+    await Assert.That(StrongIdDocumentForms.IsOpen(conn.Database, "public")).IsTrue();
   }
 
   /// <summary>
@@ -165,18 +166,68 @@ public class StrongIdDocumentGateTests : EFCoreTestBase {
     await Assert.That(await _rewriteRanAsync(conn)).IsTrue();
   }
 
-  /// <summary>The latch is one-way: an instance that cannot read the UUID string starting later does not close it.</summary>
+  /// <summary>
+  /// The latch is one-way: an instance that cannot read the UUID string starting later does not close it. Each check
+  /// names it, with a Warning when the set of such instances changes and on the gauge for as long as it is live (#2518).
+  /// </summary>
   [Test]
-  public async Task OnceOpen_TheGateStaysOpen_WhenAnEarlierInstanceAppearsAsync() {
+  public async Task OnceOpen_AnEarlierInstanceThatJoins_IsNamedByEveryCheck_AndTheGateStaysOpenAsync() {
     await using var conn = await _openAsync();
     await _registerAsync(conn, WRITES, "0.4522.0");
     await Assert.That((await StrongIdDocumentGate.CheckAsync(conn, "public")).Status).IsEqualTo("opened");
+    var logger = new TestLogger<StrongIdDocumentGateTests>();
+    var earlier = await _registerAsync(conn, EARLIER, "0.4521.0");
 
-    await _registerAsync(conn, EARLIER, "0.4521.0");
+    var first = await StrongIdDocumentGate.CheckAsync(conn, "public", logger);
+    var second = await StrongIdDocumentGate.CheckAsync(conn, "public", logger);
+    var gauged = _observeUnreadable(conn.Database, "public");
+
+    await Assert.That(first.State).IsEqualTo(StrongIdDocumentGateState.Open);
+    await Assert.That(first.Status).IsEqualTo(
+      "open (1 of 2 live instances write strong ids as UUID strings); 1 live instances cannot read them");
+    await Assert.That(first.Unreadable.Select(i => i.InstanceId)).IsEquivalentTo([earlier]);
+    await Assert.That(first.Unreadable[0].StoredFormLevel).IsEqualTo("1");
+    await Assert.That(second.Unreadable.Select(i => i.InstanceId)).IsEquivalentTo([earlier]);
+    await Assert.That(logger.LoggedMessages.Count(m => m.Contains(earlier.ToString(), StringComparison.Ordinal))).IsEqualTo(1)
+      .Because("the Warning comes when the set of unreadable instances changes, not on every check");
+    await Assert.That(gauged).IsEquivalentTo([earlier.ToString()]);
+    await Assert.That(StrongIdDocumentForms.IsOpen(conn.Database, "public")).IsTrue();
+  }
+
+  /// <summary>Once no unreadable instance is live, the gauge names none.</summary>
+  [Test]
+  public async Task OnceTheEarlierInstanceIsGone_TheGaugeNamesNoneAsync() {
+    await using var conn = await _openAsync();
+    await _registerAsync(conn, WRITES, "0.4522.0");
+    await StrongIdDocumentGate.CheckAsync(conn, "public");
+    var earlier = await _registerAsync(conn, EARLIER, "0.4521.0");
+    await StrongIdDocumentGate.CheckAsync(conn, "public");
+    var named = _observeUnreadable(conn.Database, "public");
+
+    await _executeAsync(conn, "DELETE FROM wh_service_instances WHERE instance_id = @i", ("i", earlier));
     var after = await StrongIdDocumentGate.CheckAsync(conn, "public");
 
-    await Assert.That(after.State).IsEqualTo(StrongIdDocumentGateState.Open);
-    await Assert.That(WhizbangIdDocumentForm.IsOpen(conn.Database, "public")).IsTrue();
+    await Assert.That(named).IsEquivalentTo([earlier.ToString()]);
+    await Assert.That(after.Unreadable).IsEmpty();
+    await Assert.That(_observeUnreadable(conn.Database, "public")).IsEmpty();
+  }
+
+  /// <summary>
+  /// An operator reads where a schema stands without latching it: the status function never writes the flag, even when
+  /// every live instance reads the UUID string (#2518).
+  /// </summary>
+  [Test]
+  public async Task TheStatusFunction_NeverLatchesTheGateAsync() {
+    await using var conn = await _openAsync();
+    await _registerAsync(conn, READS, "0.4522.0");
+
+    var status = await _scalarAsync(conn, "SELECT wh_strong_id_document_status()");
+
+    await Assert.That(status).IsEqualTo("closed (1 of 1 live instances read strong ids as UUID strings)");
+    await Assert.That(await _flagAsync(conn)).IsNull();
+    await Assert.That((await StrongIdDocumentGate.CheckAsync(conn, "public")).Status).IsEqualTo("opened");
+    await Assert.That(await _scalarAsync(conn, "SELECT wh_strong_id_document_status()"))
+      .IsEqualTo("open (0 of 1 live instances write strong ids as UUID strings)");
   }
 
   [Test]
@@ -189,25 +240,65 @@ public class StrongIdDocumentGateTests : EFCoreTestBase {
     await Assert.That((await StrongIdDocumentGate.CheckAsync(conn, "public")).State).IsEqualTo(StrongIdDocumentGateState.Closed);
   }
 
+  /// <summary>
+  /// A schema with no gate is left out of the process's write form rather than held, so it does not hold the schemas
+  /// that have one for the life of the process (#2518).
+  /// </summary>
   [Test]
-  public async Task ASchemaWithoutTheGate_IsUnavailable_AndHeldAsync() {
+  public async Task ASchemaWithoutTheGate_IsUnavailable_AndLeftOutOfTheWriteFormAsync() {
     await using var conn = await _openAsync();
+    StrongIdDocumentForms.Hold(conn.Database, "no_such_schema");
 
     var answer = await StrongIdDocumentGate.CheckAsync(conn, "no_such_schema");
 
     await Assert.That(answer.State).IsEqualTo(StrongIdDocumentGateState.Unavailable);
-    await Assert.That(WhizbangIdDocumentForm.IsOpen(conn.Database, "no_such_schema")).IsFalse();
+    await Assert.That(StrongIdDocumentForms.IsHeld(conn.Database, "no_such_schema")).IsFalse();
+    await Assert.That(StrongIdDocumentForms.IsOpen(conn.Database, "no_such_schema")).IsFalse();
+  }
+
+  /// <summary>A gate that could not be asked holds its schema, so the process keeps the form every release reads.</summary>
+  [Test]
+  public async Task HoldUnasked_HoldsTheSchemaAsync() {
+    StrongIdDocumentGate.HoldUnasked("unasked_db", "unasked");
+
+    await Assert.That(StrongIdDocumentForms.IsHeld("unasked_db", "unasked")).IsTrue();
   }
 
   [Test]
   [Arguments("ready", StrongIdDocumentGateState.Ready)]
   [Arguments("opened", StrongIdDocumentGateState.Open)]
   [Arguments("open (1 of 2 live instances write strong ids as UUID strings)", StrongIdDocumentGateState.Open)]
+  [Arguments("open (1 of 2 live instances write strong ids as UUID strings); 1 live instances cannot read them", StrongIdDocumentGateState.Open)]
   [Arguments("closed (0 of 0 live instances read strong ids as UUID strings)", StrongIdDocumentGateState.Closed)]
   public async Task StateOf_ReadsTheGatesWordsAsync(string status, StrongIdDocumentGateState expected) =>
     await Assert.That(StrongIdDocumentGate.StateOf(status)).IsEqualTo(expected);
 
   // ===== Helpers =====
+
+  /// <summary>The instance ids the unreadable-instances gauge names for one schema, read through a meter listener.</summary>
+  private static List<string> _observeUnreadable(string database, string schema) {
+    var named = new List<string>();
+    using var listener = new MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (instrument.Meter == StrongIdDocumentGate.UnreadableMeter
+          && instrument.Name == StrongIdDocumentGate.UNREADABLE_INSTRUMENT_NAME) {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<int>((_, _, tags, _) => {
+      var tagged = new Dictionary<string, string?>(StringComparer.Ordinal);
+      foreach (var tag in tags) {
+        tagged[tag.Key] = tag.Value as string;
+      }
+      if (tagged.GetValueOrDefault("database") == database && tagged.GetValueOrDefault("schema") == schema
+          && tagged.GetValueOrDefault("instance_id") is { } instance) {
+        named.Add(instance);
+      }
+    });
+    listener.Start();
+    listener.RecordObservableInstruments();
+    return named;
+  }
 
   /// <summary>Registers an instance of this build through the EF Core driver's heartbeat.</summary>
   private async Task _registerThisBuildAsync() {

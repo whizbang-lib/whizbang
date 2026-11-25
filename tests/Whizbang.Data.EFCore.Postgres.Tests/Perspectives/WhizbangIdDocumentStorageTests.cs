@@ -10,6 +10,7 @@ using TUnit.Core;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres.Functions;
 using Whizbang.Data.EFCore.Postgres.Perspectives;
+using Whizbang.Data.Postgres;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
@@ -132,7 +133,7 @@ public class WhizbangIdDocumentStorageTests {
 
   [Test]
   public async Task Convention_WithoutTheExtension_WritesScalarsReadsBothFormsAndTranslatesAsync() {
-    using var form = WhizbangIdDocumentForm.ScopeTo(uuidString: true);
+    using var form = StrongIdDocumentForms.ScopeTo(uuidString: true);
     var orderId = TestOrderId.New();
     var parentId = TestOrderId.New();
     var lineId = TestOrderId.New();
@@ -162,7 +163,7 @@ public class WhizbangIdDocumentStorageTests {
 
   [Test]
   public async Task Whizbang_ReadsTheObjectFormAndWritesTheScalarAsync() {
-    using var form = WhizbangIdDocumentForm.ScopeTo(uuidString: true);
+    using var form = StrongIdDocumentForms.ScopeTo(uuidString: true);
     var orderId = TestOrderId.New();
     var lineId = TestOrderId.New();
     var parentId = TestOrderId.New();
@@ -287,7 +288,7 @@ public class WhizbangIdDocumentStorageTests {
   [Test]
   public async Task Structural_CannotReadARowInTheUuidStringFormAsync() {
     var row = _row(TestOrderId.New(), null, TestOrderId.New());
-    using (WhizbangIdDocumentForm.ScopeTo(uuidString: true))
+    using (StrongIdDocumentForms.ScopeTo(uuidString: true))
     await using (var current = _context(o => new WhizbangContext(o))) {
       current.Rows.Add(row);
       await current.SaveChangesAsync();
@@ -304,7 +305,7 @@ public class WhizbangIdDocumentStorageTests {
   /// </summary>
   [Test]
   public async Task Whizbang_WhileTheGateIsClosed_WritesTheObjectForm_WhichTheEarlierReleaseReadsAsync() {
-    using var form = WhizbangIdDocumentForm.ScopeTo(uuidString: false);
+    using var form = StrongIdDocumentForms.ScopeTo(uuidString: false);
     var row = _row(TestOrderId.New(), TestOrderId.New(), TestOrderId.New());
     await using (var current = _context(o => new WhizbangContext(o))) {
       current.Rows.Add(row);
@@ -321,7 +322,7 @@ public class WhizbangIdDocumentStorageTests {
 
   [Test]
   public async Task Whizbang_WritesEveryIdAsAUuidStringAsync() {
-    using var form = WhizbangIdDocumentForm.ScopeTo(uuidString: true);
+    using var form = StrongIdDocumentForms.ScopeTo(uuidString: true);
     await using var db = _context(o => new WhizbangContext(o));
     var orderId = TestOrderId.New();
     var parentId = TestOrderId.New();
@@ -458,7 +459,7 @@ public class WhizbangIdDocumentStorageTests {
   /// </summary>
   [Test]
   public async Task Convention_ReadsQueriesAndWritesTheAtomicUpsertsBytesAsync() {
-    using var form = WhizbangIdDocumentForm.ScopeTo(uuidString: true);
+    using var form = StrongIdDocumentForms.ScopeTo(uuidString: true);
     var carrierId = TestOrderId.New();
     var row = _row(TestOrderId.New(), TestOrderId.New(), TestOrderId.New(), carrierId);
     var upsertOptions = PerspectiveDocumentSerialization.Options;
@@ -527,7 +528,7 @@ public class WhizbangIdDocumentStorageTests {
   /// </summary>
   [Test]
   public async Task Whizbang_ListOfIdsIsAnArrayOfUuidStringsAndContainsTranslatesAsync() {
-    using var form = WhizbangIdDocumentForm.ScopeTo(uuidString: true);
+    using var form = StrongIdDocumentForms.ScopeTo(uuidString: true);
     var first = TestOrderId.New();
     var second = TestOrderId.New();
     await using var db = _context(o => new WhizbangListContext(o));
@@ -594,7 +595,7 @@ public class WhizbangIdDocumentStorageTests {
   /// </summary>
   [Test]
   public async Task Whizbang_OrderingByAnIdSortsRowsInEitherStoredFormAsync() {
-    using var form = WhizbangIdDocumentForm.ScopeTo(uuidString: true);
+    using var form = StrongIdDocumentForms.ScopeTo(uuidString: true);
     // Minted in order, so each is lower than the next.
     var (lowOrder, middleOrder, highOrder) = (TestOrderId.New(), TestOrderId.New(), TestOrderId.New());
     var (lowParent, highParent) = (TestOrderId.New(), TestOrderId.New());
@@ -629,7 +630,7 @@ public class WhizbangIdDocumentStorageTests {
   /// </summary>
   [Test]
   public async Task Whizbang_ExecuteUpdateSetsAnIdAsAUuidString_AndItsIdPredicateMatchesBothFormsAsync() {
-    using var form = WhizbangIdDocumentForm.ScopeTo(uuidString: true);
+    using var form = StrongIdDocumentForms.ScopeTo(uuidString: true);
     var (oldOrder, currentOrder, newOrder, newParent) = (TestOrderId.New(), TestOrderId.New(), TestOrderId.New(), TestOrderId.New());
     var old = _row(oldOrder, null, TestOrderId.New());
     var current = _row(currentOrder, null, TestOrderId.New());
@@ -668,7 +669,7 @@ public class WhizbangIdDocumentStorageTests {
   /// </summary>
   [Test]
   public async Task Whizbang_ExecuteUpdateWhileTheGateIsClosed_SetsAnIdInTheObjectFormAsync() {
-    using var form = WhizbangIdDocumentForm.ScopeTo(uuidString: false);
+    using var form = StrongIdDocumentForms.ScopeTo(uuidString: false);
     var (order, newOrder, newParent) = (TestOrderId.New(), TestOrderId.New(), TestOrderId.New());
     var row = _row(order, TestOrderId.New(), TestOrderId.New());
     var capture = new SqlCapture();
@@ -708,11 +709,11 @@ public class WhizbangIdDocumentStorageTests {
     async Task setAsync(TestOrderId id) =>
       await db.Rows.Where(r => r.Id == row.Id).ExecuteUpdateAsync(s => s.SetProperty(r => r.Data.OrderId, id));
 
-    using (WhizbangIdDocumentForm.ScopeTo(uuidString: false)) {
+    using (StrongIdDocumentForms.ScopeTo(uuidString: false)) {
       await setAsync(closedOrder);
     }
     var closed = await _storedTextAsync(row.Id);
-    using (WhizbangIdDocumentForm.ScopeTo(uuidString: true)) {
+    using (StrongIdDocumentForms.ScopeTo(uuidString: true)) {
       await setAsync(openOrder);
     }
 

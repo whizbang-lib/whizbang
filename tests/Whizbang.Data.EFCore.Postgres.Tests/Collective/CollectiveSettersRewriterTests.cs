@@ -10,6 +10,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres.Collective;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 
@@ -195,7 +196,7 @@ public class CollectiveSettersRewriterTests {
 
   [Test]
   public async Task CollectAssignments_AStrongIdWhileTheGateIsClosed_IsSerializedInTheObjectFormAsync() {
-    using var form = WhizbangIdDocumentForm.ScopeTo(uuidString: false);
+    using var form = StrongIdDocumentForms.ScopeTo(uuidString: false);
     var id = TestOrderId.New();
     Expression<Action<ICollectiveSetters<OrderModel>>> source = s => s.SetProperty(o => o.OrderId, id);
 
@@ -207,7 +208,7 @@ public class CollectiveSettersRewriterTests {
 
   [Test]
   public async Task CollectAssignments_AStrongIdOnceTheGateIsOpen_IsSerializedAsItsUuidStringAsync() {
-    using var form = WhizbangIdDocumentForm.ScopeTo(uuidString: true);
+    using var form = StrongIdDocumentForms.ScopeTo(uuidString: true);
     var id = TestOrderId.New();
     Expression<Action<ICollectiveSetters<OrderModel>>> source = s => s.SetProperty(o => o.OrderId, id);
 
@@ -218,7 +219,7 @@ public class CollectiveSettersRewriterTests {
 
   [Test]
   public async Task FromHookSetters_AStrongIdWhileTheGateIsClosed_IsSerializedInTheObjectFormAsync() {
-    using var form = WhizbangIdDocumentForm.ScopeTo(uuidString: false);
+    using var form = StrongIdDocumentForms.ScopeTo(uuidString: false);
     var id = TestOrderId.New();
     Expression<Func<OrderModel, TestOrderId>> selector = o => o.OrderId;
 

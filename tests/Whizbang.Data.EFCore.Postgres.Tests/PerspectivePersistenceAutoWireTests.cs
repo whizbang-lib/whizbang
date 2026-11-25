@@ -6,6 +6,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Data.EFCore.Postgres.Perspectives;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -33,7 +34,7 @@ public class PerspectivePersistenceAutoWireTests {
       Amount = 100.00m,
       Status = "Created"
     };
-    using var form = Whizbang.Core.Perspectives.WhizbangIdDocumentForm.ScopeTo(uuidString);
+    using var form = global::Whizbang.Data.Postgres.StrongIdDocumentForms.ScopeTo(uuidString);
 
     var json = PerspectiveDocumentSerialization.Serialize(order);
 

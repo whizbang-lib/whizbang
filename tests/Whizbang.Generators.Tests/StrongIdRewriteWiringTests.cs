@@ -65,6 +65,44 @@ public class StrongIdRewriteWiringTests {
     await Assert.That(call).Contains("StrongIdDocumentGate.RewriteHoldAsync(connection, \"", StringComparison.Ordinal);
   }
 
+  /// <summary>
+  /// The slice runs last in the stored-form phase and in its own try: a failure in it, a lost connection or a gate that
+  /// cannot be asked, skips neither the index rebuild nor the declared-key pass for that start.
+  /// </summary>
+  [Test]
+  public async Task TheStartupSlice_RunsLastInItsOwnTry_SoItsFailureSkipsNoOtherStepAsync() {
+    var output = await _generatedAsync();
+    var rebuild = output.IndexOf("StoredFormIndexRebuild.ApplyAsync(", StringComparison.Ordinal);
+    var settle = output.IndexOf("DeclaredKeySpellingPass.SettleAsync(", StringComparison.Ordinal);
+    var slice = output.IndexOf("BatchedRewriteRunner.RunAsync(", StringComparison.Ordinal);
+    var ownTry = output.LastIndexOf("try {", slice, StringComparison.Ordinal);
+    var ownCatch = output.IndexOf("catch (Exception ex)", slice, StringComparison.Ordinal);
+    var phaseCatch = output.IndexOf("StoredFormConversionBlockedException", slice, StringComparison.Ordinal);
+
+    await Assert.That(rebuild).IsGreaterThan(-1);
+    await Assert.That(settle).IsGreaterThan(rebuild);
+    await Assert.That(slice).IsGreaterThan(settle);
+    await Assert.That(ownTry).IsGreaterThan(settle).Because("the slice's try opens after the steps it must not skip");
+    await Assert.That(ownCatch).IsGreaterThan(slice);
+    await Assert.That(phaseCatch).IsGreaterThan(ownCatch).Because("the slice's own catch comes before the phase's");
+  }
+
+  /// <summary>The gate and analyze methods each carry their own summary, and neither carries two.</summary>
+  [Test]
+  [Arguments("_checkStrongIdDocumentGateAsync")]
+  [Arguments("_analyzeNewlyIndexedTablesAsync")]
+  public async Task TheGateAndAnalyzeMethods_EachCarryTheirOwnSummaryAsync(string method) {
+    var output = (await _generatedAsync()).Replace("\r\n", "\n", StringComparison.Ordinal);
+    var declaration = output.IndexOf("  private static async Task " + method + "(", StringComparison.Ordinal);
+    var summary = output.LastIndexOf("  /// <summary>", declaration, StringComparison.Ordinal);
+    var before = output[..summary].TrimEnd();
+
+    await Assert.That(declaration).IsGreaterThan(-1);
+    await Assert.That(output[summary..declaration]).Contains("/// </summary>\n", StringComparison.Ordinal);
+    await Assert.That(before.EndsWith("/// </summary>", StringComparison.Ordinal)).IsFalse()
+      .Because("a summary directly after another is the one the method before it lost");
+  }
+
   /// <summary>Every start asks the gate, the fast path included, after the schema work and outside its lock.</summary>
   [Test]
   public async Task EveryStart_AsksTheStrongIdDocumentGateAsync() {
@@ -75,8 +113,10 @@ public class StrongIdRewriteWiringTests {
 
     await Assert.That(gate).IsGreaterThan(analyze);
     await Assert.That(reconcile).IsGreaterThan(gate);
-    await Assert.That(output).Contains("StrongIdDocumentGate.CheckAsync(", StringComparison.Ordinal);
-    await Assert.That(output).Contains("WhizbangIdDocumentForm.Hold(", StringComparison.Ordinal)
+    await Assert.That(output).Contains("StrongIdDocumentGate.CheckAsync(connection, \"", StringComparison.Ordinal);
+    await Assert.That(output).DoesNotContain("WhizbangIdDocumentForm.Hold(", StringComparison.Ordinal)
+      .Because("the write form's setters are internal to Whizbang; generated code goes through the gate");
+    await Assert.That(output).Contains("StrongIdDocumentGate.HoldUnasked(", StringComparison.Ordinal)
       .Because("a gate that cannot be asked keeps the object form every release reads");
   }
 }

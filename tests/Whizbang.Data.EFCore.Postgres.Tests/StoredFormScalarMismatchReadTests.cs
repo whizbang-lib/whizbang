@@ -7,6 +7,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -61,7 +62,7 @@ public class StoredFormScalarMismatchReadTests : EFCoreTestBase {
   [Test]
   public async Task GetByStreamId_AnObjectFormIdBesideTheWrongValue_IsNotBlamedAsync() {
     var streamId = (Guid)TrackedGuid.New();
-    using (Whizbang.Core.Perspectives.WhizbangIdDocumentForm.ScopeTo(uuidString: false))
+    using (global::Whizbang.Data.Postgres.StrongIdDocumentForms.ScopeTo(uuidString: false))
     await using (var writeContext = CreateDbContext()) {
       var writer = new EFCorePostgresPerspectiveStore<Order>(writeContext, "wh_per_order", new PostgresUpsertStrategy());
       await writer.UpsertAsync(streamId, new Order { OrderId = new TestOrderId(streamId), Amount = 5m, Status = "Created" });

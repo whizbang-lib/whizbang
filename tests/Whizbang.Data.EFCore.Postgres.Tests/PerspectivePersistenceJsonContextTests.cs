@@ -9,6 +9,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -50,7 +51,7 @@ public class PerspectivePersistenceJsonContextTests {
     // back to PerspectivePersistenceJsonContext (first in the chain) and returns the document form.
     var options = PerspectivePersistenceJsonContext.CreateOptions(MessageJsonContext.Default);
     var typeInfo = options.GetTypeInfo(typeof(Order));
-    using var form = WhizbangIdDocumentForm.ScopeTo(uuidString);
+    using var form = StrongIdDocumentForms.ScopeTo(uuidString);
 
     // Act
     var json = JsonSerializer.Serialize(order, typeInfo);

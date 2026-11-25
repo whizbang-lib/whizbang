@@ -39,7 +39,8 @@
 --
 -- Reversal: reversible (the functions are dropped; rows already converted stay converted, and every reader since #2518 reads them)
 -- Dependencies: 176 (wh_stored_form_migrations, the journal the rewrite records in)
--- Objects: _wh_strong_id_scalar, wh_strong_id_scalar_at, wh_strong_id_document_gate, jsonb_strong_id_containment_set,
+-- Objects: _wh_strong_id_scalar, wh_strong_id_scalar_at, wh_strong_id_document_status,
+--          wh_strong_id_document_unreadable_instances, wh_strong_id_document_gate, jsonb_strong_id_containment_set,
 --          wh_stored_form_migrations.resume_key, wh_stored_form_migrations.pass_rows_converted
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
@@ -126,28 +127,24 @@ COMMENT ON COLUMN __SCHEMA__.wh_stored_form_migrations.pass_rows_converted IS
   'For a migration run a batch at a time (#2518): the rows the current pass has converted. A pass that reaches the '
   'end with none settles the migration; one with any starts another, which catches rows written meanwhile.';
 
--- The strong-id document gate. A release before #2518 maps a strongly-typed id in a document as a complex type, and its
--- Entity Framework reader throws on a UUID string; so the UUID string is written only once every live instance reads it.
--- Each heartbeat of this release says stored_form_level 2 in its registry row's metadata (HeartbeatRequest
--- .STORED_FORM_LEVEL); an earlier release says 1 or nothing. The gate latches wh_settings 'strong_id_uuid_string_documents'
--- once at least one instance is live (the one liveness rule, wh_live_instance_ids) and every live instance is at level 2
--- or higher. One-way, like the trim gate (537): an instance of an earlier release that starts after it cannot read rows
--- written since, and rolling back below this release is then not supported.
--- Once it is open each instance switches its writes to the UUID string and says so in its heartbeat
--- (strong_id_document_form = 'uuid-string'); the rewrite starts only once every live instance has, so no instance writes
--- the object form behind it.
--- Returns 'closed (n of m live instances read strong ids as UUID strings)', 'opened' (this call latched it), 'open (n of
--- m live instances write strong ids as UUID strings)', or 'ready' (open, and every live instance writes them).
+-- Where a schema's strong-id document stands, read-only: it never latches anything, so an operator can ask it at any time.
+-- A release before #2518 maps a strongly-typed id in a document as a complex type, and its Entity Framework reader throws
+-- on a UUID string; so the UUID string is written only once every live instance reads it. Each heartbeat of this release
+-- says stored_form_level 2 in its registry row's metadata (HeartbeatRequest.STORED_FORM_LEVEL); an earlier release says 1
+-- or nothing. Once the gate has latched (wh_strong_id_document_gate) each instance writes the UUID string and says so in
+-- its heartbeat (strong_id_document_form = 'uuid-string'); the rewrite starts only once every live instance has.
+-- Returns 'closed (n of m live instances read strong ids as UUID strings)' (the next gate check latches it when n = m and
+-- m > 0), 'open (n of m live instances write strong ids as UUID strings)', with '; k live instances cannot read them'
+-- appended when an instance of an earlier release is live after the latch, or 'ready' (every live instance writes them).
 -- plpgsql, so its body is checked when it runs: in the bootstrap region the registry may not exist yet.
--- <docs>fundamentals/identity/whizbang-ids#stored-form</docs>
+-- <docs>fundamentals/identity/whizbang-ids#stored-form-switch</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/StrongIdDocumentGateTests.cs</tests>
-CREATE OR REPLACE FUNCTION __SCHEMA__.wh_strong_id_document_gate()
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_strong_id_document_status()
 RETURNS TEXT AS $$
 DECLARE
   v_live BIGINT;
   v_reading BIGINT;
   v_writing BIGINT;
-  v_open BOOLEAN;
 BEGIN
   SELECT count(*),
          count(*) FILTER (WHERE jsonb_typeof(si.metadata -> 'stored_form_level') = 'number'
@@ -157,35 +154,89 @@ BEGIN
   FROM __SCHEMA__.wh_service_instances si
   WHERE si.instance_id IN (SELECT l.instance_id FROM __SCHEMA__.wh_live_instance_ids() l);
 
-  v_open := EXISTS (
-    SELECT 1 FROM __SCHEMA__.wh_settings s
-    WHERE s.setting_key = 'strong_id_uuid_string_documents' AND s.setting_value = 'true');
-
-  IF NOT v_open THEN
-    IF v_live = 0 OR v_reading < v_live THEN
-      RETURN 'closed (' || v_reading || ' of ' || v_live || ' live instances read strong ids as UUID strings)';
-    END IF;
-    INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description, updated_at, updated_by)
-    VALUES ('strong_id_uuid_string_documents', 'true', 'boolean',
-            'Migration 562 (#2518): every live instance read a strongly-typed id stored as its UUID string when this was '
-            'written, so documents store ids that way. One-way: never cleared.',
-            NOW(), 'wh_strong_id_document_gate')
-    ON CONFLICT (setting_key) DO UPDATE SET setting_value = 'true', updated_at = NOW(), updated_by = EXCLUDED.updated_by
-    WHERE __SCHEMA__.wh_settings.setting_value IS DISTINCT FROM 'true';
-    RETURN 'opened';
+  IF NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_settings s
+      WHERE s.setting_key = 'strong_id_uuid_string_documents' AND s.setting_value = 'true') THEN
+    RETURN 'closed (' || v_reading || ' of ' || v_live || ' live instances read strong ids as UUID strings)';
   END IF;
-
   IF v_live = 0 OR v_writing < v_live THEN
-    RETURN 'open (' || v_writing || ' of ' || v_live || ' live instances write strong ids as UUID strings)';
+    RETURN 'open (' || v_writing || ' of ' || v_live || ' live instances write strong ids as UUID strings)'
+      || CASE WHEN v_reading < v_live
+           THEN '; ' || (v_live - v_reading) || ' live instances cannot read them'
+           ELSE '' END;
   END IF;
   RETURN 'ready';
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_strong_id_document_status() IS
+  'Issue #2518, read-only: where the strong-id document gate stands. Returns closed (...), open (...) or ready; never '
+  'latches. wh_strong_id_document_gate is the one that latches.';
+
+-- The live instances that cannot read a strongly-typed id stored as its UUID string: below stored_form_level 2. Before
+-- the latch they keep the gate closed; after it they are instances of an earlier release that joined a fleet already
+-- writing the UUID string, which fail on every converted row, so each check reports them by name.
+-- <docs>fundamentals/identity/whizbang-ids#stored-form-switch</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/StrongIdDocumentGateTests.cs</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_strong_id_document_unreadable_instances()
+RETURNS TABLE (instance_id UUID, service_name TEXT, host_name TEXT, stored_form_level TEXT) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT si.instance_id, si.service_name::TEXT, si.host_name::TEXT, si.metadata ->> 'stored_form_level'
+  FROM __SCHEMA__.wh_service_instances si
+  WHERE si.instance_id IN (SELECT l.instance_id FROM __SCHEMA__.wh_live_instance_ids() l)
+    AND NOT (jsonb_typeof(si.metadata -> 'stored_form_level') = 'number'
+             AND (si.metadata ->> 'stored_form_level')::NUMERIC >= 2)
+  ORDER BY si.service_name, si.host_name, si.instance_id;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_strong_id_document_unreadable_instances() IS
+  'Issue #2518: the live instances below stored_form_level 2, which cannot read a strongly-typed id stored as its UUID '
+  'string.';
+
+-- The strong-id document gate: latches wh_settings 'strong_id_uuid_string_documents' once at least one instance is live
+-- (the one liveness rule, wh_live_instance_ids) and every live instance is at stored_form_level 2 or higher, then says
+-- where the schema stands. One-way, like the trim gate (537): an instance of an earlier release that starts after it
+-- cannot read rows written since, and rolling back below this release is then not supported. Asked by every instance at
+-- startup and each maintenance cycle; an operator asks wh_strong_id_document_status, which never latches.
+-- Returns 'opened' when this call latched it, otherwise what wh_strong_id_document_status returns.
+-- <docs>fundamentals/identity/whizbang-ids#stored-form-switch</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/StrongIdDocumentGateTests.cs</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_strong_id_document_gate()
+RETURNS TEXT AS $$
+DECLARE
+  v_live BIGINT;
+  v_reading BIGINT;
+BEGIN
+  IF NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_settings s
+      WHERE s.setting_key = 'strong_id_uuid_string_documents' AND s.setting_value = 'true') THEN
+    SELECT count(*),
+           count(*) FILTER (WHERE jsonb_typeof(si.metadata -> 'stored_form_level') = 'number'
+                              AND (si.metadata ->> 'stored_form_level')::NUMERIC >= 2)
+      INTO v_live, v_reading
+    FROM __SCHEMA__.wh_service_instances si
+    WHERE si.instance_id IN (SELECT l.instance_id FROM __SCHEMA__.wh_live_instance_ids() l);
+    IF v_live > 0 AND v_reading = v_live THEN
+      INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description, updated_at, updated_by)
+      VALUES ('strong_id_uuid_string_documents', 'true', 'boolean',
+              'Migration 562 (#2518): every live instance read a strongly-typed id stored as its UUID string when this '
+              'was written, so documents store ids that way. One-way: never cleared.',
+              NOW(), 'wh_strong_id_document_gate')
+      ON CONFLICT (setting_key) DO UPDATE SET setting_value = 'true', updated_at = NOW(), updated_by = EXCLUDED.updated_by
+      WHERE __SCHEMA__.wh_settings.setting_value IS DISTINCT FROM 'true';
+      RETURN 'opened';
+    END IF;
+  END IF;
+  RETURN __SCHEMA__.wh_strong_id_document_status();
 END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_strong_id_document_gate() IS
   'Issue #2518: latches wh_settings strong_id_uuid_string_documents once every live instance reads strongly-typed ids '
-  'stored as UUID strings (stored_form_level 2), and says whether every live instance also writes them. Returns closed '
-  '(...), opened, open (...) or ready; the stored-form rewrite runs only when ready.';
+  'stored as UUID strings (stored_form_level 2), then returns opened or what wh_strong_id_document_status returns. '
+  'Operators ask wh_strong_id_document_status, which never latches.';
 
 -- @whizbang:bootstrap-end
 

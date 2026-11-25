@@ -32,8 +32,9 @@ namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 /// live instance writes the UUID string, so none writes the object form behind it.
 /// </para>
 /// <para>
-/// Once every table is settled the step remembers it for the process and does nothing more: the model, and so the
-/// tables, do not change while it runs.
+/// Once every table is settled the step remembers it for the process and runs no more rewrite: the model, and so the
+/// tables, do not change while it runs. It still asks the gate every cycle, which reports a live instance of an earlier
+/// release that joined after the switch (<see cref="StrongIdDocumentGate.UNREADABLE_INSTRUMENT_NAME"/>).
 /// </para>
 /// </remarks>
 /// <param name="dbContextType">The DbContext whose perspectives the step converts.</param>
@@ -62,30 +63,31 @@ public sealed class StrongIdScalarRewriteStep(
   /// <inheritdoc />
   public async Task RunAsync(IServiceProvider services, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(services);
-    if (_settled.ContainsKey(_dbContextType)) {
-      return;
-    }
-
     var context = (DbContext)services.GetRequiredService(_dbContextType);
     var schema = context.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
     schema = string.IsNullOrWhiteSpace(schema) ? "public" : schema;
-    var rewrites = StrongIdScalarRewrite.ForModel(context.Model, PerspectiveDocumentSerialization.Options, schema)
-      .Select(t => (t.Name, t.Sql)).ToList();
 
     // The rewrite writes as the role startup migrations use, when one is configured.
     var connectionString = SchemaInitConnection.For(services, _dbContextType) ?? context.Database.GetConnectionString()
       ?? throw new InvalidOperationException($"{TypeNameFormatter.SimpleName(_dbContextType)} has no connection string to rewrite with.");
+
+    StrongIdDocumentGateAnswer gate;
+    await using (var connection = new NpgsqlConnection(connectionString)) {
+      await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+      gate = await StrongIdDocumentGate.CheckAsync(connection, schema, _logger, cancellationToken).ConfigureAwait(false);
+      StrongIdScalarRewriteStepLog.Gate(_logger, schema, gate.Status);
+    }
+    if (_settled.ContainsKey(_dbContextType)) {
+      return;
+    }
+
+    var rewrites = StrongIdScalarRewrite.ForModel(context.Model, PerspectiveDocumentSerialization.Options, schema)
+      .Select(t => (t.Name, t.Sql)).ToList();
     var libraryVersion = services.GetService<ILibraryVersionProvider>()?.LibraryVersion;
     var applier = libraryVersion is null
       ? null
       : new StoredFormApplier(libraryVersion, SchemaLedgerVersion.ApplicationVersionOf(services) ?? SchemaLedgerVersion.UNKNOWN);
 
-    StrongIdDocumentGateAnswer gate;
-    await using (var connection = new NpgsqlConnection(connectionString)) {
-      await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-      gate = await StrongIdDocumentGate.CheckAsync(connection, schema, cancellationToken).ConfigureAwait(false);
-      StrongIdScalarRewriteStepLog.Gate(_logger, schema, gate.Status);
-    }
 
     var run = await BatchedRewriteRunner.RunAsync(
       new BatchedRewriteRequest(
