@@ -35,6 +35,15 @@ public sealed record PerspectiveWriteFence(string Prefix, Func<Guid, PartitionTe
   public static PerspectiveWriteFence? For(string prefix, PartitionTenures? tenures) =>
     tenures is null ? null : new PerspectiveWriteFence(prefix, tenures.OfPerspectiveWrite);
 
+  /// <summary>
+  /// The statement that holds every partition of a batch at its epoch in partition order (#2557, migration 581), binding
+  /// <c>@wb_hp</c> and <c>@wb_he</c>: run first in a write's transaction, so it takes its partitions in the order every
+  /// flip and every other fenced write takes them, and a flip cannot deadlock against it.
+  /// </summary>
+  internal string HoldAllStatement() =>
+    "SELECT 1 FROM " + Prefix + "wh_partition_ownership y WHERE (y.partition_number, y.epoch) IN "
+    + "(SELECT t.p, t.e FROM unnest(@wb_hp, @wb_he) AS t(p, e)) ORDER BY y.partition_number FOR SHARE OF y";
+
   /// <summary>The call that holds a partition at an epoch, for an update's or a purge's predicate.</summary>
   /// <param name="partition">The partition expression.</param>
   /// <param name="epoch">The epoch expression.</param>

@@ -66,6 +66,11 @@ internal static class PostgresPerspectiveWriter {
     var context = new WriteContext(connection, transaction, writes, writeClock, outcomes, fence, tenures);
     // A fenced row binds its partition and epoch as well.
     var fencedPerRow = tenures.Any(t => t.HasValue) ? 2 : 0;
+    // 581 (#2557): in the caller's transaction every partition is held first, in partition order, so the statements
+    // below re-take only partitions already held and a flip cannot deadlock against the write.
+    if (fencedPerRow > 0 && transaction is not null) {
+      await _holdAllAsync(context, cancellationToken).ConfigureAwait(false);
+    }
     foreach (var (shape, rows) in Plan(writes, outcomes, maxParameters, fencedPerRow)) {
       await _writeAsync(context, shape, rows, cancellationToken).ConfigureAwait(false);
     }
@@ -135,6 +140,16 @@ internal static class PostgresPerspectiveWriter {
     public PerspectiveWriteFence? FenceOf(List<int> rows) => rows.Any(i => Tenures[i].HasValue) ? Fence : null;
   }
 
+  private static async Task _holdAllAsync(WriteContext context, CancellationToken cancellationToken) {
+    var held = context.Tenures.OfType<PartitionTenure>().Select(t => (Partition: t.Partition % 10000, t.Epoch)).Distinct().ToList();
+    await using var command = context.Connection.CreateWhizbangCommand();
+    command.Transaction = context.Transaction;
+    command.CommandText = context.Fence!.HoldAllStatement();
+    command.Parameters.Add(new NpgsqlParameter("wb_hp", NpgsqlDbType.Array | NpgsqlDbType.Integer) { Value = held.Select(h => h.Partition).ToArray() });
+    command.Parameters.Add(new NpgsqlParameter("wb_he", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = held.Select(h => h.Epoch).ToArray() });
+    await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
   // #2556: a row whose partition moved on raised in its own statement; it is fenced, not failed.
   private static PerspectiveWriteOutcome _rejected(Exception ex) =>
     PerspectiveWriteFence.IsFenced(ex) ? PerspectiveWriteOutcome.Fenced : PerspectiveWriteOutcome.Failed(ex);
@@ -196,6 +211,10 @@ internal static class PostgresPerspectiveWriter {
     command.Transaction = context.Transaction;
     var written = new HashSet<Guid>();
     var fence = context.FenceOf(rows);
+    if (fence is not null) {
+      // 581 (#2557): the statement holds its rows' partitions in partition order, the order every flip takes them in.
+      rows = [.. rows.OrderBy(i => context.Tenures[i]?.Partition % 10000 ?? -1)];
+    }
     if (shape.Operation == PerspectiveWriteOperation.Purge) {
       _bindPurge(command, shape, rows, context, fence);
       await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
