@@ -128,7 +128,7 @@ public sealed partial class InstanceAssignmentMonitor : BackgroundService {
     var own = rows.FirstOrDefault(r => r.InstanceId == _instanceId);
     _awaitingSince = own?.Kind == InstanceAssignmentKind.AwaitingShare ? _awaitingSince ?? now : null;
     if (own is not null && !_same(_logged, own)) {
-      LogAssigned(_logger, Describe(own));
+      LogAssigned(_logger, new AssignmentText(own));
       _logged = own;
     }
     return new(own, now, _awaitingSince, null);
@@ -159,8 +159,13 @@ public sealed partial class InstanceAssignmentMonitor : BackgroundService {
     };
   }
 
+  /// <summary>An assignment as the log line writes it, described only when the line is written.</summary>
+  private readonly record struct AssignmentText(InstanceAssignment Assignment) {
+    public override string ToString() => Describe(Assignment);
+  }
+
   [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "Assigned: {Assignment}")]
-  static partial void LogAssigned(ILogger logger, string assignment);
+  static partial void LogAssigned(ILogger logger, AssignmentText assignment);
 
   [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
     Message = "InstanceAssignmentMonitor: this instance's assignment could not be read; reading again on the next interval")]
