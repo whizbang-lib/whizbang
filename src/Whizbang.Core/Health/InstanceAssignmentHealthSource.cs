@@ -38,5 +38,28 @@ public sealed class InstanceAssignmentHealthSource : IWhizbangHealthSource {
   /// <inheritdoc />
   public ValueTask<ComponentHealth> ReportAsync(CancellationToken cancellationToken) => ValueTask.FromResult(_report());
 
-  private ComponentHealth _report() => new(ComponentState.Operational, string.Empty);
+  private ComponentHealth _report() {
+    if (_monitor.Latest is not { } latest) {
+      return new(ComponentState.Degraded, "this instance's assignment is read from the Coordinate stage on; not read yet");
+    }
+    if (latest.Failure is { } failure) {
+      return new(ComponentState.Degraded, failure);
+    }
+    if (latest.Assignment is not { } assignment) {
+      return new(ComponentState.Degraded, "this instance is not in the registered fleet");
+    }
+    var detail = "Assigned: " + InstanceAssignmentMonitor.Describe(assignment);
+    if (assignment.Kind == InstanceAssignmentKind.Evicted) {
+      return new(ComponentState.Degraded, detail);
+    }
+    if (assignment.Kind != InstanceAssignmentKind.AwaitingShare) {
+      return new(ComponentState.Operational, detail);
+    }
+    var waited = _time.GetUtcNow() - latest.AwaitingSince!.Value;
+    var grace = _monitor.AwaitingShareGrace;
+    var timing = string.Create(CultureInfo.InvariantCulture, $"for {waited.TotalSeconds:0}s of a {grace.TotalSeconds:0}s grace");
+    return waited > grace
+      ? new(ComponentState.Degraded, $"{detail}, {timing}: past the grace, no published map gives it a partition")
+      : new(ComponentState.Operational, $"{detail}, {timing}");
+  }
 }

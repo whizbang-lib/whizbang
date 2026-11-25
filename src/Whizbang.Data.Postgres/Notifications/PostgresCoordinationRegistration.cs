@@ -34,6 +34,7 @@ internal static class PostgresCoordinationRegistration {
     services.AddWhizbangRoleAssignmentByDefault();
     services.AddWhizbangPartitionAssigner();
     // #2595: each instance reads, logs and reports its own assignment, on every driver alike.
+    services.AddWhizbangInstanceAssignmentMonitor();
     return services;
   }
 

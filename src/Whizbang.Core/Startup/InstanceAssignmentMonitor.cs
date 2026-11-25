@@ -110,8 +110,28 @@ public sealed partial class InstanceAssignmentMonitor : BackgroundService {
   }
 
   private async Task<InstanceAssignmentObservation> _readAsync(CancellationToken cancellationToken) {
-    await Task.Yield();
-    return new(null, _time.GetUtcNow(), null, null);
+    var now = _time.GetUtcNow();
+    if (_reader is null) {
+      return new(null, now, _awaitingSince, "no instance-assignment reader is registered (no Postgres driver)");
+    }
+    System.Collections.Generic.IReadOnlyList<InstanceAssignment> rows;
+    try {
+      rows = await _reader.ReadAssignmentsAsync(cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+      throw;
+#pragma warning disable CA1031 // reported, not swallowed: logged here, and the failure is the health detail
+    } catch (Exception ex) {
+#pragma warning restore CA1031
+      LogReadFailed(_logger, ex);
+      return new(null, now, _awaitingSince, $"the assignment could not be read: {TypeNameFormatter.ForLog(ex.GetType())}");
+    }
+    var own = rows.FirstOrDefault(r => r.InstanceId == _instanceId);
+    _awaitingSince = own?.Kind == InstanceAssignmentKind.AwaitingShare ? _awaitingSince ?? now : null;
+    if (own is not null && !_same(_logged, own)) {
+      LogAssigned(_logger, Describe(own));
+      _logged = own;
+    }
+    return new(own, now, _awaitingSince, null);
   }
 
   /// <summary>Whether two reads give the instance the same assignment: kind, roles, share and map.</summary>
@@ -122,7 +142,22 @@ public sealed partial class InstanceAssignmentMonitor : BackgroundService {
   /// <summary>What an assignment says, as the log line and the health detail write it after "Assigned: ".</summary>
   /// <param name="assignment">The assignment.</param>
   /// <returns>The description.</returns>
-  public static string Describe(InstanceAssignment assignment) => string.Empty;
+  public static string Describe(InstanceAssignment assignment) {
+    ArgumentNullException.ThrowIfNull(assignment);
+    var map = assignment.MapRevision is { } revision
+      ? string.Create(CultureInfo.InvariantCulture, $"map {revision}")
+      : "no map published";
+    var share = string.Create(CultureInfo.InvariantCulture, $"{assignment.OwnedPartitions} partitions, {map}");
+    return assignment.Kind switch {
+      InstanceAssignmentKind.StandardWorker => $"standard worker, {share}",
+      InstanceAssignmentKind.RoleHolder => $"role holder ({string.Join(", ", assignment.Roles)}), {share}",
+      InstanceAssignmentKind.AwaitingShare => $"awaiting its share, {map}",
+      InstanceAssignmentKind.Starting => "starting, not yet eligible for work",
+      InstanceAssignmentKind.Draining => "draining",
+      InstanceAssignmentKind.Ineligible => "ineligible: an older release in a service that claims by the partition map",
+      _ => "evicted",
+    };
+  }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "Assigned: {Assignment}")]
   static partial void LogAssigned(ILogger logger, string assignment);
