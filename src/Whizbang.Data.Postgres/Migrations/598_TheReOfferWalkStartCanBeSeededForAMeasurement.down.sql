@@ -1,11 +1,11 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 620_TheReOfferWalkStartCanBeSeededForAMeasurement.sql (#2580): claim_work goes back to its last word
--- before 620 (566), and _claim_walk_start is dropped.
+-- The reverse of 598_TheReOfferWalkStartCanBeSeededForAMeasurement.sql (#2580): claim_work goes back to its last word
+-- before 598 (566), and _claim_walk_start is dropped.
 
 -- ---------------------------------------------------------------------------------------------
--- claim_work: its last word before 620 (566).
+-- claim_work: its last word before 598 (566).
 -- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('claim_work');
 

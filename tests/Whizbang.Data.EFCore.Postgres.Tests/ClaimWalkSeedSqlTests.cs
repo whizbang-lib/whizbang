@@ -15,7 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// the same streams and read the same pages; nothing in the framework sets it.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/claim-loop#the-re-offer-walk-start</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/620_TheReOfferWalkStartCanBeSeededForAMeasurement.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/598_TheReOfferWalkStartCanBeSeededForAMeasurement.sql</code-under-test>
 [Category("Shard5")]
 [Category("Integration")]
 public class ClaimWalkSeedSqlTests : EFCoreTestBase {

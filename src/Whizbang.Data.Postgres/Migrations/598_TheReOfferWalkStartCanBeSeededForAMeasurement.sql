@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 620_TheReOfferWalkStartCanBeSeededForAMeasurement.sql
+-- Migration: 598_TheReOfferWalkStartCanBeSeededForAMeasurement.sql
 -- Date: 2026-11-25
 -- Description: The claim's re-offer walks start at a point a measurement can fix for its own session (#2580).
 --
@@ -45,7 +45,7 @@ COMMENT ON FUNCTION __SCHEMA__._claim_walk_start() IS
   'measurement set it (#2580). Nothing in the framework sets the seed.';
 
 -- ---------------------------------------------------------------------------------------------
--- claim_work: copied from its last word (566), with the 620 delta: every walk starts at _claim_walk_start().
+-- claim_work: copied from its last word (566), with the 598 delta: every walk starts at _claim_walk_start().
 -- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('claim_work');
 
@@ -808,7 +808,7 @@ BEGIN
         EXIT inbox_lanes WHEN v_remaining <= 0;
         -- 367: an empty lane is not walked; see the lane probe above.
         CONTINUE WHEN NOT v_inbox_lanes_held[v_bucket * 2 + CASE WHEN v_is_event THEN 2 ELSE 1 END];
-        -- 620 (#2580): drawn at random, or the session's measurement seed (_claim_walk_start).
+        -- 598 (#2580): drawn at random, or the session's measurement seed (_claim_walk_start).
         v_start := __SCHEMA__._claim_walk_start();
         RETURN QUERY
         WITH RECURSIVE lanes AS (
@@ -957,7 +957,7 @@ BEGIN
       -- 367: an empty bucket is not walked (the lane probe before the inbox walks). Skipped where the walk would run, after the trickle bound above, so the
       -- remaining count, and the perspective row count derived from it below, are what they were.
       CONTINUE WHEN NOT v_perspective_buckets_held[v_bucket + 1];
-      -- 620 (#2580): drawn at random, or the session's measurement seed (_claim_walk_start).
+      -- 598 (#2580): drawn at random, or the session's measurement seed (_claim_walk_start).
       v_start := __SCHEMA__._claim_walk_start();
       RETURN QUERY
       WITH RECURSIVE lane AS (
@@ -1147,5 +1147,5 @@ COMMENT ON FUNCTION __SCHEMA__.claim_work(UUID, TEXT, TEXT, INTEGER, INTEGER, IN
   'renewed without an attempt, a claim window at a time, and offered again; their streams join the ledger pass. The '
   'receptor-processing table, which nothing writes, is no longer read. 545: both re-offer walks test the lease as a '
   'filter on their held-lanes entry ((lease_expiry > now) IS TRUE), never as an index condition, so a walk is one '
-  'probe per held stream on any statistics. 566 (#2554, #2555): with the service''s switch on (wh_partition_ownership_by_map), decided through wh_i_own alone. 620 (#2580): each walk starts at _claim_walk_start(), a random stream '
+  'probe per held stream on any statistics. 566 (#2554, #2555): with the service''s switch on (wh_partition_ownership_by_map), decided through wh_i_own alone. 598 (#2580): each walk starts at _claim_walk_start(), a random stream '
   'unless the session set the measurement seed whizbang.claim_walk_seed, which nothing in the framework sets.';
