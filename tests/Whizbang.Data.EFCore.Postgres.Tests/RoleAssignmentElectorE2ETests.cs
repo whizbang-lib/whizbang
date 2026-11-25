@@ -546,6 +546,38 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
 
   [Test]
   [Timeout(120000)]
+  public async Task TryAcquire_ARoleTheCatalogDoesNotDeclare_IsRefused_AndCastsNoVoteAsync(CancellationToken cancellationToken) {
+    // #2594: an undeclared name never reaches the vote, alone or in a batch; declaring it is what lets it through.
+    var a = await _joinAsync(cancellationToken);
+    PgRoleElector electorWith(RoleCatalog catalog) => new(
+      Options.Create(_notificationOptions()), Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero }),
+      new ConfigurationBuilder().AddInMemoryCollection([]).Build(), a,
+      NullLogger<PgRoleElector>.Instance, libraryVersion: null, roleCatalog: catalog);
+    var undeclared = electorWith(new RoleCatalog([]));
+
+    var alone = await undeclared.TryAcquireAsync("nightly-report", cancellationToken);
+    await Assert.That(alone.Grant).IsNull();
+    await Assert.That(alone.Refusal).IsEqualTo(DutyRefusal.Refused);
+    await Assert.That(alone.Detail!).Contains("AddWhizbangRole");
+    var batch = await undeclared.TryAcquireManyAsync(["nightly-report", ROLE], cancellationToken);
+    await Assert.That(batch[0].Refusal).IsEqualTo(DutyRefusal.Refused);
+    await using (var held = batch[1].Grant!) {
+      await Assert.That(held.Duty).IsEqualTo(ROLE).Because("a declared role in the same batch is voted for as usual");
+    }
+    await using (var conn = await _openAsync(cancellationToken)) {
+      await using var cmd = conn.CreateCommand();
+      cmd.CommandText = "SELECT count(*) FROM wh_role_candidates WHERE role = 'nightly-report'";
+      await Assert.That((long)(await cmd.ExecuteScalarAsync(cancellationToken))!).IsEqualTo(0L)
+        .Because("the refusal is decided before any statement, so no candidacy is written");
+    }
+
+    var declared = electorWith(new RoleCatalog([new RoleDeclaration("nightly-report", RoleKind.Standing)]));
+    await using var grant = (await declared.TryAcquireAsync("nightly-report", cancellationToken)).Grant;
+    await Assert.That(grant).IsNotNull();
+  }
+
+  [Test]
+  [Timeout(120000)]
   public async Task ReadAssignments_CountsAStalledSoleHolder_OnTheStalledWithoutSuccessorMeterAsync(CancellationToken cancellationToken) {
     // #2593: the meter counts each read that found a holder kept only because no peer can take its role.
     await using var provider = new ServiceCollection().AddMetrics().BuildServiceProvider();

@@ -114,7 +114,8 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
       INotificationDataSource? notificationDataSource = null,
       TimeProvider? timeProvider = null,
       RoleAssignmentMetrics? metrics = null,
-      Whizbang.Core.RunControl.WhizbangRunPermit? runPermit = null) {
+      Whizbang.Core.RunControl.WhizbangRunPermit? runPermit = null,
+      RoleCatalog? roleCatalog = null) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(roleOptions);
