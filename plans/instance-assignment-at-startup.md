@@ -255,3 +255,11 @@ keeps the role and is reported Degraded (a healthy sole holder is Healthy); no R
   from 3.4: `RoleAssignmentOptions.IsEpisodic` still names the migrator alone (it sets the migrator's lease and keeps
   it out of the holder loop), and the stamper's and assigner's roster entries stay their own post-configures, since
   the stamper's is conditional on its options.
+- **Phase 3, #2595 (done, in part):** migration `616_EachInstanceAssignmentIsOneFact.sql` (`wh_instance_assignments()`,
+  outside the bootstrap region); `InstanceAssignment`, `InstanceAssignmentKind` and `IInstanceAssignmentReader` in
+  Core; `PostgresFleetStatus` in `Whizbang.Data.Postgres` is the one reader both drivers call
+  (`EFCorePostgresStartupFleetStatusSource`, the new `DapperPostgresStartupFleetStatusSource`); the fleet read checks
+  the function exists first, so the Preflight read of a cold boot still works. `FleetInstanceStatus` gains `Assignment`
+  and `OwnedPartitions`. Locked by `InstanceAssignmentsSqlTests` and `InstanceAssignmentDriverParityTests`. Not done:
+  the instance's own "Assigned: ..." log line, the `assignment` health detail and `AwaitingShareGrace` (3.3, third and
+  fourth bullets).
