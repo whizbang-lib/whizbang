@@ -47,6 +47,12 @@ public class PerspectiveWorkQueueBacklogCostSqlTests : EFCoreTestBase {
   private const string PERSPECTIVE = "Perf.OrderPerspective";
   private static readonly Guid _instance = new("00000000-0000-0000-0000-0000000000b1");
 
+  /// <summary>The tables a fill writes and the measured calls read or write.</summary>
+  private static readonly string[] _measuredTables = [
+    "wh_event_store", "wh_event_body", "wh_perspective_events", "wh_active_streams", "wh_perspective_cursors",
+    "wh_perspective_applied", "wh_outbox",
+  ];
+
   /// <summary>
   /// Rows an acquisition may read per stream it leases: the window it chooses streams from is eight rows per stream
   /// (157), and each window row costs its urgency entry, its stream's ledger row and its ordering probe.
@@ -135,15 +141,8 @@ public class PerspectiveWorkQueueBacklogCostSqlTests : EFCoreTestBase {
   [Arguments("force_generic_plan")]
   [Timeout(600000)]
   public async Task CompletePerspective_ReadsWhatItsBatchHolds_NotTheBacklogAsync(string planMode, CancellationToken cancellationToken) {
-    await _assertPricedByTheBatchAsync(planMode, COMPLETE_ROWS_PER_STREAM, async (conn, batch) => {
-      _ = await _fetchAsync(conn, batch, cancellationToken);
-      await _vacuumAsync(conn, cancellationToken);
-      var read = await RowsRead.MeasureAsync(conn, () => _completeAsync(conn, batch, cancellationToken),
-        commit: true, cancellationToken);
-      await Assert.That(await _pendingAsync(conn, batch, cancellationToken)).IsEqualTo(0L)
-        .Because("the completion retires every row of its batch, or it measured nothing");
-      return read;
-    }, cancellationToken);
+    await _assertPricedByTheBatchAsync(planMode, COMPLETE_ROWS_PER_STREAM,
+      (conn, batch) => _measureCompleteAsync(conn, batch, cancellationToken), cancellationToken);
   }
 
   [Test]
@@ -151,20 +150,70 @@ public class PerspectiveWorkQueueBacklogCostSqlTests : EFCoreTestBase {
   [Arguments("force_generic_plan")]
   [Timeout(600000)]
   public async Task CleanupCompletedStreams_ReadsWhatItsBatchHolds_NotTheBacklogAsync(string planMode, CancellationToken cancellationToken) {
-    await _assertPricedByTheBatchAsync(planMode, CLEANUP_ROWS_PER_STREAM, async (conn, batch) => {
-      _ = await _fetchAsync(conn, batch, cancellationToken);
-      await _completeAsync(conn, batch, cancellationToken);
-      await _vacuumAsync(conn, cancellationToken);
-      var evicted = 0;
-      var read = await RowsRead.MeasureAsync(conn, async () => {
-        await using var cleanup = conn.CreateCommand();
-        cleanup.CommandText = "SELECT cleanup_completed_streams(@streams)";
-        cleanup.Parameters.AddWithValue("streams", batch);
-        evicted = Convert.ToInt32(await cleanup.ExecuteScalarAsync(cancellationToken), System.Globalization.CultureInfo.InvariantCulture);
-      }, commit: true, cancellationToken);
-      await Assert.That(evicted).IsEqualTo(BATCH).Because("every stream of the batch is left with nothing to do, or it measured nothing");
-      return read;
-    }, cancellationToken);
+    await _assertPricedByTheBatchAsync(planMode, CLEANUP_ROWS_PER_STREAM,
+      (conn, batch) => _measureCleanupAsync(conn, batch, cancellationToken), cancellationToken);
+  }
+
+  /// <summary>
+  /// The measure is the call's alone (#2587): the same round on the same fill, run again while another session of this
+  /// database holds a snapshot from before the fill, reads the same rows from the same relations. That snapshot is what
+  /// a loaded server does to a measurement: it holds back the horizon, which decides whether the vacuum after the
+  /// preparing calls may remove the versions they left dead and whether the fill's pages are marked all-visible.
+  /// </summary>
+  [Test]
+  [Arguments("complete")]
+  [Arguments("cleanup")]
+  [Timeout(600000)]
+  public async Task AMeasure_UnderAHorizonHeldElsewhere_ReadsTheSameRowsAsync(string call, CancellationToken cancellationToken) {
+    Func<NpgsqlConnection, Guid[], Task<RowsReadResult>> measure = call == "cleanup"
+      ? (conn, batch) => _measureCleanupAsync(conn, batch, cancellationToken)
+      : (conn, batch) => _measureCompleteAsync(conn, batch, cancellationToken);
+    await using (var setup = new NpgsqlConnection(ConnectionString)) {
+      await setup.OpenAsync(cancellationToken);
+      await _registerAsync(setup, cancellationToken);
+    }
+
+    var plain = await _measureAtDepthAsync("force_custom_plan", "control", BACKLOG, measure, cancellationToken);
+    await using (var setup = new NpgsqlConnection(ConnectionString)) {
+      await setup.OpenAsync(cancellationToken);
+      await using var truncate = setup.CreateCommand();
+      truncate.CommandText = $"TRUNCATE {string.Join(", ", _measuredTables)} CASCADE";
+      _ = await truncate.ExecuteNonQueryAsync(cancellationToken);
+    }
+    var disturbed = await _measureAtDepthAsync("force_custom_plan", "control", BACKLOG, measure, cancellationToken, disturb: true);
+
+    await Assert.That(disturbed.ByRelation).IsEquivalentTo(plain.ByRelation)
+      .Because($"the same call on the same fill reads the same rows whatever another session holds ({call}): "
+        + $"{plain} undisturbed, {disturbed} disturbed");
+  }
+
+  /// <summary>Fetches the batch (its lease written), then measures the completion that retires it.</summary>
+  private static async Task<RowsReadResult> _measureCompleteAsync(
+      NpgsqlConnection conn, Guid[] batch, CancellationToken cancellationToken) {
+    _ = await _fetchAsync(conn, batch, cancellationToken);
+    await _vacuumAsync(conn, cancellationToken);
+    var read = await RowsRead.MeasureAsync(conn, () => _completeAsync(conn, batch, cancellationToken),
+      commit: true, cancellationToken);
+    await Assert.That(await _pendingAsync(conn, batch, cancellationToken)).IsEqualTo(0L)
+      .Because("the completion retires every row of its batch, or it measured nothing");
+    return read;
+  }
+
+  /// <summary>Fetches and completes the batch, then measures the eviction of its streams.</summary>
+  private static async Task<RowsReadResult> _measureCleanupAsync(
+      NpgsqlConnection conn, Guid[] batch, CancellationToken cancellationToken) {
+    _ = await _fetchAsync(conn, batch, cancellationToken);
+    await _completeAsync(conn, batch, cancellationToken);
+    await _vacuumAsync(conn, cancellationToken);
+    var evicted = 0;
+    var read = await RowsRead.MeasureAsync(conn, async () => {
+      await using var cleanup = conn.CreateCommand();
+      cleanup.CommandText = "SELECT cleanup_completed_streams(@streams)";
+      cleanup.Parameters.AddWithValue("streams", batch);
+      evicted = Convert.ToInt32(await cleanup.ExecuteScalarAsync(cancellationToken), System.Globalization.CultureInfo.InvariantCulture);
+    }, commit: true, cancellationToken);
+    await Assert.That(evicted).IsEqualTo(BATCH).Because("every stream of the batch is left with nothing to do, or it measured nothing");
+    return read;
   }
 
   /// <summary>
@@ -366,8 +415,13 @@ public class PerspectiveWorkQueueBacklogCostSqlTests : EFCoreTestBase {
   /// <summary>Adds <paramref name="streams"/> new streams to the backlog, then measures the call on a batch of them.</summary>
   private async Task<RowsReadResult> _measureAtDepthAsync(
       string planMode, string fill, int streams, Func<NpgsqlConnection, Guid[], Task<RowsReadResult>> call,
-      CancellationToken cancellationToken) {
+      CancellationToken cancellationToken, bool disturb = false) {
     Guid[] batch;
+    await using var elsewhere = new NpgsqlConnection(ConnectionString);
+    if (disturb) {
+      // Another session's open snapshot, as a loaded server has: the horizon stays where it was before the fill.
+      await HeldHorizon.HoldAsync(elsewhere, cancellationToken);
+    }
     await using (var setup = new NpgsqlConnection(ConnectionString)) {
       await setup.OpenAsync(cancellationToken);
       batch = await _fillAsync(setup, fill, streams, cancellationToken);
