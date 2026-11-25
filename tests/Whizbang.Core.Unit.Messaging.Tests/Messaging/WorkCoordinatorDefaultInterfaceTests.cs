@@ -60,7 +60,7 @@ public class WorkCoordinatorDefaultInterfaceTests {
     var flipped = await _coordinator.AcknowledgeHandoverAsync((Guid)TrackedGuid.New(), [new PartitionHandover(1, 1, (Guid)TrackedGuid.New())]);
 
     await Assert.That(handingOver).IsEmpty().Because("#2557: a store that does not own partitions by map hands nothing over");
-    await Assert.That(await _coordinator.GetLeaveStatusAsync((Guid)TrackedGuid.New())).IsEqualTo(default(PartitionLeaveStatus));
+    await Assert.That(await _coordinator.GetLeaveStatusAsync((Guid)TrackedGuid.New())).IsEqualTo(default);
     await Assert.That(flipped).IsEmpty();
   }
 

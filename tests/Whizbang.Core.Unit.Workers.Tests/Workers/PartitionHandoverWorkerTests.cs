@@ -190,9 +190,10 @@ public sealed class PartitionHandoverWorkerTests {
     }
   }
 
+  // Single-threaded: the pass runs synchronously up to its wait on the queued writes, and Land() resumes it inline.
   private sealed class GatedLanded : IQueuedWritesLandedSignal {
-    private readonly TaskCompletionSource _waiting = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _landed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _waiting = new();
+    private readonly TaskCompletionSource _landed = new();
     public Task Waiting => _waiting.Task;
     public void Land() => _landed.TrySetResult();
     public IReadOnlyList<IQueuedWriteFlusher> Flushers => [];

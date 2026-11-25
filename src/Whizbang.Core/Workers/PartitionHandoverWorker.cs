@@ -74,47 +74,35 @@ public sealed record PartitionHandoverWorkerSettings {
 /// </summary>
 /// <docs>fundamentals/work-coordinator/partition-assignment#handover</docs>
 /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/PartitionHandoverWorkerTests.cs</tests>
-public sealed partial class PartitionHandoverWorker : BackgroundService, Whizbang.Core.RunControl.IReleasesHeldWork {
+/// <param name="scopeFactory">Scopes for the work coordinator.</param>
+/// <param name="instance">This instance.</param>
+/// <param name="tenures">The tenure ledger, which says each claimed stream's partition.</param>
+/// <param name="participants">
+/// Everything that works or holds streams, enumerated afresh on each pass, so a participant is resolved only once a
+/// handover needs it.
+/// </param>
+/// <param name="logger">The logger.</param>
+/// <param name="settings">The optional collaborators.</param>
+public sealed partial class PartitionHandoverWorker(
+    IServiceScopeFactory scopeFactory,
+    IServiceInstanceProvider instance,
+    PartitionTenures tenures,
+    IEnumerable<IPartitionHandoverParticipant> participants,
+    ILogger<PartitionHandoverWorker> logger,
+    PartitionHandoverWorkerSettings? settings = null) : BackgroundService, Whizbang.Core.RunControl.IReleasesHeldWork {
   /// <summary>How often the worker looks for partitions to hand over.</summary>
   public static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
 
-  private readonly IServiceScopeFactory _scopeFactory;
-  private readonly IServiceInstanceProvider _instance;
-  private readonly PartitionTenures _tenures;
-  private readonly IEnumerable<IPartitionHandoverParticipant> _participants;
-  private readonly IQueuedWritesLandedSignal? _landed;
-  private readonly Whizbang.Core.Startup.IStartupStageGate? _stages;
-  private readonly ILogger<PartitionHandoverWorker> _logger;
-  private readonly TimeProvider _time;
-  private readonly TimeSpan _leaveBudget;
-
-  /// <summary>Creates the worker.</summary>
-  /// <param name="scopeFactory">Scopes for the work coordinator.</param>
-  /// <param name="instance">This instance.</param>
-  /// <param name="tenures">The tenure ledger, which says each claimed stream's partition.</param>
-  /// <param name="participants">
-  /// Everything that works or holds streams, enumerated afresh on each pass, so a participant is resolved only once a
-  /// handover needs it.
-  /// </param>
-  /// <param name="logger">The logger.</param>
-  /// <param name="settings">The optional collaborators.</param>
-  public PartitionHandoverWorker(
-      IServiceScopeFactory scopeFactory,
-      IServiceInstanceProvider instance,
-      PartitionTenures tenures,
-      IEnumerable<IPartitionHandoverParticipant> participants,
-      ILogger<PartitionHandoverWorker> logger,
-      PartitionHandoverWorkerSettings? settings = null) {
-    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-    _instance = instance ?? throw new ArgumentNullException(nameof(instance));
-    _tenures = tenures ?? throw new ArgumentNullException(nameof(tenures));
-    _participants = participants ?? throw new ArgumentNullException(nameof(participants));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    _landed = settings?.Landed;
-    _stages = settings?.Stages;
-    _time = settings?.Time ?? TimeProvider.System;
-    _leaveBudget = settings?.LeaveBudget ?? new PartitionAssignerOptions().HandoverDeadline;
-  }
+  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+  private readonly IServiceInstanceProvider _instance = instance ?? throw new ArgumentNullException(nameof(instance));
+  private readonly PartitionTenures _tenures = tenures ?? throw new ArgumentNullException(nameof(tenures));
+  private readonly IEnumerable<IPartitionHandoverParticipant> _participants =
+    participants ?? throw new ArgumentNullException(nameof(participants));
+  private readonly IQueuedWritesLandedSignal? _landed = settings?.Landed;
+  private readonly Whizbang.Core.Startup.IStartupStageGate? _stages = settings?.Stages;
+  private readonly ILogger<PartitionHandoverWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly TimeProvider _time = settings?.Time ?? TimeProvider.System;
+  private readonly TimeSpan _leaveBudget = settings?.LeaveBudget ?? new PartitionAssignerOptions().HandoverDeadline;
 
   /// <summary>
   /// Graceful leave (#2557, design 3.3): a stopping instance hands over every partition it owns before it deregisters.
@@ -188,15 +176,15 @@ public sealed partial class PartitionHandoverWorker : BackgroundService, Whizban
     if (handingOver.Count == 0) {
       return [];
     }
-    var participants = _participants.ToList();
-    var busy = participants.SelectMany(p => p.StreamsInFlight).Select(_partitionOf).OfType<int>().ToHashSet();
+    var present = _participants.ToList();
+    var busy = present.SelectMany(p => p.StreamsInFlight).Select(_partitionOf).OfType<int>().ToHashSet();
     var ready = handingOver.Where(h => !busy.Contains(h.Partition)).ToList();
     if (ready.Count == 0) {
       return [];
     }
     var readyPartitions = ready.Select(h => h.Partition).ToHashSet();
     bool handsOver(Guid stream) => _partitionOf(stream) is { } partition && readyPartitions.Contains(partition);
-    foreach (var participant in participants) {
+    foreach (var participant in present) {
       await participant.SaveForHandoverAsync(handsOver, cancellationToken).ConfigureAwait(false);
     }
     // The finished batch's completions, and what the participants just saved, land under the old epoch before the
