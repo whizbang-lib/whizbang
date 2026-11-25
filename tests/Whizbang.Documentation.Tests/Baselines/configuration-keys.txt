@@ -84,6 +84,8 @@ Whizbang:Database
 Whizbang:Database:ConnectionStringKey
 Whizbang:Database:DirectConnectionString
 Whizbang:Database:DisableNotifications
+Whizbang:Database:InstanceAssignment:AwaitingShareGrace
+Whizbang:Database:InstanceAssignment:ObserveInterval
 Whizbang:Database:ListenKeepaliveInterval
 Whizbang:Database:ListenReconnectBackoffMultiplier
 Whizbang:Database:ListenReconnectInitialDelay

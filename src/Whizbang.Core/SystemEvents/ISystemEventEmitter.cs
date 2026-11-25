@@ -60,7 +60,7 @@ public interface ISystemEventEmitter {
       CancellationToken cancellationToken = default) where TCommand : notnull;
 
   /// <summary>
-  /// Emits a generic system event: an audit record to its tenant's audit ledger, any other kind to the global system stream.
+  /// Emits a generic system event: an audit record stored on its own id (it travels on its tenant's audit ledger), any other kind on the global system stream.
   /// </summary>
   /// <typeparam name="TSystemEvent">The type of system event to emit.</typeparam>
   /// <param name="systemEvent">The system event to emit.</param>

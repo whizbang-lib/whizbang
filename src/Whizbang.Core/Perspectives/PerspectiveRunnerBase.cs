@@ -2822,10 +2822,11 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
   /// snapshot holds must come first in that order, and the trigger after it.
   /// </para>
   /// <para>
-  /// There is deliberately no fallback to any other floor or order. A fallback is not a safety net here, it is
-  /// the same wrong answer arriving one branch later: it fires exactly when the floor cannot be placed. A full
-  /// replay costs more and reproduces the row; a wrong restore point leaves a read model nothing is pending to
-  /// repair.
+  /// There is no fallback to any other order. The one fallback is from a refused tip snapshot to the floor
+  /// (#2463): a tip is a speed copy, and the floor below it is judged by the same ReplayFloor rule. Past the
+  /// floor there is none, because a fallback there is not a safety net, it is the same wrong answer arriving
+  /// one branch later: it fires exactly when the floor cannot be placed. A full replay costs more and
+  /// reproduces the row; a wrong restore point leaves a read model nothing is pending to repair.
   /// </para>
   /// </remarks>
   private async ValueTask<(global::Whizbang.Core.Perspectives.PerspectiveSnapshotFloor? Snapshot, TModel? SnapshotModel, Action AnnounceReplay)> _placeSnapshotAsync(
