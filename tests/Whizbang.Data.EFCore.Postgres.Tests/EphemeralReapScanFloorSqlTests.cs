@@ -181,7 +181,7 @@ public class EphemeralReapScanFloorSqlTests : EFCoreTestBase {
     cmd.CommandText = $"""
       INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, commit_sequence, created_at, flags)
       VALUES (@id, @id, @id, 'TestAggregate', '{EVENT_TYPE}', 1, 1, NOW() - @days * INTERVAL '1 day', 8);
-      INSERT INTO wh_event_body (event_id, event_data, metadata) SELECT @id, '{"{}"}'::jsonb, '{"{}"}'::jsonb WHERE @body;
+      INSERT INTO wh_event_body (event_id, event_data, metadata) SELECT @id, jsonb_build_object(), jsonb_build_object() WHERE @body;
       """;
     cmd.Parameters.AddWithValue("id", eventId);
     cmd.Parameters.AddWithValue("days", daysAgo);
