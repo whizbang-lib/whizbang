@@ -92,14 +92,15 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
     var measures = new List<DepthMeasure>();
     foreach (var depth in DEPTHS) {
       // The dearest layout is the depth's cost: a ceiling is a bound on every workload of that shape, not on an average.
-      var dearest = new DepthMeasure(0, 0);
+      var dearest = new DepthMeasure(0, 0, []);
       foreach (var layout in LAYOUTS) {
         var measured = await _measureAtDepthAsync(conn, recorder, depth, layout, cancellationToken);
         Console.WriteLine($"depth {depth}, layout '{layout}': {measured.BlocksPerCall:F1} blocks/call, "
           + $"{measured.RowsLeasedPerCall:F1} rows leased/call");
         dearest = new DepthMeasure(
           Math.Max(dearest.BlocksPerCall, measured.BlocksPerCall),
-          Math.Max(dearest.RowsLeasedPerCall, measured.RowsLeasedPerCall));
+          Math.Max(dearest.RowsLeasedPerCall, measured.RowsLeasedPerCall),
+          []);
       }
       measures.Add(dearest);
       report.Measure($"claim.blocks_per_call.depth_{depth}", dearest.BlocksPerCall, "blocks/call");
@@ -136,11 +137,31 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
   /// blocks a call against a ceiling of 8,000, and the scenario failed about one run in two.
   /// </summary>
   /// <remarks>
-  /// The same workload is asserted as the same fill, the same rows leased and the same blocks a call, all exact. The
-  /// claim's re-offer walk starts each lane at a stream drawn at random in production (fairness between streams), and
-  /// where the draw lands decides how many probes the walk makes before it wraps: two fills of one workload measured blocks
-  /// up to 1.3% apart with nothing different but the draw (#2563). The scenario seeds the walk for its session
-  /// (<c>whizbang.claim_walk_seed</c>, #2580), so both fills walk the same streams and read the same pages.
+  /// <para>
+  /// The same workload is asserted as the same fill, the same rows leased and the same work, all exact: per measured
+  /// table, the index scans, the tuples they fetched, the sequential scans and their tuples, and the rows inserted and
+  /// updated. The claim's re-offer walk starts each lane at a stream drawn at random in production (fairness between
+  /// streams), and where the draw lands decides how many probes the walk makes before it wraps: two fills of one workload
+  /// made 1,060 to 1,081 index scans with nothing different but the draw (#2563). The scenario seeds the walk for its
+  /// session (<c>whizbang.claim_walk_seed</c>, #2580), so both fills walk the same streams and do the same work.
+  /// </para>
+  /// <para>
+  /// Blocks are reported, not compared (#2580). On a server other test processes share, the blocks a poll touches are not
+  /// a function of the workload alone: a relcache reset of the polling session, which another database's schema changes
+  /// cause by overflowing the server-wide invalidation queue, drops what the session had cached about the table and its
+  /// indexes, so the next accesses read pages they would otherwise have skipped. One forced invalidation between two polls
+  /// moved an otherwise exact comparison; one before every poll was exact alone and still not under load, because resets
+  /// also land between the statements of one poll. Nothing a single database can hold controls it. A tolerance would not
+  /// replace the comparison either: the load moved blocks by up to 1.1% a call, as much as the random walk did (0.5% to
+  /// 1.3%), so a tolerance wide enough to pass under load would pass the regression. The work counters are what the walk
+  /// changes and the invalidations do not.
+  /// </para>
+  /// <para>
+  /// The work counters need one variable held: the horizon. A scan walks past a dead version it may treat as removable,
+  /// and that decision on a shared server follows the oldest snapshot of every database, so under load the tuples the
+  /// polls fetched differed by a few (4,723 and 4,730) with every scan the same. The test holds a snapshot in its own
+  /// database from before the first fill, so no version either fill creates is removable in either.
+  /// </para>
   /// </remarks>
   [Test]
   [Timeout(1800000)]
@@ -158,6 +179,19 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
       _ = await seed.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    // Whether a scan counts a dead version as removable, and so walks past it to the next, is decided against the
+    // horizon; on a shared server that check reads the oldest snapshot of every database, so other test processes
+    // decided it (#2580). A snapshot this database holds from before the first fill makes every version either fill
+    // creates unremovable, the same for both fills, whatever runs beside them.
+    await using var horizon = new NpgsqlConnection(ConnectionString);
+    await horizon.OpenAsync(cancellationToken);
+    await using var held = await horizon.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, cancellationToken);
+    await using (var snapshot = horizon.CreateCommand()) {
+      snapshot.Transaction = held;
+      snapshot.CommandText = "SELECT 1";
+      _ = await snapshot.ExecuteScalarAsync(cancellationToken);
+    }
+
     var first = await _measureAtDepthAsync(conn, recorder, depth, LAYOUTS[0], cancellationToken);
     var firstWorkload = await _workloadAsync(conn);
     var second = await _measureAtDepthAsync(conn, recorder, depth, LAYOUTS[0], cancellationToken);
@@ -167,9 +201,10 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
       .Because("each fill of a depth is the same streams and events, so the scenario measures the claim and not the draw");
     await Assert.That(second.RowsLeasedPerCall).IsEqualTo(first.RowsLeasedPerCall)
       .Because("the same workload, polled the same way, leases the same rows");
-    await Assert.That(second.BlocksPerCall).IsEqualTo(first.BlocksPerCall)
-      .Because($"the same workload, walked from the same seed, costs the same blocks a call ({first.BlocksPerCall:F1} and "
-        + $"{second.BlocksPerCall:F1})");
+    await Assert.That(second.Work).IsEquivalentTo(first.Work)
+      .Because($"the same workload, walked from the same seed, does the same work ({first.BlocksPerCall:F1} and "
+        + $"{second.BlocksPerCall:F1} blocks a call, which a shared server's invalidations move): "
+        + $"{string.Join("; ", first.Work)} against {string.Join("; ", second.Work)}");
   }
 
   /// <summary>The work rows, streams, events and poller of the current fill, as one fingerprint.</summary>
@@ -184,7 +219,10 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
     return (string)(await cmd.ExecuteScalarAsync())!;
   }
 
-  private readonly record struct DepthMeasure(double BlocksPerCall, double RowsLeasedPerCall);
+  /// <summary>One depth's measure: blocks and rows leased a call, and the window's work per measured table.</summary>
+  /// <param name="Work">Each measured table's counters for the window with its blocks left out, as text, so two windows
+  /// that did the same work compare equal (#2580).</param>
+  private readonly record struct DepthMeasure(double BlocksPerCall, double RowsLeasedPerCall, IReadOnlyList<string> Work);
 
   /// <summary>
   /// Fills to one stream depth in one id layout and measures the polls. Each depth and layout gets its own fill, so the
@@ -207,7 +245,8 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
     var blocks = MEASURED_TABLES.Sum(t => window.Tables[t].Blocks);
     return new DepthMeasure(
       (double)blocks / POLLS,
-      (double)(leasedAfter - leasedBefore) / POLLS);
+      (double)(leasedAfter - leasedBefore) / POLLS,
+      [.. MEASURED_TABLES.Select(t => $"{t}: {window.Tables[t] with { Blocks = 0 }}")]);
   }
 
   /// <summary>Perspective events this instance holds a live lease on: what a poll leased.</summary>
