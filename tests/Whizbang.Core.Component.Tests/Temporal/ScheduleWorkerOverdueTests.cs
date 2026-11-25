@@ -50,8 +50,8 @@ public class ScheduleWorkerOverdueTests {
     await Assert.That(warning.Level).IsEqualTo(LogLevel.Warning);
     await Assert.That(warning.Message).Contains(STUCK_KEY)
       .Because("the operator needs to know which schedule is stuck, not only that one is");
-    await Assert.That(host.ReadGauge(TemporalMetrics.OVERDUE_COUNT)).IsEquivalentTo(new[] { 1.0 });
-    await Assert.That(host.ReadGauge(TemporalMetrics.OVERDUE_OLDEST_AGE_SECONDS)).IsEquivalentTo(new[] { 600.0 });
+    await Assert.That(host.ReadGauge(TemporalMetrics.OVERDUE_COUNT)).IsEqualTo(1.0);
+    await Assert.That(host.ReadGauge(TemporalMetrics.OVERDUE_OLDEST_AGE_SECONDS)).IsEqualTo(600.0);
   }
 
   [Test]
@@ -60,7 +60,7 @@ public class ScheduleWorkerOverdueTests {
 
     _ = await host.Worker.CheckOverdueOnceAsync();
 
-    await Assert.That(host.Claimer.Bounds).IsEquivalentTo(new[] { TimeSpan.FromSeconds(90) });
+    await Assert.That(host.Claimer.Bounds.Single()).IsEqualTo(TimeSpan.FromSeconds(90));
   }
 
   [Test]
@@ -89,8 +89,8 @@ public class ScheduleWorkerOverdueTests {
     _ = await host.Worker.CheckOverdueOnceAsync();
 
     await Assert.That(host.Events(OVERDUE_CLEARED_EVENT_ID)).Count().IsEqualTo(1);
-    await Assert.That(host.ReadGauge(TemporalMetrics.OVERDUE_COUNT)).IsEquivalentTo(new[] { 0.0 });
-    await Assert.That(host.ReadGauge(TemporalMetrics.OVERDUE_OLDEST_AGE_SECONDS)).IsEquivalentTo(new[] { 0.0 });
+    await Assert.That(host.ReadGauge(TemporalMetrics.OVERDUE_COUNT)).IsEqualTo(0.0);
+    await Assert.That(host.ReadGauge(TemporalMetrics.OVERDUE_OLDEST_AGE_SECONDS)).IsEqualTo(0.0);
   }
 
   [Test]
@@ -101,7 +101,7 @@ public class ScheduleWorkerOverdueTests {
 
     await Assert.That(reading).IsEqualTo(ScheduleOverdueReading.None);
     await Assert.That(host.Logger.Collector.Count).IsEqualTo(0);
-    await Assert.That(host.ReadGauge(TemporalMetrics.OVERDUE_COUNT)).IsEquivalentTo(new[] { 0.0 });
+    await Assert.That(host.ReadGauge(TemporalMetrics.OVERDUE_COUNT)).IsEqualTo(0.0);
   }
 
   [Test]
@@ -129,7 +129,7 @@ public class ScheduleWorkerOverdueTests {
 
     _ = await host.Worker.CheckOverdueOnceAsync();
 
-    await Assert.That(host.ReadGauge(TemporalMetrics.OVERDUE_COUNT)).IsEmpty()
+    await Assert.That(host.ReadGauge(TemporalMetrics.OVERDUE_COUNT)).IsNull()
       .Because("a gauge reading zero while the count is unknown would claim health it has not measured");
   }
 
@@ -287,10 +287,11 @@ public class ScheduleWorkerOverdueTests {
     public IReadOnlyList<int> Events(int eventId) =>
       [.. Logger.Collector.GetSnapshot().Where(r => r.Id.Id == eventId).Select(r => r.Id.Id)];
 
-    public List<double> ReadGauge(string name) {
+    /// <summary>The gauge's one observed value, or null when it observed none.</summary>
+    public double? ReadGauge(string name) {
       _readings.Clear();
       _listener.RecordObservableInstruments();
-      return _readings.TryGetValue(name, out var list) ? [.. list] : [];
+      return _readings.TryGetValue(name, out var list) ? list.Single() : null;
     }
 
     public void Dispose() {

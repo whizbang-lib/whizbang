@@ -104,4 +104,38 @@ public sealed partial class PgScheduleClaimer(
     }
     return new DateTimeOffset(DateTime.SpecifyKind((DateTime)result, DateTimeKind.Utc), TimeSpan.Zero);
   }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// #2575: every Active schedule, not only this instance's, since the failure it reports is a schedule no instance
+  /// takes. The age and the bound are judged by the database clock, as the claim's due decision is. The scan is the
+  /// partial index on Active schedules' fire times.
+  /// </remarks>
+  public async Task<ScheduleOverdueReading?> GetOverdueSchedulesAsync(TimeSpan bound, CancellationToken cancellationToken = default) {
+    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
+    var plan = NotificationConnectionPlan.Create(_notificationDataSource, resolution);
+    if (!plan.IsAvailable) {
+      return null;
+    }
+
+    await using var conn = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
+    await using var cmd = conn.CreateWhizbangCommand();
+    // The window count runs before the LIMIT, so the one row carries the whole count beside the oldest schedule.
+    cmd.CommandText = @"
+      SELECT count(*) OVER ()::int, EXTRACT(EPOCH FROM (NOW() - sc.next_fire_at))::float8, sc.schedule_id, sc.schedule_key
+      FROM wh_schedules sc
+      WHERE sc.status = 0 AND sc.next_fire_at < NOW() - @bound
+      ORDER BY sc.next_fire_at
+      LIMIT 1";
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(bound), NpgsqlDbType.Interval) { Value = bound });
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      return ScheduleOverdueReading.None;
+    }
+    return new ScheduleOverdueReading(
+      reader.GetInt32(0),
+      TimeSpan.FromSeconds(reader.GetDouble(1)),
+      reader.GetGuid(2),
+      await reader.IsDBNullAsync(3, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(3));
+  }
 }

@@ -256,9 +256,9 @@ public class PgScheduleClaimerIntegrationTests : EFCoreTestBase {
          next_fire_at, occurrence_count, status, event_type, event_data)
       VALUES (@id, @key, gen_random_uuid(), 0, 1, 60000, 'UTC', NOW() + @off::interval, 0, @status, 'OverdueOcc', '{}'::jsonb);", conn);
     cmd.Parameters.AddWithValue("id", id);
-    cmd.Parameters.AddWithValue("key", key);
+    cmd.Parameters.AddWithValue(nameof(key), key);
     cmd.Parameters.AddWithValue("off", fireOffset);
-    cmd.Parameters.AddWithValue("status", status);
+    cmd.Parameters.AddWithValue(nameof(status), status);
     await cmd.ExecuteNonQueryAsync();
     return id;
   }
@@ -276,7 +276,7 @@ public class PgScheduleClaimerIntegrationTests : EFCoreTestBase {
 
     var reading = await claimer.GetOverdueSchedulesAsync(TimeSpan.FromMinutes(1));
 
-    await Assert.That(reading).IsNotNull();
+    await Assert.That(reading.HasValue).IsTrue();
     await Assert.That(reading!.Value.Count).IsEqualTo(2)
       .Because("only Active schedules past the bound count; one just due is being fired, a paused one is waiting on purpose");
     await Assert.That(reading.Value.OldestScheduleId).IsEqualTo(oldest);
@@ -302,7 +302,7 @@ public class PgScheduleClaimerIntegrationTests : EFCoreTestBase {
     var reading = await claimer.GetOverdueSchedulesAsync(TimeSpan.FromMinutes(1));
 
     await Assert.That(reading!.Value.Count).IsEqualTo(1);
-    await Assert.That(reading.Value.OldestScheduleId).IsNotNull();
+    await Assert.That(reading.Value.OldestScheduleId.HasValue).IsTrue();
     await Assert.That(reading.Value.OldestScheduleKey).IsNull();
   }
 
