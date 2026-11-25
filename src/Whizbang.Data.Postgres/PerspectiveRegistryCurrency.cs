@@ -53,43 +53,93 @@ public static partial class PerspectiveRegistryCurrency {
       int commandTimeoutSeconds, IServiceProvider? services, ILogger? logger, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(payloads);
-    var lockId = SchemaInitializationLockKey.Compute(schema);
     var log = logger ?? NullLogger.Instance;
     try {
       await using var connection = connectionFactory();
       await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-      if (await _isCurrentAsync(connection, schema, payloads, commandTimeoutSeconds, null, cancellationToken).ConfigureAwait(false)) {
-        return false;
-      }
-
-      await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken)
+      return await _reconcileIfStaleAsync(connection, schema, payloads, commandTimeoutSeconds, services, log, cancellationToken)
         .ConfigureAwait(false);
-      if (!await _tryLockAsync(connection, transaction, lockId, cancellationToken).ConfigureAwait(false)) {
-        await SchemaInitializationObservers.LockContendedAsync(services, schema, cancellationToken).ConfigureAwait(false);
-        await _lockAsync(connection, transaction, lockId, commandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
-        if (await _isCurrentAsync(connection, schema, payloads, commandTimeoutSeconds, transaction, cancellationToken)
-            .ConfigureAwait(false)) {
-          return false;   // another instance reconciled it while this one waited; disposing rolls back, releasing the lock
-        }
-      }
-
-      foreach (var payload in payloads) {
-#pragma warning disable S2077 // The schema cannot be a bind parameter; PgIdentifier.Qualify quotes it. Every value is bound.
-        await using var reconcile = new NpgsqlCommand(
-          $"SELECT count(*) FROM {PgIdentifier.Qualify(schema, "reconcile_perspective_registry")}($1::jsonb, $2)",
-          connection, transaction) { CommandTimeout = commandTimeoutSeconds };
-#pragma warning restore S2077
-        reconcile.Parameters.AddWithValue(payload.Json);
-        reconcile.Parameters.AddWithValue(payload.ServiceName);
-        await reconcile.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-      }
-      await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-      LogReconciled(log, schema);
-      return true;
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogFailed(log, ex, schema);
       return false;
     }
+  }
+
+  /// <summary>
+  /// Reconciles the stored registry from <paramref name="payloads"/> when, and only when, it differs from them, on a
+  /// connection the caller owns (#2578): what an EF Core host that registers no separate connection runs on its
+  /// context's own. Opened here when it is closed, and closed again afterwards; never disposed, and left open when it
+  /// was found open.
+  /// </summary>
+  /// <param name="connection">The connection to borrow; no transaction may be open on it.</param>
+  /// <param name="schema">The schema, unquoted; its schema initialization lock is the one taken.</param>
+  /// <param name="payloads">This build's registry payloads.</param>
+  /// <param name="commandTimeoutSeconds">The budget for one statement, and for the wait on the lock.</param>
+  /// <param name="services">Where the observers are registered; told when the lock is held elsewhere.</param>
+  /// <param name="logger">Optional logger.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Whether this call reconciled the registry.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/PerspectiveRegistryRestartTests.cs:ACleanHashRestart_WithNoSeparateConnection_ReconcilesARegistryNoHashCoversAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/PerspectiveRegistryRestartTests.cs:ACleanHashRestart_OnAConnectionTheHostOpened_ReconcilesTheRegistry_AndLeavesItOpenAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/PerspectiveRegistryRestartTests.cs:ACleanHashRestart_WithNoSeparateConnection_AgainstAMatchingRegistry_TouchesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMigratorElectionTests.cs:ABorrowedConnection_WhoseRegistryCannotBeReconciled_IsNotFatal_AndIsClosedAgainAsync</tests>
+  public static async Task<bool> ReconcileIfStaleAsync(
+      NpgsqlConnection connection, string schema, IReadOnlyList<PerspectiveRegistryPayload> payloads,
+      int commandTimeoutSeconds, IServiceProvider? services, ILogger? logger, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(connection);
+    ArgumentNullException.ThrowIfNull(payloads);
+    var log = logger ?? NullLogger.Instance;
+    var opened = false;
+    try {
+      if (connection.State == ConnectionState.Closed) {
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        opened = true;
+      }
+      return await _reconcileIfStaleAsync(connection, schema, payloads, commandTimeoutSeconds, services, log, cancellationToken)
+        .ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogFailed(log, ex, schema);
+      return false;
+    } finally {
+      if (opened) {
+        await connection.CloseAsync().ConfigureAwait(false);
+      }
+    }
+  }
+
+  /// <summary>The check, then the reconcile under the lock when the registry differs, on an open connection.</summary>
+  private static async Task<bool> _reconcileIfStaleAsync(
+      NpgsqlConnection connection, string schema, IReadOnlyList<PerspectiveRegistryPayload> payloads,
+      int commandTimeoutSeconds, IServiceProvider? services, ILogger log, CancellationToken cancellationToken) {
+    var lockId = SchemaInitializationLockKey.Compute(schema);
+    if (await _isCurrentAsync(connection, schema, payloads, commandTimeoutSeconds, null, cancellationToken).ConfigureAwait(false)) {
+      return false;
+    }
+
+    await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken)
+      .ConfigureAwait(false);
+    if (!await _tryLockAsync(connection, transaction, lockId, cancellationToken).ConfigureAwait(false)) {
+      await SchemaInitializationObservers.LockContendedAsync(services, schema, cancellationToken).ConfigureAwait(false);
+      await _lockAsync(connection, transaction, lockId, commandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+      if (await _isCurrentAsync(connection, schema, payloads, commandTimeoutSeconds, transaction, cancellationToken)
+          .ConfigureAwait(false)) {
+        return false;   // another instance reconciled it while this one waited; disposing rolls back, releasing the lock
+      }
+    }
+
+    foreach (var payload in payloads) {
+#pragma warning disable S2077 // The schema cannot be a bind parameter; PgIdentifier.Qualify quotes it. Every value is bound.
+      await using var reconcile = new NpgsqlCommand(
+        $"SELECT count(*) FROM {PgIdentifier.Qualify(schema, "reconcile_perspective_registry")}($1::jsonb, $2)",
+        connection, transaction) { CommandTimeout = commandTimeoutSeconds };
+#pragma warning restore S2077
+      reconcile.Parameters.AddWithValue(payload.Json);
+      reconcile.Parameters.AddWithValue(payload.ServiceName);
+      await reconcile.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    }
+    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    LogReconciled(log, schema);
+    return true;
   }
 
   /// <summary>Whether every payload entry is stored as the reconcile would write it.</summary>

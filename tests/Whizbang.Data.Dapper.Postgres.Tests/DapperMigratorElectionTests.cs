@@ -449,6 +449,29 @@ public class DapperMigratorElectionTests {
     await Assert.That((await _registryRowAsync()).UpdatedAt).IsEqualTo(_untouched);
   }
 
+  /// <summary>
+  /// The same check on a connection the caller owns (#2578), as an EF Core host with no separate connection runs it: a
+  /// failure is said and is not fatal, and the connection it opened is closed again, not disposed.
+  /// </summary>
+  [Test]
+  [Timeout(120_000)]
+  public async Task ABorrowedConnection_WhoseRegistryCannotBeReconciled_IsNotFatal_AndIsClosedAgainAsync(
+      CancellationToken cancellationToken) {
+    await _migratedByThisBuildAsync();
+    await using var borrowed = new NpgsqlConnection(_database.ConnectionString);
+
+    var reconciled = await PerspectiveRegistryCurrency.ReconcileIfStaleAsync(
+      borrowed, "public", [new("election-svc", "not json")], 600, services: null, logger: null, cancellationToken);
+
+    await Assert.That(reconciled).IsFalse();
+    await Assert.That((await _registryRowAsync()).UpdatedAt).IsEqualTo(_untouched);
+    await Assert.That(borrowed.State).IsEqualTo(System.Data.ConnectionState.Closed)
+      .Because("the connection it opened is closed again, as it was found");
+    await borrowed.OpenAsync(cancellationToken);
+    await Assert.That(borrowed.State).IsEqualTo(System.Data.ConnectionState.Open)
+      .Because("closed, not disposed: the caller still owns it");
+  }
+
   private PostgresSchemaInitializer _thisBuild(bool applicationHeld = false) =>
     new(_database.ConnectionString, _entries) { PerspectiveRegistry = [_registry], ApplicationHeld = applicationHeld };
 

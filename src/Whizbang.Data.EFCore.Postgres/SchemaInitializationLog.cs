@@ -70,55 +70,11 @@ public static partial class SchemaInitializationLog {
   public static partial void SchemaInitializedByOtherInstance(ILogger logger, string schema);
 
   [LoggerMessage(
-      Level = LogLevel.Information,
-      Message = "Migration {Position} of {Total} - Started : {Step}")]
-  internal static partial void StepStarted(ILogger logger, int position, int total, string step);
-
-  [LoggerMessage(
-      Level = LogLevel.Information,
-      Message = "Migration {Position} of {Total} - Succeeded : {Step} ({Duration})")]
-  internal static partial void StepSucceeded(ILogger logger, int position, int total, string step, StepDuration duration);
-
-  [LoggerMessage(
-      Level = LogLevel.Information,
-      Message = "Migration {Position} of {Total} - Skipped : {Step} (already current)")]
-  internal static partial void StepSkipped(ILogger logger, int position, int total, string step);
-
-  [LoggerMessage(
-      Level = LogLevel.Error,
-      Message = "Migration {Position} of {Total} - Failed : {Step} : {SqlState} {Error}")]
-  internal static partial void StepFailed(ILogger logger, Exception ex, int position, int total, string step, string sqlState, string error);
-
-  [LoggerMessage(
-      Level = LogLevel.Error,
-      Message = "Migration {Position} of {Total} - Failed : {Step} : {SqlState} {Error}; retrying in {Delay} at {RetryAt}")]
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "A LoggerMessage method takes the logger, the exception and one parameter per placeholder, and the line names seven. A parameter object would change the structured fields the line logs.")]
-  internal static partial void StepFailedWillRetry(
-      ILogger logger, Exception ex, int position, int total, string step, string sqlState, string error, StepDuration delay, string retryAt);
-
-  [LoggerMessage(
-      Level = LogLevel.Warning,
-      Message = "Migration {Position} of {Total} - Deadlocked : {Step} : {SqlState} {Error}; retrying the step in {Delay} (deadlock {Deadlock} of {MaxDeadlocks})")]
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "A LoggerMessage method takes the logger and one parameter per placeholder, and the line names eight. A parameter object would change the structured fields the line logs.")]
-  internal static partial void StepDeadlocked(
-      ILogger logger, int position, int total, string step, string sqlState, string error, StepDuration delay, int deadlock, int maxDeadlocks);
-
-  [LoggerMessage(
       Level = LogLevel.Warning,
       Message = "Schema step {Step} deadlocked : {SqlState} {Error}; retrying the step in {Delay} (deadlock {Deadlock} of {MaxDeadlocks})")]
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "A LoggerMessage method takes the logger and one parameter per placeholder, and the line names six. A parameter object would change the structured fields the line logs.")]
   internal static partial void UncountedStepDeadlocked(
       ILogger logger, string step, string sqlState, string error, StepDuration delay, int deadlock, int maxDeadlocks);
-
-  [LoggerMessage(
-      Level = LogLevel.Information,
-      Message = "Migration complete: {Succeeded} of {Total} succeeded ({Applied} applied, {Skipped} skipped) in {Duration}")]
-  internal static partial void PassComplete(ILogger logger, int succeeded, int total, int applied, int skipped, StepDuration duration);
-
-  [LoggerMessage(
-      Level = LogLevel.Error,
-      Message = "Migration stopped at {Position} of {Total}: {Step} : {Error}")]
-  internal static partial void PassStopped(ILogger logger, int position, int total, string step, string error);
 
   [LoggerMessage(
       Level = LogLevel.Warning,

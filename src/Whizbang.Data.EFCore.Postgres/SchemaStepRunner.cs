@@ -3,14 +3,12 @@
 
 using System.Data.Common;
 using System.Diagnostics;
-using System.Globalization;
 using System.Runtime.ExceptionServices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
-using Whizbang.Core;
 using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -70,11 +68,8 @@ public sealed class SchemaStepRunner {
   private readonly ILogger _logger;
   private readonly TimeProvider _timeProvider;
 
-  private int _total;
-  private int _position;
-  private int _applied;
-  private int _skipped;
-  private long _passStarted;
+  /// <summary>The step lines, counted against the whole pass, as both drivers write them (#2579).</summary>
+  private readonly MigrationPassProgress _pass;
 
   /// <summary>Creates a runner for one schema pass.</summary>
   /// <param name="dbContext">The context being initialized; its connection must be open.</param>
@@ -104,6 +99,7 @@ public sealed class SchemaStepRunner {
     _services = services;
     _logger = logger ?? NullLogger.Instance;
     _timeProvider = timeProvider ?? TimeProvider.System;
+    _pass = new MigrationPassProgress(_logger, _timeProvider);
   }
 
   /// <summary>
@@ -125,40 +121,19 @@ public sealed class SchemaStepRunner {
   /// Starts counting the pass's steps: from here each step logs its line as one of <paramref name="totalSteps"/>.
   /// </summary>
   /// <param name="totalSteps">Every step of the pass, including those it will skip.</param>
-  public void BeginPass(int totalSteps) {
-    _total = totalSteps;
-    _position = 0;
-    _applied = 0;
-    _skipped = 0;
-    _passStarted = _timeProvider.GetTimestamp();
-  }
+  public void BeginPass(int totalSteps) => _pass.Begin(totalSteps);
 
   /// <summary>Counts a step the plan already found current, so it never takes the lock.</summary>
   /// <param name="step">The step's name.</param>
-  public void Skip(string step) {
-    _position++;
-    _skipped++;
-    SchemaInitializationLog.StepSkipped(_logger, _position, _total, step);
-  }
+  public void Skip(string step) => _pass.Skip(step);
 
   /// <summary>Logs the summary of a pass in which every step succeeded.</summary>
-  public void CompletePass() {
-    var elapsed = _timeProvider.GetElapsedTime(_passStarted);
-    SchemaInitializationLog.PassComplete(_logger, _total, _total, _applied, _skipped, new StepDuration(elapsed));
-  }
+  public void CompletePass() => _pass.Complete();
 
   /// <summary>A failure as the ledger and the step lines give it: the SQLSTATE, or the exception's type, and its message.</summary>
   /// <param name="exception">The failure.</param>
   /// <returns>For example <c>40P01 deadlock detected</c>.</returns>
-  public static string FailureText(Exception exception) {
-    ArgumentNullException.ThrowIfNull(exception);
-    for (var inner = exception; inner is not null; inner = inner.InnerException) {
-      if (inner is PostgresException postgres) {
-        return $"{postgres.SqlState} {postgres.MessageText}";
-      }
-    }
-    return $"{TypeNameFormatter.ForLog(exception.GetType())} {exception.Message}";
-  }
+  public static string FailureText(Exception exception) => MigrationPassProgress.FailureText(exception);
 
   /// <summary>Runs one step in a transaction of its own, under the schema lock.</summary>
   /// <param name="step">The step's name: a migration's file name, a perspective's ledger key, or the step's own.</param>
@@ -183,9 +158,9 @@ public sealed class SchemaStepRunner {
       return SchemaStepOutcome.CompletedElsewhere;
     }
 
-    var counted = _total > 0;
+    var counted = _pass.Counted;
     if (counted) {
-      _position++;
+      _pass.Next();
     }
 
     var work = new StepWork(step, counted, isCurrentAsync, applyAsync, recordFailureAsync);
@@ -251,8 +226,7 @@ public sealed class SchemaStepRunner {
       string step, bool counted, PostgresException deadlock, int deadlocks, CancellationToken cancellationToken) {
     var delay = DeadlockRetryDelay(deadlocks, Random.Shared);
     if (counted) {
-      SchemaInitializationLog.StepDeadlocked(_logger, _position, _total, step, deadlock.SqlState, deadlock.MessageText,
-        new StepDuration(delay), deadlocks, MaxDeadlockRetries);
+      _pass.Deadlocked(step, deadlock, delay, deadlocks, MaxDeadlockRetries);
     } else {
       SchemaInitializationLog.UncountedStepDeadlocked(_logger, step, deadlock.SqlState, deadlock.MessageText,
         new StepDuration(delay), deadlocks, MaxDeadlockRetries);
@@ -272,12 +246,12 @@ public sealed class SchemaStepRunner {
     var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
     SchemaStepOutcome? outcome = null;
     Exception? failure = null;
-    var started = _timeProvider.GetTimestamp();
+    var started = _pass.Timestamp();
     try {
       await _dbContext.Database.UseTransactionAsync(transaction, cancellationToken).ConfigureAwait(false);
       if (await _tryLockAsync(connection, transaction, cancellationToken).ConfigureAwait(false)) {
         if (counted) {
-          SchemaInitializationLog.StepStarted(_logger, _position, _total, step);
+          _pass.Started(step);
         }
         outcome = SchemaStepOutcome.AlreadyCurrent;
         if (!await isCurrentAsync(cancellationToken).ConfigureAwait(false)) {
@@ -314,12 +288,9 @@ public sealed class SchemaStepRunner {
   /// <summary>Counts a counted step that ended under the lock as applied or skipped, and says so.</summary>
   private void _tally(string step, SchemaStepOutcome ended, long started) {
     if (ended == SchemaStepOutcome.Applied) {
-      _applied++;
-      var elapsed = _timeProvider.GetElapsedTime(started);
-      SchemaInitializationLog.StepSucceeded(_logger, _position, _total, step, new StepDuration(elapsed));
+      _pass.Succeeded(step, started);
     } else {
-      _skipped++;
-      SchemaInitializationLog.StepSkipped(_logger, _position, _total, step);
+      _pass.Current(step);
     }
   }
 
@@ -375,16 +346,7 @@ public sealed class SchemaStepRunner {
     if (!counted || failure is OperationCanceledException) {
       return;
     }
-    var text = FailureText(failure);
-    var space = text.IndexOf(' ', StringComparison.Ordinal);
-    var (state, message) = (text[..space], text[(space + 1)..]);
-    if (RetryDelayFor?.Invoke(failure) is { } delay) {
-      var at = (_timeProvider.GetUtcNow() + delay).ToString("O", CultureInfo.InvariantCulture);
-      SchemaInitializationLog.StepFailedWillRetry(_logger, failure, _position, _total, step, state, message, new StepDuration(delay), at);
-    } else {
-      SchemaInitializationLog.StepFailed(_logger, failure, _position, _total, step, state, message);
-    }
-    SchemaInitializationLog.PassStopped(_logger, _position, _total, step, text);
+    _pass.Failed(step, failure, RetryDelayFor?.Invoke(failure));
   }
 
   private async Task _recordFailureAsync(
