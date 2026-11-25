@@ -56,17 +56,128 @@ public class ReapedBodyBatchIsolationTests : EFCoreTestBase {
   private const int MAX_FAILURES = 1;
   private const int BATCH_LOST_EVENT_ID = 68;
 
+  /// <summary>
+  /// The deployed shape: an ephemeral stream whose bodies were reaped shares a batch with healthy streams. The healthy
+  /// streams are applied, and the reaped row is dead-lettered on first sight with <see cref="MessageFailureReason.EventBodyMissing"/>:
+  /// a reaped body never comes back, so no retry is spent on it.
+  /// </summary>
   [Test]
   [Timeout(180_000)]
-  public async Task AReapedStreamSharingABatch_FailsOnlyItself_IsRetriedBoundedly_AndIsDeadLetteredAsync(
+  public async Task AReapedStreamSharingABatch_FailsOnlyItself_AndIsDeadLetteredOnFirstSightAsync(
       CancellationToken cancellationToken) {
-    await using var pipeline = _composePipeline();
+    await using var pipeline = _composePipeline(maxFailures: 10, RewindStartupMode.Background);
     await using var conn = await _openAsync(cancellationToken);
+    var run = await _runASharedBatchAsync(pipeline, conn, EPHEMERAL, cancellationToken);
+
+    await pipeline.DeadLetters.WaitAsync(items => items.Contains(run.ReapedWork), cancellationToken);
+    await Assert.That(pipeline.Failures.Snapshot().Where(f => f.MessageId == run.ReapedWork)).IsEmpty()
+      .Because("a reaped body never comes back, so the row is not failed for a retry first");
+    await Assert.That(await _deadLetterReasonAsync(conn, run.ReapedWork, cancellationToken))
+      .IsEqualTo((int)MessageFailureReason.EventBodyMissing);
+    await Assert.That(await _pendingRowExistsAsync(conn, run.ReapedWork, cancellationToken)).IsFalse()
+      .Because("the dead letter takes the row out of the work table, so no batch leases it again");
+    var named = _linesNaming(pipeline, run);
+    await Assert.That(named).IsNotEmpty().Because("the log names the stream, the perspective and the error");
+    await Assert.That(named.All(l => l.Level == LogLevel.Warning)).IsTrue()
+      .Because("a reaped ephemeral body is the retention working as configured, not a defect");
+  }
+
+  /// <summary>
+  /// The same shape with a Sourced event whose body is missing: that should never happen, so it is logged at Error, and
+  /// the row keeps the bounded retry (a body restored in the meantime is read) before it is dead-lettered.
+  /// </summary>
+  [Test]
+  [Timeout(180_000)]
+  public async Task AStreamMissingASourcedBody_FailsOnlyItself_IsRetriedBoundedly_AndIsDeadLetteredAtErrorAsync(
+      CancellationToken cancellationToken) {
+    await using var pipeline = _composePipeline(MAX_FAILURES, RewindStartupMode.Background);
+    await using var conn = await _openAsync(cancellationToken);
+    var run = await _runASharedBatchAsync(pipeline, conn, flags: 0, cancellationToken);
+
+    // The row is failed with a named error: the database records it, and the row retries with backoff.
+    await pipeline.Failures.WaitAsync(items => items.Any(f => f.MessageId == run.ReapedWork), cancellationToken);
+    var failure = pipeline.Failures.Snapshot().First(f => f.MessageId == run.ReapedWork);
+    await Assert.That(failure.Error).Contains(run.ReapedStream.ToString()).And.Contains("body")
+      .Because("the error names the stream and what is missing");
+    await Assert.That(failure.Reason).IsEqualTo(MessageFailureReason.EventBodyMissing);
+    await Assert.That(await _failuresAsync(conn, run.ReapedWork, cancellationToken)).IsGreaterThanOrEqualTo(1)
+      .Because("the failure is counted against the row, which the dead-letter bound reads");
+    var named = _linesNaming(pipeline, run);
+    await Assert.That(named).IsNotEmpty().Because("the log names the stream, the perspective and the error");
+    await Assert.That(named.Any(l => l.Level == LogLevel.Error)).IsTrue()
+      .Because("a Sourced body is never reaped, so its absence means something else is wrong");
+
+    // Each retry made due fails again, until the bound moves the row to the dead letters.
+    for (var attempt = 0; attempt <= MAX_FAILURES + 1 && !pipeline.DeadLetters.Snapshot().Contains(run.ReapedWork); attempt++) {
+      var next = pipeline.Failures.WaitAsync(items => items.Any(f => f.MessageId == run.ReapedWork), cancellationToken, fromNow: true);
+      var moved = pipeline.DeadLetters.WaitAsync(items => items.Contains(run.ReapedWork), cancellationToken);
+      await _makeRetryDueAsync(conn, run.ReapedWork, cancellationToken);
+      await Task.WhenAny(next, moved);
+    }
+    await pipeline.DeadLetters.WaitAsync(items => items.Contains(run.ReapedWork), cancellationToken);
+    await Assert.That(pipeline.Failures.Snapshot().Count(f => f.MessageId == run.ReapedWork)).IsLessThanOrEqualTo(MAX_FAILURES + 1)
+      .Because("the stream is retried a bounded number of times");
+    await Assert.That(await _deadLetterExistsAsync(conn, run.ReapedWork, cancellationToken)).IsTrue();
+    await Assert.That(await _pendingRowExistsAsync(conn, run.ReapedWork, cancellationToken)).IsFalse();
+  }
+
+  /// <summary>
+  /// The database a deployed environment holds, repaired by migration 600: a Completed cursor at version 11 flagged to
+  /// rewind from version 1, every one of the 11 ephemeral bodies reaped, and the version 1 replay queued. The repair
+  /// clears the flag (the rewind can never complete) and deletes the queued row, so a worker starting in Blocking mode
+  /// is not held behind a rewind that cannot finish.
+  /// </summary>
+  [Test]
+  [Timeout(180_000)]
+  public async Task Migration600_ClearsARewindThatCanNeverComplete_AndABlockingStartupIsNotHeldAsync(
+      CancellationToken cancellationToken) {
+    await using var conn = await _openAsync(cancellationToken);
+    var perspective = TypeNameFormatter.GetPerspectiveName(typeof(OrderPerspective));
+    var stream = (Guid)TrackedGuid.New();
+    var queued = await _seedReapedStreamRewoundToItsStartAsync(conn, stream, perspective, EPHEMERAL, cancellationToken);
+    // The repair runs once per database; the template this database was copied from already ran it.
+    await _execAsync(conn, "DELETE FROM wh_settings WHERE setting_key = 'rewind_reap_floor_repaired'", cancellationToken);
+
+    await _execAsync(conn, _migrationSql("600_"), cancellationToken);
+
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText = """
+        SELECT status, rewind_trigger_event_id IS NULL, rewind_flagged_at IS NULL, rewind_first_flagged_at IS NULL
+        FROM wh_perspective_cursors WHERE stream_id = @sid AND perspective_name = @p
+        """;
+      cmd.Parameters.AddWithValue("sid", stream);
+      cmd.Parameters.AddWithValue("p", perspective);
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+      await Assert.That(await reader.ReadAsync(cancellationToken)).IsTrue();
+      await Assert.That(reader.GetInt32(0)).IsEqualTo(2).Because("Completed, with the RewindRequired bit cleared");
+      await Assert.That(reader.GetBoolean(1) && reader.GetBoolean(2) && reader.GetBoolean(3)).IsTrue()
+        .Because("the trigger and both flag times are cleared with the flag");
+    }
+    await Assert.That(await _pendingRowExistsAsync(conn, queued, cancellationToken)).IsFalse()
+      .Because("the queued replay of an event without a body is deleted");
+
+    await using var pipeline = _composePipeline(maxFailures: 10, RewindStartupMode.Blocking);
+    await pipeline.RegisterAsync(conn, cancellationToken);
+    await pipeline.StartAsync(cancellationToken);
+    await Assert.That(pipeline.PerspectiveWorker.StartupScanComplete.IsCompletedSuccessfully).IsTrue()
+      .Because("no cursor is left flagged for a rewind that can never complete, so the startup barrier opens");
+  }
+
+  // ===== The shared batch =====
+
+  private sealed record SharedBatchRun(Guid ReapedStream, Guid ReapedWork, string Perspective);
+
+  /// <summary>
+  /// Seeds the stream without bodies (ephemeral or not, per <paramref name="flags"/>) rewound to its start, commits two
+  /// healthy streams, starts the pipeline and waits until the healthy streams are applied in the batch they shared with
+  /// it; a lost batch ends the test with what lost it.
+  /// </summary>
+  private static async Task<SharedBatchRun> _runASharedBatchAsync(Pipeline pipeline, NpgsqlConnection conn, int flags,
+      CancellationToken cancellationToken) {
     await pipeline.RegisterAsync(conn, cancellationToken);
     var perspective = TypeNameFormatter.GetPerspectiveName(typeof(OrderPerspective));
-
     var reapedStream = (Guid)TrackedGuid.New();
-    var reapedWork = await _seedReapedStreamRewoundToItsStartAsync(conn, reapedStream, perspective, cancellationToken);
+    var reapedWork = await _seedReapedStreamRewoundToItsStartAsync(conn, reapedStream, perspective, flags, cancellationToken);
     var healthyA = (Guid)TrackedGuid.New();
     var healthyB = (Guid)TrackedGuid.New();
     var healthyEvents = await pipeline.CommitAsync(conn, [(healthyA, 10m), (healthyB, 20m)], cancellationToken);
@@ -83,42 +194,21 @@ public class ReapedBodyBatchIsolationTests : EFCoreTestBase {
     var first = await Task.WhenAny(applied, lost);
     if (first == lost && lost.IsCompletedSuccessfully) {
       var record = pipeline.Logs.Snapshot().First(l => l.EventId == BATCH_LOST_EVENT_ID);
-      Assert.Fail($"the whole batch was lost to the reaped stream: {record.Message} {record.Exception}");
+      Assert.Fail($"the whole batch was lost to the stream without bodies: {record.Message} {record.Exception}");
     }
     await applied;
     await Assert.That(pipeline.Claims.Snapshot().Any(c => c.Contains(reapedStream) && c.Contains(healthyA) && c.Contains(healthyB)))
-      .IsTrue().Because("the reaped stream and the healthy ones were leased together, in one batch");
+      .IsTrue().Because("the stream without bodies and the healthy ones were leased together, in one batch");
     await Assert.That(await _readAmountAsync(conn, healthyA, cancellationToken)).IsEqualTo(10m);
     await Assert.That(await _readAmountAsync(conn, healthyB, cancellationToken)).IsEqualTo(20m);
-
-    // The reaped stream's row is failed with a named error: the database records it, and the row retries with backoff.
-    await pipeline.Failures.WaitAsync(items => items.Any(f => f.MessageId == reapedWork), cancellationToken);
-    var failure = pipeline.Failures.Snapshot().First(f => f.MessageId == reapedWork);
-    await Assert.That(failure.Error).Contains(reapedStream.ToString()).And.Contains("body")
-      .Because("the error names the stream and what is missing");
-    await Assert.That(failure.Reason).IsEqualTo(MessageFailureReason.EventBodyMissing);
-    await Assert.That(await _failuresAsync(conn, reapedWork, cancellationToken)).IsGreaterThanOrEqualTo(1)
-      .Because("the failure is counted against the row, which the dead-letter bound reads");
-    var named = pipeline.Logs.Snapshot().Where(l => l.Level >= LogLevel.Warning
-      && l.Message.Contains(reapedStream.ToString(), StringComparison.Ordinal)
-      && l.Message.Contains(perspective, StringComparison.Ordinal)
-      && l.Message.Contains("body", StringComparison.OrdinalIgnoreCase)).ToList();
-    await Assert.That(named).IsNotEmpty().Because("the log names the stream, the perspective and the error");
-
-    // Each retry made due fails again, until the bound moves the row to the dead letters.
-    for (var attempt = 0; attempt <= MAX_FAILURES + 1 && !pipeline.DeadLetters.Snapshot().Contains(reapedWork); attempt++) {
-      var next = pipeline.Failures.WaitAsync(items => items.Any(f => f.MessageId == reapedWork), cancellationToken, fromNow: true);
-      var moved = pipeline.DeadLetters.WaitAsync(items => items.Contains(reapedWork), cancellationToken);
-      await _makeRetryDueAsync(conn, reapedWork, cancellationToken);
-      await Task.WhenAny(next, moved);
-    }
-    await pipeline.DeadLetters.WaitAsync(items => items.Contains(reapedWork), cancellationToken);
-    await Assert.That(pipeline.Failures.Snapshot().Count(f => f.MessageId == reapedWork)).IsLessThanOrEqualTo(MAX_FAILURES + 1)
-      .Because("the stream is retried a bounded number of times");
-    await Assert.That(await _deadLetterExistsAsync(conn, reapedWork, cancellationToken)).IsTrue();
-    await Assert.That(await _pendingRowExistsAsync(conn, reapedWork, cancellationToken)).IsFalse()
-      .Because("the dead letter takes the row out of the work table, so no batch leases it again");
+    return new SharedBatchRun(reapedStream, reapedWork, perspective);
   }
+
+  private static List<LogRecord> _linesNaming(Pipeline pipeline, SharedBatchRun run) =>
+    [.. pipeline.Logs.Snapshot().Where(l => l.Level >= LogLevel.Warning
+      && l.Message.Contains(run.ReapedStream.ToString(), StringComparison.Ordinal)
+      && l.Message.Contains(run.Perspective, StringComparison.Ordinal)
+      && l.Message.Contains("body", StringComparison.OrdinalIgnoreCase))];
 
   // ===== Seeding =====
 
@@ -128,7 +218,7 @@ public class ReapedBodyBatchIsolationTests : EFCoreTestBase {
   /// snapshot left; and that replay queued as a pending, unattempted row. Returns the queued row's work id.
   /// </summary>
   private static async Task<Guid> _seedReapedStreamRewoundToItsStartAsync(
-      NpgsqlConnection conn, Guid streamId, string perspective, CancellationToken ct) {
+      NpgsqlConnection conn, Guid streamId, string perspective, int flags, CancellationToken ct) {
     var eventType = TypeNameFormatter.Format(typeof(SampleOrderCreatedEvent));
     var ids = new List<Guid>();
     for (var v = 1; v <= 11; v++) {
@@ -145,7 +235,7 @@ public class ReapedBodyBatchIsolationTests : EFCoreTestBase {
       cmd.Parameters.AddWithValue("v", v);
       cmd.Parameters.AddWithValue("type", eventType);
       cmd.Parameters.AddWithValue("written", _writtenInJuly);
-      cmd.Parameters.AddWithValue("flags", EPHEMERAL);
+      cmd.Parameters.AddWithValue(nameof(flags), flags);
       await cmd.ExecuteNonQueryAsync(ct);
     }
     var workId = (Guid)TrackedGuid.New();
@@ -169,7 +259,7 @@ public class ReapedBodyBatchIsolationTests : EFCoreTestBase {
 
   // ===== Pipeline =====
 
-  private Pipeline _composePipeline() {
+  private Pipeline _composePipeline(int maxFailures, RewindStartupMode startupMode) {
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
 
     var services = new ServiceCollection();
@@ -223,7 +313,7 @@ public class ReapedBodyBatchIsolationTests : EFCoreTestBase {
       claims.Add([.. batch.PerspectiveStreamIds, .. batch.PerspectiveWork.Select(w => w.StreamId)]);
 
     var workerOptions = new PerspectiveWorkerOptions {
-      MaxPerspectiveEventAttempts = MAX_FAILURES,
+      MaxPerspectiveEventAttempts = maxFailures,
       MaxConcurrentDrainConsumers = 1,
     };
     var perspectiveWorker = new PerspectiveWorker(
@@ -242,9 +332,9 @@ public class ReapedBodyBatchIsolationTests : EFCoreTestBase {
       streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
       processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
       workChannelWriter: new WorkChannelWriter(),
-      // The reaped stream's cursor is flagged when the worker starts, and its rewind can never complete; the deployed
-      // worker was already running when the flag was raised, so the startup barrier does not wait on it here either.
-      rewindOptions: Options.Create(new PerspectiveRewindOptions { StartupRewindMode = RewindStartupMode.Background }),
+      // A test whose stream is flagged when the worker starts runs in Background mode: the deployed worker was already
+      // running when the flag was raised, so the startup barrier did not wait on it there either.
+      rewindOptions: Options.Create(new PerspectiveRewindOptions { StartupRewindMode = startupMode }),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: new WriteThroughCompletionChannel(scopeFactory, completed),
       failureChannel: new WriteThroughFailureChannel(scopeFactory, failures),
@@ -508,6 +598,22 @@ public class ReapedBodyBatchIsolationTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("work", workId);
     return (bool)(await cmd.ExecuteScalarAsync(ct))!;
   }
+
+  private static async Task<int> _deadLetterReasonAsync(NpgsqlConnection conn, Guid workId, CancellationToken ct) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT failure_reason FROM wh_dead_letters WHERE source_id = @work";
+    cmd.Parameters.AddWithValue("work", workId);
+    return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct), System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  private static async Task _execAsync(NpgsqlConnection conn, string sql, CancellationToken ct) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = sql;
+    await cmd.ExecuteNonQueryAsync(ct);
+  }
+
+  private static string _migrationSql(string prefix) =>
+    new PostgresMigrationProvider().GetMigrations().Single(m => m.Name.StartsWith(prefix, StringComparison.Ordinal)).Sql;
 
   private static async Task<bool> _deadLetterExistsAsync(NpgsqlConnection conn, Guid workId, CancellationToken ct) {
     await using var cmd = conn.CreateCommand();

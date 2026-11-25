@@ -655,6 +655,63 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     await Assert.That(await _snapshotVersionsAsync(conn, stream, REAPED_READER)).IsEquivalentTo(_atVersionTwo);
   }
 
+  /// <summary>
+  /// The one-off repair migration 600 runs over what a database already holds. A flagged cursor whose trigger was reaped
+  /// and has a floor above it is moved to the floor, its queued replays of events without bodies deleted and the floor
+  /// queued; one with no floor is cleared (see <c>ReapedBodyBatchIsolationTests</c> for the deployed shape); one whose
+  /// trigger has a body, and an unflagged cursor, are left alone. A second run changes nothing.
+  /// </summary>
+  [Test]
+  public async Task Repair_MovesAReapedTriggerToItsFloor_ClearsOneWithNone_LeavesTheRest_AndRunsOnceAsync() {
+    await using var conn = await _openAsync();
+    var moved = TrackedGuid.New().Value;
+    var cleared = TrackedGuid.New().Value;
+    var kept = TrackedGuid.New().Value;
+    var m1 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: moved, version: 1, body: false, flags: EPHEMERAL);
+    var m2 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: moved, version: 2, body: false, flags: EPHEMERAL);
+    var m3 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: moved, version: 3, flags: EPHEMERAL);
+    var c1 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: cleared, version: 1, body: false, flags: EPHEMERAL);
+    var k1 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: kept, version: 1, flags: EPHEMERAL);
+    await _cursorAsync(conn, moved, REAPED_READER, m3, flaggedAt: m1);
+    await _cursorAsync(conn, cleared, REAPED_READER, c1, flaggedAt: c1);
+    await _cursorAsync(conn, kept, REAPED_READER, k1, flaggedAt: k1);
+    await _cursorAsync(conn, kept, "Unflagged", k1);
+    (Guid Stream, Guid Event)[] queued = [(moved, m1), (moved, m2), (cleared, c1), (kept, k1)];
+    foreach (var (stream, evt) in queued) {
+      await _execAsync(conn, $"""
+        INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at)
+        VALUES (gen_random_uuid(), '{stream}', '{REAPED_READER}', '{evt}', 0, 1, 0, NOW())
+        """);
+    }
+    await _execAsync(conn, "DELETE FROM wh_settings WHERE setting_key = 'rewind_reap_floor_repaired'");
+
+    var first = await _repairAsync(conn);
+    var second = await _repairAsync(conn);
+
+    await Assert.That(first).IsEqualTo((1L, 1L, 3L))
+      .Because("one cursor cleared, one moved, and the three queued replays of events without bodies deleted");
+    await Assert.That(second).IsEqualTo((0L, 0L, 0L)).Because("the repair runs once per database");
+    await Assert.That(await _triggerAsync(conn, moved, REAPED_READER)).IsEqualTo(m3)
+      .Because("version 3 is the first event at or after the trigger that still has a body");
+    await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_events WHERE stream_id = '{moved}' AND event_id = '{m3}' AND processed_at IS NULL"))
+      .IsEqualTo(1L).Because("the floor is queued so the rewind runs");
+    await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_events WHERE stream_id = '{moved}' AND event_id <> '{m3}'"))
+      .IsEqualTo(0L);
+    await Assert.That(await _flagAsync(conn, cleared, REAPED_READER)).IsEqualTo(0L);
+    await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_events WHERE stream_id = '{cleared}'")).IsEqualTo(0L);
+    await Assert.That(await _triggerAsync(conn, kept, REAPED_READER)).IsEqualTo(k1).Because("a trigger with a body is its own floor");
+    await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_events WHERE stream_id = '{kept}'")).IsEqualTo(1L);
+    await Assert.That(await _flagAsync(conn, kept, "Unflagged")).IsEqualTo(0L);
+  }
+
+  private static async Task<(long Cleared, long Moved, long Deleted)> _repairAsync(NpgsqlConnection conn) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT cursors_cleared, cursors_moved, rows_deleted FROM _wh_repair_unreplayable_rewinds()";
+    await using var reader = await cmd.ExecuteReaderAsync();
+    await reader.ReadAsync();
+    return (reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2));
+  }
+
   [Test]
   public async Task Unknown_IsForgotten_WhenItsEventIsDeletedOrPositionedAsync() {
     await using var conn = await _openAsync();

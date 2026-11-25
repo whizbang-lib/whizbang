@@ -5676,6 +5676,20 @@ public record StreamEventData {
   public const string NO_STORED_BODY = "the event has no stored body (an ephemeral event whose body was reaped past its retention)";
 
   /// <summary>
+  /// What a driver says, in <see cref="UnreadableReason"/>, about an ephemeral event whose body is gone: the reap deleted
+  /// it past its retention, so it never comes back.
+  /// </summary>
+  /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
+  public const string BODY_REAPED = "the event is ephemeral and its body was reaped past its retention";
+
+  /// <summary>
+  /// What a driver says, in <see cref="UnreadableReason"/>, about an event that is not ephemeral and has no stored body.
+  /// A Sourced body is never reaped, so its absence means something else deleted it.
+  /// </summary>
+  /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
+  public const string BODY_MISSING = "the event is not ephemeral and has no stored body; nothing in the framework deletes it";
+
+  /// <summary>
   /// Why the row's event cannot be read, when the read could tell (#2591): <see cref="NO_STORED_BODY"/> for an event whose
   /// body is gone. Null for a readable row. Such a row carries its identity (stream, event, work id, perspective, counts)
   /// and an empty <see cref="EventData"/>; the perspective worker fails it by name, so it is retried a bounded number of

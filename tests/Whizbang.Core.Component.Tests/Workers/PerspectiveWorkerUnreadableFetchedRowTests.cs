@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -25,9 +26,9 @@ namespace Whizbang.Core.Tests.Workers;
 #pragma warning disable IDE1006 // local helpers _row, _buildWorker: the suite's convention
 
 /// <summary>
-/// #2591: a fetched row the read returned without its event (a body the reap deleted) is failed alone, by name, through
-/// the failure channel; every other row is handed on, in the order the read returned them, wherever the unreadable row
-/// sits among them. The end-to-end shape (real Postgres, real claim loop, dead-lettering) is in
+/// #2591: a fetched row the read returned without its event's body is taken out alone, by name: an ephemeral event's
+/// reaped body is dead-lettered on first sight, and a Sourced event's missing body is failed for the bounded retry and
+/// logged at Error. Every other row is handed on, in the order the read returned them, wherever the unreadable row sits. The end-to-end shape (real Postgres, real claim loop, dead-lettering) is in
 /// <c>tests/Whizbang.Data.EFCore.Postgres.Tests/ReapedBodyBatchIsolationTests.cs</c>.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/PerspectiveWorker.cs</code-under-test>
@@ -35,7 +36,7 @@ public class PerspectiveWorkerUnreadableFetchedRowTests {
   [Test]
   public async Task NoUnreadableRow_HandsOnTheSameListAndFailsNothingAsync() {
     var failures = new CapturingFailureChannel();
-    var worker = _buildWorker(failures, NullLogger<PerspectiveWorker>.Instance);
+    var worker = _buildWorker(failures, NullLogger<PerspectiveWorker>.Instance, NullDeadLetterStore.Instance, metrics: null);
     List<StreamEventData> rows = [_row(), _row()];
 
     var kept = await worker.FailRowsReadWithoutTheirEventAsync(rows, CancellationToken.None);
@@ -44,42 +45,141 @@ public class PerspectiveWorkerUnreadableFetchedRowTests {
     await Assert.That(failures.Items).IsEmpty();
   }
 
+  /// <summary>A Sourced event's body is never reaped: its absence is failed for the bounded retry and logged at Error.</summary>
   [Test]
   [Arguments(0)]
   [Arguments(1)]
   [Arguments(2)]
-  public async Task AnUnreadableRow_IsFailedAlone_ByName_AndTheRestKeepTheirOrderAsync(int position) {
+  public async Task ASourcedRowWithoutItsBody_IsFailedForRetryAlone_ByName_AtError_AndTheRestKeepTheirOrderAsync(int position) {
     var failures = new CapturingFailureChannel();
     var logs = new ListLogger();
-    var worker = _buildWorker(failures, logs);
-    var reaped = _row() with {
-      EventData = string.Empty,
-      UnreadableReason = StreamEventData.NO_STORED_BODY,
-      PerspectiveName = "ActiveSessions+Projection",
-      Version = 1,
-      Failures = 2,
-    };
+    var store = new CapturingDeadLetterStore();
+    var worker = _buildWorker(failures, logs, store, metrics: null);
+    var missing = _unreadable(StreamEventData.BODY_MISSING);
     List<StreamEventData> readable = [_row(), _row()];
     var rows = new List<StreamEventData>(readable);
-    rows.Insert(position, reaped);
+    rows.Insert(position, missing);
 
     var kept = await worker.FailRowsReadWithoutTheirEventAsync(rows, CancellationToken.None);
 
     await Assert.That(kept).IsEquivalentTo(readable, TUnit.Assertions.Enums.CollectionOrdering.Matching);
-    await Assert.That(failures.Items.Count).IsEqualTo(1);
+    await Assert.That(store.Moves).IsEmpty().Because("the bounded retry decides, through the pre-apply dead-letter filter");
     var (category, failure) = failures.Items.Single();
     await Assert.That(category).IsEqualTo(WorkCategory.PerspectiveEvent);
+    await Assert.That(failure.MessageId).IsEqualTo(missing.EventWorkId);
+    await Assert.That(failure.Reason).IsEqualTo(MessageFailureReason.EventBodyMissing);
+    await Assert.That(failure.Error).Contains(missing.StreamId.ToString()).And.Contains(PERSPECTIVE)
+      .And.Contains(missing.EventId.ToString()).And.Contains(StreamEventData.BODY_MISSING);
+    var line = logs.Entries.Single(e => e.EventId == MISSING_BODY_EVENT_ID);
+    await Assert.That(line.Level).IsEqualTo(LogLevel.Error);
+    await Assert.That(line.Message).Contains(missing.StreamId.ToString()).And.Contains(PERSPECTIVE);
+  }
+
+  /// <summary>
+  /// An ephemeral event's reaped body never comes back: the row is dead-lettered on first sight, with no failure recorded
+  /// first, counted when the dead-letter metrics are wired and logged at Warning.
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task AReapedRow_IsDeadLetteredOnFirstSight_AndTheRestKeepTheirOrderAsync(bool withMetrics) {
+    var failures = new CapturingFailureChannel();
+    var logs = new ListLogger();
+    var store = new CapturingDeadLetterStore();
+    var worker = _buildWorker(failures, logs, store, withMetrics ? _metrics() : null);
+    var reaped = _unreadable(StreamEventData.BODY_REAPED);
+    var other = _row();
+
+    var kept = await worker.FailRowsReadWithoutTheirEventAsync([reaped, other], CancellationToken.None);
+
+    List<StreamEventData> expected = [other];
+    await Assert.That(kept).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(failures.Items).IsEmpty().Because("no retry is spent on a body that never comes back");
+    var move = store.Moves.Single();
+    await Assert.That(move.SourceId).IsEqualTo(reaped.EventWorkId);
+    await Assert.That(move.SourceTable).IsEqualTo(DeadLetterSourceTable.PERSPECTIVE_EVENTS);
+    await Assert.That(move.Reason).IsEqualTo(MessageFailureReason.EventBodyMissing);
+    await Assert.That(move.Error).Contains(reaped.StreamId.ToString()).And.Contains(PERSPECTIVE).And.Contains(StreamEventData.BODY_REAPED);
+    var line = logs.Entries.Single(e => e.EventId == REAPED_BODY_EVENT_ID);
+    await Assert.That(line.Level).IsEqualTo(LogLevel.Warning);
+    await Assert.That(line.Message).Contains(reaped.StreamId.ToString()).And.Contains(PERSPECTIVE);
+  }
+
+  /// <summary>
+  /// A reaped row this worker cannot dead-letter (no dead-letter store, or a move that throws) is failed for the bounded
+  /// retry instead, with a Warning that says why, so it is never left to be leased again with nothing recorded.
+  /// </summary>
+  [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task AReapedRowThatCannotBeDeadLettered_IsFailedForRetryInsteadAsync(bool storeThrows) {
+    var failures = new CapturingFailureChannel();
+    var logs = new ListLogger();
+    IDeadLetterStore store = storeThrows ? new CapturingDeadLetterStore { Throw = true } : NullDeadLetterStore.Instance;
+    var worker = _buildWorker(failures, logs, store, metrics: null);
+    var reaped = _unreadable(StreamEventData.BODY_REAPED);
+
+    var kept = await worker.FailRowsReadWithoutTheirEventAsync([reaped], CancellationToken.None);
+
+    await Assert.That(kept).IsEmpty();
+    var (_, failure) = failures.Items.Single();
     await Assert.That(failure.MessageId).IsEqualTo(reaped.EventWorkId);
     await Assert.That(failure.Reason).IsEqualTo(MessageFailureReason.EventBodyMissing);
-    await Assert.That(failure.Error).Contains(reaped.StreamId.ToString()).And.Contains("ActiveSessions+Projection")
-      .And.Contains(reaped.EventId.ToString()).And.Contains(StreamEventData.NO_STORED_BODY);
-    var warning = logs.Entries.Single(e => e.EventId == 84);
-    await Assert.That(warning.Level).IsEqualTo(LogLevel.Warning);
-    await Assert.That(warning.Message).Contains(reaped.StreamId.ToString()).And.Contains("ActiveSessions+Projection")
-      .And.Contains(StreamEventData.NO_STORED_BODY);
+    var line = logs.Entries.Single(e => e.EventId == REAPED_BODY_NOT_MOVED_EVENT_ID);
+    await Assert.That(line.Level).IsEqualTo(LogLevel.Warning);
+    await Assert.That(line.Message).Contains(reaped.StreamId.ToString()).And.Contains(PERSPECTIVE);
+    await Assert.That(line.Exception is InvalidOperationException).IsEqualTo(storeThrows);
+  }
+
+  /// <summary>Two rows without bodies in one batch are each handled by their own case; the readable row between them goes on.</summary>
+  [Test]
+  public async Task TwoRowsWithoutBodies_AreEachHandledByTheirOwnCase_AndTheReadableRowGoesOnAsync() {
+    var failures = new CapturingFailureChannel();
+    var store = new CapturingDeadLetterStore();
+    var worker = _buildWorker(failures, new ListLogger(), store, metrics: null);
+    var missing = _unreadable(StreamEventData.BODY_MISSING);
+    var readable = _row();
+    var reaped = _unreadable(StreamEventData.BODY_REAPED);
+
+    var kept = await worker.FailRowsReadWithoutTheirEventAsync([missing, readable, reaped], CancellationToken.None);
+
+    List<StreamEventData> expected = [readable];
+    await Assert.That(kept).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(failures.Items.Single().failure.MessageId).IsEqualTo(missing.EventWorkId);
+    await Assert.That(store.Moves.Single().SourceId).IsEqualTo(reaped.EventWorkId);
   }
 
   // ── helpers ─────────────────────────────────────────────────────────────────────────────────
+
+  private const string PERSPECTIVE = "ActiveSessions+Projection";
+  private const int REAPED_BODY_EVENT_ID = 84;
+  private const int MISSING_BODY_EVENT_ID = 85;
+  private const int REAPED_BODY_NOT_MOVED_EVENT_ID = 86;
+
+  private static StreamEventData _unreadable(string reason) => _row() with {
+    EventData = string.Empty,
+    UnreadableReason = reason,
+    PerspectiveName = PERSPECTIVE,
+    Version = 1,
+    Failures = 2,
+  };
+
+  private static DeadLetterMetrics _metrics() =>
+    new(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+
+  private sealed class CapturingDeadLetterStore : IDeadLetterStore {
+    public List<(Guid SourceId, string SourceTable, MessageFailureReason Reason, string? Error)> Moves { get; } = [];
+    public bool Throw { get; init; }
+
+    public Task<Guid?> MoveAsync(Guid deadLetterId, string sourceTable, Guid sourceId, MessageFailureReason failureReason,
+        string? errorText, Guid instanceId, string generation, CancellationToken ct = default) {
+      if (Throw) {
+        throw new InvalidOperationException("simulated dead-letter store failure");
+      }
+      Moves.Add((sourceId, sourceTable, failureReason, errorText));
+      return Task.FromResult<Guid?>(deadLetterId);
+    }
+  }
 
   private static StreamEventData _row() => new() {
     StreamId = (Guid)TrackedGuid.New(),
@@ -90,11 +190,11 @@ public class PerspectiveWorkerUnreadableFetchedRowTests {
   };
 
   private sealed class ListLogger : ILogger<PerspectiveWorker> {
-    public List<(LogLevel Level, int EventId, string Message)> Entries { get; } = [];
+    public List<(LogLevel Level, int EventId, string Message, Exception? Exception)> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-      Entries.Add((logLevel, eventId.Id, formatter(state, exception)));
+      Entries.Add((logLevel, eventId.Id, formatter(state, exception), exception));
   }
 
   private sealed class FixedInstance(Guid id) : IServiceInstanceProvider {
@@ -110,7 +210,8 @@ public class PerspectiveWorkerUnreadableFetchedRowTests {
     };
   }
 
-  private static PerspectiveWorker _buildWorker(CapturingFailureChannel failures, ILogger<PerspectiveWorker> logger) {
+  private static PerspectiveWorker _buildWorker(CapturingFailureChannel failures, ILogger<PerspectiveWorker> logger,
+      IDeadLetterStore deadLetterStore, DeadLetterMetrics? metrics) {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddLogging();
@@ -140,9 +241,10 @@ public class PerspectiveWorkerUnreadableFetchedRowTests {
       perspectiveDrainChannel: new PerspectiveDrainChannel(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
-      deadLetterStore: NullDeadLetterStore.Instance,
+      deadLetterStore: deadLetterStore,
       generationProvider: new DefaultGenerationProvider(),
       perspectiveNotificationListener: new NoOpWorkNotificationListener(),
-      governor: PerspectiveWorker.CreateDefaultGovernor(options));
+      governor: PerspectiveWorker.CreateDefaultGovernor(options),
+      deadLetterMetrics: metrics);
   }
 }
