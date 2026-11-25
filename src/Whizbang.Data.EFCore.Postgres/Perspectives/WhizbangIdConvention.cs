@@ -3,7 +3,10 @@
 
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Query;
+using Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
 
 namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 
@@ -39,6 +42,34 @@ public static class WhizbangIdConvention {
         _apply(complex.ComplexType);
       }
     }
+  }
+
+  /// <summary>
+  /// Gives a context without the Whizbang options extension the framework's query postprocessor, which the extension
+  /// would have registered, so an <c>ExecuteUpdate</c> on it sets a strongly-typed id inside a document in the form the
+  /// fleet reads, decided when the statement runs (<see cref="StrongIdSetterFormRewriter"/>), and an id predicate takes
+  /// either stored form (#2518). The generated <c>OnConfiguring</c> calls it.
+  /// </summary>
+  /// <remarks>
+  /// Nothing is changed on options that already have a query postprocessor of their own or of the extension, on options
+  /// for a provider that is not relational, or on frozen options: a pooled context's options cannot be changed by
+  /// <c>OnConfiguring</c>, so a pooled context needs the extension (<c>UseWhizbangFunctions</c>), which the generated
+  /// registration always adds.
+  /// </remarks>
+  /// <param name="optionsBuilder">The builder <c>OnConfiguring</c> is given.</param>
+  /// <docs>fundamentals/identity/whizbang-ids#stored-form-switch</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/WhizbangIdDocumentStorageTests.cs:Convention_ExecuteUpdateWhileTheGateIsClosed_SetsAnIdInTheObjectFormAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/WhizbangIdDocumentStorageTests.cs:Configure_LeavesOptionsWithAPostprocessorOrFrozen_AsTheyAreAsync</tests>
+  public static void Configure(DbContextOptionsBuilder optionsBuilder) {
+    ArgumentNullException.ThrowIfNull(optionsBuilder);
+    var options = optionsBuilder.Options;
+    var replaced = options.FindExtension<CoreOptionsExtension>()?.ReplacedServices;
+    if (options.IsFrozen
+        || !options.Extensions.OfType<RelationalOptionsExtension>().Any()
+        || replaced?.Keys.Any(k => k.Item1 == typeof(IQueryTranslationPostprocessorFactory)) == true) {
+      return;
+    }
+    optionsBuilder.ReplaceService<IQueryTranslationPostprocessorFactory, ContainmentPostprocessorFactory>();
   }
 
   private static void _apply(IMutableComplexType type) {

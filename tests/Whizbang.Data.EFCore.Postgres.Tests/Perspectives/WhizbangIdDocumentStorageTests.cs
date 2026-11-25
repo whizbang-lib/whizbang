@@ -129,6 +129,9 @@ public class WhizbangIdDocumentStorageTests {
       _configure(modelBuilder);
       WhizbangIdConvention.Apply(modelBuilder);
     }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
+      WhizbangIdConvention.Configure(optionsBuilder);
   }
 
   [Test]
@@ -668,12 +671,46 @@ public class WhizbangIdDocumentStorageTests {
   /// SaveChanges, so an instance of an earlier release still reads the row; a null id is set as JSON null (#2518).
   /// </summary>
   [Test]
-  public async Task Whizbang_ExecuteUpdateWhileTheGateIsClosed_SetsAnIdInTheObjectFormAsync() {
+  public async Task Whizbang_ExecuteUpdateWhileTheGateIsClosed_SetsAnIdInTheObjectFormAsync() =>
+    await _executeUpdateWhileTheGateIsClosedAsync(o => new WhizbangContext(o));
+
+  /// <summary>
+  /// The same on a context without the extension, as a generated context built from options by hand: its
+  /// <c>OnConfiguring</c> gives it the query postprocessor that sets the form (#2518).
+  /// </summary>
+  [Test]
+  public async Task Convention_ExecuteUpdateWhileTheGateIsClosed_SetsAnIdInTheObjectFormAsync() =>
+    await _executeUpdateWhileTheGateIsClosedAsync(o => new ConventionContext(o));
+
+  /// <summary>
+  /// Options that already carry a query postprocessor, and a pooled context's frozen options, are left as they are: the
+  /// first has the extension's (or the consumer's own), and the second cannot be changed by <c>OnConfiguring</c>.
+  /// </summary>
+  [Test]
+  public async Task Configure_LeavesOptionsWithAPostprocessorOrFrozen_AsTheyAreAsync() {
+    static int replaced(DbContextOptions options) =>
+      options.FindExtension<Microsoft.EntityFrameworkCore.Infrastructure.CoreOptionsExtension>()?.ReplacedServices?.Count ?? 0;
+    var plain = new DbContextOptionsBuilder().UseNpgsql("Host=unused");
+    var withExtension = new DbContextOptionsBuilder().UseNpgsql("Host=unused", n => n.UseWhizbangFunctions());
+    var frozen = new DbContextOptionsBuilder().UseNpgsql("Host=unused").Options;
+    frozen.Freeze();
+    var (extensionBefore, frozenBuilder) = (replaced(withExtension.Options), new DbContextOptionsBuilder(frozen));
+
+    WhizbangIdConvention.Configure(plain);
+    WhizbangIdConvention.Configure(withExtension);
+    WhizbangIdConvention.Configure(frozenBuilder);
+
+    await Assert.That(replaced(plain.Options)).IsEqualTo(1);
+    await Assert.That(replaced(withExtension.Options)).IsEqualTo(extensionBefore);
+    await Assert.That(frozenBuilder.Options).IsSameReferenceAs(frozen);
+  }
+
+  private async Task _executeUpdateWhileTheGateIsClosedAsync<T>(Func<DbContextOptions, T> create) where T : ProbeContext {
     using var form = StrongIdDocumentForms.ScopeTo(uuidString: false);
     var (order, newOrder, newParent) = (TestOrderId.New(), TestOrderId.New(), TestOrderId.New());
     var row = _row(order, TestOrderId.New(), TestOrderId.New());
     var capture = new SqlCapture();
-    await using var db = _context(o => new WhizbangContext(o), capture);
+    await using var db = _context(create, capture);
     db.Rows.Add(row);
     await db.SaveChangesAsync();
     await Assert.That(await _storedTextAsync(row.Id)).Contains($"\"OrderId\": {{\"Value\": \"{order.Value}\"}}");

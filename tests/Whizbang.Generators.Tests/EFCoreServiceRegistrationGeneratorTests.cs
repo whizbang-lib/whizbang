@@ -609,6 +609,37 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
+  /// The generated context gives itself the framework's query postprocessor when its options lack the Whizbang options
+  /// extension, so ExecuteUpdate on it sets a strong id in the form the fleet reads (#2518), and keeps a hook for the
+  /// consumer's own option configuration.
+  /// </summary>
+  [Test]
+  public async Task Generator_WithDiscoveredDbContext_GeneratesOnConfiguringThatGivesItTheQueryPostprocessorAsync() {
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    var sourceText = result.GeneratedSources.Single(s => s.HintName.Contains("TestDbContext.Generated")).SourceText.ToString();
+    var configure = sourceText.IndexOf("WhizbangIdConvention.Configure(optionsBuilder);", StringComparison.Ordinal);
+    await Assert.That(sourceText).Contains("protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {");
+    await Assert.That(configure).IsGreaterThan(0);
+    await Assert.That(sourceText.IndexOf("OnConfiguringExtended(optionsBuilder);", StringComparison.Ordinal)).IsGreaterThan(configure);
+    await Assert.That(sourceText).Contains("partial void OnConfiguringExtended(DbContextOptionsBuilder optionsBuilder);");
+  }
+
+  /// <summary>
   /// Test that generated code includes required using directives.
   /// Must include Whizbang.Data.EFCore.Postgres.Generated for ConfigureWhizbang() extension.
   /// </summary>
