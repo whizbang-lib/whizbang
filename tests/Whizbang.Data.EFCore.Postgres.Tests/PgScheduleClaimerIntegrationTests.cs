@@ -246,6 +246,66 @@ public class PgScheduleClaimerIntegrationTests : EFCoreTestBase {
       .Because("the only schedule is held by another live instance, so there is no moment worth waking for");
   }
 
+  private async Task<Guid> _insertKeyedScheduleAsync(string key, string fireOffset, short status = 0) {
+    var id = Guid.NewGuid();
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = new NpgsqlCommand(@"
+      INSERT INTO wh_schedules
+        (schedule_id, schedule_key, stream_id, partition_number, recurrence_kind, interval_ms, timezone,
+         next_fire_at, occurrence_count, status, event_type, event_data)
+      VALUES (@id, @key, gen_random_uuid(), 0, 1, 60000, 'UTC', NOW() + @off::interval, 0, @status, 'OverdueOcc', '{}'::jsonb);", conn);
+    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue("key", key);
+    cmd.Parameters.AddWithValue("off", fireOffset);
+    cmd.Parameters.AddWithValue("status", status);
+    await cmd.ExecuteNonQueryAsync();
+    return id;
+  }
+
+  [Test]
+  public async Task GetOverdueSchedules_CountsEveryActiveScheduleOverdueBeyondTheBound_AndNamesTheOldestAsync() {
+    // #2575: whoever owns them. The failure this reports is exactly that no instance takes the schedule, so a reading
+    // scoped to this instance's streams would miss it.
+    var (claimer, _) = _create();
+    var oldest = await _insertKeyedScheduleAsync("overdue-oldest", "-2 hours");
+    _ = await _insertKeyedScheduleAsync("overdue-newer", "-10 minutes");
+    _ = await _insertKeyedScheduleAsync("due-within-bound", "-30 seconds");
+    _ = await _insertKeyedScheduleAsync("overdue-but-paused", "-3 hours", status: 1);
+    _ = await _insertKeyedScheduleAsync("not-due", "1 hour");
+
+    var reading = await claimer.GetOverdueSchedulesAsync(TimeSpan.FromMinutes(1));
+
+    await Assert.That(reading).IsNotNull();
+    await Assert.That(reading!.Value.Count).IsEqualTo(2)
+      .Because("only Active schedules past the bound count; one just due is being fired, a paused one is waiting on purpose");
+    await Assert.That(reading.Value.OldestScheduleId).IsEqualTo(oldest);
+    await Assert.That(reading.Value.OldestScheduleKey).IsEqualTo("overdue-oldest");
+    await Assert.That(reading.Value.OldestAge).IsGreaterThanOrEqualTo(TimeSpan.FromHours(2));
+  }
+
+  [Test]
+  public async Task GetOverdueSchedules_NothingOverdue_ReadsNoneAsync() {
+    var (claimer, _) = _create();
+    _ = await _insertKeyedScheduleAsync("due-within-bound", "-30 seconds");
+
+    await Assert.That(await claimer.GetOverdueSchedulesAsync(TimeSpan.FromMinutes(1))).IsEqualTo(ScheduleOverdueReading.None);
+  }
+
+  [Test]
+  public async Task GetOverdueSchedules_AnUnkeyedSchedule_IsNamedByItsIdOnlyAsync() {
+    var (claimer, instance) = _create();
+    var stream = Guid.NewGuid();
+    await _pinStreamAsync(stream, instance.InstanceId);
+    await _insertScheduleAsync(stream, "-1 hour", "UnkeyedOverdue");
+
+    var reading = await claimer.GetOverdueSchedulesAsync(TimeSpan.FromMinutes(1));
+
+    await Assert.That(reading!.Value.Count).IsEqualTo(1);
+    await Assert.That(reading.Value.OldestScheduleId).IsNotNull();
+    await Assert.That(reading.Value.OldestScheduleKey).IsNull();
+  }
+
   [Test]
   public async Task BeforeTheDatabaseIsReachable_BothEntryPointsReportNothingToDoAsync() {
     // A pod can start before its database is resolvable — no connection string yet, no registered
@@ -264,5 +324,7 @@ public class PgScheduleClaimerIntegrationTests : EFCoreTestBase {
       .Because("claiming nothing is the honest answer when there is nowhere to claim from");
     await Assert.That(await claimer.GetNextFireTimeAsync()).IsNull()
       .Because("there is no schedule table to read a fire time out of yet");
+    await Assert.That(await claimer.GetOverdueSchedulesAsync(TimeSpan.FromMinutes(1))).IsNull()
+      .Because("with no database the overdue count is unknown, which is not the same as nothing overdue");
   }
 }
