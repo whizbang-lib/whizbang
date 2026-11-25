@@ -153,7 +153,10 @@ public sealed class RoleAssignmentOptions {
   /// </summary>
   /// <param name="role">The role.</param>
   /// <returns>True for the migrator.</returns>
-  public static bool IsEpisodic(string role) => string.Equals(role, StartupDuties.MIGRATOR, StringComparison.Ordinal);
+  public bool IsEpisodic(string role) => Catalog.Declarations.Count > 0 && string.Equals(role, StartupDuties.MIGRATOR, StringComparison.Ordinal);
+
+  /// <summary>The declared roles (#2594); the framework's alone until the registered catalog is applied.</summary>
+  public RoleCatalog Catalog { get; set; } = RoleCatalog.Framework;
 
   /// <summary>Throws when the options describe a configuration that cannot work.</summary>
   /// <exception cref="ArgumentOutOfRangeException">A non-positive renew interval, fewer than two

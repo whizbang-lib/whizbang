@@ -106,9 +106,9 @@ public sealed class RoleAssignmentHealthSource : IWhizbangHealthSource {
   /// A standing role is unassigned unless it is held. An episodic role (the migrator) is vacant
   /// between runs by design, so only a lapsed holder, one that stopped mid-run, counts.
   /// </summary>
-  private static bool _isUnassigned(string role, Dictionary<string, RoleAssignmentSnapshot> byRole) {
+  private bool _isUnassigned(string role, Dictionary<string, RoleAssignmentSnapshot> byRole) {
     var found = byRole.TryGetValue(role, out var snapshot);
-    if (RoleAssignmentOptions.IsEpisodic(role)) {
+    if (_options.IsEpisodic(role)) {
       return found && snapshot!.State == RoleAssignmentState.Lapsed;
     }
     return !found || snapshot!.State != RoleAssignmentState.Held;

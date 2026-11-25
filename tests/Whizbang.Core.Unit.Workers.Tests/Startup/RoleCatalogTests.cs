@@ -96,6 +96,9 @@ public class RoleCatalogTests {
     await Assert.That(catalog.Declares("nightly-export")).IsTrue();
     await Assert.That(options.Manages("nightly-export")).IsFalse()
       .Because("an episodic role is held only by the work that asks for it, so its vacancy is never a fault");
+    await Assert.That(options.Catalog).IsSameReferenceAs(catalog).Because("the options read the one registered catalog");
+    await Assert.That(options.IsEpisodic("nightly-export")).IsTrue();
+    await Assert.That(options.IsEpisodic("nightly-report")).IsFalse();
   }
 
   [Test]

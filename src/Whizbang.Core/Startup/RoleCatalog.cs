@@ -71,6 +71,9 @@ public sealed class RoleCatalog {
     new(PerspectiveRebuildDuty.DUTY_PREFIX, RoleKind.Episodic, isPrefix: true),
   ];
 
+  /// <summary>The catalog of the framework's roles alone.</summary>
+  public static RoleCatalog Framework { get; } = new([]);
+
   /// <summary>Creates the catalog of the framework's roles and <paramref name="declarations"/>.</summary>
   /// <param name="declarations">The host's declarations; one declared twice with one kind is one declaration.</param>
   /// <exception cref="ArgumentNullException"><paramref name="declarations"/> is null.</exception>
