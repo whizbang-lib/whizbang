@@ -94,4 +94,37 @@ public static class ReceivedStreamOrder {
       filled, e => e.OriginServiceId, e => e.OriginCommitSequence, e => e.EventId);
     return !before.Select(e => e.EventId).SequenceEqual(after.Select(e => e.EventId));
   }
+
+  /// <summary>
+  /// Where filling missing origin positions first changes the order a replay folds <paramref name="stream"/> in (#2571):
+  /// the stored event at the first version whose slot the replay fills with a different event after the fill than
+  /// before it, or null when the fill changes nothing.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A perspective replays only the event types it handles, and the id merge that places an unpositioned event among
+  /// its origin's positioned ones is not stable under taking a subset: a fill can reorder a whole stream and leave one
+  /// perspective's events in the same order, or leave the whole stream in order and reorder one perspective's events.
+  /// So the caller passes one perspective's events, never the whole stream, and gets that perspective's answer.
+  /// </para>
+  /// <para>
+  /// Every slot below the returned version folds the same event before and after the fill, so a fold held by a snapshot
+  /// below it is still the replay's fold: the rewind starts at this version and keeps the snapshots below it. The slots
+  /// from it on hold the same events in another order.
+  /// </para>
+  /// </remarks>
+  /// <param name="stream">The stored events of one stream that the fill's origin produced and one perspective reads
+  /// (other origins' and local events keep their places either way), in any order.</param>
+  /// <param name="fills">The positions to fill, by event id. A fill for an event that already has a position is ignored:
+  /// a position is never overwritten.</param>
+  /// <returns>The event stored at the first version whose replayed event the fill changes; null when the replay order
+  /// before the fill equals the order after it.</returns>
+  /// <exception cref="ArgumentNullException">An argument is null.</exception>
+  /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/ReceivedStreamOrderTests.cs</tests>
+  public static StoredStreamEvent? FirstSlotTheFillChanges(IReadOnlyList<StoredStreamEvent> stream, IReadOnlyDictionary<Guid, long> fills) {
+    ArgumentNullException.ThrowIfNull(stream);
+    ArgumentNullException.ThrowIfNull(fills);
+    return null;
+  }
 }

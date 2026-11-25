@@ -202,4 +202,135 @@ public class ReceivedStreamOrderTests {
     await Assert.That(() => ReceivedStreamOrder.FillChangesTheOrder(null!, new Dictionary<Guid, long>())).Throws<ArgumentNullException>();
     await Assert.That(() => ReceivedStreamOrder.FillChangesTheOrder(stream, null!)).Throws<ArgumentNullException>();
   }
+
+  // ----- #2571: where a fill first changes one perspective's replay order -----
+
+  private static readonly Dictionary<Guid, long> _noFills = [];
+
+  [Test]
+  public async Task FirstSlotTheFillChanges_AFillThatReordersTheStream_ButNotThePerspectivesEvents_IsNullForThePerspectiveAsync() {
+    // P1 (position 1, id 9), P2 (position 2, id 2), U (no position, id 5): the stream goes from U, P1, P2 to P1, P2, U.
+    var p1 = _from(_originA, 9, 1, 1);
+    var p2 = _from(_originA, 2, 2, 2);
+    var u = _from(_originA, 5, 3);
+    var fills = new Dictionary<Guid, long> { [u.EventId] = 3 };
+
+    var wholeStream = ReceivedStreamOrder.FirstSlotTheFillChanges([p1, p2, u], fills);
+    var perspective = ReceivedStreamOrder.FirstSlotTheFillChanges([p2, u], fills);
+
+    await Assert.That(wholeStream).IsEqualTo(p1).Because("the whole stream's first slot folds U before the fill and P1 after it");
+    await Assert.That(perspective).IsNull().Because("a perspective reading only P2 and U folds P2, U both before and after");
+  }
+
+  [Test]
+  public async Task FirstSlotTheFillChanges_AFillThatKeepsTheStreamsOrder_ButReordersThePerspectivesEvents_NamesItsFirstChangedSlotAsync() {
+    // P1 (position 2, id 9), U (no position, id 5), P2 (position 3, id 2), U filled with 1: the stream is U, P1, P2 both
+    // before and after, while a perspective reading only U and P2 goes from P2, U to U, P2.
+    var p1 = _from(_originA, 9, 1, 2);
+    var u = _from(_originA, 5, 2);
+    var p2 = _from(_originA, 2, 3, 3);
+    var fills = new Dictionary<Guid, long> { [u.EventId] = 1 };
+
+    var wholeStream = ReceivedStreamOrder.FirstSlotTheFillChanges([p1, u, p2], fills);
+    var perspective = ReceivedStreamOrder.FirstSlotTheFillChanges([p2, u], fills);
+
+    await Assert.That(wholeStream).IsNull().Because("the whole stream's replay order is the same before and after");
+    await Assert.That(perspective).IsEqualTo(u)
+      .Because("the perspective's first slot (version 2, where U is stored) folds P2 before the fill and U after it");
+  }
+
+  [Test]
+  public async Task FirstSlotTheFillChanges_TheRewindFromIt_KeepsTheEarlierSnapshot_AndFoldsWhatARebuildFoldsAsync() {
+    StoredStreamEvent[] before = [_from(_originA, 1, 1, 10), _from(_originA, 2, 2, 20), _from(_originA, 3, 3), _from(_originA, 4, 4, 30)];
+    var fills = new Dictionary<Guid, long> { [_id(3)] = 40 };
+    StoredStreamEvent[] after = [.. before.Select(e => fills.TryGetValue(e.EventId, out var position) ? e with { OriginCommitSequence = position } : e)];
+
+    var first = ReceivedStreamOrder.FirstSlotTheFillChanges(before, fills);
+
+    await Assert.That(first).IsEqualTo(before[2]).Because("versions 1 and 2 fold the same events either way; version 3 does not");
+    var replayedAfter = ReplayEventOrder.Order([.. after.Select(_envelope)]);
+    await Assert.That(ReplayFloor.Qualifies(replayedAfter, 2, first!.Value.EventId)).IsTrue()
+      .Because("the snapshot at version 2 is kept, and it is still a floor for the rewind from version 3");
+    var snapshotHolds = ReplayEventOrder.Order([.. before.Select(_envelope)]).Take(2).Select(e => e.MessageId.Value);
+    var replayedAboveIt = ReplayEventOrder.Order([.. after.Where(e => e.Version > 2).Select(_envelope)]).Select(e => e.MessageId.Value);
+    await Assert.That(snapshotHolds.Concat(replayedAboveIt).ToArray())
+      .IsEquivalentTo(replayedAfter.Select(e => e.MessageId.Value).ToArray(), TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("restoring the kept snapshot and replaying above it folds what a rebuild in the new order folds");
+  }
+
+  [Test]
+  public async Task FirstSlotTheFillChanges_IgnoresPositionsHeld_ZeroFills_AndAbsentEvents_AndRefusesNullAsync() {
+    StoredStreamEvent[] stream = [_from(_originA, 1, 1, 10), _from(_originA, 2, 2), _from(_originA, 3, 3, 30)];
+
+    await Assert.That(ReceivedStreamOrder.FirstSlotTheFillChanges(stream,
+      new Dictionary<Guid, long> { [_id(1)] = 99, [_id(2)] = 0, [_id(4)] = 5 })).IsNull();
+    await Assert.That(ReceivedStreamOrder.FirstSlotTheFillChanges(stream, _noFills)).IsNull();
+    await Assert.That(ReceivedStreamOrder.FirstSlotTheFillChanges([], _noFills)).IsNull();
+    await Assert.That(() => ReceivedStreamOrder.FirstSlotTheFillChanges(null!, _noFills)).Throws<ArgumentNullException>();
+    await Assert.That(() => ReceivedStreamOrder.FirstSlotTheFillChanges(stream, null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task FirstSlotTheFillChanges_OverEveryArrangement_FillAndTypeSubset_IsWhereThePerspectivesReplayFirstDiffersAsync() {
+    // The design choice this locks (#2571): the rewind decision is made per perspective, over the events it reads, by the
+    // replay's own rule. The oracle is the replay itself (ReplayEventOrder.Order over the perspective's events, every
+    // origin and the local event included), compared before and after the fill: null exactly when the two agree, and
+    // otherwise the version of the first slot where they differ, every slot below it folding the same event.
+    StoredStreamEvent[] events = [
+      _from(_originA, 1, 0), _from(_originA, 2, 0, sequence: 3), _from(_originA, 3, 0), _from(_originA, 4, 0, sequence: 1),
+      _from(_originB, 6, 0, sequence: 1), _local(5, 0)];
+    var typeX = new HashSet<Guid> { _id(1), _id(3), _id(6) };
+    bool[][] typeSubsets = [[true, false], [false, true], [true, true]];
+    long[] fillValues = [0, 2, 4];
+    int checkedCases = 0, rewound = 0, wholeStreamRewoundOnlyPerspectiveKept = 0, wholeStreamKeptPerspectiveRewound = 0;
+    foreach (var versions in _permutations([1, 2, 3, 4, 5, 6])) {
+      var stream = events.Select((e, i) => e with { Version = versions[i] }).ToArray();
+      foreach (var fillFirst in fillValues) {
+        foreach (var fillThird in fillValues) {
+          var fills = new Dictionary<Guid, long> { [_id(1)] = fillFirst, [_id(3)] = fillThird };
+          var wholeStream = ReceivedStreamOrder.FirstSlotTheFillChanges([.. stream.Where(e => e.OriginServiceId == _originA)], fills);
+          foreach (var subset in typeSubsets) {
+            var reads = stream.Where(e => typeX.Contains(e.EventId) ? subset[0] : subset[1]).ToArray();
+            var first = ReceivedStreamOrder.FirstSlotTheFillChanges([.. reads.Where(e => e.OriginServiceId == _originA)], fills);
+            var failure = _replayDisagrees(reads, fills, first);
+            if (failure is not null) {
+              Assert.Fail($"versions {string.Join(",", versions)}, fills {fillFirst}/{fillThird}, types {subset[0]}/{subset[1]}: {failure}");
+            }
+            checkedCases++;
+            rewound += first is null ? 0 : 1;
+            wholeStreamRewoundOnlyPerspectiveKept += wholeStream is not null && first is null ? 1 : 0;
+            wholeStreamKeptPerspectiveRewound += wholeStream is null && first is not null ? 1 : 0;
+          }
+        }
+      }
+    }
+    await Assert.That(checkedCases).IsEqualTo(720 * 9 * 3);
+    await Assert.That(rewound).IsGreaterThan(0).Because("a positive control: some fills do reorder a perspective's events");
+    await Assert.That(rewound).IsLessThan(checkedCases).Because("and some leave them as they were");
+    await Assert.That(wholeStreamRewoundOnlyPerspectiveKept).IsGreaterThan(0)
+      .Because("the stream-wide answer rewinds perspectives whose own order the fill left alone");
+    await Assert.That(wholeStreamKeptPerspectiveRewound).IsGreaterThan(0)
+      .Because("and misses perspectives whose own order the fill changed");
+  }
+
+  /// <summary>Null when <paramref name="first"/> is where the replay of <paramref name="reads"/> first differs; else why not.</summary>
+  private static string? _replayDisagrees(StoredStreamEvent[] reads, Dictionary<Guid, long> fills, StoredStreamEvent? first) {
+    var filled = reads.Select(e => e.OriginCommitSequence <= 0 && fills.TryGetValue(e.EventId, out var position) && position > 0
+      ? e with { OriginCommitSequence = position }
+      : e).ToArray();
+    var before = ReplayEventOrder.Order([.. reads.Select(_envelope)]).Select(e => e.MessageId.Value).ToArray();
+    var after = ReplayEventOrder.Order([.. filled.Select(_envelope)]).Select(e => e.MessageId.Value).ToArray();
+    if (first is not StoredStreamEvent slot) {
+      return before.SequenceEqual(after) ? null : "the replay order changed and no rewind was named";
+    }
+    var slots = reads.Select(e => e.Version).Order().ToArray();
+    var k = Array.IndexOf(slots, slot.Version);
+    if (k < 0 || reads.Single(e => e.Version == slot.Version) != slot || slot.OriginServiceId != _originA) {
+      return "the named event is not the origin's event the perspective reads at that version";
+    }
+    if (!before.Take(k).SequenceEqual(after.Take(k))) {
+      return "a slot below the named version folds a different event";
+    }
+    return before[k] == after[k] ? "the named version folds the same event before and after" : null;
+  }
 }
