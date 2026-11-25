@@ -127,10 +127,9 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     // id among them is serialized in the form this schema's gate allows (#2518).
     List<CollectiveSettersRewriter.CollectiveSetterAssignment> assignments;
     using (Perspectives.StrongIdDocumentTarget.Of(dbContext, schema)) {
-      assignments = CollectiveSettersRewriter.CollectAssignments(spec.Setters)
+      assignments = [.. CollectiveSettersRewriter.CollectAssignments(spec.Setters)
         .Concat(CollectiveSettersRewriter.FromHookSetters(hookPlan.ModelFieldSetters))
-        .Where(a => !hookPlan.RemovedModelFields.Contains(a.PathName))
-        .ToList();
+        .Where(a => !hookPlan.RemovedModelFields.Contains(a.PathName))];
     }
     var qualifiedTable = schema is null
       ? PgIdentifier.Quote(table)
