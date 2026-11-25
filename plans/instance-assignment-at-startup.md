@@ -265,6 +265,8 @@ keeps the role and is reported Degraded (a healthy sole holder is Healthy); no R
   `InstanceAssignmentMonitor` (hosted from Coordinate, every `ObserveInterval`) logs "Assigned: ..." on first sight and
   on every change, and the `assignment` health component (`InstanceAssignmentHealthSource`) reports it, Degraded past
   `AwaitingShareGrace` (`InstanceAssignmentOptions`, bound from `Whizbang:Database:InstanceAssignment`; zero derives
-  two settle windows plus one renew interval). Registered for both drivers by `PostgresCoordinationRegistration`.
+  two settle windows plus one renew interval). Registered for both drivers by `PostgresCoordinationRegistration`. A fresh instance not yet
+  observed reads Operational ("not yet observed") and turns Degraded only when no read has succeeded by the end of the
+  grace measured from the monitor's start.
   Locked by `InstanceAssignmentMonitorTests`, `InstanceAssignmentHealthSourceTests`, `InstanceAssignmentMonitorLoopTests`
   and the parity test.
