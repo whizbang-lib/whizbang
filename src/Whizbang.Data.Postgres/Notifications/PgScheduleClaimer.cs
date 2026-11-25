@@ -89,11 +89,14 @@ public sealed partial class PgScheduleClaimer(
 
     await using var conn = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
     await using var cmd = conn.CreateWhizbangCommand();
+    // #2575: the claim's ownership rule (wh_schedule_owner_admits), so the wake is armed for every schedule the
+    // claim would take, a stream no live instance holds included.
     cmd.CommandText = @"
       SELECT MIN(sc.next_fire_at)
       FROM wh_schedules sc
-      JOIN wh_active_streams s ON s.stream_id = sc.stream_id
-      WHERE s.assigned_instance_id = @i AND sc.status = 0";
+      LEFT JOIN wh_active_streams s ON s.stream_id = sc.stream_id
+      WHERE sc.status = 0
+        AND wh_schedule_owner_admits(s.assigned_instance_id, @i, ARRAY(SELECT l.instance_id FROM wh_live_instance_ids() l))";
     cmd.Parameters.Add(new NpgsqlParameter("i", NpgsqlDbType.Uuid) { Value = _instanceProvider.InstanceId });
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     if (result is null or DBNull) {
