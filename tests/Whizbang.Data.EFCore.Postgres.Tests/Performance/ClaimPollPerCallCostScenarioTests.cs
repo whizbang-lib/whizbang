@@ -172,11 +172,12 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
         + $"{second.BlocksPerCall:F1})");
   }
 
-  /// <summary>The streams, events and poller of the current fill, as one fingerprint.</summary>
+  /// <summary>The work rows, streams, events and poller of the current fill, as one fingerprint.</summary>
   private static async Task<string> _workloadAsync(NpgsqlConnection conn) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = """
-      SELECT md5(string_agg(stream_id::text || ':' || event_id::text, ',' ORDER BY stream_id, event_id))
+      SELECT md5(string_agg(event_work_id::text || ':' || stream_id::text || ':' || event_id::text, ','
+                            ORDER BY stream_id, event_id))
         || ' ' || (SELECT string_agg(instance_id::text, ',') FROM wh_service_instances)
       FROM wh_perspective_events
       """;
@@ -239,8 +240,10 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
   /// </summary>
   private static async Task<Guid> _fillAtDepthAsync(NpgsqlConnection conn, int depth, string layout) {
     // The poller and every id are fixed (#2521): the ids decide which rows a stream walk meets first and so which pages
-    // it reads, and ids drawn at random made the cost a draw. The layout seeds the ids, so each layout is one fixed
-    // workload and the scenario holds the ceiling against the dearest of several (#2523).
+    // it reads, and ids drawn at random made the cost a draw. The work id too (#2580): left to its default it was drawn
+    // with gen_random_uuid, and a lease written through the primary key read different pages on every fill. The layout
+    // seeds the ids, so each layout is one fixed workload and the scenario holds the ceiling against the dearest of
+    // several (#2523).
     var poller = _poller;
     await using var fill = conn.CreateCommand();
     fill.CommandText = @"
@@ -257,8 +260,9 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
       VALUES (@poller, 'perf', 'perf-host', 1, NOW(), NOW(), '{}'::jsonb);
 
       INSERT INTO wh_perspective_events
-        (stream_id, perspective_name, event_id, status, attempts, created_at, partition_number, priority)
-      SELECT st.stream_id, 'TestPerspective', md5(@layout || 'claim-cost-event-' || st.ordinal || '-' || r)::uuid, 0, 0,
+        (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at, partition_number, priority)
+      SELECT md5(@layout || 'claim-cost-work-' || st.ordinal || '-' || r)::uuid,
+             st.stream_id, 'TestPerspective', md5(@layout || 'claim-cost-event-' || st.ordinal || '-' || r)::uuid, 0, 0,
              NOW() - (st.ordinal * INTERVAL '1 millisecond') + (r * INTERVAL '1 microsecond'),
              compute_partition(st.stream_id),
              CASE st.ordinal % 3 WHEN 0 THEN 50 WHEN 1 THEN 150 ELSE 250 END
