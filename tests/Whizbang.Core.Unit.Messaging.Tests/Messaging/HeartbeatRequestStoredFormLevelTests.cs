@@ -80,7 +80,9 @@ public class HeartbeatRequestStoredFormLevelTests {
     await Assert.That(before.RootElement.GetProperty("zone").GetString()).IsEqualTo("a");
     await Assert.That(after.RootElement.GetProperty("strong_id_document_form").GetString()).IsEqualTo("uuid-string")
       .Because("migration 562's rewrite readiness reads this key and value");
-    await Assert.That(after.RootElement.EnumerateObject().Count()).IsEqualTo(3).Because("each marker is written once");
+    await Assert.That(after.RootElement.EnumerateObject().Select(p => p.Name).Order().ToList()).IsEquivalentTo([
+      HeartbeatRequest.PARTITION_OWNERSHIP_LEVEL_KEY, HeartbeatRequest.STORED_FORM_LEVEL_KEY,
+      HeartbeatRequest.STRONG_ID_DOCUMENT_FORM_KEY, "zone"]).Because("each marker is written once, beside the caller's keys");
   }
 
   [Test]
