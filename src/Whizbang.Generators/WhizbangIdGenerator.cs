@@ -818,6 +818,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
   private const string RULE_SNIPPETS_FILE = "WhizbangIdRuleSnippets.cs";
 
+  /// <summary>The snippet file holding the members of a generated id's JSON converter.</summary>
+  private const string JSON_SNIPPETS_FILE = "WhizbangIdJsonSnippets.cs";
+
   /// <summary>
   /// One region of <c>WhizbangIdRuleSnippets.cs</c>, its placeholders replaced, indented as a member of the generated
   /// struct, ending in a newline:
@@ -897,15 +900,18 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     // Converter class
     sb.AppendLine("/// <summary>");
     sb.AppendLine($"/// AOT-compatible JSON converter for {id.TypeName}.");
-    sb.AppendLine($"/// Serializes {id.TypeName} as the standard lowercase hyphenated UUID string.");
+    sb.AppendLine($"/// Serializes {id.TypeName} as the standard lowercase hyphenated UUID string, and reads that or the object");
+    sb.AppendLine("/// form {\"Value\": \"...\"} an Entity Framework perspective stores until its fleet reads the UUID string.");
     sb.AppendLine("/// </summary>");
     sb.AppendLine($"public sealed class {id.TypeName}JsonConverter : JsonConverter<{id.TypeName}> {{");
 
     // Read method
-    sb.AppendLine("  /// <inheritdoc/>");
-    sb.AppendLine($"  public override {id.TypeName} Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {{");
-    sb.AppendLine($"    return {id.TypeName}.From(Guid.Parse(reader.GetString()!, CultureInfo.InvariantCulture));");
-    sb.AppendLine("  }");
+    // Reads the UUID string and the object form an EF perspective stored before its fleet read the UUID string (#2518).
+    sb.Append(TemplateUtilities.IndentCode(
+      TemplateUtilities.ExtractSnippet(typeof(WhizbangIdGenerator).Assembly, JSON_SNIPPETS_FILE, "JSON_READ_EITHER_FORM")
+        .Replace("__TYPE_NAME__", id.TypeName)
+        .TrimEnd(),
+      "  ") + "\n");
     sb.AppendLine();
 
     // Write method

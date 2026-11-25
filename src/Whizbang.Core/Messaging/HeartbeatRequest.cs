@@ -112,10 +112,14 @@ public sealed record HeartbeatRequest(
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/HeartbeatRequestStoredFormLevelTests.cs</tests>
   public string MetadataJson() => MetadataJson(Whizbang.Core.Perspectives.WhizbangIdDocumentForm.WritesUuidString);
 
-  /// <summary>The metadata, saying the given strong-id document form.</summary>
+  /// <summary>
+  /// The metadata, saying the given strong-id document form: for a driver whose store writes a strongly-typed id as its
+  /// UUID string whatever the gate says (the Dapper driver, #2518), which passes true from its first beat.
+  /// </summary>
   /// <param name="writesUuidStrings">Whether this process writes strongly-typed ids as UUID strings.</param>
   /// <returns>The metadata as JSON text.</returns>
-  internal string MetadataJson(bool writesUuidStrings) {
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStrongIdDocumentGateTests.cs:TheDapperHeartbeat_SaysItWritesTheUuidString_FromItsFirstBeatAsync</tests>
+  public string MetadataJson(bool writesUuidStrings) {
     using var buffer = new System.IO.MemoryStream();
     using (var writer = new Utf8JsonWriter(buffer)) {
       writer.WriteStartObject();

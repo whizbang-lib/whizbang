@@ -1081,8 +1081,9 @@ public partial class DapperWorkCoordinator(
   public async Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    // #2323: the metadata with this build's stored form level, which the trim gate counts.
-    var metadataJson = request.MetadataJson();
+    // #2323: the metadata with this build's stored form level, which the trim gate counts. #2518: the Dapper store writes
+    // a strongly-typed id as its UUID string whatever the gate says, so the heartbeat says so from its first beat.
+    var metadataJson = request.MetadataJson(writesUuidStrings: true);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);

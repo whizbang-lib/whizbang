@@ -18,10 +18,11 @@ using Whizbang.Testing.Containers;
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
 /// <summary>
-/// The Dapper driver asks the strong-id document gate as the Entity Framework driver does (#2518): at host start and
-/// each maintenance cycle. Asking opens the process's write form once every live instance reads the UUID string, and
-/// the heartbeat then says this instance writes it, so a schema with Entity Framework and Dapper instances reaches the
-/// stored-form rewrite rather than holding it for the Dapper ones.
+/// The Dapper driver and the strong-id document gate (#2518). The Dapper store writes a strongly-typed id as its UUID
+/// string whatever the gate says, and its heartbeat says so from the first beat, so a schema with Entity Framework and
+/// Dapper instances reaches the stored-form rewrite rather than holding it for the Dapper ones. The driver also asks
+/// the gate at host start and each maintenance cycle, as the Entity Framework driver does, which latches the gate,
+/// opens the process's form for any Entity Framework writer it hosts, and reports instances that cannot read it.
 /// </summary>
 /// <docs>fundamentals/identity/whizbang-ids#stored-form-switch</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/StrongIdDocumentGateStep.cs</code-under-test>
@@ -72,13 +73,38 @@ public class DapperStrongIdDocumentGateTests {
     await Assert.That(known).IsTrue();
   }
 
+  private async Task<string?> _metadataAsync(Guid instance) {
+    await using var connection = new NpgsqlConnection(_database.ConnectionString);
+    return await connection.ExecuteScalarAsync<string?>(
+      "SELECT metadata::text FROM wh_service_instances WHERE instance_id = @instance", new { instance });
+  }
+
   /// <summary>
-  /// A schema with an Entity Framework instance and a Dapper instance: once the Dapper driver's step asks the gate and
-  /// its heartbeat says it writes the UUID string, the rewrite runs. Before, the Dapper instance never asked, never said
-  /// so, and held the rewrite for as long as it was live.
+  /// The Dapper store writes a strongly-typed id as its UUID string whatever the gate says, so its heartbeat says so from
+  /// its first beat, before anything has asked the gate, with no form forced.
   /// </summary>
   [Test]
-  public async Task AMixedFleet_ReachesTheRewrite_OnceTheDapperInstanceAsksTheGateAsync() {
+  public async Task TheDapperHeartbeat_SaysItWritesTheUuidString_FromItsFirstBeatAsync() {
+    await using var provider = _provider();
+    var self = provider.GetRequiredService<IServiceInstanceProvider>().InstanceId;
+    using var scope = provider.CreateScope();
+    var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+    await _startAsync(provider);
+    StrongIdDocumentForms.Hold(_database.Name, "public");
+
+    await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(self, "dapper-svc", "dapper-host", 2));
+
+    await Assert.That(await _metadataAsync(self)).Contains("\"strong_id_document_form\": \"uuid-string\"")
+      .Because("the Dapper store writes the UUID string even while this process holds the schema for its EF writers");
+  }
+
+  /// <summary>
+  /// A schema with an Entity Framework instance and a Dapper instance reaches the rewrite, driven through the real Dapper
+  /// coordinator and the real maintenance step: the Dapper heartbeat says it writes the UUID string, and the step's
+  /// check, which every instance in the fleet reads, opens the gate.
+  /// </summary>
+  [Test]
+  public async Task AMixedFleet_ReachesTheRewrite_ThroughTheDapperCoordinatorAndStepAsync() {
     await using var provider = _provider();
     await _startAsync(provider);
     var self = provider.GetRequiredService<IServiceInstanceProvider>().InstanceId;
@@ -89,24 +115,14 @@ public class DapperStrongIdDocumentGateTests {
     using var scope = provider.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     var step = scope.ServiceProvider.GetServices<IMaintenanceStep>().OfType<StrongIdDocumentGateStep>().Single();
-    var heartbeat = new HeartbeatRequest(self, "dapper-svc", "dapper-host", 2);
 
-    // The Dapper instance as it beats before its form is open: it reads the UUID string but does not yet write it.
-    using (StrongIdDocumentForms.ScopeTo(uuidString: false)) {
-      await coordinator.RecordHeartbeatAsync(heartbeat);
-    }
+    await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(self, "dapper-svc", "dapper-host", 2));
     var answer = await step.CheckAsync(scope.ServiceProvider, CancellationToken.None);
-    var heldForDapper = await _rewriteHoldAsync();
-    // Its form is open now, so its heartbeat says it writes the UUID string.
-    using (StrongIdDocumentForms.ScopeTo(uuidString: true)) {
-      await coordinator.RecordHeartbeatAsync(heartbeat);
-    }
-    var released = await _rewriteHoldAsync();
+    var hold = await _rewriteHoldAsync();
 
-    await Assert.That(answer.State).IsEqualTo(StrongIdDocumentGateState.Open);
+    await Assert.That(answer.State).IsEqualTo(StrongIdDocumentGateState.Open).Because("the check that latches the gate answers open");
     await Assert.That(StrongIdDocumentForms.IsOpen(_database.Name, "public")).IsTrue()
       .Because("the step opened the process's write form for this schema");
-    await Assert.That(heldForDapper).IsEqualTo("strong-id document gate open (1 of 2 live instances write strong ids as UUID strings)");
-    await Assert.That(released).IsNull().Because("every live instance, the Dapper one included, writes the UUID string");
+    await Assert.That(hold).IsNull().Because("every live instance, the Dapper one included, writes the UUID string");
   }
 }
