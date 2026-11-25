@@ -30,6 +30,16 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// (1,000 streams).
 /// </para>
 /// <para>
+/// Rows read are work counters, not blocks, and the test holds the one input on a shared server that moves them
+/// (#2587): the horizon. Whether a vacuum may remove the versions the preparing calls leave dead (the fetch's lease, the
+/// completion's retire, the shallower round's writes), whether a scan may skip one, and whether the fill's pages are
+/// marked all-visible are decided against it, and any open snapshot holds it back, so a measurement that vacuumed them
+/// away in isolation read every dead entry again under load. Each measurement holds a snapshot from before its first
+/// fill (<see cref="HeldHorizon"/>), so every dead version stays on every run and no vacuum is asked to remove one; the
+/// fills derive their ids from their names, and autovacuum is off on the measured tables, so no analyze rewrites the
+/// statistics between the fill and the call. None of these calls draws a walk start, so there is nothing to seed.
+/// </para>
+/// <para>
 /// Every call is measured with the plan made for its arguments and with the generic plan a long-lived connection may
 /// settle on: a batch that is a few percent of the queue made a whole-table scan look as cheap as a probe per key to
 /// the first, and the two are not always the same plan.
@@ -47,10 +57,13 @@ public class PerspectiveWorkQueueBacklogCostSqlTests : EFCoreTestBase {
   private const string PERSPECTIVE = "Perf.OrderPerspective";
   private static readonly Guid _instance = new("00000000-0000-0000-0000-0000000000b1");
 
-  /// <summary>The tables a fill writes and the measured calls read or write.</summary>
+  /// <summary>
+  /// The tables a fill writes and the measured calls read or write, the completion's doorbell row among them: left in
+  /// place, the second round finds the row the first wrote and reads its entry once more.
+  /// </summary>
   private static readonly string[] _measuredTables = [
     "wh_event_store", "wh_event_body", "wh_perspective_events", "wh_active_streams", "wh_perspective_cursors",
-    "wh_perspective_applied", "wh_outbox",
+    "wh_perspective_applied", "wh_outbox", "wh_notify_state",
   ];
 
   /// <summary>
@@ -170,17 +183,25 @@ public class PerspectiveWorkQueueBacklogCostSqlTests : EFCoreTestBase {
       : (conn, batch) => _measureCompleteAsync(conn, batch, cancellationToken);
     await using (var setup = new NpgsqlConnection(ConnectionString)) {
       await setup.OpenAsync(cancellationToken);
-      await _registerAsync(setup, cancellationToken);
+      await _prepareAsync(setup, cancellationToken);
     }
 
-    var plain = await _measureAtDepthAsync("force_custom_plan", "control", BACKLOG, measure, cancellationToken);
+    RowsReadResult plain;
+    await using (var horizon = new NpgsqlConnection(ConnectionString)) {
+      await HeldHorizon.HoldAsync(horizon, cancellationToken);
+      plain = await _measureAtDepthAsync("force_custom_plan", "control", BACKLOG, measure, cancellationToken);
+    }
     await using (var setup = new NpgsqlConnection(ConnectionString)) {
       await setup.OpenAsync(cancellationToken);
       await using var truncate = setup.CreateCommand();
       truncate.CommandText = $"TRUNCATE {string.Join(", ", _measuredTables)} CASCADE";
       _ = await truncate.ExecuteNonQueryAsync(cancellationToken);
     }
-    var disturbed = await _measureAtDepthAsync("force_custom_plan", "control", BACKLOG, measure, cancellationToken, disturb: true);
+    RowsReadResult disturbed;
+    await using (var horizon = new NpgsqlConnection(ConnectionString)) {
+      await HeldHorizon.HoldAsync(horizon, cancellationToken);
+      disturbed = await _measureAtDepthAsync("force_custom_plan", "control", BACKLOG, measure, cancellationToken, disturb: true);
+    }
 
     await Assert.That(disturbed.ByRelation).IsEquivalentTo(plain.ByRelation)
       .Because($"the same call on the same fill reads the same rows whatever another session holds ({call}): "
@@ -191,7 +212,6 @@ public class PerspectiveWorkQueueBacklogCostSqlTests : EFCoreTestBase {
   private static async Task<RowsReadResult> _measureCompleteAsync(
       NpgsqlConnection conn, Guid[] batch, CancellationToken cancellationToken) {
     _ = await _fetchAsync(conn, batch, cancellationToken);
-    await _vacuumAsync(conn, cancellationToken);
     var read = await RowsRead.MeasureAsync(conn, () => _completeAsync(conn, batch, cancellationToken),
       commit: true, cancellationToken);
     await Assert.That(await _pendingAsync(conn, batch, cancellationToken)).IsEqualTo(0L)
@@ -204,7 +224,6 @@ public class PerspectiveWorkQueueBacklogCostSqlTests : EFCoreTestBase {
       NpgsqlConnection conn, Guid[] batch, CancellationToken cancellationToken) {
     _ = await _fetchAsync(conn, batch, cancellationToken);
     await _completeAsync(conn, batch, cancellationToken);
-    await _vacuumAsync(conn, cancellationToken);
     var evicted = 0;
     var read = await RowsRead.MeasureAsync(conn, async () => {
       await using var cleanup = conn.CreateCommand();
@@ -295,9 +314,12 @@ public class PerspectiveWorkQueueBacklogCostSqlTests : EFCoreTestBase {
       string planMode, CancellationToken cancellationToken) {
     const int pendingOutbox = 12_500;
     Guid[] batch;
+    // The horizon, held where the test puts it (#2587): from before the fill to the end of the measurement.
+    await using var horizon = new NpgsqlConnection(ConnectionString);
     await using (var setup = new NpgsqlConnection(ConnectionString)) {
       await setup.OpenAsync(cancellationToken);
-      await _registerAsync(setup, cancellationToken);
+      await _prepareAsync(setup, cancellationToken);
+      await HeldHorizon.HoldAsync(horizon, cancellationToken);
       batch = await _fillAsync(setup, "fill-outbox", BATCH, cancellationToken);
       _ = await _fetchAsync(setup, batch, cancellationToken);
       await _completeAsync(setup, batch, cancellationToken);
@@ -307,13 +329,12 @@ public class PerspectiveWorkQueueBacklogCostSqlTests : EFCoreTestBase {
       outbox.CommandText = """
         INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, attempts, created_at,
                                stream_id, partition_number)
-        SELECT gen_random_uuid(), 'topic', 'Perf.Message, Perf', '{}'::jsonb, '{}'::jsonb, 0, 0, NOW(),
-               gen_random_uuid(), 0
-        FROM generate_series(1, @rows);
+        SELECT md5('fill-outbox-message-' || n)::uuid, 'topic', 'Perf.Message, Perf', '{}'::jsonb, '{}'::jsonb, 0, 0, NOW(),
+               md5('fill-outbox-other-stream-' || n)::uuid, 0
+        FROM generate_series(1, @rows) n;
         """;
       outbox.Parameters.AddWithValue("rows", pendingOutbox);
       _ = await outbox.ExecuteNonQueryAsync(cancellationToken);
-      await _vacuumAsync(setup, cancellationToken);
       await using var analyze = setup.CreateCommand();
       analyze.CommandTimeout = 300;
       analyze.CommandText = "VACUUM ANALYZE wh_outbox";
@@ -389,24 +410,28 @@ public class PerspectiveWorkQueueBacklogCostSqlTests : EFCoreTestBase {
   /// <summary>
   /// Measures one call over a backlog and over four times it, each time on a batch of new streams from the latest fill,
   /// and requires the deeper call to read no more than the shallower one and no more than
-  /// <paramref name="rowsPerStream"/> rows per stream of its batch. The deeper round may read up to one more row per
+  /// <paramref name="rowsPerStream"/> rows per stream of its batch. The deeper round may read up to two more rows per
   /// stream of the batch: the shallower round's batch is still in the tables, leased, and the acquisition's window
-  /// passes over those rows once. Growth with the backlog is three backlogs, thirty times that allowance.
+  /// passes over each of those rows once and over the version its lease left dead once, which the held horizon keeps
+  /// on every run (#2587). Growth with the backlog is three backlogs, fifteen times that allowance.
   /// </summary>
   private async Task _assertPricedByTheBatchAsync(
       string planMode, int rowsPerStream, Func<NpgsqlConnection, Guid[], Task<RowsReadResult>> call,
       CancellationToken cancellationToken) {
     await using (var setup = new NpgsqlConnection(ConnectionString)) {
       await setup.OpenAsync(cancellationToken);
-      await _registerAsync(setup, cancellationToken);
+      await _prepareAsync(setup, cancellationToken);
     }
+    // The horizon, held where the test puts it (#2587): from before the first fill to the end of the deeper round.
+    await using var horizon = new NpgsqlConnection(ConnectionString);
+    await HeldHorizon.HoldAsync(horizon, cancellationToken);
 
     var shallow = await _measureAtDepthAsync(planMode, "fill-1", BACKLOG, call, cancellationToken);
     var deep = await _measureAtDepthAsync(planMode, "fill-2", DEEPER - BACKLOG, call, cancellationToken);
     var story = $"at {BACKLOG} pending and applied: {shallow}; at {DEEPER} pending and applied: {deep}";
     Console.WriteLine($"MEASURE {planMode} {story}");
 
-    await Assert.That(deep.Total).IsLessThanOrEqualTo(shallow.Total + BATCH)
+    await Assert.That(deep.Total).IsLessThanOrEqualTo(shallow.Total + (2 * BATCH))
       .Because($"four times the backlog and history must not cost more for the same batch ({planMode}), {story}");
     await Assert.That(deep.Total).IsLessThanOrEqualTo((long)rowsPerStream * BATCH)
       .Because($"a call reads a few rows per stream of its batch ({planMode}), {story}");
@@ -449,7 +474,7 @@ public class PerspectiveWorkQueueBacklogCostSqlTests : EFCoreTestBase {
       insert.CommandTimeout = 300;
       insert.CommandText = """
         WITH s AS MATERIALIZED (
-          SELECT gen_random_uuid() AS stream_id, gen_random_uuid() AS event_id, n
+          SELECT md5(@fill || '-stream-' || n)::uuid AS stream_id, md5(@fill || '-event-' || n)::uuid AS event_id, n
           FROM generate_series(1, @streams) n
         ),
         es AS (
@@ -477,7 +502,7 @@ public class PerspectiveWorkQueueBacklogCostSqlTests : EFCoreTestBase {
         SELECT stream_id, compute_partition(stream_id, 10000), @instance, NOW(), NOW() FROM s;
 
         WITH h AS MATERIALIZED (
-          SELECT gen_random_uuid() AS stream_id, gen_random_uuid() AS event_id, n
+          SELECT md5(@fill || '-applied-stream-' || n)::uuid AS stream_id, md5(@fill || '-applied-event-' || n)::uuid AS event_id, n
           FROM generate_series(1, @streams) n
         ),
         es AS (
@@ -520,18 +545,12 @@ public class PerspectiveWorkQueueBacklogCostSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Removes the dead row versions the preparing calls left (a lease written, a row retired), so the measured call reads
-  /// the same index entries however soon another session would have let a scan mark them dead. Statistics are left as
-  /// the fill analyzed them.
+  /// Registers the instance and turns autovacuum off on the measured tables: the preparing calls rewrite every row of a
+  /// batch, which is enough to make autovacuum analyze a table whenever it next visits this database, and an analyze
+  /// between the fill's and the measured call rewrites the statistics the call is planned from.
   /// </summary>
-  private static async Task _vacuumAsync(NpgsqlConnection conn, CancellationToken cancellationToken) {
-    await using var vacuum = conn.CreateCommand();
-    vacuum.CommandTimeout = 300;
-    vacuum.CommandText = "VACUUM wh_perspective_events, wh_active_streams, wh_perspective_cursors, wh_perspective_applied";
-    _ = await vacuum.ExecuteNonQueryAsync(cancellationToken);
-  }
-
-  private static async Task _registerAsync(NpgsqlConnection conn, CancellationToken cancellationToken) {
+  private static async Task _prepareAsync(NpgsqlConnection conn, CancellationToken cancellationToken) {
+    await HeldHorizon.DisableAutovacuumAsync(conn, _measuredTables, cancellationToken);
     await using var register = conn.CreateCommand();
     register.CommandText = """
       INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
