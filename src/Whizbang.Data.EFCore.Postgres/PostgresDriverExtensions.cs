@@ -412,6 +412,11 @@ public static class PostgresDriverExtensions {
         // <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MisattributedOriginCorrectionStep>(
           MisattributedOriginCorrectionStep.FromServices));
+        // TURNKEY: the one-off maintenance step that returns events this service wrote, stored under another origin
+        // before migration 594, to the local lane (#2573), under the maintainer duty, idle-gated.
+        // <docs>resilience/stream-integrity#events-written-here-returned</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, WrittenHereOriginRestorationStep>(
+          WrittenHereOriginRestorationStep.FromServices));
         // TURNKEY: the maintenance step that names every seal this service holds for an origin it does not audit (#2544):
         // such a seal cannot advance, so the cut gate no longer waits on it, and the missing checkpoint route is reported.
         // <docs>resilience/stream-integrity#a-seal-nothing-audits</docs>

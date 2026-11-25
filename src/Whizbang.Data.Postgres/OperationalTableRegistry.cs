@@ -211,6 +211,7 @@ public static class OperationalTableRegistry {
     _state("wh_unsequenced_digest_changes",
       "work in flight: each change is deleted by the fold that takes it in, and the maintenance fold runs whoever asks (#2351)"),
     _state("wh_unsequenced_digest_totals", "origins, tenants and types: one row each (#2351)"),
+    _state("wh_written_here_restoration", "one cursor: the one-off return of events written here to the local lane (#2573)"),
   ];
 
   /// <summary>The entry for a table, or null when the table is not classified.</summary>

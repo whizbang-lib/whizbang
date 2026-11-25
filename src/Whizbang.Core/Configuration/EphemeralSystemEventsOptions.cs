@@ -16,13 +16,13 @@ namespace Whizbang.Core.Configuration;
 public sealed class EphemeralSystemEventsOptions {
   /// <summary>
   /// How long a rewind or rebuild event is kept after it is written, under <c>Whizbang:Ephemeral:SystemEvents:Ttl</c>
-  /// (for example <c>30.00:00:00</c>). Default 30 days. Must be greater than zero and fit in whole seconds as a 32-bit
+  /// (for example <c>14.00:00:00</c>). Default 14 days (30 days before #2585). Must be greater than zero and fit in whole seconds as a 32-bit
   /// integer. It applies to events already stored too once the history walk
   /// (<see cref="EphemeralOptions.ReconcileHistoricalOnStartup"/>) has reclassified them, because the reaper measures it
   /// from each event's stored creation time.
   /// </summary>
   /// <docs>fundamentals/events/ephemeral-events#framework-system-events</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Events/System/SystemEventRetentionTests.cs:SystemEventsTtl_DefaultsToThirtyDaysAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Events/System/SystemEventRetentionTests.cs:SystemEventsTtl_DefaultsToFourteenDaysAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Events/System/SystemEventRetentionTests.cs:SystemEventsTtl_BindsFromConfigurationAsync</tests>
   public TimeSpan Ttl { get; set; } = TimeSpan.FromSeconds(Whizbang.Core.Events.System.SystemEventRetention.DEFAULT_TTL_SECONDS);
 }

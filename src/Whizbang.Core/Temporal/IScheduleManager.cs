@@ -26,6 +26,16 @@ public interface IScheduleManager {
   Task<bool> CancelAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Cancel the schedule created under <paramref name="key"/> (<see cref="ScheduleDefinition.Key"/>), so it fires no
+  /// more (#2586). Returns whether a schedule was canceled: <c>false</c> when no schedule has the key or it is already
+  /// terminal, which is not an error, so a caller that only wants the key to end up inactive can call it on every start.
+  /// </summary>
+  /// <param name="key">The schedule's idempotent create-or-update key.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Whether an Active or Paused schedule was canceled.</returns>
+  Task<bool> CancelByKeyAsync(string key, CancellationToken cancellationToken = default);
+
+  /// <summary>
   /// Fire an <b>extra</b> occurrence for a non-terminal schedule right now, <b>without disturbing its
   /// cadence</b> — <c>next_fire_at</c> / <c>last_fire_at</c> / <c>occurrence_count</c> are untouched, so
   /// the regular schedule continues exactly as it would have and the manual fire does not consume a

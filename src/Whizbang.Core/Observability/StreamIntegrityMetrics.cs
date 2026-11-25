@@ -271,6 +271,17 @@ public sealed class StreamIntegrityMetrics {
   /// <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>
   public PassiveCounter<long> MisattributedOriginsCorrected { get; }
 
+  /// <summary>#2573: events this service wrote, stored under another origin before migration 594, returned to the local
+  /// lane by the one-off restoration. Tag <c>shape</c> is <c>reaction</c> (stored with no origin position) or
+  /// <c>return</c> (stored with the position of another service's redelivery bundle).</summary>
+  /// <docs>resilience/stream-integrity#events-written-here-returned</docs>
+  public PassiveCounter<long> WrittenHereOriginsRestored { get; }
+
+  /// <summary>#2573: unpositioned events the restoration left under their origin because nothing proves this service wrote
+  /// them (their origin disowned them, or nothing records their first hop's service).</summary>
+  /// <docs>resilience/stream-integrity#events-written-here-returned</docs>
+  public PassiveCounter<long> WrittenHereRestorationAmbiguous { get; }
+
   /// <summary>#2544: events named in position requests sent to their origins, tagged by <c>origin</c>.</summary>
   /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
   public PassiveCounter<long> OriginPositionsRequested { get; }
@@ -541,6 +552,12 @@ public sealed class StreamIntegrityMetrics {
     MisattributedOriginsCorrected = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.misattributed_origins_corrected",
       description: "Stored events recorded under an origin that does not own their type, re-attributed to the owner");
+    WrittenHereOriginsRestored = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.written_here_origins_restored",
+      description: "Events written here and stored under another origin, returned to the local lane; tagged by shape (reaction | return)");
+    WrittenHereRestorationAmbiguous = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.written_here_restoration_ambiguous",
+      description: "Unpositioned events left under their origin because nothing proves they were written here");
     OriginPositionsRequested = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.origin_positions_requested",
       description: "Received events named in position requests sent to their origins; tagged by origin");
