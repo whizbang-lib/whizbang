@@ -92,7 +92,7 @@ public class DapperSchemaStartupTests {
 
   /// <summary>
   /// #2561: the Dapper driver holds the migrator election the EF Core driver holds. Alone on an empty database, its start
-  /// ends Preflight by registering this instance, votes, wins, and reports Elect as won before it migrates; what waits for
+  /// ends Preflight by registering this instance, votes, wins, and reports Elect as won before it enters Migrate and migrates; what waits for
   /// the end of Preflight (the notification connection and its alive-lock) starts there.
   /// </summary>
   [Test]
@@ -104,10 +104,15 @@ public class DapperSchemaStartupTests {
 
     await _initializer(provider).StartAsync(CancellationToken.None);
 
-    await Assert.That(stages.Calls).IsEquivalentTo([
+    // #2579: the pass's step count is the migrations this build carries, so it is read as N.
+    var calls = stages.Calls.Select(c => c.StartsWith("Enter Migrate: ", StringComparison.Ordinal)
+      && c.EndsWith(" migration steps to apply", StringComparison.Ordinal) ? "Enter Migrate: N migration steps to apply" : c);
+    await Assert.That(calls).IsEquivalentTo([
       "Enter Preflight: the bootstrap closure is in place; registering this instance",
       "Enter Elect: voting for the migrator duty",
       "Enter Elect: this instance migrates the schema",
+      // #2579: Migrate as the pass begins, with how many steps it owes, as on the EF Core driver.
+      "Enter Migrate: N migration steps to apply",
       // #2563: Converge just before the managed-object reconcile, as on the EF Core driver.
       "Enter Converge: analyzing new indexes and reconciling managed objects",
       "Enter Coordinate: recomputing partitions before the schema-ready gate opens",

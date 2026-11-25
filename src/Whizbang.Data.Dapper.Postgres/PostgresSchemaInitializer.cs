@@ -212,6 +212,14 @@ public sealed class PostgresSchemaInitializer {
   internal Func<CancellationToken, Task>? Converging { get; set; }
 
   /// <summary>
+  /// Awaited as this instance's pass begins, with how many steps it owes: the runner that drives this initializer enters
+  /// the Migrate stage here, as the EF Core driver does as its pass begins (#2579). Null reports nothing, as a direct
+  /// call with no host does.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs:AFreshStart_EntersMigrate_AndLogsEveryStep_OnEitherDriverAsync</tests>
+  internal Func<int, CancellationToken, Task>? Applying { get; set; }
+
+  /// <summary>
   /// Initializes the Whizbang schema by generating SQL from C# schema definitions.
   /// Optionally executes perspective schema SQL if provided.
   /// Uses hash-based change detection to skip unchanged migrations.
@@ -508,14 +516,24 @@ public sealed class PostgresSchemaInitializer {
       await retired.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    // #2579: the pass's steps (each migration file, then each perspective table) are counted and said through the one
+    // reporter both drivers use, and the Migrate stage is entered with how many the pass owes.
+    var pass = new MigrationPassProgress(Logger, TimeProvider.System);
+    pass.Begin(_migrationProvider.GetMigrations().Count(m => !m.Name.StartsWith("000", StringComparison.Ordinal))
+      + (ApplicationHeld ? 0 : _perspectiveEntries?.Length ?? 0));
+    if (Applying is { } applying) {
+      await applying(pass.Total, cancellationToken);
+    }
+
     // Execute migration SQL files with hash-based change detection
-    await _executeMigrationsWithHashDetectionAsync(connection, schema, cancellationToken);
+    await _executeMigrationsWithHashDetectionAsync(connection, schema, pass, cancellationToken);
 
     // #2553: W! first. A held application schema is left as it is: none of what follows runs, and this instance joins
     // the registry, as on every start.
     if (!ApplicationHeld) {
-      await _migrateApplicationAsync(connection, schema, cancellationToken);
+      await _migrateApplicationAsync(connection, schema, pass, cancellationToken);
     }
+    pass.Complete();
 
     // This instance joins the registry while the lock is still held: an instance that starts after it, and
     // reconciles, sees it running. The registration function exists now that the migrations have run.
@@ -527,7 +545,8 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>The application's share of the pass: its objects, its perspective tables, their registry and stored keys.</summary>
-  private async Task _migrateApplicationAsync(NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
+  private async Task _migrateApplicationAsync(
+      NpgsqlConnection connection, string schema, MigrationPassProgress pass, CancellationToken cancellationToken) {
     // An application's own objects, before anything of its perspectives exists. This is the slot an
     // immutable function behind an expression index needs: the function has to be there before the
     // index that calls it is created, and the index is created by the perspective pass below.
@@ -539,7 +558,7 @@ public sealed class PostgresSchemaInitializer {
 
     // Execute perspective schema — per-perspective hash tracking if entries provided, else legacy single-string
     if (_perspectiveEntries is { Length: > 0 }) {
-      await _executePerspectiveMigrationsAsync(connection, renames, cancellationToken);
+      await _executePerspectiveMigrationsAsync(connection, renames, pass, cancellationToken);
     } else if (!string.IsNullOrWhiteSpace(_perspectiveSchemaSql)) {
       await using var perspectiveCommand = connection.CreateCommand();
       perspectiveCommand.CommandText = _perspectiveSchemaSql;
@@ -920,7 +939,8 @@ public sealed class PostgresSchemaInitializer {
   }
 
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Deciding what to run compares each migration's recorded hash against the file, then pulls in the redefinition closure of whatever drifted. Both passes walk the same ordered list, and the second depends on what the first found.")]
-  private async Task _executeMigrationsWithHashDetectionAsync(NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
+  private async Task _executeMigrationsWithHashDetectionAsync(
+      NpgsqlConnection connection, string schema, MigrationPassProgress pass, CancellationToken cancellationToken) {
     var migrations = _migrationProvider.GetMigrations();
     if (migrations.Count == 0) {
       return;
@@ -971,6 +991,7 @@ public sealed class PostgresSchemaInitializer {
 
       if (existingHash == hash && !inClosure) {
         // Hash matches — skip execution, record as Skipped
+        pass.Skip(migration.Name);
         await _updateMigrationStatusAsync(connection, migration.Name, versionId, 3, "Skipped (hash unchanged)", cancellationToken);
         continue;
       }
@@ -978,6 +999,9 @@ public sealed class PostgresSchemaInitializer {
       // A deadlock is the server choosing this file's transaction as its victim (#1636): the file runs again, in
       // place, after a short back-off, as on the EF Core driver. Any other failure, or a deadlock that keeps
       // happening, is recorded after the rollback and halts the migration.
+      pass.Next();
+      pass.Started(migration.Name);
+      var started = pass.Timestamp();
       var deadlocks = 0;
       Exception? failure;
       while ((failure = await _applyMigrationFileAsync(
@@ -988,10 +1012,12 @@ public sealed class PostgresSchemaInitializer {
       }
 
       if (failure is not null) {
+        pass.Failed(migration.Name, failure, retryDelay: null);
         // Recorded on the connection with no ambient transaction, so it survives the rollback.
         await _recordFailureAsync(connection, migration.Name, hash, versionId, failure, cancellationToken);
         ExceptionDispatchInfo.Capture(failure).Throw();   // halt migration
       }
+      pass.Succeeded(migration.Name, started);
       await _stepCommittedAsync(schema, migration.Name, cancellationToken);
     }
   }
@@ -1145,11 +1171,12 @@ public sealed class PostgresSchemaInitializer {
   /// Hash matches → skip (status 3). Hash differs or missing → execute DDL → record hash (status 1 or 2).
   /// </summary>
   private async Task _executePerspectiveMigrationsAsync(
-      NpgsqlConnection connection, IReadOnlyDictionary<string, string> renames, CancellationToken cancellationToken) {
+      NpgsqlConnection connection, IReadOnlyDictionary<string, string> renames, MigrationPassProgress pass,
+      CancellationToken cancellationToken) {
     var versionId = await _upsertVersionAsync(connection, cancellationToken);
 
     foreach (var entry in _perspectiveEntries!) {
-      await _executeSinglePerspectiveMigrationAsync(connection, entry, versionId, renames, cancellationToken);
+      await _executeSinglePerspectiveMigrationAsync(connection, entry, versionId, renames, pass, cancellationToken);
     }
   }
 
@@ -1172,15 +1199,19 @@ public sealed class PostgresSchemaInitializer {
 
   private static async Task _executeSinglePerspectiveMigrationAsync(
       NpgsqlConnection connection, KeyValuePair<string, string> entry,
-      int versionId, IReadOnlyDictionary<string, string> renames, CancellationToken cancellationToken) {
+      int versionId, IReadOnlyDictionary<string, string> renames, MigrationPassProgress pass, CancellationToken cancellationToken) {
     var perspectiveName = $"perspective:{entry.Key}";
     var hash = _sha256(entry.Value);
     var existingHash = await _getExistingHashAsync(connection, perspectiveName, cancellationToken);
 
     if (existingHash == hash) {
+      pass.Skip(perspectiveName);
       await _updateMigrationStatusAsync(connection, perspectiveName, versionId, 3, "Skipped (hash unchanged)", cancellationToken);
       return;
     }
+    pass.Next();
+    pass.Started(perspectiveName);
+    var started = pass.Timestamp();
 
     var isUpdate = existingHash != null;
     var tableName = _extractTableName(entry.Value);
@@ -1235,6 +1266,7 @@ public sealed class PostgresSchemaInitializer {
       // reverse a table it created; every perspective change it applies is recorded as irreversible.
       await MigrationReversal.RecordAsync(connection, LEDGER, perspectiveName, MigrationReversal.Irreversible, cancellationToken);
       await transaction.CommitAsync(cancellationToken);
+      pass.Succeeded(perspectiveName, started);
     } catch (Exception ex) {
       // Captured rather than rethrown here. A rethrow from an async catch that also awaits
       // makes the compiler hoist this handler out of the IL catch region and rewrite
@@ -1242,6 +1274,7 @@ public sealed class PostgresSchemaInitializer {
       // state-machine cleanup nothing reaches. Throwing after the block keeps the same
       // order — roll back, record the failure, propagate — with no unreachable line.
       failure = ex;
+      pass.Failed(perspectiveName, ex, retryDelay: null);
       await transaction.RollbackAsync(cancellationToken);
       await _recordFailureAsync(connection, perspectiveName, hash, versionId, ex, cancellationToken);
     }
