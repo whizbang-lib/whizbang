@@ -690,12 +690,15 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // #2561: the perspective registry, at every start, the fast path included. No hash covers it, so a start that skips
     // the pass's registries step (a hash-clean restart, a Current schema, a waiter behind a migrator of another build, a
     // restored database) checks what is stored against what this build declares, and reconciles only when they differ,
-    // under the schema lock. Never fatal. Needs a connection of its own; without one, only the pass reconciles it.
-    if (segmentConnectionFactory is not null) {
-      _ = await Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ReconcileIfStaleAsync(
+    // under the schema lock. Never fatal. #2578: whatever the connection registration: on a connection of its own when
+    // one can be opened, otherwise on the context's, which a host that registers no separate connection configured.
+    _ = segmentConnectionFactory is not null
+      ? await Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ReconcileIfStaleAsync(
         segmentConnectionFactory, "__SCHEMA__", _perspectiveRegistryPayloads(), _schemaCommandTimeoutSeconds, serviceProvider,
-        logger, cancellationToken);
-    }
+        logger, cancellationToken)
+      : await Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ReconcileIfStaleAsync(
+        (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection(), "__SCHEMA__", _perspectiveRegistryPayloads(),
+        _schemaCommandTimeoutSeconds, serviceProvider, logger, cancellationToken);
 
     // Each perspective table's fillfactor and autovacuum settings follow its model at every start, the fast path
     // included, except on the tables listed in perspective_storage_manual_tables (#1747). One catalog read; a table
