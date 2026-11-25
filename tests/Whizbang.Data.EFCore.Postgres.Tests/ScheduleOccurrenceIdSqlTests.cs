@@ -79,9 +79,9 @@ public class ScheduleOccurrenceIdSqlTests : EFCoreTestBase {
     await Assert.That(_unixMsOf(id)).IsEqualTo(_fireAt.ToUnixTimeMilliseconds())
       .Because("a cadence id's timestamp is the occurrence's scheduled fire time, not the moment a claimer got to it, " +
                "so every claimer of the occurrence computes the same id");
-    await Assert.That(await _outboxMessageIdsAsync(conn, stream)).IsEquivalentTo(new[] { id })
+    await Assert.That(await _outboxMessageIdsAsync(conn, stream)).IsEquivalentTo([id])
       .Because("the occurrence id is the outbox message id");
-    await Assert.That(await _runOccurrenceIdsAsync(conn, _scheduleA, status: 0)).IsEquivalentTo(new[] { id });
+    await Assert.That(await _runOccurrenceIdsAsync(conn, _scheduleA, status: 0)).IsEquivalentTo([id]);
   }
 
   [Test]
@@ -140,7 +140,7 @@ public class ScheduleOccurrenceIdSqlTests : EFCoreTestBase {
 
     var claimed = await _claimAsync(conn, instance, _fireAt.AddSeconds(5));
 
-    await Assert.That(claimed).IsEquivalentTo(new[] { await _occurrenceIdAsync(conn, _scheduleA, 3, _fireAt) })
+    await Assert.That(claimed).IsEquivalentTo([await _occurrenceIdAsync(conn, _scheduleA, 3, _fireAt)])
       .Because("every fire path takes its cadence id from wh_schedule_occurrence_id, so they cannot drift apart");
   }
 
@@ -182,7 +182,7 @@ public class ScheduleOccurrenceIdSqlTests : EFCoreTestBase {
     await Assert.That(_unixMsOf(first[0])).IsEqualTo(_fireAt.ToUnixTimeMilliseconds());
     await Assert.That(_unixMsOf(second[0])).IsEqualTo(_fireAt.AddMilliseconds(INTERVAL_MS).ToUnixTimeMilliseconds())
       .Because("CatchUp replays each missed occurrence, and each one's id carries its own scheduled time");
-    await Assert.That(await _outboxMessageIdsAsync(conn, stream)).IsEquivalentTo(new[] { first[0], second[0] });
+    await Assert.That(await _outboxMessageIdsAsync(conn, stream)).IsEquivalentTo([first[0], second[0]]);
   }
 
   [Test]
@@ -237,7 +237,7 @@ public class ScheduleOccurrenceIdSqlTests : EFCoreTestBase {
       .Because("a manual trigger's id is stamped with the moment it fired on the database clock");
     await Assert.That(first).IsNotEqualTo(await _occurrenceIdAsync(conn, _scheduleA, 0, _fireAt.AddYears(10)))
       .Because("a manual trigger never takes the id of the cadence occurrence still to come");
-    await Assert.That(await _outboxMessageIdsAsync(conn, stream)).IsEquivalentTo(new[] { first, second });
+    await Assert.That(await _outboxMessageIdsAsync(conn, stream)).IsEquivalentTo([first, second]);
   }
 
   // ── stored ids ───────────────────────────────────────────────────────────────────────────────
@@ -264,7 +264,7 @@ public class ScheduleOccurrenceIdSqlTests : EFCoreTestBase {
 
     var claimed = await _claimAsync(conn, instance, _fireAt.AddSeconds(5));
 
-    await Assert.That(await _runOccurrenceIdsAsync(conn, _scheduleA, status: 0)).IsEquivalentTo(new[] { legacy, claimed[0] })
+    await Assert.That(await _runOccurrenceIdsAsync(conn, _scheduleA, status: 0)).IsEquivalentTo([legacy, claimed[0]])
       .Because("ids already stored are history and are never rewritten; only new occurrences take the v7 id");
     await Assert.That(claimed[0]).IsNotEqualTo(legacy);
   }
