@@ -48,7 +48,7 @@ public class RoleCatalogTests {
   [Test]
   public async Task AHostsRole_IsDeclared_AndAnExactNameWinsOverAPrefixAsync() {
     var catalog = new RoleCatalog([
-      new RoleDeclaration("report:", RoleKind.Episodic, IsPrefix: true),
+      new RoleDeclaration("report:", RoleKind.Episodic, isPrefix: true),
       new RoleDeclaration("report:nightly", RoleKind.Standing),
     ]);
 
@@ -79,6 +79,7 @@ public class RoleCatalogTests {
     var services = new ServiceCollection();
     services.AddWhizbangRole("nightly-report", RoleKind.Standing);
     services.AddWhizbangRolePrefix("report:", RoleKind.Episodic);
+    services.AddWhizbangRole("nightly-export", RoleKind.Episodic);
     await using var provider = services.BuildServiceProvider();
 
     var catalog = provider.GetRequiredService<RoleCatalog>();
@@ -89,6 +90,9 @@ public class RoleCatalogTests {
     await Assert.That(options.Manages("nightly-report")).IsTrue()
       .Because("one registration declares the role and puts it in the roster the holder loop and health read");
     await Assert.That(options.Manages("report:")).IsFalse().Because("a family is held per member, never as itself");
+    await Assert.That(catalog.Declares("nightly-export")).IsTrue();
+    await Assert.That(options.Manages("nightly-export")).IsFalse()
+      .Because("an episodic role is held only by the work that asks for it, so its vacancy is never a fault");
   }
 
   [Test]

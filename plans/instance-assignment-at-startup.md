@@ -246,3 +246,12 @@ keeps the role and is reported Degraded (a healthy sole holder is Healthy); no R
   carries it, the `roles` health component reports it Degraded, and `whizbang.roles.stalled_without_successor` counts
   each read that sees it. Locked by `RoleLapseNeedsASuccessorSqlTests`, `RoleAssignmentHealthSourceTests` and
   `RoleAssignmentElectorE2ETests`.
+- **Phase 2, #2594 (done):** `RoleCatalog` (`RoleKind` Standing or Episodic, `RoleDeclaration` by name or prefix)
+  declares the framework's roles in one list; `AddWhizbangRole` / `AddWhizbangRolePrefix` declare a host's, and a
+  standing one joins `RoleAssignmentOptions.Roles`. `PgRoleElector` votes only for declared roles (a role in
+  `RoleAssignmentOptions.Roles` counts as declared) and refuses the rest before any statement. Locked by
+  `RoleCatalogTests`, `RoleDeclarationGuardTests` (every acquire call names a declared constant or is a listed
+  forwarder; each framework standing role has exactly one holding loop) and `RoleAssignmentElectorE2ETests`. Not done
+  from 3.4: `RoleAssignmentOptions.IsEpisodic` still names the migrator alone (it sets the migrator's lease and keeps
+  it out of the holder loop), and the stamper's and assigner's roster entries stay their own post-configures, since
+  the stamper's is conditional on its options.

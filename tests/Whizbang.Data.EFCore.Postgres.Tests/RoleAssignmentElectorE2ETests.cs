@@ -55,14 +55,15 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
 
   private WhizbangNotificationOptions _notificationOptions() => new() { DirectConnectionString = ConnectionString };
 
-  private PgRoleElector _electorFor(Pod pod, TimeProvider? time = null) => new(
+  private PgRoleElector _electorFor(Pod pod, TimeProvider? time = null, RoleCatalog? catalog = null) => new(
     Options.Create(_notificationOptions()),
     Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero }),
     new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
     pod,
     NullLogger<PgRoleElector>.Instance,
     libraryVersion: null,
-    timeProvider: time);
+    timeProvider: time,
+    roleCatalog: catalog);
 
   private async Task<Pod> _joinAsync(CancellationToken ct) {
     var pod = new Pod();
@@ -381,14 +382,16 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var a = await _joinAsync(cancellationToken);
     var b = await _joinAsync(cancellationToken);
 
-    var attempt = await _electorFor(a).TryAcquireAsync("host-duty", cancellationToken);
+    var catalog = new RoleCatalog([new RoleDeclaration("host-duty", RoleKind.Episodic)]);
+    var attempt = await _electorFor(a, catalog: catalog).TryAcquireAsync("host-duty", cancellationToken);
 
     await Assert.That(attempt.Grant).IsNotNull();
     await Assert.That(attempt.Grant!.Epoch).IsEqualTo(1L)
       .Because("every duty carries a fencing token, so a deposed holder's writes are refused");
-    await Assert.That((await _electorFor(b).TryAcquireAsync("host-duty", cancellationToken)).Refusal).IsEqualTo(DutyRefusal.Contended);
+    await Assert.That((await _electorFor(b, catalog: catalog).TryAcquireAsync("host-duty", cancellationToken)).Refusal)
+      .IsEqualTo(DutyRefusal.Contended);
     await attempt.Grant.DisposeAsync();
-    await using var next = (await _electorFor(b).TryAcquireAsync("host-duty", cancellationToken)).Grant;
+    await using var next = (await _electorFor(b, catalog: catalog).TryAcquireAsync("host-duty", cancellationToken)).Grant;
     await Assert.That(next?.Epoch).IsEqualTo(2L).Because("a release hands the duty off at once");
   }
 

@@ -84,6 +84,7 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
   private readonly TimeProvider _time;
   private readonly RoleAssignmentMetrics? _metrics;
   private readonly int[] _versionKey;
+  private readonly RoleCatalog _catalog;
   private readonly ConcurrentDictionary<string, Tenure> _tenures = new(StringComparer.Ordinal);
   private readonly SemaphoreSlim _acquireGate = new(1, 1);
 
@@ -100,6 +101,9 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
   /// <param name="notificationDataSource">Optional dedicated data source.</param>
   /// <param name="timeProvider">Optional clock for the renew throttle; the system clock when null.</param>
   /// <param name="metrics">Optional meters.</param>
+  /// <param name="runPermit">The instance's run permit; a new open one when null.</param>
+  /// <param name="roleCatalog">The roles this elector may vote for (#2594); the framework's roles when null. A role in
+  /// <see cref="RoleAssignmentOptions.Roles"/> counts as declared either way.</param>
   /// <exception cref="ArgumentNullException">A required argument is null.</exception>
   /// <exception cref="ArgumentOutOfRangeException">The role options describe an unworkable lease.</exception>
 #pragma warning disable S107 // DI-injection constructor: every parameter is a registered service or an optional seam, and a parameter object would only move the list
@@ -134,7 +138,30 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     _metrics = metrics;
     _versionKey = LibraryVersionKey.From(libraryVersion?.LibraryVersion);
     RunPermit = runPermit ?? new Whizbang.Core.RunControl.WhizbangRunPermit();
+    _catalog = _withRoster(roleCatalog ?? new RoleCatalog([]), _roleOptions);
   }
+
+  /// <summary>
+  /// The catalog this elector votes from: <paramref name="catalog"/>, plus any role put in
+  /// <see cref="RoleAssignmentOptions.Roles"/> directly rather than through <c>AddWhizbangRole</c>, which is a standing
+  /// role the holder loop holds and so is declared by that roster.
+  /// </summary>
+  private static RoleCatalog _withRoster(RoleCatalog catalog, RoleAssignmentOptions options) {
+    var undeclared = options.Roles.Where(role => !catalog.Declares(role)).ToList();
+    return undeclared.Count == 0
+      ? catalog
+      : new RoleCatalog([.. catalog.Declarations.Except(RoleCatalog.FrameworkRoles),
+        .. undeclared.Select(role => new RoleDeclaration(role, RoleKind.Standing))]);
+  }
+
+  /// <summary>
+  /// The refusal for a role no registration declared (#2594): decided before any statement, so an undeclared name never
+  /// reaches the vote and writes no candidacy. Null for a declared role.
+  /// </summary>
+  private DutyAttempt? _undeclaredRefusal(string duty) => _catalog.Declares(duty)
+    ? null
+    : DutyAttempt.Lost(DutyRefusal.Refused,
+      $"duty '{duty}' is not a declared role: declare it with services.AddWhizbangRole(\"{duty}\", RoleKind.Standing or Episodic)");
 
   /// <summary>
   /// The instance's run permit (#2045). While it is closed every vote is refused as <see cref="DutyRefusal.Halted"/>: a
@@ -160,7 +187,9 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
   /// <inheritdoc />
   public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
     ArgumentException.ThrowIfNullOrEmpty(duty);
-    return _haltedRefusal(duty) is { } refused ? Task.FromResult(refused) : _voteAsync(duty, cancellationToken);
+    return (_undeclaredRefusal(duty) ?? _haltedRefusal(duty)) is { } refused
+      ? Task.FromResult(refused)
+      : _voteAsync(duty, cancellationToken);
   }
 
   /// <summary>
@@ -175,7 +204,8 @@ public sealed partial class PgRoleElector : IDutyElector, Whizbang.Core.RunContr
     if (!RunPermit.IsRunning) {
       return [.. duties.Select(duty => _haltedRefusal(duty)!)];
     }
-    var voted = await _voteManyAsync([.. duties.Distinct(StringComparer.Ordinal)], cancellationToken).ConfigureAwait(false);
+    var voted = await _voteManyAsync([.. duties.Distinct(StringComparer.Ordinal).Where(_catalog.Declares)], cancellationToken)
+      .ConfigureAwait(false);
     var attempts = new List<DutyAttempt>(duties.Count);
     foreach (var duty in duties) {
       attempts.Add(voted.Remove(duty, out var attempt)
