@@ -7,6 +7,32 @@
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
 -- store_inbox_messages: its last word before 576 (567).
+-- <docs>fundamentals/events/superseding-events#redelivered-copies</docs>
+-- <docs>resilience/stream-integrity#remembered-but-missing</docs>
+-- <docs>messaging/transports/transport-consumer#batch-handler</docs>
+-- <docs>resilience/stream-integrity#cuts-carry-their-digest</docs>
+-- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredSupersedingCopySqlTests.cs:ARedeliveredOlderCopy_IsNeverStored_IsRecordedSatisfied_AndNoPerspectiveSeesItAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredSupersedingCopySqlTests.cs:ARedeliveredCopyNewerThanTheHeldOne_IsRestoredAsBeforeAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredSupersedingCopySqlTests.cs:AnOlderCopyArrivingForTheFirstTime_AfterTheNewest_IsNeverStored_AndIsRecordedSatisfiedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TwoServiceIntegrityConvergenceTests.cs:AnOlderRedeliveredCopy_IsNeverStoredOrApplied_AndThePairConvergesWithNoFurtherResendAsync</tests>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStoreInboxMessagesTests.cs:SingleMessage_StoresInboxAndDedupAsync</tests>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStoreInboxMessagesTests.cs:DuplicateMessageId_SecondCallNoOpsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredDeadLetterReentrySqlTests.cs:ARecoveredMessage_IsStoredInTheSameWorkShapeAsADeliveryOfTheSameEnvelopeAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxDiscardedOnReceiveSqlTests.cs:AMessageDiscardedOnReceive_IsStoredSettled_WithItsReason_AndNeverClaimedOrCopiedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredMissingEventRestoreSqlTests.cs:ARepairedEvent_DeduplicationRemembers_TheStoreLost_IsRestored_AndTheBucketHealsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredMissingEventRestoreSqlTests.cs:ARestoredEvent_IsStoredStateOnly_SoTriggerReceptorsThatRanOnItsFirstArrivalDoNotRunAgainAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredMissingEventRestoreSqlTests.cs:ADuplicateOfAStoredEvent_IsStillDropped_EvenAsRepairTrafficAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredMissingEventRestoreSqlTests.cs:OrdinaryTraffic_DeduplicationRemembers_TheStoreLost_IsDroppedAsBeforeAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredMissingEventRestoreSqlTests.cs:ARepairedEvent_StillPendingInTheInbox_IsNotStoredTwiceAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredMissingEventRestoreSqlTests.cs:ARepairedEphemeralEvent_IsNotRestoredAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredMissingEventRestoreSqlTests.cs:ARepairedEvent_OnAStreamWhoseEarlierHistoryWasTruncated_IsRefused_AndReportedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxDiscardedOnReceiveKeepsNoBodySqlTests.cs:AMessageDiscardedOnReceive_IsStoredWithoutItsBody_AndIsStillADuplicateOnRedeliveryAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxDiscardedOnReceiveKeepsNoBodySqlTests.cs:AMessageDiscardedOnReceive_RedeliveredForProcessing_IsStillADuplicate_AndNotDispatchedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxDiscardedOnReceiveKeepsNoBodySqlTests.cs:AnOrdinaryArrival_KeepsItsBodyAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxDiscardedOnReceiveKeepsNoBodySqlTests.cs:ADiscardedRedelivery_OfAProcessedMessage_LeavesItsStoredBodyAloneAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsCarryTheirDigestSqlTests.cs:Purge_KeepsTheBucketCarried_AndARedeliveryOfThePurgedStreamIsRefusedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapStoreSqlTests.cs:StoreInbox_InMapMode_RecordsTheStreamWithoutAnOwnerAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.store_inbox_messages(
   p_messages JSONB,
   p_instance_id UUID,
@@ -334,6 +360,11 @@ COMMENT ON FUNCTION __SCHEMA__.store_inbox_messages(JSONB, UUID, TIMESTAMPTZ, TI
 
 -- fetch_inbox_batch: its last word before 576 (230).
 SELECT __SCHEMA__.drop_all_overloads('fetch_inbox_batch');
+-- <docs>fundamentals/work-coordinator/claim-loop</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReceivedStreamOrderSqlTests.cs:AWaitingEvent_IsNotFetched_UntilItIsStoredAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FetchInboxBatchSqlTests.cs:FetchInboxBatch_ReturnsRowsForOwnedStreams_InReceivedAtOrderAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FetchInboxBatchSqlTests.cs:FetchInboxBatch_FiltersOutOtherInstancesRowsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FetchInboxBatchSqlTests.cs:FetchInboxBatch_FiltersRowsWithProcessedAtSet_DebugModeRetainedAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_inbox_batch(
   p_stream_ids UUID[],
   p_instance_id UUID,
@@ -440,6 +471,18 @@ $$ LANGUAGE plpgsql;
 
 -- get_stream_events: its last word before 576 (575).
 SELECT __SCHEMA__.drop_all_overloads('get_stream_events');
+-- <docs>fundamentals/perspectives/perspectives-with-actions#no-row-contract</docs>
+-- <docs>fundamentals/work-coordinator/commit-sequence</docs>
+-- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
+-- <docs>fundamentals/event-store/version-ordering#reads</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FirstEventInStreamReadTests.cs:GetStreamEvents_ReturnsWhetherEachEventIsTheFirstInItsStreamAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/GetStreamEventsCommitSequencePropagationSqlTests.cs:GetStreamEvents_StampedReturnedUnstampedExcludedOnSameStreamAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveFailureCounterSqlTests.cs:GetStreamEvents_SurfacesFailures_ForTheDeadLetterDecisionAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/GetStreamEventsCrossPodOwnershipTests.cs:LiveOwnersExpiredLeaseRow_NotStolenByAnotherInstance</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveWorkQueueBacklogCostSqlTests.cs:GetStreamEvents_ReadsWhatItsBatchHolds_NotTheBacklogAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapClaimSqlTests.cs:Fetch_TheNewOwnerFetchesTheStream_AndTheStoredOwnerNothingAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ClaimPathsDecideThroughTheOwnershipTableGuardTests.cs:EveryClaimFunction_DecidesThroughWhIOwn_AndRanksOnlyInTheLegacyBranchAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/StreamOrderNeverByIdGuardTests.cs:NoStoreReceiveOrReplayFunction_OrdersAStreamById_InItsLatestDefinitionAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.get_stream_events(
   p_instance_id UUID,
   p_stream_ids UUID[],
@@ -594,5 +637,8 @@ COMMENT ON FUNCTION __SCHEMA__.get_stream_events(UUID, UUID[], TIMESTAMPTZ, INTE
 DROP FUNCTION IF EXISTS __SCHEMA__.fetch_inbox_batch_in_stream_order(UUID[], UUID, INTEGER, BIGINT);
 DROP FUNCTION IF EXISTS __SCHEMA__.get_stream_events_in_stream_order(UUID, UUID[], TIMESTAMPTZ, INTEGER);
 -- Dropping the column drops its default; IF EXISTS keeps the file safe to run where 576 never ran.
+-- RECLAIM: not required in production: wh_inbox is a work queue whose rows are deleted once processed, so the eight
+--          dropped bytes leave with each row. A debug-mode database that keeps processed rows can run pg_repack on
+--          wh_inbox after this migration to return them.
 ALTER TABLE __SCHEMA__.wh_inbox DROP COLUMN IF EXISTS arrival_position;
 DROP SEQUENCE IF EXISTS __SCHEMA__.wh_inbox_arrival_seq;

@@ -7,6 +7,16 @@
 
 -- get_stream_events: its last word before 575 (566_ClaimsDecideThroughTheOwnershipTable.sql).
 SELECT __SCHEMA__.drop_all_overloads('get_stream_events');
+-- <docs>fundamentals/perspectives/perspectives-with-actions#no-row-contract</docs>
+-- <docs>fundamentals/work-coordinator/commit-sequence</docs>
+-- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FirstEventInStreamReadTests.cs:GetStreamEvents_ReturnsWhetherEachEventIsTheFirstInItsStreamAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/GetStreamEventsCommitSequencePropagationSqlTests.cs:GetStreamEvents_StampedReturnedUnstampedExcludedOnSameStreamAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveFailureCounterSqlTests.cs:GetStreamEvents_SurfacesFailures_ForTheDeadLetterDecisionAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/GetStreamEventsCrossPodOwnershipTests.cs:LiveOwnersExpiredLeaseRow_NotStolenByAnotherInstance</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveWorkQueueBacklogCostSqlTests.cs:GetStreamEvents_ReadsWhatItsBatchHolds_NotTheBacklogAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapClaimSqlTests.cs:Fetch_TheNewOwnerFetchesTheStream_AndTheStoredOwnerNothingAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ClaimPathsDecideThroughTheOwnershipTableGuardTests.cs:EveryClaimFunction_DecidesThroughWhIOwn_AndRanksOnlyInTheLegacyBranchAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.get_stream_events(
   p_instance_id UUID,
   p_stream_ids UUID[],
@@ -158,6 +168,10 @@ COMMENT ON FUNCTION __SCHEMA__.get_stream_events(UUID, UUID[], TIMESTAMPTZ, INTE
   'probe per work row, so a call reads what its batch holds and never the whole event store or ledger. 566 (#2554, #2555): with the service''s switch on (wh_partition_ownership_by_map), decided through wh_i_own alone.';
 
 -- wh_collective_sink_queue: its last word before 575 (175_CollectiveSinkQueue.sql).
+-- <docs>fundamentals/messaging/collective-events</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:SinkQueue_TwoCollectivesSharingAKey_AreInCommitOrder_WhenIdsRunBackwardAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:SinkQueue_LeavesOutProcessedRowsOtherPerspectivesAndOtherStreamsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:SinkQueue_UnstampedRowsComeLastInEventIdOrderAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_collective_sink_queue(
   p_stream_id UUID
 ) RETURNS TABLE(
@@ -182,6 +196,8 @@ COMMENT ON FUNCTION __SCHEMA__.wh_collective_sink_queue(UUID) IS
   'order a replay reads the stream in. A read, not a claim.';
 
 -- fetch_events_by_ids: its last word before 575 (078_DropInlineBodyColumns.sql).
+-- <docs>fundamentals/event-store/version-ordering#reads</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/StreamOrderNeverByIdGuardTests.cs:NoStoreReceiveOrReplayFunction_OrdersAStreamById_InItsLatestDefinitionAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_events_by_ids(
   p_event_ids UUID[]
 ) RETURNS TABLE(
@@ -210,6 +226,8 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- fetch_pending_perspective_events: its last word before 575 (042_FetchPendingPerspectiveEvents.sql).
+-- <docs>fundamentals/event-store/version-ordering#reads</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/StreamOrderNeverByIdGuardTests.cs:NoStoreReceiveOrReplayFunction_OrdersAStreamById_InItsLatestDefinitionAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_pending_perspective_events(
   p_stream_id UUID,
   p_perspective_name TEXT,
@@ -241,6 +259,8 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- claim_and_fetch_pending_perspective_events: its last word before 575 (042_FetchPendingPerspectiveEvents.sql).
+-- <docs>fundamentals/event-store/version-ordering#reads</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/StreamOrderNeverByIdGuardTests.cs:NoStoreReceiveOrReplayFunction_OrdersAStreamById_InItsLatestDefinitionAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.claim_and_fetch_pending_perspective_events(
   p_stream_id UUID,
   p_perspective_name TEXT,

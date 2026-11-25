@@ -796,6 +796,10 @@ COMMENT ON FUNCTION __SCHEMA__.get_stream_events_in_stream_order(UUID, UUID[], T
 SELECT __SCHEMA__.drop_all_overloads('get_stream_events');
 
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/StreamOrderNeverByIdGuardTests.cs:NoStoreReceiveOrReplayFunction_OrdersAStreamById_InItsLatestDefinitionAsync</tests>
+-- <docs>fundamentals/perspectives/perspectives-with-actions#no-row-contract</docs>
+-- <docs>fundamentals/work-coordinator/commit-sequence</docs>
+-- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
+-- <docs>fundamentals/event-store/version-ordering#reads</docs>
 CREATE OR REPLACE FUNCTION __SCHEMA__.get_stream_events(
   p_instance_id UUID,
   p_stream_ids UUID[],

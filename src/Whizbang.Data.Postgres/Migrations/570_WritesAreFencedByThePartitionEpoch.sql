@@ -298,7 +298,7 @@ AS $$
      AND __SCHEMA__.wh_partition_ownership_by_map()
      AND EXISTS (
        SELECT 1 FROM __SCHEMA__.wh_inbox_state s
-       WHERE s.message_id = (p_request -> 'inbox_completion' ->> 'MessageId')::UUID
+       WHERE s.message_id = (p_request -> 'inbox_completion' ->> __ENVELOPE_FIELD_MESSAGE_ID__)::UUID
          AND NOT __SCHEMA__.wh_epoch_is_current(s.partition_number, (p_request ->> 'partition_epoch')::BIGINT))
 $$;
 
@@ -768,7 +768,7 @@ BEGIN
   FOR r IN
     SELECT elem
     FROM jsonb_array_elements(p_results) AS elem
-    ORDER BY (elem -> 'inbox_completion' ->> 'MessageId') ASC NULLS FIRST,
+    ORDER BY (elem -> 'inbox_completion' ->> __ENVELOPE_FIELD_MESSAGE_ID__) ASC NULLS FIRST,
              (elem ->> 'handler_id') ASC NULLS FIRST
   LOOP
     v_handler_id := (r.elem ->> 'handler_id')::UUID;

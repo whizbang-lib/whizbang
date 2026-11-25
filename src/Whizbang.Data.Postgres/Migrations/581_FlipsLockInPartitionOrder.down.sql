@@ -398,6 +398,10 @@ COMMENT ON FUNCTION __SCHEMA__.flush_completions(UUID[], JSONB, UUID[], JSONB, B
 -- ---------------------------------------------------------------------------------------------
 -- commit_handler_batch: its last word before 581 (570).
 -- ---------------------------------------------------------------------------------------------
+-- <docs>fundamentals/work-coordinator/handler-commit</docs>
+-- <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipFencingSqlTests.cs:HandlerBatch_AStaleItemIsReturnedFenced_AndTheRestCommitAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CommitHandlerBatchSqlTests.cs</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.commit_handler_batch(
   p_results JSONB
 ) RETURNS TABLE(
@@ -474,7 +478,7 @@ BEGIN
   FOR r IN
     SELECT elem
     FROM jsonb_array_elements(p_results) AS elem
-    ORDER BY (elem -> 'inbox_completion' ->> 'MessageId') ASC NULLS FIRST,
+    ORDER BY (elem -> 'inbox_completion' ->> __ENVELOPE_FIELD_MESSAGE_ID__) ASC NULLS FIRST,
              (elem ->> 'handler_id') ASC NULLS FIRST
   LOOP
     v_handler_id := (r.elem ->> 'handler_id')::UUID;

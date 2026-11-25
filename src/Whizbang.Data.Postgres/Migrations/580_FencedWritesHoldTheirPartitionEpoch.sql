@@ -69,7 +69,7 @@ AS $$
      AND __SCHEMA__.wh_partition_ownership_by_map()
      AND EXISTS (
        SELECT 1 FROM __SCHEMA__.wh_inbox_state s
-       WHERE s.message_id = (p_request -> 'inbox_completion' ->> 'MessageId')::UUID
+       WHERE s.message_id = (p_request -> 'inbox_completion' ->> __ENVELOPE_FIELD_MESSAGE_ID__)::UUID
          AND NOT __SCHEMA__.wh_epoch_is_current(s.partition_number, (p_request ->> 'partition_epoch')::BIGINT))
 $$;
 

@@ -11,6 +11,27 @@ SELECT __SCHEMA__.drop_all_overloads('wh_continue_outbox_streams_in_emission_ord
 -- ---------------------------------------------------------------------------------------------
 -- store_outbox_messages: its last word before 579 (573).
 -- ---------------------------------------------------------------------------------------------
+-- <docs>fundamentals/events/system-events#audit</docs>
+-- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
+-- <docs>fundamentals/messaging/sequence-integrity#how-the-hold-works</docs>
+-- <docs>fundamentals/event-store/version-ordering#emission-order</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AuditRecordStreamPositionSqlTests.cs:Store_EventAndItsAuditTogether_RecordCarriesTheEventsVersionAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/EFCoreCollectiveOrderingHeadTests.cs:StoreOutboxMessagesAsync_TwoCoordinators_LinkTheSecondToTheFirstAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_RefusedEventInABatch_LeavesTheOtherStreamsStoredAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StringEventFlagsStoreTests.cs:StoreOutbox_FlagsWrittenAsNames_KeepsEveryBitAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredWorkReentrySqlTests.cs:ARecoveredOutboxMessage_IsStoredInTheShapeItWasStoredInAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredWorkReentrySqlTests.cs:ARecovery_OfAnOutboxMessageStillInTheOutbox_LeavesItsDeadLetterDueAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredOutboxDeadLetterPublishTests.cs:ARecoveredOutboxEvent_IsPublishedAsTheEventItWasStoredAs_AndReadsRecoveredOncePublishedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:StoreOutboxMessages_AnAwaitedWriteToASealedStream_ThrowsStreamSealedException_AndStoresNothingAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamSealingSqlTests.cs:StoreOutboxMessages_TheSameWriteNotAwaited_IsDeadLettered_AndAnAwaitedWriteToAnOpenStreamIsStoredAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:StoreOutboxMessages_AnAwaitedWrite_Refuse_ThrowsStreamArchivedException_AndStoresNothingAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ArchiveAppendPolicySqlTests.cs:StoreOutboxMessages_AnAwaitedWrite_AutoRestore_RaisesTheRestoreStateAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapStoreSqlTests.cs:StoreOutbox_InMapMode_RecordsTheStreamWithoutAnOwnerAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapStoreSqlTests.cs:StoreOutbox_SwitchOff_PinsTheFirstWriter_AsBeforeAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SequenceIntegritySqlTests.cs:Store_WritesEachModesHoldOntoAnEventsRow_AndNeverOntoACommandsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EmissionOrderVersioningSqlTests.cs:Store_ACauseAndItsDerivedEffectInOneBatch_TheCauseTakesTheLowerVersionAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EmissionOrderVersioningSqlTests.cs:CommitHandlerResult_ACauseAndItsDerivedEffect_TheCauseTakesTheLowerVersionAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_FirstWriteMixesBothKinds_KeepsTheFirstKindAndDeadLettersTheOtherAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.store_outbox_messages(
   p_messages JSONB,
   p_instance_id UUID,
@@ -1111,5 +1132,8 @@ COMMENT ON FUNCTION __SCHEMA__.process_outbox_failures(JSONB, TIMESTAMPTZ) IS
 
 DROP INDEX IF EXISTS __SCHEMA__.idx_outbox_stream_emission;
 -- Dropping the column drops its default; IF EXISTS keeps the file safe to run where 579 never ran.
+-- RECLAIM: not required in production: wh_outbox is a work queue whose rows are deleted once published, so the eight
+--          dropped bytes leave with each row. A debug-mode database that keeps processed rows can run pg_repack on
+--          wh_outbox after this migration to return them.
 ALTER TABLE __SCHEMA__.wh_outbox DROP COLUMN IF EXISTS emission_position;
 DROP SEQUENCE IF EXISTS __SCHEMA__.wh_outbox_emission_seq;
