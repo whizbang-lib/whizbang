@@ -49,8 +49,10 @@ public class InstanceAssignmentMonitorLoopTests {
     var reads = Channel.CreateUnbounded<InstanceAssignmentObservation>();
     monitor.Observed += o => reads.Writer.TryWrite(o);
 
+    await Assert.That(monitor.StartedAt).IsNull();
     await monitor.StartAsync(cancellationToken);
     var first = await reads.Reader.ReadAsync(cancellationToken);
+    await Assert.That(monitor.StartedAt).IsEqualTo(ProbeClock.Origin).Because("the grace is measured from the loop's start");
     var due = await clock.NextArmedAsync(cancellationToken);
     await Assert.That(due - first.ObservedAt).IsEqualTo(options.ObserveInterval);
     clock.SetUtcNow(due);

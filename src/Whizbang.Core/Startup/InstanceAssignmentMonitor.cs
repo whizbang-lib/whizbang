@@ -81,6 +81,12 @@ public sealed partial class InstanceAssignmentMonitor : BackgroundService {
   /// <summary>How long this instance may await its share before the health component reports it Degraded.</summary>
   public TimeSpan AwaitingShareGrace { get; }
 
+  /// <summary>RED stub.</summary>
+  public DateTimeOffset? StartedAt => null;
+
+  /// <summary>RED stub.</summary>
+  internal void MarkStarted() => _ = _time;
+
   /// <summary>The latest read; null before the first.</summary>
   public InstanceAssignmentObservation? Latest => Volatile.Read(ref _latest);
 

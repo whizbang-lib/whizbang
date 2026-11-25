@@ -113,8 +113,8 @@ public class InstanceAssignmentDriverParityTests : EFCoreTestBase {
       && d.ImplementationFactory?.Method.ReturnType == typeof(Whizbang.Core.Health.InstanceAssignmentHealthSource));
     var source = (Whizbang.Core.Health.IWhizbangHealthSource)component.ImplementationFactory!(composed);
     await Assert.That(source.Component).IsEqualTo("assignment");
-    await Assert.That((await source.ReportAsync(cancellationToken)).State).IsEqualTo(Whizbang.Core.Health.ComponentState.Degraded)
-      .Because("before the monitor's first read the component says it has not read yet");
+    await Assert.That((await source.ReportAsync(cancellationToken)).Detail).IsEqualTo("not yet observed")
+      .Because("before the monitor's first read the component says it has not read yet, and is not degraded for it");
   }
 
   [Test]
