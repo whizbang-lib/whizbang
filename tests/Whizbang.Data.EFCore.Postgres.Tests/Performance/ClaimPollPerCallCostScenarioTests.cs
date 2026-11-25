@@ -48,6 +48,8 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
   private const int BATCH = 10;
   /// <summary>The instance that polls: fixed, as every id of the workload is (#2521).</summary>
   private static readonly Guid _poller = Guid.Parse("01a20000-0000-7000-8000-000000002521");
+  /// <summary>Where the two-fill comparison starts every re-offer walk (#2580); production draws it at random.</summary>
+  private static readonly Guid _walkSeed = Guid.Parse("01a20000-0000-7000-8000-000000002580");
   /// <summary>Polls measured at each depth.</summary>
   private const int POLLS = 6;
   /// <summary>
@@ -134,12 +136,11 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
   /// blocks a call against a ceiling of 8,000, and the scenario failed about one run in two.
   /// </summary>
   /// <remarks>
-  /// The same workload is asserted as the same fill and the same rows leased, both exact. Not as the same blocks to
-  /// within 1%, as it was: the claim's re-offer walk starts each lane at a stream drawn with gen_random_uuid (fairness
-  /// between streams), and where the draw lands decides how many probes the walk makes before it wraps. Two fills of one
-  /// workload measured 1,060 to 1,081 index scans and blocks up to 0.5% apart unloaded, 1.3% and 1.2% apart on loaded
-  /// full runs, with nothing different but the draw; on one loaded run the rows the walk fetched differed too (#2563).
-  /// The blocks are shown, not gated: an exact comparison needs the walk's start to be fixable in a measurement.
+  /// The same workload is asserted as the same fill, the same rows leased and the same blocks a call, all exact. The
+  /// claim's re-offer walk starts each lane at a stream drawn at random in production (fairness between streams), and
+  /// where the draw lands decides how many probes the walk makes before it wraps: two fills of one workload measured blocks
+  /// up to 1.3% apart with nothing different but the draw (#2563). The scenario seeds the walk for its session
+  /// (<c>whizbang.claim_walk_seed</c>, #2580), so both fills walk the same streams and read the same pages.
   /// </remarks>
   [Test]
   [Timeout(1800000)]
@@ -151,6 +152,11 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
     }
     var recorder = new WorkCostRecorder(ConnectionString);
     const int depth = 50;
+    // The walk's start, fixed for this session only, so the two fills are polled the same way (#2580).
+    await using (var seed = conn.CreateCommand()) {
+      seed.CommandText = $"SET whizbang.claim_walk_seed = '{_walkSeed}'";
+      _ = await seed.ExecuteNonQueryAsync(cancellationToken);
+    }
 
     var first = await _measureAtDepthAsync(conn, recorder, depth, LAYOUTS[0], cancellationToken);
     var firstWorkload = await _workloadAsync(conn);
@@ -160,15 +166,18 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
     await Assert.That(secondWorkload).IsEqualTo(firstWorkload)
       .Because("each fill of a depth is the same streams and events, so the scenario measures the claim and not the draw");
     await Assert.That(second.RowsLeasedPerCall).IsEqualTo(first.RowsLeasedPerCall)
-      .Because($"the same workload, polled the same way, leases the same rows ({first.BlocksPerCall:F1} and "
-        + $"{second.BlocksPerCall:F1} blocks a call, which the re-offer walk's random start moves)");
+      .Because("the same workload, polled the same way, leases the same rows");
+    await Assert.That(second.BlocksPerCall).IsEqualTo(first.BlocksPerCall)
+      .Because($"the same workload, walked from the same seed, costs the same blocks a call ({first.BlocksPerCall:F1} and "
+        + $"{second.BlocksPerCall:F1})");
   }
 
-  /// <summary>The streams, events and poller of the current fill, as one fingerprint.</summary>
+  /// <summary>The work rows, streams, events and poller of the current fill, as one fingerprint.</summary>
   private static async Task<string> _workloadAsync(NpgsqlConnection conn) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = """
-      SELECT md5(string_agg(stream_id::text || ':' || event_id::text, ',' ORDER BY stream_id, event_id))
+      SELECT md5(string_agg(event_work_id::text || ':' || stream_id::text || ':' || event_id::text, ','
+                            ORDER BY stream_id, event_id))
         || ' ' || (SELECT string_agg(instance_id::text, ',') FROM wh_service_instances)
       FROM wh_perspective_events
       """;
@@ -231,8 +240,10 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
   /// </summary>
   private static async Task<Guid> _fillAtDepthAsync(NpgsqlConnection conn, int depth, string layout) {
     // The poller and every id are fixed (#2521): the ids decide which rows a stream walk meets first and so which pages
-    // it reads, and ids drawn at random made the cost a draw. The layout seeds the ids, so each layout is one fixed
-    // workload and the scenario holds the ceiling against the dearest of several (#2523).
+    // it reads, and ids drawn at random made the cost a draw. The work id too (#2580): left to its default it was drawn
+    // with gen_random_uuid, and a lease written through the primary key read different pages on every fill. The layout
+    // seeds the ids, so each layout is one fixed workload and the scenario holds the ceiling against the dearest of
+    // several (#2523).
     var poller = _poller;
     await using var fill = conn.CreateCommand();
     fill.CommandText = @"
@@ -249,8 +260,9 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
       VALUES (@poller, 'perf', 'perf-host', 1, NOW(), NOW(), '{}'::jsonb);
 
       INSERT INTO wh_perspective_events
-        (stream_id, perspective_name, event_id, status, attempts, created_at, partition_number, priority)
-      SELECT st.stream_id, 'TestPerspective', md5(@layout || 'claim-cost-event-' || st.ordinal || '-' || r)::uuid, 0, 0,
+        (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at, partition_number, priority)
+      SELECT md5(@layout || 'claim-cost-work-' || st.ordinal || '-' || r)::uuid,
+             st.stream_id, 'TestPerspective', md5(@layout || 'claim-cost-event-' || st.ordinal || '-' || r)::uuid, 0, 0,
              NOW() - (st.ordinal * INTERVAL '1 millisecond') + (r * INTERVAL '1 microsecond'),
              compute_partition(st.stream_id),
              CASE st.ordinal % 3 WHEN 0 THEN 50 WHEN 1 THEN 150 ELSE 250 END
