@@ -84,6 +84,8 @@ public class FrameworkNonTimeOrderedIdsTests {
       throw new NotSupportedException();
     public Task<bool> CancelAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) =>
       throw new NotSupportedException();
+    public Task<bool> CancelByKeyAsync(string key, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
     public Task<Guid?> TriggerNowAsync(Guid scheduleId, CancellationToken cancellationToken = default) =>
       throw new NotSupportedException();
     public Task<ScheduleUpdateResult?> UpdateAsync(

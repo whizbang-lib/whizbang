@@ -152,6 +152,58 @@ public class PgScheduleManagerAllOutcomesTests : EFCoreTestBase {
     await Assert.That(await _cronAsync(handle.ScheduleId, cancellationToken)).IsEqualTo("0 9 * * *");
   }
 
+  // #2586: a schedule is canceled by the key it was created under. The first cancel ends the active schedule and the
+  // second finds it terminal; neither throws.
+  [Test]
+  [Timeout(60000)]
+  public async Task CancelByKey_OfAKeyedSchedule_CancelsIt_AndASecondCancelIsANoOpAsync(CancellationToken cancellationToken) {
+    var manager = _manager(ConnectionString);
+    var key = "all-outcomes-cancel-by-key-" + Guid.NewGuid().ToString("N");
+    var handle = await manager.CreateAsync(new ScheduleDefinition {
+      Key = key,
+      EventType = "AllOutcomesCancelByKey",
+      AuthorityPrincipalId = _authority,
+      StreamId = Guid.NewGuid(),
+      Kind = RecurrenceKind.Cron,
+      Cron = "0 9 * * *",
+    }, cancellationToken);
+
+    var first = await manager.CancelByKeyAsync(key, cancellationToken);
+    var second = await manager.CancelByKeyAsync(key, cancellationToken);
+
+    await Assert.That(first).IsTrue().Because("an active schedule under the key is canceled");
+    await Assert.That(await _statusAsync(handle.ScheduleId, cancellationToken)).IsEqualTo((short)3);
+    await Assert.That(second).IsFalse().Because("a canceled schedule is terminal: nothing more to cancel");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task CancelByKey_OfAnUnknownKey_IsANoOpAsync(CancellationToken cancellationToken) {
+    var manager = _manager(ConnectionString);
+
+    var canceled = await manager.CancelByKeyAsync("all-outcomes-no-such-key-" + Guid.NewGuid().ToString("N"), cancellationToken);
+
+    await Assert.That(canceled).IsFalse();
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task CancelByKey_WithNoConnectionConfigured_ReportsNothingDoneAsync(CancellationToken cancellationToken) {
+    var manager = _manager(connectionString: null);
+
+    await Assert.That(await manager.CancelByKeyAsync("any-key", cancellationToken)).IsFalse();
+  }
+
+  [Test]
+  [Arguments("")]
+  [Arguments("  ")]
+  public async Task CancelByKey_WithABlankKey_IsRejectedAsync(string key) {
+    var manager = _manager(connectionString: null);
+
+    await Assert.That(async () => await manager.CancelByKeyAsync(key)).Throws<ArgumentException>()
+      .Because("a blank key names no schedule; schedules created without a key are canceled by id");
+  }
+
   private static Task<ScheduleHandle> _createIntervalScheduleAsync(
       PgScheduleManager manager, string eventType, CancellationToken cancellationToken) =>
     manager.CreateAsync(new ScheduleDefinition {

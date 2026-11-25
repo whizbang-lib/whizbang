@@ -128,6 +128,9 @@ public sealed class PgScheduleManager(
     _transitionAsync(scheduleId, STATUS_CANCELED, expectedVersion, cancellationToken);
 
   /// <inheritdoc />
+  public Task<bool> CancelByKeyAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(false);
+
+  /// <inheritdoc />
   public async Task<Guid?> TriggerNowAsync(Guid scheduleId, CancellationToken cancellationToken = default) {
     await using var conn = await _openAsync(cancellationToken).ConfigureAwait(false);
     if (conn is null) {
