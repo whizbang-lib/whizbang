@@ -47,6 +47,12 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
   private static readonly long[] _atVersionOne = [1];
   private static readonly long[] _atVersionsOneAndTwo = [1, 2];
   private static readonly long[] _atVersionThree = [3];
+  private static readonly long[] _atVersionTwo = [2];
+  private static readonly long[] _atVersionEleven = [11];
+  private const int EPHEMERAL = 8;
+  private const string REAPED_READER = "ActiveSessions+Projection";
+  private const string FLOOR_READS_TYPE = "FloorReadsType";
+  private const string FLOOR_READS_ALL = "FloorReadsAll";
   private const int REWIND_REQUIRED = 32;
   private static readonly DateTimeOffset _t0 = new(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
 
@@ -486,6 +492,226 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
       .IsEqualTo(1L).Because("the kept trigger is the one queued");
   }
 
+  // ── #2591: a rewind never asks for a replay of events whose bodies the reap has deleted ─────────
+
+  /// <summary>
+  /// The shape a deployed environment stalled on: an ephemeral stream of 11 events, every body reaped (60-day retention),
+  /// whose first event the fill moves. The order changed at version 1, so the per-perspective rule (#2571) names version
+  /// 1, and nothing at or after it can be read: the rewind is skipped. The cursor stays where it is, its snapshot (the
+  /// floor the reap kept) stays, and no replay is queued.
+  /// </summary>
+  [Test]
+  public async Task Fill_ThatReordersAStreamWhoseBodiesWereAllReaped_QueuesNoReplay_AndLeavesTheCursorAndItsSnapshotAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    // Ids ascend with seeding: v1 is unpositioned with the lowest id, so it replays first until its position puts it last.
+    var events = new List<Guid> {
+      await _seedAsync(conn, origin, null, minutesAgo: 10, stream: stream, version: 1, body: false, flags: EPHEMERAL),
+    };
+    for (var v = 2; v <= 11; v++) {
+      events.Add(await _seedAsync(conn, origin, v * 10, minutesAgo: 10, stream: stream, version: v, body: false, flags: EPHEMERAL));
+    }
+    await _cursorAsync(conn, stream, REAPED_READER, events[10]);
+    await _snapshotAsync(conn, stream, REAPED_READER, events[10], 11);
+
+    var result = await _store().FillAsync(new OriginPositionsAnswer { OriginServiceId = origin, Positions = [new(events[0], 1000)] },
+      _t0, CancellationToken.None);
+
+    await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_events WHERE stream_id = '{stream}'"))
+      .IsEqualTo(0L).Because("no event at or after version 1 still has a body, so a replay of it can never be read");
+    await Assert.That(await _flagAsync(conn, stream, REAPED_READER)).IsEqualTo(0L)
+      .Because("a rewind that cannot replay anything leaves the cursor where it is");
+    await Assert.That(await _snapshotVersionsAsync(conn, stream, REAPED_READER)).IsEquivalentTo(_atVersionEleven)
+      .Because("the snapshot is the floor the reap kept; deleting it leaves nothing to rebuild the fold from");
+    await Assert.That(result).IsEqualTo(new OriginPositionFillResult(1, 0, 1, 0, 1,
+      new OriginPositionSkippedRewind(stream, REAPED_READER, events[0])))
+      .Because("the stream was reordered and its one rewind skipped, and the skip names what it skipped");
+    await Assert.That(await _originSeqAsync(conn, events[0])).IsEqualTo(1000L).Because("the position is still filled");
+  }
+
+  /// <summary>
+  /// The floor each rewind starts from: the first event at or after its trigger with a body that the perspective reads (the
+  /// types its association rows name, every type when it has none); the trigger itself whatever its type; none when nothing
+  /// readable follows; and no row for a trigger the store does not hold.
+  /// </summary>
+  [Test]
+  public async Task ReapFloor_IsTheFirstEventWithABodyThePerspectiveReads_AtOrAfterTheTriggerAsync() {
+    await using var conn = await _openAsync();
+    var stream = TrackedGuid.New().Value;
+    var bare = TrackedGuid.New().Value;
+    var v1 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: stream, version: 1, body: false, flags: EPHEMERAL);
+    var v2 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: stream, version: 2, type: OTHER_TYPE, flags: EPHEMERAL);
+    var v3 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: stream, version: 3, flags: EPHEMERAL);
+    var b1 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: bare, version: 1, body: false, flags: EPHEMERAL);
+    await _associateAsync(conn, TYPE, FLOOR_READS_TYPE);
+    var gone = TrackedGuid.New().Value;
+
+    var floors = new List<(Guid Asked, Guid? Floor, string Perspective)>();
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText = "SELECT asked_trigger_event_id, trigger_event_id, perspective_name FROM wh_rewind_reap_floor(@s, @p, @t)";
+      Guid[] streams = [stream, stream, stream, bare, stream];
+      string[] perspectives = [FLOOR_READS_TYPE, FLOOR_READS_ALL, FLOOR_READS_TYPE, FLOOR_READS_ALL, FLOOR_READS_ALL];
+      Guid[] triggers = [v1, v1, v2, b1, gone];
+      cmd.Parameters.AddWithValue("s", streams);
+      cmd.Parameters.AddWithValue("p", perspectives);
+      cmd.Parameters.AddWithValue("t", triggers);
+      await using var reader = await cmd.ExecuteReaderAsync();
+      while (await reader.ReadAsync()) {
+        floors.Add((reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetGuid(1), reader.GetString(2)));
+      }
+    }
+
+    await Assert.That(floors.Count).IsEqualTo(4).Because("a trigger the store does not hold has no floor row");
+    await Assert.That(floors[0]).IsEqualTo((v1, (Guid?)v3, FLOOR_READS_TYPE))
+      .Because("version 2 has a body, but its type is not one the perspective reads");
+    await Assert.That(floors[1]).IsEqualTo((v1, (Guid?)v2, FLOOR_READS_ALL)).Because("a perspective with no association rows reads every type");
+    await Assert.That(floors[2]).IsEqualTo((v2, (Guid?)v2, FLOOR_READS_TYPE)).Because("a trigger with a body is its own floor");
+    await Assert.That(floors[3]).IsEqualTo((b1, (Guid?)null, FLOOR_READS_ALL)).Because("nothing readable follows the trigger");
+  }
+
+  /// <summary>
+  /// The answer receptor counts the skipped rewinds on <c>whizbang.stream_integrity.origin_position_rewinds_skipped</c> and
+  /// logs one warning per answer that names the first one: the perspective, the stream and the trigger.
+  /// </summary>
+  [Test]
+  public async Task AnswerReceptor_CountsAndLogsTheRewindsItSkippedAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    var r1 = await _seedAsync(conn, origin, null, minutesAgo: 10, stream: stream, version: 1, body: false, flags: EPHEMERAL);
+    var r2 = await _seedAsync(conn, origin, 20, minutesAgo: 10, stream: stream, version: 2, body: false, flags: EPHEMERAL);
+    await _cursorAsync(conn, stream, REAPED_READER, r2);
+    await using var meters = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    var skipped = new List<long>();
+    using var listener = _listen(meters, ("whizbang.stream_integrity.origin_position_rewinds_skipped", skipped));
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: meters.GetRequiredService<IMeterFactory>()));
+    await using var services = _services(new StreamIntegrityOptions(), null, null, metrics);
+    var logger = new AnswerLogger();
+    var receptor = new OriginPositionsAnswerReceptor(services.GetRequiredService<IServiceScopeFactory>(), logger);
+
+    await receptor.HandleAsync(new OriginPositionsAnswer { OriginServiceId = origin, Positions = [new(r1, 1000)] });
+    await receptor.HandleAsync(new OriginPositionsAnswer { OriginServiceId = origin });
+
+    listener.RecordObservableInstruments();
+    await Assert.That(skipped.Sum()).IsEqualTo(1L);
+    var warnings = logger.Entries.Where(e => e.Level == LogLevel.Warning).ToList();
+    await Assert.That(warnings.Count).IsEqualTo(1).Because("an answer that skipped nothing logs no warning");
+    await Assert.That(warnings[0].Message).Contains(REAPED_READER).And.Contains(stream.ToString()).And.Contains(r1.ToString());
+  }
+
+  /// <summary>
+  /// The same reorder on a stream whose first two bodies were reaped and whose last two remain: the rewind starts at the
+  /// first event at or after the changed version that still has a body (the reap floor), never below it. The snapshot
+  /// below the floor is kept; the one at or above it goes.
+  /// </summary>
+  [Test]
+  public async Task Fill_ThatReordersAStreamWhoseEarliestBodiesWereReaped_RewindsFromTheFirstEventWithABodyAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    Guid[] e = [
+      await _seedAsync(conn, origin, null, minutesAgo: 10, stream: stream, version: 1, body: false, flags: EPHEMERAL),
+      await _seedAsync(conn, origin, 20, minutesAgo: 10, stream: stream, version: 2, body: false, flags: EPHEMERAL),
+      await _seedAsync(conn, origin, 30, minutesAgo: 10, stream: stream, version: 3, flags: EPHEMERAL),
+      await _seedAsync(conn, origin, 40, minutesAgo: 10, stream: stream, version: 4, flags: EPHEMERAL)];
+    await _cursorAsync(conn, stream, REAPED_READER, e[3]);
+    await _snapshotAsync(conn, stream, REAPED_READER, e[1], 2);
+    await _snapshotAsync(conn, stream, REAPED_READER, e[3], 4);
+
+    var result = await _store().FillAsync(new OriginPositionsAnswer { OriginServiceId = origin, Positions = [new(e[0], 1000)] },
+      _t0, CancellationToken.None);
+
+    await Assert.That(await _triggerAsync(conn, stream, REAPED_READER)).IsEqualTo(e[2])
+      .Because("version 3 is the first event at or after the changed version 1 that still has a body");
+    await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_events WHERE stream_id = '{stream}' AND event_id = '{e[0]}'"))
+      .IsEqualTo(0L).Because("a replay of an event without a body is never queued");
+    await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_events WHERE stream_id = '{stream}' AND event_id = '{e[2]}' AND processed_at IS NULL"))
+      .IsEqualTo(1L).Because("the floored trigger is queued so the rewind runs");
+    await Assert.That(await _snapshotVersionsAsync(conn, stream, REAPED_READER)).IsEquivalentTo(_atVersionTwo)
+      .Because("a snapshot below the floor is kept; one at or above it holds a fold in the old order");
+    await Assert.That(result).IsEqualTo(new OriginPositionFillResult(1, 0, 1, 1));
+  }
+
+  /// <summary>
+  /// The rewind itself, called with a trigger whose body was reaped and nothing readable after it, as any caller of
+  /// <c>_wh_rewind_perspectives_from</c> may: nothing is flagged, deleted or queued.
+  /// </summary>
+  [Test]
+  public async Task Rewind_FromAReapedTrigger_WithNothingReadableAfterIt_FlagsDeletesAndQueuesNothingAsync() {
+    await using var conn = await _openAsync();
+    var stream = TrackedGuid.New().Value;
+    var v1 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: stream, version: 1, body: false, flags: EPHEMERAL);
+    var v2 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: stream, version: 2, body: false, flags: EPHEMERAL);
+    await _cursorAsync(conn, stream, REAPED_READER, v2);
+    await _snapshotAsync(conn, stream, REAPED_READER, v2, 2);
+
+    var rewound = await _scalarAsync(conn,
+      $"SELECT _wh_rewind_perspectives_from(ARRAY['{stream}']::uuid[], ARRAY['{REAPED_READER}'], ARRAY['{v1}']::uuid[], NOW())");
+
+    await Assert.That(rewound).IsEqualTo(0L);
+    await Assert.That(await _flagAsync(conn, stream, REAPED_READER)).IsEqualTo(0L);
+    await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_events WHERE stream_id = '{stream}'")).IsEqualTo(0L);
+    await Assert.That(await _snapshotVersionsAsync(conn, stream, REAPED_READER)).IsEquivalentTo(_atVersionTwo);
+  }
+
+  /// <summary>
+  /// The one-off repair migration 600 runs over what a database already holds. A flagged cursor whose trigger was reaped
+  /// and has a floor above it is moved to the floor, its queued replays of events without bodies deleted and the floor
+  /// queued; one with no floor is cleared (see <c>ReapedBodyBatchIsolationTests</c> for the deployed shape); one whose
+  /// trigger has a body, and an unflagged cursor, are left alone. A second run changes nothing.
+  /// </summary>
+  [Test]
+  public async Task Repair_MovesAReapedTriggerToItsFloor_ClearsOneWithNone_LeavesTheRest_AndRunsOnceAsync() {
+    await using var conn = await _openAsync();
+    var moved = TrackedGuid.New().Value;
+    var cleared = TrackedGuid.New().Value;
+    var kept = TrackedGuid.New().Value;
+    var m1 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: moved, version: 1, body: false, flags: EPHEMERAL);
+    var m2 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: moved, version: 2, body: false, flags: EPHEMERAL);
+    var m3 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: moved, version: 3, flags: EPHEMERAL);
+    var c1 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: cleared, version: 1, body: false, flags: EPHEMERAL);
+    var k1 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: kept, version: 1, flags: EPHEMERAL);
+    await _cursorAsync(conn, moved, REAPED_READER, m3, flaggedAt: m1);
+    await _cursorAsync(conn, cleared, REAPED_READER, c1, flaggedAt: c1);
+    await _cursorAsync(conn, kept, REAPED_READER, k1, flaggedAt: k1);
+    await _cursorAsync(conn, kept, "Unflagged", k1);
+    (Guid Stream, Guid Event)[] queued = [(moved, m1), (moved, m2), (cleared, c1), (kept, k1)];
+    foreach (var (stream, evt) in queued) {
+      await _execAsync(conn, $"""
+        INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at)
+        VALUES (gen_random_uuid(), '{stream}', '{REAPED_READER}', '{evt}', 0, 1, 0, NOW())
+        """);
+    }
+    await _execAsync(conn, "DELETE FROM wh_settings WHERE setting_key = 'rewind_reap_floor_repaired'");
+
+    var first = await _repairAsync(conn);
+    var second = await _repairAsync(conn);
+
+    await Assert.That(first).IsEqualTo((1L, 1L, 3L))
+      .Because("one cursor cleared, one moved, and the three queued replays of events without bodies deleted");
+    await Assert.That(second).IsEqualTo((0L, 0L, 0L)).Because("the repair runs once per database");
+    await Assert.That(await _triggerAsync(conn, moved, REAPED_READER)).IsEqualTo(m3)
+      .Because("version 3 is the first event at or after the trigger that still has a body");
+    await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_events WHERE stream_id = '{moved}' AND event_id = '{m3}' AND processed_at IS NULL"))
+      .IsEqualTo(1L).Because("the floor is queued so the rewind runs");
+    await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_events WHERE stream_id = '{moved}' AND event_id <> '{m3}'"))
+      .IsEqualTo(0L);
+    await Assert.That(await _flagAsync(conn, cleared, REAPED_READER)).IsEqualTo(0L);
+    await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_events WHERE stream_id = '{cleared}'")).IsEqualTo(0L);
+    await Assert.That(await _triggerAsync(conn, kept, REAPED_READER)).IsEqualTo(k1).Because("a trigger with a body is its own floor");
+    await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_events WHERE stream_id = '{kept}'")).IsEqualTo(1L);
+    await Assert.That(await _flagAsync(conn, kept, "Unflagged")).IsEqualTo(0L);
+  }
+
+  private static async Task<(long Cleared, long Moved, long Deleted)> _repairAsync(NpgsqlConnection conn) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT cursors_cleared, cursors_moved, rows_deleted FROM _wh_repair_unreplayable_rewinds()";
+    await using var reader = await cmd.ExecuteReaderAsync();
+    await reader.ReadAsync();
+    return (reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2));
+  }
+
   [Test]
   public async Task Unknown_IsForgotten_WhenItsEventIsDeletedOrPositionedAsync() {
     await using var conn = await _openAsync();
@@ -743,6 +969,14 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
 
   // ── fixture ──────────────────────────────────────────────────────────
 
+  private sealed class AnswerLogger : ILogger<OriginPositionsAnswerReceptor> {
+    public List<(LogLevel Level, string Message)> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+      Entries.Add((logLevel, formatter(state, exception)));
+  }
+
   private sealed class ListLogger : ILogger {
     public List<(LogLevel Level, string Message)> Entries { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
@@ -805,21 +1039,24 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
   }
 
   /// <summary>Writes one event straight to the store (the held-fold triggers fire; no digest is folded). Ids are minted in
-  /// order, so a later call's event sorts after an earlier one's.</summary>
+  /// order, so a later call's event sorts after an earlier one's. The event has a body unless <paramref name="body"/> is
+  /// false, which is an ephemeral event whose body the reap has deleted (#2591).</summary>
   private static async Task<Guid> _seedAsync(NpgsqlConnection conn, Guid? origin, long? originSequence, int minutesAgo,
-      Guid? stream = null, int version = 1, string type = TYPE) {
+      Guid? stream = null, int version = 1, string type = TYPE, bool body = true, int flags = 0) {
     var id = TrackedGuid.New().Value;
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = """
+    cmd.CommandText = $"""
       INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, scope,
-                                  commit_sequence, created_at, origin_service_id, origin_commit_sequence)
-      VALUES (@id, @sid, @sid, 'TestAggregate', @v, @t, NULL, nextval('wh_commit_seq'), NOW() - make_interval(mins => @ago), @o, @seq)
+                                  commit_sequence, created_at, origin_service_id, origin_commit_sequence, flags)
+      VALUES (@id, @sid, @sid, 'TestAggregate', @v, @t, NULL, nextval('wh_commit_seq'), NOW() - make_interval(mins => @ago), @o, @seq, @flags);
+      {(body ? "INSERT INTO wh_event_body (event_id, event_data, metadata) VALUES (@id, '{}'::jsonb, '{}'::jsonb);" : string.Empty)}
       """;
     cmd.Parameters.AddWithValue("id", id);
     cmd.Parameters.AddWithValue("sid", stream ?? id);
     cmd.Parameters.AddWithValue("v", version);
     cmd.Parameters.AddWithValue("t", type);
     cmd.Parameters.AddWithValue("ago", minutesAgo);
+    cmd.Parameters.AddWithValue(nameof(flags), flags);
     cmd.Parameters.Add(new NpgsqlParameter("o", NpgsqlDbType.Uuid) { Value = (object?)origin ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("seq", NpgsqlDbType.Bigint) { Value = (object?)originSequence ?? DBNull.Value });
     await cmd.ExecuteNonQueryAsync();

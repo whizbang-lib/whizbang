@@ -5667,6 +5667,31 @@ public record StreamEventData {
   /// <docs>fundamentals/event-store/version-ordering#dispatch-order</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FetchInboxBatchStreamOrderSqlTests.cs</tests>
   public long? Version { get; init; }
+
+  /// <summary>
+  /// What a driver says, in <see cref="UnreadableReason"/>, about an ephemeral event whose body is gone: the reap deleted
+  /// it past its retention, so it never comes back.
+  /// </summary>
+  /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
+  public const string BODY_REAPED = "the event is ephemeral and its body was reaped past its retention";
+
+  /// <summary>
+  /// What a driver says, in <see cref="UnreadableReason"/>, about an event that is not ephemeral and has no stored body.
+  /// A Sourced body is never reaped, so its absence means something else deleted it.
+  /// </summary>
+  /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
+  public const string BODY_MISSING = "the event is not ephemeral and has no stored body; nothing in the framework deletes it";
+
+  /// <summary>
+  /// Why the row's event cannot be read, when the read could tell (#2591): <see cref="BODY_REAPED"/> for an ephemeral event
+  /// whose body the reap deleted, <see cref="BODY_MISSING"/> for any other event without a body. Null for a readable row.
+  /// Such a row carries its identity (stream, event, work id, perspective, counts) and an empty <see cref="EventData"/>.
+  /// The perspective worker dead-letters a reaped one on first sight, fails a missing one for the bounded retry, and
+  /// applies the other rows of the batch.
+  /// </summary>
+  /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReapedBodyStreamReadTests.cs</tests>
+  public string? UnreadableReason { get; init; }
 }
 
 /// <summary>

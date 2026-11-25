@@ -147,6 +147,44 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
 
   // ----- GetStreamEventsAsync row mapping -----
 
+  /// <summary>
+  /// #2591: an ephemeral event whose body the reap deleted, and a Sourced event whose body is missing, are each read as a
+  /// row named unreadable for its own reason, with an empty body, next to a readable one, which carries no reason.
+  /// </summary>
+  [Test]
+  public async Task GetStreamEventsAsync_AnEventWhoseBodyWasReaped_IsReadAsUnreadable_NextToAReadableOneAsync() {
+    var c = _build();
+    var instanceId = (Guid)TrackedGuid.New();
+    var healthyStream = (Guid)TrackedGuid.New();
+    var reapedStream = (Guid)TrackedGuid.New();
+    var healthyEvent = (Guid)TrackedGuid.New();
+    var reapedEvent = (Guid)TrackedGuid.New();
+
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await _seedEventStoreRowAsync(conn, healthyEvent, healthyStream, version: 1, commitSequence: 100L);
+    await _seedEventStoreRowAsync(conn, reapedEvent, reapedStream, version: 1, commitSequence: 101L);
+    var missingStream = (Guid)TrackedGuid.New();
+    var missingEvent = (Guid)TrackedGuid.New();
+    await _seedEventStoreRowAsync(conn, missingEvent, missingStream, version: 1, commitSequence: 102L);
+    await conn.ExecuteAsync("UPDATE wh_event_store SET flags = 8 WHERE event_id = @id", new { id = reapedEvent });
+    Guid[] bodiesGone = [reapedEvent, missingEvent];
+    await conn.ExecuteAsync("DELETE FROM wh_event_body WHERE event_id = ANY(@ids)", new { ids = bodiesGone });
+    await _seedUnclaimedPerspectiveEventAsync(conn, (Guid)TrackedGuid.New(), missingStream, "ReapedPerspective", missingEvent);
+    await _seedUnclaimedPerspectiveEventAsync(conn, (Guid)TrackedGuid.New(), healthyStream, "ReapedPerspective", healthyEvent);
+    await _seedUnclaimedPerspectiveEventAsync(conn, (Guid)TrackedGuid.New(), reapedStream, "ReapedPerspective", reapedEvent);
+
+    var events = await c.GetStreamEventsAsync(instanceId, [healthyStream, reapedStream, missingStream]);
+
+    await Assert.That(events.Count).IsEqualTo(3);
+    var healthy = events.Single(e => e.EventId == healthyEvent);
+    var reaped = events.Single(e => e.EventId == reapedEvent);
+    await Assert.That(healthy.UnreadableReason).IsNull();
+    await Assert.That(reaped.UnreadableReason).IsEqualTo(StreamEventData.BODY_REAPED);
+    await Assert.That(reaped.EventData).IsEqualTo(string.Empty);
+    await Assert.That(events.Single(e => e.EventId == missingEvent).UnreadableReason).IsEqualTo(StreamEventData.BODY_MISSING);
+  }
+
   [Test]
   public async Task GetStreamEventsAsync_SeededClaimableEvent_MapsAllFieldsAndClaimsRowAsync() {
     var c = _build();

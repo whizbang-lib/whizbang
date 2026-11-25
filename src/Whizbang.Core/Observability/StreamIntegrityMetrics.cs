@@ -299,6 +299,11 @@ public sealed class StreamIntegrityMetrics {
   /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
   public PassiveCounter<long> OriginPositionRewinds { get; }
 
+  /// <summary>#2591: rewinds a filled position's reorder asked for and skipped, because no event at or after the changed
+  /// version that the perspective reads still has a body (the reap deleted them), so nothing could be replayed.</summary>
+  /// <docs>resilience/stream-integrity#a-rewind-never-reaches-below-the-reap-floor</docs>
+  public PassiveCounter<long> OriginPositionRewindsSkipped { get; }
+
   /// <summary>Stored events received before origins were recorded that re-attribution gave their owner as origin.</summary>
   /// <docs>resilience/stream-integrity#re-attribution</docs>
   public PassiveCounter<long> OriginsReattributed { get; }
@@ -570,6 +575,9 @@ public sealed class StreamIntegrityMetrics {
     OriginPositionRewinds = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.origin_position_rewinds",
       description: "Perspective cursors rewound because a filled origin position changed a stream's order");
+    OriginPositionRewindsSkipped = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.origin_position_rewinds_skipped",
+      description: "Rewinds a filled origin position asked for and skipped: every event the replay would read had its body reaped");
     _ = meter.CreateObservableGauge(
       "whizbang.stream_integrity.origin_positions_unfilled",
       () => {

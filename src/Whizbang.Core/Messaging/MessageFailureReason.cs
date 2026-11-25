@@ -288,6 +288,16 @@ public enum MessageFailureReason {
   AwaitingStreamHead = 30,
 
   /// <summary>
+  /// The stored event a perspective work row names has no body: its pointer row is in the event store and its body is
+  /// not, which is an ephemeral event whose body the reap deleted past its retention (#2591). The row is failed with an
+  /// error naming the perspective, the stream and the event, retried a bounded number of times
+  /// (<c>MaxPerspectiveEventAttempts</c>) and then dead-lettered; the other rows of its batch are applied.
+  /// </summary>
+  /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReapedBodyBatchIsolationTests.cs</tests>
+  EventBodyMissing = 31,
+
+  /// <summary>
   /// Unclassified error - reason not determined. Numbered far above the classified reasons so a
   /// new one can be appended without moving it, and last so the members read in value order.
   /// </summary>
