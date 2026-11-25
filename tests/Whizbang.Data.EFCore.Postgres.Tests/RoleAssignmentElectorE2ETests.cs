@@ -546,6 +546,30 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
 
   [Test]
   [Timeout(120000)]
+  public async Task ReadAssignments_CountsAStalledSoleHolder_OnTheStalledWithoutSuccessorMeterAsync(CancellationToken cancellationToken) {
+    // #2593: the meter counts each read that found a holder kept only because no peer can take its role.
+    await using var provider = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    var metrics = new RoleAssignmentMetrics(new WhizbangMetrics(provider.GetRequiredService<IMeterFactory>()));
+    using var reader = new MeterReader(metrics.Elections.Meter);
+    var a = await _joinAsync(cancellationToken);
+    var elector = new PgRoleElector(
+      Options.Create(_notificationOptions()), Options.Create(new RoleAssignmentOptions { ProgressWindow = TimeSpan.Zero }),
+      new ConfigurationBuilder().AddInMemoryCollection([]).Build(), a,
+      NullLogger<PgRoleElector>.Instance, libraryVersion: null, metrics: metrics);
+    await using var grant = (await elector.TryAcquireAsync(ROLE, cancellationToken)).Grant!;
+
+    _ = await elector.ReadAssignmentsAsync(cancellationToken);
+    await Assert.That(reader.Total("whizbang.roles.stalled_without_successor")).IsEqualTo(0)
+      .Because("a holder inside its lease is healthy, peer or no peer");
+
+    await _ageAsync(_defaults.Lease + TimeSpan.FromSeconds(1), cancellationToken);
+    _ = await elector.ReadAssignmentsAsync(cancellationToken);
+    await Assert.That(reader.Total("whizbang.roles.stalled_without_successor", RoleAssignmentMetrics.ROLE_TAG, ROLE)).IsEqualTo(1);
+    await _ageAsync(-(_defaults.Lease + TimeSpan.FromSeconds(1)), cancellationToken);
+  }
+
+  [Test]
+  [Timeout(120000)]
   public async Task ReadAssignments_ReportsHolderEpochStateAndOwedWorkAsync(CancellationToken cancellationToken) {
     // Requirements 9 and 10 through the C# reader.
     var a = await _joinAsync(cancellationToken);
@@ -564,10 +588,23 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     await Assert.That(held.ElectionCount).IsEqualTo(1L);
     await Assert.That(held.PendingWork).IsEqualTo(1L);
 
+    await Assert.That(held.StalledWithoutSuccessor).IsFalse();
+
+    // Past its lease with no peer, the sole holder keeps the role and is reported stalled (#2593).
     await _ageAsync(_defaults.Lease + TimeSpan.FromSeconds(1), cancellationToken);
+    var stalled = (await elector.ReadAssignmentsAsync(cancellationToken)).Single();
+    await Assert.That(stalled.State).IsEqualTo(RoleAssignmentState.Held);
+    await Assert.That(stalled.StalledWithoutSuccessor).IsTrue();
+
+    // A live peer that votes for the role is a successor, so the same holder has lapsed.
+    var b = await _joinAsync(cancellationToken);
+    await _executeAsync("INSERT INTO wh_role_candidates (role, instance_id, version_key, last_voted_at) VALUES (@role, @id, '{}', now())",
+      cancellationToken, ("role", ROLE), ("id", b.InstanceId));
     var lapsed = (await elector.ReadAssignmentsAsync(cancellationToken)).Single();
     await Assert.That(lapsed.State).IsEqualTo(RoleAssignmentState.Lapsed);
     await Assert.That(lapsed.VoidReason).IsEqualTo("lapsed");
+    await Assert.That(lapsed.StalledWithoutSuccessor).IsFalse();
+    await _executeAsync("DELETE FROM wh_role_candidates WHERE instance_id = @id", cancellationToken, ("id", b.InstanceId));
 
     await _ageAsync(-(_defaults.Lease + TimeSpan.FromSeconds(1)), cancellationToken);
     await grant.DisposeAsync();
