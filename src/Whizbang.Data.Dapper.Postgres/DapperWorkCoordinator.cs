@@ -502,7 +502,9 @@ public partial class DapperWorkCoordinator(
       StreamId = r.out_stream_id,
       EventId = r.out_event_id,
       EventType = r.out_event_type,
-      EventData = r.out_event_data,
+      // #2591: a body the reap deleted reads as NULL; the row is named as unreadable rather than carrying a null body.
+      EventData = r.out_event_data ?? string.Empty,
+      UnreadableReason = r.out_event_data is null ? StreamEventData.NO_STORED_BODY : null,
       Metadata = r.out_metadata,
       Scope = r.out_scope,
       EventWorkId = r.out_event_work_id,
@@ -1696,7 +1698,8 @@ internal class StreamEventRow {
   public Guid out_stream_id { get; set; }
   public Guid out_event_id { get; set; }
   public string out_event_type { get; set; } = string.Empty;
-  public string out_event_data { get; set; } = string.Empty;
+  // #2591: NULL when the reap has deleted the event's body.
+  public string? out_event_data { get; set; }
   public string? out_metadata { get; set; }
   public string? out_scope { get; set; }
   public Guid out_event_work_id { get; set; }

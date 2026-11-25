@@ -51,6 +51,8 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
   private static readonly long[] _atVersionEleven = [11];
   private const int EPHEMERAL = 8;
   private const string REAPED_READER = "ActiveSessions+Projection";
+  private const string FLOOR_READS_TYPE = "FloorReadsType";
+  private const string FLOOR_READS_ALL = "FloorReadsAll";
   private const int REWIND_REQUIRED = 32;
   private static readonly DateTimeOffset _t0 = new(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
 
@@ -522,8 +524,80 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
       .Because("a rewind that cannot replay anything leaves the cursor where it is");
     await Assert.That(await _snapshotVersionsAsync(conn, stream, REAPED_READER)).IsEquivalentTo(_atVersionEleven)
       .Because("the snapshot is the floor the reap kept; deleting it leaves nothing to rebuild the fold from");
-    await Assert.That(result.PerspectivesRewound).IsEqualTo(0);
+    await Assert.That(result).IsEqualTo(new OriginPositionFillResult(1, 0, 1, 0, 1,
+      new OriginPositionSkippedRewind(stream, REAPED_READER, events[0])))
+      .Because("the stream was reordered and its one rewind skipped, and the skip names what it skipped");
     await Assert.That(await _originSeqAsync(conn, events[0])).IsEqualTo(1000L).Because("the position is still filled");
+  }
+
+  /// <summary>
+  /// The floor each rewind starts from: the first event at or after its trigger with a body that the perspective reads (the
+  /// types its association rows name, every type when it has none); the trigger itself whatever its type; none when nothing
+  /// readable follows; and no row for a trigger the store does not hold.
+  /// </summary>
+  [Test]
+  public async Task ReapFloor_IsTheFirstEventWithABodyThePerspectiveReads_AtOrAfterTheTriggerAsync() {
+    await using var conn = await _openAsync();
+    var stream = TrackedGuid.New().Value;
+    var bare = TrackedGuid.New().Value;
+    var v1 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: stream, version: 1, body: false, flags: EPHEMERAL);
+    var v2 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: stream, version: 2, type: OTHER_TYPE, flags: EPHEMERAL);
+    var v3 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: stream, version: 3, flags: EPHEMERAL);
+    var b1 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: bare, version: 1, body: false, flags: EPHEMERAL);
+    await _associateAsync(conn, TYPE, FLOOR_READS_TYPE);
+    var gone = TrackedGuid.New().Value;
+
+    var floors = new List<(Guid Asked, Guid? Floor, string Perspective)>();
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText = "SELECT asked_trigger_event_id, trigger_event_id, perspective_name FROM wh_rewind_reap_floor(@s, @p, @t)";
+      Guid[] streams = [stream, stream, stream, bare, stream];
+      string[] perspectives = [FLOOR_READS_TYPE, FLOOR_READS_ALL, FLOOR_READS_TYPE, FLOOR_READS_ALL, FLOOR_READS_ALL];
+      Guid[] triggers = [v1, v1, v2, b1, gone];
+      cmd.Parameters.AddWithValue("s", streams);
+      cmd.Parameters.AddWithValue("p", perspectives);
+      cmd.Parameters.AddWithValue("t", triggers);
+      await using var reader = await cmd.ExecuteReaderAsync();
+      while (await reader.ReadAsync()) {
+        floors.Add((reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetGuid(1), reader.GetString(2)));
+      }
+    }
+
+    await Assert.That(floors.Count).IsEqualTo(4).Because("a trigger the store does not hold has no floor row");
+    await Assert.That(floors[0]).IsEqualTo((v1, (Guid?)v3, FLOOR_READS_TYPE))
+      .Because("version 2 has a body, but its type is not one the perspective reads");
+    await Assert.That(floors[1]).IsEqualTo((v1, (Guid?)v2, FLOOR_READS_ALL)).Because("a perspective with no association rows reads every type");
+    await Assert.That(floors[2]).IsEqualTo((v2, (Guid?)v2, FLOOR_READS_TYPE)).Because("a trigger with a body is its own floor");
+    await Assert.That(floors[3]).IsEqualTo((b1, (Guid?)null, FLOOR_READS_ALL)).Because("nothing readable follows the trigger");
+  }
+
+  /// <summary>
+  /// The answer receptor counts the skipped rewinds on <c>whizbang.stream_integrity.origin_position_rewinds_skipped</c> and
+  /// logs one warning per answer that names the first one: the perspective, the stream and the trigger.
+  /// </summary>
+  [Test]
+  public async Task AnswerReceptor_CountsAndLogsTheRewindsItSkippedAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    var r1 = await _seedAsync(conn, origin, null, minutesAgo: 10, stream: stream, version: 1, body: false, flags: EPHEMERAL);
+    var r2 = await _seedAsync(conn, origin, 20, minutesAgo: 10, stream: stream, version: 2, body: false, flags: EPHEMERAL);
+    await _cursorAsync(conn, stream, REAPED_READER, r2);
+    await using var meters = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    var skipped = new List<long>();
+    using var listener = _listen(meters, ("whizbang.stream_integrity.origin_position_rewinds_skipped", skipped));
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics(meterFactory: meters.GetRequiredService<IMeterFactory>()));
+    await using var services = _services(new StreamIntegrityOptions(), null, null, metrics);
+    var logger = new AnswerLogger();
+    var receptor = new OriginPositionsAnswerReceptor(services.GetRequiredService<IServiceScopeFactory>(), logger);
+
+    await receptor.HandleAsync(new OriginPositionsAnswer { OriginServiceId = origin, Positions = [new(r1, 1000)] });
+    await receptor.HandleAsync(new OriginPositionsAnswer { OriginServiceId = origin });
+
+    listener.RecordObservableInstruments();
+    await Assert.That(skipped.Sum()).IsEqualTo(1L);
+    var warnings = logger.Entries.Where(e => e.Level == LogLevel.Warning).ToList();
+    await Assert.That(warnings.Count).IsEqualTo(1).Because("an answer that skipped nothing logs no warning");
+    await Assert.That(warnings[0].Message).Contains(REAPED_READER).And.Contains(stream.ToString()).And.Contains(r1.ToString());
   }
 
   /// <summary>
@@ -556,7 +630,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
       .IsEqualTo(1L).Because("the floored trigger is queued so the rewind runs");
     await Assert.That(await _snapshotVersionsAsync(conn, stream, REAPED_READER)).IsEquivalentTo(_atVersionTwo)
       .Because("a snapshot below the floor is kept; one at or above it holds a fold in the old order");
-    await Assert.That(result.PerspectivesRewound).IsEqualTo(1);
+    await Assert.That(result).IsEqualTo(new OriginPositionFillResult(1, 0, 1, 1));
   }
 
   /// <summary>
@@ -837,6 +911,14 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
   }
 
   // ── fixture ──────────────────────────────────────────────────────────
+
+  private sealed class AnswerLogger : ILogger<OriginPositionsAnswerReceptor> {
+    public List<(LogLevel Level, string Message)> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+      Entries.Add((logLevel, formatter(state, exception)));
+  }
 
   private sealed class ListLogger : ILogger {
     public List<(LogLevel Level, string Message)> Entries { get; } = [];

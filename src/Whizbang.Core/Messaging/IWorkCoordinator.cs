@@ -5667,6 +5667,23 @@ public record StreamEventData {
   /// <docs>fundamentals/event-store/version-ordering#dispatch-order</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FetchInboxBatchStreamOrderSqlTests.cs</tests>
   public long? Version { get; init; }
+
+  /// <summary>
+  /// What a driver says, in <see cref="UnreadableReason"/>, about a row whose event has no stored body: the pointer row is
+  /// in the event store and the body is not, which is an ephemeral event whose body the reap deleted past its retention.
+  /// </summary>
+  /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
+  public const string NO_STORED_BODY = "the event has no stored body (an ephemeral event whose body was reaped past its retention)";
+
+  /// <summary>
+  /// Why the row's event cannot be read, when the read could tell (#2591): <see cref="NO_STORED_BODY"/> for an event whose
+  /// body is gone. Null for a readable row. Such a row carries its identity (stream, event, work id, perspective, counts)
+  /// and an empty <see cref="EventData"/>; the perspective worker fails it by name, so it is retried a bounded number of
+  /// times and dead-lettered, and the other rows of the batch are applied.
+  /// </summary>
+  /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReapedBodyStreamReadTests.cs</tests>
+  public string? UnreadableReason { get; init; }
 }
 
 /// <summary>

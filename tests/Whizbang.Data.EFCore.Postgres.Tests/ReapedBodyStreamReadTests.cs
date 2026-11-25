@@ -53,6 +53,13 @@ public class ReapedBodyStreamReadTests : EFCoreTestBase {
     await Assert.That(rows!.Select(r => r.EventWorkId)).IsEquivalentTo(expected)
       .Because("the reaped event's row is returned so the worker can fail it, and the healthy stream's row with it");
     await Assert.That(rows!.Single(r => r.EventWorkId == healthy.WorkId).EventData).IsEqualTo("{\"Ordinal\": 1}");
+    await Assert.That(rows!.Single(r => r.EventWorkId == healthy.WorkId).UnreadableReason).IsNull();
+    var reapedRow = rows!.Single(r => r.EventWorkId == reaped.WorkId);
+    await Assert.That(reapedRow.UnreadableReason).IsEqualTo(StreamEventData.NO_STORED_BODY)
+      .Because("the row says why its event cannot be read, so the worker fails it by name");
+    await Assert.That(reapedRow.EventData).IsEqualTo(string.Empty);
+    await Assert.That(reapedRow.StreamId).IsEqualTo(reapedStream);
+    await Assert.That(reapedRow.EventId).IsEqualTo(reaped.EventId);
   }
 
   // ── helpers ─────────────────────────────────────────────────────────────────────────────────

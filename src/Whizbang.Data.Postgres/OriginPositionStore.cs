@@ -28,8 +28,21 @@ public sealed record OriginPositionLookup(Guid EventId, string State, long? Comm
 /// <param name="StreamsReordered">Streams where the fill changed the replay order of at least one perspective's events.</param>
 /// <param name="PerspectivesRewound">Perspective cursors newly flagged to replay their stream from the first version their
 /// own replay order changed at; a cursor an earlier fill already flagged is not counted again.</param>
+/// <param name="RewindsSkipped">Rewinds the fill's reorder asked for and did not make, because no event at or after the
+/// changed version that the perspective reads still has a body: the reap deleted them past their retention, so there is
+/// nothing to replay (#2591). The cursor stays where it is and keeps its snapshots.</param>
+/// <param name="FirstSkippedRewind">The first skipped rewind, for the log line that reports them; null when none was.</param>
 /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
-public sealed record OriginPositionFillResult(int Filled, int UnknownRecorded, int StreamsReordered, int PerspectivesRewound);
+public sealed record OriginPositionFillResult(int Filled, int UnknownRecorded, int StreamsReordered, int PerspectivesRewound,
+  int RewindsSkipped = 0, OriginPositionSkippedRewind? FirstSkippedRewind = null);
+
+/// <summary>A rewind the fill asked for and skipped, because nothing at or after its trigger can be read (#2591).</summary>
+/// <param name="StreamId">The stream.</param>
+/// <param name="PerspectiveName">The perspective whose cursor stays where it is.</param>
+/// <param name="TriggerEventId">The event the fill's reorder named, whose body (and every later one the perspective reads)
+/// was reaped.</param>
+/// <docs>resilience/stream-integrity#a-rewind-never-reaches-below-the-reap-floor</docs>
+public sealed record OriginPositionSkippedRewind(Guid StreamId, string PerspectiveName, Guid TriggerEventId);
 
 /// <summary>
 /// The database side of filling missing origin positions (#2544, migration 561): the receiver's walk over the events it
@@ -143,6 +156,9 @@ public sealed class OriginPositionStore {
         }
       }
     }
+    // #2591: each rewind starts no earlier than the reap floor; one with no floor is skipped and reported.
+    var (floored, skipped) = await _reapFloorAsync(connection, transaction, rewinds, cancellationToken).ConfigureAwait(false);
+    rewinds = floored;
     OriginPositionFillResult result;
     await using (var fill = new NpgsqlCommand(
       $"SELECT filled, unknown_recorded, perspectives_rewound FROM {_prefix}wh_fill_origin_positions($1, $2, $3, $4, $5, $6, $7, $8)",
@@ -157,11 +173,42 @@ public sealed class OriginPositionStore {
       fill.Parameters.AddWithValue(now);
       await using var reader = await fill.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-      result = new OriginPositionFillResult(reader.GetInt32(0), reader.GetInt32(1), rewinds.Select(r => r.Stream).Distinct().Count(),
-        reader.GetInt32(2));
+      result = new OriginPositionFillResult(reader.GetInt32(0), reader.GetInt32(1),
+        rewinds.Select(r => r.Stream).Concat(skipped.Select(r => r.StreamId)).Distinct().Count(),
+        reader.GetInt32(2), skipped.Count, skipped.FirstOrDefault());
     }
     await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     return result;
+  }
+
+  /// <summary>
+  /// #2591: the rewinds the fill asked for, each moved to its reap floor (<c>wh_rewind_reap_floor</c>): the first event at
+  /// or after its trigger that still has a body and that the perspective reads. A rewind with no floor cannot replay
+  /// anything; it is returned among the skipped ones, and the fill does not make it.
+  /// </summary>
+  private async Task<(List<(Guid Stream, string Perspective, Guid Trigger)> Floored, List<OriginPositionSkippedRewind> Skipped)> _reapFloorAsync(
+      NpgsqlConnection connection, NpgsqlTransaction transaction, List<(Guid Stream, string Perspective, Guid Trigger)> rewinds,
+      CancellationToken cancellationToken) {
+    var floored = new List<(Guid Stream, string Perspective, Guid Trigger)>(rewinds.Count);
+    var skipped = new List<OriginPositionSkippedRewind>();
+    if (rewinds.Count == 0) {
+      return (floored, skipped);
+    }
+    await using var floor = new NpgsqlCommand(
+      $"SELECT stream_id, perspective_name, asked_trigger_event_id, trigger_event_id FROM {_prefix}wh_rewind_reap_floor($1, $2, $3)",
+      connection, transaction);
+    floor.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = rewinds.Select(r => r.Stream).ToArray() });
+    floor.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text, Value = rewinds.Select(r => r.Perspective).ToArray() });
+    floor.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = rewinds.Select(r => r.Trigger).ToArray() });
+    await using var reader = await floor.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      if (reader.IsDBNull(3)) {
+        skipped.Add(new OriginPositionSkippedRewind(reader.GetGuid(0), reader.GetString(1), reader.GetGuid(2)));
+      } else {
+        floored.Add((reader.GetGuid(0), reader.GetString(1), reader.GetGuid(3)));
+      }
+    }
+    return (floored, skipped);
   }
 
   // #2571: the origin's events a perspective replays, those of the types its association rows name; every one of them

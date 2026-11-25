@@ -2011,6 +2011,8 @@ public partial class PerspectiveWorker(
     // are both present; otherwise the row stays in wh_perspective_events and is
     // re-claimed by the orphan path as before (legacy v0.501 behavior).
     rawEvents = await FilterDeadLetteredAsync(rawEvents, cancellationToken).ConfigureAwait(false);
+    // #2591: a row the read returned without its event (a reaped body) is failed by name, alone; the rest go on.
+    rawEvents = await FailRowsReadWithoutTheirEventAsync(rawEvents, cancellationToken).ConfigureAwait(false);
     if (rawEvents.Count == 0) {
       return null;
     }
@@ -2048,6 +2050,49 @@ public partial class PerspectiveWorker(
     // that must be completed individually.
     return (typedEvents, rawEvents.ToLookup(r => r.EventId));
   }
+
+  /// <summary>
+  /// Fails each fetched row whose event the read could not return (<see cref="StreamEventData.UnreadableReason"/>, a body
+  /// the reap deleted), and returns the rest (#2591). Each such row is reported through the failure channel with
+  /// <see cref="MessageFailureReason.EventBodyMissing"/> and an error naming the perspective, the stream and the event, and
+  /// logged with the same; the database records the failure and backs the retry off, and the pre-apply dead-letter filter
+  /// (<see cref="FilterDeadLetteredAsync"/>) moves the row once its failures pass
+  /// <see cref="PerspectiveWorkerOptions.MaxPerspectiveEventAttempts"/>. The other rows of the batch, of every stream, are
+  /// applied as usual.
+  /// </summary>
+  /// <remarks>
+  /// Before, the read cast the missing body and threw, so the whole batch was lost, released, and leased again with the
+  /// same row in it: nothing was ever recorded against the row, and every batch it joined failed.
+  /// </remarks>
+  /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReapedBodyBatchIsolationTests.cs:AReapedStreamSharingABatch_FailsOnlyItself_IsRetriedBoundedly_AndIsDeadLetteredAsync</tests>
+  internal async Task<List<StreamEventData>> FailRowsReadWithoutTheirEventAsync(
+      List<StreamEventData> rows, CancellationToken cancellationToken) {
+    List<StreamEventData>? readable = null;
+    for (var i = 0; i < rows.Count; i++) {
+      var row = rows[i];
+      if (row.UnreadableReason is null) {
+        readable?.Add(row);
+        continue;
+      }
+      readable ??= rows.GetRange(0, i);
+      var error = $"Perspective {row.PerspectiveName} cannot read event {row.EventId} (version {row.Version}, type {row.EventType}) "
+        + $"of stream {row.StreamId}: {row.UnreadableReason}";
+      LogRowReadWithoutItsEvent(_logger, row.PerspectiveName, row.StreamId, row.EventId, row.Version, row.EventType,
+        row.UnreadableReason, row.Failures);
+      await _parkLeasedRowsAsync([row.EventWorkId], error, MessageFailureReason.EventBodyMissing, cancellationToken).ConfigureAwait(false);
+    }
+    return readable ?? rows;
+  }
+
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
+    Justification = "A generated structured log message: each value is its own searchable property.")]
+  [LoggerMessage(EventId = 84, Level = LogLevel.Warning,
+    Message = "Perspective {PerspectiveName} cannot read event {EventId} (version {Version}, type {EventType}) of stream {StreamId}: "
+            + "{Reason}. The row is failed alone (failures before this one: {Failures}) and dead-lettered once its failures "
+            + "pass MaxPerspectiveEventAttempts; the rest of the batch is applied")]
+  static partial void LogRowReadWithoutItsEvent(ILogger logger, string? perspectiveName, Guid streamId, Guid eventId, long? version,
+    string eventType, string reason, int failures);
 
   /// <summary>
   /// Reads the fetched rows into typed envelopes. When the read throws for the batch (a store or decorator that does not skip a row

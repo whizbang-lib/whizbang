@@ -96,6 +96,7 @@ public class ReapedBodyBatchIsolationTests : EFCoreTestBase {
     var failure = pipeline.Failures.Snapshot().First(f => f.MessageId == reapedWork);
     await Assert.That(failure.Error).Contains(reapedStream.ToString()).And.Contains("body")
       .Because("the error names the stream and what is missing");
+    await Assert.That(failure.Reason).IsEqualTo(MessageFailureReason.EventBodyMissing);
     await Assert.That(await _failuresAsync(conn, reapedWork, cancellationToken)).IsGreaterThanOrEqualTo(1)
       .Because("the failure is counted against the row, which the dead-letter bound reads");
     var named = pipeline.Logs.Snapshot().Where(l => l.Level >= LogLevel.Warning
