@@ -156,7 +156,17 @@ public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     var stream = Guid.NewGuid();
-    await _pinStreamAsync(conn, stream, Guid.NewGuid());   // owned by someone else
+    var someoneElse = Guid.NewGuid();
+    // #2575: owned by another LIVE instance; an owner the liveness rule calls dead holds nothing.
+    await using (var register = conn.CreateCommand()) {
+      register.CommandText = @"
+        INSERT INTO wh_service_instances
+          (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, connection_mode, liveness_window_seconds)
+        VALUES (@id, 'test', 'test-host', 1, NOW(), NOW(), 'pooled', 30)";
+      register.Parameters.AddWithValue("id", someoneElse);
+      await register.ExecuteNonQueryAsync();
+    }
+    await _pinStreamAsync(conn, stream, someoneElse);
     await _insertScheduleAsync(conn, Guid.NewGuid(), stream, DateTimeOffset.UtcNow.AddMinutes(-1), eventType: "OccOther");
 
     var claimed = await _claimAsync(conn, Guid.NewGuid(), DateTimeOffset.UtcNow);

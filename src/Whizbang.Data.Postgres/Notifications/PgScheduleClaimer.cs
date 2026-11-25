@@ -33,6 +33,14 @@ public sealed partial class PgScheduleClaimer(
   INotificationConnectionStringFallback? connectionStringFallback = null,
   INotificationDataSource? notificationDataSource = null) : IScheduleClaimer {
 #pragma warning restore S107
+  // #2575: the claim's ownership rule (SchedulePredicate), built once.
+  private static readonly string _nextFireSql = @"
+      SELECT MIN(sc.next_fire_at)
+      FROM wh_schedules sc
+      LEFT JOIN wh_active_streams s ON s.stream_id = sc.stream_id
+      WHERE sc.status = 0
+        AND " + SchedulePredicate.OWNED_BY_INSTANCE.Replace(SchedulePredicate.INSTANCE_PARAMETER, "@i", StringComparison.Ordinal);
+
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -89,16 +97,49 @@ public sealed partial class PgScheduleClaimer(
 
     await using var conn = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
     await using var cmd = conn.CreateWhizbangCommand();
-    cmd.CommandText = @"
-      SELECT MIN(sc.next_fire_at)
-      FROM wh_schedules sc
-      JOIN wh_active_streams s ON s.stream_id = sc.stream_id
-      WHERE s.assigned_instance_id = @i AND sc.status = 0";
+    // #2575: the claim's ownership rule, so the wake is armed for every schedule the claim would take: in map mode the
+    // schedule's partition owner (wh_i_own), otherwise the stream's stored owner or, when no live instance holds the
+    // stream, anyone (wh_schedule_owner_admits). The switch and the live set are each read once per statement.
+    cmd.CommandText = _nextFireSql;
     cmd.Parameters.Add(new NpgsqlParameter("i", NpgsqlDbType.Uuid) { Value = _instanceProvider.InstanceId });
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     if (result is null or DBNull) {
       return null;
     }
     return new DateTimeOffset(DateTime.SpecifyKind((DateTime)result, DateTimeKind.Utc), TimeSpan.Zero);
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// #2575: every Active schedule, not only this instance's, since the failure it reports is a schedule no instance
+  /// takes. The age and the bound are judged by the database clock, as the claim's due decision is. The scan is the
+  /// partial index on Active schedules' fire times.
+  /// </remarks>
+  public async Task<ScheduleOverdueReading?> GetOverdueSchedulesAsync(TimeSpan bound, CancellationToken cancellationToken = default) {
+    var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
+    var plan = NotificationConnectionPlan.Create(_notificationDataSource, resolution);
+    if (!plan.IsAvailable) {
+      return null;
+    }
+
+    await using var conn = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
+    await using var cmd = conn.CreateWhizbangCommand();
+    // The window count runs before the LIMIT, so the one row carries the whole count beside the oldest schedule.
+    cmd.CommandText = @"
+      SELECT count(*) OVER ()::int, EXTRACT(EPOCH FROM (NOW() - sc.next_fire_at))::float8, sc.schedule_id, sc.schedule_key
+      FROM wh_schedules sc
+      WHERE sc.status = 0 AND sc.next_fire_at < NOW() - @bound
+      ORDER BY sc.next_fire_at
+      LIMIT 1";
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(bound), NpgsqlDbType.Interval) { Value = bound });
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      return ScheduleOverdueReading.None;
+    }
+    return new ScheduleOverdueReading(
+      reader.GetInt32(0),
+      TimeSpan.FromSeconds(reader.GetDouble(1)),
+      reader.GetGuid(2),
+      await reader.IsDBNullAsync(3, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(3));
   }
 }

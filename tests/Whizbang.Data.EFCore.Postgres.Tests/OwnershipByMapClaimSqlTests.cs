@@ -25,7 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/566_ClaimsDecideThroughTheOwnershipTable.sql</code-under-test>
 [Category("Shard5")]
-public class OwnershipByMapClaimSqlTests : EFCoreTestBase {
+public partial class OwnershipByMapClaimSqlTests : EFCoreTestBase {
   private const string PERSPECTIVE = "Ownership.Perspective";
   private const string SUPPORTS_MAP = """{"partition_ownership_level":1}""";
   private const int MOVED = 1;

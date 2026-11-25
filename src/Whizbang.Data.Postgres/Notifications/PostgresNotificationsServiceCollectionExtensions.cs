@@ -196,6 +196,10 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // ScheduleWorker wakes on the ScheduleDueSignal doorbell (poll source / arm-on-mutation NOTIFY)
     // and reconciles on its backstop interval, draining due schedules through the claimer.
     services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleClaimer, PgScheduleClaimer>();
+    // #2575: the overdue gauges the worker publishes a stuck schedule on (its optional dependency, so registered here).
+    services.AddMetrics();
+    services.TryAddSingleton<Whizbang.Core.Observability.WhizbangMetrics>();
+    services.TryAddSingleton<Whizbang.Core.Temporal.TemporalMetrics>();
     // Hosted to start at Accept commands (#1636): firing a schedule publishes into the message tables.
     services.AddWhizbangWorker<Whizbang.Core.Temporal.ScheduleWorker>();
     // Temporal engine (F2): the schedule management API (create / pause / resume / cancel / trigger / update).
