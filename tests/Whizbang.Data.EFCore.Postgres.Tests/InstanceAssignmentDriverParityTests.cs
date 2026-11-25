@@ -81,6 +81,63 @@ public class InstanceAssignmentDriverParityTests : EFCoreTestBase {
   }
 
   [Test]
+  [Timeout(120000)]
+  public async Task BothDrivers_RegisterTheMonitorAndTheAssignmentHealthComponent_ThatReadTheInstancesOwnRowAsync(
+      CancellationToken cancellationToken) {
+    var (worker, _, _) = await _seedAsync(cancellationToken);
+    var self = new FixedInstance(worker);
+    await using var efCore = _efCore(self);
+    await using var dapper = _dapper(instance: self);
+
+    foreach (var provider in new[] { efCore, dapper }) {
+      var monitor = provider.GetRequiredService<InstanceAssignmentMonitor>();
+      var observation = await monitor.ObserveAsync(cancellationToken);
+      await Assert.That(observation.Failure).IsNull();
+      await Assert.That(observation.Assignment!.Kind).IsEqualTo(InstanceAssignmentKind.StandardWorker);
+      var health = provider.GetServices<Whizbang.Core.Health.IWhizbangHealthSource>().Single(h => h.Component == "assignment");
+      var report = await health.ReportAsync(cancellationToken);
+      await Assert.That(report.State).IsEqualTo(Whizbang.Core.Health.ComponentState.Operational);
+      await Assert.That(report.Detail).IsEqualTo("Assigned: standard worker, 6000 partitions, no map published");
+    }
+
+    // The monitor is hosted from the Coordinate stage on, by the registration both drivers share.
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IServiceInstanceProvider>(self);
+    services.AddWhizbangPostgres(ConnectionString, JsonContextRegistry.CreateCombinedOptions(), initializeSchema: false, []);
+    await using var composed = services.BuildServiceProvider();
+    var hosted = services.Single(d => d.ServiceType == typeof(Microsoft.Extensions.Hosting.IHostedService)
+      && d.ImplementationFactory?.Method.ReturnType == typeof(StartupStageGatedService<InstanceAssignmentMonitor>));
+    await Assert.That(hosted.ImplementationFactory!(composed)).IsTypeOf<StartupStageGatedService<InstanceAssignmentMonitor>>();
+  }
+
+  [Test]
+  public async Task TheOptions_BindFromConfiguration_AndKeepTheirDefaultsWithoutItAsync() {
+    var bound = new InstanceAssignmentOptions();
+    new Whizbang.Data.Postgres.Notifications.ConfigureInstanceAssignmentOptionsFromConfiguration(new ConfigurationBuilder()
+      .AddInMemoryCollection([
+        new("Whizbang:Database:InstanceAssignment:ObserveInterval", "00:00:10"),
+        new("Whizbang:Database:InstanceAssignment:AwaitingShareGrace", "00:02:00"),
+      ]).Build()).Configure(bound);
+    await Assert.That(bound.ObserveInterval).IsEqualTo(TimeSpan.FromSeconds(10));
+    await Assert.That(bound.AwaitingShareGrace).IsEqualTo(TimeSpan.FromMinutes(2));
+
+    var defaults = new InstanceAssignmentOptions();
+    new Whizbang.Data.Postgres.Notifications.ConfigureInstanceAssignmentOptionsFromConfiguration(new ConfigurationBuilder()
+      .AddInMemoryCollection([new("Whizbang:Database:InstanceAssignment:ObserveInterval", "soon")]).Build()).Configure(defaults);
+    await Assert.That(defaults.ObserveInterval).IsEqualTo(TimeSpan.FromSeconds(30));
+    await Assert.That(defaults.AwaitingShareGrace).IsEqualTo(TimeSpan.Zero);
+  }
+
+  private sealed class FixedInstance(Guid id) : IServiceInstanceProvider {
+    public Guid InstanceId => id;
+    public string ServiceName => "parity-svc";
+    public string HostName => "parity-host";
+    public int ProcessId => 1;
+    public ServiceInstanceInfo ToInfo() => new() { InstanceId = id, ServiceName = ServiceName, HostName = HostName, ProcessId = ProcessId };
+  }
+
+  [Test]
   public async Task KindOf_ReadsEveryNameTheFunctionWrites_AndRefusesAnUnknownOneAsync() {
     await Assert.That(Whizbang.Data.Postgres.PostgresFleetStatus.KindOf("starting")).IsEqualTo(InstanceAssignmentKind.Starting);
     await Assert.That(Whizbang.Data.Postgres.PostgresFleetStatus.KindOf("standard-worker")).IsEqualTo(InstanceAssignmentKind.StandardWorker);
@@ -140,19 +197,26 @@ public class InstanceAssignmentDriverParityTests : EFCoreTestBase {
     return (worker, holder, waiting);
   }
 
-  private ServiceProvider _efCore() {
+  private ServiceProvider _efCore(IServiceInstanceProvider? instance = null) {
     var services = new ServiceCollection();
     services.AddLogging();
     services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection([]).Build());
-    services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>();
+    if (instance is null) {
+      services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>();
+    } else {
+      services.AddSingleton(instance);
+    }
     services.AddDbContext<WorkCoordinationDbContext>(o => o.UseNpgsql(ConnectionString));
     _ = new WhizbangPerspectiveBuilder(services).WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres;
     return services.BuildServiceProvider();
   }
 
-  private ServiceProvider _dapper(string? connectionString = null) {
+  private ServiceProvider _dapper(string? connectionString = null, IServiceInstanceProvider? instance = null) {
     var services = new ServiceCollection();
     services.AddLogging();
+    if (instance is not null) {
+      services.AddSingleton(instance);
+    }
     services.AddWhizbangPostgres(connectionString ?? ConnectionString, JsonContextRegistry.CreateCombinedOptions(), initializeSchema: false, []);
     return services.BuildServiceProvider();
   }
