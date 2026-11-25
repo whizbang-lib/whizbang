@@ -119,15 +119,19 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
 
     var logger = dbContext.GetService<ILoggerFactory>().CreateLogger("Whizbang.Collective.Apply");
 
-    // Model-field (jsonb) setters = the spec's setters plus any the hooks added, minus any a hook removed.
-    var assignments = CollectiveSettersRewriter.CollectAssignments(spec.Setters)
-      .Concat(CollectiveSettersRewriter.FromHookSetters(hookPlan.ModelFieldSetters))
-      .Where(a => !hookPlan.RemovedModelFields.Contains(a.PathName))
-      .ToList();
-
     var (table, schema) = PerspectiveRowTable.Resolve(
       dbContext.Model, typeof(PerspectiveRow<TModel>), TypeNameFormatter.SimpleName(typeof(TModel)),
       "the collective event's perspective is not registered in this DbContext.");
+
+    // Model-field (jsonb) setters = the spec's setters plus any the hooks added, minus any a hook removed. A strongly-typed
+    // id among them is serialized in the form this schema's gate allows (#2518).
+    List<CollectiveSettersRewriter.CollectiveSetterAssignment> assignments;
+    using (Perspectives.StrongIdDocumentTarget.Of(dbContext, schema)) {
+      assignments = CollectiveSettersRewriter.CollectAssignments(spec.Setters)
+        .Concat(CollectiveSettersRewriter.FromHookSetters(hookPlan.ModelFieldSetters))
+        .Where(a => !hookPlan.RemovedModelFields.Contains(a.PathName))
+        .ToList();
+    }
     var qualifiedTable = schema is null
       ? PgIdentifier.Quote(table)
       : PgIdentifier.Quote(schema) + "." + PgIdentifier.Quote(table);

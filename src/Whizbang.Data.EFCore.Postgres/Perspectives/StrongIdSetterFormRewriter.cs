@@ -3,6 +3,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -12,8 +13,8 @@ namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 
 /// <summary>
 /// Makes <c>ExecuteUpdate</c> set a strongly-typed id inside a document in the form the fleet reads, the same as
-/// SaveChanges: the object <c>{"Value": ...}</c> while <see cref="WhizbangIdDocumentForm.WritesUuidString"/> says no,
-/// the UUID string once it says yes, and JSON <c>null</c> for no id (#2518).
+/// SaveChanges: the object <c>{"Value": ...}</c> while the updated schema's gate is not open, the UUID string once it is,
+/// and JSON <c>null</c> for no id (#2518).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -23,13 +24,15 @@ namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 /// <c>CASE WHEN @id IS NULL THEN 'null' WHEN @uuid_string THEN to_jsonb(@id) ELSE jsonb_build_object('Value', @id) END</c>.
 /// </para>
 /// <para>
-/// <c>@uuid_string</c> is a runtime parameter, read from <see cref="WhizbangIdDocumentForm.WritesUuidString"/> every time
-/// the statement runs: a compiled query is cached for the life of the process, and the write form switches during it.
+/// <c>@uuid_string</c> is a runtime parameter, read from <see cref="WhizbangIdDocumentForm.WritesUuidStringTo"/> for the
+/// updated table's schema every time the statement runs: a compiled query is cached for the life of the process, and the
+/// write form switches during it.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/identity/whizbang-ids#stored-form-switch</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/WhizbangIdDocumentStorageTests.cs:Whizbang_ExecuteUpdateWhileTheGateIsClosed_SetsAnIdInTheObjectFormAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/WhizbangIdDocumentStorageTests.cs:Whizbang_OneCompiledExecuteUpdate_FollowsTheGateWhenItRunsAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/WhizbangIdDocumentStorageTests.cs:Whizbang_ExecuteUpdate_FollowsTheGateOfTheSchemaItUpdates_NotTheProcessesAsync</tests>
 [SuppressMessage("Usage", "EF1001:Internal EF Core API usage",
   Justification = "The setter's value is rewritten after the provider built it; its jsonb functions have no public builder.")]
 internal sealed class StrongIdSetterFormRewriter(
@@ -40,7 +43,21 @@ internal sealed class StrongIdSetterFormRewriter(
 
   private const string VALUE = "Value";
 
+  private static readonly System.Reflection.MethodInfo _writesUuidStringFor =
+    ((Func<QueryContext, string?, bool>)WritesUuidStringFor).Method;
+
   private SqlParameterExpression? _uuidString;
+  private string? _schema;
+
+  /// <summary>
+  /// Whether the statement running in <paramref name="context"/> sets an id as its UUID string: whether the gate of the
+  /// schema it updates, in the database the context is connected to, is open (#2518).
+  /// </summary>
+  /// <param name="context">The running query's context.</param>
+  /// <param name="schema">The updated table's schema; null is <c>public</c>.</param>
+  /// <returns>True to set the UUID string.</returns>
+  internal static bool WritesUuidStringFor(QueryContext context, string? schema) =>
+    WhizbangIdDocumentForm.WritesUuidStringTo(context.Context.Database.GetDbConnection().Database, schema);
 
   /// <inheritdoc/>
   protected override Expression VisitExtension(Expression node) {
@@ -49,11 +66,16 @@ internal sealed class StrongIdSetterFormRewriter(
     return node switch {
       // A query reads; only an update sets.
       ShapedQueryExpression => node,
-      UpdateExpression update => update.Update(
-        update.SelectExpression,
-        [.. update.ColumnValueSetters.Select(s => new ColumnValueSetter(s.Column, (SqlExpression)new Setter(this).Visit(s.Value)))]),
+      UpdateExpression update => _visitUpdate(update),
       _ => base.VisitExtension(node),
     };
+  }
+
+  private UpdateExpression _visitUpdate(UpdateExpression update) {
+    _schema = update.Table.Schema;
+    return update.Update(
+        update.SelectExpression,
+        [.. update.ColumnValueSetters.Select(s => new ColumnValueSetter(s.Column, (SqlExpression)new Setter(this).Visit(s.Value)))]);
   }
 
   /// <summary>The write form, registered with the compilation the first time a setter needs it.</summary>
@@ -62,7 +84,8 @@ internal sealed class StrongIdSetterFormRewriter(
       compilation.RegisterRuntimeParameter(
         UUID_STRING_PARAMETER,
         Expression.Lambda<Func<QueryContext, bool>>(
-          Expression.Property(null, typeof(WhizbangIdDocumentForm), nameof(WhizbangIdDocumentForm.WritesUuidString)),
+          Expression.Call(
+            _writesUuidStringFor, QueryCompilationContext.QueryContextParameter, Expression.Constant(_schema, typeof(string))),
           QueryCompilationContext.QueryContextParameter));
       _uuidString = new SqlParameterExpression(
         UUID_STRING_PARAMETER, UUID_STRING_PARAMETER, typeof(bool), nullable: false, translationMode: null, boolean);

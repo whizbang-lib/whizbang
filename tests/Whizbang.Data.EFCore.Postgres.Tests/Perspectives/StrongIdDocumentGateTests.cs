@@ -241,19 +241,18 @@ public class StrongIdDocumentGateTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// A schema with no gate is left out of the process's write form rather than held, so it does not hold the schemas
-  /// that have one for the life of the process (#2518).
+  /// A schema with no gate (not yet migrated, or migrated by an earlier release) is held, so nothing this process writes
+  /// to it carries the UUID string, which that schema's readers may not read (#2518).
   /// </summary>
   [Test]
-  public async Task ASchemaWithoutTheGate_IsUnavailable_AndLeftOutOfTheWriteFormAsync() {
+  public async Task ASchemaWithoutTheGate_IsUnavailable_AndHeld_SoNothingWritesTheUuidStringIntoItAsync() {
     await using var conn = await _openAsync();
-    StrongIdDocumentForms.Hold(conn.Database, "no_such_schema");
 
     var answer = await StrongIdDocumentGate.CheckAsync(conn, "no_such_schema");
 
     await Assert.That(answer.State).IsEqualTo(StrongIdDocumentGateState.Unavailable);
-    await Assert.That(StrongIdDocumentForms.IsHeld(conn.Database, "no_such_schema")).IsFalse();
-    await Assert.That(StrongIdDocumentForms.IsOpen(conn.Database, "no_such_schema")).IsFalse();
+    await Assert.That(StrongIdDocumentForms.IsHeld(conn.Database, "no_such_schema")).IsTrue();
+    await Assert.That(WhizbangIdDocumentForm.WritesUuidStringTo(conn.Database, "no_such_schema")).IsFalse();
   }
 
   /// <summary>A gate that could not be asked holds its schema, so the process keeps the form every release reads.</summary>

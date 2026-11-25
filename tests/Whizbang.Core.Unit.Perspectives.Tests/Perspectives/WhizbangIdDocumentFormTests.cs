@@ -75,35 +75,49 @@ public class WhizbangIdDocumentFormTests {
   }
 
   /// <summary>
-  /// A schema with no gate is forgotten rather than held, so it does not hold the schemas that have one for the life of
-  /// the process (#2518).
+  /// A schema with no gate (not yet migrated, or migrated by an earlier release) is held like any other, so a write that
+  /// names no schema keeps the object form while it is (#2518).
   /// </summary>
   [Test]
-  public async Task AForgottenSchema_NoLongerHoldsTheProcess_ButAnOpenOneStaysOpenAsync() {
+  public async Task ASchemaWithoutAGate_IsHeld_SoAWriteThatNamesNoSchemaKeepsTheObjectFormAsync() {
     var state = new WhizbangIdDocumentFormState();
     state.Open("db", "orders");
     state.Hold("db", "no_gate");
-    var held = state.WritesUuidString;
-
-    state.Forget("db", "no_gate");
-    state.Forget("db", "orders");
-
-    await Assert.That(held).IsFalse();
-    await Assert.That(state.WritesUuidString).IsTrue();
-    await Assert.That(state.IsHeld("db", "no_gate")).IsFalse();
-    await Assert.That(state.IsOpen("db", "orders")).IsTrue().Because("an open schema is never forgotten");
-  }
-
-  [Test]
-  public async Task ForgettingEveryHeldSchema_LeavesNothingKnown_SoTheObjectFormAsync() {
-    var state = new WhizbangIdDocumentFormState();
-    state.Hold("db", "no_gate");
-
-    state.Forget("db", "no_gate");
-    state.Forget("db", "never_seen");
 
     await Assert.That(state.WritesUuidString).IsFalse();
-    await Assert.That(state.IsHeld("db", "no_gate")).IsFalse();
+    await Assert.That(state.IsHeld("db", "no_gate")).IsTrue();
+    await Assert.That(state.IsOpen("db", "orders")).IsTrue();
+  }
+
+  /// <summary>
+  /// The form is decided per schema for a write that names its target: the UUID string into a schema whose gate is open,
+  /// the object form into one that is held or was never asked, whatever the process's other schemas say (#2518).
+  /// </summary>
+  [Test]
+  public async Task AWriteToAnOpenSchema_WritesTheUuidString_WhileAnotherIsHeldAsync() {
+    var database = "form_" + Guid.CreateVersion7().ToString("N");
+    WhizbangIdDocumentForm.Open(database, "orders");
+    WhizbangIdDocumentForm.Hold(database, "no_gate");
+
+    bool open;
+    bool held;
+    bool unasked;
+    using (WhizbangIdDocumentForm.WritingTo(database, "orders")) {
+      open = WhizbangIdDocumentForm.WritesUuidString;
+      using (WhizbangIdDocumentForm.WritingTo(database, "no_gate")) {
+        held = WhizbangIdDocumentForm.WritesUuidString;
+      }
+    }
+    using (WhizbangIdDocumentForm.WritingTo(database, "never_asked")) {
+      unasked = WhizbangIdDocumentForm.WritesUuidString;
+    }
+
+    await Assert.That(open).IsTrue();
+    await Assert.That(held).IsFalse();
+    await Assert.That(unasked).IsFalse();
+    await Assert.That(WhizbangIdDocumentForm.WritesUuidStringTo(database, "orders")).IsTrue();
+    await Assert.That(WhizbangIdDocumentForm.WritesUuidStringTo(database, "no_gate")).IsFalse();
+    await Assert.That(WhizbangIdDocumentForm.WritesUuidStringTo(database, "never_asked")).IsFalse();
   }
 
   [Test]

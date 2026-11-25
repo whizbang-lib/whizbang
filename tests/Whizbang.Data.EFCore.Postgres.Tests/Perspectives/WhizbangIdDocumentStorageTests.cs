@@ -758,6 +758,32 @@ public class WhizbangIdDocumentStorageTests {
     await Assert.That(await _storedTextAsync(row.Id)).Contains($"\"OrderId\": \"{openOrder.Value}\"");
   }
 
+  /// <summary>
+  /// With no form forced, ExecuteUpdate follows the gate of the schema it updates in the database it is connected to: the
+  /// object form while that schema is held, the UUID string once it is open, even while another schema the process
+  /// writes to is held (#2518).
+  /// </summary>
+  [Test]
+  public async Task Whizbang_ExecuteUpdate_FollowsTheGateOfTheSchemaItUpdates_NotTheProcessesAsync() {
+    var (heldOrder, openOrder) = (TestOrderId.New(), TestOrderId.New());
+    var row = _row(TestOrderId.New(), null, TestOrderId.New());
+    await using var db = _context(o => new WhizbangContext(o));
+    db.Rows.Add(row);
+    await db.SaveChangesAsync();
+    async Task setAsync(TestOrderId id) =>
+      await db.Rows.Where(r => r.Id == row.Id).ExecuteUpdateAsync(s => s.SetProperty(r => r.Data.OrderId, id));
+
+    StrongIdDocumentForms.Hold(_databaseName, "public");
+    await setAsync(heldOrder);
+    var held = await _storedTextAsync(row.Id);
+    StrongIdDocumentForms.Open(_databaseName, "public");
+    StrongIdDocumentForms.Hold(_databaseName, "unmigrated");
+    await setAsync(openOrder);
+
+    await Assert.That(held).Contains($"\"OrderId\": {{\"Value\": \"{heldOrder.Value}\"}}");
+    await Assert.That(await _storedTextAsync(row.Id)).Contains($"\"OrderId\": \"{openOrder.Value}\"");
+  }
+
   /// <summary>ExecuteDelete with an id predicate deletes rows in either stored form (#2518).</summary>
   [Test]
   public async Task Whizbang_ExecuteDeleteWithAnIdPredicateMatchesBothFormsAsync() {

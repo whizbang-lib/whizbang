@@ -378,8 +378,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "record_heartbeat");
 
-    // #2323: the metadata with this build's stored form level, which the trim gate counts.
-    var metadataJson = request.MetadataJson();
+    // #2323: the metadata with this build's stored form level, which the trim gate counts. #2518: and whether this process
+    // writes strongly-typed ids into this schema's documents as UUID strings, which its own gate decides.
+    string metadataJson;
+    using (Perspectives.StrongIdDocumentTarget.Of(_dbContext, schema)) {
+      metadataJson = request.MetadataJson();
+    }
 
     // record_heartbeat returns BOOLEAN (migration 106): false means this instance_id has been
     // tombstoned in wh_instance_evictions and the caller must stop heartbeating. ExecuteSqlRawAsync

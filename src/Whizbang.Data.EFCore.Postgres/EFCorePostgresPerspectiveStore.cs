@@ -605,8 +605,11 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   public async Task FlushAsync(CancellationToken cancellationToken = default) {
     // For EF Core, ensure all tracked changes are committed to the database
     // This is critical for PostPerspectiveInline lifecycle stage which guarantees
-    // data is persisted and queryable before receptors fire
-    await _context.SaveChangesAsync(cancellationToken);
+    // data is persisted and queryable before receptors fire. A strongly-typed id in the documents it writes takes the
+    // form this table's schema's gate allows (#2518).
+    using (Perspectives.StrongIdDocumentTarget.Of(_context, typeof(PerspectiveRow<TModel>))) {
+      await _context.SaveChangesAsync(cancellationToken);
+    }
   }
 
   /// <inheritdoc/>

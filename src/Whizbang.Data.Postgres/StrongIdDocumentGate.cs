@@ -110,7 +110,8 @@ public static class StrongIdDocumentGate {
 
   /// <summary>
   /// Asks the gate, and records the answer in this process's write form: open or ready opens the schema, closed holds it,
-  /// and a schema with no gate is left out. Once the gate is open, each live instance that cannot read the UUID string
+  /// and so does a schema with no gate (not yet migrated, or migrated by an earlier release), so nothing writes the UUID
+  /// string into it. Once the gate is open, each live instance that cannot read the UUID string
   /// is reported: a Warning naming them whenever the set changes, and <see cref="UNREADABLE_INSTRUMENT_NAME"/>.
   /// </summary>
   /// <param name="connection">An open connection.</param>
@@ -126,9 +127,6 @@ public static class StrongIdDocumentGate {
     switch (answer.State) {
       case StrongIdDocumentGateState.Open or StrongIdDocumentGateState.Ready:
         WhizbangIdDocumentForm.Open(connection.Database, target);
-        break;
-      case StrongIdDocumentGateState.Unavailable:
-        WhizbangIdDocumentForm.Forget(connection.Database, target);
         break;
       default:
         WhizbangIdDocumentForm.Hold(connection.Database, target);
