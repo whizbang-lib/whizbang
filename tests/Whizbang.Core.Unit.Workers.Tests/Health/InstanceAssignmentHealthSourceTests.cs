@@ -38,6 +38,10 @@ public class InstanceAssignmentHealthSourceTests {
     var (unstarted, _, _, _, _) = await _setupAsync(null);
     await Assert.That(unstarted.State).IsEqualTo(ComponentState.Operational);
     await Assert.That(unstarted.Detail).IsEqualTo("not yet observed");
+    var (unstartedFailed, _, _, _, _) = await _setupAsync((r, _) => r.Fail(new InvalidOperationException("down")));
+    await Assert.That(unstartedFailed.State).IsEqualTo(ComponentState.Operational)
+      .Because("before the loop starts there is no grace to run out, only the failure to name");
+    await Assert.That(unstartedFailed.Detail).IsEqualTo("not yet observed; last read: the assignment could not be read: InvalidOperationException");
 
     var time = new FakeTimeProvider();
     var monitor = InstanceAssignments.Monitor(new QueuedAssignmentReader(), new FixedInstance(), time);

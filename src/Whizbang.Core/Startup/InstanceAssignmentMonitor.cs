@@ -44,6 +44,8 @@ public sealed partial class InstanceAssignmentMonitor : BackgroundService {
   private InstanceAssignmentObservation? _latest;
   private InstanceAssignment? _logged;
   private DateTimeOffset? _awaitingSince;
+  private DateTimeOffset? _startedAt;
+  private bool _succeeded;
 
   /// <summary>Creates the monitor.</summary>
   /// <param name="reader">Reads the fleet's assignments; null when no driver registered one, which every read reports.</param>
@@ -81,11 +83,17 @@ public sealed partial class InstanceAssignmentMonitor : BackgroundService {
   /// <summary>How long this instance may await its share before the health component reports it Degraded.</summary>
   public TimeSpan AwaitingShareGrace { get; }
 
-  /// <summary>RED stub.</summary>
-  public DateTimeOffset? StartedAt => null;
+  /// <summary>
+  /// When the hosted loop started, by this instance's clock; null before it starts. The grace for the first successful
+  /// read is measured from here.
+  /// </summary>
+  public DateTimeOffset? StartedAt => _startedAt;
 
-  /// <summary>RED stub.</summary>
-  internal void MarkStarted() => _ = _time;
+  /// <summary>Whether any read has found this instance's assignment (or found it is not in the fleet).</summary>
+  public bool HasSucceeded => Volatile.Read(ref _succeeded);
+
+  /// <summary>Records the loop's start on this instance's clock: the first thing the loop does.</summary>
+  internal void MarkStarted() => _startedAt = _time.GetUtcNow();
 
   /// <summary>The latest read; null before the first.</summary>
   public InstanceAssignmentObservation? Latest => Volatile.Read(ref _latest);
@@ -105,6 +113,7 @@ public sealed partial class InstanceAssignmentMonitor : BackgroundService {
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+    MarkStarted();
     while (!stoppingToken.IsCancellationRequested) {
       try {
         _ = await ObserveAsync(stoppingToken).ConfigureAwait(false);
@@ -137,6 +146,7 @@ public sealed partial class InstanceAssignmentMonitor : BackgroundService {
       LogAssigned(_logger, new AssignmentText(own));
       _logged = own;
     }
+    Volatile.Write(ref _succeeded, true);
     return new(own, now, _awaitingSince, null);
   }
 
