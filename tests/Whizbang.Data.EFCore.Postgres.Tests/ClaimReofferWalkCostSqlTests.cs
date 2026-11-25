@@ -40,6 +40,11 @@ public class ClaimReofferWalkCostSqlTests : EFCoreTestBase {
   private const int DEEPER = 4 * BATCH;
   private static readonly Guid _instance = new("00000000-0000-0000-0000-0000000024b4");
 
+  /// <summary>The tables the claim reads or writes in these measurements.</summary>
+  private static readonly string[] _measuredTables = [
+    "wh_perspective_events", "wh_inbox_state", "wh_inbox", "wh_active_streams", "wh_event_store", "wh_event_body",
+  ];
+
   /// <summary>
   /// Rows a re-offer claim may read per held stream: the walk's probe, the watermark's lease probe and its event-store
   /// lookup, with room for the guards and the lane probes, which read a few entries per claim.
@@ -65,6 +70,31 @@ public class ClaimReofferWalkCostSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// The measure is the re-offer's alone (#2587): the same re-offer, measured again while another session of this
+  /// database holds a snapshot from before the fill and invalidates what the measuring session cached about the measured
+  /// tables, reads the same rows from the same relations. Those are what a server other test processes share does to a
+  /// measurement: an open snapshot holds back the horizon, which decides whether the vacuum after the acquisition may
+  /// remove the versions the acquisition left dead (and whether the fill's pages are marked all-visible), and another
+  /// database's schema changes overflow the invalidation queue, which drops the session's cached relation state.
+  /// </summary>
+  [Test]
+  [Arguments("perspective_stream")]
+  [Arguments("inbox")]
+  [Timeout(600000)]
+  public async Task ReOfferMeasure_UnderAHorizonHeldElsewhereAndAnInvalidation_ReadsTheSameRowsAsync(
+      string source, CancellationToken cancellationToken) {
+    var fill = source == "inbox" ? (Func<NpgsqlConnection, int, CancellationToken, Task>)_fillInboxAsync : _fillPerspectiveAsync;
+    await _prepareAsync(cancellationToken);
+
+    var plain = await _measureAsync("force_custom_plan", source, BATCH, fill, cancellationToken);
+    var disturbed = await _measureAsync("force_custom_plan", source, BATCH, fill, cancellationToken, disturb: true);
+
+    await Assert.That(disturbed.ByRelation).IsEquivalentTo(plain.ByRelation)
+      .Because($"the same re-offer reads the same rows whatever another session holds or invalidates ({source}): "
+        + $"{plain} undisturbed, {disturbed} disturbed");
+  }
+
+  /// <summary>
   /// Measures the re-offer over <see cref="BATCH"/> held streams and over four times as many, and requires the larger
   /// to read no more than four times the smaller (plus one row per stream of the smaller batch, for the guards) and no
   /// more than <see cref="ROWS_PER_HELD_STREAM"/> rows per stream it holds.
@@ -72,14 +102,7 @@ public class ClaimReofferWalkCostSqlTests : EFCoreTestBase {
   private async Task _assertPricedByTheBatchAsync(
       string planMode, string source, Func<NpgsqlConnection, int, CancellationToken, Task> fill,
       CancellationToken cancellationToken) {
-    await using (var setup = new NpgsqlConnection(ConnectionString)) {
-      await setup.OpenAsync(cancellationToken);
-      await _registerAsync(setup, cancellationToken);
-      // As the maintenance step builds them after the migrations, before the first poll.
-      foreach (var index in ConcurrentIndexBuild.FrameworkIndexes.Where(i => i.Table == "wh_inbox_state")) {
-        _ = await ConcurrentIndexBuild.EnsureAsync(setup, "public", index, 300, cancellationToken: cancellationToken);
-      }
-    }
+    await _prepareAsync(cancellationToken);
 
     var shallow = await _measureAsync(planMode, source, BATCH, fill, cancellationToken);
     var deep = await _measureAsync(planMode, source, DEEPER, fill, cancellationToken);
@@ -92,6 +115,17 @@ public class ClaimReofferWalkCostSqlTests : EFCoreTestBase {
       .Because($"the walk reads one probe per held stream ({source}, {planMode}): {story}");
   }
 
+  /// <summary>Registers the instance and builds the indexes the maintenance step builds before the first poll.</summary>
+  private async Task _prepareAsync(CancellationToken cancellationToken) {
+    await using var setup = new NpgsqlConnection(ConnectionString);
+    await setup.OpenAsync(cancellationToken);
+    await _registerAsync(setup, cancellationToken);
+    // As the maintenance step builds them after the migrations, before the first poll.
+    foreach (var index in ConcurrentIndexBuild.FrameworkIndexes.Where(i => i.Table == "wh_inbox_state")) {
+      _ = await ConcurrentIndexBuild.EnsureAsync(setup, "public", index, 300, cancellationToken: cancellationToken);
+    }
+  }
+
   /// <summary>
   /// Empties the queues, fills <paramref name="streams"/> held streams whose leases lapsed an hour ago, analyzes them
   /// (so the statistics say every lease lapsed), claims them once (so every lease is live and the statistics still say
@@ -99,10 +133,15 @@ public class ClaimReofferWalkCostSqlTests : EFCoreTestBase {
   /// </summary>
   private async Task<RowsReadResult> _measureAsync(
       string planMode, string source, int streams, Func<NpgsqlConnection, int, CancellationToken, Task> fill,
-      CancellationToken cancellationToken) {
+      CancellationToken cancellationToken, bool disturb = false) {
+    await using var elsewhere = new NpgsqlConnection(ConnectionString);
     await using (var setup = new NpgsqlConnection(ConnectionString)) {
       await setup.OpenAsync(cancellationToken);
       await _executeAsync(setup, "TRUNCATE wh_perspective_events, wh_inbox_state, wh_inbox, wh_active_streams, wh_event_store, wh_event_body CASCADE", cancellationToken);
+      if (disturb) {
+        // Another session's open snapshot, as a loaded server has: the horizon stays where it was before the fill.
+        await _holdSnapshotAsync(elsewhere, cancellationToken);
+      }
       await fill(setup, streams, cancellationToken);
       await _executeAsync(setup, "VACUUM ANALYZE wh_perspective_events, wh_inbox_state, wh_inbox, wh_active_streams, wh_event_store, wh_event_body", cancellationToken);
       var acquired = await _claimAsync(setup, source, streams, cancellationToken);
@@ -118,10 +157,37 @@ public class ClaimReofferWalkCostSqlTests : EFCoreTestBase {
     await conn.OpenAsync(cancellationToken);
     await _executeAsync(conn, $"SET plan_cache_mode = {planMode}", cancellationToken);
     var offered = 0;
-    var read = await RowsRead.MeasureAsync(conn, async () => offered = await _claimAsync(conn, source, streams, cancellationToken),
-      commit: true, cancellationToken);
+    var read = await RowsRead.MeasureAsync(conn, async () => {
+      if (disturb) {
+        await _invalidateAsync(cancellationToken);
+      }
+      offered = await _claimAsync(conn, source, streams, cancellationToken);
+    }, commit: true, cancellationToken);
     await Assert.That(offered).IsEqualTo(streams).Because($"the claim re-offers every held stream ({source}), or it measured nothing");
     return read;
+  }
+
+  /// <summary>
+  /// Opens a repeatable-read transaction on <paramref name="conn"/> and takes its snapshot, which it holds until the
+  /// connection closes: no row version that commits after it is removable, by a vacuum or by a scan, in this database.
+  /// </summary>
+  private static async Task _holdSnapshotAsync(NpgsqlConnection conn, CancellationToken cancellationToken) {
+    await conn.OpenAsync(cancellationToken);
+    await _executeAsync(conn, "BEGIN ISOLATION LEVEL REPEATABLE READ", cancellationToken);
+    await _executeAsync(conn, "SELECT 1", cancellationToken);
+  }
+
+  /// <summary>
+  /// From another session, rewrites the options of every measured table (to the value they hold), which invalidates
+  /// what every session cached about them, as a reset of the invalidation queue does; the measuring session rebuilds
+  /// its cache on its next access.
+  /// </summary>
+  private async Task _invalidateAsync(CancellationToken cancellationToken) {
+    await using var other = new NpgsqlConnection(ConnectionString);
+    await other.OpenAsync(cancellationToken);
+    foreach (var table in _measuredTables) {
+      await _executeAsync(other, $"ALTER TABLE {table} SET (autovacuum_enabled = false)", cancellationToken);
+    }
   }
 
   /// <summary>One claim for a batch of <paramref name="streams"/>; returns the rows of <paramref name="source"/> it returned.</summary>
