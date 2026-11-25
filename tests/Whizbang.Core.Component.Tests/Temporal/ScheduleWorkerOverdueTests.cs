@@ -79,6 +79,23 @@ public class ScheduleWorkerOverdueTests {
   }
 
   [Test]
+  public async Task CheckOverdue_WhenOnlyTheOldestIdAppearsOrGoes_WarnsAgain_AndAnUnchangedReadingDoesNotAsync() {
+    using var host = new Host();
+    var unnamed = _oneStuck with { Count = 2, OldestScheduleId = null };
+    host.Claimer.Reading = unnamed;
+    _ = await host.Worker.CheckOverdueOnceAsync();
+
+    host.Claimer.Reading = _oneStuck with { Count = 2 };   // same count, the oldest is now named
+    _ = await host.Worker.CheckOverdueOnceAsync();
+    host.Claimer.Reading = unnamed;                          // same count, the oldest is no longer named
+    _ = await host.Worker.CheckOverdueOnceAsync();
+    _ = await host.Worker.CheckOverdueOnceAsync();           // unchanged, with no oldest named
+
+    await Assert.That(host.Events(OVERDUE_EVENT_ID)).Count().IsEqualTo(3)
+      .Because("an oldest schedule appearing or disappearing is a change even when the count is the same; a repeat is not");
+  }
+
+  [Test]
   public async Task CheckOverdue_WhenTheOverdueSetClears_SaysSoOnceAsync() {
     using var host = new Host();
     host.Claimer.Reading = _oneStuck;
