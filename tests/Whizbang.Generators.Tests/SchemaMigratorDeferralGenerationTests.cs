@@ -123,6 +123,27 @@ public class SchemaMigratorDeferralGenerationTests {
   }
 
   /// <summary>
+  /// The registry check runs whatever the connection registration (#2578): a host that registers no separate connection
+  /// has it run on the context's own connection, so it is not guarded by the factory. Before, it was, and such a host
+  /// reconciled its registry only inside the pass, which a hash-clean restart skips.
+  /// </summary>
+  [Test]
+  public async Task TheRegistryCheck_RunsWithOrWithoutASeparateConnectionAsync() {
+    var output = await _generatedAsync(MINIMAL_CONTEXT);
+
+    var held = output.IndexOf("if (incompatibilityOverride is not null || applicationHeld) {", StringComparison.Ordinal);
+    var check = output.IndexOf("Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ReconcileIfStaleAsync(", held, StringComparison.Ordinal);
+    var between = output[held..check];
+    await Assert.That(between).DoesNotContain("if (segmentConnectionFactory is not null) {", StringComparison.Ordinal)
+      .Because("no connection registration skips the check");
+    var borrowed = output.IndexOf("Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ReconcileIfStaleAsync(", check + 1, StringComparison.Ordinal);
+    await Assert.That(borrowed).IsGreaterThan(check);
+    var call = output[borrowed..output.IndexOf(';', borrowed)];
+    await Assert.That(call).Contains("(Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection()", StringComparison.Ordinal)
+      .Because("without a factory, it runs on the context's own connection");
+  }
+
+  /// <summary>
   /// The bootstrap subset is emitted, and is a subset.
   /// </summary>
   /// <remarks>
