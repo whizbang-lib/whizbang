@@ -25,9 +25,9 @@ namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 /// </para>
 /// <para>
 /// Each id discovered as a complex property is removed and the same member added back as a property, with the id's
-/// converter and JSON reader/writer. Outside a document the property keeps the column the complex id had,
-/// <c>&lt;column&gt;_Value</c>, as <see cref="WhizbangIdColumnConvention"/> keeps it on a context with the extension. A
-/// collection of ids is left as Entity Framework discovered it.
+/// converter and JSON reader/writer. Outside a document its column is named after the property, as on a context with
+/// the extension; <c>migrations add</c> scaffolds the move from the complex id's <c>&lt;column&gt;_Value</c> as a rename.
+/// A collection of ids is left as Entity Framework discovered it.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/identity/whizbang-ids#stored-form</docs>
@@ -51,10 +51,10 @@ public static class WhizbangIdConvention {
   /// either stored form (#2518). The generated <c>OnConfiguring</c> calls it.
   /// </summary>
   /// <remarks>
-  /// Nothing is changed on options that already have a query postprocessor of their own or of the extension, on options
-  /// for a provider that is not relational, or on frozen options: a pooled context's options cannot be changed by
-  /// <c>OnConfiguring</c>, so a pooled context needs the extension (<c>UseWhizbangFunctions</c>), which the generated
-  /// registration always adds.
+  /// A postprocessor the options already replace (the extension's, or the consumer's own) is left as it is, and nothing is
+  /// changed on options for a provider that is not relational, or on frozen options: a pooled context's options cannot
+  /// be changed by <c>OnConfiguring</c>, so a pooled context needs the extension (<c>UseWhizbangFunctions</c>), which the
+  /// generated registration always adds.
   /// </remarks>
   /// <param name="optionsBuilder">The builder <c>OnConfiguring</c> is given.</param>
   /// <docs>fundamentals/identity/whizbang-ids#stored-form-switch</docs>
@@ -63,13 +63,13 @@ public static class WhizbangIdConvention {
   public static void Configure(DbContextOptionsBuilder optionsBuilder) {
     ArgumentNullException.ThrowIfNull(optionsBuilder);
     var options = optionsBuilder.Options;
-    var replaced = options.FindExtension<CoreOptionsExtension>()?.ReplacedServices;
-    if (options.IsFrozen
-        || !options.Extensions.OfType<RelationalOptionsExtension>().Any()
-        || replaced?.Keys.Any(k => k.Item1 == typeof(IQueryTranslationPostprocessorFactory)) == true) {
+    if (options.IsFrozen || !options.Extensions.OfType<RelationalOptionsExtension>().Any()) {
       return;
     }
-    optionsBuilder.ReplaceService<IQueryTranslationPostprocessorFactory, ContainmentPostprocessorFactory>();
+    var replaced = options.FindExtension<CoreOptionsExtension>()?.ReplacedServices;
+    if (replaced?.Keys.Any(k => k.Item1 == typeof(IQueryTranslationPostprocessorFactory)) != true) {
+      optionsBuilder.ReplaceService<IQueryTranslationPostprocessorFactory, ContainmentPostprocessorFactory>();
+    }
   }
 
   private static void _apply(IMutableComplexType type) {
@@ -95,9 +95,6 @@ public static class WhizbangIdConvention {
       property.IsNullable = nullable || complex.ClrType != idType;
       if (jsonName is not null) {
         property.SetJsonPropertyName(jsonName);
-      } else if (!type.IsMappedToJson() && WhizbangIdColumnConvention.KeptColumn(property) is { } column) {
-        // Outside a document the id keeps the column it had as a complex type (WhizbangIdColumnConvention).
-        property.SetColumnName(column);
       }
     }
   }

@@ -245,8 +245,6 @@ internal sealed class WhizbangOptionsExtension : IDbContextOptionsExtension {
     // Entity Framework converts is decided by the model it built and not by a generator's partial
     // discovery of it. Every generated perspective context carries this extension.
     services.AddSingleton<IConventionSetPlugin, CanonicalTemporalConventionSetPlugin>();
-    // An id outside a document keeps the column a complex id had (#2518): no migration outside the strong-id gate.
-    services.AddSingleton<IConventionSetPlugin, Whizbang.Data.EFCore.Postgres.Perspectives.WhizbangIdColumnConventionSetPlugin>();
 
     // A dictionary inside a perspective document is a value stored as an array of key/value objects (#1911). Entity
     // Framework asks the type mapping source while it discovers a complex type's members, so the mapping has to be

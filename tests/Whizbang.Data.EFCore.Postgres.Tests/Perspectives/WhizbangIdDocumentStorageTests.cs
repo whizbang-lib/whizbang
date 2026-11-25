@@ -683,8 +683,9 @@ public class WhizbangIdDocumentStorageTests {
     await _executeUpdateWhileTheGateIsClosedAsync(o => new ConventionContext(o));
 
   /// <summary>
-  /// Options that already carry a query postprocessor, and a pooled context's frozen options, are left as they are: the
-  /// first has the extension's (or the consumer's own), and the second cannot be changed by <c>OnConfiguring</c>.
+  /// Plain options get the query postprocessor; options that already carry one, and a pooled
+  /// context's frozen options, are left as they are: the first has the extension's (or the consumer's own), and the
+  /// second cannot be changed by <c>OnConfiguring</c>.
   /// </summary>
   [Test]
   public async Task Configure_LeavesOptionsWithAPostprocessorOrFrozen_AsTheyAreAsync() {
@@ -700,7 +701,7 @@ public class WhizbangIdDocumentStorageTests {
     WhizbangIdConvention.Configure(withExtension);
     WhizbangIdConvention.Configure(frozenBuilder);
 
-    await Assert.That(replaced(plain.Options)).IsEqualTo(1);
+    await Assert.That(replaced(plain.Options)).IsEqualTo(1).Because("the query postprocessor");
     await Assert.That(replaced(withExtension.Options)).IsEqualTo(extensionBefore);
     await Assert.That(frozenBuilder.Options).IsSameReferenceAs(frozen);
   }

@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -15,13 +18,12 @@ using Whizbang.Testing.Containers;
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 
 /// <summary>
-/// A strongly-typed id outside a perspective document keeps the column it had before #2518, <c>&lt;column&gt;_Value</c>,
-/// so an instance of an earlier release and one of this release read and write the same column during a rolling deploy
-/// and no migration is needed. A configured column name is the opt-in to a column named after the property; a converter
-/// of the model's own is left alone.
+/// A strongly-typed id outside a perspective document is a <c>uuid</c> column named after its property (#2518). A table
+/// an earlier release created holds the id in the column Entity Framework gave the complex id's <c>Value</c>,
+/// <c>&lt;column&gt;_Value</c>; <c>migrations add</c> scaffolds the move as a rename, so the values stay.
 /// </summary>
 /// <docs>fundamentals/identity/whizbang-ids#strong-id-columns</docs>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/Perspectives/WhizbangIdColumnConvention.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/Perspectives/WhizbangIdTypeMapping.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/Perspectives/WhizbangIdConvention.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard1")]
@@ -67,18 +69,12 @@ public class WhizbangIdEntityColumnTests {
       });
   }
 
-  /// <summary>A context with the extension that opts one id into a column named after its property.</summary>
-  private sealed class OptedInContext(DbContextOptions<OptedInContext> options) : DbContext(options) {
-    protected override void OnModelCreating(ModelBuilder modelBuilder) =>
-      modelBuilder.Entity<Shipment>(e => {
-        e.ToTable(TABLE);
-        e.ComplexProperty(x => x.Depot);
-        e.Property(x => x.OrderId).HasColumnName("OrderId");
-        e.Property(x => x.Converted).HasConversion(v => v.Value, g => new TestOrderId(g));
-      });
-  }
-
-  /// <summary>A generated context without the extension, which calls <see cref="WhizbangIdConvention.Apply"/>.</summary>
+  /// <summary>
+  /// A generated context without the extension: <see cref="WhizbangIdConvention.Apply"/> in its model and
+  /// <see cref="WhizbangIdConvention.Configure"/> in its options, as the generated context calls them. Without the type
+  /// mapping an entity's own id has to be configured, and stays as configured; the convention replaces ids inside a
+  /// complex type.
+  /// </summary>
   private sealed class ConventionContext(DbContextOptions<ConventionContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       modelBuilder.Entity<Shipment>(e => {
@@ -90,6 +86,9 @@ public class WhizbangIdEntityColumnTests {
       });
       WhizbangIdConvention.Apply(modelBuilder);
     }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
+      WhizbangIdConvention.Configure(optionsBuilder);
   }
 
   [Before(Test)]
@@ -134,51 +133,38 @@ public class WhizbangIdEntityColumnTests {
     return columns;
   }
 
+  /// <summary>What <c>migrations add</c> scaffolds on <paramref name="current"/> from <paramref name="earlier"/>'s model.</summary>
+  private static IReadOnlyList<MigrationOperation> _migrationsAdd(DbContext earlier, DbContext current) =>
+    current.GetService<IMigrationsModelDiffer>().GetDifferences(
+      earlier.GetService<IDesignTimeModel>().Model.GetRelationalModel(),
+      current.GetService<IDesignTimeModel>().Model.GetRelationalModel());
+
   [Test]
-  public async Task WithTheExtension_AnIdOutsideADocument_KeepsTheColumnItHadAsAComplexTypeAsync() {
+  public async Task AnIdOutsideADocument_IsAColumnNamedAfterItsProperty_OnEitherPathAsync() {
     await using var earlier = _context<EarlierContext>(whizbang: false);
     await using var current = _context<CurrentContext>(whizbang: true);
+    await using var convention = _context<ConventionContext>(whizbang: false);
 
-    var before = _columns(earlier);
-    var after = _columns(current);
+    var (before, after, generated) = (_columns(earlier), _columns(current), _columns(convention));
 
     await Assert.That(before["Depot.DepotId.Value"]).IsEqualTo("Depot_DepotId_Value");
     await Assert.That(before["OrderId.Value"]).IsEqualTo("OrderId_Value");
-    await Assert.That(after["Depot.DepotId"]).IsEqualTo("Depot_DepotId_Value");
-    await Assert.That(after["OrderId"]).IsEqualTo("OrderId_Value");
-    await Assert.That(after["ParentId"]).IsEqualTo("ParentId_Value");
+    await Assert.That(after["Depot.DepotId"]).IsEqualTo("Depot_DepotId");
+    await Assert.That(after["OrderId"]).IsEqualTo("OrderId");
+    await Assert.That(after["ParentId"]).IsEqualTo("ParentId");
     await Assert.That(after["Converted"]).IsEqualTo("Converted")
       .Because("an id with a converter of the model's own was a column named after the property before too");
-  }
-
-  [Test]
-  public async Task WithoutTheExtension_TheGeneratedConvention_KeepsTheSameColumnsAsync() {
-    await using var context = _context<ConventionContext>(whizbang: false);
-
-    var columns = _columns(context);
-
-    await Assert.That(columns["Depot.DepotId"]).IsEqualTo("Depot_DepotId_Value");
-    await Assert.That(columns["Converted"]).IsEqualTo("Converted");
-    await Assert.That(context.Model.FindEntityType(typeof(Shipment))!.FindProperty(nameof(Shipment.OrderId))).IsNull()
-      .Because("an entity's own complex id stays as it was configured; only ids inside a complex type are replaced");
-  }
-
-  [Test]
-  public async Task AConfiguredColumnName_IsTheOptInToAColumnNamedAfterThePropertyAsync() {
-    await using var context = _context<OptedInContext>(whizbang: true);
-
-    var columns = _columns(context);
-
-    await Assert.That(columns["OrderId"]).IsEqualTo("OrderId");
-    await Assert.That(columns["ParentId"]).IsEqualTo("ParentId_Value");
+    await Assert.That(generated["Depot.DepotId"]).IsEqualTo("Depot_DepotId");
+    await Assert.That(generated["OrderId.Value"]).IsEqualTo("OrderId_Value")
+      .Because("an entity's own complex id stays as it was configured");
   }
 
   /// <summary>
-  /// The rolling deploy: a table an earlier release created, written by it, is read and written by this release through
-  /// the same columns, and what this release writes the earlier release reads.
+  /// <c>migrations add</c> against a table an earlier release created scaffolds each id's move as a rename, never a drop
+  /// and an add, and once applied this release reads the values the earlier release wrote.
   /// </summary>
   [Test]
-  public async Task ATableAnEarlierReleaseCreated_IsReadAndWrittenByThisRelease_AndTheOtherWayAsync() {
+  public async Task MigrationsAdd_FromAnEarlierModel_RenamesTheValueColumn_AndKeepsItsDataAsync() {
     var (order, parent, depot, converted) = (TestOrderId.New(), TestOrderId.New(), TestOrderId.New(), TestOrderId.New());
     var id = Guid.CreateVersion7();
     await using (var earlier = _context<EarlierContext>(whizbang: false)) {
@@ -193,26 +179,40 @@ public class WhizbangIdEntityColumnTests {
       await earlier.SaveChangesAsync();
     }
 
+    IReadOnlyList<MigrationOperation> operations;
+    await using (var earlier = _context<EarlierContext>(whizbang: false))
+    await using (var current = _context<CurrentContext>(whizbang: true)) {
+      operations = _migrationsAdd(earlier, current);
+      var commands = current.GetService<IMigrationsSqlGenerator>().Generate(operations, current.Model);
+      foreach (var command in commands) {
+        await current.Database.ExecuteSqlRawAsync(command.CommandText);
+      }
+    }
     Shipment read;
-    var newOrder = TestOrderId.New();
     await using (var current = _context<CurrentContext>(whizbang: true)) {
       read = await current.Set<Shipment>().AsNoTracking().SingleAsync(s => s.Id == id);
-      var tracked = await current.Set<Shipment>().SingleAsync(s => s.Id == id);
-      tracked.OrderId = newOrder;
-      tracked.ParentId = null;
-      await current.SaveChangesAsync();
-    }
-    Shipment readBack;
-    await using (var earlier = _context<EarlierContext>(whizbang: false)) {
-      readBack = await earlier.Set<Shipment>().AsNoTracking().SingleAsync(s => s.Id == id);
     }
 
+    var renames = operations.OfType<RenameColumnOperation>().Select(r => $"{r.Name}->{r.NewName}").Order().ToList();
+    await Assert.That(renames).IsEquivalentTo(["Depot_DepotId_Value->Depot_DepotId", "OrderId_Value->OrderId", "ParentId_Value->ParentId"]);
+    await Assert.That(operations.OfType<DropColumnOperation>()).IsEmpty().Because("no id's values are dropped");
+    await Assert.That(operations.OfType<AddColumnOperation>()).IsEmpty();
     await Assert.That(read.OrderId).IsEqualTo(order);
     await Assert.That(read.ParentId).IsEqualTo(parent);
     await Assert.That(read.Depot.DepotId).IsEqualTo(depot);
     await Assert.That(read.Converted).IsEqualTo(converted);
-    await Assert.That(readBack.OrderId).IsEqualTo(newOrder);
-    await Assert.That(readBack.ParentId).IsNull();
-    await Assert.That(readBack.Depot.DepotId).IsEqualTo(depot);
+  }
+
+  /// <summary>A generated context without the extension scaffolds its id's move as a rename too.</summary>
+  [Test]
+  public async Task MigrationsAdd_OnAContextWithoutTheExtension_RenamesTooAsync() {
+    await using var earlier = _context<EarlierContext>(whizbang: false);
+    await using var convention = _context<ConventionContext>(whizbang: false);
+
+    var operations = _migrationsAdd(earlier, convention);
+
+    await Assert.That(operations.OfType<RenameColumnOperation>().Select(r => $"{r.Name}->{r.NewName}").ToList())
+      .IsEquivalentTo(["Depot_DepotId_Value->Depot_DepotId"]);
+    await Assert.That(operations.OfType<DropColumnOperation>()).IsEmpty();
   }
 }
