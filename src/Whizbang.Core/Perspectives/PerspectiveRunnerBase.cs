@@ -101,6 +101,15 @@ public abstract class PerspectiveRunnerBase<TPerspective, TModel> : IPerspective
     public bool KeepsRewindFloor { get; init; } = true;
 
     /// <summary>
+    /// True for a perspective that applies both ephemeral and durable events (#2463). Beside its floor, the reap-boundary
+    /// snapshot that only the reap moves, it keeps one tip snapshot that its live and rewind cadences write and that never
+    /// counts as a reap floor, so a rewind of it starts near the tip instead of replaying every durable event since the
+    /// last reap boundary.
+    /// </summary>
+    /// <docs>fundamentals/events/ephemeral-events#the-tip-snapshot</docs>
+    public bool KeepsTipSnapshot { get; init; }
+
+    /// <summary>
     /// True for a perspective marked [OverwriteOnly] (#1869), whose every Apply builds the row from its event alone, so a
     /// rewind applies only the stream's last event (_replayLastEventOnlyAsync).
     /// </summary>

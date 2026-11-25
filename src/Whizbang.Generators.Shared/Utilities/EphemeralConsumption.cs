@@ -31,4 +31,17 @@ public static class EphemeralConsumption {
     appliedEvents.Count > 0
     && appliedEvents.All(EphemeralResolver.IsEphemeral)
     && !perspective.GetAttributes().Any(a => TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, KEEP_REWIND_FLOOR_ATTRIBUTE));
+
+  /// <summary>
+  /// True when the perspective keeps a tip snapshot beside its rewind floor (#2463): it applies at least one ephemeral
+  /// event and at least one durable one. Its floor is the reap-boundary snapshot, moved only by the reap; its tip is the
+  /// live and rewind cadence's snapshot near the cursor, which never counts as a floor. A perspective that applies only
+  /// ephemeral events keeps its one snapshot as its floor, and one that applies only durable events loses nothing to the
+  /// reaper, so neither keeps a tip.
+  /// </summary>
+  /// <param name="appliedEvents">Every event type the perspective applies.</param>
+  /// <docs>fundamentals/events/ephemeral-events#the-tip-snapshot</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/EphemeralTipSnapshotGeneratorTests.cs</tests>
+  public static bool KeepsTipSnapshot(IReadOnlyCollection<ITypeSymbol> appliedEvents) =>
+    appliedEvents.Any(EphemeralResolver.IsEphemeral) && !appliedEvents.All(EphemeralResolver.IsEphemeral);
 }
