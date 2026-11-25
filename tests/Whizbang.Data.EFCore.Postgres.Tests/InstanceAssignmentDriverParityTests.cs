@@ -94,8 +94,7 @@ public class InstanceAssignmentDriverParityTests : EFCoreTestBase {
       var observation = await monitor.ObserveAsync(cancellationToken);
       await Assert.That(observation.Failure).IsNull();
       await Assert.That(observation.Assignment!.Kind).IsEqualTo(InstanceAssignmentKind.StandardWorker);
-      var health = provider.GetServices<Whizbang.Core.Health.IWhizbangHealthSource>().Single(h => h.Component == "assignment");
-      var report = await health.ReportAsync(cancellationToken);
+      var report = await new Whizbang.Core.Health.InstanceAssignmentHealthSource(monitor).ReportAsync(cancellationToken);
       await Assert.That(report.State).IsEqualTo(Whizbang.Core.Health.ComponentState.Operational);
       await Assert.That(report.Detail).IsEqualTo("Assigned: standard worker, 6000 partitions, no map published");
     }
@@ -109,6 +108,13 @@ public class InstanceAssignmentDriverParityTests : EFCoreTestBase {
     var hosted = services.Single(d => d.ServiceType == typeof(Microsoft.Extensions.Hosting.IHostedService)
       && d.ImplementationFactory?.Method.ReturnType == typeof(StartupStageGatedService<InstanceAssignmentMonitor>));
     await Assert.That(hosted.ImplementationFactory!(composed)).IsTypeOf<StartupStageGatedService<InstanceAssignmentMonitor>>();
+    // The assignment component is registered by the same shared registration, over the same monitor.
+    var component = services.Single(d => d.ServiceType == typeof(Whizbang.Core.Health.IWhizbangHealthSource)
+      && d.ImplementationFactory?.Method.ReturnType == typeof(Whizbang.Core.Health.InstanceAssignmentHealthSource));
+    var source = (Whizbang.Core.Health.IWhizbangHealthSource)component.ImplementationFactory!(composed);
+    await Assert.That(source.Component).IsEqualTo("assignment");
+    await Assert.That((await source.ReportAsync(cancellationToken)).State).IsEqualTo(Whizbang.Core.Health.ComponentState.Degraded)
+      .Because("before the monitor's first read the component says it has not read yet");
   }
 
   [Test]
