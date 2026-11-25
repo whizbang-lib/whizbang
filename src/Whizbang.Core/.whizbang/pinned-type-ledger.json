@@ -200,6 +200,13 @@
       "formerNames": []
     },
     {
+      "pinnedId": "49f7cffc-8bb0-41dd-8b43-273b3dc651b2",
+      "clrTypeName": "Whizbang.Core.Messaging.OriginPositionsAnswer",
+      "kind": "command",
+      "assembly": "Whizbang.Core",
+      "formerNames": []
+    },
+    {
       "pinnedId": "b5e8d2a7-4f91-4c36-8a05-6d3c9e1b7f48",
       "clrTypeName": "Whizbang.Core.Messaging.PerspectiveCoverageGapDetected",
       "kind": "event",
@@ -209,6 +216,13 @@
     {
       "pinnedId": "c9f4b1e7-2a6d-4c38-9b05-7e1f8d3a6c92",
       "clrTypeName": "Whizbang.Core.Messaging.RequestIntegrityManifest",
+      "kind": "command",
+      "assembly": "Whizbang.Core",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "12b2fde7-d290-4f8a-9e0a-c41133a047c9",
+      "clrTypeName": "Whizbang.Core.Messaging.RequestOriginPositions",
       "kind": "command",
       "assembly": "Whizbang.Core",
       "formerNames": []
