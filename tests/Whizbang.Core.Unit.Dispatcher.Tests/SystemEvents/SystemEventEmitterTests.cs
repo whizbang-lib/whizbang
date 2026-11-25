@@ -627,7 +627,7 @@ public class SystemEventEmitterTests {
   }
 
   [Test]
-  public async Task EmitAsync_WithEventAudited_WhenAuditEnabled_AppendsToTheNoTenantAuditLedgerAsync() {
+  public async Task EmitAsync_WithEventAudited_WhenAuditEnabled_AppendsOnTheRecordsOwnIdAsync() {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableAudit());
@@ -647,11 +647,12 @@ public class SystemEventEmitterTests {
 
     // Assert
     await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
-    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(AuditLedger.StreamFor(null));
+    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(systemEvent.Id)
+      .Because("an audit record is stored on its own id, never the ledger it travels on (#2331)");
   }
 
   [Test]
-  public async Task EmitAsync_WithCommandAudited_WhenAuditEnabled_AppendsToTheNoTenantAuditLedgerAsync() {
+  public async Task EmitAsync_WithCommandAudited_WhenAuditEnabled_AppendsOnTheRecordsOwnIdAsync() {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableAudit());
@@ -671,7 +672,8 @@ public class SystemEventEmitterTests {
 
     // Assert
     await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
-    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(AuditLedger.StreamFor(null));
+    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(systemEvent.Id)
+      .Because("an audit record is stored on its own id, never the ledger it travels on (#2331)");
   }
 
   [Test]
@@ -707,7 +709,7 @@ public class SystemEventEmitterTests {
   #region EmitEventAuditedAsync Happy Path Tests
 
   [Test]
-  public async Task EmitEventAuditedAsync_WithEnabledAudit_EmitsEventAuditedToTheAuditLedgerAsync() {
+  public async Task EmitEventAuditedAsync_WithEnabledAudit_EmitsEventAuditedOnTheRecordsOwnIdAsync() {
     // Arrange - Use string as TEvent since it's registered in InfrastructureJsonContext
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
@@ -720,12 +722,13 @@ public class SystemEventEmitterTests {
     // Act
     await emitter.EmitEventAuditedAsync(streamId, streamPosition, envelope);
 
-    // Assert - EventAudited was emitted to the system stream
+    // Assert - EventAudited was stored on its own id
     await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
-    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(AuditLedger.StreamFor(null));
 
     var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<EventAudited>;
     await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(emittedEnvelope!.Payload.Id)
+      .Because("an audit record is stored on its own id, never the ledger it travels on (#2331)");
     await Assert.That(emittedEnvelope!.Payload.OriginalEventType).IsEqualTo("String");
     await Assert.That(emittedEnvelope.Payload.OriginalStreamId).IsEqualTo(streamId.ToString());
     await Assert.That(emittedEnvelope.Payload.OriginalStreamPosition).IsEqualTo(streamPosition);
@@ -895,7 +898,7 @@ public class SystemEventEmitterTests {
   #region EmitCommandAuditedAsync Happy Path Tests
 
   [Test]
-  public async Task EmitCommandAuditedAsync_WithEnabledAudit_EmitsCommandAuditedToTheAuditLedgerAsync() {
+  public async Task EmitCommandAuditedAsync_WithEnabledAudit_EmitsCommandAuditedOnTheRecordsOwnIdAsync() {
     // Arrange - Use string as TCommand since it's registered in InfrastructureJsonContext
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
@@ -906,10 +909,11 @@ public class SystemEventEmitterTests {
 
     // Assert
     await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
-    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(AuditLedger.StreamFor(null));
 
     var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<CommandAudited>;
     await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(emittedEnvelope!.Payload.Id)
+      .Because("an audit record is stored on its own id, never the ledger it travels on (#2331)");
     await Assert.That(emittedEnvelope!.Payload.CommandType).IsEqualTo("String");
     await Assert.That(emittedEnvelope.Payload.ReceptorName).IsEqualTo("MyReceptor");
     await Assert.That(emittedEnvelope.Payload.ResponseType).IsEqualTo("String");

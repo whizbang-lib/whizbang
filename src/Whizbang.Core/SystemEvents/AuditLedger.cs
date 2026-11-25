@@ -6,17 +6,18 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.SystemEvents;
 
 /// <summary>
-/// The audit ledger: one deterministic stream per tenant that every audit record of that tenant is
-/// written on.
+/// The audit ledger: one deterministic stream per tenant that every audit record of that tenant
+/// travels and is ordered on.
 /// </summary>
 /// <remarks>
 /// <para>
-/// An audit record is a ledger entry ABOUT a domain event, not part of the domain event's stream, so
-/// it belongs on neither the audited stream nor a stream of its own. Minting a fresh stream per record
-/// spent the full per-stream machinery (ownership, ordering, partition routing) on every record and
-/// left the records of one tenant with no order among themselves. One stream per tenant gives each
-/// tenant one orderable ledger, and a coalesced bundle of audit records inherits it because a bundle
-/// never mixes tenants.
+/// An audit record is a ledger entry ABOUT a domain event, not part of the domain event's stream. Its
+/// outbox row rides the tenant's ledger: one stream per tenant gives each tenant one orderable lane, and a
+/// coalesced bundle of audit records inherits it because a bundle never mixes tenants. The receiver STORES
+/// each record on a stream of its own, its id (#1798, #2331): perspective rows are keyed by the stored
+/// stream, so a record stored on the ledger would fold a tenant's whole trail into one row, and every
+/// append of the tenant would take one stream lock. Records stored before #1798 stay on the audited
+/// streams; a reader by type finds both.
 /// </para>
 /// <para>
 /// Derivation: <c>UUIDv5(UUIDv5(nil, "sys-audit"), tenant)</c>, a record with no tenant using the empty
@@ -25,7 +26,7 @@ namespace Whizbang.Core.SystemEvents;
 /// <strong>Never change it:</strong> every ledger stream already written was derived from it.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/security/audit-logging#dedicated-system-stream</docs>
+/// <docs>fundamentals/security/audit-logging#record-storage</docs>
 /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/AuditLedgerTests.cs</tests>
 public static class AuditLedger {
   /// <summary>The name the ledger namespace is derived from.</summary>

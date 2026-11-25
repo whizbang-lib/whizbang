@@ -555,7 +555,7 @@ public class SystemEventEmitterCoverageTests {
   #region Multiple Events in Sequence
 
   [Test]
-  public async Task EmitAsync_MultipleEventsInSequence_AllAppendedToTheNoTenantAuditLedgerAsync() {
+  public async Task EmitAsync_MultipleEventsInSequence_EachAppendedOnItsOwnIdAsync() {
     // Arrange
     var eventStore = new CoverageMockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableAudit());
@@ -584,8 +584,8 @@ public class SystemEventEmitterCoverageTests {
 
     // Assert
     await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(2);
-    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(AuditLedger.StreamFor(null));
-    await Assert.That(eventStore.AppendedStreamIds[1]).IsEqualTo(AuditLedger.StreamFor(null));
+    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(event1.Id);
+    await Assert.That(eventStore.AppendedStreamIds[1]).IsEqualTo(event2.Id);
   }
 
   #endregion
