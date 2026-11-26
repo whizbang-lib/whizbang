@@ -78,9 +78,15 @@ public class PartitionAssignerWorkerLoopTests {
         [new PartitionAssignmentCandidate(_self, InstanceConnectionMode.Pooled, false, TimeSpan.Zero, IsLive: true)]);
     }
     public Task<PartitionAssignment?> PublishAsync(
-        string role, Guid instanceId, long epoch, IReadOnlyList<Guid> members, TimeSpan lease, CancellationToken cancellationToken) =>
-      Task.FromResult<PartitionAssignment?>(new PartitionAssignment(epoch, 1, instanceId, [.. members], DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch + lease));
+        string role, Guid instanceId, long epoch, PartitionMap map, TimeSpan lease, TimeSpan handoverDeadline,
+        CancellationToken cancellationToken) =>
+      Task.FromResult<PartitionAssignment?>(new PartitionAssignment(
+        epoch, 1, instanceId, [.. map.Members], DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch + lease, [.. map.Owners]));
     public Task<bool> RenewAsync(Guid instanceId, long epoch, CancellationToken cancellationToken) => Task.FromResult(true);
+    public Task<string?> OpenOwnershipByMapAsync(Guid instanceId, long epoch, CancellationToken cancellationToken) =>
+      Task.FromResult<string?>("open");
+    public Task<int?> CompleteExpiredHandoversAsync(Guid instanceId, long epoch, CancellationToken cancellationToken) =>
+      Task.FromResult<int?>(0);
   }
 
   private sealed class FailingElector : IDutyElector {

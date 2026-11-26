@@ -17,6 +17,7 @@ using Whizbang.Core.Sequencing;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.MultiStream;
+using Whizbang.Data.Postgres.Notifications;
 using Whizbang.Data.Postgres.Observability;
 using Whizbang.Data.Postgres.Schema;
 
@@ -194,7 +195,12 @@ public static class ServiceCollectionExtensions {
       new DapperWorkCoordinator(
         connectionString,
         jsonOptions,
-        sp.GetService<ILogger<DapperWorkCoordinator>>()));
+        sp.GetService<ILogger<DapperWorkCoordinator>>(),
+        guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>(),
+        // #2554, #2556: the fenced writes and the claims that waited for a map are counted on the coordinator's meter.
+        metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
+        // #2556: the process's tenure ledger, so every write names the epoch its work was claimed under.
+        tenures: sp.GetService<Whizbang.Core.Messaging.PartitionTenures>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     // #2359: records past their own expiry are removed every maintenance cycle; the store's expiry had no caller.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep,
@@ -244,6 +250,11 @@ public static class ServiceCollectionExtensions {
     _addDeadLetterRecoveryService(services, connectionString);
     _addPerspectiveTableSwapper(services, connectionString);
     _addTableStatistics(services, connectionString);
+
+    // #2559: role assignment and the elected partition assigner, through the one registration the EF Core driver calls
+    // too, so the drivers cannot drift: each exclusive duty is held by one instance, and claims present the published
+    // map. The schema bootstrap does not elect a migrator here; every instance migrates under the schema lock in turn.
+    services.AddWhizbangPostgresCoordination(connectionString);
 
     // #1358: multi-stream commands, over this connection string; the worker polls, as there is no listen connection.
     services.AddWhizbangMultiStreamCommands(connectionString);
@@ -366,7 +377,12 @@ public static class ServiceCollectionExtensions {
       new DapperWorkCoordinator(
         connectionString,
         jsonOptions,
-        sp.GetService<ILogger<DapperWorkCoordinator>>()));
+        sp.GetService<ILogger<DapperWorkCoordinator>>(),
+        guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>(),
+        // #2554, #2556: the fenced writes and the claims that waited for a map are counted on the coordinator's meter.
+        metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
+        // #2556: the process's tenure ledger, so every write names the epoch its work was claimed under.
+        tenures: sp.GetService<Whizbang.Core.Messaging.PartitionTenures>()));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     // #2359: records past their own expiry are removed every maintenance cycle; the store's expiry had no caller.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep,
@@ -420,6 +436,11 @@ public static class ServiceCollectionExtensions {
     _addPerspectiveTableSwapper(services, connectionString);
     _addTableStatistics(services, connectionString);
 
+    // #2559: role assignment and the elected partition assigner, through the one registration the EF Core driver calls
+    // too, so the drivers cannot drift: each exclusive duty is held by one instance, and claims present the published
+    // map. The schema bootstrap does not elect a migrator here; every instance migrates under the schema lock in turn.
+    services.AddWhizbangPostgresCoordination(connectionString);
+
     // #1358: multi-stream commands, over this connection string; the worker polls, as there is no listen connection.
     services.AddWhizbangMultiStreamCommands(connectionString);
 
@@ -455,8 +476,7 @@ public static class ServiceCollectionExtensions {
     new(connectionString, () => createInitializer(sp),
       sp.GetService<Whizbang.Core.Versioning.IApplicationVersionProvider>()?.ApplicationVersion.Recorded,
       sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>().InstanceId,
-      Whizbang.Core.Versioning.UpgradeOrder.IsIncompatibilityOverridden(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()),
-      Whizbang.Core.Versioning.UpgradeOrder.IsLossyRollbackAllowed(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
+      Whizbang.Core.Versioning.UpgradeOrder.ReadOverrides(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
 
   /// <summary>
   /// Records the schema work for host start: the shared schema initializer runs this driver's runner, then opens the
@@ -522,20 +542,24 @@ public static class ServiceCollectionExtensions {
       sp.GetService<IPerspectiveInvoker>(),
       sp.GetRequiredService<ILogger<DapperPostgresEventStore>>(),
       // #1546: an appended event's kind is the one the dispatch path stamps, [Ephemeral] on a type included.
-      sp.GetService<Whizbang.Core.IEphemeralModeResolver>());
+      sp.GetService<Whizbang.Core.IEphemeralModeResolver>(),
+      // #2528: the time-ordering check for appended event ids, with the configured severity.
+      sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>());
 
   /// <summary>
   /// Registers the purge markers that keep a purged perspective row purged (<see cref="IPerspectivePurgeMarkerStore"/>)
   /// and the operator stream purge (<see cref="IStreamPurger"/>), both the shared Postgres implementations over a
   /// connection of their own per call, and the repair for composite children filed under the composite's stream
-  /// (<see cref="IFanoutChildRefiler"/>, #1798), and the built-in archive store (<c>IArchiveStore</c>, WS-3 S7). A host's
-  /// own registration wins.
+  /// (<see cref="IFanoutChildRefiler"/>, #1798), the re-sequence of received streams stored out of their origin's order
+  /// (<see cref="IReceivedStreamResequencer"/>, #1629), and the built-in archive store (<c>IArchiveStore</c>, WS-3 S7). A
+  /// host's own registration wins.
   /// </summary>
   /// <param name="services">The service collection.</param>
   /// <param name="connectionString">The service's database.</param>
   /// <docs>operations/infrastructure/purging-streams</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPurgeTests.cs:AddWhizbangPostgres_RegistersPurgeMarkersAndStreamPurger_BothOverloadsAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveStoreTests.cs:AddWhizbangPostgres_RegistersTheTableArchiveStore_AndTheTruncateWritesThroughItAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamPurgeTests.cs:Resequence_OnADapperMigratedDatabase_StoresAReceivedStreamInItsOriginsOrderAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStreamSealingTests.cs:Finalize_ThroughTheRegisteredFinalizer_SealsTheStream_AndTheNextAppendThrowsAsync</tests>
   internal static void AddStreamPurge(IServiceCollection services, string connectionString) {
     services.TryAddSingleton<IPerspectivePurgeMarkerStore>(_ =>
@@ -545,8 +569,7 @@ public static class ServiceCollectionExtensions {
         ct => OpenConnectionAsync(connectionString, ct),
         logger: sp.GetService<ILogger<PostgresStreamPurger>>(),
         integrityMetrics: sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>()));
-    // The built-in archive store (WS-3 S7): the prefix truncate's archive path writes through it; a blob store
-    // registered first wins.
+    // The built-in archive store (WS-3 S7): the prefix truncate's archive path writes through it.
     services.TryAddSingleton(_ => new PostgresArchiveConnection(ct => OpenConnectionAsync(connectionString, ct), Schema: null));
     // What a rebuild knows of each stream's archive (#1931), read from the lifecycle ledger.
     services.TryAddSingleton<global::Whizbang.Core.Archival.IArchivedStreamExtents>(sp =>
@@ -554,10 +577,9 @@ public static class ServiceCollectionExtensions {
     // What a snapshot of a row with collectives reads to record how far they are complete (#1963).
     services.TryAddSingleton<global::Whizbang.Core.Perspectives.ICollectiveSnapshotFence>(sp =>
       new PostgresCollectiveSnapshotFence(sp.GetRequiredService<PostgresArchiveConnection>()));
-    services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(sp => {
-      var database = sp.GetRequiredService<PostgresArchiveConnection>();
-      return new PostgresTableArchiveStore(database.Open, database.Schema, sp.GetService<ILogger<PostgresTableArchiveStore>>());
-    });
+    // #2503: the archive coordinator when a storage provider selected an object store (it moves objects only; the
+    // transaction is the driver's), otherwise the table store.
+    services.TryAddSingleton<global::Whizbang.Core.Archival.IArchiveStore>(PostgresArchiveStores.Create);
     // The maintenance step that performs the restores an AutoRestore append queued (#1738), through whichever archive store
     // is registered.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, ArchiveRestoreRequestStep>(
@@ -566,6 +588,9 @@ public static class ServiceCollectionExtensions {
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataDistillationStep>(
       MetadataDistillationStep.FromServices));
     // The maintenance step that converts rows written with full metadata before slim stored metadata (#1727).
+    // #2323: the trim gate, ahead of the history conversion, so the cycle that opens it starts trimming history.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataTrimGateStep>(
+      MetadataTrimGateStep.FromServices));
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
       MetadataHistoryConversionStep.FromServices));
     // #2326: the maintenance step that converts audit records written before the pointer default to the pointer form.
@@ -577,9 +602,15 @@ public static class ServiceCollectionExtensions {
     // #2206: the maintenance step that reclassifies the history an [Ephemeral] type stored before its declaration, opt-in.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, EphemeralHistoryReclassifyStep>(
       EphemeralHistoryReclassifyStep.FromServices));
+    // #2329: the maintenance step that purges the stored events of the retired event types, in bounded batches.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, RetiredEventTypePurgeStep>(
+      RetiredEventTypePurgeStep.FromServices));
     // #2116: the maintenance step that re-attributes stored events recorded under an origin that does not own their type.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MisattributedOriginCorrectionStep>(
       MisattributedOriginCorrectionStep.FromServices));
+    // #2573: the one-off maintenance step that returns events written here, stored under another origin, to the local lane.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, WrittenHereOriginRestorationStep>(
+      WrittenHereOriginRestorationStep.FromServices));
     // #1734: the scheduled disposition of sealed streams, on the same database as the archive store.
     services.TryAddSingleton<global::Whizbang.Core.Lifecycle.IStreamDispositionLedger>(sp =>
       new PostgresStreamDispositionLedger(sp.GetRequiredService<PostgresArchiveConnection>()));
@@ -606,6 +637,11 @@ public static class ServiceCollectionExtensions {
         jsonOptions: global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
         schema: null,
         logger: sp.GetService<ILogger<PostgresFanoutChildRefiler>>()));
+    services.TryAddSingleton<IReceivedStreamResequencer>(sp =>
+      new PostgresReceivedStreamResequencer(
+        ct => OpenConnectionAsync(connectionString, ct),
+        schema: null,
+        logger: sp.GetService<ILogger<PostgresReceivedStreamResequencer>>()));
   }
 
   /// <summary>

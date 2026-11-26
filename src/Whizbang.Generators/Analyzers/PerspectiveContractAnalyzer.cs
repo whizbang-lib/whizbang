@@ -79,21 +79,23 @@ public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
   );
 
   /// <summary>
-  /// WHIZ117: Error - an event is listed only through a custom marker interface that extends <c>IPerspectiveBase</c>
-  /// without declaring an <c>Apply</c> for it, so it counts as routed while no interface-declared <c>Apply</c> handles
-  /// it. Custom marker interfaces may be supported in a future release.
+  /// WHIZ117: Error - an event is listed only through <c>IPerspectiveBase</c> or a custom interface that extends it,
+  /// so it counts as routed while no <c>Apply</c> the runner calls handles it. That holds whether or not the custom
+  /// interface declares an <c>Apply</c> of its own: the runner calls only the built-in families' <c>Apply</c>. Custom
+  /// perspective interfaces may be supported in a future release (#1943).
   /// </summary>
   /// <docs>operations/diagnostics/whiz117</docs>
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveMarkerOnlyEventTests.cs:AnEventListedOnlyByAMarkerWithNoApply_IsAnErrorAtThePerspectiveAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveMarkerOnlyEventTests.cs:AnEventListedOnlyByACustomInterfaceThatDeclaresItsOwnApply_IsAnErrorAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveMarkerOnlyEventTests.cs:AnEventAMarkerAndADeclaringInterfaceBothList_IsNotReportedAsync</tests>
   public static readonly DiagnosticDescriptor EventWithNoDeclaredApply = new(
       id: "WHIZ117",
-      title: "Event is listed only by an interface that declares no Apply for it",
-      messageFormat: "Perspective '{0}' lists '{1}' for model '{2}' only through a marker interface that declares no Apply for it, so nothing strongly typed handles the event. List '{1}' under IPerspectiveFor<{2}, ...>, IPerspectiveWithActionsFor<{2}, ...> or IGlobalPerspectiveFor<{2}, TPartitionKey, ...>, which declare its Apply. Custom marker interfaces may be supported in a future release.",
+      title: "Event is listed only by an interface whose Apply the runner never calls",
+      messageFormat: "Perspective '{0}' lists '{1}' for model '{2}' only through IPerspectiveBase or a custom interface extending it, and the runner calls no Apply of theirs, so nothing handles the event. List '{1}' under IPerspectiveFor<{2}, ...>, IPerspectiveWithActionsFor<{2}, ...> or IGlobalPerspectiveFor<{2}, TPartitionKey, ...>, which declare the Apply the runner calls. Custom perspective interfaces may be supported in a future release.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
-      description: "IPerspectiveBase and an interface that extends it without declaring Apply only mark the events a perspective handles. Such an event is counted as routed (it is registered and associated with the perspective), yet no interface-declared Apply exists for it, so nothing the compiler checks handles it. Every event needs an interface that declares its Apply. Support for custom marker interfaces may come in a future release."
+      description: "IPerspectiveBase and a custom interface that extends it only mark the events a perspective handles. Such an event is counted as routed (it is registered and associated with the perspective), yet the generated runner calls Apply only through IPerspectiveFor, IPerspectiveWithActionsFor and IGlobalPerspectiveFor, so an Apply the custom interface declares never runs. Every event needs one of those interfaces. Support for custom perspective interfaces may come in a future release."
   );
 
   /// <inheritdoc/>
@@ -146,7 +148,8 @@ public class PerspectiveContractAnalyzer : DiagnosticAnalyzer {
   }
 
   /// <summary>
-  /// WHIZ117: every event the perspective lists only through a marker interface that declares no Apply for it.
+  /// WHIZ117: every event the perspective lists only through IPerspectiveBase or a custom interface, whose Apply the
+  /// runner never calls (#1943).
   /// </summary>
   private static void _reportEventsWithNoDeclaredApply(
       SymbolAnalysisContext context, INamedTypeSymbol perspective, PerspectiveContract contract) {

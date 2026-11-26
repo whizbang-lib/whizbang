@@ -65,6 +65,8 @@ public class ScheduleOccurrencePublishGateTests {
 
   private sealed class FakeManager : IScheduleManager {
     public Guid? Canceled { get; private set; }
+    public Task<bool> CancelByKeyAsync(string key, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
     public Task<bool> CancelAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) {
       Canceled = scheduleId;
       return Task.FromResult(true);

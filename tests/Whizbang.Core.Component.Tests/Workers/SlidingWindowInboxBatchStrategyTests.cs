@@ -156,12 +156,10 @@ public class SlidingWindowInboxBatchStrategyTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task AppendAsync_OutOfOrderArrivals_FlushedSortedByMessageIdAsync(CancellationToken cancellationToken) {
-    // Slice 18 invariant: every batch boundary delivers event_id-sorted output. Concurrent
-    // producers (transport consumers across multiple RabbitMQ channels) can deposit messages
-    // into the inbox sliding window in non-deterministic order. Cursor-by-event_id on the
-    // perspective-apply side depends on lex order matching commit order, so the window must
-    // sort before flushing to wh_inbox.
+  public async Task AppendAsync_OutOfOrderArrivals_FlushedInTheOrderTheyArrivedAsync(CancellationToken cancellationToken) {
+    // #2551: the window flushes what it holds in the order it arrived and never sorts it by id. An id is time-ordered,
+    // never a stream position; the receiving store orders a stream by its origin's position (the origin's commit
+    // sequence), so the order rows reach wh_inbox in decides nothing about versions.
     var captured = new List<InboxMessage[]>();
     var flushedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var clock = new BatchWindowClock(_window);
@@ -202,10 +200,9 @@ public class SlidingWindowInboxBatchStrategyTests {
     await Assert.That(captured.Count).IsEqualTo(1);
     var batch = captured[0];
     await Assert.That(batch.Length).IsEqualTo(3);
-    // Batch MUST be sorted by MessageId ASC — locks the slice-18 invariant.
-    await Assert.That(batch[0].MessageId).IsEqualTo(m1.MessageId);
-    await Assert.That(batch[1].MessageId).IsEqualTo(m2.MessageId);
-    await Assert.That(batch[2].MessageId).IsEqualTo(m3.MessageId);
+    await Assert.That(batch[0].MessageId).IsEqualTo(m3.MessageId);
+    await Assert.That(batch[1].MessageId).IsEqualTo(m1.MessageId);
+    await Assert.That(batch[2].MessageId).IsEqualTo(m2.MessageId);
   }
 
   // ===== slice 23: per-stream invariants =====
@@ -254,8 +251,8 @@ public class SlidingWindowInboxBatchStrategyTests {
   [Timeout(30000)]
   public async Task AppendAsync_SameStream_CrossWindowArrivals_CoalesceInOneFlushAsync(CancellationToken cancellationToken) {
     // The motivating fan-in case: stream X receives messages from multiple producers
-    // across the sliding window. Per-slice-23 they MUST flush in a single batch (sorted
-    // by MessageId), so the downstream apply sees them in order with no inversion.
+    // across the sliding window. Per-slice-23 they MUST flush in a single batch, in the order they
+    // arrived (#2551: never sorted by id; the receiving store orders a stream by its origin's position).
     var captured = new List<InboxMessage[]>();
     var flushedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var streamX = _idProvider.NewGuid();
@@ -275,7 +272,7 @@ public class SlidingWindowInboxBatchStrategyTests {
       },
       timeProvider: clock);
 
-    // m1, m2, m3 are MessageId-sorted. Append m3 first, m1 second (within window),
+    // m1, m2, m3 are in id order. Append m3 first, m1 second (within window),
     // m2 third (also within window) — mirrors the cross-producer race that produced
     // cursor inversions before slice 23. Two thirds of a window passes before each later
     // arrival: together they span more than one window, and each arrival restarts it.
@@ -298,10 +295,9 @@ public class SlidingWindowInboxBatchStrategyTests {
     await Assert.That(captured.Count).IsEqualTo(1);
     var batch = captured[0];
     await Assert.That(batch.Length).IsEqualTo(3);
-    // Slice 18b sort survives — batch is MessageId-ASC even though arrival was out of order.
-    await Assert.That(batch[0].MessageId).IsEqualTo(m1.MessageId);
-    await Assert.That(batch[1].MessageId).IsEqualTo(m2.MessageId);
-    await Assert.That(batch[2].MessageId).IsEqualTo(m3.MessageId);
+    await Assert.That(batch[0].MessageId).IsEqualTo(m3.MessageId);
+    await Assert.That(batch[1].MessageId).IsEqualTo(m1.MessageId);
+    await Assert.That(batch[2].MessageId).IsEqualTo(m2.MessageId);
   }
 
   [Test]

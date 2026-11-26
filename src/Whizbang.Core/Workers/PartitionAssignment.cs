@@ -9,10 +9,11 @@ namespace Whizbang.Core.Workers;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Partition <c>p</c> belongs to <c>Members[p % Members.Count]</c>: an instance's rank is its position in
-/// <see cref="Members"/> and the member count is the instance count, which is the arithmetic every acquisition already
-/// applies. The assigner decides liveness once, for everyone, so claimers stop ranking the peers they believe are alive
-/// and stop overlapping when that belief is wrong.
+/// Partition <c>p</c> belongs to <c>Members[Owners[p]]</c>, the explicit map the assigner keeps and changes as little
+/// as it can (#2558, <see cref="PartitionMap"/>). An assignment of the older shape carries no map, and partition <c>p</c>
+/// belongs to <c>Members[p % Members.Count]</c>, the arithmetic every acquisition applied before the map. The assigner
+/// decides liveness once, for everyone, so claimers stop ranking the peers they believe are alive and stop overlapping
+/// when that belief is wrong.
 /// </para>
 /// <para>
 /// <see cref="Epoch"/> is the role election's epoch for the assigner's tenure; <see cref="Revision"/> counts publishes
@@ -26,18 +27,22 @@ namespace Whizbang.Core.Workers;
 /// <param name="Members">The live instances, in rank order.</param>
 /// <param name="PublishedAt">When it was published, by the database clock.</param>
 /// <param name="LeaseExpiresAt">When it stops being valid unless the assigner renews it, by the database clock.</param>
+/// <param name="Owners">The explicit map (#2558): entry <c>p</c> is the index in <paramref name="Members"/> of the member
+/// partition <c>p</c> belongs to. Null for an assignment published in the older shape, whose claimers rank by modulo.</param>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentTests.cs:RankOf_AMember_IsItsPositionAsync</tests>
 /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentTests.cs:OwnerOf_APartition_IsTheMemberAtItsResidueAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignmentTests.cs:OwnerOf_WithAMap_IsTheMapsMember_NotTheResidueAsync</tests>
 public sealed record PartitionAssignment(
   long Epoch,
   long Revision,
   Guid AssignerInstanceId,
   IReadOnlyList<Guid> Members,
   DateTimeOffset PublishedAt,
-  DateTimeOffset LeaseExpiresAt) {
+  DateTimeOffset LeaseExpiresAt,
+  IReadOnlyList<short>? Owners = null) {
 
-  /// <summary>Two assignments are equal when every field is, the members compared in order.</summary>
+  /// <summary>Two assignments are equal when every field is, the members and the map compared in order.</summary>
   /// <param name="other">The other assignment.</param>
   /// <returns>True when equal.</returns>
   public bool Equals(PartitionAssignment? other) =>
@@ -47,7 +52,11 @@ public sealed record PartitionAssignment(
     && AssignerInstanceId == other.AssignerInstanceId
     && PublishedAt == other.PublishedAt
     && LeaseExpiresAt == other.LeaseExpiresAt
-    && Members.SequenceEqual(other.Members);
+    && Members.SequenceEqual(other.Members)
+    && _sameMap(Owners, other.Owners);
+
+  private static bool _sameMap(IReadOnlyList<short>? one, IReadOnlyList<short>? other) =>
+    one is null ? other is null : other is not null && one.SequenceEqual(other);
 
   /// <inheritdoc />
   public override int GetHashCode() => HashCode.Combine(Epoch, Revision, AssignerInstanceId);
@@ -67,16 +76,21 @@ public sealed record PartitionAssignment(
     return null;
   }
 
-  /// <summary>The instance a partition belongs to.</summary>
+  /// <summary>
+  /// The instance a partition belongs to: its member in the map (#2558), or, for an assignment of the older shape, the
+  /// member at its residue. A partition past the map wraps, as the claim's predicate does.
+  /// </summary>
   /// <param name="partitionNumber">A partition number, zero or more.</param>
-  /// <returns>The member at the partition's residue.</returns>
+  /// <returns>The partition's member.</returns>
   /// <exception cref="InvalidOperationException">The assignment has no members.</exception>
   public Guid OwnerOf(int partitionNumber) {
     ArgumentOutOfRangeException.ThrowIfNegative(partitionNumber);
     if (Members.Count == 0) {
       throw new InvalidOperationException("The assignment has no members.");
     }
-    return Members[partitionNumber % Members.Count];
+    return Owners is { Count: > 0 } map
+      ? Members[map[partitionNumber % map.Count]]
+      : Members[partitionNumber % Members.Count];
   }
 }
 
@@ -165,12 +179,26 @@ public interface IPartitionAssignmentStore {
   /// <param name="role">The assigner role.</param>
   /// <param name="instanceId">The publishing instance.</param>
   /// <param name="epoch">Its role epoch.</param>
-  /// <param name="members">The live instances, in rank order.</param>
+  /// <param name="map">The members and the partition map (#2558); <see cref="PartitionMap.Empty"/> publishes no members.</param>
   /// <param name="lease">How long the assignment holds without renewal.</param>
+  /// <param name="handoverDeadline">In map mode, how long a partition moving away from a live owner may hand over before
+  /// the assigner completes the move itself (#2557).</param>
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>The assignment as published, or null when the caller no longer holds the role at that epoch.</returns>
   Task<PartitionAssignment?> PublishAsync(
-    string role, Guid instanceId, long epoch, IReadOnlyList<Guid> members, TimeSpan lease, CancellationToken cancellationToken);
+    string role, Guid instanceId, long epoch, PartitionMap map, TimeSpan lease, TimeSpan handoverDeadline,
+    CancellationToken cancellationToken);
+
+  /// <summary>
+  /// Completes every handover past its deadline (#2557), fenced by the role epoch: each such partition flips to its next
+  /// owner at a raised epoch, and what the old owner held there is released, so the new owner replays it.
+  /// </summary>
+  /// <param name="instanceId">The assigner.</param>
+  /// <param name="epoch">Its role epoch.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>How many partitions it flipped, or null when the caller no longer holds the role at that epoch.</returns>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#handover</docs>
+  Task<int?> CompleteExpiredHandoversAsync(Guid instanceId, long epoch, CancellationToken cancellationToken);
 
   /// <summary>Extends the lease of the assignment the caller published at <paramref name="epoch"/>, while it holds the role.</summary>
   /// <param name="instanceId">The assigner.</param>
@@ -178,6 +206,20 @@ public interface IPartitionAssignmentStore {
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>True when the lease was extended.</returns>
   Task<bool> RenewAsync(Guid instanceId, long epoch, CancellationToken cancellationToken);
+
+  /// <summary>
+  /// Asks for the service's ownership-by-map switch (#2555), fenced by the role epoch: it turns on, one way, once a map
+  /// is published at <paramref name="epoch"/> and every live instance of the service supports the mode.
+  /// </summary>
+  /// <param name="instanceId">The assigner.</param>
+  /// <param name="epoch">Its role epoch.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>
+  /// <c>open</c> (it was already on), <c>opened</c> (this call turned it on), a <c>closed (...)</c> reason, or null when the
+  /// caller no longer holds the role at that epoch.
+  /// </returns>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
+  Task<string?> OpenOwnershipByMapAsync(Guid instanceId, long epoch, CancellationToken cancellationToken);
 }
 
 /// <summary>

@@ -25,7 +25,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// both branches only fire after a live INSERT/DELETE against wh_perspective_snapshots actually
 /// succeeds.
 /// </summary>
-public sealed class DapperPerspectiveSnapshotStoreCoverageTests : IDisposable {
+public sealed class DapperPerspectiveSnapshotStoreCoverageTests {
   private TestFixture _testBase = null!;
 
   [Before(Test)]
@@ -34,14 +34,9 @@ public sealed class DapperPerspectiveSnapshotStoreCoverageTests : IDisposable {
     await _testBase.SetupAsync();
   }
 
-  public void Dispose() {
-    _testBase?.DisposeAsync().AsTask().GetAwaiter().GetResult();
-    GC.SuppressFinalize(this);
-  }
-
   [After(Test)]
   public async Task CleanupAsync() {
-    await _testBase.DisposeAsync();
+    await _testBase.TeardownAsync();
   }
 
   /// <summary>Captures the fully formatted message of every log call, and reports itself enabled for

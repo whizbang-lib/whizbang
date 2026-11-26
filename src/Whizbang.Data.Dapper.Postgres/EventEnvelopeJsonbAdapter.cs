@@ -107,6 +107,8 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
   /// Reconstructs a strongly-typed message envelope from the 3-column JSONB persistence model.
   /// </summary>
   /// <tests>No tests found</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStoredMetadataRowValuesTests.cs:EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventOriginReadTests.cs:EveryReader_CarriesEachEventsOrigin_OntoItsEnvelopeAsync</tests>
   public MessageEnvelope<TMessage> FromJsonb<TMessage>(JsonbPersistenceModel jsonb) {
     ArgumentNullException.ThrowIfNull(jsonb);
 
@@ -116,9 +118,8 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
                        ?? throw new InvalidOperationException("Failed to deserialize metadata JSON");
 
     // Extract envelope properties from metadata (snake_case keys to match ToJsonb)
-    var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
-      ? Guid.Parse(msgIdElem.GetString()!)
-      : throw new InvalidOperationException("message_id not found in metadata");
+    // #2323: a row whose message id is its event id leaves it out; the read hands the event id over.
+    var messageId = JsonbPersistenceModel.MessageIdOf(metadataDict, jsonb.EventId);
 
     // Deserialize Hops (AOT-compatible, using snake_case key)
     List<MessageHop> hops;
@@ -143,6 +144,9 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
       Payload = (TMessage)payload,
       Hops = hops,
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+      // #2509: the event's origin, when the read selected it, so a replay deals a received stream into its origin's order.
+      SourceServiceId = jsonb.OriginServiceId ?? Guid.Empty,
+      SourceCommitSequence = jsonb.OriginCommitSequence ?? 0,
       Priority = metadataDict.TryGetValue("pri", out var pri) && pri.ValueKind == JsonValueKind.Number
         ? pri.GetInt32()
         : Whizbang.Core.Priority.WorkPriority.UNDECLARED,

@@ -32,6 +32,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// </remarks>
 /// <docs>fundamentals/perspectives/rebuild</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchivedStreamRebuildTests.cs:Completer_TheCursorOfAStreamArchivedWhole_IsParked_AndTheRestoreBringsItBackAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchivedStreamRebuildTests.cs:Completer_WritesEveryCursorOfAFlush_WithOneStatement_ParkedAndLiveAlikeAsync</tests>
 public sealed partial class DapperPostgresPerspectiveCheckpointCompleter(
     string connectionString,
     ILogger<DapperPostgresPerspectiveCheckpointCompleter>? logger = null) : IPerspectiveCheckpointCompleter {
@@ -53,23 +54,20 @@ public sealed partial class DapperPostgresPerspectiveCheckpointCompleter(
     await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
     try {
-      // The shared rebuild cursor write (migration 273, #1931): a stream archived whole has its cursor parked with the
-      // stream, any other stream's is upserted into wh_perspective_cursors, exactly as the EF Core driver's completer writes it.
-      const string sql = "SELECT wh_complete_rebuilt_cursor(@p_stream_id, @p_perspective_name, @p_last_event_id, @p_status)";
-
-      foreach (var completion in completions) {
-        // Skip completions with no event processed — same rationale as the EFCore completer:
-        // the wh_perspective_cursors.last_event_id FK to wh_event_store.event_id rejects
-        // Guid.Empty, and a cursor pointing at nothing carries no useful state.
-        if (completion.LastEventId == Guid.Empty) {
-          continue;
-        }
-
+      // The shared rebuild cursor write (migration 273, #1931; a flush in one statement since 556, #2513): a stream archived
+      // whole has its cursor parked with the stream, any other stream's is upserted into wh_perspective_cursors, exactly as
+      // the EF Core driver's completer writes it. A completion with no event processed is skipped, as the EF Core completer
+      // skips it: the wh_perspective_cursors.last_event_id FK to wh_event_store.event_id rejects Guid.Empty, and a cursor
+      // pointing at nothing carries no useful state.
+      var written = completions.Where(c => c.LastEventId != Guid.Empty).ToList();
+      if (written.Count > 0) {
+        const string sql =
+          "SELECT wh_complete_rebuilt_cursors(@p_stream_ids, @p_perspective_names, @p_last_event_ids, @p_statuses)";
         await using var cmd = new NpgsqlCommand(sql, connection, transaction);
-        cmd.Parameters.AddWithValue("p_stream_id", completion.StreamId);
-        cmd.Parameters.AddWithValue("p_perspective_name", completion.PerspectiveName);
-        cmd.Parameters.AddWithValue("p_last_event_id", completion.LastEventId);
-        cmd.Parameters.AddWithValue("p_status", (short)completion.Status);
+        cmd.Parameters.AddWithValue("p_stream_ids", written.ConvertAll(c => c.StreamId).ToArray());
+        cmd.Parameters.AddWithValue("p_perspective_names", written.ConvertAll(c => c.PerspectiveName).ToArray());
+        cmd.Parameters.AddWithValue("p_last_event_ids", written.ConvertAll(c => c.LastEventId).ToArray());
+        cmd.Parameters.AddWithValue("p_statuses", written.ConvertAll(c => (short)c.Status).ToArray());
         await cmd.ExecuteNonQueryAsync(cancellationToken);
       }
 

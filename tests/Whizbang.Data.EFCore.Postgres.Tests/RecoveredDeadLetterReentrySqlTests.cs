@@ -52,7 +52,7 @@ public class RecoveredDeadLetterReentrySqlTests : EFCoreTestBase {
     await _storeAsync(_message(recovered, streamId, isEvent: true) with { RecoveredFromDeadLetterId = deadLetterId });
 
     await Assert.That(await _workShapeAsync(connection, recovered)).IsEqualTo(await _workShapeAsync(connection, delivered))
-      .Because("everything but the message id, the arrival time and the dead letter it names is the delivery's");
+      .Because("everything but the message id, the arrival (its time and position) and the dead letter it names is the delivery's");
     await Assert.That(await _recoveredFromAsync(connection, recovered)).IsEqualTo(deadLetterId);
     await Assert.That(await _recoveredFromAsync(connection, delivered)).IsNull();
     await Assert.That((await _deadLetterAsync(connection, deadLetterId)).Status).IsEqualTo(RECOVERING)
@@ -294,7 +294,7 @@ public class RecoveredDeadLetterReentrySqlTests : EFCoreTestBase {
   private static async Task<string> _workShapeAsync(NpgsqlConnection connection, Guid messageId) {
     await using var command = connection.CreateCommand();
     command.CommandText = """
-      SELECT ((to_jsonb(i) - 'message_id' - 'received_at' - 'event_data' - 'metadata')
+      SELECT ((to_jsonb(i) - 'message_id' - 'received_at' - 'arrival_position' - 'event_data' - 'metadata')
               || jsonb_build_object('state', to_jsonb(ist) - 'message_id' - 'received_at' - 'recovered_from_dead_letter_id'))::text
       FROM wh_inbox i JOIN wh_inbox_state ist ON ist.message_id = i.message_id
       WHERE i.message_id = @id

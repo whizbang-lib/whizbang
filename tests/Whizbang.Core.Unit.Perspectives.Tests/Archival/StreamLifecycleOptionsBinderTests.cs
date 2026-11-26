@@ -264,6 +264,8 @@ public class StreamLifecycleOptionsBinderTests {
         ("Whizbang:StreamLifecycle:Types:Shop.Ledger:Action", "CloseBooks"),
         ("Whizbang:StreamLifecycle:Types:Shop.Order:Action", "Purge")));
       services.AddWhizbangWorkers();
+      // A closed book's sealed predecessor is archived, so the driver's archive store is there (#2503).
+      services.AddSingleton<IArchiveStore>(new TableLikeStore());
       if (withHandler) {
         services.AddSingleton<Whizbang.Core.Lifecycle.IBookClosingHandler>(new NoBooks());
       }
@@ -287,6 +289,81 @@ public class StreamLifecycleOptionsBinderTests {
     await Assert.That(failure!.Message).Contains("Shop.Ledger");
     await Assert.That(failure.Message).Contains(nameof(Whizbang.Core.Lifecycle.IBookClosingHandler));
     await Assert.That(failure.Message).DoesNotContain("Shop.Order");
+  }
+
+  [Test]
+  public async Task Registration_AnArchivingPolicy_WithNoArchiveStore_OrAnObjectStoreNothingWritesThrough_FailsTheStartAsync() {
+    // #2503: the start fails naming the missing piece, rather than the first archive.
+    static string? start(IArchiveStore? store, bool objectStore, params (string Key, string Value)[] policy) {
+      var services = new ServiceCollection();
+      services.AddSingleton(_config(policy));
+      services.AddWhizbangWorkers();
+      services.AddSingleton<Whizbang.Core.Lifecycle.IBookClosingHandler>(new NoBooks());
+      if (store is not null) {
+        services.AddSingleton(store);
+      }
+      if (objectStore) {
+        services.AddWhizbangArchiveObjectStore(_ => new ArchiveObjectStoreSelection(new NoObjects(), "code"));
+      }
+      using var provider = services.BuildServiceProvider();
+      try {
+        provider.GetRequiredService<IStartupValidator>().Validate();
+        return null;
+      } catch (Exception ex) when (ex is OptionsValidationException or AggregateException) {
+        return ex.Message;
+      }
+    }
+    (string, string)[] archives = [
+      ("Whizbang:StreamLifecycle:Types:Shop.Order:IdleTtl", "30.00:00:00"),
+      ("Whizbang:StreamLifecycle:Types:Shop.Ledger:Action", "CloseBooks"),
+      ("Whizbang:StreamLifecycle:Types:Shop.Cart:MaxAge", "1.00:00:00"),
+      ("Whizbang:StreamLifecycle:Types:Shop.Cart:Action", "Purge"),
+      ("Whizbang:StreamLifecycle:Types:Shop.Note:AppendToArchived", "AutoRestore")];
+
+    var noStore = start(store: null, objectStore: false, archives);
+    var nothingWritesThrough = start(new TableLikeStore(), objectStore: true, archives);
+
+    await Assert.That(noStore).IsNotNull().Because("a driver with no archive coordinator (SQLite) cannot archive");
+    await Assert.That(noStore!).Contains("Shop.Ledger, Shop.Order").And.Contains(nameof(IArchiveStore)).And.Contains("SQLite");
+    await Assert.That(noStore).DoesNotContain("Shop.Cart").And.DoesNotContain("Shop.Note")
+      .Because("a type that purges, or that sets no trigger, never archives");
+    await Assert.That(nothingWritesThrough).IsNotNull()
+      .Because("an object store the driver's archive store does not write through would never receive an archive");
+    await Assert.That(nothingWritesThrough!).Contains(nameof(IArchiveObjectCoordinator)).And.Contains("container 'archive'");
+    await Assert.That(start(new TableLikeStore(), objectStore: false, archives)).IsNull().Because("the driver's table store archives");
+    await Assert.That(start(new CoordinatorLikeStore(), objectStore: true, archives)).IsNull().Because("the coordinator writes through the object store");
+    await Assert.That(start(store: null, objectStore: true, ("Whizbang:StreamLifecycle:Types:Shop.Cart:IdleTtl", "1.00:00:00"),
+      ("Whizbang:StreamLifecycle:Types:Shop.Cart:Action", "Compact"))).IsNull().Because("nothing archives, so nothing is missing");
+  }
+
+  private sealed class TableLikeStore : IArchiveStore {
+    public Task<ArchiveWriteResult> WriteAsync(ArchiveBatch batch, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public IAsyncEnumerable<Whizbang.Core.Messaging.ArchivedEvent> ReadAsync(Guid streamId, long fromVersion = 0, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<ArchiveRestoreResult> RestoreAsync(Guid streamId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<long> DeleteAsync(Guid streamId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+  }
+
+  private sealed class CoordinatorLikeStore : IArchiveObjectCoordinator {
+    public IArchiveObjectStore Objects { get; } = new NoObjects();
+    public ArchiveLocation ConfiguredLocation => Objects.Location;
+    public Task<long> RepointLocationAsync(long fromLocationId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<int> DeleteQueuedObjectsAsync(int maxObjects, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<int> SweepOrphanedObjectsAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<int> SweepOrphanedObjectsIfDueAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<ArchiveWriteResult> WriteAsync(ArchiveBatch batch, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public IAsyncEnumerable<Whizbang.Core.Messaging.ArchivedEvent> ReadAsync(Guid streamId, long fromVersion = 0, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<ArchiveRestoreResult> RestoreAsync(Guid streamId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<long> DeleteAsync(Guid streamId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+  }
+
+  private sealed class NoObjects : IArchiveObjectStore {
+    public ArchiveLocation Location { get; } = new("test", "https://account.example", "default", "archive");
+    public ArchiveObjectStoreSettings Settings { get; } = new();
+    public Task PrepareAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<bool> PutAsync(string path, ReadOnlyMemory<byte> content, CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public Task<byte[]> GetAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(Array.Empty<byte>());
+    public Task<bool> DeleteAsync(string path, CancellationToken cancellationToken = default) => Task.FromResult(false);
+    public IAsyncEnumerable<ArchiveObjectInfo> ListAsync(CancellationToken cancellationToken = default) => AsyncEnumerable.Empty<ArchiveObjectInfo>();
   }
 
   private sealed class NoBooks : Whizbang.Core.Lifecycle.IBookClosingHandler {

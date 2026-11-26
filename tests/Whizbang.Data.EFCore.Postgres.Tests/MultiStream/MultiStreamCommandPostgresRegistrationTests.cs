@@ -70,7 +70,7 @@ public class MultiStreamCommandPostgresRegistrationTests {
     await using var sp = _build(before: s => s.AddSingleton<IPartitionAssignmentSource>(NullPartitionAssignmentSource.Instance));
 
     await Assert.That(sp.GetRequiredService<IPartitionAssignmentSource>()).IsSameReferenceAs(sp.GetRequiredService<PartitionAssignmentCache>())
-      .Because("a host that also wires a driver without an assigner must still claim under the published assignment");
+      .Because("the core's null source registered first gives way, so every claim runs under the published assignment");
   }
 
   [Test]

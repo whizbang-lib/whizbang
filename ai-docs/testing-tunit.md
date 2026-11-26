@@ -202,6 +202,38 @@ public async Task ProcessOrder_ValidInput_ReturnsSuccess() { }  // WRONG!
 
 **Naming Pattern:** `MethodUnderTest_Scenario_ExpectedOutcomeAsync`
 
+### A fixture tears down in one place (WHIZ609)
+
+TUnit runs a test class's `[After(Test)]` hooks and then, when the instance is `IDisposable` or `IAsyncDisposable`,
+disposes it. A fixture that is both tears down **twice**: once as the hook, again as the `Dispose` that calls it (or the
+hook that is itself `DisposeAsync`). Idempotent teardown hides it; a teardown that is not (a second drop of a database
+whose name another test already reuses, a second dispose of a shared data source) fails somewhere else, later.
+
+The build rejects it: `Whizbang.TestAnalyzers` (loaded by every test project through `tests/Directory.Build.props`)
+reports **WHIZ609** as an error on the class. Hooks and interfaces on base classes count; a base class in the same
+project that is both is reported once, on the base. Keep the hook, which runs whether the test passed or failed, as the
+only teardown, and drop the interface:
+
+```csharp
+// ❌ Tears down twice (WHIZ609)
+public class OrdersTests : IAsyncDisposable {
+  [After(Test)]
+  public async Task TeardownAsync() { /* drop the test database */ }
+
+  public async ValueTask DisposeAsync() => await TeardownAsync();
+}
+
+// ✅ One teardown
+public class OrdersTests {
+  [After(Test)]
+  public async Task TeardownAsync() { /* drop the test database */ }
+}
+```
+
+A fixture that wraps another (a nested `TestFixture : PostgresTestBase`) calls the wrapped fixture's hook method from its
+own hook, not its `DisposeAsync`. When the hook releases a disposable field the fixture creates, CA1001 may ask for the
+interface back; suppress it on the class with the reason (the hook disposes it), as the EF Core fixtures do.
+
 ---
 
 ## Pinning a limitation that justified a decision

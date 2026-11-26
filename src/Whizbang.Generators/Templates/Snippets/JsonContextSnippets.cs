@@ -198,7 +198,10 @@ private JsonTypeInfo<global::System.Collections.Generic.Dictionary<__KEY_TYPE__,
 
 #region GET_TYPE_INFO_DICTIONARY
 if (type == typeof(global::System.Collections.Generic.Dictionary<__KEY_TYPE__, __VALUE_TYPE__>)) {
-  return CreateDictionary___UNIQUE_IDENTIFIER__(options);
+  // A converter registered on the options comes first: a perspective document stores a dictionary as key/value pairs
+  // through one on the persistence profile (#1911).
+  return _registered<global::System.Collections.Generic.Dictionary<__KEY_TYPE__, __VALUE_TYPE__>>(options)
+    ?? CreateDictionary___UNIQUE_IDENTIFIER__(options);
 }
 #endregion
 

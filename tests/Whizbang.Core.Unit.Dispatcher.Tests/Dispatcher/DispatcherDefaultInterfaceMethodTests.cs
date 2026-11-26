@@ -210,6 +210,8 @@ public class DispatcherDefaultInterfaceMethodTests {
     yield return () => ("ScheduledFor", new DispatchOptions { ScheduledFor = new DateTimeOffset(2100, 1, 1, 0, 0, 0, TimeSpan.Zero) });
     yield return () => ("Priority", new DispatchOptions { Priority = 7 });
     yield return () => ("MaxPayloadBytes", new DispatchOptions { MaxPayloadBytes = 1024 });
+    yield return () => ("SequenceIntegrity", new DispatchOptions { SequenceIntegrity = Whizbang.Core.Messaging.SequenceIntegrity.None });
+    yield return () => ("SequenceHoldTime", new DispatchOptions { SequenceHoldTime = TimeSpan.FromSeconds(3) });
     yield return () => ("Policy", new DispatchOptions { Policy = new Whizbang.Core.Dispatch.Policy.DispatchPolicyId(1) });
     yield return () => ("Behaviors", new DispatchOptions { Behaviors = DispatchBehaviors.ThrowWhenNoHandler });
     yield return () => ("BatchFailure", new DispatchOptions { BatchFailure = BatchFailureMode.ContinueAndAggregate });

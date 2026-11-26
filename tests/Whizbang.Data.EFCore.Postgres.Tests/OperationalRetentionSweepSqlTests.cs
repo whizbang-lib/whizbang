@@ -316,6 +316,33 @@ public class OperationalRetentionSweepSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// #2377: the pair guard's halt history rolls off under the PairHistory retention once a halt has resumed. An open
+  /// halt is state (the alert clock of a pair still halted) and stays whatever its age.
+  /// </summary>
+  /// <docs>operations/infrastructure/operational-retention#every-table-is-classified</docs>
+  [Test]
+  public async Task AResumedPairHalt_GoesPastThePairHistoryRetention_AnOpenOneNeverAsync() {
+    await using var conn = await _openAsync();
+    await _executeAsync(conn, """
+      INSERT INTO wh_integrity_pair_halts (peer, side, reason, differing_types, local_semantics_version,
+        local_eligibility_sql_version, local_fingerprint, halted_at, resumed_at) VALUES
+        ('old-resumed', 0, 4, '{}', 1, 1, 'fp', NOW() - INTERVAL '40 days', NOW() - INTERVAL '35 days'),
+        ('recent-resumed', 0, 4, '{}', 1, 1, 'fp', NOW() - INTERVAL '40 days', NOW() - INTERVAL '2 days'),
+        ('still-halted', 1, 1, '{}', 1, 1, 'fp', NOW() - INTERVAL '90 days', NULL);
+      """);
+
+    var row = (await _sweepAsync(conn, $$"""{"PairHistory": {{30 * DAY}}}""")).Single(r => r.Table == "wh_integrity_pair_halts");
+
+    await Assert.That(row.Category).IsEqualTo(nameof(OperationalCategory.PairHistory));
+    await Assert.That(row.Expired).IsEqualTo(1).Because("only the halt that resumed longer ago than the resting period");
+    await Assert.That(row.Remaining).IsEqualTo(1L).Because("the resumed history left; the open halt is state, not history");
+    await Assert.That(await _scalarAsync(conn, "SELECT COUNT(*) FROM wh_integrity_pair_halts WHERE peer = 'still-halted'"))
+      .IsEqualTo(1L).Because("a pair still halted keeps the halt its alert clock runs from, however old");
+    await Assert.That(await _scalarAsync(conn, "SELECT COUNT(*) FROM wh_integrity_pair_halts WHERE peer = 'recent-resumed'"))
+      .IsEqualTo(1L);
+  }
+
+  /// <summary>
   /// #2360: a finished subscription backfill is the "already done" marker (a backfill is inserted ON CONFLICT DO
   /// NOTHING), so removing it would start the backfill again. The sweep never touches it, whatever the retention.
   /// </summary>

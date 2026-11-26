@@ -35,8 +35,8 @@ public partial class PerspectiveWorker {
   /// its stream's events after it, of every event type, in the stream's order.
   /// </summary>
   private sealed record ClaimedPrefetch(PerspectiveCursorInfo? Checkpoint, IReadOnlyList<MessageEnvelope<IEvent>> StreamEvents) {
-    /// <summary>The events in the order the per-pair path loads them (by id), for the lifecycle stages and the trace.</summary>
-    public List<MessageEnvelope<IEvent>> Upcoming { get; } = [.. StreamEvents.OrderByMessageId()];
+    /// <summary>The events in the order the per-pair path loads them (stream order, #2551), for the lifecycle stages and the trace.</summary>
+    public List<MessageEnvelope<IEvent>> Upcoming { get; } = StreamOrder.InStreamOrder(StreamEvents);
   }
 
   /// <summary>One claimed group between its phases: its scope, what it resolved, and its span.</summary>
@@ -316,9 +316,11 @@ public partial class PerspectiveWorker {
     var candidates = new ConcurrentQueue<ClaimedGroup>();
     try {
       try {
+        // #2247: a claimed pair meets its row current, so a model the drain holds for it is flushed first.
+        await _flushWriteBehindHeldAsync(groupedWork.Select(g => g.Key), takeApplyLocks: true, cancellationToken).ConfigureAwait(false);
         // Under the gates, as each pair's own reads would be: one cursor read and one event read for every set-based pair.
         var prefetched = await _prefetchClaimedAsync(
-          [.. groupedWork.Select(g => g.Key).Where(k => _writeModeOf(k.PerspectiveName) == PerspectiveWriteMode.SetBased)],
+          [.. groupedWork.Select(g => g.Key).Where(k => _isBatched(_writeModeOf(k.PerspectiveName)))],
           cancellationToken).ConfigureAwait(false);
         await Parallel.ForEachAsync(groupedWork, parallel, (work, ct) =>
           new ValueTask(_beginClaimedForBatchAsync(batch, work, prefetched?.GetValueOrDefault(work.Key), candidates, ct))).ConfigureAwait(false);
@@ -352,7 +354,7 @@ public partial class PerspectiveWorker {
       ClaimedPrefetch? prefetched,
       ConcurrentQueue<ClaimedGroup> candidates,
       CancellationToken ct) {
-    if (_writeModeOf(work.Key.PerspectiveName) != PerspectiveWriteMode.SetBased) {
+    if (!_isBatched(_writeModeOf(work.Key.PerspectiveName))) {
       await _runClaimedGroupAsync(batch, work, ct).ConfigureAwait(false);
       return;
     }
@@ -458,9 +460,11 @@ public partial class PerspectiveWorker {
         var prefetched = new Dictionary<(Guid StreamId, string PerspectiveName), ClaimedPrefetch>();
         foreach (var pair in pairs) {
           var checkpoint = cursors.GetValueOrDefault(pair);
-          // The stream was read from its pairs' earliest cursor: each pair takes the events after its own.
-          prefetched[pair] = new ClaimedPrefetch(checkpoint, [.. read.GetValueOrDefault(pair.StreamId, [])
-            .Where(e => checkpoint?.LastEventId is not { } last || e.MessageId.Value.CompareTo(last) > 0)]);
+          // The stream was read from its pairs' earliest cursor: each pair takes the events after its own, in stream
+          // order (#2551), never an id range. The earliest cursor's own event is not in the read, so that pair takes all.
+          var stream = StreamOrder.InStreamOrder(read.GetValueOrDefault(pair.StreamId, []));
+          var after = stream.FindIndex(e => e.MessageId.Value == checkpoint?.LastEventId) + 1;
+          prefetched[pair] = new ClaimedPrefetch(checkpoint, stream.GetRange(after, stream.Count - after));
         }
         return prefetched;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
@@ -485,7 +489,8 @@ public partial class PerspectiveWorker {
         provider.GetService<IPerspectiveStateSource>(),
         provider.GetService<IApplyBatchStrategy>() ?? _defaultFlushPolicy,
         _effectiveWidth(),
-        _logger);
+        _logger,
+        PerspectiveApplyBatch.NoWriteBehind.Instance);
     } finally {
       root.Dispose();
     }

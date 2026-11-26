@@ -22,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 ///    overrides the partition-modulo branch — the registered owner always claims.
 /// </para>
 /// </summary>
-/// <docs>fundamentals/work-coordinator/stream-ownership</docs>
+/// <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
 [Category("Shard1")]
 public class PerspectiveEventsPartitionSqlTests : EFCoreTestBase {
 

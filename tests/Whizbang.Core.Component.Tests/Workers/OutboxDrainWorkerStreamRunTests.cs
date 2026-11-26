@@ -59,6 +59,26 @@ public class OutboxDrainWorkerStreamRunTests {
   }
 
   [Test]
+  public async Task AStream_IsPublishedInEmissionOrder_AndContinuedFromItsLastPosition_WhateverItsIdsAsync() {
+    // #2551: the later id was emitted first. The drain publishes by position, and its cursor is the last position.
+    var stream = TrackedGuid.New().Value;
+    var low = TrackedGuid.New().Value;
+    var high = TrackedGuid.New().Value;
+    var coord = new RunCoordinator();
+    coord.Leased[stream] = [_row(low, stream) with { StreamPosition = 2 }, _row(high, stream) with { StreamPosition = 1 }];
+    var publish = new ScriptedPublishStrategy(bulk: false);
+    using var harness = _start(coord, publish, new OutboxDrainWorkerOptions { MaxPerStream = 100 }, stream);
+    await harness.Completion.WaitForCountAsync(2, TimeSpan.FromSeconds(30));
+    await harness.FirstCycle.WaitAsync(TimeSpan.FromSeconds(30));
+
+    await Assert.That(publish.PublishedIds).IsEquivalentTo([high, low], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the stream goes out in the order it was emitted, though its ids sort the other way");
+    var cursor = coord.ContinueCursors[0].Single();
+    await Assert.That(cursor.LastPublishedPosition).IsEqualTo(2L);
+    await Assert.That(cursor.LastPublishedMessageId).IsEqualTo(low);
+  }
+
+  [Test]
   public async Task AFailureMidRun_StopsTheStream_AndItIsNeverContinuedAsync() {
     var stream = TrackedGuid.New().Value;
     var healthy = TrackedGuid.New().Value;
@@ -269,8 +289,9 @@ public class OutboxDrainWorkerStreamRunTests {
 
   private static readonly JsonSerializerOptions _jsonOpts = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
+  // A stream's rows in emission order, each with its position (#2551), as the fetch returns them.
   private static List<OutboxBatchRow> _rows(Guid stream, int count) =>
-    [.. Enumerable.Range(0, count).Select(_ => TrackedGuid.New().Value).Order().Select(id => _row(id, stream))];
+    [.. Enumerable.Range(0, count).Select(_ => TrackedGuid.New().Value).Order().Select((id, i) => _row(id, stream) with { StreamPosition = i + 1 })];
 
   private static OutboxBatchRow _row(Guid messageId, Guid? streamId) {
     var envelope = new MessageEnvelope<JsonElement> {

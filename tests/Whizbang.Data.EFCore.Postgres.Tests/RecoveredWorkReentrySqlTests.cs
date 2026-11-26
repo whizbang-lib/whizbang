@@ -49,7 +49,7 @@ public class RecoveredWorkReentrySqlTests : EFCoreTestBase {
     await Assert.That(await _recoverAsync(connection, deadLetterId)).IsTrue();
 
     await Assert.That(await _outboxShapeAsync(connection, id)).IsEqualTo(stored)
-      .Because("everything but the arrival time and the lease is what the message was stored with");
+      .Because("everything but the arrival time, the lease and its place in the stream (a recovery is a new emission) is what the message was stored with");
     await Assert.That((await _deadLetterAsync(connection, deadLetterId)).Status).IsEqualTo((int)DeadLetterRecoveryStatus.Recovering)
       .Because("the store claims the dead letter, which reads Recovered only once the message is published");
   }
@@ -165,6 +165,62 @@ public class RecoveredWorkReentrySqlTests : EFCoreTestBase {
       .Because("an event behind the cursor is applied by replaying the stream in order, as the chain arranges for a late event");
     await Assert.That(await _scalarAsync<Guid>(connection,
       "SELECT rewind_trigger_event_id FROM wh_perspective_cursors WHERE stream_id = @id", streamId)).IsEqualTo(first);
+  }
+
+  [Test]
+  public async Task ARecoveredPerspectiveEvent_BehindItsCursorInStreamOrder_ThoughItsIdSortsAfter_FlagsTheRewindAsync() {
+    // #2551: the stream's order is its versions (emission order), never its ids. The recovered event was emitted
+    // first, so it is behind the cursor, though its id sorts after the event the cursor applied.
+    var streamId = (Guid)TrackedGuid.New();
+    // Time-ordered ids made one after the other: the first sorts first, in the database's byte order as well.
+    var lowId = (Guid)TrackedGuid.New();
+    var highId = (Guid)TrackedGuid.New();
+    await using var connection = await _openAsync();
+    await _associatePerspectiveAsync(connection);
+    await _storeOutboxAsync(_event(highId, streamId), _event(lowId, streamId));
+    var deadLetterId = await _moveAsync(connection, "wh_perspective_events", await _workIdAsync(connection, highId));
+    await _executeAsync(connection, "DELETE FROM wh_perspective_events WHERE event_id = @id", lowId);
+    await _cursorAtAsync(connection, streamId, lowId);
+
+    await Assert.That(await _recoverAsync(connection, deadLetterId)).IsTrue();
+
+    await Assert.That(await _scalarAsync<int>(connection,
+      "SELECT status & 32 FROM wh_perspective_cursors WHERE stream_id = @id", streamId)).IsEqualTo(REWIND_REQUIRED)
+      .Because("version 1 is behind the cursor's version 2, whatever the ids say");
+    await Assert.That(await _scalarAsync<Guid>(connection,
+      "SELECT rewind_trigger_event_id FROM wh_perspective_cursors WHERE stream_id = @id", streamId)).IsEqualTo(highId);
+  }
+
+  [Test]
+  public async Task ARecoveredPerspectiveEvent_AheadOfItsCursorInStreamOrder_ThoughItsIdSortsBefore_IsNotARewindAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    // Time-ordered ids made one after the other: the first sorts first, in the database's byte order as well.
+    var lowId = (Guid)TrackedGuid.New();
+    var highId = (Guid)TrackedGuid.New();
+    await using var connection = await _openAsync();
+    await _associatePerspectiveAsync(connection);
+    await _storeOutboxAsync(_event(highId, streamId), _event(lowId, streamId));
+    var deadLetterId = await _moveAsync(connection, "wh_perspective_events", await _workIdAsync(connection, lowId));
+    await _executeAsync(connection, "DELETE FROM wh_perspective_events WHERE event_id = @id", highId);
+    await _cursorAtAsync(connection, streamId, highId);
+
+    await Assert.That(await _recoverAsync(connection, deadLetterId)).IsTrue();
+
+    await Assert.That(await _scalarAsync<int>(connection,
+      "SELECT status & 32 FROM wh_perspective_cursors WHERE stream_id = @id", streamId)).IsEqualTo(0)
+      .Because("version 2 comes after the cursor's version 1: it is applied in order, with no replay");
+  }
+
+  private static async Task _cursorAtAsync(NpgsqlConnection connection, Guid streamId, Guid lastEventId) {
+    await using var cursor = connection.CreateCommand();
+    cursor.CommandText = """
+      INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status, processed_at)
+      VALUES (@stream, @name, @last, 0, NOW())
+      """;
+    cursor.Parameters.AddWithValue("stream", streamId);
+    cursor.Parameters.AddWithValue("name", PERSPECTIVE);
+    cursor.Parameters.AddWithValue("last", lastEventId);
+    await cursor.ExecuteNonQueryAsync();
   }
 
   [Test]
@@ -287,7 +343,8 @@ public class RecoveredWorkReentrySqlTests : EFCoreTestBase {
   /// <summary>The stored outbox row, without the arrival time, the lease and the dead letter it names.</summary>
   private static async Task<string> _outboxShapeAsync(NpgsqlConnection connection, Guid id) =>
     await _scalarAsync<string>(connection, """
-      SELECT (to_jsonb(o) - 'created_at' - 'instance_id' - 'lease_expiry' - 'recovered_from_dead_letter_id')::text
+      SELECT (to_jsonb(o) - 'created_at' - 'instance_id' - 'lease_expiry' - 'recovered_from_dead_letter_id'
+              - 'emission_position')::text
       FROM wh_outbox o WHERE o.message_id = @id
       """, id);
 

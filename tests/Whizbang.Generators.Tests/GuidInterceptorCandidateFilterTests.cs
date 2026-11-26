@@ -45,9 +45,6 @@ public class GuidInterceptorCandidateFilterTests {
   [Arguments("System.Guid.NewGuid()")]
   [Arguments("Guid.CreateVersion7()")]
   [Arguments("CombGuidIdGeneration.NewGuid()")]
-  [Arguments("Uuid.NewDatabaseFriendly(Database.PostgreSql)")]
-  [Arguments("Uuid.NewSequential()")]
-  [Arguments("Uuid7.NewUuid7()")]
   public async Task IsGuidCallCandidate_EveryInterceptableMethodName_IsAcceptedAsync(string call) {
     // The filter names the methods the transform can intercept; one it left out would silently stop
     // being intercepted. The predicate reads names alone, so the call need not resolve.
@@ -59,6 +56,9 @@ public class GuidInterceptorCandidateFilterTests {
   [Test]
   [Arguments("NewGuid()")]
   [Arguments("Guid.Empty")]
+  [Arguments("Uuid.NewDatabaseFriendly(Database.PostgreSql)")]
+  [Arguments("Uuid.NewSequential()")]
+  [Arguments("Uuid7.NewUuid7()")]
   [Arguments("s.ToString()")]
   public async Task IsGuidCallCandidate_NotAMemberAccessCallToAnInterceptableName_IsRejectedAsync(string expression) {
     var node = SyntaxFactory.ParseExpression(expression);

@@ -51,7 +51,7 @@ public class OutboxPublishSkipGateTests {
   public async Task ShouldSkipOutboxPublish_DefaultPolicy_AlwaysReturnsFalseAsync() {
     var registry = new TestRegistry();  // empty — but EvaluateOutbox is the SAFE-default no-op
     var meter = new Meter("Whizbang.Tests.OutboxPublishSkipGateTests.A");
-    var policy = new MessageDiscardPolicy(registry: registry, logger: new TestLogger<MessageDiscardPolicy>(new RecordingLogger()), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    var policy = new MessageDiscardPolicy(registry: registry, logger: new TestLogger<MessageDiscardPolicy>(new RecordingLogger()), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance), retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
 
     var shouldSkip = OutboxPublishWorker.ShouldSkipOutboxPublish(
       discardPolicy: policy,

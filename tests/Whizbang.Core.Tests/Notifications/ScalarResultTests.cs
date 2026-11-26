@@ -40,4 +40,18 @@ public class ScalarResultTests {
     await Assert.That(ScalarResult.LongOrZero(DBNull.Value)).IsEqualTo(0L);
     await Assert.That(ScalarResult.LongOrZero(42)).IsEqualTo(0L);
   }
+
+  [Test]
+  public async Task InstantOrNull_ATimestampIsItsUtcInstant_AndAnythingElseIsNullAsync() {
+    var at = new DateTime(2026, 11, 23, 12, 0, 0, DateTimeKind.Utc);
+    var offset = new DateTimeOffset(2026, 11, 23, 7, 0, 0, TimeSpan.FromHours(-5));
+
+    await Assert.That(ScalarResult.InstantOrNull(at)).IsEqualTo(new DateTimeOffset(at));
+    await Assert.That(ScalarResult.InstantOrNull(DateTime.SpecifyKind(at, DateTimeKind.Unspecified)))
+      .IsEqualTo(new DateTimeOffset(at))
+      .Because("a timestamptz the driver hands back without a kind is still UTC");
+    await Assert.That(ScalarResult.InstantOrNull(offset)).IsEqualTo(offset);
+    await Assert.That(ScalarResult.InstantOrNull(null)).IsNull();
+    await Assert.That(ScalarResult.InstantOrNull(DBNull.Value)).IsNull();
+  }
 }

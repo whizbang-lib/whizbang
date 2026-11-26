@@ -12,15 +12,15 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Reconcile self-declares the rewind at WORK-ITEM CREATION. A backfilled event keeps its
 /// ORIGINAL (older) event id, so the moment the inbox emit chain creates its perspective work
-/// item the system already knows the event slots BELOW the cursor — no heuristic detection is
+/// item the system already knows the event slots BELOW the cursor in its origin's order (#2551: never by id): no heuristic detection is
 /// possible later (the backfill's local commit_sequence is fresh and above the cursor, so the
 /// inversion detector can never see it). The emit chain therefore flags the cursor
 /// RewindRequired with the straggler as trigger, and the worker's existing rewind routing does
 /// the rest. The pre-existing straggler check in complete_perspective_checkpoint runs only at
-/// completion time and only catches events the runner never saw — a reconciled event is seen,
+/// completion time and only catches events the runner never saw: a reconciled event is seen,
 /// applied in arrival order, and marked processed, so that check stays silent.
 /// </summary>
-/// <docs>fundamentals/perspectives/rewind-invariants</docs>
+/// <docs>fundamentals/perspectives/rewind#detection</docs>
 [Category("Shard4")]
 public class ReconcileRewindDeclarationSqlTests : EFCoreTestBase {
 
@@ -63,7 +63,7 @@ public class ReconcileRewindDeclarationSqlTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
-  private static async Task _driveInboxEventAsync(NpgsqlConnection conn, Guid streamId, Guid eventId) {
+  private static async Task _driveInboxEventAsync(NpgsqlConnection conn, Guid streamId, Guid eventId, Guid origin, long originSequence) {
     var instanceId = Guid.NewGuid();
     var inbox = $$"""
       [{
@@ -77,8 +77,8 @@ public class ReconcileRewindDeclarationSqlTests : EFCoreTestBase {
         "StreamId": "{{streamId}}",
         "IsEvent": true,
         "Flags": 0,
-        "SourceServiceId": "{{Guid.NewGuid()}}",
-        "SourceCommitSequence": 7
+        "SourceServiceId": "{{origin}}",
+        "SourceCommitSequence": {{originSequence}}
       }]
       """;
     await using (var store = conn.CreateCommand()) {
@@ -119,22 +119,24 @@ public class ReconcileRewindDeclarationSqlTests : EFCoreTestBase {
     await _registerAssociationAsync(conn);
 
     var streamId = Guid.NewGuid();
-    var cursorEventId = Guid.Parse("019f0000-0000-7000-8000-00000000cccc");   // "today"
-    var monthOldEventId = Guid.Parse("019e0000-0000-7000-8000-00000000aaaa"); // origin-era id
-    // The cursor's last event must exist (FK) — the stream's normal history, applied and done.
-    await _driveInboxEventAsync(conn, streamId, cursorEventId);
+    var origin = Guid.NewGuid();
+    // #2551: below the cursor in the origin's order (sequence 3 under the cursor's 5), although its id sorts above the
+    // cursor's: ids are time-ordered and never stream position.
+    var cursorEventId = Guid.Parse("019e0000-0000-7000-8000-00000000cccc");
+    var lateEventId = Guid.Parse("019f0000-0000-7000-8000-00000000aaaa");
+    // The cursor's last event must exist (FK): the stream's normal history, applied and done.
+    await _driveInboxEventAsync(conn, streamId, cursorEventId, origin, 5);
     await _seedCursorAsync(conn, streamId, cursorEventId);
 
-    await _driveInboxEventAsync(conn, streamId, monthOldEventId);
+    await _driveInboxEventAsync(conn, streamId, lateEventId, origin, 3);
 
     var (status, trigger) = await _cursorAsync(conn, streamId);
     await Assert.That(status & 32).IsEqualTo(32)
-      .Because("a work item whose event id slots BELOW the cursor is a straggler by "
-               + "construction — reconcile must self-declare the rewind at creation time, "
-               + "because the backfill's fresh local commit_sequence makes it invisible to "
-               + "every later inversion check");
-    await Assert.That(trigger).IsEqualTo(monthOldEventId)
-      .Because("the straggler itself is the rewind trigger — the replay floor must sit below it");
+      .Because("a work item its origin committed before the cursor's last event is a straggler by construction: "
+               + "reconcile must self-declare the rewind at creation time, because the backfill's fresh local "
+               + "commit_sequence makes it invisible to every later inversion check");
+    await Assert.That(trigger).IsEqualTo(lateEventId)
+      .Because("the straggler itself is the rewind trigger: the replay floor must sit below it");
   }
 
   [Test]
@@ -144,17 +146,39 @@ public class ReconcileRewindDeclarationSqlTests : EFCoreTestBase {
     await _registerAssociationAsync(conn);
 
     var streamId = Guid.NewGuid();
-    var cursorEventId = Guid.Parse("019e0000-0000-7000-8000-00000000cccc");
-    var newerEventId = Guid.Parse("019f0000-0000-7000-8000-00000000eeee");
-    await _driveInboxEventAsync(conn, streamId, cursorEventId);
+    var origin = Guid.NewGuid();
+    // #2551: after the cursor in the origin's order (sequence 6 over 5), although its id sorts below the cursor's.
+    var cursorEventId = Guid.Parse("019f0000-0000-7000-8000-00000000cccc");
+    var newerEventId = Guid.Parse("019e0000-0000-7000-8000-00000000eeee");
+    await _driveInboxEventAsync(conn, streamId, cursorEventId, origin, 5);
     await _seedCursorAsync(conn, streamId, cursorEventId);
 
-    await _driveInboxEventAsync(conn, streamId, newerEventId);
+    await _driveInboxEventAsync(conn, streamId, newerEventId, origin, 6);
 
     var (status, trigger) = await _cursorAsync(conn, streamId);
     await Assert.That(status & 32).IsEqualTo(0)
-      .Because("normal forward progress must never declare a rewind — the declaration is "
-               + "strictly for events that slot below the cursor");
+      .Because("normal forward progress in the origin's order must never declare a rewind, whatever the ids say");
+    await Assert.That(trigger).IsNull();
+  }
+
+  [Test]
+  public async Task InboxEmitChain_AnotherOriginsEvent_WithALowerId_DoesNotDeclareRewindAsync() {
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    await _registerAssociationAsync(conn);
+
+    var streamId = Guid.NewGuid();
+    var cursorEventId = Guid.Parse("019f0000-0000-7000-8000-00000000cccc");
+    var otherOriginsEventId = Guid.Parse("019e0000-0000-7000-8000-00000000dddd");
+    await _driveInboxEventAsync(conn, streamId, cursorEventId, Guid.NewGuid(), 5);
+    await _seedCursorAsync(conn, streamId, cursorEventId);
+
+    await _driveInboxEventAsync(conn, streamId, otherOriginsEventId, Guid.NewGuid(), 1);
+
+    var (status, trigger) = await _cursorAsync(conn, streamId);
+    await Assert.That(status & 32).IsEqualTo(0)
+      .Because("a replay keeps the arrival order between origins (#2257), so another origin's event stored after the "
+               + "cursor's is after it; its lower id says nothing about stream position");
     await Assert.That(trigger).IsNull();
   }
 }

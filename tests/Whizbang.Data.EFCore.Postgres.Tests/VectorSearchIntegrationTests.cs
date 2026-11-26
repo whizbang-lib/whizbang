@@ -22,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Integration")]
 [Category("VectorSearch")]
 [Category("Shard2")]
-public class VectorSearchIntegrationTests : IAsyncDisposable {
+public class VectorSearchIntegrationTests {
   private string? _testDatabaseName;
   private string _connectionString = null!;
   private DbContextOptions<VectorTestDbContext> _dbContextOptions = null!;
@@ -173,11 +173,6 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
 
       _testDatabaseName = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   private async Task _initializeDatabaseAsync() {

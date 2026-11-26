@@ -31,14 +31,14 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// showed as claimed and lease-expired.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/perspectives/drain-mode</docs>
+/// <docs>operations/workers/perspective-worker#scope-on-replay</docs>
 [Category("Integration")]
 [Category("Shard3")]
 public class ReplayScopeRehydrationTests : EFCoreTestBase {
 
   private static StreamEventData _row(string? scope, string? metadata) => new() {
     StreamId = Guid.Parse("2a2a2a2a-1111-4111-8111-111111111111"),
-    EventId = Guid.Parse("2b2b2b2b-1111-4111-8111-111111111111"),
+    EventId = Guid.Parse("2b2b2b2b-1111-7111-8111-111111111111"),
     EventType = typeof(ScopeProbeEvent).AssemblyQualifiedName!,
     EventData = """{"ProbeId":"2a2a2a2a-1111-4111-8111-111111111111"}""",
     Metadata = metadata,

@@ -44,6 +44,16 @@ public class AddWhizbangPostgresNotificationsTests {
   }
 
   [Test]
+  public async Task AddWhizbangPostgresNotifications_GivesTheScheduleWorkerItsOverdueGaugesAsync() {
+    // #2575: a stuck schedule is reported on a gauge. The worker takes the gauges as an optional dependency, so the
+    // registration is what decides whether a host that configures nothing gets them.
+    var sp = _build();
+
+    await Assert.That(sp.GetService<Whizbang.Core.Temporal.TemporalMetrics>()).IsNotNull();
+    await Assert.That(sp.GetRequiredService<Whizbang.Core.Temporal.ScheduleWorker>().HasMetricsForTests).IsTrue();
+  }
+
+  [Test]
   public async Task AddWhizbangPostgresNotifications_ReplacesNoOpWithPgListenerAsync() {
     var sp = _build();
     var listener = sp.GetRequiredService<IWorkNotificationListener>();

@@ -1,11 +1,13 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Threading.Channels;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -42,6 +44,40 @@ public class CapabilitiesStartupStepTests {
 
   private static CapabilityRegistry _registry(FakeCapabilityProvider provider) =>
     new([provider], NullLogger<CapabilityRegistry>.Instance);
+
+  /// <summary>A fake clock that says when a wait is scheduled and how long it is, so a test advances it on that signal.</summary>
+  private sealed class SchedulingClock : FakeTimeProvider {
+    private readonly Channel<TimeSpan> _scheduled = Channel.CreateUnbounded<TimeSpan>();
+
+    public List<TimeSpan> Waits { get; } = [];
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
+      var timer = base.CreateTimer(callback, state, dueTime, period);
+      lock (Waits) {
+        Waits.Add(dueTime);
+      }
+      _scheduled.Writer.TryWrite(dueTime);
+      return timer;
+    }
+
+    /// <summary>
+    /// Waits for the next scheduled wait, then advances past it; returns false, advancing nothing, when the step
+    /// finished first, so a step that schedules fewer waits than expected fails its assertions instead of hanging.
+    /// </summary>
+    public async Task<bool> ElapseNextWaitAsync(TimeSpan expected, Task running) {
+      var next = _scheduled.Reader.ReadAsync().AsTask();
+      if (await Task.WhenAny(next, running) != next) {
+        return false;
+      }
+      Advance(expected);
+      return true;
+    }
+  }
+
+  private static CapabilitiesStartupStep _retryingStep(
+      ICapabilityRegistry registry, TimeProvider clock, ILogger<CapabilitiesStartupStep> logger,
+      IConfiguration? configuration, params CapabilityRequirement[] requirements) =>
+    new(registry, Options.Create(new CapabilityOptions()), [new FixedRequirements(requirements)], [], configuration, logger, clock);
 
   [Test]
   public async Task Descriptor_RunsAfterMigrateOnEveryInstanceWithoutBlockingReadinessAsync() {
@@ -135,6 +171,83 @@ public class CapabilitiesStartupStepTests {
       .StartsWith("capability broker/x on 'vhost-a': Unknown: not probed yet.");
   }
 
+  // ---- #1513, decided in #1672: Unknown on an explicit requirement is probed again a bounded number of times,
+  // then fails start ----
+
+  [Test]
+  public async Task ExplicitRequirement_StillUnknownAfterTheBoundedRetries_FailsStartAsync() {
+    var provider = new FakeCapabilityProvider("broker", ["vhost-a"], FakeCapabilityProvider.Describe("broker", "x")) {
+      Failure = new InvalidOperationException("broker unreachable"),
+    };
+    var registry = _registry(provider);
+    var clock = new SchedulingClock();
+    var logger = new FakeLogger<CapabilitiesStartupStep>();
+
+    var running = _retryingStep(registry, clock, logger, _set("W:Delay:Mode", "Delayed"), _delayed).ExecuteAsync(CancellationToken.None).AsTask();
+    var retry = 1;
+    while (retry <= 3 && await clock.ElapseNextWaitAsync(StartupAssessmentSource.RetryDelay(retry), running)) {
+      retry++;
+    }
+    await running;
+
+    await Assert.That(provider.Probes).IsEqualTo(4).Because("the first probe and three bounded retries");
+    await Assert.That(clock.Waits).IsEquivalentTo([TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4)]);
+    var failure = registry.Verdict.Failures.Single();
+    await Assert.That(failure.Status.State).IsEqualTo(CapabilityState.Unknown);
+    await Assert.That(failure.Line).StartsWith(
+      "capability broker/x on 'vhost-a': Unknown: InvalidOperationException: broker unreachable.");
+    var records = logger.Collector.GetSnapshot();
+    await Assert.That(records.Count(r => r.Level == LogLevel.Warning && r.Message.Contains("probing again in", StringComparison.Ordinal)))
+      .IsEqualTo(3);
+    await Assert.That(records.Single(r => r.Level == LogLevel.Error).Message).IsEqualTo(failure.Line);
+  }
+
+  [Test]
+  public async Task ExplicitRequirement_UnknownThenReadyOnARetry_ProceedsAsync() {
+    var provider = new FakeCapabilityProvider("broker", ["vhost-a"], FakeCapabilityProvider.Describe("broker", "x"));
+    provider.States["x"] = CapabilityState.Unknown;
+    var registry = _registry(provider);
+    var clock = new SchedulingClock();
+
+    var running = _retryingStep(registry, clock, new FakeLogger<CapabilitiesStartupStep>(), _set("W:Delay:Mode", "Delayed"), _delayed)
+      .ExecuteAsync(CancellationToken.None).AsTask();
+    provider.States.Remove("x");
+    await clock.ElapseNextWaitAsync(StartupAssessmentSource.RetryDelay(1), running);
+    await running;
+
+    await Assert.That(provider.Probes).IsEqualTo(2).Because("the retry stops as soon as the probe can tell");
+    await Assert.That(registry.Verdict.Entries.Single().Outcome).IsEqualTo(CapabilityVerdictOutcome.Proceed);
+  }
+
+  [Test]
+  public async Task ImplicitRequirement_Unknown_IsNotProbedAgain_AndDegradesAsync() {
+    var provider = new FakeCapabilityProvider("broker", ["vhost-a"], FakeCapabilityProvider.Describe("broker", "x"));
+    provider.States["x"] = CapabilityState.Unknown;
+    var registry = _registry(provider);
+    var clock = new SchedulingClock();
+
+    await _retryingStep(registry, clock, new FakeLogger<CapabilitiesStartupStep>(), null, _delayed with { Default = "Delayed" })
+      .ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(provider.Probes).IsEqualTo(1);
+    await Assert.That(clock.Waits).IsEmpty().Because("only an explicit requirement is worth holding the verdict for");
+    await Assert.That(registry.Verdict.Entries.Single().Outcome).IsEqualTo(CapabilityVerdictOutcome.Degrade);
+  }
+
+  [Test]
+  public async Task ExplicitRequirement_NoProviderDescribes_IsNotProbedAgain_AndWarnsAsync() {
+    var provider = new FakeCapabilityProvider("broker", ["vhost-a"], FakeCapabilityProvider.Describe("broker", "y"));
+    var registry = _registry(provider);
+    var clock = new SchedulingClock();
+
+    await _retryingStep(registry, clock, new FakeLogger<CapabilitiesStartupStep>(), _set("W:Delay:Mode", "Delayed"), _delayed)
+      .ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(provider.Probes).IsEqualTo(1);
+    await Assert.That(clock.Waits).IsEmpty().Because("probing again cannot describe a capability no provider knows");
+    await Assert.That(registry.Verdict.Entries.Single().Outcome).IsEqualTo(CapabilityVerdictOutcome.Warn);
+  }
+
   [Test]
   public async Task Arguments_AreValidatedAsync() {
     var registry = _registry(new FakeCapabilityProvider("broker", []));
@@ -146,5 +259,6 @@ public class CapabilitiesStartupStepTests {
     await Assert.That(() => new CapabilitiesStartupStep(registry, options, null!, [], null, logger)).Throws<ArgumentNullException>();
     await Assert.That(() => new CapabilitiesStartupStep(registry, options, [], null!, null, logger)).Throws<ArgumentNullException>();
     await Assert.That(() => new CapabilitiesStartupStep(registry, options, [], [], null, null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new CapabilitiesStartupStep(registry, options, [], [], null, logger, null!)).Throws<ArgumentNullException>();
   }
 }

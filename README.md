@@ -15,6 +15,7 @@
   <a href="https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang"><img src="https://sonarcloud.io/api/project_badges/measure?project=whizbang-lib_whizbang&metric=alert_status" alt="Quality Gate Status"></a>
   <a href="https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/"><img src="https://img.shields.io/nuget/v/SoftwareExtravaganza.Whizbang.Core.svg" alt="NuGet"></a>
   <a href="https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/"><img src="https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Core.svg?label=nuget%20pre-release" alt="NuGet pre-release"></a>
+  <a href="https://whizba.ng/docs/getting-started/supported-frameworks"><img src="https://img.shields.io/badge/.NET-10.0%20%7C%2011.0-512BD4.svg" alt=".NET 10.0 | 11.0"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
 </p>
 
@@ -147,13 +148,21 @@ ASP.NET Core request integration, and Aspire resources for local and cloud hosti
 | [Whizbang.Hosting.Azure.ServiceBus](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus/) | Aspire hosting extensions for Whizbang Azure Service Bus integration |
 | [Whizbang.Hosting.RabbitMQ](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ/) | Aspire hosting extensions for Whizbang RabbitMQ integration with automatic topology configuration. |
 
+#### Object storage
+
+Message body offload and event archive objects in a storage account, active when referenced and configured.
+
+| Package | Version | What it is for |
+|---|---|---|
+| [Whizbang.Storage.AzureBlob](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Storage.AzureBlob/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Storage.AzureBlob.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Storage.AzureBlob/) | Azure Blob Storage for Whizbang: message body offload (claim check) and event archive objects, active when referenced and configured (Whizbang:Storage:AzureBlob). |
+
 #### Message offload
 
 Move large message bodies out of the broker and database (claim check).
 
 | Package | Version | What it is for |
 |---|---|---|
-| [Whizbang.Offloads.AzureBlob](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Offloads.AzureBlob/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Offloads.AzureBlob.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Offloads.AzureBlob/) | Azure Blob Storage IMessageBodyStore provider for Whizbang offloads (claim-check pattern). |
+| [Whizbang.Offloads.AzureBlob](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Offloads.AzureBlob/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Offloads.AzureBlob.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Offloads.AzureBlob/) | Replaced by Whizbang.Storage.AzureBlob, which this release depends on: the earlier registration calls compile and work, marked obsolete. |
 | [Whizbang.Offloads.InMemory](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Offloads.InMemory/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Offloads.InMemory.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Offloads.InMemory/) | In-memory IMessageBodyStore provider for Whizbang offloads. |
 
 #### Event archive
@@ -162,7 +171,7 @@ Keep archived event streams outside the database, readable and restorable.
 
 | Package | Version | What it is for |
 |---|---|---|
-| [Whizbang.Archive.AzureBlob](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Archive.AzureBlob/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Archive.AzureBlob.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Archive.AzureBlob/) | Azure Blob Storage IArchiveStore for Whizbang: archived event streams leave the database as Brotli-compressed chunks, with a manifest in the service's Postgres database. |
+| [Whizbang.Archive.AzureBlob](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Archive.AzureBlob/) | [![NuGet](https://img.shields.io/nuget/vpre/SoftwareExtravaganza.Whizbang.Archive.AzureBlob.svg?label=)](https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Archive.AzureBlob/) | Replaced by Whizbang.Storage.AzureBlob, which this release depends on: the earlier registration calls compile and work, marked obsolete. |
 
 #### Observability
 
@@ -251,7 +260,7 @@ The eligibility rules storage cleanup and stream integrity share, versioned only
 
 ## Requirements
 
-- **.NET 10**
+- **.NET 10 or .NET 11**: every package ships net10.0 and net11.0 builds, supported for as long as Microsoft supports each version (see [Supported frameworks](https://whizba.ng/docs/getting-started/supported-frameworks))
 - **PostgreSQL** for the production stores (tested against PostgreSQL 17). Search fields use the `pg_trgm`
   extension, and the framework creates it when the server allows.
 - RabbitMQ or Azure Service Bus when services talk across processes; neither is needed in-process.
@@ -269,7 +278,7 @@ dotnet add package SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres
 ## Quality
 
 <!-- auto:quality -->
-- **Tests:** 43,000+ across unit, generator, integration and transport suites, run on every pull request.
+- **Tests:** 45,000+ across unit, generator, integration and transport suites, run on every pull request.
 - **Coverage:** 99.8% of library lines; every pull request must cover all of its new lines and add no
   SonarCloud findings.
 <!-- /auto:quality -->

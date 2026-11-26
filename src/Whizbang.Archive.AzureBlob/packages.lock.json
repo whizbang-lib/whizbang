@@ -2,37 +2,11 @@
   "version": 2,
   "dependencies": {
     "net10.0": {
-      "Azure.Storage.Blobs": {
-        "type": "Direct",
-        "requested": "[12.30.1, )",
-        "resolved": "12.30.1",
-        "contentHash": "ywPqtDHLH5MY0Cp/wfLQgqhHOuJmD+bYVJawjXudtaQr9aJB+9orhk8oE6hHPy5s8H5bzq2q/mDkESf8w1rzBg==",
-        "dependencies": {
-          "Apache.Arrow": "22.1.0",
-          "Azure.Core": "1.60.0",
-          "Azure.Storage.Common": "12.29.0"
-        }
-      },
       "Microsoft.CodeAnalysis.BannedApiAnalyzers": {
         "type": "Direct",
         "requested": "[4.14.0, )",
         "resolved": "4.14.0",
         "contentHash": "gSWJlDWwmDhtbrEJGiHqvEjz9KthIiFD0qYB8zZ6a7z+xpMSPEtM9yTYELSa58iFWYlzSRqP9FXO6KoT3+ZMtg=="
-      },
-      "Microsoft.Extensions.DependencyInjection.Abstractions": {
-        "type": "Direct",
-        "requested": "[10.0.15, )",
-        "resolved": "10.0.15",
-        "contentHash": "KczR2nV7ooeimtZxAawPht/FJUHnX+uoWy7y4pba+iaRQBwUM2NwtiqZg+/FpZDHUf2RkkzveGkhMTWDNzmDUA=="
-      },
-      "Microsoft.Extensions.Logging.Abstractions": {
-        "type": "Direct",
-        "requested": "[10.0.15, )",
-        "resolved": "10.0.15",
-        "contentHash": "s5xzXGWqqlmmThMnQ1rnmL7QLwbluB2JqX9NaK8C9HPuHzN7kfmiddTRbwts5rQssATkh2B18RrofjeUD8g14A==",
-        "dependencies": {
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.15"
-        }
       },
       "Microsoft.NET.ILLink.Tasks": {
         "type": "Direct",
@@ -391,19 +365,28 @@
           "SoftwareExtravaganza.Whizbang.Rules": "[0.100.0-local.111, )"
         }
       },
-      "SoftwareExtravaganza.Whizbang.Data.Postgres": {
-        "type": "Project",
-        "dependencies": {
-          "Npgsql": "[10.0.1, )",
-          "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )",
-          "SoftwareExtravaganza.Whizbang.Data.Schema": "[0.100.0-local.111, )"
-        }
-      },
-      "SoftwareExtravaganza.Whizbang.Data.Schema": {
-        "type": "Project"
-      },
       "SoftwareExtravaganza.Whizbang.Rules": {
         "type": "Project"
+      },
+      "SoftwareExtravaganza.Whizbang.Storage.AzureBlob": {
+        "type": "Project",
+        "dependencies": {
+          "Azure.Storage.Blobs": "[12.30.1, )",
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.15, )",
+          "Microsoft.Extensions.Logging.Abstractions": "[10.0.15, )",
+          "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )"
+        }
+      },
+      "Azure.Storage.Blobs": {
+        "type": "CentralTransitive",
+        "requested": "[12.30.1, )",
+        "resolved": "12.30.1",
+        "contentHash": "ywPqtDHLH5MY0Cp/wfLQgqhHOuJmD+bYVJawjXudtaQr9aJB+9orhk8oE6hHPy5s8H5bzq2q/mDkESf8w1rzBg==",
+        "dependencies": {
+          "Apache.Arrow": "22.1.0",
+          "Azure.Core": "1.60.0",
+          "Azure.Storage.Common": "12.29.0"
+        }
       },
       "Microsoft.Extensions.DependencyInjection": {
         "type": "CentralTransitive",
@@ -413,6 +396,12 @@
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.15"
         }
+      },
+      "Microsoft.Extensions.DependencyInjection.Abstractions": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.15, )",
+        "resolved": "10.0.15",
+        "contentHash": "KczR2nV7ooeimtZxAawPht/FJUHnX+uoWy7y4pba+iaRQBwUM2NwtiqZg+/FpZDHUf2RkkzveGkhMTWDNzmDUA=="
       },
       "Microsoft.Extensions.Diagnostics.HealthChecks": {
         "type": "CentralTransitive",
@@ -462,45 +451,22 @@
           "Microsoft.Extensions.Options": "10.0.15"
         }
       },
-      "Npgsql": {
+      "Microsoft.Extensions.Logging.Abstractions": {
         "type": "CentralTransitive",
-        "requested": "[10.0.1, )",
-        "resolved": "10.0.1",
-        "contentHash": "XyUcxEfqlFomhNTG/ZdGlec+uSOQArKz0Mzz8jYKP/Jj9GM2YabU5CVZtp0yiC4f9hRp+tRZTnHMatJeJ3rwgw==",
+        "requested": "[10.0.15, )",
+        "resolved": "10.0.15",
+        "contentHash": "s5xzXGWqqlmmThMnQ1rnmL7QLwbluB2JqX9NaK8C9HPuHzN7kfmiddTRbwts5rQssATkh2B18RrofjeUD8g14A==",
         "dependencies": {
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.0"
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.15"
         }
       }
     },
     "net11.0": {
-      "Azure.Storage.Blobs": {
-        "type": "Direct",
-        "requested": "[12.30.1, )",
-        "resolved": "12.30.1",
-        "contentHash": "ywPqtDHLH5MY0Cp/wfLQgqhHOuJmD+bYVJawjXudtaQr9aJB+9orhk8oE6hHPy5s8H5bzq2q/mDkESf8w1rzBg==",
-        "dependencies": {
-          "Apache.Arrow": "22.1.0",
-          "Azure.Core": "1.60.0",
-          "Azure.Storage.Common": "12.29.0"
-        }
-      },
       "Microsoft.CodeAnalysis.BannedApiAnalyzers": {
         "type": "Direct",
         "requested": "[4.14.0, )",
         "resolved": "4.14.0",
         "contentHash": "gSWJlDWwmDhtbrEJGiHqvEjz9KthIiFD0qYB8zZ6a7z+xpMSPEtM9yTYELSa58iFWYlzSRqP9FXO6KoT3+ZMtg=="
-      },
-      "Microsoft.Extensions.DependencyInjection.Abstractions": {
-        "type": "Direct",
-        "requested": "[11.0.0, )",
-        "resolved": "11.0.0",
-        "contentHash": "a2c4Kp55miXT6G+DSb75pczXQJHgNMzPyZEyMxrrKxuQrgvctcDWJWD9fVe/uGbQdu4Z0c3B7AVKp1DXmD64nQ=="
-      },
-      "Microsoft.Extensions.Logging.Abstractions": {
-        "type": "Direct",
-        "requested": "[11.0.0, )",
-        "resolved": "11.0.0",
-        "contentHash": "MTMO2V1eT9Dm5VIpJGLNwIjAjoBErUlfuB+DEaZ0tb8J+Nf/Xlj8he5AztK9p1iOJPIyuBeOrVy2u/CSdsfzPw=="
       },
       "Microsoft.NET.ILLink.Tasks": {
         "type": "Direct",
@@ -763,19 +729,26 @@
           "SoftwareExtravaganza.Whizbang.Rules": "[0.100.0-local.111, )"
         }
       },
-      "SoftwareExtravaganza.Whizbang.Data.Postgres": {
-        "type": "Project",
-        "dependencies": {
-          "Npgsql": "[10.0.1, )",
-          "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )",
-          "SoftwareExtravaganza.Whizbang.Data.Schema": "[0.100.0-local.111, )"
-        }
-      },
-      "SoftwareExtravaganza.Whizbang.Data.Schema": {
-        "type": "Project"
-      },
       "SoftwareExtravaganza.Whizbang.Rules": {
         "type": "Project"
+      },
+      "SoftwareExtravaganza.Whizbang.Storage.AzureBlob": {
+        "type": "Project",
+        "dependencies": {
+          "Azure.Storage.Blobs": "[12.30.1, )",
+          "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )"
+        }
+      },
+      "Azure.Storage.Blobs": {
+        "type": "CentralTransitive",
+        "requested": "[12.30.1, )",
+        "resolved": "12.30.1",
+        "contentHash": "ywPqtDHLH5MY0Cp/wfLQgqhHOuJmD+bYVJawjXudtaQr9aJB+9orhk8oE6hHPy5s8H5bzq2q/mDkESf8w1rzBg==",
+        "dependencies": {
+          "Apache.Arrow": "22.1.0",
+          "Azure.Core": "1.60.0",
+          "Azure.Storage.Common": "12.29.0"
+        }
       },
       "Microsoft.Extensions.DependencyInjection": {
         "type": "CentralTransitive",
@@ -821,12 +794,6 @@
           "Microsoft.Extensions.Logging.EventLog": "11.0.0",
           "Microsoft.Extensions.Logging.EventSource": "11.0.0"
         }
-      },
-      "Npgsql": {
-        "type": "CentralTransitive",
-        "requested": "[10.0.1, )",
-        "resolved": "10.0.1",
-        "contentHash": "XyUcxEfqlFomhNTG/ZdGlec+uSOQArKz0Mzz8jYKP/Jj9GM2YabU5CVZtp0yiC4f9hRp+tRZTnHMatJeJ3rwgw=="
       }
     }
   }

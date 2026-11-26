@@ -1,0 +1,230 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using Npgsql;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Data.EFCore.Postgres.Tests.Performance;
+using Whizbang.Data.Postgres;
+
+namespace Whizbang.Data.EFCore.Postgres.Tests;
+
+/// <summary>
+/// What the claim's re-offer walk reads when the statistics say every lease has lapsed (#2474): one probe per held
+/// stream, priced by the batch, never a read of every live lease per step of the walk.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A fan-out that outlasts the lease its rows were stored under leaves them lapsed, and the statistics are taken then.
+/// The claim acquires them again, so their leases are live, and the statistics still say none is. A walk that tests the
+/// lease as an index condition then looks cheapest through the lease-expiry index, which the planner believes holds no
+/// live lease, and reads every live lease on every step: for 1,000 held streams one claim read 1,001,001 index entries
+/// (#2286). The walk is one probe per stream only through the held-lanes index, which the lease test must not displace.
+/// </para>
+/// <para>
+/// Each walk is measured in rows read (<see cref="RowsRead"/>, on a database this test alone uses), over a batch of
+/// held streams and over four times as many: a walk priced by the batch reads four times as much, one priced by the
+/// batch squared sixteen. The claim measured is the one after the acquisition, so it acquires nothing and its rows read
+/// are the walk's and the guards'. <c>claim_work</c> plans for its arguments whatever the session asks (its own
+/// <c>plan_cache_mode</c> clause, 157), so the generic run proves that the session cannot hand it a generic plan.
+/// </para>
+/// </remarks>
+/// <docs>fundamentals/work-coordinator/claim-loop</docs>
+[Category("Shard5")]
+[Category("Integration")]
+[Category("Performance")]
+[NotInParallel] // A measurement: runs alone so it measures the code, not its neighbors.
+public class ClaimReofferWalkCostSqlTests : EFCoreTestBase {
+  private const int BATCH = 250;
+  private const int DEEPER = 4 * BATCH;
+  private static readonly Guid _instance = new("00000000-0000-0000-0000-0000000024b4");
+
+  /// <summary>
+  /// Rows a re-offer claim may read per held stream: the walk's probe, the watermark's lease probe and its event-store
+  /// lookup, with room for the guards and the lane probes, which read a few entries per claim.
+  /// </summary>
+  private const int ROWS_PER_HELD_STREAM = 6;
+
+  [Test]
+  [Arguments("force_custom_plan")]
+  [Arguments("force_generic_plan")]
+  [Timeout(600000)]
+  public async Task PerspectiveReOffer_OnStatisticsThatSayEveryLeaseLapsed_ReadsWhatItHolds_OncePerStreamAsync(
+      string planMode, CancellationToken cancellationToken) {
+    await _assertPricedByTheBatchAsync(planMode, "perspective_stream", _fillPerspectiveAsync, cancellationToken);
+  }
+
+  [Test]
+  [Arguments("force_custom_plan")]
+  [Arguments("force_generic_plan")]
+  [Timeout(600000)]
+  public async Task InboxReOffer_OnStatisticsThatSayEveryLeaseLapsed_ReadsWhatItHolds_OncePerStreamAsync(
+      string planMode, CancellationToken cancellationToken) {
+    await _assertPricedByTheBatchAsync(planMode, "inbox", _fillInboxAsync, cancellationToken);
+  }
+
+  /// <summary>
+  /// Measures the re-offer over <see cref="BATCH"/> held streams and over four times as many, and requires the larger
+  /// to read no more than four times the smaller (plus one row per stream of the smaller batch, for the guards) and no
+  /// more than <see cref="ROWS_PER_HELD_STREAM"/> rows per stream it holds.
+  /// </summary>
+  private async Task _assertPricedByTheBatchAsync(
+      string planMode, string source, Func<NpgsqlConnection, int, CancellationToken, Task> fill,
+      CancellationToken cancellationToken) {
+    await using (var setup = new NpgsqlConnection(ConnectionString)) {
+      await setup.OpenAsync(cancellationToken);
+      await _registerAsync(setup, cancellationToken);
+      // As the maintenance step builds them after the migrations, before the first poll.
+      foreach (var index in ConcurrentIndexBuild.FrameworkIndexes.Where(i => i.Table == "wh_inbox_state")) {
+        _ = await ConcurrentIndexBuild.EnsureAsync(setup, "public", index, 300, cancellationToken: cancellationToken);
+      }
+    }
+
+    var shallow = await _measureAsync(planMode, source, BATCH, fill, cancellationToken);
+    var deep = await _measureAsync(planMode, source, DEEPER, fill, cancellationToken);
+    var story = $"{BATCH} held streams: {shallow}; {DEEPER} held streams: {deep}";
+    Console.WriteLine($"MEASURE {source} {planMode} {story}");
+
+    await Assert.That(deep.Total).IsLessThanOrEqualTo((4 * shallow.Total) + BATCH)
+      .Because($"four times the held streams cost four times the rows, not sixteen ({source}, {planMode}): {story}");
+    await Assert.That(deep.Total).IsLessThanOrEqualTo((long)ROWS_PER_HELD_STREAM * DEEPER)
+      .Because($"the walk reads one probe per held stream ({source}, {planMode}): {story}");
+  }
+
+  /// <summary>
+  /// Empties the queues, fills <paramref name="streams"/> held streams whose leases lapsed an hour ago, analyzes them
+  /// (so the statistics say every lease lapsed), claims them once (so every lease is live and the statistics still say
+  /// otherwise), and measures the next claim on a fresh connection in <paramref name="planMode"/>.
+  /// </summary>
+  private async Task<RowsReadResult> _measureAsync(
+      string planMode, string source, int streams, Func<NpgsqlConnection, int, CancellationToken, Task> fill,
+      CancellationToken cancellationToken) {
+    await using (var setup = new NpgsqlConnection(ConnectionString)) {
+      await setup.OpenAsync(cancellationToken);
+      await _executeAsync(setup, "TRUNCATE wh_perspective_events, wh_inbox_state, wh_inbox, wh_active_streams, wh_event_store, wh_event_body CASCADE", cancellationToken);
+      await fill(setup, streams, cancellationToken);
+      await _executeAsync(setup, "VACUUM ANALYZE wh_perspective_events, wh_inbox_state, wh_inbox, wh_active_streams, wh_event_store, wh_event_body", cancellationToken);
+      var acquired = await _claimAsync(setup, source, streams, cancellationToken);
+      await Assert.That(acquired).IsEqualTo(streams).Because($"precondition: the first claim takes back every held stream ({source})");
+      // The dead row versions the acquisition left, removed so the measured claim reads the same entries however soon
+      // another session would have; statistics are left as the fill analyzed them.
+      await _executeAsync(setup, "VACUUM wh_perspective_events, wh_inbox_state, wh_active_streams", cancellationToken);
+      // The planner never estimates fewer than one row, so one is what "none" looks like.
+      await Assert.That(await _livePlannedAsync(setup, source, cancellationToken)).IsLessThanOrEqualTo(1.0)
+        .Because($"precondition: the statistics say no lease is live ({source})");
+    }
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await _executeAsync(conn, $"SET plan_cache_mode = {planMode}", cancellationToken);
+    var offered = 0;
+    var read = await RowsRead.MeasureAsync(conn, async () => offered = await _claimAsync(conn, source, streams, cancellationToken),
+      commit: true, cancellationToken);
+    await Assert.That(offered).IsEqualTo(streams).Because($"the claim re-offers every held stream ({source}), or it measured nothing");
+    return read;
+  }
+
+  /// <summary>One claim for a batch of <paramref name="streams"/>; returns the rows of <paramref name="source"/> it returned.</summary>
+  private static async Task<int> _claimAsync(NpgsqlConnection conn, string source, int streams, CancellationToken cancellationToken) {
+    await using var claim = conn.CreateCommand();
+    claim.CommandTimeout = 300;
+    claim.CommandText = """
+      SELECT count(*) FILTER (WHERE source = @source)::int FROM claim_work(
+        p_instance_id => @instance, p_service_name => 'perf', p_host_name => 'perf-host', p_process_id => 1,
+        p_max_streams => @streams, p_partition_count => 10000, p_lease_seconds => 300, p_max_rows => @streams)
+      """;
+    claim.Parameters.AddWithValue(nameof(source), source);
+    claim.Parameters.AddWithValue("instance", _instance);
+    claim.Parameters.AddWithValue(nameof(streams), streams);
+    return (int)(await claim.ExecuteScalarAsync(cancellationToken))!;
+  }
+
+  /// <summary>How many live leases the planner believes the measured table holds.</summary>
+  private static async Task<double> _livePlannedAsync(NpgsqlConnection conn, string source, CancellationToken cancellationToken) {
+    var table = source == "inbox" ? "wh_inbox_state" : "wh_perspective_events";
+    await using var explain = conn.CreateCommand();
+    explain.CommandText = $"EXPLAIN (FORMAT JSON) SELECT 1 FROM {table} WHERE lease_expiry > NOW() AND processed_at IS NULL";
+    var plan = (string)(await explain.ExecuteScalarAsync(cancellationToken))!;
+    using var json = System.Text.Json.JsonDocument.Parse(plan);
+    return json.RootElement[0].GetProperty("Plan").GetProperty("Plan Rows").GetDouble();
+  }
+
+  /// <summary>
+  /// One stored event on each of <paramref name="streams"/> new streams, its perspective work row leased to the instance
+  /// with the lease lapsed an hour ago, and the stream's ledger row.
+  /// </summary>
+  private static Task _fillPerspectiveAsync(NpgsqlConnection conn, int streams, CancellationToken cancellationToken) =>
+    _executeAsync(conn, """
+      WITH s AS MATERIALIZED (
+        SELECT gen_random_uuid() AS stream_id, gen_random_uuid() AS event_id, n FROM generate_series(1, @streams) n
+      ),
+      es AS (
+        INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version,
+                                    created_at, flags, commit_sequence)
+        SELECT event_id, stream_id, stream_id, 'perf', 'Perf.OrderCreated, Perf', NULL, 1, NOW(), 0, n FROM s
+        RETURNING 1
+      ),
+      eb AS (
+        INSERT INTO wh_event_body (event_id, event_data, metadata)
+        SELECT event_id, '{"Amount":1}'::jsonb, '{"Hops":[]}'::jsonb FROM s
+        RETURNING 1
+      ),
+      pe AS (
+        INSERT INTO wh_perspective_events (stream_id, perspective_name, event_id, instance_id, lease_expiry,
+                                           partition_number, status, priority, created_at)
+        SELECT stream_id, 'Perf.OrderPerspective', event_id, @instance, NOW() - INTERVAL '1 hour',
+               compute_partition(stream_id, 10000), 1, 150, NOW()
+        FROM s
+        RETURNING 1
+      )
+      INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, created_at, last_activity_at)
+      SELECT stream_id, compute_partition(stream_id, 10000), @instance, NOW(), NOW() FROM s
+      """, streams, cancellationToken);
+
+  /// <summary>
+  /// One command on each of <paramref name="streams"/> new streams, held by the instance with the lease lapsed an hour
+  /// ago, never tried.
+  /// </summary>
+  private static Task _fillInboxAsync(NpgsqlConnection conn, int streams, CancellationToken cancellationToken) =>
+    _executeAsync(conn, """
+      WITH inserted AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id, is_event, priority)
+        SELECT gen_random_uuid(), 'TestHandler', 'TestCommand', '{}', '{}',
+               NOW() - INTERVAL '2 hours' + (g * INTERVAL '1 microsecond'), gen_random_uuid(), FALSE, 150
+        FROM generate_series(1, @streams) g
+        RETURNING message_id, stream_id, received_at
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts, partition_number, instance_id, lease_expiry)
+      SELECT i.message_id, i.stream_id, i.received_at, 150, FALSE, 0, 0, compute_partition(i.stream_id, 10000),
+             @instance, NOW() - INTERVAL '1 hour'
+      FROM inserted i
+      """, streams, cancellationToken);
+
+  private static async Task _registerAsync(NpgsqlConnection conn, CancellationToken cancellationToken) {
+    await using var register = conn.CreateCommand();
+    register.CommandText = """
+      INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
+      VALUES (@instance, 'perf', 'perf-host', 1, NOW(), NOW(), '{}'::jsonb)
+      """;
+    register.Parameters.AddWithValue("instance", _instance);
+    _ = await register.ExecuteNonQueryAsync(cancellationToken);
+  }
+
+  private static async Task _executeAsync(NpgsqlConnection conn, string sql, CancellationToken cancellationToken) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandTimeout = 300;
+    cmd.CommandText = sql;
+    _ = await cmd.ExecuteNonQueryAsync(cancellationToken);
+  }
+
+  /// <summary>Runs a fill for <paramref name="streams"/> streams held by the instance.</summary>
+  private static async Task _executeAsync(NpgsqlConnection conn, string sql, int streams, CancellationToken cancellationToken) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandTimeout = 300;
+    cmd.CommandText = sql;
+    cmd.Parameters.AddWithValue(nameof(streams), streams);
+    cmd.Parameters.AddWithValue("instance", _instance);
+    _ = await cmd.ExecuteNonQueryAsync(cancellationToken);
+  }
+}

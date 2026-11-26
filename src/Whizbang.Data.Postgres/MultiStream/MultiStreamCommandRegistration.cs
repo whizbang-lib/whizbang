@@ -54,8 +54,8 @@ internal static class MultiStreamCommandRegistration {
     services.AddOptions<MultiStreamCommandOptions>();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       IConfigureOptions<MultiStreamCommandOptions>, ConfigureMultiStreamCommandOptionsFromConfiguration>());
-    // A driver without the elected assigner ranks the live instances in every claim; the assigner replaces this.
-    services.TryAddSingleton<IPartitionAssignmentSource>(NullPartitionAssignmentSource.Instance);
+    // The worker claims each run's streams under the published partition map: the elected assigner's cache, which every
+    // driver registers through the shared coordination (#2559).
     // #1357: a rebuild of named streams, or in place, is worked per stream on each stream's owner.
     services.AddMultiStreamCommandHandler<RebuildPerspectiveStreamsCommand, RebuildPerspectiveStreamsHandler>();
     if (services.Any(d => d.ServiceType == typeof(MultiStreamCommandWorker))) {

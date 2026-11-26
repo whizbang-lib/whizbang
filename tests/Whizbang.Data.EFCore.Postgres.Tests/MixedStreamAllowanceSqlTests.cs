@@ -118,11 +118,12 @@ public class MixedStreamAllowanceSqlTests : EFCoreTestBase {
     await ((IWorkCoordinator)coordinator).SyncMixedStreamAllowancesAsync([new MixedStreamPair(PINGED, OPENED)]);
     var stream = (Guid)TrackedGuid.New();
     Guid[] ids = [.. Enumerable.Range(0, 3).Select(_ => (Guid)TrackedGuid.New()).Order()];
-    var pinged = _outbox(ids[0], stream, PINGED, EventFlags.Ephemeral);
-    var opened = _outbox(ids[1], stream, OPENED, EventFlags.None);
-    var closed = _outbox(ids[2], stream, CLOSED, EventFlags.None);
+    // #2551: emitted pinged, opened, closed, against the ids' order: the first event emitted decides the stream's kind.
+    var pinged = _outbox(ids[2], stream, PINGED, EventFlags.Ephemeral);
+    var opened = _outbox(ids[0], stream, OPENED, EventFlags.None);
+    var closed = _outbox(ids[1], stream, CLOSED, EventFlags.None);
 
-    await coordinator.StoreOutboxMessagesAsync([closed, opened, pinged], partitionCount: 10000);
+    await coordinator.StoreOutboxMessagesAsync([pinged, opened, closed], partitionCount: 10000);
 
     var conn = await _openAsync(dbContext);
     await Assert.That(await _storedIdsAsync(conn, stream)).IsEquivalentTo([pinged.MessageId, opened.MessageId])
@@ -225,7 +226,9 @@ public class MixedStreamAllowanceSqlTests : EFCoreTestBase {
     var conn = await _openAsync(dbContext);
     await Assert.That(await _storedIdsAsync(conn, stream)).IsEquivalentTo([opened.MessageId, pinged.MessageId])
       .Because("precondition: the allowed pair shares the stream");
-    await _executeAsync(conn, "UPDATE wh_settings SET setting_value = '0' WHERE setting_key = 'ephemeral_rewind_grace_seconds'");
+    // Past the rewind grace on the database's clock, the clock the reap reads. The store stamps created_at with the
+    // host's clock, so a grace of zero left the body reapable only when the host's clock was behind the database's.
+    await _executeAsync(conn, "UPDATE wh_event_store SET created_at = now() - interval '1 hour' WHERE stream_id = @stream", ("stream", stream));
 
     await _executeAsync(conn, "SELECT count(*) FROM perform_maintenance()");
 

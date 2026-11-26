@@ -37,22 +37,31 @@ public sealed class CatalogRuleFingerprintSource : IRuleFingerprintSource {
 
   private readonly Lazy<IReadOnlyDictionary<string, string>> _hashes;
 
-  /// <summary>A source over the catalog and the stream lifecycle settings.</summary>
+  /// <summary>A source over the catalog, the stream lifecycle settings and the retired event types.</summary>
   /// <param name="catalog">The message-type catalog.</param>
   /// <param name="lifecycle">
   /// The stream lifecycle settings. Required: an end-of-life action is part of a type's rules, so a source built without
   /// them would fingerprint every type as having none and halt a pair whose peer read its settings (WHIZ501).
   /// </param>
-  public CatalogRuleFingerprintSource(IMessageTypeCatalog catalog, IOptions<StreamLifecycleOptions> lifecycle) {
+  /// <param name="retired">
+  /// The retired event types (#2329). Required: a retired type is no longer in the catalog, so its rule comes from here,
+  /// and a source built without it would fingerprint a retired type as unknown and halt nothing it should.
+  /// </param>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CatalogRuleFingerprintSourceTests.cs:For_CoversEachRetiredName_AsRetired_ThoughTheCatalogNoLongerDeclaresItAsync</tests>
+  public CatalogRuleFingerprintSource(
+      IMessageTypeCatalog catalog, IOptions<StreamLifecycleOptions> lifecycle, IOptions<RetiredEventTypesOptions> retired) {
     ArgumentNullException.ThrowIfNull(catalog);
     ArgumentNullException.ThrowIfNull(lifecycle);
-    _hashes = new(() => RulesOf(catalog, lifecycle.Value).ToDictionary(r => r.Key, r => r.Value.Hash(), StringComparer.Ordinal),
+    ArgumentNullException.ThrowIfNull(retired);
+    _hashes = new(() => RulesOf(catalog, lifecycle.Value, retired.Value)
+        .ToDictionary(r => r.Key, r => r.Value.Hash(), StringComparer.Ordinal),
       LazyThreadSafetyMode.ExecutionAndPublication);
   }
 
   /// <summary>The source for a host without a catalog: it knows no type, so it shares none and compares only versions.</summary>
   public static IRuleFingerprintSource Empty { get; } =
-    new CatalogRuleFingerprintSource(NullMessageTypeCatalog.Instance, Options.Create(new StreamLifecycleOptions()));
+    new CatalogRuleFingerprintSource(NullMessageTypeCatalog.Instance, Options.Create(new StreamLifecycleOptions()),
+      Options.Create(new RetiredEventTypesOptions()));
 
   /// <inheritdoc />
   public RuleSet RulesFor(IEnumerable<string>? eventTypes) {
@@ -70,9 +79,12 @@ public sealed class CatalogRuleFingerprintSource : IRuleFingerprintSource {
   /// <summary>Every event type's rules, by its name without the assembly.</summary>
   /// <param name="catalog">The catalog.</param>
   /// <param name="lifecycle">The stream lifecycle settings, or null.</param>
+  /// <param name="retired">The retired event types (#2329): each this service no longer declares is covered as retired.</param>
   /// <returns>The rules of each event type.</returns>
-  public static IReadOnlyDictionary<string, TypeRules> RulesOf(IMessageTypeCatalog catalog, StreamLifecycleOptions? lifecycle) {
+  public static IReadOnlyDictionary<string, TypeRules> RulesOf(
+      IMessageTypeCatalog catalog, StreamLifecycleOptions? lifecycle, RetiredEventTypesOptions retired) {
     ArgumentNullException.ThrowIfNull(catalog);
+    ArgumentNullException.ThrowIfNull(retired);
     // not the digest rule: the per-type DigestExempt field a fingerprint carries, read from the one exempt list
     var exempt = new HashSet<string>(DigestExemptTypes.TypeNames, StringComparer.Ordinal);
     var rules = new Dictionary<string, TypeRules>(StringComparer.Ordinal);
@@ -87,6 +99,11 @@ public sealed class CatalogRuleFingerprintSource : IRuleFingerprintSource {
         EndOfLife = lifecycle is not null && lifecycle.Types.TryGetValue(name, out var type) ? type.Action.ToString() : null,
         DigestExempt = exempt.Contains(name),
       };
+    }
+    // #2329: a retired type's class is deleted, so the catalog no longer has it. A name the catalog still declares is not
+    // retired here and keeps its declared rules (owner decision, 2026-11-20).
+    foreach (var name in retired.EffectiveNames(catalog)) {
+      rules[name] = new TypeRules(name) { Retired = true };
     }
     return rules;
   }

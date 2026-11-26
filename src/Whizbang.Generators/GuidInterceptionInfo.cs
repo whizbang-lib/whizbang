@@ -17,6 +17,8 @@ namespace Whizbang.Generators;
 /// <param name="GuidVersion">The GUID version metadata flag name (e.g., "Version4", "Version7")</param>
 /// <param name="GuidSource">The GUID source metadata flag name (e.g., "SourceMicrosoft", "SourceMarten")</param>
 /// <param name="InterceptorMethodName">A unique name for the generated interceptor method</param>
+/// <param name="LocationVersion">The interceptable location's encoding version, from the compiler (#2528)</param>
+/// <param name="LocationData">The interceptable location's encoded data, from the compiler (#2528)</param>
 /// <tests>tests/Whizbang.Generators.Tests/GuidInterceptionInfoTests.cs:GuidInterceptionInfo_ValueEquality_ComparesFieldsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/GuidInterceptionInfoTests.cs:GuidInterceptionInfo_Constructor_SetsPropertiesAsync</tests>
 public sealed record GuidInterceptionInfo(
@@ -27,7 +29,9 @@ public sealed record GuidInterceptionInfo(
     string FullyQualifiedTypeName,
     string GuidVersion,
     string GuidSource,
-    string InterceptorMethodName
+    string InterceptorMethodName,
+    int LocationVersion = 0,
+    string LocationData = ""
 );
 
 /// <summary>

@@ -30,9 +30,10 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// <para>
 /// Per-stream-keyed buffer + 300 ms / 3 s sliding window: messages for the same stream
-/// coalesce across transport arrivals within the window, get sorted by MessageId at flush
-/// (the slice-18b sort survives unchanged), and apply in correct order downstream — no
-/// inversion. Different streams remain fully parallel.
+/// coalesce across transport arrivals within the window and flush together, in the order they
+/// arrived. They are never sorted by MessageId (#2551): an id is time-ordered, never a stream
+/// position, and the receiving store orders a stream by its origin's position. Different
+/// streams remain fully parallel.
 /// </para>
 /// <para>
 /// Memory bound via idle eviction: streams with no messages for
@@ -233,14 +234,10 @@ public sealed partial class SlidingWindowInboxBatchStrategy : IInboxBatchStrateg
       // takes no stop token, so a stop past its deadline still drains what was buffered, and reports it, rather than
       // discarding a half-filled batch (#1885).
       await foreach (var batch in batcher.ReadBatchesAsync(CancellationToken.None).ConfigureAwait(false)) {
-        // Slice 18b: sort by MessageId (UUIDv7 chronological) before flushing. With the
-        // slice-23 per-stream buffer this sort now covers cross-transport-message events
-        // for the same stream — fan-in saga aggregates no longer see late events because
-        // the window holds them until quiet, then flushes them all in MessageId order.
+        // #2551: flushed in the order the messages arrived, never sorted by id. The per-stream window still holds a
+        // fan-in stream's late arrivals until quiet and flushes them together; the receiving store orders the stream by
+        // its origin's position (the origin's commit sequence), so the order rows reach wh_inbox in decides nothing.
         InboxMessage[] array = [.. batch];
-        if (array.Length > 1) {
-          Array.Sort(array, static (a, b) => a.MessageId.CompareTo(b.MessageId));
-        }
         if (_stopCts.IsCancellationRequested || !await _storeOrReportAsync(buffer.Key, array).ConfigureAwait(false)) {
           (abandoned ??= []).AddRange(array);
         }

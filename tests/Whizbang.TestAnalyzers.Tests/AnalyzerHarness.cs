@@ -26,11 +26,20 @@ internal static class AnalyzerHarness {
   public static CSharpCompilation Compile(string source, bool referenceTUnit = true) => Compile([source], referenceTUnit);
 
   /// <summary>The compilation of <paramref name="sources"/>, one syntax tree (file) each, failing the test on any compiler error.</summary>
-  public static CSharpCompilation Compile(IReadOnlyList<string> sources, bool referenceTUnit = true) {
+  public static CSharpCompilation Compile(IReadOnlyList<string> sources, bool referenceTUnit = true) =>
+    Compile(sources, "AnalyzerHarnessSubject", [], referenceTUnit);
+
+  /// <summary>
+  /// The compilation of <paramref name="sources"/> as assembly <paramref name="assemblyName"/>, also referencing
+  /// <paramref name="extraReferences"/> (another compilation's <c>ToMetadataReference()</c>, for a base class declared
+  /// outside the analyzed project), failing the test on any compiler error.
+  /// </summary>
+  public static CSharpCompilation Compile(IReadOnlyList<string> sources, string assemblyName,
+      IReadOnlyList<MetadataReference> extraReferences, bool referenceTUnit = true) {
     var compilation = CSharpCompilation.Create(
-      assemblyName: "AnalyzerHarnessSubject",
+      assemblyName: assemblyName,
       syntaxTrees: [.. sources.Select(source => CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Latest)))],
-      references: referenceTUnit ? _references : _referencesWithoutTUnit,
+      references: [.. (referenceTUnit ? _references : _referencesWithoutTUnit), .. extraReferences],
       options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
 
     var errors = compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
@@ -56,8 +65,12 @@ internal static class AnalyzerHarness {
 
   /// <summary>As <see cref="AnalyzeAsync(DiagnosticAnalyzer, string, IReadOnlyDictionary{string, string}, bool)"/>, over several files.</summary>
   public static async Task<ImmutableArray<Diagnostic>> AnalyzeAsync(
-      DiagnosticAnalyzer analyzer, IReadOnlyList<string> sources, IReadOnlyDictionary<string, string> globalOptions, bool referenceTUnit = true) {
-    var compilation = Compile(sources, referenceTUnit);
+      DiagnosticAnalyzer analyzer, IReadOnlyList<string> sources, IReadOnlyDictionary<string, string> globalOptions, bool referenceTUnit = true) =>
+    await AnalyzeAsync(analyzer, Compile(sources, referenceTUnit), globalOptions);
+
+  /// <summary>Every diagnostic <paramref name="analyzer"/> reports on an already built <paramref name="compilation"/>.</summary>
+  public static async Task<ImmutableArray<Diagnostic>> AnalyzeAsync(
+      DiagnosticAnalyzer analyzer, CSharpCompilation compilation, IReadOnlyDictionary<string, string> globalOptions) {
     var options = new AnalyzerOptions([], new GlobalOptionsProvider(globalOptions));
     var analyzed = compilation.WithAnalyzers([analyzer], options);
     return await analyzed.GetAnalyzerDiagnosticsAsync();

@@ -13,6 +13,14 @@ on:
         type: string
         required: false
         default: '"ubuntu-latest"'
+      runner-plan-attempt:
+        description: >-
+          The run attempt the runs-on plan was made in (the picker's attempt output). The job takes runs-on only in that
+          attempt, so a job re-run without the picker ("re-run failed jobs") runs on ubuntu-latest rather than on labels
+          chosen for an earlier attempt, which may name machines that have since left the pool (#1880). Empty: ubuntu-latest.
+        type: string
+        required: false
+        default: ''
       version:
         description: 'Version to stamp into assemblies (from GitVersion). If empty, uses Directory.Build.props default.'
         required: false
@@ -72,7 +80,7 @@ permissions:
 jobs:
   build:
     name: Compile and hash
-    runs-on: ${{ fromJSON(inputs.runs-on || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(inputs.runner-plan-attempt == github.run_attempt && inputs.runs-on || '"ubuntu-latest"') }}
     # With the analyzers on (any caller but CI) they roughly double the solution build on a hosted
     # runner (16 minutes observed); the artifact upload follows it.
     timeout-minutes: 50

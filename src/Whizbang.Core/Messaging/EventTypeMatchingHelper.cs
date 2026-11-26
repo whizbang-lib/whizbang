@@ -175,14 +175,17 @@ public static class EventTypeMatchingHelper {
 
     // Check if any event type matches
     return eventTypes.Any(et => {
-      var etNormalized = et.FullName + ", " + et.Assembly.GetName().Name;
+      // Each event type's names are read once and kept: this runs on a receive the registries could not classify, and
+      // reading them here allocated for every event type on every such receive (#2548)
+      var names = TypeNameFormatter.NamesOf(et);
+      var etNormalized = names.FullNameWithAssembly;
 
       // Three matching strategies (ordered by specificity):
       // 1. Exact match on full assembly-qualified name (includes version)
       // 2. Match on FullName + AssemblyName (no version)
       // 3. Match normalized forms (strips version from both sides)
-      return et.AssemblyQualifiedName == messageTypeName ||
-             et.FullName + ", " + et.Assembly.GetName().Name == messageTypeName ||
+      return names.QualifiedName == messageTypeName ||
+             etNormalized == messageTypeName ||
              etNormalized == normalizedMessageType;
     });
   }
@@ -204,8 +207,9 @@ public static class EventTypeMatchingHelper {
 
     var lookup = new Dictionary<string, Type>(candidateTypes.Count * 3, StringComparer.Ordinal);
     foreach (var type in candidateTypes) {
-      var assemblyName = type.Assembly.GetName().Name;
-      if (type.FullName is { } fullName) {
+      var names = TypeNameFormatter.NamesOf(type);
+      var assemblyName = names.AssemblyName;
+      if (names.FullName is { } fullName) {
         if (assemblyName is not null) {
           // Storage form — identical to NormalizeTypeName(AssemblyQualifiedName) and to Format(type).
           lookup[fullName + ", " + assemblyName] = type;
@@ -213,7 +217,7 @@ public static class EventTypeMatchingHelper {
         lookup[fullName] = type;
       }
       // Simple-name fallback (last resort; mirrors the legacy per-store maps).
-      lookup[type.Name] = type;
+      lookup[names.Name] = type;
     }
     return lookup;
   }

@@ -19,6 +19,7 @@ BeforeAll {
   $script:AnyOs = '["self-hosted","whizbang"]'
   $script:Linux = '["self-hosted","whizbang","Linux","X64"]'
   $script:LinuxDocker = '["self-hosted","whizbang","Linux","X64","docker"]'
+  $script:ChecksPath = "/repos/$script:Repo/actions/caches?key=ci-runner-check/v1/&sort=created_at&direction=desc&per_page=100"
 
   function New-Runner {
     param([string]$Name = 'r1', [string]$Status = 'online', [bool]$Busy = $false,
@@ -63,12 +64,35 @@ BeforeAll {
     [pscustomobject]@{ Group = $Group; SelectedRepositories = $Selected; Runners = $Runners }
   }
 
-  # Select-CiRunner for a trusted push with an open pool and an empty queue, unless overridden.
+  # The fixed "now" of every capability decision: no test reads the clock (#1880).
+  $script:Now = [datetime]::new(2026, 11, 20, 12, 0, 0, [DateTimeKind]::Utc)
+
+  # A self-check record, as Get-RunnerCheck returns it: passed an hour ago, uploading at 100 MB/s with Docker working.
+  function New-Check {
+    param([string]$Runner = 'r1', [bool]$Ok = $true, [AllowNull()][object]$Up = 100, [bool]$Docker = $true, [double]$HoursAgo = 1)
+    [pscustomobject]@{ Runner = $Runner; Ok = $Ok; UploadMBps = $Up; Docker = $Docker; CheckedAt = $script:Now.AddHours(-$HoursAgo) }
+  }
+
+  # A runner name -> latest self-check table, as Get-RunnerCheck returns it.
+  function New-CheckTable {
+    param([object[]]$Checks = @())
+    $table = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($c in $Checks) { $table[$c.Runner] = $c }
+    , $table
+  }
+
+  # Select-CiRunner for a trusted push with an open pool and an empty queue, unless overridden. Unless -Checks is
+  # given, every runner of the pool state passed its self-check an hour ago.
   function Invoke-Select {
     param([hashtable]$Context = (New-Context), $PoolState = (New-PoolState), [string]$PoolUnavailable = '',
-      $QueuedJobs = @(), [string]$QueueUnavailable = '', [int]$QueueThreshold = 0)
+      $QueuedJobs = @(), [string]$QueueUnavailable = '', [int]$QueueThreshold = 0, [switch]$NoChecks,
+      $Checks = $null, [string]$ChecksUnavailable = '', [int]$CheckMaxAgeHours = 24, [int]$MinUploadMBps = 10)
+    if (-not $NoChecks -and $null -eq $Checks) {
+      $Checks = New-CheckTable @($(if ($PoolState) { @($PoolState.Runners) | ForEach-Object { New-Check -Runner $_.name } }))
+    }
     Select-CiRunner -Context $Context -PoolState $PoolState -PoolUnavailable $PoolUnavailable -QueuedJobs $QueuedJobs `
-      -QueueUnavailable $QueueUnavailable -QueueThreshold $QueueThreshold
+      -QueueUnavailable $QueueUnavailable -QueueThreshold $QueueThreshold -Checks $Checks -ChecksUnavailable $ChecksUnavailable `
+      -Now $script:Now -CheckMaxAgeHours $CheckMaxAgeHours -MinUploadMBps $MinUploadMBps
   }
 
   # A fake GitHub API: answers each path from $Responses, records the calls, throws for a path it was
@@ -89,8 +113,15 @@ BeforeAll {
   # The answers of an org with one open group, one idle machine and an empty queue.
   function Get-PoolResponse {
     param($Group = (New-Group), [object[]]$Runners = @(New-Runner), [object[]]$QueuedRuns = @(),
-      [object[]]$RunningRuns = @(), [hashtable]$Jobs = @{}, [string[]]$Selected = @())
+      [object[]]$RunningRuns = @(), [hashtable]$Jobs = @{}, [string[]]$Selected = @(), [object[]]$Caches = $null)
+    # Unless -Caches is given, every runner passed its self-check an hour ago.
+    if ($null -eq $Caches) {
+      $Caches = @($Runners | ForEach-Object {
+          [pscustomobject]@{ key = (ConvertTo-RunnerCheckKey -RunnerName $_.name -Ok $true -UploadMBps 100 -Docker $true -Nonce '1-1'); created_at = $script:Now.AddHours(-1).ToString('o') }
+        })
+    }
     $r = [ordered]@{
+      $script:ChecksPath = [pscustomobject]@{ total_count = $Caches.Count; actions_caches = $Caches }
       '/orgs/whizbang-lib/actions/runner-groups?per_page=100'                 = [pscustomobject]@{ total_count = 1; runner_groups = @($Group) }
       '/orgs/whizbang-lib/actions/runner-groups/7/runners?per_page=100'       = [pscustomobject]@{ total_count = $Runners.Count; runners = $Runners }
       '/orgs/whizbang-lib/actions/runner-groups/7/repositories?per_page=100'  = [pscustomobject]@{
@@ -115,7 +146,7 @@ BeforeAll {
     Invoke-SelectCiRunner -EventName $EventName -Repository $script:Repo -HeadRepository $HeadRepository -Actor $Actor `
       -PrAuthor $PrAuthor -RepositoryPrivate 'false' -Organization $Organization -GroupName 'Default' -RunId $RunId `
       -PoolToken $PoolToken -RepoToken $RepoToken -Disabled $Disabled -QueueThreshold 0 -BudgetSeconds $BudgetSeconds `
-      -OutputFile $script:OutPath -SummaryFile $script:SummaryPath -InvokeApi $Api
+      -OutputFile $script:OutPath -SummaryFile $script:SummaryPath -InvokeApi $Api -Now $script:Now
   }
 
   # The outputs the entry point wrote, as a name -> value table.
@@ -301,6 +332,13 @@ Describe 'Get-CiRunnerClass' {
     $classes = Get-CiRunnerClass
     $classes['compile'].HostedOn | Should -Be @('push')
     foreach ($name in 'any-os', 'linux', 'analyze', 'linux-docker') { $classes[$name].HostedOn | Should -BeNullOrEmpty }
+  }
+
+  It 'asks upload speed of the compile, which uploads the build, and Docker of the container suites (#1880)' {
+    $classes = Get-CiRunnerClass
+    $classes['compile'].Requires | Should -Be @('upload')
+    $classes['linux-docker'].Requires | Should -Be @('docker')
+    foreach ($name in 'any-os', 'linux', 'analyze') { $classes[$name].Requires | Should -BeNullOrEmpty }
   }
 
   It 'keeps the pool from only the analysis, which waits hours on other jobs that may need the same machine' {
@@ -526,6 +564,7 @@ Describe 'Invoke-SelectCiRunner' {
     @{ Failing = 'status=queued' }
     @{ Failing = 'status=in_progress' }
     @{ Failing = '/jobs' }
+    @{ Failing = 'actions/caches' }
   ) {
     $responses = Get-PoolResponse -Group (New-Group -Visibility 'selected') -Selected @($Repo) `
       -QueuedRuns @([pscustomobject]@{ id = 11 }) -Jobs @{ 11 = @() }
@@ -733,7 +772,9 @@ Describe 'Which class each ci.yml job takes' {
   ) {
     $text = $CiJobs[$Job]
     $text | Should -Not -BeNullOrEmpty
-    $used = @([regex]::Matches($text, 'needs\.pick-runner\.outputs\.([a-z-]+)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+    # attempt is not a class: every routed job reads it to take the plan only in its own attempt (#1880).
+    $used = @([regex]::Matches($text, 'needs\.pick-runner\.outputs\.([a-z-]+)') | ForEach-Object { $_.Groups[1].Value } |
+        Where-Object { $_ -ne 'attempt' } | Select-Object -Unique)
     $used | Should -Be @($Class)
     $text | Should -Match '(?m)^    needs: \[[^\]]*\bpick-runner\b'
   }
@@ -744,8 +785,14 @@ Describe 'Which class each ci.yml job takes' {
   }
 
   It 'routes no other job, so pack, publish, release, gate and planning jobs stay on GitHub-hosted runners' {
-    $routed = @($CiJobs.Keys | Where-Object { $CiJobs[$_] -match 'pick-runner\.outputs' })
+    # A class output, not attempt or pool: the watcher reads those to decide whether to run, and runs on ubuntu-latest.
+    $classOutput = 'pick-runner\.outputs\.(' + ((@((Get-CiRunnerClass).Keys) | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')\b'
+    $routed = @($CiJobs.Keys | Where-Object { $CiJobs[$_] -match $classOutput })
     @($routed | Sort-Object) | Should -Be @($Expected.Keys | Sort-Object)
+  }
+
+  It 'runs the watcher on ubuntu-latest, whatever the plan (#1880)' {
+    $CiJobs['runner-watch'] | Should -Match '(?m)^    runs-on: ubuntu-latest\s*$'
   }
 
   It 'never makes the gate wait on the picker' {
@@ -864,6 +911,266 @@ Describe 'Every step an any-os job reaches runs on Windows' {
   It 'never sets a bash default shell in ci.yml or a reusable workflow an any-os job calls' {
     foreach ($file in @($CiPath) + @(Get-ChildItem (Join-Path $Root '.github' 'workflows') -Filter 'reusable-test-*.yml' | ForEach-Object FullName)) {
       (Get-Content -Raw -LiteralPath $file) | Should -Not -Match '(?ms)^\s*defaults:\s*\n\s*run:\s*\n\s*shell:\s*(bash|sh)'
+    }
+  }
+}
+
+Describe 'Re-runs re-plan (#1880)' {
+  # "Re-run failed jobs" re-runs the failed jobs and their dependents but not the picker, so they kept the labels the
+  # picker chose in the first attempt; after a machine left the pool the re-run queued for good on a label no runner
+  # had. The picker now says which attempt it planned for, and every routed job takes the plan only in that attempt:
+  # a job re-run in a later attempt without the picker goes to ubuntu-latest, and "re-run all jobs" re-runs the picker,
+  # so its plan is fresh again.
+  BeforeAll {
+    $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '..' '..' '..')).Path
+    $script:Workflows = Join-Path $Root '.github' 'workflows'
+    $script:HostedLiteral = [regex]::Escape(" || '`"ubuntu-latest`"') }}")
+
+    # The violations of the rule in one workflow's text: each runs-on that reads the picker's plan without checking the
+    # attempt, each reusable-workflow call that passes the plan without the attempt, and each reusable workflow whose
+    # runs-on input is used without its runner-plan-attempt input.
+    function script:Get-ReplanViolation([string]$Text, [string]$Name) {
+      $violations = [System.Collections.Generic.List[string]]::new()
+      $guardedNeeds = '^\s+runs-on: \$\{\{ fromJSON\(needs\.pick-runner\.outputs\.attempt == github\.run_attempt && needs\.pick-runner\.outputs\.[a-z-]+' + $HostedLiteral + '\s*$'
+      $guardedInput = '^\s+runs-on: \$\{\{ fromJSON\(inputs\.runner-plan-attempt == github\.run_attempt && inputs\.runs-on' + $HostedLiteral + '\s*$'
+      $lines = $Text -split "`n"
+      foreach ($line in $lines) {
+        if ($line -match '^    runs-on: .*pick-runner\.outputs' -and $line -notmatch $guardedNeeds) { $violations.Add("${Name}: $($line.Trim())") }
+        if ($line -match '^    runs-on: .*inputs\.runs-on' -and $line -notmatch $guardedInput) { $violations.Add("${Name}: $($line.Trim())") }
+      }
+      # A call that passes the plan as an input passes the attempt it was planned for too.
+      $callers = [regex]::Split($Text, '(?m)^(?=  [A-Za-z0-9_-]+:\s*$)')
+      foreach ($job in $callers) {
+        if ($job -match '(?m)^      runs-on: \$\{\{ needs\.pick-runner\.outputs\.[a-z-]+ \}\}' -and
+          $job -notmatch '(?m)^      runner-plan-attempt: \$\{\{ needs\.pick-runner\.outputs\.attempt \}\}') {
+          $violations.Add("${Name}: a call passes the picker's plan without runner-plan-attempt")
+        }
+      }
+      if ($Text -match '(?m)^      runs-on:\s*$' -and $Text -match 'workflow_call:' -and $Text -notmatch '(?m)^      runner-plan-attempt:\s*$') {
+        $violations.Add("${Name}: takes a runs-on input without a runner-plan-attempt input")
+      }
+      return @($violations)
+    }
+  }
+
+  It 'says which attempt the plan is for' {
+    (Get-Content -Raw (Join-Path $Workflows 'ci.yml')) | Should -Match '(?m)^      attempt: \$\{\{ github\.run_attempt \}\}\s*$'
+  }
+
+  It 'takes the plan only in the attempt it was made for, in <_>' -ForEach @(
+    'ci.yml', 'reusable-build.yml', 'reusable-quality-build.yml', 'reusable-quality.yml', 'reusable-test-unit.yml',
+    'reusable-test-component.yml', 'reusable-test-postgres.yml', 'reusable-test-inmemory.yml', 'reusable-test-rabbitmq.yml',
+    'reusable-test-servicebus.yml', 'reusable-test-azureblob.yml', 'reusable-test-integration.yml'
+  ) {
+    Get-ReplanViolation -Text (Get-Content -Raw (Join-Path $Workflows $_)) -Name $_ | Should -BeNullOrEmpty
+  }
+
+  It 'covers every workflow that runs where the picker says' {
+    $routed = @(Get-ChildItem $Workflows -Filter '*.yml' | Where-Object { (Get-Content -Raw $_.FullName) -match 'pick-runner\.outputs|inputs\.runs-on' } |
+        ForEach-Object Name | Sort-Object)
+    $routed | Should -Be @('ci.yml', 'reusable-build.yml', 'reusable-quality-build.yml', 'reusable-quality.yml', 'reusable-test-azureblob.yml',
+      'reusable-test-component.yml', 'reusable-test-inmemory.yml', 'reusable-test-integration.yml', 'reusable-test-postgres.yml',
+      'reusable-test-rabbitmq.yml', 'reusable-test-servicebus.yml', 'reusable-test-unit.yml')
+  }
+
+  It 'catches the regression it was written for' {
+    $old = @"
+jobs:
+  format:
+    needs: [pick-runner]
+    runs-on: `${{ fromJSON(needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
+  unit-tests:
+    uses: ./.github/workflows/reusable-test-unit.yml
+    with:
+      runs-on: `${{ needs.pick-runner.outputs.any-os }}
+"@
+    @(Get-ReplanViolation -Text $old -Name 'old').Count | Should -Be 2
+    $reusable = @"
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        type: string
+jobs:
+  test:
+    runs-on: `${{ fromJSON(inputs.runs-on || '"ubuntu-latest"') }}
+"@
+    @(Get-ReplanViolation -Text $reusable -Name 'reusable').Count | Should -Be 2
+  }
+}
+
+Describe 'Runner self-check records (#1880)' {
+  # A machine can be online and idle and still unable to do the job: pve01 had no PowerShell, so the .NET setup
+  # failed, and its upload speed made the compile's artifact uploads hit the job timeout. A pool machine is now
+  # eligible only while it has a recent passing self-check (.github/workflows/runner-self-check.yml), recorded as
+  # an Actions cache entry whose key carries the result and whose creation time says when.
+  Context 'ConvertTo-RunnerCheckKey and ConvertFrom-RunnerCheckKey' {
+    It 'round-trips a passing check with its upload speed and Docker' {
+      $key = ConvertTo-RunnerCheckKey -RunnerName 'wpc' -Ok $true -UploadMBps 42 -Docker $true -Nonce '99-1'
+      $key | Should -Be 'ci-runner-check/v1/wpc/ok/up-42/docker-yes/99-1'
+      $r = ConvertFrom-RunnerCheckKey -Key $key -CreatedAt '2026-11-20T11:00:00Z'
+      $r.Runner | Should -Be 'wpc'
+      $r.Ok | Should -BeTrue
+      $r.UploadMBps | Should -Be 42
+      $r.Docker | Should -BeTrue
+      $r.CheckedAt | Should -Be $Now.AddHours(-1)
+      $r.CheckedAt.Kind | Should -Be 'Utc'
+    }
+
+    It 'round-trips a failed check whose upload was not measured' {
+      $key = ConvertTo-RunnerCheckKey -RunnerName 'pve01' -Ok $false -UploadMBps $null -Docker $false -Nonce '7-2'
+      $key | Should -Be 'ci-runner-check/v1/pve01/fail/up-na/docker-no/7-2'
+      $r = ConvertFrom-RunnerCheckKey -Key $key -CreatedAt '2026-11-20T11:00:00Z'
+      $r.Ok | Should -BeFalse
+      $r.UploadMBps | Should -BeNullOrEmpty
+      $r.Docker | Should -BeFalse
+    }
+
+    It 'reads no record from a key of another shape (<Key>)' -ForEach @(
+      @{ Key = 'ci-runner-check/v2/wpc/ok/up-42/docker-yes/1-1' }
+      @{ Key = 'ci-runner-check/v1/wpc/maybe/up-42/docker-yes/1-1' }
+      @{ Key = 'ci-runner-check/v1/wpc/ok/up-fast/docker-yes/1-1' }
+      @{ Key = 'nuget-Linux-abc' }
+    ) {
+      ConvertFrom-RunnerCheckKey -Key $Key -CreatedAt '2026-11-20T11:00:00Z' | Should -BeNullOrEmpty
+    }
+
+    It 'refuses a runner name that would break the key (<Name>)' -ForEach @(
+      @{ Name = 'a/b' }
+      @{ Name = '' }
+      @{ Name = 'a,b' }
+    ) {
+      { ConvertTo-RunnerCheckKey -RunnerName $Name -Ok $true -UploadMBps 1 -Docker $true -Nonce '1' } | Should -Throw
+    }
+  }
+
+  Context 'Get-RunnerCheck' {
+    It 'reads the records with the repository token and keeps the latest per runner, whatever the case' {
+      $caches = @(
+        [pscustomobject]@{ key = 'ci-runner-check/v1/wpc/fail/up-na/docker-no/1-1'; created_at = '2026-11-20T08:00:00Z' }
+        [pscustomobject]@{ key = 'ci-runner-check/v1/WPC/ok/up-50/docker-yes/2-1'; created_at = '2026-11-20T10:00:00Z' }
+        [pscustomobject]@{ key = 'ci-runner-check/v1/wpc/fail/up-na/docker-no/0-1'; created_at = '2026-11-19T10:00:00Z' }
+        [pscustomobject]@{ key = 'ci-runner-check/v1/ultra/ok/up-90/docker-yes/3-1'; created_at = '2026-11-20T09:00:00Z' }
+        [pscustomobject]@{ key = 'ci-runner-check/v9/other/ok/up-90/docker-yes/3-1'; created_at = '2026-11-20T09:00:00Z' }
+      )
+      $api = New-FakeApi @{ $ChecksPath = [pscustomobject]@{ total_count = 5; actions_caches = $caches } }
+      $checks = Get-RunnerCheck -InvokeApi $api -Repository $Repo -RepoToken 'repo'
+      $checks.Count | Should -Be 2
+      $checks['wpc'].Ok | Should -BeTrue
+      $checks['wpc'].UploadMBps | Should -Be 50
+      $checks['ultra'].UploadMBps | Should -Be 90
+      $ApiCalls | Should -Be @("repo $ChecksPath")
+    }
+
+    It 'returns an empty table when nothing was recorded' {
+      $api = New-FakeApi @{ $ChecksPath = [pscustomobject]@{ total_count = 0; actions_caches = @() } }
+      (Get-RunnerCheck -InvokeApi $api -Repository $Repo -RepoToken 'repo').Count | Should -Be 0
+    }
+  }
+
+  Context 'Test-RunnerCheck' {
+    It 'passes a runner with a recent passing check' {
+      Test-RunnerCheck -Check (New-Check) -Requires @('upload', 'docker') -Now $Now -MaxAgeHours 24 -MinUploadMBps 10 | Should -Be ''
+    }
+
+    It 'fails a runner <Case>' -ForEach @(
+      @{ Case = 'with no check'; Check = $null; Requires = @(); Why = 'no self-check recorded' }
+      @{ Case = 'whose check is stale'; Check = @{ HoursAgo = 30 }; Requires = @(); Why = 'last self-check 30 hours ago (limit 24)' }
+      @{ Case = 'whose last check failed'; Check = @{ Ok = $false }; Requires = @(); Why = 'failed its last self-check' }
+      @{ Case = 'too slow to upload the build'; Check = @{ Up = 5 }; Requires = @('upload'); Why = 'uploads at 5 MB/s (needs 10)' }
+      @{ Case = 'whose upload speed was not measured'; Check = @{ Up = $null }; Requires = @('upload'); Why = 'upload speed not measured' }
+      @{ Case = 'without a working Docker'; Check = @{ Docker = $false }; Requires = @('docker'); Why = 'Docker not working' }
+    ) {
+      $c = if ($null -eq $Check) { $null } else { New-Check @Check }
+      Test-RunnerCheck -Check $c -Requires $Requires -Now $Now -MaxAgeHours 24 -MinUploadMBps 10 | Should -Be $Why
+    }
+
+    It 'asks only what the class requires: a slow, Docker-less runner still serves a class requiring neither' {
+      Test-RunnerCheck -Check (New-Check -Up 1 -Docker $false) -Requires @() -Now $Now -MaxAgeHours 24 -MinUploadMBps 10 | Should -Be ''
+    }
+
+    It 'holds a check exactly MaxAgeHours old as fresh, and one a minute older as stale' {
+      Test-RunnerCheck -Check (New-Check -HoursAgo 24) -Requires @() -Now $Now -MaxAgeHours 24 -MinUploadMBps 10 | Should -Be ''
+      Test-RunnerCheck -Check (New-Check -HoursAgo (24 + 1 / 60)) -Requires @() -Now $Now -MaxAgeHours 24 -MinUploadMBps 10 |
+        Should -BeLike 'last self-check 24 hours ago*'
+    }
+  }
+
+  Context 'Select-CiRunner' {
+    It 'routes only to runners that passed their self-check' {
+      $state = New-PoolState -Runners @((New-Runner -Name 'a'), (New-Runner -Name 'b'))
+      $d = Invoke-Select -PoolState $state -Checks (New-CheckTable @(New-Check -Runner 'a'))
+      $d['linux'].RunsOn | Should -Be $Linux
+      $d['linux'].Reason | Should -BeLike 'self-hosted pool: 1 idle*'
+    }
+
+    It 'skips the pool for every class when no idle runner passed, naming each runner and why' {
+      $state = New-PoolState -Runners @((New-Runner -Name 'pve01'), (New-Runner -Name 'wpc'))
+      $d = Invoke-Select -PoolState $state -Checks (New-CheckTable @(New-Check -Runner 'wpc' -HoursAgo 48))
+      foreach ($class in $d.Keys) { $d[$class].RunsOn | Should -Be $Hosted }
+      $d['linux'].Reason | Should -Be ('GitHub-hosted (ubuntu-latest); self-hosted pool skipped: no idle runner with labels self-hosted, whizbang, Linux, X64 ' +
+        'passed its self-check (pve01: no self-check recorded; wpc: last self-check 48 hours ago (limit 24))')
+    }
+
+    It 'keeps the compile off a runner too slow to upload the build, while the other classes use it' {
+      $d = Invoke-Select -Context (New-Context -EventName 'merge_group') -Checks (New-CheckTable @(New-Check -Up 5)) -MinUploadMBps 10
+      $d['compile'].RunsOn | Should -Be $Hosted
+      $d['compile'].Reason | Should -BeLike '*r1: uploads at 5 MB/s (needs 10)*'
+      $d['linux'].RunsOn | Should -Be $Linux
+      $d['linux-docker'].RunsOn | Should -Be $LinuxDocker
+    }
+
+    It 'keeps the container suites off a runner whose Docker failed its check' {
+      $d = Invoke-Select -Context (New-Context -EventName 'merge_group') -Checks (New-CheckTable @(New-Check -Docker $false))
+      $d['linux-docker'].RunsOn | Should -Be $Hosted
+      $d['linux-docker'].Reason | Should -BeLike '*r1: Docker not working*'
+      $d['compile'].RunsOn | Should -Be $Linux
+    }
+
+    It 'skips the pool for every class when the self-checks could not be read' {
+      $d = Invoke-Select -NoChecks -Checks $null -ChecksUnavailable 'boom'
+      foreach ($class in $d.Keys) { $d[$class].RunsOn | Should -Be $Hosted }
+      $d['linux'].Reason | Should -BeLike '*the runner self-checks could not be read: boom'
+    }
+
+    It 'counts the queue against the runners that passed, not every idle one' {
+      $state = New-PoolState -Runners @((New-Runner -Name 'a'), (New-Runner -Name 'b'))
+      $d = Invoke-Select -PoolState $state -Checks (New-CheckTable @(New-Check -Runner 'a')) -QueuedJobs @(New-Job @('self-hosted', 'whizbang'))
+      $d['linux'].RunsOn | Should -Be $Hosted
+      $d['linux'].Reason | Should -BeLike '*no spare runner (1 idle, 1 queued ahead*'
+    }
+  }
+
+  Context 'Invoke-SelectCiRunner' {
+    It 'reads the self-checks and routes by them' {
+      $caches = @([pscustomobject]@{ key = 'ci-runner-check/v1/r1/fail/up-na/docker-no/1-1'; created_at = $Now.AddHours(-1).ToString('o') })
+      $decisions = Invoke-Entry -Api (New-FakeApi (Get-PoolResponse -Caches $caches))
+      $decisions['linux'].Reason | Should -BeLike '*r1: failed its last self-check*'
+      (Read-Output)['linux'] | Should -Be $Hosted
+      $ApiCalls | Should -Contain "repo-token $ChecksPath"
+    }
+
+    It 'writes pool=true when any class goes to the pool, and pool=false when none does' {
+      $null = Invoke-Entry -Api (New-FakeApi (Get-PoolResponse))
+      (Read-Output)['pool'] | Should -Be 'true'
+      $null = Invoke-Entry -Api (New-FakeApi @{}) -PoolToken ''
+      (Read-Output)['pool'] | Should -Be 'false'
+    }
+
+    It 'writes pool=false when the decision itself throws' {
+      Mock Select-CiRunner { throw 'unexpected' }
+      $null = Invoke-Entry -Api (New-FakeApi (Get-PoolResponse))
+      (Read-Output)['pool'] | Should -Be 'false'
+    }
+  }
+
+  Context 'ci.yml' {
+    It 'passes the self-check limits and exposes whether the pool was used' {
+      $ci = Get-Content -Raw (Join-Path $PSScriptRoot '..' '..' 'workflows' 'ci.yml')
+      $ci | Should -Match "(?m)^      pool: \`$\{\{ steps\.pick\.outputs\.pool \|\| 'false' \}\}\s*$"
+      $ci | Should -Match "MIN_UPLOAD_MBPS: \`$\{\{ vars\.RUNNER_POOL_MIN_UPLOAD_MBPS \|\| '10' \}\}"
+      $ci | Should -Match "CHECK_MAX_AGE_HOURS: \`$\{\{ vars\.RUNNER_POOL_CHECK_MAX_AGE_HOURS \|\| '24' \}\}"
+      $ci | Should -Match '-MinUploadMBps "\$env:MIN_UPLOAD_MBPS" -CheckMaxAgeHours "\$env:CHECK_MAX_AGE_HOURS"'
     }
   }
 }

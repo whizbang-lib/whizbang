@@ -13,7 +13,7 @@ namespace Whizbang.Core.Events.System;
 /// implement it: a stream never holds both ephemeral and Sourced events (WHIZ133).
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events#framework-system-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Events/System/SystemEventRetentionTests.cs:EveryRewindAndRebuildEvent_IsEphemeral_ForThirtyDaysByDefaultAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Events/System/SystemEventRetentionTests.cs:EveryRewindAndRebuildEvent_IsEphemeral_ForFourteenDaysByDefaultAsync</tests>
 [Ephemeral(
   Destruction = Destruction.AfterTtl,
   TtlSeconds = SystemEventRetention.DEFAULT_TTL_SECONDS,

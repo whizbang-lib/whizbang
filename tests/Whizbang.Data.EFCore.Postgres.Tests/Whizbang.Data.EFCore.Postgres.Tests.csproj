@@ -95,6 +95,8 @@
     <!-- #2029: the repair-ladder contract both ledgers run, so the in-memory fallback and the durable ledger cannot drift. -->
     <Compile Include="../Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityRepairLedgerContractTests.cs" Link="Shared/Messaging/IntegrityRepairLedgerContractTests.cs" />
     <!-- #2125: the ledger hashes published releases recorded, captured once and shared with the Dapper tests. -->
+    <!-- #2559: one helper publishes a known partition map, shared with the Dapper tests. -->
+    <Compile Include="../Whizbang.Data.Dapper.Postgres.Tests/Fixtures/PublishedPartitionMap.cs" Link="Shared/Fixtures/PublishedPartitionMap.cs" />
     <Compile Include="../Whizbang.Data.Dapper.Postgres.Tests/Fixtures/LegacyMigrationLedgers/LegacyMigrationLedger.cs" Link="Shared/Fixtures/LegacyMigrationLedgers/LegacyMigrationLedger.cs" />
     <None Include="../Whizbang.Data.Dapper.Postgres.Tests/Fixtures/LegacyMigrationLedgers/**/*.tsv" Link="Fixtures/LegacyMigrationLedgers/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

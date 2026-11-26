@@ -37,7 +37,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 [Category("Integration")]
 [Category("Shard1")]
 [NotInParallel] // Switches the process-wide containment mode every perspective query compiles under: runs alone.
-public class CanonicalTemporalStorageTests : IAsyncDisposable {
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable", Justification = "#1954: the [After(Test)] hook disposes them, the fixture's one teardown; a disposable fixture would be disposed by TUnit a second time.")]
+public class CanonicalTemporalStorageTests {
   private const string TABLE = "wh_per_canonical_temporal";
 
   [SuppressIndexAdvisory("storage fixture; rows are read back to see exactly what the mapping wrote")]
@@ -162,7 +163,7 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_context is not null) {
       await _context.DisposeAsync();
       _context = null;
@@ -172,7 +173,6 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
 
-    GC.SuppressFinalize(this);
   }
 
   private async Task<string> _scalarAsync(string sql) {

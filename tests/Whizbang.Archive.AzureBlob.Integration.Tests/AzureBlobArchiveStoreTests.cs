@@ -21,7 +21,7 @@ using Whizbang.Data.Dapper.Postgres;
 using Whizbang.Data.Postgres;
 using Whizbang.Testing.Containers;
 
-namespace Whizbang.Archive.AzureBlob.Integration.Tests;
+namespace Whizbang.Storage.AzureBlob.Integration.Tests;
 
 /// <summary>
 /// The Azure Blob archive store against Azurite and a database the Dapper runner migrated: a byte-identical round trip
@@ -66,12 +66,18 @@ public partial class AzureBlobArchiveStoreTests {
     return new BlobContainerClient(connectionString ?? _azurite, name ?? _containerName, options);
   }
 
-  private AzureBlobArchiveStore _store(
-      int maxEventsPerChunk = 2, HttpPipelinePolicy? fault = null, string? container = null, ILogger<AzureBlobArchiveStore>? logger = null,
-      string? connectionString = null, PostgresArchiveConnection? database = null, bool verifyLocation = true) {
+  private PostgresObjectArchiveStore _store(
+      int maxEventsPerChunk = 2, HttpPipelinePolicy? fault = null, string? container = null, ILogger<PostgresObjectArchiveStore>? logger = null,
+      string? connectionString = null, PostgresArchiveConnection? database = null,
+      ArchiveLocationMismatchHandling locationMismatch = ArchiveLocationMismatchHandling.Error, string? connectionName = null) {
     var client = _container(container, fault, connectionString);
-    return new(database ?? _database(), client,
-      new AzureBlobArchiveOptions { MaxEventsPerChunk = maxEventsPerChunk, ContainerName = client.Name, VerifyLocation = verifyLocation },
+    return AzureBlobArchive.Create(database ?? _database(), client,
+      new AzureBlobArchiveOptions {
+        MaxEventsPerChunk = maxEventsPerChunk,
+        ContainerName = client.Name,
+        LocationMismatch = locationMismatch,
+        ConnectionName = connectionName ?? AzureBlobArchiveOptions.DEFAULT_CONNECTION_NAME,
+      },
       logger);
   }
 
@@ -174,7 +180,7 @@ public partial class AzureBlobArchiveStoreTests {
     "es.aggregate_id, es.aggregate_type, es.flags) " +
     "FROM wh_event_store es JOIN wh_event_body eb ON eb.event_id = es.event_id WHERE es.stream_id = @s ORDER BY es.version", stream);
 
-  private static async Task<List<string>> _readAllAsync(AzureBlobArchiveStore store, Guid stream, long fromVersion = 0) {
+  private static async Task<List<string>> _readAllAsync(PostgresObjectArchiveStore store, Guid stream, long fromVersion = 0) {
     var read = new List<string>();
     await foreach (var e in store.ReadAsync(stream, fromVersion)) {
       read.Add(_read(e));
@@ -194,7 +200,7 @@ public partial class AzureBlobArchiveStoreTests {
     }
     await foreach (var item in client.GetBlobsAsync()) {
       // The archive's objects: the container's owner marker (#2367) is not one.
-      if (item.Name != AzureBlobArchiveStore.OWNER_MARKER_NAME) {
+      if (item.Name != PostgresObjectArchiveStore.OWNER_MARKER_NAME) {
         names.Add(item.Name);
       }
     }
@@ -244,7 +250,7 @@ public partial class AzureBlobArchiveStoreTests {
     await Assert.That(written.Status).IsEqualTo(ArchiveStatus.ARCHIVED);
     await Assert.That(written.EventsArchived).IsEqualTo(5L);
     await Assert.That(written.LastVersion).IsEqualTo(5L);
-    await Assert.That(written.Locator).IsEqualTo(AzureBlobArchiveStore.LocatorFor(stream));
+    await Assert.That(written.Locator).IsEqualTo(AzureBlobArchive.LocatorFor(stream));
     await Assert.That(await _readAllAsync(store, stream)).IsEquivalentTo(hot, TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the archive reads back byte-identical, in version order, across every object");
     await Assert.That(await _readAllAsync(store, stream, fromVersion: 4)).IsEquivalentTo(hot[3..], TUnit.Assertions.Enums.CollectionOrdering.Matching)
@@ -267,14 +273,14 @@ public partial class AzureBlobArchiveStoreTests {
     await Assert.That(await _countAsync("SELECT count(*) FROM wh_event_store WHERE stream_id = @s", stream)).IsEqualTo(0L);
     await Assert.That(await _countAsync("SELECT count(*) FROM wh_event_archive WHERE stream_id = @s", stream)).IsEqualTo(0L)
       .Because("the staged rows leave with the commit; the events live in the objects only");
-    await Assert.That(await _tombstoneAsync(stream)).IsEquivalentTo([$"Archived|{AzureBlobArchiveStore.LocatorFor(stream)}|5"]);
+    await Assert.That(await _tombstoneAsync(stream)).IsEquivalentTo([$"Archived|{AzureBlobArchive.LocatorFor(stream)}|5"]);
   }
 
   [Test]
   public async Task Write_WithAnAccessTier_StoresEveryObjectAtIt_WithoutOne_TheAccountDefaultAsync() {
     var (cool, _) = await _seedAsync(3);
     var (inferred, _) = await _seedAsync(1);
-    var coolStore = new AzureBlobArchiveStore(_database(), _container(),
+    var coolStore = AzureBlobArchive.Create(_database(), _container(),
       new AzureBlobArchiveOptions { MaxEventsPerChunk = 2, AccessTier = Azure.Storage.Blobs.Models.AccessTier.Cool });
 
     await Assert.That((await coolStore.WriteAsync(ArchiveBatch.WholeStream(cool))).Archived).IsTrue();
@@ -335,7 +341,7 @@ public partial class AzureBlobArchiveStoreTests {
     var generation = await _generationAsync();
     var fault = new FaultObjectWrites(afterSending: false);
 
-    await Assert.That(() => _completedAsync(_store(fault: fault).WriteAsync(ArchiveBatch.WholeStream(stream)))).Throws<RequestFailedException>();
+    await Assert.That(() => _completedAsync(_store(fault: fault).WriteAsync(ArchiveBatch.WholeStream(stream)))).Throws<ArchiveObjectStoreException>();
 
     await Assert.That(fault.Faulted).IsEqualTo(1).Because("the failure must come from the upload, after the database moved the events");
     await Assert.That(await _hotAsync(stream)).IsEquivalentTo(hot, TUnit.Assertions.Enums.CollectionOrdering.Matching)
@@ -354,7 +360,7 @@ public partial class AzureBlobArchiveStoreTests {
     var fault = new FaultObjectWrites(afterSending: true);
     var store = _store(maxEventsPerChunk: 10, fault: fault);
 
-    await Assert.That(() => _completedAsync(store.WriteAsync(ArchiveBatch.WholeStream(stream)))).Throws<RequestFailedException>();
+    await Assert.That(() => _completedAsync(store.WriteAsync(ArchiveBatch.WholeStream(stream)))).Throws<ArchiveObjectStoreException>();
     var orphaned = await _objectsAsync();
     await Assert.That(orphaned).Count().IsEqualTo(1).Because("the object reached the store; only the client never heard");
     await Assert.That(await _manifestAsync(stream)).IsEmpty().Because("an object no manifest row names is not part of any archive");
@@ -468,7 +474,7 @@ public partial class AzureBlobArchiveStoreTests {
     await Assert.That(counter.Requests).IsEqualTo(0).Because("a mismatched record is refused before any request reaches storage");
     await Assert.That(await _objectsAsync()).IsEquivalentTo(objects);
     await Assert.That(await _manifestAsync(stream)).IsEquivalentTo(manifest).Because("a refused delete or restore changes nothing");
-    await Assert.That(await _tombstoneAsync(stream)).IsEquivalentTo([$"Archived|{AzureBlobArchiveStore.LocatorFor(stream)}|3"]);
+    await Assert.That(await _tombstoneAsync(stream)).IsEquivalentTo([$"Archived|{AzureBlobArchive.LocatorFor(stream)}|3"]);
     await Assert.That(await _countAsync("SELECT count(*) FROM wh_event_store WHERE stream_id = @s", stream)).IsEqualTo(0L);
   }
 
@@ -620,7 +626,11 @@ public partial class AzureBlobArchiveStoreTests {
   }
 
   [Test]
-  public async Task VerifyLocationOff_AMismatchedRecord_IsRead_Restored_AndDeleted_InTheConfiguredLocationOnlyAsync() {
+  [Arguments(ArchiveLocationMismatchHandling.Warning)]
+  [Arguments(ArchiveLocationMismatchHandling.Info)]
+  [Arguments(ArchiveLocationMismatchHandling.Ignore)]
+  public async Task LocationMismatchAllowed_AMismatchedRecord_IsRead_Restored_AndDeleted_InTheConfiguredLocationOnlyAsync(
+      ArchiveLocationMismatchHandling handling) {
     var (restored, _) = await _seedAsync(3);
     var (deleted, _) = await _seedAsync(2);
     var (written, _) = await _seedAsync(3);
@@ -631,7 +641,7 @@ public partial class AzureBlobArchiveStoreTests {
     _ = await source.WriteAsync(ArchiveBatch.WholeStream(deleted));
     _ = await source.WriteAsync(ArchiveBatch.Prefix(written, 1));
     var sourceObjects = await _objectsAsync();
-    var unverified = _store(maxEventsPerChunk: 10, container: $"archive-{Guid.NewGuid():N}", verifyLocation: false);
+    var unverified = _store(maxEventsPerChunk: 10, container: $"archive-{Guid.NewGuid():N}", locationMismatch: handling);
     var target = unverified.ConfiguredLocation.Container;
     await _copyObjectsAsync(_containerName, target);
 
@@ -641,11 +651,11 @@ public partial class AzureBlobArchiveStoreTests {
     var write = await unverified.WriteAsync(ArchiveBatch.Prefix(written, 2));
 
     await Assert.That(read).IsEquivalentTo(hotAsRead, TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("with the check off, the record's location is not compared: the object is read from the configured container");
+      .Because("a mismatch that is not an error goes ahead: the object is read from the configured container");
     await Assert.That(restore.Status).IsEqualTo(ArchiveStatus.RESTORED);
     await Assert.That(await _hotAsync(restored)).IsEquivalentTo(hot, TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(eventsDeleted).IsEqualTo(2L);
-    await Assert.That(write.Status).IsEqualTo(ArchiveStatus.ARCHIVED).Because("with the check off, a write is not refused");
+    await Assert.That(write.Status).IsEqualTo(ArchiveStatus.ARCHIVED).Because("a mismatch that is not an error does not refuse a write");
     await Assert.That(await _objectsAsync()).IsEquivalentTo(sourceObjects)
       .Because("the configured location is the only place it reads, restores, deletes or writes: the source is untouched");
     await Assert.That((await _objectsAsync(target)).All(n => n.StartsWith($"{written:D}/", StringComparison.Ordinal))).IsTrue()
@@ -654,7 +664,7 @@ public partial class AzureBlobArchiveStoreTests {
         "SELECT l.container FROM wh_archive_manifest m JOIN wh_archive_locations l USING (location_id) " +
         "WHERE m.stream_id = @s ORDER BY m.first_version", written))
       .IsEquivalentTo([_containerName, target], TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("location rows are still written, so the check can be turned back on later");
+      .Because("location rows are still written, so the handling can be set back to Error later");
   }
 
   [Test]
@@ -1004,21 +1014,24 @@ public partial class AzureBlobArchiveStoreTests {
   // ── The production caller ──────────────────────────────────────────────────────────────────────────
 
   [Test]
-  public async Task Registration_TheDriversPrefixTruncate_ArchivesThroughTheBlobStoreAsync() {
+  public async Task Registration_TheDriversPrefixTruncate_ArchivesThroughTheBlobStore_ActivatedByConfigurationAloneAsync() {
     var (stream, _) = await _seedAsync(3);
     var services = new ServiceCollection().AddLogging();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+      ["Whizbang:Storage:AzureBlob:ConnectionString"] = _azurite,
+      ["Whizbang:Storage:AzureBlob:Archive:ContainerName"] = _containerName,
+    }).Build());
     services.AddWhizbangPostgres(_db.ConnectionString, JsonContextRegistry.CreateCombinedOptions(), initializeSchema: false,
       perspectiveSchemaSql: null, configureOptions: null);
-    services.AddWhizbangAzureBlobArchive(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
-      ["Whizbang:Archive:AzureBlob:ConnectionString"] = _azurite,
-      ["Whizbang:Archive:AzureBlob:ContainerName"] = _containerName,
-    }).Build());
+    // What AddWhizbang() runs for every loaded storage package (#2502): no registration call names the package.
+    AzureBlobStorageTurnkey.Register();
+    Whizbang.Core.ServiceRegistrationCallbacks.InvokeStorageProviders(services);
     services.AddWhizbangWorkers();
     await using var provider = services.BuildServiceProvider();
 
     var result = await provider.GetRequiredService<IStreamPrefixTruncator>().TruncateAsync(stream, 2, Disposition.Archive);
 
-    await Assert.That(provider.GetRequiredService<IArchiveStore>()).IsTypeOf<AzureBlobArchiveStore>();
+    await Assert.That(provider.GetRequiredService<IArchiveStore>()).IsTypeOf<PostgresObjectArchiveStore>();
     await Assert.That(result.Status).IsEqualTo("truncated");
     await Assert.That((await _manifestAsync(stream)).Select(m => string.Join('|', m.Split('|')[..3]))).IsEquivalentTo(["1|2|2"]);
     await Assert.That(await _objectsAsync()).Count().IsEqualTo(1);
@@ -1036,7 +1049,7 @@ public partial class AzureBlobArchiveStoreTests {
       // An archive object's upload: not the container's creation, and not the owner marker (#2367).
       var target = Armed && message.Request.Method == RequestMethod.Put
         && !message.Request.Uri.Query.Contains("restype=container", StringComparison.Ordinal)
-        && !message.Request.Uri.Path.EndsWith("/" + AzureBlobArchiveStore.OWNER_MARKER_NAME, StringComparison.Ordinal);
+        && !message.Request.Uri.Path.EndsWith("/" + PostgresObjectArchiveStore.OWNER_MARKER_NAME, StringComparison.Ordinal);
       if (target && !afterSending) {
         Faulted++;
         throw new RequestFailedException(503, "injected: the upload failed");
@@ -1079,7 +1092,7 @@ public partial class AzureBlobArchiveStoreTests {
         : ProcessNextAsync(message, pipeline);
   }
 
-  private sealed class ListLogger : ILogger<AzureBlobArchiveStore> {
+  private sealed class ListLogger : ILogger<PostgresObjectArchiveStore> {
     public List<(LogLevel Level, string Text)> Messages { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;

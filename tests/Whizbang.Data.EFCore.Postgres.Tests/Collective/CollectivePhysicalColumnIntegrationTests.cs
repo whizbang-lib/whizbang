@@ -37,7 +37,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 [Category("Integration")]
 [Category("CollectiveEvents")]
 [Category("Shard3")]
-public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
+public class CollectivePhysicalColumnIntegrationTests {
   private const string SPLIT_TABLE = "wh_per_physical_ticket";
   private const string EXTRACTED_TABLE = "wh_per_physical_order";
 
@@ -421,7 +421,8 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
     var set = await _jsonbColumnsAsync(id);
     await _applyTicketAsync(new TicketSpec(s => s.SetProperty(t => t.Settings, (TicketSettings?)null)), "t-A");
 
-    await Assert.That(set).IsEqualTo(("{\"Size\": 5, \"Theme\": \"blue\"}", "{\"b\": 2}"));
+    // A dictionary is stored as an array of key/value pairs, whichever writer writes it (#1911).
+    await Assert.That(set).IsEqualTo(("{\"Size\": 5, \"Theme\": \"blue\"}", "[{\"Key\": \"b\", \"Value\": 2}]"));
     await Assert.That((await _jsonbColumnsAsync(id)).Settings).IsNull()
       .Because("A null value clears the column, as the per-event write of a null property does.");
   }
@@ -452,11 +453,11 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
     await _runnerWriteTicketAsync(replayed, "t-B", model);
 
     await using var conn = await _openAsync();
-    var same = await conn.QuerySingleAsync<bool>($"""
-      SELECT (SELECT (settings, counters, data) FROM {SPLIT_TABLE} WHERE id = @live)
-           = (SELECT (settings, counters, data) FROM {SPLIT_TABLE} WHERE id = @replayed)
-      """, new { live, replayed });
-    await Assert.That(same).IsTrue();
+    // Compared as text, so a difference names itself.
+    var rows = (await conn.QueryAsync<(Guid Id, string Stored)>($"""
+      SELECT id, concat_ws(' | ', settings::text, counters::text, data::text) FROM {SPLIT_TABLE} WHERE id IN (@live, @replayed)
+      """, new { live, replayed })).ToDictionary(r => r.Id, r => r.Stored);
+    await Assert.That(rows[replayed]).IsEqualTo(rows[live]);
   }
 
   [Test]
@@ -668,11 +669,6 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
     }
   }
 
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
-  }
-
   private PhysicalDbContext _newContext() {
     var options = new DbContextOptionsBuilder<PhysicalDbContext>()
       .UseNpgsql(_dataSource!, o => o.UseVector())
@@ -694,7 +690,10 @@ public class CollectivePhysicalColumnIntegrationTests : IAsyncDisposable {
         e.Property<Pgvector.Vector?>("embedding").HasColumnName("embedding").HasColumnType("vector(3)");
         e.Property<List<TicketTag>?>("tags").HasColumnName("tags").HasColumnType("jsonb");
         e.Property<TicketSettings?>("settings").HasColumnName("settings").HasColumnType("jsonb");
-        e.Property<Dictionary<string, int>?>("counters").HasColumnName("counters").HasColumnType("jsonb");
+        // As the generated configuration maps a promoted jsonb dictionary: through the persistence profile's converter,
+        // which stores it as key/value pairs, the form the collective apply writes too (#1911).
+        e.Property<Dictionary<string, int>?>("counters").HasColumnName("counters").HasColumnType("jsonb")
+          .HasConversion(Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.ColumnConverterFor<Dictionary<string, int>?>());
       });
       _mapRow<OrderModel>(modelBuilder, EXTRACTED_TABLE, e => {
         e.Property<int>("priority").HasColumnName("priority");

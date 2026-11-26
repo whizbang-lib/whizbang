@@ -457,7 +457,7 @@ public class ServiceBusConsumerWorkerDropGateTests {
     new(new FakeReceptorRegistry(hasAnyConsumer), NullLogger<MessageDiscardPolicy>.Instance,
       new System.Diagnostics.Metrics.Meter("Whizbang.Tests.ServiceBusConsumerWorkerDropGateTests"),
       Options.Create(new RoutingOptions().AbsorbNamespaces(absorb)),
-      new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+      new EventMarkerResolver(NullMessageTypeCatalog.Instance), global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), global::Whizbang.Core.NullMessageTypeCatalog.Instance);
 
   private static MessageEnvelope<JsonElement> _asReceived() => new() {
     MessageId = MessageId.From((Guid)TrackedGuid.New()),

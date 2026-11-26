@@ -31,7 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 [Category("Integration")]
 [Category("CollectiveEvents")]
 [Category("Shard3")]
-public class CollectiveOrderingIntegrationTests : IAsyncDisposable {
+public class CollectiveOrderingIntegrationTests {
   private const string TABLE = "wh_per_ranked";
   private static readonly DateTimeOffset _t0 = new(2026, 3, 1, 12, 0, 0, TimeSpan.Zero);
   private static readonly Guid _a = Guid.Parse("00000000-0000-7000-8000-00000000000a");
@@ -165,11 +165,6 @@ public class CollectiveOrderingIntegrationTests : IAsyncDisposable {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
       _databaseName = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   private RankedDbContext _newContext() {

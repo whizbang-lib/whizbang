@@ -308,7 +308,7 @@ public class PerspectiveStageOwnedCommandSendComponentTests {
 
   /// <summary>
   /// Applies the trigger and, after the apply, fires PostPerspectiveDetached the way the runner
-  /// template does (PerspectiveRunnerTemplate.cs, the post-flush loop): only when a receptor is
+  /// template does (PerspectiveRunnerBase.cs, the post-flush loop): only when a receptor is
   /// registered at the stage for the event type, from a fresh scope's invoker, on a dedicated
   /// thread awaited before the run returns.
   /// </summary>

@@ -255,7 +255,7 @@ public sealed partial class PerspectiveRebuilder(
       // interface and the concrete type's registration would never be consulted.
       await dispatcher.AsSystem().ForAllTenants().PublishAsync(rebuildEvent);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+#pragma warning disable CA1873 // an exception path: the name is read only once publishing failed
       LogRebuildEventNotPublished(logger, ex, TypeNameFormatter.ForLog(typeof(TEvent)));
 #pragma warning restore CA1873
     }
@@ -304,6 +304,8 @@ public sealed partial class PerspectiveRebuilder(
         // with no archive registers no extents, and every stream rebuilds as it always did.
         ArchivedData = origin?.ArchivedData ?? RebuildArchivedData.Skip,
         ArchivedExtents = sp.GetService<Archival.IArchivedStreamExtents>(),
+        StreamReadBatchSize = Math.Max(1, (sp.GetOptionsValue<PerspectiveRebuildOptions>() ?? new PerspectiveRebuildOptions()).StreamReadBatchSize),
+        StateSource = sp.GetService<IPerspectiveStateSource>(),
       };
 
       // When the caller didn't supply an explicit list, narrow to streams that actually contain
@@ -315,6 +317,8 @@ public sealed partial class PerspectiveRebuilder(
       streamIds = await _withoutStateBasedStreamsAsync(sp, registry, perspectiveName, streamIds, ct);
       run.StreamsRefused = resolved - streamIds.Count;
       run.StreamsToReplay = streamIds.Count;
+
+      await _flushWriteBehindAsync(sp, perspectiveName, requested > 0 ? streamIds : null, ct);
 
       // Blue-green needs a driver that can build and swap a shadow table. Without one the rebuild
       // replays in place, as it always did, and says so rather than claiming a swap it never made.
@@ -346,6 +350,9 @@ public sealed partial class PerspectiveRebuilder(
       RebuildArchivedDataAccessor.Current = run.ArchivedData;
       try {
         if (swapper is null) {
+          // In place, each batch's rows are written together through the write sink (#2522). Blue-green writes a shadow
+          // table, which the prepared writes do not name, so it keeps its own writes (the staging load, #2248).
+          run.BatchWrites = _batchWritesFor(sp, perspectiveName);
           await _replayStreamsAsync(run, streamIds, RebuildPhase.Replaying, ct);
         } else {
           var modelTypeName = registry.GetRegisteredPerspectives().FirstOrDefault(p => p.ClrTypeName == perspectiveName)?.ModelType;
@@ -429,6 +436,19 @@ public sealed partial class PerspectiveRebuilder(
     }
   }
 
+  /// <summary>
+  /// Flushes the write-behind models held for the perspective before the rebuild reads a row (#2533), so a model held
+  /// before the rebuild is written now rather than over the rebuild later, where only the version check of its merged
+  /// write would meet it: every model of the perspective for a rebuild of every stream (<paramref name="streamIds"/>
+  /// null), the named streams' models otherwise. A host whose worker holds nothing, or runs no worker, has nothing to flush.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeTests.WriteBehindRebuild.cs</tests>
+  private static Task _flushWriteBehindAsync(
+      IServiceProvider sp, string perspectiveName, IReadOnlyCollection<Guid>? streamIds, CancellationToken ct) =>
+    sp.GetService<Workers.PerspectiveWorker>() is { } worker
+      ? worker.FlushWriteBehindForRebuildAsync(perspectiveName, streamIds, ct)
+      : Task.CompletedTask;
+
   /// <summary>Why a rebuild of named streams rebuilt none of them, in words an operator can act on.</summary>
   private static string _nothingRebuiltError(int requested, RebuildRun run) =>
     run.StreamsRefused == requested
@@ -496,10 +516,18 @@ public sealed partial class PerspectiveRebuilder(
       ? _noArchivedStreams
       : await run.ArchivedExtents.GetExtentsAsync(streamIds, ct);
     using (RebuildRekeyLedger.Begin(run.Rekeys)) {
-      foreach (var streamId in streamIds) {
+      // The streams' events are read a batch at a time, with one read per batch rather than one per stream (#2513).
+      foreach (var batch in streamIds.Chunk(run.StreamReadBatchSize)) {
         ct.ThrowIfCancellationRequested();
-        processed = await _replayStreamAsync(
-          run, streamId, extents.GetValueOrDefault(streamId, Archival.ArchivedStreamExtent.None), status, processed, ct);
+        var read = await _readBatchAsync(run, batch, extents, ct);
+        var batchState = _planBatchState(run, read);
+        var written = await _writeBatchAsync(run, batch, read, batchState, ct);
+        foreach (var streamId in batch) {
+          ct.ThrowIfCancellationRequested();
+          processed = await _replayStreamAsync(
+            run, streamId, extents.GetValueOrDefault(streamId, Archival.ArchivedStreamExtent.None),
+            new StreamRead(read?.GetValueOrDefault(streamId), batchState, written?.GetValueOrDefault(streamId)), status, processed, ct);
+        }
       }
     }
     foreach (var (row, sources) in run.Rekeys.TakeTouched()) {
@@ -551,7 +579,7 @@ public sealed partial class PerspectiveRebuilder(
     LogBlueGreenShadowCreated(logger, run.PerspectiveName, table, shadow);
     try {
       using var redirect = PerspectiveTableRedirect.Begin(table, shadow);
-      await _replayStreamsAsync(run, streamIds, RebuildPhase.Replaying, ct).ConfigureAwait(false);
+      await _loadShadowAsync(run, swapper, shadow, options, streamIds, ct).ConfigureAwait(false);
 
       for (var pass = 0; pass < options.MaxCatchUpPasses; pass++) {
         var next = await changes.WatermarkAsync(ct).ConfigureAwait(false);
@@ -572,6 +600,54 @@ public sealed partial class PerspectiveRebuilder(
     } catch {
       await _dropShadowAsync(swapper, run.PerspectiveName, shadow).ConfigureAwait(false);
       throw;
+    }
+  }
+
+  /// <summary>
+  /// The first pass of a blue-green rebuild: every stream replayed into the empty shadow table. By default through a
+  /// staging load (#2248): the shadow's secondary indexes are dropped, the rows the stores write are held and loaded in
+  /// chunks, and the indexes are built once every row is in, before the catch-up writes through them. Switched off
+  /// (<see cref="BlueGreenRebuildOptions.StagingLoad"/>), each row is upserted on its own.
+  /// </summary>
+  private async Task _loadShadowAsync(
+      RebuildRun run, IPerspectiveTableSwapper swapper, string shadow, BlueGreenRebuildOptions options,
+      List<Guid> streamIds, CancellationToken ct) {
+    if (!options.StagingLoad) {
+      await _replayStreamsAsync(run, streamIds, RebuildPhase.Replaying, ct).ConfigureAwait(false);
+      return;
+    }
+    var load = new PerspectiveStagingLoad(shadow, options.StagingChunkRows);
+    var deferred = await swapper.DeferIndexesAsync(shadow, ct).ConfigureAwait(false);
+    run.Staging = load;
+    try {
+      using (PerspectiveStagingLoad.Begin(load)) {
+        await _replayStreamsAsync(run, streamIds, RebuildPhase.Replaying, ct).ConfigureAwait(false);
+      }
+    } finally {
+      run.Staging = null;
+    }
+    LogStagingLoaded(logger, run.PerspectiveName, shadow, load.RowsLoaded, deferred.Count);
+    await swapper.BuildDeferredIndexesAsync(shadow, deferred, ct).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Writes the rows the staging load holds, and fails the stream of every row the table refused: its cursor is not
+  /// written and it no longer counts as rebuilt. Runs before any cursor is written, so no cursor names a row the table
+  /// does not hold.
+  /// </summary>
+  private async Task _flushStagingAsync(RebuildRun run, CancellationToken ct) {
+    if (run.Staging is not { } load) {
+      return;
+    }
+    await load.FlushAsync(ct).ConfigureAwait(false);
+    foreach (var refused in load.TakeRefused()) {
+      run.PendingCompletions?.RemoveAll(c => c.StreamId == refused.RowId);
+      var stream = run.StagedRowStreams.GetValueOrDefault(refused.RowId, refused.RowId);
+      if (!run.FailedStreams.Contains(stream)) {
+        run.FailedStreams.Add(stream);
+        run.StreamsProcessed--;
+      }
+      LogStagedRowRefused(logger, refused.Error, run.PerspectiveName, refused.RowId, stream);
     }
   }
 
@@ -699,7 +775,8 @@ public sealed partial class PerspectiveRebuilder(
   /// doesn't kill the rebuild. Returns the phase's processed count.
   /// </summary>
   private async Task<int> _replayStreamAsync(
-      RebuildRun run, Guid streamId, Archival.ArchivedStreamExtent extent, RebuildStatus status, int processed, CancellationToken ct) {
+      RebuildRun run, Guid streamId, Archival.ArchivedStreamExtent extent, StreamRead read,
+      RebuildStatus status, int processed, CancellationToken ct) {
     var streamSw = Stopwatch.StartNew();
     try {
       // RunRebuildAsync replays the physical stream and returns one completion per TARGET stream.
@@ -707,7 +784,7 @@ public sealed partial class PerspectiveRebuilder(
       // old RunAsync path); with a re-key upcaster, events fan out onto their target rows and a
       // cursor is queued for each. Processed counts physical streams (one per call) so the
       // rebuild result stays keyed to the resolved stream list.
-      var rebuilt = await _rebuildStreamAsync(run, streamId, extent, ct);
+      var rebuilt = await _rebuildStreamAsync(run, streamId, extent, read, ct);
       streamSw.Stop();
       processed++;
       if (rebuilt is null) {
@@ -737,13 +814,20 @@ public sealed partial class PerspectiveRebuilder(
       foreach (var completion in completions) {
         LogStreamReplayed(logger, run.PerspectiveName, completion.StreamId, completion.LastEventId,
             completion.Status, streamSw.ElapsedMilliseconds, processed, status.TotalStreams);
+        if (run.Staging is not null && completion.StreamId != streamId) {
+          // A row re-keyed away from the stream read: a refusal of it fails the stream a rerun replays (#2248).
+          run.StagedRowStreams[completion.StreamId] = streamId;
+        }
 
         if (run.PendingCompletions != null) {
           run.PendingCompletions.Add(completion);
-          if (run.PendingCompletions.Count >= COMPLETION_FLUSH_BATCH_SIZE) {
+          if (run.PendingCompletions.Count >= (run.Staging?.ChunkRows ?? COMPLETION_FLUSH_BATCH_SIZE)) {
             await _flushPendingCompletionsAsync(run, processed, status.TotalStreams, ct);
           }
         }
+      }
+      if (run.Staging is { } staging && staging.StagedCount >= staging.ChunkRows) {
+        await _flushStagingAsync(run, ct);
       }
 
       await _reportProgressAsync(run, status, processed);
@@ -769,7 +853,7 @@ public sealed partial class PerspectiveRebuilder(
   /// whose replay from the start would fold the hot events alone.
   /// </summary>
   private async Task<IReadOnlyList<PerspectiveCursorCompletion>?> _rebuildStreamAsync(
-      RebuildRun run, Guid streamId, Archival.ArchivedStreamExtent extent, CancellationToken ct) {
+      RebuildRun run, Guid streamId, Archival.ArchivedStreamExtent extent, StreamRead read, CancellationToken ct) {
     var fromSnapshot = run.ArchivedData == RebuildArchivedData.Skip;
     switch (extent) {
       case Archival.ArchivedStreamExtent.WholeDeleted:
@@ -781,7 +865,162 @@ public sealed partial class PerspectiveRebuilder(
       case Archival.ArchivedStreamExtent.Prefix or Archival.ArchivedStreamExtent.PrefixDeleted when fromSnapshot:
         return await run.Runner.RunRebuildFromLatestSnapshotAsync(streamId, run.PerspectiveName, ct);
       default:
-        return await run.Runner.RunRebuildAsync(streamId, run.PerspectiveName, ct);
+        // A stream its batch wrote ended there (#2522); one its batch read folds from that read; one the batch did not
+        // read reads its own (#2513).
+        if (read.Written is { } written) {
+          // A failed pair fails its stream as a failed replay does, with the exception it ended with, its stack kept.
+          if (written.Failure is { } failure) {
+            global::System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(failure);
+          }
+          return [written.Result!];
+        }
+        return read.Events is null
+          ? await run.Runner.RunRebuildAsync(streamId, run.PerspectiveName, ct)
+          : await run.Runner.RunRebuildWithEventsAsync(streamId, run.PerspectiveName, read.Events, read.BatchState, ct);
+    }
+  }
+
+  /// <summary>
+  /// What a batch read of one stream: its events, or null to read its own, the batch's planned reads, and the stream's
+  /// pair when its batch wrote its row (#2522), or null.
+  /// </summary>
+  private readonly record struct StreamRead(
+      IReadOnlyList<Observability.MessageEnvelope<IEvent>>? Events, IPerspectiveBatchState? BatchState,
+      Workers.PerspectiveApplyBatch.Pair? Written = null);
+
+  /// <summary>
+  /// The services a rebuild in place writes each batch's rows with (#2522), or null to write each row on its own: a
+  /// perspective whose rows the service writes set-based (<see cref="PerspectiveWriteMode"/>, which only a generated
+  /// runner can), in a host whose driver registers a write sink. One pair at a time, since the run's one runner reads
+  /// and folds through one store.
+  /// </summary>
+  private Workers.PerspectiveApplyBatch.Services? _batchWritesFor(IServiceProvider sp, string perspectiveName) {
+    var serviceMode = (sp.GetOptionsValue<Workers.PerspectiveWorkerOptions>() ?? new Workers.PerspectiveWorkerOptions()).WriteMode;
+    if (PerspectiveWriteModes.Resolve(perspectiveName, serviceMode) != PerspectiveWriteMode.SetBased
+        || sp.GetService<IServiceProviderIsService>()?.IsService(typeof(IPerspectiveWriteSink)) != true) {
+      return null;
+    }
+    return new Workers.PerspectiveApplyBatch.Services(
+      scopeFactory,
+      sp.GetService<IPerspectiveApplyCoordinator>(),
+      null,
+      sp.GetService<IApplyBatchStrategy>() ?? new FlushEveryBatchStrategy(),
+      Width: 1,
+      logger,
+      Workers.PerspectiveApplyBatch.NoWriteBehind.Instance);
+  }
+
+  /// <summary>
+  /// Writes the rows of a batch's streams together (#2522): each stream the batch read is folded onto its own row as
+  /// <see cref="IPerspectiveRunner.RunRebuildWithEventsAsync"/> folds it, its row prepared, every prepared row written
+  /// through the write sink with the rest of the batch, and each pair completed with its outcome, the set-based write of
+  /// the live path (#2246). Returns each written stream's pair, or null when the batch writes nothing together, and each
+  /// stream is rebuilt on its own.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A stream's events an upcaster re-keyed onto another row go to the run's ledger, which folds that row once after
+  /// every stream is read (#1820), exactly as the stream's own rebuild hands them over. A stream with no row of its own
+  /// to fold (no events, or every one re-keyed away) is rebuilt on its own, which reports it.
+  /// </para>
+  /// <para>
+  /// A completion decides the rest as the per-row write does: a write the ordering guard refused is reported already
+  /// correct or refused (#2252) and never rewound, as a live refusal is; a row that moved after the batch read it is
+  /// read again and written on its own; a row the database rejected is written on its own, where it fails or not. A batch
+  /// that cannot be written at all (its locks cannot be taken) is logged, and each stream it had not finished is rebuilt
+  /// on its own.
+  /// </para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderBatchedWriteTests.cs</tests>
+  private async Task<IReadOnlyDictionary<Guid, Workers.PerspectiveApplyBatch.Pair>?> _writeBatchAsync(
+      RebuildRun run, Guid[] batch,
+      IReadOnlyDictionary<Guid, IReadOnlyList<Observability.MessageEnvelope<IEvent>>>? read,
+      IPerspectiveBatchState? batchState, CancellationToken ct) {
+    if (run.BatchWrites is not { } services || read is null) {
+      return null;
+    }
+    var pairs = new List<(Workers.PerspectiveApplyBatch.Pair Pair, IReadOnlyList<RebuildPartition> Partitions)>();
+    foreach (var streamId in batch) {
+      if (read.GetValueOrDefault(streamId) is not { } events) {
+        continue;
+      }
+      var partitions = RebuildRowRouting.Partition(streamId, events);
+      if (partitions.FirstOrDefault(p => !p.IsRekeyed) is { } own) {
+        pairs.Add((new Workers.PerspectiveApplyBatch.Pair(streamId, run.PerspectiveName, run.Runner, null, own.Events), partitions));
+      }
+    }
+    if (pairs.Count == 0) {
+      return null;
+    }
+    try {
+      await Workers.PerspectiveApplyBatch.RunAsync([.. pairs.Select(p => p.Pair)], services, batchState, ct).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogRebuildBatchWriteFailed(logger, ex, run.PerspectiveName, pairs.Count);
+    }
+    var written = new Dictionary<Guid, Workers.PerspectiveApplyBatch.Pair>(pairs.Count);
+    foreach (var (pair, partitions) in pairs.Where(p => p.Pair.Ended)) {
+      written[pair.StreamId] = pair;
+      _handOverRekeyed(run, pair, partitions);
+    }
+    return written;
+  }
+
+  /// <summary>
+  /// Hands a written stream's re-keyed partitions to the run's ledger as the stream's own rebuild does: in partition
+  /// order, so the ones before its own row are handed over whatever its row's write did, and the ones after it only when
+  /// that write did not fail.
+  /// </summary>
+  private static void _handOverRekeyed(
+      RebuildRun run, Workers.PerspectiveApplyBatch.Pair pair, IReadOnlyList<RebuildPartition> partitions) {
+    var pastOwn = false;
+    foreach (var partition in partitions) {
+      if (!partition.IsRekeyed) {
+        pastOwn = true;
+      } else if (!pastOwn || pair.Failure is null) {
+        run.Rekeys.Add(partition);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Plans the reads a batch's folds make beside its events (#2513): every row the batch re-derives, the purge markers of
+  /// the missing ones, and the commit sequences of the events, each read once for the batch through the host's
+  /// <see cref="IPerspectiveStateSource"/>. Each stream with events is planned from the events the batch read: no stream
+  /// is known new, since the row a rebuild re-derives may exist, and its history is asked before the first event its
+  /// replay folds. Null, and each stream reads its own, when the batch read no events or the host has no state source.
+  /// </summary>
+  private static IPerspectiveBatchState? _planBatchState(
+      RebuildRun run, IReadOnlyDictionary<Guid, IReadOnlyList<Observability.MessageEnvelope<IEvent>>>? read) {
+    if (read is null || run.StateSource is null) {
+      return null;
+    }
+    return run.StateSource.BeginBatch([.. read
+      .Where(stream => stream.Value.Count > 0)
+      .Select(stream => new PerspectiveStateRequest(
+        stream.Key, run.PerspectiveName, ReplayEventOrder.Order(stream.Value)[0].MessageId.Value, KnownNew: false,
+        [.. stream.Value.Select(e => e.MessageId.Value)]))]);
+  }
+
+  /// <summary>
+  /// Reads the events of a batch's streams with one read (#2513), or returns <see langword="null"/>, and each stream reads
+  /// its own. A stream with archived data is left to its own read: that read goes through the archive, which the batched
+  /// read of the hot store does not. A failed read is logged and costs the batch its round trips, never its streams.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderBatchedReadTests.cs</tests>
+  private async Task<IReadOnlyDictionary<Guid, IReadOnlyList<Observability.MessageEnvelope<IEvent>>>?> _readBatchAsync(
+      RebuildRun run, Guid[] batch, IReadOnlyDictionary<Guid, Archival.ArchivedStreamExtent> extents, CancellationToken ct) {
+    if (run.StreamReadBatchSize < 2) {
+      return null;
+    }
+    Guid[] hot = [.. batch.Where(id => extents.GetValueOrDefault(id, Archival.ArchivedStreamExtent.None) == Archival.ArchivedStreamExtent.None)];
+    if (hot.Length == 0) {
+      return null;
+    }
+    try {
+      return await run.Runner.ReadRebuildEventsAsync(hot, ct).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogRebuildBatchReadFailed(logger, ex, run.PerspectiveName, hot.Length);
+      return null;
     }
   }
 
@@ -827,6 +1066,8 @@ public sealed partial class PerspectiveRebuilder(
   /// <see cref="IPerspectiveCheckpointCompleter"/> and logs the batch size + flush time.
   /// No-op when the completer or pending list is null/empty.</summary>
   private async Task _flushPendingCompletionsAsync(RebuildRun run, int processed, int totalStreams, CancellationToken ct) {
+    // The rows a cursor names are written before the cursor is (#2248).
+    await _flushStagingAsync(run, ct);
     if (run.Completer is null || run.PendingCompletions is not { Count: > 0 } pending) {
       return;
     }
@@ -861,6 +1102,10 @@ public sealed partial class PerspectiveRebuilder(
     public int StreamsPurged { get; set; }
     /// <summary>Streams skipped for their archived data (#1931).</summary>
     public int StreamsSkipped { get; set; }
+    /// <summary>How many streams one read reads the events of (#2513); 1 reads each stream on its own.</summary>
+    public int StreamReadBatchSize { get; init; } = 1;
+    /// <summary>Plans the reads beside a batch's events (#2513); null in a host with none, and each stream reads its own.</summary>
+    public IPerspectiveStateSource? StateSource { get; init; }
     /// <summary>What the rebuild may read of the archive (#1931).</summary>
     public RebuildArchivedData ArchivedData { get; init; }
     /// <summary>What the ledger says each stream has archived; null in a host with no archive.</summary>
@@ -882,6 +1127,12 @@ public sealed partial class PerspectiveRebuilder(
     public IPerspectivePurgeMarkerStore? PurgeMarkers { get; init; }
     /// <summary>The events re-keyed onto each row this run has read, across all of its phases (#1820).</summary>
     public RebuildRekeyLedger Rekeys { get; } = new();
+    /// <summary>The staging load of the first pass of a blue-green rebuild, while it runs (#2248).</summary>
+    public PerspectiveStagingLoad? Staging { get; set; }
+    /// <summary>The services each batch's rows are written together with (#2522), or null to write each row on its own.</summary>
+    public Workers.PerspectiveApplyBatch.Services? BatchWrites { get; set; }
+    /// <summary>The stream each staged row re-keyed away from its own stream was read from.</summary>
+    public Dictionary<Guid, Guid> StagedRowStreams { get; } = [];
   }
 
   /// <summary>
@@ -927,6 +1178,14 @@ public sealed partial class PerspectiveRebuilder(
   }
 
   [LoggerMessage(Level = LogLevel.Warning,
+      Message = "Rebuild of {Perspective}: the one read of {StreamCount} stream(s) failed; each of them reads its own events")]
+  private static partial void LogRebuildBatchReadFailed(ILogger logger, Exception ex, string perspective, int streamCount);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+      Message = "Rebuild of {Perspective}: the one write of the rows of {StreamCount} stream(s) failed; each of them is rebuilt on its own")]
+  private static partial void LogRebuildBatchWriteFailed(ILogger logger, Exception ex, string perspective, int streamCount);
+
+  [LoggerMessage(Level = LogLevel.Warning,
       Message = "Blue-green rebuild of {Perspective}: the driver has no shadow-table support, so it is rebuilt in place")]
   private static partial void LogBlueGreenInPlace(ILogger logger, string perspective);
 
@@ -945,6 +1204,14 @@ public sealed partial class PerspectiveRebuilder(
   [LoggerMessage(Level = LogLevel.Warning,
       Message = "Blue-green rebuild of {Perspective} failed and its shadow table {Shadow} could not be dropped; the next rebuild replaces it")]
   private static partial void LogBlueGreenShadowDropFailed(ILogger logger, Exception ex, string perspective, string shadow);
+
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "Blue-green rebuild of {Perspective}: staging load wrote {Rows} rows into {Shadow}; building its {Indexes} deferred indexes")]
+  private static partial void LogStagingLoaded(ILogger logger, string perspective, string shadow, long rows, int indexes);
+
+  [LoggerMessage(Level = LogLevel.Error,
+      Message = "Blue-green rebuild of {Perspective}: the shadow table refused row {Row}, so stream {StreamId} was not rebuilt")]
+  private static partial void LogStagedRowRefused(ILogger logger, Exception ex, string perspective, Guid row, Guid streamId);
 
   [LoggerMessage(Level = LogLevel.Information,
       Message = "Starting {Mode} rebuild of perspective {Perspective} — {StreamCount} streams; cursor persistence enabled={CursorPersistence}")]

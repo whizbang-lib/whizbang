@@ -411,6 +411,34 @@ public static class WorkerPipelineExtensions {
     // worker-never-starts signature. Without a runner registry the worker parks with a
     // structured warning, so perspective-less services host it harmlessly.
     services.TryAddSingleton<PerspectiveWorker>();
+    // #2557: the old owner's side of a handover. It hands a partition over once no participant works a stream of it,
+    // after every participant saves what it holds there: the drains' in-flight streams, and the perspective worker's
+    // write-behind models. One tenure ledger per process says each stream's partition (#2556).
+    services.TryAddSingleton(_ => new Whizbang.Core.Messaging.PartitionTenures());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IPartitionHandoverParticipant, DrainChannelsHandoverParticipant>(sp =>
+      new DrainChannelsHandoverParticipant(
+        sp.GetRequiredService<Whizbang.Core.Messaging.IOutboxDrainChannel>(),
+        sp.GetRequiredService<Whizbang.Core.Messaging.IInboxDrainChannel>(),
+        sp.GetRequiredService<Whizbang.Core.Messaging.IPerspectiveDrainChannel>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IPartitionHandoverParticipant, PerspectiveWorker>(sp => sp.GetRequiredService<PerspectiveWorker>()));
+    // The participants are resolved on the first pass that hands a partition over, not when the worker is built: a
+    // host that never owns by map never builds the perspective worker on its account.
+    services.TryAddSingleton(sp => new PartitionHandoverWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetRequiredService<Whizbang.Core.Messaging.PartitionTenures>(),
+      _handoverParticipants(sp),
+      sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PartitionHandoverWorker>>(),
+      new PartitionHandoverWorkerSettings {
+        Landed = sp.GetService<IQueuedWritesLandedSignal>(),
+        Stages = sp.GetService<Whizbang.Core.Startup.IStartupStageGate>(),
+        Time = sp.GetService<TimeProvider>(),
+        LeaveBudget = sp.GetService<Microsoft.Extensions.Options.IOptions<PartitionAssignerOptions>>()?.Value.HandoverDeadline,
+      }));
+    // #2557 graceful leave: a stopping instance hands its partitions over after finishing its work in hand, before it
+    // releases its roles and deregisters.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.RunControl.IReleasesHeldWork, PartitionHandoverWorker>(
+      sp => sp.GetRequiredService<PartitionHandoverWorker>()));
     // #2246: the flush policy of set-based perspective writes, registered where the worker is so a service that
     // registers nothing gets it; TryAdd, so a service's own policy wins. The state source and the write sink need a
     // DbContext and are registered by the storage driver.
@@ -463,7 +491,9 @@ public static class WorkerPipelineExtensions {
     // guard every integrity receptor asks before comparing, repairing or redelivering.
     services.TryAddSingleton<Whizbang.Core.Messaging.IRuleFingerprintSource>(sp => new Whizbang.Core.Messaging.CatalogRuleFingerprintSource(
       sp.GetService<Whizbang.Core.IMessageTypeCatalog>() ?? Whizbang.Core.NullMessageTypeCatalog.Instance,
-      sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Archival.StreamLifecycleOptions>>()));
+      sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Archival.StreamLifecycleOptions>>(),
+      // #2329: a retired type's rule comes from configuration, since the application deleted its class.
+      sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.RetiredEventTypesOptions>>()));
     services.TryAddSingleton(sp => new Whizbang.Core.Messaging.IntegrityPairGuard(
       sp.GetRequiredService<Whizbang.Core.Messaging.IRuleFingerprintSource>(),
       sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>(),
@@ -474,6 +504,14 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<OutboxPublishWorker>();
     services.TryAddSingleton<InboxDispatchWorker>();
     services.TryAddSingleton<OutboxDrainWorker>();
+    services.TryAddSingleton<Whizbang.Core.Observability.SequenceHoldMetrics>();
+    services.TryAddSingleton(sp => new Whizbang.Core.Observability.SequenceHoldWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetService<Whizbang.Core.Configuration.WhizbangCoreOptions>() ?? new Whizbang.Core.Configuration.WhizbangCoreOptions(),
+      sp.GetRequiredService<Whizbang.Core.Observability.SequenceHoldMetrics>(),
+      sp.GetRequiredService<ILogger<Whizbang.Core.Observability.SequenceHoldWorker>>(),
+      sp.GetService<TimeProvider>()));
     services.TryAddSingleton<InboxDrainWorker>();
     services.TryAddSingleton<DeadLetterRecoveryWorker>();
     services.TryAddSingleton<TransportDeadLetterDrainWorker>();
@@ -598,7 +636,10 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<ILogger<MessageDiscardPolicy>>(),
       new System.Diagnostics.Metrics.Meter(MessageDiscardPolicy.METER_NAME),
       sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>(),
-      sp.GetRequiredService<IEventMarkerResolver>()));
+      sp.GetRequiredService<IEventMarkerResolver>(),
+      // #2329: a retired type is turned away at receive, so it is never stored again and integrity never compares it.
+      retired: sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.RetiredEventTypesOptions>>(),
+      catalog: sp.GetRequiredService<IMessageTypeCatalog>()));
 
     // Poison detector (topology arc phase 8.5). Turnkey by construction: the valve it replaces —
     // the broker's MaxDeliveryCount, and every transport branch reading the same counter — cannot
@@ -662,6 +703,8 @@ public static class WorkerPipelineExtensions {
     services.AddWhizbangWorker(HeartbeatWorker.StartsAt, sp => sp.GetRequiredService<HeartbeatWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<ClaimWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<PerspectiveWorker>());
+    // #2557: hands over the partitions this instance is moving away from, once their work is done.
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<PartitionHandoverWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<PerspectiveCompletionFlushWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<FailureFlushWorker>());
@@ -680,6 +723,8 @@ public static class WorkerPipelineExtensions {
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<OutboxPublishWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<InboxDispatchWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<OutboxDrainWorker>());
+    // Sequence integrity (#2542): the age of the oldest outbox event this instance holds for its commit-order stamp.
+    services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<Whizbang.Core.Observability.SequenceHoldWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<InboxDrainWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<DeadLetterRecoveryWorker>());
     services.AddWhizbangWorker(Whizbang.Core.Startup.StartupStage.AcceptingCommands, sp => sp.GetRequiredService<TransportDeadLetterDrainWorker>());
@@ -1473,5 +1518,12 @@ public static class WorkerPipelineExtensions {
         metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
         interactiveReserve: gateOptions.InteractiveReserve);
     });
+  }
+
+  // Enumerated on each handover pass, so each participant is resolved only when a partition is handed over (#2557).
+  private static IEnumerable<IPartitionHandoverParticipant> _handoverParticipants(IServiceProvider sp) {
+    foreach (var participant in sp.GetServices<IPartitionHandoverParticipant>()) {
+      yield return participant;
+    }
   }
 }

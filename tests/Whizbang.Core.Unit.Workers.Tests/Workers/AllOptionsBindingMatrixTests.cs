@@ -47,6 +47,18 @@ public sealed class AllOptionsBindingMatrixTests {
   }
 
   [Test]
+  public async Task RetiredEventTypesOptions_BindsTurnkeyAsync() {
+    await using var provider = _hostWith(new Dictionary<string, string?> {
+      ["Whizbang:EventStore:RetiredTypes:Names:0"] = "MyApp.Orders.CouponIssued",
+      ["Whizbang:EventStore:RetiredTypes:MaxBatchesPerCycle"] = "4",
+    });
+    var options = provider.GetRequiredService<IOptions<Whizbang.Core.Messaging.RetiredEventTypesOptions>>().Value;
+    await Assert.That(options.Names).IsEquivalentTo(["MyApp.Orders.CouponIssued"])
+      .Because("#2329: a retirement named in configuration must reach the purge, the receive gate and the fingerprint");
+    await Assert.That(options.MaxBatchesPerCycle).IsEqualTo(4);
+  }
+
+  [Test]
   public async Task PerspectiveRowRetentionOptions_BindsTurnkeyAsync() {
     await using var provider = _hostWith(new Dictionary<string, string?> {
       ["Whizbang:PerspectiveRowRetention:Enabled"] = "false",

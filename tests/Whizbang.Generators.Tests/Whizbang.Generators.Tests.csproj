@@ -30,6 +30,12 @@
                       LogicalName="WhizbangBuild/Whizbang.Generators/%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\..\src\Whizbang.Data.EFCore.Postgres.Generators\build\*.props;..\..\src\Whizbang.Data.EFCore.Postgres.Generators\build\*.targets"
                       LogicalName="WhizbangBuild/Whizbang.Data.EFCore.Postgres.Generators/%(Filename)%(Extension)" />
+    <!-- #2469: the runner base every generated runner derives from is Whizbang.Core source, not a template. Embedded
+         so the runner tests read the code a runner runs with no file read at run time. -->
+    <EmbeddedResource Include="..\..\src\Whizbang.Core\Perspectives\PerspectiveRunnerBase.cs"
+                      LogicalName="WhizbangCore/PerspectiveRunnerBase.cs" />
+    <!-- #2382: the registration file the EF Core generator emits, pinned byte for byte. -->
+    <EmbeddedResource Include="Snapshots\*.txt" LogicalName="Whizbang.Generators.Tests.Snapshots.%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>
     <!-- Reference to the generator projects we're testing -->

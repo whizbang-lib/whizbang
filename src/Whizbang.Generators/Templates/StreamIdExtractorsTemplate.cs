@@ -15,12 +15,12 @@ namespace Whizbang.Core.Generated;
 #endregion
 
 /// <summary>
-/// Module initializer that registers this assembly's StreamIdExtractor with the global registry.
-/// Runs automatically when assembly loads - before Main().
+/// Module initializer that registers one stream-id entry per message type this assembly compiles with the global
+/// per-type table. Runs automatically when assembly loads - before Main().
 /// </summary>
 /// <remarks>
-/// Uses <see cref="global::Whizbang.Core.Registry.StreamIdExtractorRegistry"/> for multi-assembly support.
-/// Priority 100 is used for contracts assemblies (tried first), 1000 for services.
+/// <see cref="global::Whizbang.Core.Registry.StreamIdTypeRegistry"/> resolves a message by its exact runtime type, so a
+/// derived type's own entry wins wherever its base types are compiled (#1905, #1908).
 /// </remarks>
 [ExcludeFromCodeCoverage]
 [DebuggerNonUserCode]
@@ -30,8 +30,8 @@ internal static class StreamIdExtractorInitializer {
 #pragma warning restore CA2255
   internal static void Initialize() {
     #region MODULE_INITIALIZER_REGISTRATION
-    // Conditional registration - only if this assembly has extractors
-    // Generated code: StreamIdExtractorRegistry.Register(new GeneratedStreamIdExtractor(), priority: 100);
+    // Conditional registration - only if this assembly has message types with a stream id
+    // Generated code: StreamIdTypeRegistry.Register(StreamIdExtractors.TypeEntries());
     #endregion
   }
 }
@@ -190,6 +190,21 @@ public static partial class StreamIdExtractors {
     return null;
   }
 
+  /// <summary>
+  /// One entry per message type this assembly compiles, including types that only inherit their [StreamId], for the
+  /// per-type table (#1905, #1908). Ordered by type name, so the generated file does not depend on discovery order.
+  /// </summary>
+  /// <returns>The entries.</returns>
+  internal static global::Whizbang.Core.Registry.StreamIdTypeEntry[] TypeEntries() => [
+    #region TYPE_ENTRIES
+    // One StreamIdTypeEntry per message type
+    #endregion
+  ];
+
+  #region TYPE_ENTRY_SETTERS
+  // One writer per table entry whose stream id can be written
+  #endregion
+
   #region EVENT_EXTRACTORS
   // Individual extractor methods for each event type
   #endregion
@@ -208,7 +223,9 @@ public static partial class StreamIdExtractors {
 }
 
 /// <summary>
-/// Generated IStreamIdExtractor implementation that delegates to the generated StreamIdExtractors class.
+/// Generated IStreamIdExtractor implementation that delegates to the generated StreamIdExtractors class. No longer
+/// registered by the module initializer, which registers the per-type table instead (#1905); kept so code that
+/// constructs it directly keeps compiling.
 /// </summary>
 [ExcludeFromCodeCoverage]
 [DebuggerNonUserCode]
@@ -265,18 +282,13 @@ public static class StreamIdExtractorRegistrations {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// <strong>Multi-assembly projects</strong>: When message types (events/commands) are defined
-  /// in a shared contracts assembly, the [ModuleInitializer] pattern ensures the contracts'
-  /// extractors are automatically registered with higher priority (100) than service extractors (1000).
+  /// <strong>Multi-assembly projects</strong>: every assembly's [ModuleInitializer] registers one entry per message
+  /// type it compiles with the per-type table, which resolves a message by its exact runtime type, so a derived type's
+  /// own [StreamId] and [GenerateStreamId] hold wherever its base types are compiled (#1905, #1908).
   /// </para>
   /// <para>
-  /// <strong>How it works</strong>:
-  /// <list type="number">
-  /// <item>Contracts assembly loads → [ModuleInitializer] registers extractors (priority 100)</item>
-  /// <item>Service assembly loads → [ModuleInitializer] registers extractors (priority 1000) or skips if empty</item>
-  /// <item>AddWhizbangDispatcher() → AddWhizbangStreamIdExtractor() → registers composite</item>
-  /// <item>Composite tries all registered extractors in priority order</item>
-  /// </list>
+  /// <strong>How it works</strong>: the composite asks hand-written extractors registered below priority 100 first,
+  /// then the per-type table, then the remaining hand-written extractors.
   /// </para>
   /// </remarks>
   /// <param name="services">The service collection.</param>

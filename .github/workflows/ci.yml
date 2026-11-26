@@ -144,8 +144,10 @@ jobs:
   # This job can never hold CI up or turn it red. Every step continues on error, the job does too, it is not
   # in ci-result's needs, and every output defaults to "ubuntu-latest" when the step wrote nothing. Each
   # consumer repeats that default (`|| '"ubuntu-latest"'`), so a picker that did not run at all still
-  # leaves every job on a GitHub-hosted runner. Without the app secrets and the variables, every class is
-  # GitHub-hosted, exactly as before the picker existed.
+  # leaves every job on a GitHub-hosted runner. Each consumer also takes the plan only in the attempt it
+  # was made for (the attempt output), so a job re-run without the picker runs on ubuntu-latest (#1880).
+  # Without the app secrets and the variables, every class is GitHub-hosted, exactly as before the picker
+  # existed.
   # ============================================================================
 
   pick-runner:
@@ -155,7 +157,7 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
-      actions: read   # this repository's queued jobs, counted against the pool
+      actions: read   # this repository's queued jobs, counted against the pool, and the runner self-checks (caches)
     env:
       HAS_POOL_APP: ${{ secrets.RUNNER_POOL_APP_ID != '' && secrets.RUNNER_POOL_APP_PRIVATE_KEY != '' }}
     outputs:
@@ -164,6 +166,13 @@ jobs:
       compile: ${{ steps.pick.outputs.compile || '"ubuntu-latest"' }}
       analyze: ${{ steps.pick.outputs.analyze || '"ubuntu-latest"' }}
       linux-docker: ${{ steps.pick.outputs.linux-docker || '"ubuntu-latest"' }}
+      # The attempt this plan is for. "Re-run failed jobs" does not re-run this job, so a re-run job would
+      # otherwise take labels picked for the first attempt, which may name machines that have left the pool;
+      # every consumer takes the plan only when this matches github.run_attempt, and ubuntu-latest otherwise.
+      # "Re-run all jobs" re-runs this job too, so its plan is fresh again (#1880).
+      attempt: ${{ github.run_attempt }}
+      # Whether any class went to the pool; the watcher (runner-watch) runs only then.
+      pool: ${{ steps.pick.outputs.pool || 'false' }}
     steps:
       - name: Checkout the pipeline scripts
         continue-on-error: true
@@ -205,11 +214,76 @@ jobs:
           GROUP: ${{ vars.RUNNER_POOL_GROUP || 'Default' }}
           DISABLED: ${{ vars.RUNNER_POOL_DISABLED }}
           RUN_ID: ${{ github.run_id }}
+          # A machine takes jobs only with a passing self-check at most this many hours old, and the compile
+          # only when that check measured at least this upload speed (#1880; .github/WORKFLOWS.md).
+          MIN_UPLOAD_MBPS: ${{ vars.RUNNER_POOL_MIN_UPLOAD_MBPS || '10' }}
+          CHECK_MAX_AGE_HOURS: ${{ vars.RUNNER_POOL_CHECK_MAX_AGE_HOURS || '24' }}
         run: >-
           ./.github/scripts/Select-CiRunner.ps1 -EventName "$env:EVENT" -Repository "$env:REPOSITORY"
           -HeadRepository "$env:HEAD_REPOSITORY" -Actor "$env:ACTOR" -PrAuthor "$env:PR_AUTHOR"
           -RepositoryPrivate "$env:PRIVATE" -Organization "$env:ORGANIZATION" -GroupName "$env:GROUP"
           -RunId "$env:RUN_ID" -Disabled "$env:DISABLED"
+          -MinUploadMBps "$env:MIN_UPLOAD_MBPS" -CheckMaxAgeHours "$env:CHECK_MAX_AGE_HOURS"
+
+  # ============================================================================
+  # Watch self-hosted jobs (#1880)
+  #
+  # GitHub cannot move a queued job to another runner, so a pool job whose machine went away queues for up to a
+  # day. This watches the run's pool jobs and, once one has been queued 10 minutes with no online machine carrying
+  # its labels (or 45 minutes whatever the machines say) AND no other job is still running, starts
+  # ci-runner-fallback.yml and cancels the run; the re-runner then re-runs the failed jobs, which take
+  # ubuntu-latest (the attempt guard). It never touches a running job: a slow but alive machine is left to the
+  # job's own timeout, and waiting for the running jobs first means the cancel throws away no finished work.
+  # A machine lost mid-job fails its job; ci-runner-fallback.yml re-runs that once the run has finished.
+  # Off the gate's needs and continue-on-error: the watcher can never turn CI red. Rules:
+  # .github/scripts/Invoke-CiRunnerFallback.ps1; runbook: .github/WORKFLOWS.md, "Runner selection".
+  # ============================================================================
+
+  runner-watch:
+    name: Plan · Watch self-hosted jobs
+    needs: [pick-runner]
+    if: ${{ needs.pick-runner.outputs.pool == 'true' && needs.pick-runner.outputs.attempt == github.run_attempt }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    continue-on-error: true
+    permissions:
+      contents: read
+      actions: write   # cancel this run, and start the re-runner
+    env:
+      HAS_POOL_APP: ${{ secrets.RUNNER_POOL_APP_ID != '' && secrets.RUNNER_POOL_APP_PRIVATE_KEY != '' }}
+    steps:
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+
+      # Which machines are online, to tell a job waiting its turn from one no machine will take.
+      - name: Create the runner-pool app token
+        id: app-token
+        if: env.HAS_POOL_APP == 'true'
+        continue-on-error: true
+        timeout-minutes: 1
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.RUNNER_POOL_APP_ID }}
+          private-key: ${{ secrets.RUNNER_POOL_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-organization-self-hosted-runners: read
+
+      - name: Watch the pool jobs
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUNNER_POOL_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'develop' }}
+          ORGANIZATION: ${{ github.repository_owner }}
+          GROUP: ${{ vars.RUNNER_POOL_GROUP || 'Default' }}
+        run: >-
+          ./.github/scripts/Invoke-CiRunnerFallback.ps1 -Mode Watch -Repository "$env:REPOSITORY" -RunId "$env:RUN_ID"
+          -DefaultBranch "$env:DEFAULT_BRANCH" -Organization "$env:ORGANIZATION" -GroupName "$env:GROUP"
 
   # ============================================================================
   # Queue-validated push optimization
@@ -764,7 +838,7 @@ jobs:
     if: >-
       ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
       needs.release-pr.outputs.skip != 'true' }}
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.attempt == github.run_attempt && needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
     permissions:
       contents: read
     steps:
@@ -819,7 +893,7 @@ jobs:
       ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
       needs.release-pr.outputs.skip != 'true' &&
       (github.event_name != 'pull_request' || github.base_ref != 'develop' || vars.PR_RUN_FULL_MATRIX == 'true') }}
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.attempt == github.run_attempt && needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -875,6 +949,7 @@ jobs:
     uses: ./.github/workflows/reusable-build.yml
     with:
       runs-on: ${{ needs.pick-runner.outputs.compile }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
       version: ${{ needs.version.outputs.semver || (github.event_name == 'merge_group' && format('0.0.0-queue.{0}', github.run_number) || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number)) }}
       # The suites skip when this push reuses an already-tested run, so their slices would be read by nothing.
       upload-slices: ${{ needs.queue-validated.outputs.validated != 'true' }}
@@ -897,7 +972,7 @@ jobs:
       ${{ !failure() && !cancelled() && needs.release-pr.outputs.skip != 'true' &&
       needs.ff-validated.outputs.skip != 'true' && needs.queue-validated.outputs.validated != 'true' &&
       (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group') }}
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.compile || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.attempt == github.run_attempt && needs.pick-runner.outputs.compile || '"ubuntu-latest"') }}
     timeout-minutes: 45
     permissions:
       contents: read
@@ -951,7 +1026,7 @@ jobs:
       ${{ !failure() && !cancelled() &&
       ((github.event_name == 'pull_request' && github.base_ref == 'develop') || github.event_name == 'merge_group') &&
       needs.changes.outputs.code == 'true' }}
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.compile || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.attempt == github.run_attempt && needs.pick-runner.outputs.compile || '"ubuntu-latest"') }}
     timeout-minutes: 45
     permissions:
       contents: read
@@ -1017,6 +1092,7 @@ jobs:
       frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       coverage-framework: ${{ needs.build.outputs.coverage-framework }}  # coverage on one framework only (#2135)
       runs-on: ${{ needs.pick-runner.outputs.any-os }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
 
   postgres-integration:
     name: Test · PostgreSQL
@@ -1064,6 +1140,7 @@ jobs:
       frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       coverage-framework: ${{ needs.build.outputs.coverage-framework }}  # coverage on one framework only (#2135)
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
       project-filter: ${{ matrix.projectFilter }}
       test-filter: ${{ matrix.testFilter }}
       shard-name: ${{ matrix.shard }}
@@ -1083,6 +1160,7 @@ jobs:
       frameworks: ${{ needs.build.outputs.sample-test-frameworks }}
       coverage-framework: ${{ needs.build.outputs.coverage-framework }}  # coverage on one framework only (#2135)
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
 
   rabbitmq-integration:
     name: Test · RabbitMQ
@@ -1098,6 +1176,7 @@ jobs:
       frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       coverage-framework: ${{ needs.build.outputs.coverage-framework }}  # coverage on one framework only (#2135)
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
 
   servicebus-integration:
     # Single-dimension matrix so GitHub renders the leg names itself ("Service Bus
@@ -1123,6 +1202,7 @@ jobs:
       frameworks: ${{ matrix.shard == 'ecommerce' && needs.build.outputs.sample-test-frameworks || needs.build.outputs.test-frameworks }}
       coverage-framework: ${{ needs.build.outputs.coverage-framework }}  # coverage on one framework only (#2135)
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
       project-filter: ${{ matrix.shard == 'whizbang' && 'Whizbang\.Transports\.AzureServiceBus' || 'ECommerce\.AzureServiceBus' }}
       shard-name: ${{ matrix.shard }}
 
@@ -1140,6 +1220,7 @@ jobs:
       frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       coverage-framework: ${{ needs.build.outputs.coverage-framework }}  # coverage on one framework only (#2135)
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
   general-integration:
     name: Test · Integration (general)
     needs: [build, queue-validated, ff-validated, release-pr, pick-runner]
@@ -1154,6 +1235,7 @@ jobs:
       frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       coverage-framework: ${{ needs.build.outputs.coverage-framework }}  # coverage on one framework only (#2135)
       runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
 
   component-tests:
     name: Test · Component
@@ -1171,6 +1253,7 @@ jobs:
       frameworks: ${{ needs.build.outputs.test-frameworks }}  # one leg per framework (#2427)
       coverage-framework: ${{ needs.build.outputs.coverage-framework }}  # coverage on one framework only (#2135)
       runs-on: ${{ needs.pick-runner.outputs.any-os }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
 
   quality-build:
     name: Analyze · Quality build
@@ -1195,6 +1278,7 @@ jobs:
     uses: ./.github/workflows/reusable-quality-build.yml
     with:
       runs-on: ${{ needs.pick-runner.outputs.analyze }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
       # Empty on main: the main-line analysis. The merge queue runs only for develop (its ruleset).
       pull-request: ${{ github.event.pull_request.number || needs.queue-prs.outputs.first }}
       pull-request-head: ${{ github.head_ref || needs.queue-prs.outputs.first-head }}
@@ -1254,6 +1338,7 @@ jobs:
     with:
       # The same runner class as quality-build, so the scan ends at the checkout path it began at.
       runs-on: ${{ needs.pick-runner.outputs.analyze }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
       # Set when the suites yielded to another run over the same tree (a release PR's push run, or
       # the release-branch run behind a main push): the coverage to analyze lives there.
       coverage-run-id: ${{ needs.release-pr.outputs.coverage-run-id }}
@@ -1292,6 +1377,7 @@ jobs:
     uses: ./.github/workflows/reusable-quality.yml
     with:
       runs-on: ${{ needs.pick-runner.outputs.analyze }}
+      runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
       sonar: true
       queue-group: true
       pull-request: ${{ format('{0}', matrix.pr) }}
@@ -1410,7 +1496,7 @@ jobs:
     # !cancelled(): the picker never decides whether this runs, only where. any-os: every step is pwsh
     # or an action; the few tests that drive a POSIX shell skip themselves on Windows.
     if: ${{ !cancelled() }}
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.attempt == github.run_attempt && needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -1446,6 +1532,14 @@ jobs:
           $c.Run.Exit = $true
           $c.Output.Verbosity = 'Detailed'
           Invoke-Pester -Configuration $c
+      # Every <docs> tag must name a page, and an anchor on it, that exists on the docs site's develop
+      # branch (#2495). The script clones that public repository shallowly; when the clone fails it exits
+      # 2, so an unreachable docs repository fails this job instead of passing it unchecked. Targets that
+      # already dangled are in .github/scripts/docs-tag-target-baseline.txt, which only shrinks.
+      - name: Check <docs> tag targets against the docs site
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: ./.github/scripts/Test-DocsTagTarget.ps1
 
   dco:
     name: Gate · DCO sign-off

@@ -41,10 +41,14 @@ public interface IPerspectiveDrainChannel {
 
   /// <summary>Clears the in-flight marker. Called by <c>PerspectiveWorker</c> when the drain session ends.</summary>
   void MarkDrained(Guid streamId) { }
+
+  /// <summary>The streams being drained now (#2557): a partition is handed over only once none of its streams is.</summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#handover</docs>
+  IEnumerable<Guid> InFlightStreams => [];
 }
 
 /// <summary>Default unbounded channel implementation.</summary>
-/// <docs>fundamentals/perspectives/drain-mode</docs>
+/// <docs>operations/workers/perspective-worker#the-perspective-work-pipeline</docs>
 public sealed class PerspectiveDrainChannel : IPerspectiveDrainChannel {
   private readonly Channel<Guid> _channel;
   private readonly ConcurrentDictionary<Guid, byte> _inFlight = new();
@@ -76,4 +80,7 @@ public sealed class PerspectiveDrainChannel : IPerspectiveDrainChannel {
 
   /// <inheritdoc />
   public void MarkDrained(Guid streamId) => _inFlight.TryRemove(streamId, out _);
+
+  /// <inheritdoc />
+  public IEnumerable<Guid> InFlightStreams => _inFlight.Keys;
 }

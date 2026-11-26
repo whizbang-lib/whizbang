@@ -28,7 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <tests>src/Whizbang.Data.Postgres/StoredFormMigrationJournal.cs</tests>
 [Category("Integration")]
 [Category("Shard1")]
-public class StoredFormMigrationTests : IAsyncDisposable {
+public class StoredFormMigrationTests {
   private const string MIGRATION = "176_StoredFormMigrations";
   private const long LOCK_ID = 987654986;
   private const int TIMEOUT_SECONDS = 30;
@@ -51,11 +51,10 @@ public class StoredFormMigrationTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_databaseName is not null) {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
-    GC.SuppressFinalize(this);
   }
 
   // ─── Type changes ────────────────────────────────────────────────────────────────────────────────────────

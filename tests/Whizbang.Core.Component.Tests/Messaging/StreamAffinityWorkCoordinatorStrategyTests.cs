@@ -244,7 +244,7 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task QueueOutboxMessageAsync_ManySameStreamEmits_SingleSortedBatchAsync(CancellationToken cancellationToken) {
+  public async Task QueueOutboxMessageAsync_ManySameStreamEmits_SingleBatchInEmissionOrderAsync(CancellationToken cancellationToken) {
     var captured = new List<OutboxMessage[]>();
     var flushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var streamId = _idProvider.NewGuid();
@@ -271,7 +271,7 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
     var m2 = _outboxMessage(streamId);
     var m3 = _outboxMessage(streamId);
 
-    // Emit out-of-order; verify the batch arrives ordered. Each emit is drained, and its window armed, before the
+    // Emit against the ids' order; the batch arrives in emission order, never sorted by id (#2551). Each emit is drained, and its window armed, before the
     // next one is made, so all three are in the open batch when the clock closes the window. The frozen clock is
     // what keeps the window open between emits; on the real clock a slow runner closed it early and split the batch.
     await sut.QueueOutboxMessageAsync(m3, cancellationToken);
@@ -287,9 +287,9 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
     await Assert.That(captured.Count).IsEqualTo(1);
     var arr = captured[0];
     await Assert.That(arr.Length).IsEqualTo(3);
-    await Assert.That(arr[0].MessageId).IsEqualTo(m1.MessageId);
-    await Assert.That(arr[1].MessageId).IsEqualTo(m2.MessageId);
-    await Assert.That(arr[2].MessageId).IsEqualTo(m3.MessageId);
+    await Assert.That(arr[0].MessageId).IsEqualTo(m3.MessageId);
+    await Assert.That(arr[1].MessageId).IsEqualTo(m1.MessageId);
+    await Assert.That(arr[2].MessageId).IsEqualTo(m2.MessageId);
   }
 
   // ===== helpers =====

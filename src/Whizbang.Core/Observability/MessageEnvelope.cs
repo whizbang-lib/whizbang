@@ -212,6 +212,17 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   internal long? PayloadLimitOverride { get; set; }
 
   /// <summary>
+  /// The dispatch's own sequence integrity (<c>DispatchOptions.WithSequenceIntegrity</c>), carried from the dispatch
+  /// call to the point where the outbox row is built. Never serialized: the setting is the origin's.
+  /// </summary>
+  [JsonIgnore]
+  internal Messaging.SequenceIntegrity? SequenceIntegrityOverride { get; set; }
+
+  /// <summary>The dispatch's own bounded hold time, carried as <see cref="SequenceIntegrityOverride"/> is.</summary>
+  [JsonIgnore]
+  internal TimeSpan? SequenceHoldTimeOverride { get; set; }
+
+  /// <summary>
   /// Parameterless constructor for object initializer syntax.
   /// </summary>
   public MessageEnvelope() {
@@ -266,6 +277,8 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
     Repaired = source.Repaired,
     Priority = source.Priority,
     PayloadLimitOverride = source.PayloadLimitOverride,
+    SequenceIntegrityOverride = source.SequenceIntegrityOverride,
+    SequenceHoldTimeOverride = source.SequenceHoldTimeOverride,
   };
 
   /// <summary>

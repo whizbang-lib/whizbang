@@ -62,6 +62,26 @@ public class DbContextInitializationRegistryTests {
       .IsFalse().Because("one context with work to do makes the schema not current");
   }
 
+  // ── #2553: what each context's pass records, for the rollback gate ──────────────────────────────────
+
+  [Test]
+  public async Task SchemaContent_IsWhatTheContextsPassRecords_AndNothingForAnUnregisteredContextAsync() {
+    var services = new FakeServiceProvider();
+    IServiceProvider? seen = null;
+    DbContextInitializationRegistry.RegisterSchemaContent<FakeDbContextA>((_, sp) => {
+      seen = sp;
+      return new Dictionary<string, string>(StringComparer.Ordinal) { ["perspective:a"] = "aa11" };
+    });
+
+    await Assert.That(DbContextInitializationRegistry.SchemaContentOf(new FakeDbContextA(), services))
+      .IsEquivalentTo(new Dictionary<string, string>(StringComparer.Ordinal) { ["perspective:a"] = "aa11" });
+    await Assert.That(seen).IsSameReferenceAs(services).Because("the content is produced with the host's services");
+    await Assert.That(DbContextInitializationRegistry.SchemaContentOf(new FakeDbContextB(), services)).IsEmpty()
+      .Because("a context nothing registered defines nothing, and its changes are judged by who applied them, as before");
+    await Assert.That(() => DbContextInitializationRegistry.SchemaContentOf(null!, services)).Throws<ArgumentNullException>();
+    await Assert.That(() => DbContextInitializationRegistry.RegisterSchemaContent<FakeDbContextA>(null!)).Throws<ArgumentNullException>();
+  }
+
   [Test]
   public async Task IsSchemaCurrent_WhenNoContextIsRegisteredInTheHost_IsNotCurrentAsync() {
     DbContextInitializationRegistry.RegisterSchemaCurrencyCheck<FakeDbContextA>((_, _) => Task.FromResult<bool?>(null));
@@ -109,6 +129,24 @@ public class DbContextInitializationRegistryTests {
 
     await Assert.That(DbContextInitializationRegistry.Count).IsEqualTo(1);
     await Assert.That((first, second)).IsEqualTo((0, 1)).Because("the latest registration for a context replaces the earlier one");
+  }
+
+  /// <summary>
+  /// Each context is named in an information log only when that level is on: with it off the context's type name is
+  /// never read, and with it on the log names the context (#2548).
+  /// </summary>
+  [Test]
+  [Arguments(LogLevel.Information, true)]
+  [Arguments(LogLevel.Warning, false)]
+  public async Task InitializeAllAsync_NamesEachContext_OnlyWhenInformationIsOnAsync(LogLevel minimum, bool named) {
+    var called = 0;
+    DbContextInitializationRegistry.Register<FakeDbContextA>((_, _, _) => { called++; return Task.CompletedTask; });
+    var messages = new List<string>();
+
+    await DbContextInitializationRegistry.InitializeAllAsync(new FakeServiceProvider(), new LevelLogger(minimum, messages));
+
+    await Assert.That(called).IsEqualTo(1);
+    await Assert.That(messages.Contains($"Initializing {nameof(FakeDbContextA)}...")).IsEqualTo(named);
   }
 
   [Test]
@@ -485,6 +523,18 @@ public class DbContextInitializationRegistryTests {
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
       lock (_sink) {
         _sink.Add(formatter(state, exception));
+      }
+    }
+  }
+
+  private sealed class LevelLogger(LogLevel minimum, List<string> sink) : ILogger {
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => logLevel >= minimum;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (IsEnabled(logLevel)) {
+        lock (sink) {
+          sink.Add(formatter(state, exception));
+        }
       }
     }
   }

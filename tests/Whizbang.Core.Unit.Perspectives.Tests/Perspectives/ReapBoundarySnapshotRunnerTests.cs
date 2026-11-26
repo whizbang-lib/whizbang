@@ -117,6 +117,85 @@ public class ReapBoundarySnapshotRunnerTests {
     await Assert.That(snapshots.Written.Select(w => w.EventId)).IsEquivalentTo([events[2]]);
   }
 
+  // ===== #2456: the boundary snapshot is the slot's only occupant until the next boundary =====
+
+  // An ephemeral perspective keeps one snapshot. A snapshot taken at the tip during normal processing replaced the
+  // boundary snapshot and still satisfied the reap's coverage gate, so a late event below the tip had no floor again.
+  [Test]
+  public async Task ALiveSnapshot_DoesNotReplaceTheBoundarySnapshot_SoALateEventBelowTheTipStillFindsItsFloorAsync() {
+    // Events 1, 2, 3 and 5 are applied and event 4 is late. The cycle snapshots through event 3 and reaps it and the two
+    // below; then event 6 is applied live, on a cadence that snapshots every event, and event 4 turns up.
+    var (streamId, events, store) = _stream(6);
+    var rows = new InMemoryRows<FloorPresenceModel>();
+    await rows.UpsertAsync(streamId, new FloorPresenceModel { Id = streamId, Pings = 4 });
+    var snapshots = new VersionedSnapshotStore(store);
+    var runner = _runner(store, rows, snapshots, _everyEvent());
+    var name = _name<KeptFloorPresencePerspective>();
+    await runner.TryBootstrapSnapshotThroughAsync(streamId, name, lastProcessedEventId: events[4], boundaryEventId: events[2]);
+    store.Reap(events[0], events[1], events[2]);
+
+    await runner.RunWithEventsAsync(streamId, name, events[4], [store.Envelope(events[5])], CancellationToken.None);
+
+    await Assert.That((await rows.GetByStreamIdAsync(streamId))!.Pings).IsEqualTo(5).Because("the control: event 6 is applied");
+    await Assert.That(snapshots.Written.Select(w => w.EventId)).IsEquivalentTo([events[2]])
+      .Because("a snapshot at the tip sits above bodies still inside the grace window, so it must not take the boundary's slot");
+
+    var result = await runner.RewindAndRunAsync(streamId, name, triggeringEventId: events[3]);
+
+    await Assert.That(result.DroppedStragglers).IsEmpty()
+      .Because("the boundary snapshot is still the floor below the late event");
+    await Assert.That((await rows.GetByStreamIdAsync(streamId))!.Pings).IsEqualTo(6)
+      .Because("the rewind restores the three events the snapshot holds and replays events 4, 5 and 6");
+  }
+
+  [Test]
+  public async Task ARewind_DoesNotReplaceTheBoundarySnapshot_ItRestoredFromAsync() {
+    var (streamId, events, store) = _stream(5);
+    var rows = new InMemoryRows<FloorPresenceModel>();
+    await rows.UpsertAsync(streamId, new FloorPresenceModel { Id = streamId, Pings = 4 });
+    var snapshots = new VersionedSnapshotStore(store);
+    var runner = _runner(store, rows, snapshots);
+    var name = _name<KeptFloorPresencePerspective>();
+    await runner.TryBootstrapSnapshotThroughAsync(streamId, name, lastProcessedEventId: events[4], boundaryEventId: events[2]);
+    store.Reap(events[0], events[1], events[2]);
+
+    _ = await runner.RewindAndRunAsync(streamId, name, triggeringEventId: events[3]);
+
+    await Assert.That((await rows.GetByStreamIdAsync(streamId))!.Pings).IsEqualTo(5).Because("the control: the rewind ran");
+    await Assert.That(snapshots.Written.Select(w => w.EventId)).IsEquivalentTo([events[2]])
+      .Because("the rewind's own snapshot is at the tip too, above bodies a later late event may still land among");
+  }
+
+  [Test]
+  public async Task ABootstrapThroughALaterBoundary_TakesTheSlot_AndTheSnapshotBelowItGoesAsync() {
+    var (streamId, events, store) = _stream(5);
+    var rows = new InMemoryRows<FloorPresenceModel>();
+    await rows.UpsertAsync(streamId, new FloorPresenceModel { Id = streamId, Pings = 5 });
+    var snapshots = new VersionedSnapshotStore(store);
+    var runner = _runner(store, rows, snapshots);
+    var name = _name<KeptFloorPresencePerspective>();
+    await runner.TryBootstrapSnapshotThroughAsync(streamId, name, lastProcessedEventId: events[4], boundaryEventId: events[1]);
+    store.Reap(events[0], events[1]);
+
+    await runner.TryBootstrapSnapshotThroughAsync(streamId, name, lastProcessedEventId: events[4], boundaryEventId: events[3]);
+
+    await Assert.That(snapshots.Written.Select(w => w.EventId)).IsEquivalentTo([events[3]])
+      .Because("only the reap boundary moves the floor, and the stream keeps one snapshot: the new boundary's");
+  }
+
+  [Test]
+  public async Task ALiveSnapshot_FillsAnEmptySlotAsync() {
+    var (streamId, events, store) = _stream(1);
+    var rows = new InMemoryRows<FloorPresenceModel>();
+    var snapshots = new VersionedSnapshotStore(store);
+    var runner = _runner(store, rows, snapshots, _everyEvent());
+
+    await runner.RunWithEventsAsync(streamId, _name<KeptFloorPresencePerspective>(), null, [store.Envelope(events[0])], CancellationToken.None);
+
+    await Assert.That(snapshots.Written.Select(w => w.EventId)).IsEquivalentTo([events[0]])
+      .Because("a stream with no snapshot yet has no floor for a late event, so the live cadence takes one");
+  }
+
   // ---------------------------------------------------------------------------------------------
 
   private static (Guid StreamId, Guid[] Events, VersionedEventStore Store) _stream(int count) {
@@ -129,8 +208,11 @@ public class ReapBoundarySnapshotRunnerTests {
     return (streamId, events, store);
   }
 
+  private static PerspectiveSnapshotOptions _everyEvent() => new() { Enabled = true, EphemeralSnapshotEveryNEvents = 1 };
+
   private static IPerspectiveRunner _runner(
-      IEventStore events, InMemoryRows<FloorPresenceModel> rows, IPerspectiveSnapshotStore snapshots) {
+      IEventStore events, InMemoryRows<FloorPresenceModel> rows, IPerspectiveSnapshotStore snapshots,
+      PerspectiveSnapshotOptions? options = null) {
     var services = new ServiceCollection();
     services.AddLogging();
     services.AddSingleton<KeptFloorPresencePerspective>();
@@ -146,7 +228,7 @@ public class ReapBoundarySnapshotRunnerTests {
     args[3] = rows;
     args[4] = provider.GetRequiredService<IServiceScopeFactory>();
     args[6] = snapshots;
-    args[7] = Options.Create(new PerspectiveSnapshotOptions { Enabled = true });
+    args[7] = Options.Create(options ?? new PerspectiveSnapshotOptions { Enabled = true });
     return (IPerspectiveRunner)ctor.Invoke(args);
   }
 
@@ -174,6 +256,8 @@ public class ReapBoundarySnapshotRunnerTests {
     }
 
     public void Reap(params Guid[] eventIds) => _reaped.UnionWith(eventIds);
+
+    public MessageEnvelope<IEvent> Envelope(Guid eventId) => _events.Single(e => e.Envelope.MessageId.Value == eventId).Envelope;
 
     public long? VersionOf(Guid eventId) => _events.Where(e => e.Envelope.MessageId.Value == eventId).Select(e => (long?)e.Version).FirstOrDefault();
 
@@ -255,8 +339,11 @@ public class ReapBoundarySnapshotRunnerTests {
     public Task<bool> HasAnySnapshotAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>
       Task.FromResult(Written.Count > 0);
 
-    public Task PruneOldSnapshotsAsync(Guid streamId, string perspectiveName, int keepCount, CancellationToken ct = default) =>
-      Task.CompletedTask;
+    // Keeps the newest keepCount, in the order they were written, as the stores keep the highest sequence numbers.
+    public Task PruneOldSnapshotsAsync(Guid streamId, string perspectiveName, int keepCount, CancellationToken ct = default) {
+      Written.RemoveRange(0, Math.Max(0, Written.Count - keepCount));
+      return Task.CompletedTask;
+    }
 
     public Task DeleteAllSnapshotsAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) =>
       Task.CompletedTask;

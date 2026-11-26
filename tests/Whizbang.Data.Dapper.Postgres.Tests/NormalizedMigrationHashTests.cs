@@ -24,7 +24,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/MigrationHashUpgrade.cs</code-under-test>
 /// <docs>operations/infrastructure/migrations#what-counts-as-a-change</docs>
 [Category("Integration")]
-public class NormalizedMigrationHashTests : IAsyncDisposable {
+public class NormalizedMigrationHashTests {
   private const string REWRITE_MESSAGE = "normalized form";
   private const string TABLE_SQL = "CREATE TABLE IF NOT EXISTS wh_norm_probe (id int);";
   private const string PROBE_SQL = "-- counts how often this file runs\nINSERT INTO wh_norm_probe VALUES (1);";
@@ -57,11 +57,6 @@ public class NormalizedMigrationHashTests : IAsyncDisposable {
       // The shared container drops leftovers when it stops.
     }
     _databaseName = null;
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   private sealed class Provider(params MigrationScript[] migrations) : IMigrationProvider {

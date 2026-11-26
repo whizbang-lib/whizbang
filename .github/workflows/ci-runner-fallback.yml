@@ -1,0 +1,58 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
+name: CI runner fallback
+
+# Re-runs a CI run's failed jobs on GitHub-hosted runners when a self-hosted pool machine was lost (#1880):
+#   - on CI finishing with a failure in which every failed job was a pool job whose machine was lost (it lost
+#     communication, was shut down, exceeded its time or was never acquired), or the gate failing after it;
+#   - when CI's watcher (Plan · Watch self-hosted jobs) asks, after canceling a run whose only remaining work was
+#     pool jobs no machine would start.
+# A job that failed for any other reason means nothing is re-run. A re-run job takes ubuntu-latest: every routed job
+# takes the picker's plan only in the attempt it was made for. Merge-queue runs are never re-run (the queue has
+# already removed the pull request). Rules: .github/scripts/Invoke-CiRunnerFallback.ps1, tested by script-tests;
+# runbook: .github/WORKFLOWS.md, "Runner selection".
+#
+# Runs from the default branch in both cases and never checks out the code of the run it judges.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: The CI run to re-run once it has finished (the watcher passes its own).
+        type: string
+        required: true
+
+permissions: {}
+
+jobs:
+  rerun:
+    name: Plan · Re-run on GitHub-hosted runners
+    # On workflow_run, only a failed run can need it; the watcher's dispatch is for a canceled one.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write   # re-run the failed jobs
+      checks: read     # the failed jobs' annotations, which say whether the machine was lost
+    steps:
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+
+      - name: Re-run the jobs a lost machine failed
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ inputs.run-id || github.event.workflow_run.id }}
+          TRIGGER: ${{ github.event_name == 'workflow_dispatch' && 'watcher' || 'workflow_run' }}
+        run: >-
+          ./.github/scripts/Invoke-CiRunnerFallback.ps1 -Mode Rerun -Repository "$env:REPOSITORY" -RunId "$env:RUN_ID"
+          -Trigger "$env:TRIGGER"

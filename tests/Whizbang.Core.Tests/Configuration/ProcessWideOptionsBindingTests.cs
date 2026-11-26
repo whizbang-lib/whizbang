@@ -83,6 +83,23 @@ public sealed class ProcessWideOptionsBindingTests {
   }
 
   [Test]
+  public async Task RetiredEventTypes_BindFromTheirSection_AndValidateAtStartupAsync() {
+    await using var provider = _workers(new() {
+      ["Whizbang:EventStore:RetiredTypes:Names:0"] = "MyApp.Orders.CouponIssued",
+      ["Whizbang:EventStore:RetiredTypes:BatchStreams"] = "50",
+      ["Whizbang:EventStore:RetiredTypes:MaxBatchesPerCycle"] = "3",
+    });
+
+    var options = provider.GetRequiredService<IOptions<RetiredEventTypesOptions>>().Value;
+
+    await Assert.That(options.Names).IsEquivalentTo(["MyApp.Orders.CouponIssued"]);
+    await Assert.That(options.BatchStreams).IsEqualTo(50);
+    await Assert.That(options.MaxBatchesPerCycle).IsEqualTo(3);
+    await Assert.That(provider.GetServices<IValidateOptions<RetiredEventTypesOptions>>().Count()).IsEqualTo(1)
+      .Because("#2329: a name this service still declares stops the host at startup");
+  }
+
+  [Test]
   public async Task EventStoreMetadata_Unconfigured_IsLinkedWithNothingKeptFullAsync() {
     await using var provider = _workers([]);
 
@@ -271,6 +288,17 @@ public sealed class ProcessWideOptionsBindingTests {
   }
 
   [Test]
+  public async Task PerspectiveRebuildOptions_EveryKeyBindsAsync() {
+    await using var provider = _workers(new() {
+      ["Whizbang:Perspectives:Rebuild:StreamReadBatchSize"] = "250",
+    });
+
+    var options = provider.GetRequiredService<IOptions<PerspectiveRebuildOptions>>().Value;
+
+    await Assert.That(options.StreamReadBatchSize).IsEqualTo(250);
+  }
+
+  [Test]
   public async Task PerspectiveStreamLockOptions_EveryKeyBindsAsync() {
     await using var provider = _workers(new() {
       ["Whizbang:Perspectives:StreamLock:LockTimeout"] = "00:01:00",
@@ -453,6 +481,10 @@ public sealed class ProcessWideOptionsBindingTests {
     ["Whizbang:Core:EmptyStreamIdPolicy"] = "DeadLetter",
     ["Whizbang:Core:MaxMessagePayloadBytes"] = "1024",
     ["Whizbang:Core:MessagePayloadWarningRatio"] = "0.5",
+    ["Whizbang:Core:SequenceIntegrity"] = "UntilStamped",
+    ["Whizbang:Core:SequenceHoldTime"] = "00:00:02.500",
+    ["Whizbang:Core:SequenceHoldWarningAge"] = "00:05:00",
+    ["Whizbang:Core:SequenceHoldSampleInterval"] = "00:00:30",
     ["Whizbang:ShowBanner"] = "false",
   };
 
@@ -464,6 +496,10 @@ public sealed class ProcessWideOptionsBindingTests {
     await Assert.That(options.EmptyStreamIdPolicy).IsEqualTo(EmptyStreamIdPolicy.DeadLetter);
     await Assert.That(options.MaxMessagePayloadBytes).IsEqualTo(1024L);
     await Assert.That(options.MessagePayloadWarningRatio).IsEqualTo(0.5);
+    await Assert.That(options.SequenceIntegrity).IsEqualTo(Whizbang.Core.Messaging.SequenceIntegrity.UntilStamped);
+    await Assert.That(options.SequenceHoldTime).IsEqualTo(TimeSpan.FromMilliseconds(2500));
+    await Assert.That(options.SequenceHoldWarningAge).IsEqualTo(TimeSpan.FromMinutes(5));
+    await Assert.That(options.SequenceHoldSampleInterval).IsEqualTo(TimeSpan.FromSeconds(30));
     await Assert.That(options.ShowBanner).IsFalse();
   }
 

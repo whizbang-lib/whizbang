@@ -109,6 +109,66 @@ public partial class PerspectiveWorkerDrainModeTests {
 
   [Test]
   [Timeout(30000)]
+  public async Task SetBasedDrain_APairWithAResultWhenItsBatchsLeaseRanOut_IsReportedWithItsResultAsync(CancellationToken cancellationToken) {
+    // The lease runs out while the pair's completion runs: the pair has its result, and the batch then meets the lease.
+    var stream = Guid.NewGuid();
+    var rig = new SetBasedRig(PerspectiveWriteMode.SetBased) { CompletionOutlivesLease = true, WaitForBatchEnd = true };
+
+    await rig.DrainExpectingAsync([stream], expectedReports: 1, expectedFailures: 0, cancellationToken);
+
+    await Assert.That(rig.Runners.Completed.Keys).IsEquivalentTo([stream]).Because("the pair's completion ran, so the pair had its result");
+    await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo([stream])
+      .Because("the pair did its work, so it is finished with its result, as the per-pair path finishes an apply that returned (#2536)");
+    await Assert.That(rig.Coordinator.Failed).IsEmpty()
+      .Because("failing it on the lease would only replay work already done");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task SetBasedDrain_APairThatFailedBeforeItsBatchsLeaseRanOut_IsReportedWithItsOwnFailureAsync(CancellationToken cancellationToken) {
+    // The broken pair's prepare fails; the lease then runs out while the healthy pair's completion runs.
+    var broken = Guid.NewGuid();
+    var healthy = Guid.NewGuid();
+    var rig = new SetBasedRig(PerspectiveWriteMode.SetBased) { FailPrepareOf = broken, CompletionOutlivesLease = true, WaitForBatchEnd = true };
+
+    await rig.DrainExpectingAsync([broken, healthy], expectedReports: 1, expectedFailures: 1, cancellationToken);
+
+    await Assert.That(rig.Coordinator.Failed.Single().StreamId).IsEqualTo(broken);
+    await Assert.That(rig.Coordinator.Failed.Single().Error).IsEqualTo("the fold threw")
+      .Because("a pair that failed keeps its own failure, as the per-pair path reports one, not the lease's (#2536)");
+    await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo([healthy]);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task PerPairDrain_APairWithAResultWhenItsLeaseRanOut_IsReportedWithItsResultAsync(CancellationToken cancellationToken) {
+    // The per-pair twin of the batch's case (#2536): the apply returns its result as the lease runs out.
+    var stream = Guid.NewGuid();
+    var rig = new SetBasedRig(PerspectiveWriteMode.PerStream) { CompletionOutlivesLease = true, WaitForBatchEnd = true };
+
+    await rig.DrainExpectingAsync([stream], expectedReports: 1, expectedFailures: 0, cancellationToken);
+
+    await Assert.That(rig.Runners.RunWithEventsCalls).IsEqualTo(1).Because("the pair's apply ran, so the pair had its result");
+    await Assert.That(rig.Coordinator.Reported.Select(c => c.StreamId)).IsEquivalentTo([stream]);
+    await Assert.That(rig.Coordinator.Failed).IsEmpty();
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task PerPairDrain_AnApplyThatFailsAsItsLeaseRunsOut_IsReportedWithItsOwnFailureAsync(CancellationToken cancellationToken) {
+    // The per-pair twin of the batch's case (#2536): the apply fails as the lease runs out, and the failure stands.
+    var stream = Guid.NewGuid();
+    var rig = new SetBasedRig(PerspectiveWriteMode.PerStream) { FailPrepareOf = stream, CompletionOutlivesLease = true, WaitForBatchEnd = true };
+
+    await rig.DrainExpectingAsync([stream], expectedReports: 0, expectedFailures: 1, cancellationToken);
+
+    await Assert.That(rig.Coordinator.Reported).IsEmpty();
+    await Assert.That(rig.Coordinator.Failed.Single().StreamId).IsEqualTo(stream);
+    await Assert.That(rig.Coordinator.Failed.Single().Error).IsEqualTo("the fold threw");
+  }
+
+  [Test]
+  [Timeout(30000)]
   public async Task SetBasedDrain_AReportThatOutlivesTheLease_FailsItsPairOnTheLeaseAsync(CancellationToken cancellationToken) {
     // One stream: once the batch's lease has run out, every pair still finishing meets it.
     var late = Guid.NewGuid();
@@ -448,6 +508,7 @@ public partial class PerspectiveWorkerDrainModeTests {
     public Guid? LeaseExpiresOnReportOf { get; init; }
     public bool RewindThrows { get; init; }
     public bool RewindOutlivesLease { get; init; }
+    public bool CompletionOutlivesLease { get; init; }
     public bool HoldPrepare { get; init; }
     public bool RewindLockHeldElsewhere { get; init; }
     public bool BatchedReads { get; init; }
@@ -564,6 +625,7 @@ public partial class PerspectiveWorkerDrainModeTests {
         ReadThrowsFor = ReadThrowsFor,
         SetBasedUnresolvable = SetBasedUnresolvable,
         OnRewind = RewindOutlivesLease ? () => time.Advance(TimeSpan.FromHours(1)) : null,
+        OnComplete = CompletionOutlivesLease ? () => time.Advance(TimeSpan.FromHours(1)) : null,
       };
       Coordinator.Expect(expectedReports, expectedFailures);
       Coordinator.ReadsCursorsInBatches = !CursorsPerPair;
@@ -594,7 +656,12 @@ public partial class PerspectiveWorkerDrainModeTests {
         Coordinator.Cursors[resumes] = new PerspectiveCursorInfo { StreamId = resumes, PerspectiveName = SET_BASED, LastEventId = behindEvents };
       }
       if (CaughtUp is { } caughtUp) {
-        Coordinator.Cursors[caughtUp] = new PerspectiveCursorInfo { StreamId = caughtUp, PerspectiveName = SET_BASED, LastEventId = aheadOfEvents };
+        // #2551: caught up means the cursor stands on the stream's last event, a position; never an id that sorts higher.
+        Coordinator.Cursors[caughtUp] = new PerspectiveCursorInfo {
+          StreamId = caughtUp,
+          PerspectiveName = SET_BASED,
+          LastEventId = events[caughtUp].MessageId.Value,
+        };
       }
       string[] perspectives = AlsoPerStream ? [SET_BASED, PER_STREAM] : [SET_BASED];
       Coordinator.StreamEventsToReturn = [.. streams.SelectMany(s => perspectives.Select(p => new StreamEventData {
@@ -716,6 +783,7 @@ public partial class PerspectiveWorkerDrainModeTests {
     public bool HoldPrepare { get; init; }
     public bool RewindThrows { get; init; }
     public Action? OnRewind { get; init; }
+    public Action? OnComplete { get; init; }
     public Guid? ReadThrowsFor { get; init; }
     public ConcurrentQueue<Guid> Rewound { get; } = new();
     private int _runCalls;
@@ -795,6 +863,7 @@ public partial class PerspectiveWorkerDrainModeTests {
 
       public Task<PerspectiveCursorCompletion> CompleteAsync(PreparedPerspectiveApply prepared, PerspectiveWriteOutcome? outcome, CancellationToken cancellationToken = default) {
         owner.Completed[prepared.StreamId] = outcome?.Status;
+        owner.OnComplete?.Invoke();
         return Task.FromResult(owner._completion(prepared.StreamId));
       }
 
@@ -806,6 +875,11 @@ public partial class PerspectiveWorkerDrainModeTests {
       public Task<PerspectiveCursorCompletion> RunWithEventsAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId,
           IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
         Interlocked.Increment(ref owner._runWithEvents);
+        // The per-pair apply is the prepare and the completion in one.
+        owner.OnComplete?.Invoke();
+        if (streamId == owner.FailPrepareOf) {
+          throw new InvalidOperationException("the fold threw");
+        }
         return Task.FromResult(owner._completion(streamId, name));
       }
 
@@ -851,6 +925,8 @@ public partial class PerspectiveWorkerDrainModeTests {
       _expectedReports = reports;
       _expectedFailures = failures;
       _all = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      // Nothing expected is already everything expected.
+      _check();
     }
 
     private void _check() {
@@ -944,7 +1020,13 @@ public partial class PerspectiveWorkerDrainModeTests {
     private readonly ConcurrentQueue<Guid> _acquired = new();
     public IReadOnlyList<Guid> Acquired => [.. _acquired];
 
+    /// <summary>Whether a lock is refused from now on.</summary>
+    public bool Refuses { get; set; }
+
     public Task<IAsyncDisposable> AcquireAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) {
+      if (Refuses) {
+        throw new InvalidOperationException("the apply lock was refused");
+      }
       _acquired.Enqueue(streamId);
       return Task.FromResult<IAsyncDisposable>(new Nothing());
     }

@@ -166,7 +166,7 @@ public class AzureServiceBusBacklogPeekIntegrationTests(ServiceBusEmulatorFixtur
     var transport = _transport(new DepthOnlyAdminClient(depth: 1), clock);
     transport.LivenessWatchdog!.Track(HELD_TOPIC, SUBSCRIPTION);
 
-    var probe = new ServiceBusMessage("probe") { MessageId = Guid.NewGuid().ToString("N") };
+    var probe = new ServiceBusMessage("probe") { MessageId = Whizbang.Core.ValueObjects.TrackedGuid.New().Value.ToString("N") };
     var sender = _fixture.Client.CreateSender(HELD_TOPIC);
     await using (sender) {
       await sender.SendMessageAsync(probe);

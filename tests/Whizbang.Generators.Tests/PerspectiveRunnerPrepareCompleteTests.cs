@@ -1,13 +1,10 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-extern alias shared;
-
 using System.Diagnostics.CodeAnalysis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using TemplateUtilities = shared::Whizbang.Generators.Shared.Utilities.TemplateUtilities;
 
 namespace Whizbang.Generators.Tests;
 
@@ -19,7 +16,7 @@ namespace Whizbang.Generators.Tests;
 /// whole batch across its write.
 /// </summary>
 /// <tests>src/Whizbang.Generators/PerspectiveRunnerGenerator.cs</tests>
-/// <tests>src/Whizbang.Generators/Templates/PerspectiveRunnerTemplate.cs</tests>
+/// <tests>src/Whizbang.Core/Perspectives/PerspectiveRunnerBase.cs</tests>
 [Category("SourceGenerators")]
 public class PerspectiveRunnerPrepareCompleteTests {
   private const string SOURCE = """
@@ -77,17 +74,13 @@ public class PerspectiveRunnerPrepareCompleteTests {
     }
     """;
 
-  private static readonly System.Reflection.Assembly _generatorsAssembly = typeof(MessageRegistryGenerator).Assembly;
-
   [RequiresAssemblyFiles()]
   private static string _runner(string perspective) {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(SOURCE);
-    return GeneratorTestHelper.GetGeneratedSource(result, $"{perspective}Runner.g.cs") ?? "";
+    return GeneratorTestHelper.GetRunnerSource(result, $"{perspective}Runner.g.cs") ?? "";
   }
 
-  [RequiresAssemblyFiles()]
-  private static string _template() =>
-    TemplateUtilities.GetEmbeddedTemplate(_generatorsAssembly, "PerspectiveRunnerTemplate.cs");
+  private static string _template() => GeneratorTestHelper.RunnerBaseSource();
 
   private static string _compact(string source) => string.Concat(source.Where(c => !char.IsWhiteSpace(c)));
 
@@ -144,7 +137,7 @@ public class PerspectiveRunnerPrepareCompleteTests {
 
     await Assert.That(_count(template, "foreach (var envelope in foldEvents)")).IsEqualTo(2)
       .Because("one fold for the live apply (per-pair and prepare) and one for the replay; a third is a copy that can drift");
-    await Assert.That(_count(template, "ApplyEvent(perspective")).IsEqualTo(4);
+    await Assert.That(_count(template, "_applyEvent(perspective")).IsEqualTo(4);
     await Assert.That(_count(template, "HasStreamEventsBeforeAsync(")).IsEqualTo(1)
       .Because("the eviction probe is made in one place for both entries");
     await Assert.That(_count(template, "await _perspectiveStore.ReadForApplyAsync(")).IsEqualTo(3)
@@ -159,6 +152,8 @@ public class PerspectiveRunnerPrepareCompleteTests {
 
     await Assert.That(runner).Contains("_perspectiveStore.PrepareWrite(streamId,model,scope??newglobal::Whizbang.Core.Lenses.PerspectiveScope(),scope!=null&&forceUpdateScope,metadata,expectedVersion,null)")
       .Because("the per-stream write passes a null scope as an empty one that never forces a scope update; the prepared write must too");
+    await Assert.That(runner).DoesNotContain("protectedoverrideglobal::System.Collections.Generic.Dictionary<string,object?>?PhysicalFieldValues(")
+      .Because("a model with no physical fields writes none, so the prepared write passes null");
   }
 
   [Test]
@@ -167,10 +162,14 @@ public class PerspectiveRunnerPrepareCompleteTests {
     var runner = _runner("SplitClassPerspective");
 
     await Assert.That(_compact(runner)).Contains("_perspectiveStore.PrepareWrite(streamId,model,scope??newglobal::Whizbang.Core.Lenses.PerspectiveScope(),forceUpdateScope,metadata,expectedVersion,physicalFieldValues)");
-    await Assert.That(_count(runner, "{ \"status\", model.Status }")).IsEqualTo(2)
-      .Because("both writes take the promoted column's value from the model before it is stripped");
-    await Assert.That(_count(runner, "model.Status = default!;")).IsEqualTo(2)
-      .Because("both writes keep the promoted field out of the document of a Split model");
+    await Assert.That(_count(runner, "{ \"status\", model.Status }")).IsEqualTo(1)
+      .Because("the runner takes the promoted column's value in one override");
+    await Assert.That(_count(runner, "model.Status = default!;")).IsEqualTo(1)
+      .Because("the runner keeps the promoted field out of the document of a Split model in one override");
+    await Assert.That(_count(runner, "var physicalFieldValues = PhysicalFieldValues(model);")).IsEqualTo(2)
+      .Because("both writes take the values from the model before it is stripped");
+    await Assert.That(_count(runner, "model = StripPhysicalFields(model);")).IsEqualTo(2)
+      .Because("both writes strip the document the same way");
   }
 
   [Test]
@@ -178,7 +177,10 @@ public class PerspectiveRunnerPrepareCompleteTests {
   public async Task ExtractedRecordModel_PreparesItsWriteWithThePhysicalValuesAndAFullDocumentAsync() {
     var runner = _runner("ExtractedRecordPerspective");
 
-    await Assert.That(_count(runner, "{ \"status\", model.Status }")).IsEqualTo(2);
+    await Assert.That(_count(runner, "{ \"status\", model.Status }")).IsEqualTo(1)
+      .Because("the runner takes the promoted column's value in one override, which both writes call");
+    await Assert.That(runner).DoesNotContain("protected override global::TestNamespace.ExtractedRecordModel StripPhysicalFields(")
+      .Because("only a Split model's document omits its promoted fields");
     await Assert.That(runner).DoesNotContain("model = model with")
       .Because("an Extracted model keeps its fields in the document as well as in their columns");
   }

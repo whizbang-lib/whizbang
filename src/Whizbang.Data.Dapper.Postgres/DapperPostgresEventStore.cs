@@ -37,8 +37,9 @@ public partial class DapperPostgresEventStore(
   IPolicyEngine policyEngine,
   IPerspectiveInvoker? perspectiveInvoker,
   ILogger<DapperPostgresEventStore> logger,
-  Whizbang.Core.IEphemeralModeResolver? ephemeralModeResolver = null
-  ) : DapperEventStoreBase(connectionFactory, executor, jsonOptions), Whizbang.Data.Postgres.IDirectAppendRowBuilder {
+  Whizbang.Core.IEphemeralModeResolver? ephemeralModeResolver = null,
+  Whizbang.Core.Validation.GuidOrderingValidator? guidOrdering = null
+  ) : DapperEventStoreBase(connectionFactory, executor, jsonOptions, guidOrdering), Whizbang.Data.Postgres.IDirectAppendRowBuilder {
 #pragma warning restore CS9113
   private readonly IJsonbPersistenceAdapter<IMessageEnvelope> _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
   private readonly JsonbSizeValidator _sizeValidator = sizeValidator ?? throw new ArgumentNullException(nameof(sizeValidator));
@@ -64,6 +65,7 @@ public partial class DapperPostgresEventStore(
   /// <exception cref="StreamSealedException">The stream is sealed (#1733); nothing is stored.</exception>
   public override async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
+    GuidOrdering.ValidateAppend(streamId, envelope, "DapperPostgresEventStore.Append");
 
     var jsonb = await _prepareJsonbAsync(envelope);
 
@@ -140,13 +142,17 @@ public partial class DapperPostgresEventStore(
   /// </summary>
   /// <remarks>
   /// The stream is read in its own order: <c>version</c> ascending, <c>event_id</c> breaking ties, as the EF Core
-  /// store reads it, and each envelope carries its version (<see cref="MessageEnvelope{T}.LocalStreamVersion"/>).
+  /// store reads it, and each envelope carries its version (<see cref="MessageEnvelope{T}.LocalStreamVersion"/>) and
+  /// its origin (<see cref="MessageEnvelope{T}.SourceServiceId"/>, <see cref="MessageEnvelope{T}.SourceCommitSequence"/>),
+  /// which the replay deals a received stream into its origin's order by (#2509).
   /// An event id is minted before commit, so two producers can append in the opposite order to their ids (#1003);
   /// a commit sequence stamped after the fact can run backward against the versions (#1352). Either order would
   /// replay the stream backward.
   /// </remarks>
   /// <docs>fundamentals/events/event-store#read-order</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.EdgeCaseTests.cs:ReadPolymorphicAsync_IdsAndCommitsRunBackwardToVersions_ReadsInStreamOrderAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStoredMetadataRowValuesTests.cs:EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventOriginReadTests.cs:Replay_OfAReceivedStreamReadOnDapper_FoldsInItsOriginsOrderAsync</tests>
   public override async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
     Guid streamId,
     Guid? fromEventId,
@@ -206,11 +212,12 @@ public partial class DapperPostgresEventStore(
   /// <tests>No tests found</tests>
   protected override string GetReadSql() => @"
     SELECT
+      es.event_id AS EventId,
       es.event_type AS EventType,
       eb.event_data::text AS EventData,
       eb.metadata::text AS Metadata,
       es.scope::text AS Scope,
-      es.version AS Version
+      es.version AS Version, es.origin_service_id AS OriginServiceId, es.origin_commit_sequence AS OriginCommitSequence
     FROM wh_event_store es
     LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
     WHERE es.stream_id = @StreamId AND es.version >= @FromSequence
@@ -229,8 +236,8 @@ public partial class DapperPostgresEventStore(
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.EdgeCaseTests.cs:GetEventsBetweenPolymorphicAsync_AfterTheEventWithTheHighestId_ReadsByVersionThroughTheUpperAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.EdgeCaseTests.cs:GetEventsBetweenPolymorphicAsync_BetweenEventsTheStreamDoesNotHold_SelectsByTheirIdsAsync</tests>
   protected override string GetEventsBetweenSql() => @"
-    SELECT es.event_type AS EventType, eb.event_data::text AS EventData, eb.metadata::text AS Metadata, es.scope::text AS Scope,
-           es.version AS Version
+    SELECT es.event_id AS EventId, es.event_type AS EventType, eb.event_data::text AS EventData, eb.metadata::text AS Metadata, es.scope::text AS Scope,
+           es.version AS Version, es.origin_service_id AS OriginServiceId, es.origin_commit_sequence AS OriginCommitSequence
     FROM wh_event_store es
     LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
     WHERE es.stream_id = @StreamId
@@ -436,22 +443,24 @@ public partial class DapperPostgresEventStore(
   /// </summary>
   private static string _getReadByEventIdSql(Guid? fromEventId) {
     if (fromEventId == null) {
-      return @"SELECT es.event_type AS EventType,
+      return @"SELECT es.event_id AS EventId,
+                 es.event_type AS EventType,
                  eb.event_data::text AS EventData,
                  eb.metadata::text AS Metadata,
                  es.scope::text AS Scope,
-                 es.version AS Version
+                 es.version AS Version, es.origin_service_id AS OriginServiceId, es.origin_commit_sequence AS OriginCommitSequence
           FROM wh_event_store es
           LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
           WHERE es.stream_id = @StreamId
           ORDER BY es.event_id";
     }
 
-    return @"SELECT es.event_type AS EventType,
+    return @"SELECT es.event_id AS EventId,
+                 es.event_type AS EventType,
                  eb.event_data::text AS EventData,
                  eb.metadata::text AS Metadata,
                  es.scope::text AS Scope,
-                 es.version AS Version
+                 es.version AS Version, es.origin_service_id AS OriginServiceId, es.origin_commit_sequence AS OriginCommitSequence
           FROM wh_event_store es
           LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
           WHERE es.stream_id = @StreamId AND es.event_id > @FromEventId
@@ -489,11 +498,12 @@ public partial class DapperPostgresEventStore(
   /// or version 1 when the stream holds no version 0, so it holds whatever the read starts after. The version-0 probe
   /// runs for version-1 rows only (CASE evaluates its arms in order), one unique-index probe per stream.
   /// </summary>
-  private const string READ_IN_STREAM_ORDER_COLUMNS = @"SELECT es.event_type AS EventType,
+  private const string READ_IN_STREAM_ORDER_COLUMNS = @"SELECT es.event_id AS EventId,
+                 es.event_type AS EventType,
                  eb.event_data::text AS EventData,
                  eb.metadata::text AS Metadata,
                  es.scope::text AS Scope,
-                 es.version AS Version,
+                 es.version AS Version, es.origin_service_id AS OriginServiceId, es.origin_commit_sequence AS OriginCommitSequence,
                  CASE
                    WHEN es.version = 0 THEN TRUE
                    WHEN es.version = 1 THEN NOT EXISTS (
@@ -510,7 +520,10 @@ public partial class DapperPostgresEventStore(
     var jsonb = new JsonbPersistenceModel {
       DataJson = row.EventData,
       MetadataJson = row.Metadata,
-      ScopeJson = row.Scope
+      ScopeJson = row.Scope,
+      EventId = row.EventId,
+      OriginServiceId = row.OriginServiceId,
+      OriginCommitSequence = row.OriginCommitSequence,
     };
 
     var envelope = _adapter.FromJsonb<TMessage>(jsonb);
@@ -532,6 +545,7 @@ public partial class DapperPostgresEventStore(
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveReadThroughTests.cs:DeserializeStreamEvents_DecodesAStoredRow_AndSkipsATypeTheReaderDoesNotFoldAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveReadThroughTests.cs:DeserializeStreamEvents_ARowThatCannotBeRead_IsSkipped_AndTheRestAreKeptAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperArchiveReadThroughTests.cs:DeserializeStreamEvents_ARowWhoseMessageIdIsNotAGuid_IsSkipped_AndTheRestAreKeptAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStoredMetadataRowValuesTests.cs:EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync</tests>
   public override List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) {
     ArgumentNullException.ThrowIfNull(streamEvents);
     var typeMap = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
@@ -541,12 +555,21 @@ public partial class DapperPostgresEventStore(
         continue;
       }
       try {
-        var jsonb = new JsonbPersistenceModel { DataJson = raw.EventData, MetadataJson = raw.Metadata ?? "{}", ScopeJson = raw.Scope };
+        // #2323: a row whose metadata left out its message id has it from its event id; a row with no metadata at all
+        // still names none, and is skipped as unreadable, as before.
+        var jsonb = new JsonbPersistenceModel {
+          DataJson = raw.EventData,
+          MetadataJson = raw.Metadata ?? "{}",
+          ScopeJson = raw.Scope,
+          EventId = raw.Metadata is null ? null : raw.EventId,
+        };
         var eventData = _deserializeEventData(jsonb, concreteType);
         var (messageId, hops) = _deserializeMetadataAndHops(jsonb);
         StoredScope.RestoreInto(hops, StoredScope.Read(jsonb.ScopeJson, JsonOptions));
-        var envelope = _buildPolymorphicEnvelope(eventData, messageId, hops);
+        var envelope = _buildPolymorphicEnvelope(eventData, messageId, hops, jsonb);
         envelope.LocalCommitSequence = raw.CommitSequence;
+        // 576 (#2551): the event's stream position, which the drain applies the stream in, never its id.
+        envelope.LocalStreamVersion = raw.Version;
         results.Add(envelope);
       } catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException) {
         LogStoredRowUnreadable(logger, ex, raw.EventId, raw.EventType);
@@ -573,7 +596,7 @@ public partial class DapperPostgresEventStore(
     var (messageId, hops) = _deserializeMetadataAndHops(jsonb);
     StoredScope.RestoreInto(hops, StoredScope.Read(jsonb.ScopeJson, JsonOptions));
 
-    var envelope = _buildPolymorphicEnvelope(eventData, messageId, hops);
+    var envelope = _buildPolymorphicEnvelope(eventData, messageId, hops, jsonb);
     envelope.LocalStreamVersion = row.Version;
     envelope.IsFirstInLocalStream = row.IsFirstInStream;
     return envelope;
@@ -605,7 +628,10 @@ public partial class DapperPostgresEventStore(
     return new JsonbPersistenceModel {
       DataJson = row.EventData,
       MetadataJson = row.Metadata,
-      ScopeJson = row.Scope
+      ScopeJson = row.Scope,
+      EventId = row.EventId,
+      OriginServiceId = row.OriginServiceId,
+      OriginCommitSequence = row.OriginCommitSequence,
     };
   }
 
@@ -625,7 +651,8 @@ public partial class DapperPostgresEventStore(
   private static MessageEnvelope<IEvent> _buildPolymorphicEnvelope(
     object eventData,
     Guid messageId,
-    List<MessageHop> hops) {
+    List<MessageHop> hops,
+    JsonbPersistenceModel jsonb) {
 
     if (eventData is not IEvent eventPayload) {
       throw new InvalidOperationException(
@@ -636,7 +663,10 @@ public partial class DapperPostgresEventStore(
       MessageId = MessageId.From(messageId),
       Payload = eventPayload,
       Hops = hops,
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+      // #2509: the event's origin, when the read selected it, as the EF Core store's replay read carries it.
+      SourceServiceId = jsonb.OriginServiceId ?? Guid.Empty,
+      SourceCommitSequence = jsonb.OriginCommitSequence ?? 0,
     };
   }
 
@@ -645,9 +675,8 @@ public partial class DapperPostgresEventStore(
     var metadataDict = JsonSerializer.Deserialize(jsonb.MetadataJson, metadataDictTypeInfo) as Dictionary<string, JsonElement>
                        ?? throw new InvalidOperationException("Failed to deserialize metadata JSON");
 
-    var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
-      ? Guid.Parse(msgIdElem.GetString()!)
-      : throw new InvalidOperationException("message_id not found in metadata");
+    // #2323: a row whose message id is its event id leaves it out.
+    var messageId = JsonbPersistenceModel.MessageIdOf(metadataDict, jsonb.EventId);
 
     List<MessageHop> hops;
     if (metadataDict.TryGetValue("hops", out var hopsElem)) {

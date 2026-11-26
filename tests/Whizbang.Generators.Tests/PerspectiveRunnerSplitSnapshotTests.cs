@@ -16,7 +16,7 @@ namespace Whizbang.Generators.Tests;
 /// after the write is the model it applied.
 /// </summary>
 /// <tests>src/Whizbang.Generators/PerspectiveRunnerGenerator.cs</tests>
-/// <tests>src/Whizbang.Generators/Templates/PerspectiveRunnerTemplate.cs</tests>
+/// <tests>src/Whizbang.Core/Perspectives/PerspectiveRunnerBase.cs</tests>
 [Category("SourceGenerators")]
 public class PerspectiveRunnerSplitSnapshotTests {
   private const string SOURCE = """
@@ -81,11 +81,11 @@ public class PerspectiveRunnerSplitSnapshotTests {
     }
     """;
 
-  private const string SNAPSHOTS_BEFORE_WRITE = "SnapshotBeforeWrite(global::TestNamespace.SplitClassModel model) => ToSnapshotJson(model);";
+  private const string SNAPSHOTS_BEFORE_WRITE = "SnapshotsBeforeWrite = true,";
 
   private static string _runner(string perspective) {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(SOURCE);
-    return GeneratorTestHelper.GetGeneratedSource(result, $"{perspective}Runner.g.cs") ?? "";
+    return GeneratorTestHelper.GetRunnerSource(result, $"{perspective}Runner.g.cs") ?? "";
   }
 
   private static string _compact(string source) => string.Concat(source.Where(c => !char.IsWhiteSpace(c)));
@@ -107,9 +107,9 @@ public class PerspectiveRunnerSplitSnapshotTests {
       var runner = _runner(perspective);
 
       await Assert.That(runner).IsNotEmpty();
-      await Assert.That(runner).DoesNotContain("=> ToSnapshotJson(model);")
+      await Assert.That(runner).DoesNotContain("=> _toSnapshotJson(model);")
         .Because($"{perspective} is not stripped in place, so its snapshot after the write is the model it applied");
-      await Assert.That(_compact(runner)).Contains("privatestaticJsonDocument?SnapshotBeforeWrite(")
+      await Assert.That(_compact(runner)).Contains("privateJsonDocument?_snapshotBeforeWrite(")
         .Because("the call sites are the same for every model; this one never has a snapshot to hand them");
     }
   }
@@ -122,9 +122,9 @@ public class PerspectiveRunnerSplitSnapshotTests {
     // The end of a run, and the end of a rewind: each captures the snapshot before it writes and hands
     // it to the store in place of one taken afterwards. Each prefers the row at its last event when collectives
     // folded after that event (#1956), which is serialized before the write too.
-    await Assert.That(runner.Split("snapshotBeforeWrite=snapshotDue?modelAtLastEvent??SnapshotBeforeWrite(updatedModel):null;").Length - 1).IsEqualTo(1);
-    await Assert.That(runner.Split("snapshotBeforeWrite=snapshotDue?_takeModelAtLastEvent(outcome)??SnapshotBeforeWrite(updatedModel):null;").Length - 1).IsEqualTo(1);
-    await Assert.That(runner.Split("snapshotBeforeWrite??ToSnapshotJson(updatedModel)").Length - 1).IsEqualTo(2);
+    await Assert.That(runner.Split("snapshotBeforeWrite=snapshotDue?modelAtLastEvent??_snapshotBeforeWrite(updatedModel):null;").Length - 1).IsEqualTo(1);
+    await Assert.That(runner.Split("snapshotBeforeWrite=snapshotDue?_takeModelAtLastEvent(outcome)??_snapshotBeforeWrite(updatedModel):null;").Length - 1).IsEqualTo(1);
+    await Assert.That(runner.Split("snapshotBeforeWrite??_toSnapshotJson(updatedModel)").Length - 1).IsEqualTo(2);
   }
 
   // #1956: the row at its last event is serialized only for a snapshot, so with snapshots off the fold of a collective
@@ -135,13 +135,13 @@ public class PerspectiveRunnerSplitSnapshotTests {
   public async Task Runner_CopiesTheRowAtItsLastEvent_OnlyWhenSnapshotsAreOnAsync() {
     var runner = _compact(_runner("SplitClassPerspective"));
 
-    await Assert.That(runner.Split("modelAtLastEvent=ToSnapshotJson(updatedModel);").Length - 1).IsEqualTo(2)
+    await Assert.That(runner.Split("modelAtLastEvent=_toSnapshotJson(updatedModel);").Length - 1).IsEqualTo(2)
       .Because("the rewind's replay and the run each take the copy at one place");
     await Assert.That(runner).Contains("varsnapshotsOn=_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true;")
       .Because("the rewind's replay decides once whether snapshots are on");
-    await Assert.That(runner).Contains("if(snapshotsOn&&modelAtLastEventisnull){modelAtLastEvent=ToSnapshotJson(updatedModel);}");
+    await Assert.That(runner).Contains("if(snapshotsOn&&modelAtLastEventisnull){modelAtLastEvent=_toSnapshotJson(updatedModel);}");
     await Assert.That(runner).Contains(
-      "if(modelAtLastEventisnull&&_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true){modelAtLastEvent=ToSnapshotJson(updatedModel);}");
+      "if(modelAtLastEventisnull&&_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true){modelAtLastEvent=_toSnapshotJson(updatedModel);}");
   }
 
   [Test]
@@ -152,7 +152,7 @@ public class PerspectiveRunnerSplitSnapshotTests {
     // Issue #1002: the end of a run serializes before the write only when the snapshot after it is due.
     const string RUN_DUE = "varsnapshotDue=_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true"
       + "&&!pendingPurge&&updatedModelisnotnull&&hasWrittenUpdate&&lastSuccessfulEventId.HasValue"
-      + "&&_eventsSinceSnapshot(state.StreamId)+eventsProcessed>=_snapshotCadence().Threshold"
+      + "&&_eventsSinceSnapshot(state.StreamId)+eventsProcessed>=_snapshotCadence(_snapshotOptions.Value).Threshold"
       + "&&!collectiveInFlight;";
     await Assert.That(runner).Contains(RUN_DUE);
     await Assert.That(runner.IndexOf(RUN_DUE, StringComparison.Ordinal))
@@ -163,6 +163,6 @@ public class PerspectiveRunnerSplitSnapshotTests {
     await Assert.That(runner).Contains(
       "varsnapshotDue=_snapshotStoreisnotnull&&_snapshotOptions?.Value.Enabled==true&&lastSuccessfulEventId.HasValue"
       + "&&outcome.CollectivesSettled;");
-    await Assert.That(runner).Contains("private(intThreshold,intRetention)_snapshotCadence(){");
+    await Assert.That(runner).Contains("private(intThreshold,intRetention)_snapshotCadence(PerspectiveSnapshotOptionsoptions){");
   }
 }

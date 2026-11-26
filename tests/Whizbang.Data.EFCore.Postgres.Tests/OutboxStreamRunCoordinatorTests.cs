@@ -55,6 +55,14 @@ public class OutboxStreamRunCoordinatorTests : EFCoreTestBase {
     MaxOutboxAcquireRows: outboxRows,
     OutboxRunLength: run);
 
+  // #2551: the row's emission position, the continuation's cursor.
+  private static async Task<long> _positionAsync(NpgsqlConnection conn, Guid messageId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT emission_position FROM wh_outbox WHERE message_id = @id";
+    cmd.Parameters.AddWithValue("id", messageId);
+    return Convert.ToInt64(await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
+  }
+
   private static async Task<int> _heldAsync(NpgsqlConnection conn, Guid instance) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT count(*) FROM wh_outbox WHERE instance_id = @inst AND processed_at IS NULL";
@@ -120,7 +128,7 @@ public class OutboxStreamRunCoordinatorTests : EFCoreTestBase {
     _ = await coordinator.ClaimWorkAsync(_request(instance, maxStreams: 1, outboxRows: 100, run: 10));
 
     var rows = await coordinator.ContinueOutboxStreamsAsync(
-      [new OutboxStreamCursor(stream, ids[9])], instance, runLength: 10, maxBytes: null);
+      [new OutboxStreamCursor(stream, ids[9]) { LastPublishedPosition = await _positionAsync(conn, ids[9]) }], instance, runLength: 10, maxBytes: null);
 
     await Assert.That(rows.Select(r => r.MessageId)).IsEquivalentTo(ids.Skip(10).Take(10), TUnit.Assertions.Enums.CollectionOrdering.Matching);
     var first = rows[0];
@@ -178,7 +186,7 @@ public class OutboxStreamRunCoordinatorTests : EFCoreTestBase {
     }
 
     var rows = await coordinator.ContinueOutboxStreamsAsync(
-      [new OutboxStreamCursor(stream, ids[0])], instance, runLength: 10, maxBytes: 1_000_000);
+      [new OutboxStreamCursor(stream, ids[0]) { LastPublishedPosition = await _positionAsync(conn, ids[0]) }], instance, runLength: 10, maxBytes: 1_000_000);
 
     var row = rows.Single();
     await Assert.That(row.MessageId).IsEqualTo(ids[1]);

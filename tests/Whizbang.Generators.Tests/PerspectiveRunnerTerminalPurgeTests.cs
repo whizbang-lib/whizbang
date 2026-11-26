@@ -84,11 +84,11 @@ namespace TestNamespace {
     var runner = _runnerFor(closedApply);
 
     await Assert.That(runner).DoesNotContain(PURGE_SET);
-    await Assert.That(runner).Contains("IsUnconditionalPurge(global::Whizbang.Core.IEvent @event) => false;");
+    await Assert.That(runner).DoesNotContain("protected override bool IsUnconditionalPurge(");
   }
 
   private static string _runnerFor(string closedApply) {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(TEMPLATE.Replace("__CLOSED_APPLY__", closedApply));
-    return GeneratorTestHelper.GetGeneratedSource(result, "AccountPerspectiveRunner.g.cs")!;
+    return GeneratorTestHelper.GetRunnerSource(result, "AccountPerspectiveRunner.g.cs")!;
   }
 }

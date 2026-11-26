@@ -89,7 +89,7 @@ public class InboxDispatchSkipGateTests {
       meter: new Meter(meterName),
       routingOptions: Options.Create(new RoutingOptions()),
       markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
-      coreOptions: core);
+      retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance, coreOptions: core);
   }
 
   /// <summary>
@@ -131,7 +131,7 @@ public class InboxDispatchSkipGateTests {
     var registry = new TestRegistry();  // empty
     var policyLogger = new RecordingLogger();
     var meter = new Meter("Whizbang.Tests.InboxDispatchSkipGateTests.A");
-    var policy = new MessageDiscardPolicy(registry: registry, logger: new TestLogger<MessageDiscardPolicy>(policyLogger), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    var policy = new MessageDiscardPolicy(registry: registry, logger: new TestLogger<MessageDiscardPolicy>(policyLogger), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance), retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
     long skippedCount = 0;
     using var listener = new MeterListener {
       InstrumentPublished = (i, l) => { if (i.Meter == meter && i.Name == MessageDiscardPolicy.COUNTER_NAME) { l.EnableMeasurementEvents(i); } }
@@ -158,7 +158,7 @@ public class InboxDispatchSkipGateTests {
     var registry = new TestRegistry { Consumed = { "Test.Contracts.Foo" } };
     var policyLogger = new RecordingLogger();
     var meter = new Meter("Whizbang.Tests.InboxDispatchSkipGateTests.B");
-    var policy = new MessageDiscardPolicy(registry: registry, logger: new TestLogger<MessageDiscardPolicy>(policyLogger), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    var policy = new MessageDiscardPolicy(registry: registry, logger: new TestLogger<MessageDiscardPolicy>(policyLogger), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance), retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
     long skippedCount = 0;
     using var listener = new MeterListener {
       InstrumentPublished = (i, l) => { if (i.Meter == meter && i.Name == MessageDiscardPolicy.COUNTER_NAME) { l.EnableMeasurementEvents(i); } }
@@ -187,7 +187,7 @@ public class InboxDispatchSkipGateTests {
   public async Task ShouldSkipInbox_EnvelopeWrappedRow_WhosePayloadHasAConsumer_IsKeptAsync() {
     var registry = new TestRegistry { Consumed = { "Test.Contracts.Foo, Test.Contracts" } };
     var policyLogger = new RecordingLogger();
-    var policy = new MessageDiscardPolicy(registry: registry, logger: new TestLogger<MessageDiscardPolicy>(policyLogger), meter: new Meter("Whizbang.Tests.InboxDispatchSkipGateTests.D"), routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    var policy = new MessageDiscardPolicy(registry: registry, logger: new TestLogger<MessageDiscardPolicy>(policyLogger), meter: new Meter("Whizbang.Tests.InboxDispatchSkipGateTests.D"), routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance), retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
 
     var shouldSkip = InboxDispatchWorker.ShouldSkipInbox(
       discardPolicy: policy,
@@ -202,7 +202,7 @@ public class InboxDispatchSkipGateTests {
   [Test]
   public async Task ShouldSkipInbox_EnvelopeWrappedRow_WhosePayloadHasNoConsumer_IsStillSkippedAsync() {
     var registry = new TestRegistry { Consumed = { "Test.Contracts.Foo, Test.Contracts" } };
-    var policy = new MessageDiscardPolicy(registry: registry, logger: NullLogger<MessageDiscardPolicy>.Instance, meter: new Meter("Whizbang.Tests.InboxDispatchSkipGateTests.E"), routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    var policy = new MessageDiscardPolicy(registry: registry, logger: NullLogger<MessageDiscardPolicy>.Instance, meter: new Meter("Whizbang.Tests.InboxDispatchSkipGateTests.E"), routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance), retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
 
     var decision = policy.EvaluateInbox(EnvelopeTypeNameHelper.Format("Test.Contracts.Bar, Test.Contracts"));
 
@@ -213,7 +213,7 @@ public class InboxDispatchSkipGateTests {
   [Test]
   public async Task EvaluateReceive_EnvelopeWrappedName_WhosePayloadHasAConsumer_IsKeptAsync() {
     var registry = new TestRegistry { Consumed = { "Test.Contracts.Foo, Test.Contracts" } };
-    var policy = new MessageDiscardPolicy(registry: registry, logger: NullLogger<MessageDiscardPolicy>.Instance, meter: new Meter("Whizbang.Tests.InboxDispatchSkipGateTests.F"), routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    var policy = new MessageDiscardPolicy(registry: registry, logger: NullLogger<MessageDiscardPolicy>.Instance, meter: new Meter("Whizbang.Tests.InboxDispatchSkipGateTests.F"), routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance), retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
 
     var decision = policy.EvaluateReceive(EnvelopeTypeNameHelper.Format("Test.Contracts.Foo, Test.Contracts"), topic: "t", subscription: "s");
 
@@ -224,7 +224,7 @@ public class InboxDispatchSkipGateTests {
   [Test]
   public async Task ShouldSkipInbox_NoPolicyWired_ReturnsFalse_PreservesLegacyBehaviorAsync() {
     var shouldSkip = InboxDispatchWorker.ShouldSkipInbox(
-      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance)),
+      discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance, new System.Diagnostics.Metrics.Meter("test"), Options.Create(new RoutingOptions()), new EventMarkerResolver(NullMessageTypeCatalog.Instance), global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), global::Whizbang.Core.NullMessageTypeCatalog.Instance),
       messageType: "Test.Contracts.Foo",
       messageId: Guid.Parse("33333333-3333-3333-3333-333333333333"));
 

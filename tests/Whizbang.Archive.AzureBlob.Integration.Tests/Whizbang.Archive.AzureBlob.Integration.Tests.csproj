@@ -8,7 +8,9 @@
     <IsTestProject>true</IsTestProject>
     <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
-    <!-- Integration: Azurite and PostgreSQL via Testcontainers. Runs in the Azure Blob suite. -->
+    <!-- Integration: Azurite and PostgreSQL via Testcontainers: the Postgres driver's archive coordinator writing through the
+         Azure Blob object store. Runs in the Azure Blob suite. The project keeps this path because migrations 269 and 353,
+         which may not be edited, name AzureBlobArchiveStoreTests.cs here in their <tests> tags (#2502). -->
     <WhizbangTestType>Integration</WhizbangTestType>
     <WhizbangTestTags>AzureBlob;Docker;Archive</WhizbangTestTags>
   </PropertyGroup>
@@ -20,11 +22,18 @@
     <PackageReference Include="SSH.NET" />
     <PackageReference Include="Testcontainers.Azurite" />
     <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- One Azurite container helper for both Azure Blob integration projects. -->
+    <Compile Include="../Whizbang.Storage.AzureBlob.Integration.Tests/AzuriteFixture.cs" Link="AzuriteFixture.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
-    <ProjectReference Include="../../src/Whizbang.Archive.AzureBlob/Whizbang.Archive.AzureBlob.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Storage.AzureBlob/Whizbang.Storage.AzureBlob.csproj" />
     <ProjectReference Include="../../src/Whizbang.Data.Dapper.Postgres/Whizbang.Data.Dapper.Postgres.csproj" />
     <ProjectReference Include="../../src/Whizbang.Data.Postgres/Whizbang.Data.Postgres.csproj" />
     <ProjectReference Include="../../src/Whizbang.Testing/Whizbang.Testing.csproj" />

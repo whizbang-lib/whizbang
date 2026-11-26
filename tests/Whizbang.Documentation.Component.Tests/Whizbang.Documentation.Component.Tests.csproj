@@ -21,8 +21,7 @@
     <ProjectReference Include="../../src/Whizbang.Hosting.AspNet/Whizbang.Hosting.AspNet.csproj" />
     <ProjectReference Include="../../src/Whizbang.Transports.HotChocolate/Whizbang.Transports.HotChocolate.csproj" />
     <ProjectReference Include="../../src/Whizbang.Sagas/Whizbang.Sagas.csproj" />
-    <ProjectReference Include="../../src/Whizbang.Offloads.AzureBlob/Whizbang.Offloads.AzureBlob.csproj" />
-    <ProjectReference Include="../../src/Whizbang.Archive.AzureBlob/Whizbang.Archive.AzureBlob.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Storage.AzureBlob/Whizbang.Storage.AzureBlob.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />

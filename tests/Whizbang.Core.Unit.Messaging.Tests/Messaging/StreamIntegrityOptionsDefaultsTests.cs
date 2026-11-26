@@ -39,9 +39,9 @@ public class StreamIntegrityOptionsDefaultsTests {
 
     await Assert.That(options.VerifiedPercentGaugeEnabled).IsTrue()
       .Because("#2261: a dashboard answers \"are we done?\" without configuration; a team that prunes its feed switches them off");
-    await Assert.That(options.RepairProgressGaugeEnabled).IsTrue();
+    await Assert.That(options.RepairCloseRatioGaugeEnabled).IsTrue();
     await Assert.That(options.BacklogEtaGaugeEnabled).IsTrue();
-    await Assert.That(options.RepairProgressWindowMinutes).IsEqualTo(60);
+    await Assert.That(options.CompletionWindowMinutes).IsEqualTo(60);
   }
 
   [Test]

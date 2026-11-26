@@ -199,7 +199,8 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // An override is the stream id on purpose (#1833): it hides the inherited one, so the event has exactly one
-    if (StreamIdSelection.Select(namedType) is { IsOverride: true }) {
+    var choice = StreamIdSelection.Select(namedType);
+    if (choice is { IsOverride: true }) {
       return null;
     }
 
@@ -213,9 +214,11 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     var eventTypeName = TypeNameUtilities.FullyQualified(typeToValidate);
     var simpleEventName = TypeNameUtilities.GetSimpleName(eventTypeName);
 
+    // With no [StreamId] property in the class chain, the stream id can still come from one interface (#1908). With
+    // one there, an interface naming another property makes it ambiguous (WHIZ036), and the event has none.
     if (streamKeyProperties.Count == 0) {
-      return new EventValidationError(simpleEventName, StreamIdErrorType.MissingStreamId);
-    } else if (streamKeyProperties.Count > 1) {
+      return choice is null ? new EventValidationError(simpleEventName, StreamIdErrorType.MissingStreamId) : null;
+    } else if (streamKeyProperties.Count > 1 || choice is null) {
       return new EventValidationError(simpleEventName, StreamIdErrorType.MultipleStreamIds);
     }
 
@@ -229,7 +232,8 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// </summary>
   /// <remarks>
   /// Called only for an event the validation accepted: a named type (after unwrapping an array) with
-  /// exactly one public [StreamId] property in its class chain, or a stream id that is an override. The choice is
+  /// exactly one public [StreamId] property in its class chain and no interface naming another, a stream id from one
+  /// interface, or a stream id that is an override. The choice is
   /// <see cref="StreamIdSelection"/>'s, the one the extractor and the analyzer make, and it always finds one here.
   /// </remarks>
   private static string _extractStreamIdProperty(ITypeSymbol eventTypeSymbol) {

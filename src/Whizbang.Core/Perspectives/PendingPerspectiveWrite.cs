@@ -123,6 +123,42 @@ public sealed class PendingPerspectiveWrite {
     return new PendingPerspectiveWrite(Table, StreamId, Operation, ExpectedVersion, Row) { SinkKey = sinkKey };
   }
 
+  /// <summary>
+  /// The one write that has the effect of this write followed by <paramref name="later"/>, which was prepared on the
+  /// model this write holds: the write-behind mode (#2247) writes a model that several batches folded with one write.
+  /// </summary>
+  /// <remarks>
+  /// The result keeps this write's operation and expected version (the row as it is in the database), its sink and,
+  /// for an insert, its creation time; it writes <paramref name="later"/>'s document, metadata, scope, physical values
+  /// and expiry. The scope is replaced when either write replaced it, the version column moves when either moved it, and
+  /// the business time is the last one a write stamped.
+  /// </remarks>
+  /// <param name="later">The write prepared after this one, on the model this one writes.</param>
+  /// <returns>The merged write.</returns>
+  /// <exception cref="ArgumentException">Either write is a purge, or the two are for different rows.</exception>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PendingPerspectiveWriteTests.cs:FollowedBy_WritesTheLaterValuesOnTheEarlierRowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PendingPerspectiveWriteTests.cs:FollowedBy_KeepsTheLastStampedActivity_AndAnyScopeOrVersionMoveAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PendingPerspectiveWriteTests.cs:FollowedBy_RefusesAPurgeOrAnotherRowAsync</tests>
+  public PendingPerspectiveWrite FollowedBy(PendingPerspectiveWrite later) {
+    ArgumentNullException.ThrowIfNull(later);
+    if (Row is null || later.Row is null) {
+      throw new ArgumentException("A purge is never merged with another write.", nameof(later));
+    }
+    if (later.StreamId != StreamId || !string.Equals(later.Table, Table, StringComparison.Ordinal)) {
+      throw new ArgumentException("Only two writes of the same row are merged.", nameof(later));
+    }
+    var earlier = Row;
+    var next = later.Row;
+    var merged = next with {
+      CreatedAt = earlier.CreatedAt,
+      ForceUpdateScope = earlier.ForceUpdateScope || next.ForceUpdateScope,
+      BumpVersion = earlier.BumpVersion || next.BumpVersion,
+      UpdatedAt = next.SuppressActivity ? earlier.UpdatedAt : next.UpdatedAt,
+      SuppressActivity = next.SuppressActivity && earlier.SuppressActivity,
+    };
+    return new PendingPerspectiveWrite(Table, StreamId, Operation, ExpectedVersion, merged) { SinkKey = SinkKey };
+  }
+
   /// <summary>An upsert, insert or update of a row, decided by the version the apply read.</summary>
   /// <param name="table">The schema-qualified, quoted perspective table.</param>
   /// <param name="streamId">The stream, which is the row's id.</param>

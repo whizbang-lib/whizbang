@@ -17,6 +17,7 @@ using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Core.Serialization;
 using Whizbang.Data.EFCore.Postgres.Perspectives;
 using Whizbang.Data.Postgres;
+using Whizbang.Data.Postgres.Perspectives;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -237,7 +238,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // or any other unsupported case).
     if (UsesAtomicUpsert
         && _tryPrepareAtomicWrite(context, args, hookPlan, expiresAt, businessTime) is { } prepared
-        && await _tryAtomicUpsertAsync<TModel>(context, prepared, cancellationToken) is bool atomicLanded) {
+        && await _stageOrUpsertAsync<TModel>(context, prepared, cancellationToken) is bool atomicLanded) {
       return atomicLanded;
     }
     if (!string.Equals(args.TableName, mappedTable, StringComparison.Ordinal)) {
@@ -246,6 +247,30 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         "could not take it (a provider other than PostgreSQL, or a value the upsert cannot bind). The rebuild stops rather than " +
         $"write {mappedTable}, the table readers are using.");
     }
+
+    // #2556: the Entity Framework write cannot carry the fence in its statement, so the stream's partition is held at its
+    // claimed epoch in the write's transaction first, and a stale owner's write ends there. With work in flight and no
+    // transaction of the caller's, the write opens one under the context's execution strategy, so the hold spans it.
+    if (context.Database.CurrentTransaction is null && EFCorePerspectiveWriteFence.Holds(context, args.Id)) {
+      return await context.Database.CreateExecutionStrategy().ExecuteAsync(async ct => {
+        await using var transaction = await context.Database.BeginTransactionAsync(ct);
+        var landed = await _heldFallbackAsync(context, args, hookPlan, expiresAt, ct);
+        await transaction.CommitAsync(ct);
+        return landed;
+      }, cancellationToken);
+    }
+    return await _heldFallbackAsync(context, args, hookPlan, expiresAt, cancellationToken);
+  }
+
+  /// <summary>The Entity Framework write, after the stream's partition is held at its claimed epoch (#2556).</summary>
+  private async Task<bool> _heldFallbackAsync<TModel>(
+      DbContext context,
+      UpsertRowArgs<TModel> args,
+      PerEventApplyHookPlan hookPlan,
+      DateTimeOffset? expiresAt,
+      CancellationToken cancellationToken)
+      where TModel : class {
+    await EFCorePerspectiveWriteFence.HoldAsync(context, args.Id, cancellationToken);
 
     if (args.ExpectedVersion.IsChecked) {
       return await _upsertCheckedFallbackAsync(context, args, hookPlan, expiresAt, cancellationToken);
@@ -468,6 +493,27 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   }
 
   /// <summary>
+  /// Writes a prepared row: held by the staging load of a blue-green rebuild's first pass when one writes its table and
+  /// the row is new to it (#2248), and otherwise with the atomic statement. A row the load holds is loaded before it is
+  /// written again, so that write meets the row and the ordering guard as the per-row path always does.
+  /// </summary>
+  /// <returns>Whether the write landed (a held row has), or null to fall back to the Entity Framework path.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/BlueGreenRebuildIntegrationTests.Staging.cs</tests>
+  private static async Task<bool?> _stageOrUpsertAsync<TModel>(
+      DbContext context, PendingPerspectiveWrite write, CancellationToken cancellationToken)
+      where TModel : class {
+    if (PerspectiveStagingLoad.For(write.Table) is { } load) {
+      if (load.TryStage(write, new EFCorePostgresPerspectiveWriteSink(context))) {
+        return true;
+      }
+      if (load.StateOf(write.StreamId) == PerspectiveStagedRowState.Staged) {
+        await load.FlushAsync(cancellationToken);
+      }
+    }
+    return await _tryAtomicUpsertAsync<TModel>(context, write, cancellationToken);
+  }
+
+  /// <summary>
   /// Writes a prepared row with the Path 1 atomic statement against the underlying Npgsql connection: an upsert for
   /// an unchecked version, a conditional update for a present one, an insert-if-missing for an absent one. Returns
   /// whether the write landed (false when the ordering guard refused it), or null when Npgsql could not bind a value,
@@ -535,9 +581,16 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     var expiresColumn = hasExpiry ? ", expires_at" : "";
     var expiresValue = hasExpiry ? ", @wb_expires" : "";
     var expiresUpdate = hasExpiry ? "\n          expires_at = EXCLUDED.expires_at," : "";
+    // #2556: with work in flight, the statement holds the stream's partition at its claimed epoch: the inserted id is
+    // the held stream, and the update carries the hold as a predicate. A flip committed first raises WHF02.
+    var fence = EFCorePerspectiveWriteFence.Of(context);
+    var tenure = fence?.TenureOf(write.StreamId);
+    var held = tenure is null ? null : fence;
+    var idValue = held is null ? "@id" : held.HeldStream("@id", "@wb_fp", "@wb_fe");
+    var holdPredicate = held is null ? "" : " AND " + held.Hold("@wb_fp", "@wb_fe");
     var insert = $@"
         INSERT INTO {qualifiedTable} (id, data, metadata, scope, created_at, updated_at, sys_created_at, sys_updated_at, version{expiresColumn}{pfColumnsClause})
-        VALUES (@id, @data::jsonb, @metadata::jsonb, @scope::jsonb, @wb_created, @wb_updated, @wb_syscreated, @wb_sysupdated, 1{expiresValue}{pfValuesClause})";
+        VALUES ({idValue}, @data::jsonb, @metadata::jsonb, @scope::jsonb, @wb_created, @wb_updated, @wb_syscreated, @wb_sysupdated, 1{expiresValue}{pfValuesClause})";
     // Issue #928: a checked write lands only on the version the apply read. An existing row is updated in
     // place on that exact version; a missing one is inserted only if it is still missing. Either affects no
     // row when the row moved, which the refusal check below turns into a conflict.
@@ -551,7 +604,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
           sys_updated_at = @wb_sysupdated,{(hasExpiry ? "\n          expires_at = @wb_expires," : "")}
           version = {qualifiedTable}.version + @wb_versionbump{(row.ForceUpdateScope ? ", scope = @scope::jsonb" : "")}{_physicalFieldAssignments(row.PhysicalValues)}
         WHERE {qualifiedTable}.id = @id AND {qualifiedTable}.xmin = @wb_expected_version
-          AND ({guard("@metadata::jsonb")})",
+          AND ({guard("@metadata::jsonb")}){holdPredicate}",
       PerspectiveRowVersionState.Absent => insert + @"
         ON CONFLICT (id) DO NOTHING",
       _ => insert + $@"
@@ -594,6 +647,10 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         cmd.Parameters.Add(new NpgsqlParameter("wb_expires", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = row.ExpiresAt!.Value });
       }
       cmd.Parameters.Add(new NpgsqlParameter("wb_versionbump", row.BumpVersion ? 1 : 0));
+      if (held is not null) {
+        cmd.Parameters.Add(PerspectiveWriteFence.PartitionParameter("wb_fp", tenure));
+        cmd.Parameters.Add(PerspectiveWriteFence.EpochParameter("wb_fe", tenure));
+      }
       for (var i = 0; i < pfCount; i++) {
         // The value is what the consumer's source generator already coerced to the EF-mapped CLR type (Vector for
         // embedding columns, string/decimal/etc. for scalars), or a jsonb column's converted document. Null values
@@ -606,6 +663,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       }
       // No row affected and no conflict thrown: the ordering guard refused the write (#1342).
       return affected > 0;
+    } catch (PostgresException ex) when (PerspectiveWriteFence.IsFenced(ex)) {
+      EFCorePerspectiveWriteFence.Report(context, 1);
+      throw new PartitionOwnershipLostException(write.StreamId);
     } catch (Exception ex) when (ex is InvalidCastException or NotSupportedException or System.Text.Json.JsonException) {
       // The atomic path couldn't serialize or bind this row — e.g. a CLR type Npgsql can't map to its
       // column (a WhizbangId physical-field value bound to a uuid column), or a model the persistence
@@ -654,8 +714,10 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// <returns>The value to write.</returns>
   internal static PerspectivePhysicalValue PhysicalColumnValue(string column, IReadOnlyProperty? property, object? value) {
     var storeType = property?.GetColumnType();
+    // The property's own converter, or its type mapping's: a dictionary column takes its stored form, an array of
+    // key/value pairs, from its mapping (#1911), the same form the collective apply and the document write.
     if (value is not null
-        && property?.GetValueConverter() is { } converter
+        && (property?.GetValueConverter() ?? property?.FindTypeMapping()?.Converter) is { } converter
         && string.Equals(storeType, "jsonb", StringComparison.OrdinalIgnoreCase)) {
       return new PerspectivePhysicalValue(column, converter.ConvertToProvider(value), storeType, IsJsonDocument: true);
     }

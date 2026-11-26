@@ -6,7 +6,6 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Workers;
-using Whizbang.Testing;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 
@@ -15,19 +14,28 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// that ranks itself, and the keyed read a claimer refreshes its copy with.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The owner's decision: no added work per claim. The claim's fence is one read of a one-row table (one page, read
 /// without its index), and it replaces the ranking query over the live registration rows rather than adding to it. A
 /// claim with the assignment is gated at no more than the self-ranked claim, at a small fleet and at a large one. One
 /// pending outbox row on each of thirty streams; each claim is measured inside a transaction that is rolled back, so
 /// both modes see the same rows.
+/// </para>
+/// <para>
+/// What is compared is the rows each claim read (<see cref="RowsRead"/>), not the shared buffers it visited (#2462).
+/// Buffers counted catalog reloads and index metapage rereads whenever another session had invalidated what this one
+/// cached, and the dead rows an earlier rolled-back claim left, so the comparison failed under load and passed alone.
+/// The tables are vacuumed before every measurement, which removes those dead rows, so each claim reads the same table
+/// state, and the count is the claim's own whatever else runs on the server.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 [Category("Benchmark")]
 [NotInParallel] // A measurement: runs alone so it measures the code, not its neighbors.
 [Category("Performance")]
 public class PartitionAssignmentClaimCostScenarioTests : EFCoreTestBase {
-  /// <summary>The refresh read's ceiling: one keyed read of a one-row table, an index page and a heap page.</summary>
-  private const int KEYED_READ_BUFFERS = 2;
+  /// <summary>The refresh read's ceiling: one keyed read of a one-row table reads one row.</summary>
+  private const int KEYED_READ_ROWS = 1;
   private const int STREAMS = 30;
   private static readonly Guid _claimer = new("00000000-0000-0000-0000-0000000000a1");
 
@@ -47,43 +55,73 @@ public class PartitionAssignmentClaimCostScenarioTests : EFCoreTestBase {
     var report = new PerformanceBaseline.Report(baseline, "Partition assignment, claim cost and refresh read");
     var version = await _fillAsync(conn, instances);
 
-    // The first claim of each kind on a session compiles its statements and warms the catalog for the tables it reads;
-    // a claimer pays that once, so it is not a claim's cost.
-    _ = await _planAsync(conn, null, cancellationToken);
-    _ = await _planAsync(conn, version, cancellationToken);
-    var selfRanked = await _planAsync(conn, null, cancellationToken);
-    var assigned = await _planAsync(conn, version, cancellationToken);
-    QueryPlan refresh;
-    await using (var tx = await conn.BeginTransactionAsync(cancellationToken)) {
-      refresh = await QueryPlan.CaptureAsync(conn, "SELECT * FROM wh_read_partition_assignment()",
-        new Dictionary<string, object?>(), cancellationToken);
-      await tx.RollbackAsync(cancellationToken);
-    }
+    var selfRanked = await _claimAsync(conn, null, cancellationToken);
+    var assigned = await _claimAsync(conn, version, cancellationToken);
+    var refresh = await RowsRead.MeasureAsync(conn, async () => {
+      await using var read = conn.CreateCommand();
+      read.CommandText = "SELECT count(*) FROM wh_read_partition_assignment()";
+      _ = await read.ExecuteScalarAsync(cancellationToken);
+    }, commit: false, cancellationToken);
 
-    report.Measure($"partition_assignment.claim.self_ranked.instances_{instances}.shared_buffers", selfRanked.SharedBuffersVisited, "buffers/claim");
-    report.Measure($"partition_assignment.claim.assigned.instances_{instances}.shared_buffers", assigned.SharedBuffersVisited, "buffers/claim");
-    report.Measure("partition_assignment.refresh_read.shared_buffers", refresh.SharedBuffersVisited, "buffers/read");
+    report.Measure($"partition_assignment.claim.self_ranked.instances_{instances}.rows_read", selfRanked.Total, "rows/claim");
+    report.Measure($"partition_assignment.claim.assigned.instances_{instances}.rows_read", assigned.Total, "rows/claim");
+    report.Measure("partition_assignment.refresh_read.rows_read", refresh.Total, "rows/read");
     var rendered = report.Render();
     Console.WriteLine(rendered);
     Console.WriteLine("Baseline lines for this run:\n" + report.RenderBaselineLines());
 
-    await Assert.That(assigned.SharedBuffersVisited).IsLessThanOrEqualTo(selfRanked.SharedBuffersVisited)
-      .Because($"the fence replaces the ranking query, so presenting the assignment adds no work to a claim. {rendered}");
-    await Assert.That(refresh.SharedBuffersVisited).IsLessThanOrEqualTo(KEYED_READ_BUFFERS)
-      .Because($"the refresh path is one keyed read of a one-row table. {rendered}");
+    await Assert.That(assigned.Total).IsLessThanOrEqualTo(selfRanked.Total)
+      .Because($"the fence replaces the ranking query, so presenting the assignment adds no work to a claim. Assigned: {assigned}; self-ranked: {selfRanked}. {rendered}");
+    await Assert.That(refresh.Total).IsLessThanOrEqualTo(KEYED_READ_ROWS)
+      .Because($"the refresh path is one keyed read of a one-row table: {refresh}. {rendered}");
     await Assert.That(report.Breaches).IsEmpty().Because($"a declared ceiling was passed. {rendered}");
   }
 
-  private static async Task<QueryPlan> _planAsync(
+  /// <summary>
+  /// The claim's measured cost is the claim's alone (#2462): another session invalidating what this session cached about
+  /// the claim's tables (an analyze, as autovacuum runs one on a loaded server) between two measurements of the same
+  /// claim does not move the number. A count that includes catalog reloads, index metapage rereads or the debris an
+  /// earlier rolled-back claim left behind measures the server and the order of the test, not the claim.
+  /// </summary>
+  [Test]
+  [Timeout(600000)]
+  public async Task TheClaimCost_IsNotMovedByAnotherSessionsWork_Async(CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    var version = await _fillAsync(conn, 20);
+
+    var first = await _claimAsync(conn, version, cancellationToken);
+    await using (var other = new NpgsqlConnection(ConnectionString)) {
+      await other.OpenAsync(cancellationToken);
+      await using var analyze = other.CreateCommand();
+      analyze.CommandText = "ANALYZE wh_service_instances; ANALYZE wh_outbox; ANALYZE wh_published_partition_assignment;";
+      _ = await analyze.ExecuteNonQueryAsync(cancellationToken);
+    }
+    var second = await _claimAsync(conn, version, cancellationToken);
+
+    await Assert.That(second.Total).IsEqualTo(first.Total)
+      .Because($"the same claim on the same rows does the same work, whatever another session did in between. First: {first}; second: {second}");
+  }
+
+  /// <summary>
+  /// One claim, rolled back, measured in rows read. The database is vacuumed first, so the claim reads the rows the fill
+  /// left and none an earlier rolled-back claim left dead.
+  /// </summary>
+  private static async Task<RowsReadResult> _claimAsync(
       NpgsqlConnection conn, PartitionAssignmentVersion? version, CancellationToken cancellationToken) {
-    await using var tx = await conn.BeginTransactionAsync(cancellationToken);
-    var plan = await QueryPlan.CaptureAsync(conn, CLAIM, new Dictionary<string, object?> {
-      ["claimer"] = _claimer,
-      ["epoch"] = version?.Epoch,
-      ["revision"] = version?.Revision,
-    }, cancellationToken);
-    await tx.RollbackAsync(cancellationToken);
-    return plan;
+    await using (var vacuum = conn.CreateCommand()) {
+      vacuum.CommandText = "VACUUM";
+      vacuum.CommandTimeout = 300;
+      _ = await vacuum.ExecuteNonQueryAsync(cancellationToken);
+    }
+    return await RowsRead.MeasureAsync(conn, async () => {
+      await using var claim = conn.CreateCommand();
+      claim.CommandText = CLAIM;
+      claim.Parameters.AddWithValue("claimer", _claimer);
+      claim.Parameters.Add(new NpgsqlParameter("epoch", NpgsqlTypes.NpgsqlDbType.Bigint) { Value = (object?)version?.Epoch ?? DBNull.Value });
+      claim.Parameters.Add(new NpgsqlParameter("revision", NpgsqlTypes.NpgsqlDbType.Bigint) { Value = (object?)version?.Revision ?? DBNull.Value });
+      _ = await claim.ExecuteScalarAsync(cancellationToken);
+    }, commit: false, cancellationToken);
   }
 
   /// <summary>Live registrations, the claimer elected and publishing all of them, thirty pending outbox rows.</summary>

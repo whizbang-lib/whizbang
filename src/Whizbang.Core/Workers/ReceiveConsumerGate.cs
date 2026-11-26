@@ -163,11 +163,13 @@ internal static class ReceiveConsumerGate {
       IReceptorRegistry runtimeRegistry,
       IEventMarkerResolver? markerResolver,
       IMessageDiscardPolicy? discardPolicy) =>
-    registry?.HasAnyConsumer(innerMessageType) == true
+    // #2329: a retired type is never kept, even where a registry still names a consumer for it.
+    discardPolicy?.IsRetired(innerMessageType) != true
+    && (registry?.HasAnyConsumer(innerMessageType) == true
       || runtimeRegistry.HasAnyRuntimeReceptors(innerMessageType)
       || CompositeInboxFanout.IsCompositeWireType(innerMessageType, markerResolver)
       // No policy (a host without the worker pipeline) keeps the registry-only decision. The receive gate's topic and
       // subscription are not part of the decision: the policy derives the namespace from the payload type, since a
       // transport's topic can be a queue name.
-      || discardPolicy?.EvaluateReceive(innerMessageType, string.Empty, string.Empty).ShouldDiscard == false;
+      || discardPolicy?.EvaluateReceive(innerMessageType, string.Empty, string.Empty).ShouldDiscard == false);
 }

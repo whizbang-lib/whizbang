@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -144,4 +145,21 @@ public sealed class NoOpReceptor<TMessage> : IReceptor<TMessage> where TMessage 
   /// <inheritdoc />
   public ValueTask HandleAsync(TMessage message, CancellationToken cancellationToken = default)
     => ValueTask.CompletedTask;
+}
+
+/// <summary>
+/// Registers <see cref="LifecycleStageFiringObserver"/> on a test host, as itself (what the lifecycle stage helpers
+/// wait on) and as the host's <see cref="IReceptorFiringObserver"/> (what the receptor invoker reports to), one instance
+/// for both. Every transport suite's host builder calls it (#2581); a helper waiting on a host without it fails at once
+/// with the missing service rather than waiting out its timeout.
+/// </summary>
+/// <docs>testing/lifecycle-synchronization</docs>
+public static class LifecycleStageFiringObserverServiceCollectionExtensions {
+  /// <summary>Registers the observer once, as itself and as the host's receptor firing observer.</summary>
+  public static IServiceCollection AddLifecycleStageFiringObserver(this IServiceCollection services) {
+    ArgumentNullException.ThrowIfNull(services);
+    services.AddSingleton<LifecycleStageFiringObserver>();
+    services.AddSingleton<IReceptorFiringObserver>(sp => sp.GetRequiredService<LifecycleStageFiringObserver>());
+    return services;
+  }
 }

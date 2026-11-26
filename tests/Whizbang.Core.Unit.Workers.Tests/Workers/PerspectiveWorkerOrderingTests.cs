@@ -13,22 +13,22 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// Regression locks for the ordering invariant inside <see cref="PerspectiveWorker"/>'s
-/// drain pipeline. Feeds shuffled events into the static helpers and asserts they emerge
-/// in MessageId-ascending order. See plans/ordered-stream-invariant.md (touchpoints 4 + 5).
+/// Regression locks for the ordering inside <see cref="PerspectiveWorker"/>'s drain pipeline (#2551): a stream's events
+/// are applied in stream order, the version each one carries, never by id. Every case gives the events versions that
+/// run against their ids, so ordering by id would fail it.
 /// </summary>
 public class PerspectiveWorkerOrderingTests {
   private readonly Uuid7IdProvider _idProvider = new();
 
   [Test]
-  public async Task GroupAndDedupe_GivenShuffledEventsForOneStream_ReturnsGroupSortedByMessageIdAscAsync() {
+  public async Task GroupAndDedupe_GivenShuffledEventsForOneStream_ReturnsTheGroupInVersionOrder_NotByIdAsync() {
     var streamId = _idProvider.NewGuid();
-    var e1 = _envelope(_idProvider.NewGuid());
-    var e2 = _envelope(_idProvider.NewGuid());
-    var e3 = _envelope(_idProvider.NewGuid());
+    // Ids ascending e1 < e2 < e3; versions run the other way.
+    var e1 = _envelope(_idProvider.NewGuid(), version: 3);
+    var e2 = _envelope(_idProvider.NewGuid(), version: 2);
+    var e3 = _envelope(_idProvider.NewGuid(), version: 1);
 
-    // Shuffled input
-    var typedEvents = new List<MessageEnvelope<IEvent>> { e3, e1, e2 };
+    var typedEvents = new List<MessageEnvelope<IEvent>> { e1, e3, e2 };
 
     var rawByEventId = new[] {
       _raw(streamId, e1.MessageId.Value),
@@ -40,23 +40,22 @@ public class PerspectiveWorkerOrderingTests {
 
     await Assert.That(result.Count).IsEqualTo(1);
     var group = result[streamId];
-    await Assert.That(group.Count).IsEqualTo(3);
-    await Assert.That(group[0].MessageId).IsEqualTo(e1.MessageId);
-    await Assert.That(group[1].MessageId).IsEqualTo(e2.MessageId);
-    await Assert.That(group[2].MessageId).IsEqualTo(e3.MessageId);
+    await Assert.That(group.Select(e => e.MessageId)).IsEquivalentTo([e3.MessageId, e2.MessageId, e1.MessageId],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("a stream's events are applied by the version each carries, never by id");
   }
 
   [Test]
-  public async Task GroupAndDedupe_TwoStreamsShuffled_EachStreamSortedIndependentlyAsync() {
+  public async Task GroupAndDedupe_TwoStreamsShuffled_EachStreamInItsOwnVersionOrderAsync() {
     var streamA = _idProvider.NewGuid();
     var streamB = _idProvider.NewGuid();
 
-    var a1 = _envelope(_idProvider.NewGuid());
-    var b1 = _envelope(_idProvider.NewGuid());
-    var a2 = _envelope(_idProvider.NewGuid());
-    var b2 = _envelope(_idProvider.NewGuid());
+    var a1 = _envelope(_idProvider.NewGuid(), version: 2);
+    var b1 = _envelope(_idProvider.NewGuid(), version: 2);
+    var a2 = _envelope(_idProvider.NewGuid(), version: 1);
+    var b2 = _envelope(_idProvider.NewGuid(), version: 1);
 
-    var typedEvents = new List<MessageEnvelope<IEvent>> { b2, a2, b1, a1 };
+    var typedEvents = new List<MessageEnvelope<IEvent>> { a1, b1, a2, b2 };
 
     var rawByEventId = new[] {
       _raw(streamA, a1.MessageId.Value),
@@ -68,10 +67,25 @@ public class PerspectiveWorkerOrderingTests {
     var result = PerspectiveWorker._groupAndDedupeDrainModeEventsByStream(typedEvents, rawByEventId);
 
     await Assert.That(result.Count).IsEqualTo(2);
-    await Assert.That(result[streamA][0].MessageId).IsEqualTo(a1.MessageId);
-    await Assert.That(result[streamA][1].MessageId).IsEqualTo(a2.MessageId);
-    await Assert.That(result[streamB][0].MessageId).IsEqualTo(b1.MessageId);
-    await Assert.That(result[streamB][1].MessageId).IsEqualTo(b2.MessageId);
+    await Assert.That(result[streamA].Select(e => e.MessageId)).IsEquivalentTo([a2.MessageId, a1.MessageId],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(result[streamB].Select(e => e.MessageId)).IsEquivalentTo([b2.MessageId, b1.MessageId],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  [Test]
+  public async Task GroupAndDedupe_EventsWithoutAVersion_KeepTheOrderTheReadReturnedAsync() {
+    var streamId = _idProvider.NewGuid();
+    var e1 = _envelope(_idProvider.NewGuid(), version: null);
+    var e2 = _envelope(_idProvider.NewGuid(), version: null);
+
+    var rawByEventId = new[] { _raw(streamId, e1.MessageId.Value), _raw(streamId, e2.MessageId.Value) }.ToLookup(r => r.EventId);
+
+    var result = PerspectiveWorker._groupAndDedupeDrainModeEventsByStream([e2, e1], rawByEventId);
+
+    await Assert.That(result[streamId].Select(e => e.MessageId)).IsEquivalentTo([e2.MessageId, e1.MessageId],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("with no version to order by, the read's own order (the stream order the SQL returned) stands; the ids decide nothing");
   }
 
   [Test]
@@ -85,8 +99,8 @@ public class PerspectiveWorkerOrderingTests {
 
   // ===== helpers =====
 
-  private static MessageEnvelope<IEvent> _envelope(Guid messageId)
-    => new(MessageId.From(messageId), new TestEvent(), []);
+  private static MessageEnvelope<IEvent> _envelope(Guid messageId, long? version)
+    => new(MessageId.From(messageId), new TestEvent(), []) { LocalStreamVersion = version };
 
   private static StreamEventData _raw(Guid streamId, Guid eventId) => new() {
     StreamId = streamId,

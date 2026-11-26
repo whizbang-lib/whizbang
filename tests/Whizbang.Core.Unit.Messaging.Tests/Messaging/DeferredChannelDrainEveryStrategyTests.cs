@@ -129,7 +129,7 @@ public sealed class DeferredChannelDrainEveryStrategyTests {
   }
 
   private static OutboxMessage _outboxMessage() {
-    var messageId = Guid.NewGuid();
+    var messageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
     return new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",

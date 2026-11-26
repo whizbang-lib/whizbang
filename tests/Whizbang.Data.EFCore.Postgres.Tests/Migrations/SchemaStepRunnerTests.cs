@@ -27,7 +27,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <docs>operations/infrastructure/migrations</docs>
 [Category("Integration")]
 [Category("Shard3")]
-public sealed class SchemaStepRunnerTests : IAsyncDisposable {
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable", Justification = "#1954: the [After(Test)] hook disposes them, the fixture's one teardown; a disposable fixture would be disposed by TUnit a second time.")]
+public sealed class SchemaStepRunnerTests {
   private const string SCHEMA = "public";
   private PerTestDatabase _database;
   private MinimalDbContext _context = null!;
@@ -49,8 +50,6 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
     await _context.Database.OpenConnectionAsync();
     _lockId = Random.Shared.NextInt64();
   }
-
-  public async ValueTask DisposeAsync() => await _context.DisposeAsync();
 
   [After(Test)]
   public async Task TeardownAsync() {

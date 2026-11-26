@@ -32,7 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <docs>operations/infrastructure/migrations</docs>
 [Category("Integration")]
 [Category("Shard1")]
-public class CanonicalTemporalFunctionTests : IAsyncDisposable {
+public class CanonicalTemporalFunctionTests {
   private const string MIGRATION = "153_PerspectiveForms";
 
   // The kinds as the function takes them; pinned to the enum in StoredTemporalKindTests.
@@ -66,11 +66,10 @@ public class CanonicalTemporalFunctionTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_databaseName is not null) {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
-    GC.SuppressFinalize(this);
   }
 
   private async Task _executeAsync(string sql) {

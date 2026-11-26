@@ -37,7 +37,8 @@ namespace Whizbang.Transports.RabbitMQ.Integration.Tests;
 /// </summary>
 [Category("Integration")]
 [NotInParallel("RabbitMQ")]
-public sealed class RabbitMQPoisonQuarantineIntegrationTests : IAsyncDisposable {
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable", Justification = "#2468: the [After(Test)] hook disposes them, the fixture's one teardown; a disposable fixture would be disposed by TUnit a second time.")]
+public sealed class RabbitMQPoisonQuarantineIntegrationTests {
   private IConnection? _connection;
   private RabbitMQChannelPool? _channelPool;
 
@@ -285,11 +286,6 @@ public sealed class RabbitMQPoisonQuarantineIntegrationTests : IAsyncDisposable 
       }
     ]
   };
-
-  public async ValueTask DisposeAsync() {
-    _channelPool?.Dispose();
-    if (_connection != null) { await _connection.CloseAsync(); _connection.Dispose(); }
-  }
 
   #endregion
 }

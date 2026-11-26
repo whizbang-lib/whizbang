@@ -137,9 +137,17 @@ This updates `src/assets/code-docs-map.json` with the latest mappings.
 
 ### Step 4: Validate Links
 
-Ensure all `<docs>` tags point to valid documentation:
+Ensure all `<docs>` tags point to valid documentation. CI enforces it: the "Test · Pipeline scripts" job
+runs `.github/scripts/Test-DocsTagTarget.ps1`, which clones the docs site's `develop` branch and fails on
+a tag whose page or anchor does not exist there (#2495). Targets that already dangled are listed in
+`.github/scripts/docs-tag-target-baseline.txt`, which only shrinks: when you write a missing page or
+heading, delete its entry in the same change, or the check fails on the stale entry. Land the docs page
+first, then the tag that points at it.
 
 ```bash
+# The CI check, against a local docs checkout (omit -DocsRoot to clone develop)
+pwsh .github/scripts/Test-DocsTagTarget.ps1 -DocsRoot ../whizbang-lib.github.io
+
 # Using MCP tool
 mcp__whizbang-docs__validate-doc-links()
 

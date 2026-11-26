@@ -110,6 +110,11 @@ public class EFCorePostgresPerspectiveStore<TModel>(
     if (!PerspectiveTableRedirect.IsActive || PerspectiveRowVersionSql.RedirectedTable<TModel>(_context) is not { } shadow) {
       return false;
     }
+    // A row a staging load holds, or never wrote, is not in the table: dropping it from the load is the purge (#2248).
+    if (PerspectiveStagingLoad.For(shadow) is { } load && load.StateOf(id) != PerspectiveStagedRowState.Loaded) {
+      load.Unstage(id);
+      return true;
+    }
     var sql = "DELETE FROM " + shadow + " WHERE id = @id";
     await _context.Database.ExecuteSqlRawAsync(sql, [new Npgsql.NpgsqlParameter(nameof(id), id)], cancellationToken);
     return true;
@@ -140,7 +145,9 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   /// </remarks>
   private async Task<TModel?> _loadAsync(Guid id, CancellationToken cancellationToken) {
     if (PerspectiveTableRedirect.IsActive && PerspectiveRowVersionSql.RedirectedTable<TModel>(_context) is { } shadow) {
-      return (await _readRedirectedAsync(shadow, id, cancellationToken)).Model;
+      return await _absentFromStagingAsync(shadow, id, cancellationToken)
+        ? null
+        : (await _readRedirectedAsync(shadow, id, cancellationToken)).Model;
     }
     if (!SplitPhysicalFieldRegistry.TryGet<TModel>(out var split)) {
       var document = await _readRowAsync(id, tracked: false, cancellationToken);
@@ -201,7 +208,9 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   /// <inheritdoc/>
   public async Task<PerspectiveMetadata?> GetMetadataByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) {
     if (PerspectiveTableRedirect.IsActive && PerspectiveRowVersionSql.RedirectedTable<TModel>(_context) is { } shadow) {
-      return (await _readRedirectedAsync(shadow, streamId, cancellationToken)).Metadata;
+      return await _absentFromStagingAsync(shadow, streamId, cancellationToken)
+        ? null
+        : (await _readRedirectedAsync(shadow, streamId, cancellationToken)).Metadata;
     }
     var row = await _context.Set<PerspectiveRow<TModel>>()
         .AsNoTracking()
@@ -220,11 +229,34 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRowVersionIntegrationTests.cs:ReadForApplyAsync_ReportsAbsence_ThenTheRowsVersionAndMetadata_AndSeesACollectiveAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRowVersionIntegrationTests.cs:Upsert_WithACheckedVersion_OnANonPostgresProvider_IsNotCheckedAsync</tests>
-  public Task<PerspectiveApplyRead> ReadForApplyAsync(Guid streamId, CancellationToken cancellationToken = default) =>
-    PerspectiveRowVersionSql.Supports(_context)
-      ? PerspectiveRowVersionSql.ReadForApplyAsync(
-          _context, PerspectiveRowVersionSql.QualifiedTable<TModel>(_context), streamId, cancellationToken)
-      : Task.FromResult(PerspectiveApplyRead.Unchecked);
+  public async Task<PerspectiveApplyRead> ReadForApplyAsync(Guid streamId, CancellationToken cancellationToken = default) {
+    if (!PerspectiveRowVersionSql.Supports(_context)) {
+      return PerspectiveApplyRead.Unchecked;
+    }
+    if (PerspectiveTableRedirect.IsActive && PerspectiveRowVersionSql.RedirectedTable<TModel>(_context) is { } shadow
+        && await _absentFromStagingAsync(shadow, streamId, cancellationToken)) {
+      return new PerspectiveApplyRead(PerspectiveRowVersion.Absent, null);
+    }
+    return await PerspectiveRowVersionSql.ReadForApplyAsync(
+      _context, PerspectiveRowVersionSql.QualifiedTable<TModel>(_context), streamId, cancellationToken);
+  }
+
+  /// <summary>
+  /// Whether a staging load writes <paramref name="shadow"/> and has not written the row (#2248): the table is empty
+  /// but for what the load wrote, so the row is absent and no read is sent. A row the load holds is loaded first and
+  /// read from the table like any other.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/BlueGreenRebuildIntegrationTests.Staging.cs</tests>
+  private static async Task<bool> _absentFromStagingAsync(string shadow, Guid id, CancellationToken cancellationToken) {
+    if (PerspectiveStagingLoad.For(shadow) is not { } load) {
+      return false;
+    }
+    var state = load.StateOf(id);
+    if (state == PerspectiveStagedRowState.Staged) {
+      await load.FlushAsync(cancellationToken);
+    }
+    return state == PerspectiveStagedRowState.Absent;
+  }
 
   /// <inheritdoc/>
   /// <remarks>
@@ -239,8 +271,11 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   public async Task<IReadOnlyDictionary<Guid, PerspectiveStoredRow<TModel>>?> ReadForApplyManyAsync(
       IReadOnlyCollection<Guid> streamIds, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(streamIds);
-    if (!PerspectiveRowVersionSql.Supports(_context) || PerspectiveTableRedirect.IsActive) {
+    if (!PerspectiveRowVersionSql.Supports(_context)) {
       return null;
+    }
+    if (PerspectiveTableRedirect.IsActive) {
+      return _absentFromStaging(streamIds);
     }
     var rows = new Dictionary<Guid, PerspectiveStoredRow<TModel>>(streamIds.Count);
     var ids = streamIds.Distinct().ToArray();
@@ -259,6 +294,19 @@ public class EFCorePostgresPerspectiveStore<TModel>(
     }
     return rows;
   }
+
+  /// <summary>
+  /// The batched read of rows a blue-green rebuild's staging load answers without a statement (#2513): every row absent
+  /// when the load has written none of them, as the per-stream read answers each. Null, so each row is read on its own,
+  /// when there is no staging load (a catch-up pass) or it holds one of the rows.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/BlueGreenRebuildIntegrationTests.BatchedReads.cs:Rebuild_SendsTheSameStatementsForTheSameBatches_WhateverTheirStreamCountAsync</tests>
+  private Dictionary<Guid, PerspectiveStoredRow<TModel>>? _absentFromStaging(IReadOnlyCollection<Guid> streamIds) =>
+    PerspectiveRowVersionSql.RedirectedTable<TModel>(_context) is { } shadow
+      && PerspectiveStagingLoad.For(shadow) is { } load
+      && streamIds.All(id => load.StateOf(id) == PerspectiveStagedRowState.Absent)
+        ? []
+        : null;
 
   /// <summary>
   /// Reads the models of many rows in one query, each as <see cref="_loadAsync"/> reads one.

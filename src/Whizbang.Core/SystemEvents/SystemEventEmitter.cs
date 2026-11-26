@@ -208,26 +208,13 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
 
     // Serialize command to JsonElement in AOT-compatible way
     var commandJson = AuditJsonSerializer.SerializeToJsonElement(command, _jsonOptions, _logger);
-    // A command that carries id lists of unbounded length keeps their lengths in the audit record, not the lists (#1525)
-    if (command is Whizbang.Core.Audit.IBoundedCommandAudit bounded) {
-      commandJson = AuditBodyProjection.ListLengths(commandJson, bounded.ListsAuditedAsLengths());
-    }
-
-    // Create the audit event with generic scope
-    var auditEvent = new CommandAudited {
-      Id = TrackedGuid.New(),
-      CommandType = TypeNameFormatter.SimpleName(typeof(TCommand)),
-      CommandBody = commandJson,
-      Timestamp = DateTimeOffset.UtcNow,
-      ReceptorName = receptorName,
-      ResponseType = TypeNameFormatter.SimpleName(typeof(TResponse)),
-      // Store individual properties for backward compatibility
-      TenantId = scope.TryGetValue(SCOPE_TENANT_ID, out var t) ? t : null,
-      UserId = context?.UserId,
-      CorrelationId = context?.CorrelationId.ToString(),
-      // Store full scope for generic access
-      Scope = scope.Count > 0 ? scope : null
-    };
+    var auditEvent = CommandAuditRecord.Create(new CommandAuditRecord.Parts(
+      command, commandJson, TypeNameFormatter.SimpleName(typeof(TCommand)), receptorName,
+      TypeNameFormatter.SimpleName(typeof(TResponse)), scope,
+      TenantId: scope.TryGetValue(SCOPE_TENANT_ID, out var t) ? t : null,
+      UserId: context?.UserId,
+      CorrelationId: context?.CorrelationId.ToString(),
+      CausationId: null));
 
     // Emit to the tenant's audit ledger (SystemEventStreams.StreamFor routes it)
     await EmitAsync(auditEvent, cancellationToken);

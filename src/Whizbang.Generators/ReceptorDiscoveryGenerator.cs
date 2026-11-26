@@ -56,7 +56,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string INDENT_6_CLOSE_BRACE = "      }";
   private const string BOOL_TRUE_LITERAL = "true";
   private const string BOOL_FALSE_LITERAL = "false";
-  private const string MESSAGE_ID_FROM_EVENT_ID = "        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();";
+  // The id a cascade's copy is written under: the one the dispatcher gave, or the one it creates, derived inside a
+  // handling (#2543). Generated code never mints a message id of its own.
+  private const string MESSAGE_ID_FROM_EVENT_ID = "        var messageId = CascadeMessageIdFor(message, sourceEnvelope, eventId);";
 
   private const string PLACEHOLDER_INDEX = "__INDEX__";
   private const string PLACEHOLDER_RECEPTOR_NAME = "__RECEPTOR_NAME__";
@@ -379,62 +381,6 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private static bool _isPolymorphicType(ITypeSymbol type) =>
       type.TypeKind == TypeKind.Interface ||
       (type.TypeKind == TypeKind.Class && !type.IsSealed);
-
-  /// <summary>
-  /// Finds all concrete (non-abstract) types in the compilation that derive from or implement
-  /// the given type. Used for polymorphic receptor expansion.
-  /// </summary>
-  internal static System.Collections.Generic.List<string> FindConcreteSubtypes(
-      Compilation compilation, string baseTypeFQN) {
-    var baseSymbol = compilation.GetTypeByMetadataName(
-        baseTypeFQN.Replace("global::", ""));
-    if (baseSymbol is null) {
-      return [];
-    }
-
-    var result = new System.Collections.Generic.List<string>();
-    _walkNamespaceForSubtypes(compilation.GlobalNamespace, baseSymbol, result);
-    return result;
-  }
-
-  private static void _walkNamespaceForSubtypes(
-      INamespaceSymbol ns, INamedTypeSymbol target, System.Collections.Generic.List<string> result) {
-    foreach (var type in ns.GetTypeMembers()) {
-      _checkTypeAndNestedTypes(type, target, result);
-    }
-    foreach (var childNs in ns.GetNamespaceMembers()) {
-      _walkNamespaceForSubtypes(childNs, target, result);
-    }
-  }
-
-  private static void _checkTypeAndNestedTypes(
-      INamedTypeSymbol type, INamedTypeSymbol target, System.Collections.Generic.List<string> result) {
-    if (!type.IsAbstract && type.TypeKind == TypeKind.Class && _isSubtypeOf(type, target)) {
-      result.Add(TypeNameHelper.GetFullyQualifiedName(type));
-    }
-    // Recurse into nested types (e.g., events nested inside static contract classes)
-    foreach (var nested in type.GetTypeMembers()) {
-      _checkTypeAndNestedTypes(nested, target, result);
-    }
-  }
-
-  /// <summary>
-  /// Checks if <paramref name="type"/> implements or inherits from <paramref name="target"/>.
-  /// </summary>
-  private static bool _isSubtypeOf(INamedTypeSymbol type, INamedTypeSymbol target) {
-    if (target.TypeKind == TypeKind.Interface) {
-      return type.AllInterfaces.Contains(target, SymbolEqualityComparer.Default);
-    }
-
-    var current = type.BaseType;
-    while (current is not null) {
-      if (SymbolEqualityComparer.Default.Equals(current, target)) {
-        return true;
-      }
-      current = current.BaseType;
-    }
-    return false;
-  }
 
   /// <summary>
   /// Extracts lifecycle stages from [FireAt] attributes on a receptor class.
@@ -1704,7 +1650,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Generate concrete type cascades (exact type matching)
     foreach (var eventType in concreteTypes) {
       sb.AppendLine($"      if (messageType == typeof({eventType})) {{");
-      // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
+      // CRITICAL: Use passed eventId for sync tracking consistency, or the dispatcher's id if not provided
       // This ensures the same ID is used for tracking (singleton tracker) AND storage
       sb.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
       // Through object: a reply type that is sealed and not a message cannot be cast from IMessage (CS0030); such a
@@ -1718,7 +1664,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Uses PublishToOutboxDynamicAsync which serializes using the runtime type, not the interface type
     foreach (var eventType in interfaceTypes) {
       sb.AppendLine($"      if (message is {eventType}) {{");
-      // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
+      // CRITICAL: Use passed eventId for sync tracking consistency, or the dispatcher's id if not provided
       sb.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
       sb.AppendLine($"        return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope{eventStoreOnlyParam});");
       sb.AppendLine(INDENT_6_CLOSE_BRACE);
@@ -2203,13 +2149,16 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 /// <param name="Subtypes">The concrete subtypes of each polymorphic message type a receptor handles.</param>
 internal sealed record ReceptorCompilationFacts(string? AssemblyName, EquatableArray<PolymorphicMessageSubtypes> Subtypes) {
   /// <summary>Reads the facts for <paramref name="receptors"/> from <paramref name="compilation"/>.</summary>
-  public static ReceptorCompilationFacts From(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) =>
-    new(compilation.AssemblyName, [.. receptors
+  public static ReceptorCompilationFacts From(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
+    var messageTypes = receptors
         .Where(static r => r.IsPolymorphicMessageType)
         .Select(static r => r.MessageType)
         .Distinct()
-        .Select(messageType => new PolymorphicMessageSubtypes(
-          messageType, [.. ReceptorDiscoveryGenerator.FindConcreteSubtypes(compilation, messageType)]))]);
+        .ToList();
+    var index = ConcreteSubtypeIndex.Build(compilation, messageTypes);
+    return new(compilation.AssemblyName, [.. messageTypes
+        .Select(messageType => new PolymorphicMessageSubtypes(messageType, [.. index.SubtypesOf(messageType)]))]);
+  }
 
   /// <summary>The concrete subtypes of <paramref name="messageType"/>, one of the polymorphic types a receptor handles.</summary>
   public EquatableArray<string> ConcreteSubtypesOf(string messageType) =>

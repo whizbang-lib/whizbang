@@ -18,7 +18,7 @@ namespace Whizbang.Core.Offloads;
 /// Provider impls live in their own projects (parallel to the
 /// <c>Whizbang.Transports.*</c> pattern) so consumers reference only the
 /// providers they use. Built-in: <c>Whizbang.Offloads.InMemory</c> (dev/test),
-/// <c>Whizbang.Offloads.AzureBlob</c> (production, Azurite + live).
+/// <c>Whizbang.Storage.AzureBlob</c> (production, Azurite + live).
 /// </para>
 /// <para>
 /// All three operations accept an optional per-call options record. Providers

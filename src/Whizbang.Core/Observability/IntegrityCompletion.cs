@@ -4,7 +4,7 @@
 namespace Whizbang.Core.Observability;
 
 /// <summary>
-/// The formulas behind the derived completion gauges (#2261): <c>verified_percent</c>, <c>repair_progress_percent</c>
+/// The formulas behind the derived completion gauges (#2261): <c>verified_percent</c>, <c>repair_close_ratio_percent</c>
 /// and <c>backlog_eta_seconds</c>. Each is a calculation over base meters, documented with the same formula, so a team
 /// that drops the derived gauges from its telemetry feed computes the same numbers from the base meters itself.
 /// </summary>
@@ -54,12 +54,12 @@ public static class IntegrityCompletion {
     return new IntegrityVerifiedReading { Reported = true, Origins = origins, AllOrigins = _weighted(origins.Count, verified, committed) };
   }
 
-  /// <summary>Buckets closed as a percentage of buckets opened over a window: <c>100 * closed / opened</c>. Above 100
-  /// means the backlog shrank.</summary>
+  /// <summary>Buckets closed as a percentage of buckets opened over a window: <c>100 * closed / opened</c>. A ratio of
+  /// two rates, not progress (#2317): above 100 the backlog shrank, 100 means it held flat, below 100 it grew.</summary>
   /// <param name="opened">Buckets opened in the window.</param>
   /// <param name="closed">Buckets closed in the window.</param>
   /// <returns>The percentage; null when nothing opened.</returns>
-  public static double? RepairProgressPercent(long opened, long closed) =>
+  public static double? RepairCloseRatioPercent(long opened, long closed) =>
     opened <= 0 ? null : HUNDRED * closed / opened;
 
   /// <summary>

@@ -47,7 +47,7 @@ public class MessageDiscardPolicyTests {
     var registry = new TestRegistry { Consumed = { CONSUMED_TYPE } };
     var logger = new RecordingLogger<MessageDiscardPolicy>();
     var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests");
-    var policy = new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    var policy = new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance), retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
     return (policy, registry, logger, meter);
   }
 
@@ -71,12 +71,61 @@ public class MessageDiscardPolicyTests {
     await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.None);
   }
 
+  /// <summary>
+  /// #2329: a retired type is discarded at receive whatever else would keep it (a consumer, an absorbed namespace), with
+  /// its own reason, and logged at Information once per type: an origin still sending it is a rollout not yet finished.
+  /// </summary>
+  [Test]
+  public async Task EvaluateReceive_ARetiredType_IsDiscardedAsRetired_EvenWhenConsumedOrAbsorbedAsync() {
+    using var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests.Retired");
+    var routing = new RoutingOptions();
+    routing.AbsorbNamespaces("Test.Contracts");
+    var logger = new RecordingLogger<MessageDiscardPolicy>();
+    var policy = new MessageDiscardPolicy(registry: new TestRegistry { Consumed = { CONSUMED_TYPE } }, logger: logger, meter: meter,
+      routingOptions: Options.Create(routing), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      retired: Options.Create(new RetiredEventTypesOptions { Names = { CONSUMED_TYPE } }), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
+
+    var decision = policy.EvaluateReceive(CONSUMED_TYPE + ", Test.Contracts", topic: "t", subscription: "s");
+    policy.RecordDiscard(MessageDiscardGate.Receive, decision, CONSUMED_TYPE);
+    policy.RecordDiscard(MessageDiscardGate.Receive, decision, CONSUMED_TYPE);
+
+    await Assert.That(decision.ShouldDiscard).IsTrue();
+    await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.RetiredType);
+    await Assert.That(policy.IsRetired(CONSUMED_TYPE)).IsTrue();
+    await Assert.That(policy.EvaluateReceive(UNCONSUMED_TYPE, "t", "s").ShouldDiscard).IsFalse()
+      .Because("an unconsumed type in an absorbed namespace is still kept; only the retired type is turned away");
+    await Assert.That(logger.Entries.Select(e => e.Level)).IsEquivalentTo([LogLevel.Information, LogLevel.Debug])
+      .Because("the first sighting of a retired type is surfaced, the rest are routine");
+    await Assert.That(_newPolicy().Policy.IsRetired(CONSUMED_TYPE)).IsFalse()
+      .Because("a policy built without the retired setting retires nothing");
+  }
+
+  /// <summary>
+  /// Owner decision (2026-11-20): a retired name this service still declares is not retired here, so its events still
+  /// reach the readers that apply them.
+  /// </summary>
+  [Test]
+  public async Task EvaluateReceive_ARetiredNameThisServiceStillDeclares_IsNotTurnedAwayAsync() {
+    using var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests.RetiredButDeclared");
+    var catalog = new DeclaringCatalog(CONSUMED_TYPE);
+    var policy = new MessageDiscardPolicy(registry: new TestRegistry { Consumed = { CONSUMED_TYPE } }, logger: new RecordingLogger<MessageDiscardPolicy>(),
+      meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      retired: Options.Create(new RetiredEventTypesOptions { Names = { CONSUMED_TYPE } }), catalog: catalog);
+
+    await Assert.That(policy.IsRetired(CONSUMED_TYPE)).IsFalse();
+    await Assert.That(policy.EvaluateReceive(CONSUMED_TYPE, "t", "s").ShouldDiscard).IsFalse();
+  }
+
+  private sealed class DeclaringCatalog(string clrTypeName) : IMessageTypeCatalog {
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() => [new(typeof(object), clrTypeName, "event", null)];
+  }
+
   private static MessageDiscardPolicy _newPolicyWithAbsorb(Meter meter, params string[] absorb) {
     var routing = new RoutingOptions();
     routing.AbsorbNamespaces(absorb);
     var registry = new TestRegistry(); // UNCONSUMED_TYPE has NO consumer
     var logger = new RecordingLogger<MessageDiscardPolicy>();
-    return new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(routing), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    return new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(routing), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance), retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
   }
 
   [Test]
@@ -251,7 +300,7 @@ public class MessageDiscardPolicyTests {
     var registry = new TestRegistry(); // composite type has NO consumer — faithful to every service
     var logger = new RecordingLogger<MessageDiscardPolicy>();
     var markerResolver = new EventMarkerResolver(new Whizbang.Core.Generated.GeneratedMessageTypeCatalog());
-    return new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: markerResolver);
+    return new MessageDiscardPolicy(registry: registry, logger: logger, meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: markerResolver, retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
   }
 
   [Test]
@@ -365,7 +414,7 @@ public class MessageDiscardPolicyTests {
     listener.Start();
 
     var registry = new TestRegistry { Consumed = { CONSUMED_TYPE } };
-    var policy = new MessageDiscardPolicy(registry: registry, logger: new RecordingLogger<MessageDiscardPolicy>(), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    var policy = new MessageDiscardPolicy(registry: registry, logger: new RecordingLogger<MessageDiscardPolicy>(), meter: meter, routingOptions: Options.Create(new RoutingOptions()), markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance), retired: global::Microsoft.Extensions.Options.Options.Create(new global::Whizbang.Core.Messaging.RetiredEventTypesOptions()), catalog: global::Whizbang.Core.NullMessageTypeCatalog.Instance);
     var decision = new MessageDiscardDecision(
       ShouldDiscard: true, MessageDiscardReason.RegistryChanged, Detail: "no consumer registered now");
 
@@ -403,5 +452,21 @@ public class MessageDiscardPolicyTests {
     policy.RecordDiscard(MessageDiscardGate.Receive, keep, CONSUMED_TYPE);
 
     await Assert.That(logger.Entries).IsEmpty();
+  }
+  /// <summary>A policy written before #2329 that does not answer IsRetired: the interface's default retires nothing.</summary>
+  private sealed class PolicyWithoutRetirement : IMessageDiscardPolicy {
+    public MessageDiscardDecision EvaluateReceive(string payloadClrType, string topic, string subscription) => default;
+    public MessageDiscardDecision EvaluateInbox(string payloadClrType) => default;
+    public MessageDiscardDecision EvaluateOutbox(string payloadClrType) => default;
+    public void RecordDiscard(MessageDiscardGate gate, MessageDiscardDecision decision, string payloadClrType,
+      IReadOnlyDictionary<string, object?>? additionalTags = null) { }
+  }
+
+  [Test]
+  public async Task IsRetired_OnAPolicyThatDoesNotAnswerIt_RetiresNothingAsync() {
+    IMessageDiscardPolicy policy = new PolicyWithoutRetirement();
+
+    await Assert.That(policy.IsRetired(CONSUMED_TYPE)).IsFalse()
+      .Because("a custom policy written before retirement existed must keep every type it kept before");
   }
 }

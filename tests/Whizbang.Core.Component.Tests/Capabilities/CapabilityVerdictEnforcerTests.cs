@@ -26,12 +26,12 @@ public class CapabilityVerdictEnforcerTests {
   private static readonly CapabilityRequirement _requirement =
     new(new CapabilityId("broker", "x"), "Delayed delivery", "W:Delay:Mode", "Delayed", "Off");
 
-  private static CapabilityVerdict _verdict(CapabilityState state) {
+  private static CapabilityVerdict _verdict(CapabilityState state, bool probed = true) {
     var status = new CapabilityStatus(
       new CapabilityDescriptor(new CapabilityId("broker", "x"), "a purpose", [], false, [], new Dictionary<CapabilityState, string>()),
       "vhost-a", state, null, null, null);
     return CapabilityVerdict.Evaluate([status],
-      [new ActiveCapabilityRequirement(_requirement, _requirement.Key, "Delayed", CapabilityActivation.Explicit)]);
+      [new ActiveCapabilityRequirement(_requirement, _requirement.Key, "Delayed", CapabilityActivation.Explicit)], probed);
   }
 
   private static (CapabilityVerdictEnforcer Enforcer, CapabilityRegistry Registry, RecordingInstanceExit Exit) _enforcer() {
@@ -59,12 +59,12 @@ public class CapabilityVerdictEnforcerTests {
   [Test]
   public async Task AVerdictWithoutFailures_LeavesTheHostRunningAsync() {
     var (enforcer, registry, exit) = _enforcer();
-    registry.PublishVerdict(_verdict(CapabilityState.Unknown));
+    registry.PublishVerdict(_verdict(CapabilityState.Unknown, probed: false));
 
     await enforcer.StartAsync(CancellationToken.None);
     await enforcer.Watching;
 
-    await Assert.That(exit.Requests).IsEmpty().Because("an explicit requirement nothing could check warns; it does not stop start");
+    await Assert.That(exit.Requests).IsEmpty().Because("an explicit requirement nothing probed warns; it does not stop start");
   }
 
   [Test]

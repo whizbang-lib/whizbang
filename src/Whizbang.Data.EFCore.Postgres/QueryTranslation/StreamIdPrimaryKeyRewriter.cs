@@ -47,11 +47,20 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// to those rows. The primary key is never null, so a comparison with a null value, or a set that can hold
 /// null, is not answered by it: those keep finding the rows whose document has no stream id.
 /// </para>
+/// <para>
+/// <b>Reads of the stream id (#2423).</b> Where the stream id is read rather than tested, in a <c>Select</c>, a sort
+/// key, a grouping key or selector, or a <c>Min</c> or <c>Max</c>, <c>r.Data.P</c> is read as <c>r.Id</c>, so a query
+/// whose other columns are promoted reads no document at all. The runner writes a row at its stream id and seeds the
+/// model's <c>[StreamId]</c> from it, so the two are the same value, and a read needs no null guard: a row always has
+/// an id. A filter inside such a read (a <c>Where</c>, <c>Any</c> or <c>Count</c> over a group's members) is left
+/// alone, as a top-level filter is, so a filter never finds a row by its id that it would not find by its document.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields#stream-id-filters</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/StreamIdPrimaryKeySqlTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/PhysicalFieldGroupingSqlTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/GroupedRowsRewriterTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamIdPrimaryKeyIntegrationTests.cs</tests>
 [SuppressMessage("AOT", "IL2060:MakeGenericMethod can break functionality when AOT compiling", Justification = "EF Core data layer inherently uses reflection for query translation")]
 [SuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "EF Core data layer inherently uses reflection for query translation")]
 [SuppressMessage("AOT", "IL2026:RequiresUnreferencedCode", Justification = "Rebuilds the query's own Queryable calls and reads PerspectiveRow.Id, which EF Core maps and keeps; EF Core query translation is reflection-based throughout")]
@@ -72,6 +81,15 @@ public sealed class StreamIdPrimaryKeyRewriter : ExpressionVisitor {
   private static readonly HashSet<string> _foldedOrAggregated = new(StringComparer.Ordinal) {
     nameof(Queryable.Select), nameof(Queryable.Sum), nameof(Queryable.Min), nameof(Queryable.Max), nameof(Queryable.Average),
     nameof(Queryable.Count), nameof(Queryable.LongCount), nameof(Queryable.Any), nameof(Queryable.All),
+  };
+
+  /// <summary>
+  /// The operators whose lambdas read a value from the row rather than test it: a read of the stream id in one of them
+  /// reads the row's id (#2423).
+  /// </summary>
+  private static readonly HashSet<string> _reads = new(StringComparer.Ordinal) {
+    nameof(Queryable.Select), nameof(Queryable.OrderBy), nameof(Queryable.OrderByDescending), nameof(Queryable.ThenBy),
+    nameof(Queryable.ThenByDescending), nameof(Queryable.GroupBy), nameof(Queryable.Min), nameof(Queryable.Max),
   };
 
   private static readonly MethodInfo _groupByKey = _groupBy(parameters: 2, lastFuncArity: 2);
@@ -98,7 +116,7 @@ public sealed class StreamIdPrimaryKeyRewriter : ExpressionVisitor {
     // moved beneath the projection now sits on an IQueryable, not an IOrderedQueryable, and could not be
     // rebuilt where it stands, only moved beneath the projection with it.
     if (_hoisted(node.Method, arguments) is { } hoisted) {
-      return hoisted;
+      return _hoistedReadingRowIds(hoisted);
     }
 
     // A rewrite beneath that changed a type this operator depends on (an ordered source under a ThenBy that
@@ -108,8 +126,35 @@ public sealed class StreamIdPrimaryKeyRewriter : ExpressionVisitor {
       return node;
     }
 
-    var call = arguments.SequenceEqual(node.Arguments) ? node : node.Update(null, arguments);
+    var call = _readingRowIds(arguments.SequenceEqual(node.Arguments) ? node : node.Update(null, arguments));
     return _filterOf(call) is { } predicate ? _withPrimaryKey(call, predicate) : call;
+  }
+
+  /// <summary>
+  /// A hoisted operator with its reads of the stream id, and those of the operator it built beneath the identity
+  /// projection, reading the row's id. The rows beneath were rewritten already, and a second pass changes nothing.
+  /// </summary>
+  private static MethodCallExpression _hoistedReadingRowIds(MethodCallExpression hoisted) =>
+    _readingRowIds(hoisted.Arguments[0] is MethodCallExpression source
+      ? hoisted.Update(null, [_readingRowIds(source), .. hoisted.Arguments.Skip(1)])
+      : hoisted);
+
+  /// <summary>
+  /// A <c>Queryable</c> read operator (<see cref="_reads"/>) with every read of a row's stream id in its lambdas read as
+  /// the row's id (#2423); any other call unchanged.
+  /// </summary>
+  private static MethodCallExpression _readingRowIds(MethodCallExpression call) {
+    // Only Queryable calls reach here: the visitor passes over any other, and a hoisted call is built from them.
+    if (!_reads.Contains(call.Method.Name)) {
+      return call;
+    }
+
+    var arguments = call.Arguments.Select(argument => _unquote(argument) is LambdaExpression lambda
+        && RowIdReader.Instance.Visit(lambda.Body) is var body
+        && body != lambda.Body
+      ? Expression.Quote(Expression.Lambda(lambda.Type, body, lambda.Parameters))
+      : argument).ToArray();
+    return arguments.SequenceEqual(call.Arguments) ? call : call.Update(null, arguments);
   }
 
   /// <summary>The predicate of a <c>Queryable.Where</c> with a one-parameter lambda; null for anything else.</summary>
@@ -364,6 +409,28 @@ public sealed class StreamIdPrimaryKeyRewriter : ExpressionVisitor {
     }
 
     return expression;
+  }
+
+  /// <summary>
+  /// Reads <c>r.Data.P</c>, where <c>r</c> is a perspective row and <c>P</c> its model's registered stream id, as
+  /// <c>r.Id</c>, lifted to <c>P</c>'s type. The lambdas of an operator that tests rather than reads (a <c>Where</c> or a
+  /// <c>Count</c> over a group's members) are left alone; any other lambda, and the source of either kind, is searched.
+  /// </summary>
+  private sealed class RowIdReader : ExpressionVisitor {
+    internal static readonly RowIdReader Instance = new();
+
+    protected override Expression VisitMember(MemberExpression node) =>
+      node.Expression is MemberExpression { Expression: ParameterExpression row }
+        && _modelTypeOf(row.Type) is { } modelType
+        && _streamIdMember(node, row, modelType) is not null
+          ? _as(Expression.Property(row, ROW_ID), node.Type)
+          : base.VisitMember(node);
+
+    protected override Expression VisitMethodCall(MethodCallExpression node) =>
+      (node.Method.DeclaringType == typeof(Queryable) || node.Method.DeclaringType == typeof(Enumerable))
+        && !_reads.Contains(node.Method.Name)
+          ? node.Update(null, node.Arguments.Select(a => _unquote(a) is LambdaExpression ? a : Visit(a)))
+          : base.VisitMethodCall(node);
   }
 
   private sealed class ParameterReplacer(ParameterExpression from, Expression to) : ExpressionVisitor {

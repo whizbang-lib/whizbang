@@ -171,4 +171,40 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await Assert.That(noted[0].Exception).IsTypeOf<NotImplementedException>();
     await Assert.That(run.Logger.LinesWith(LEASES_RELEASED_EVENT_ID)).IsEmpty();
   }
+
+  /// <summary>
+  /// #2591: a drain batch carries one signal per event, so a stream signalled twice was listed twice in the lost batch's
+  /// report and counted twice ("12 stream(s)" for three streams). The report and the release name each stream once.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task DrainMode_ALostBatchSignalledTwiceForAStream_NamesAndCountsEachStreamOnceAsync(CancellationToken cancellationToken) {
+    var twice = Guid.CreateVersion7();
+    var once = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    coordinator.EnqueueStreamEventsError(new InvalidOperationException("a defect in the fetch"));
+    var logger = new EventIdSignalingLogger<PerspectiveWorker>();
+    var (worker, harness, provider) = _createWorker(coordinator, new DrainEventStore(), _registry(new DrainRunner()),
+      logger: logger, timeProvider: new FakeTimeProvider());
+    await using var _ = provider;
+    using var cts = new CancellationTokenSource();
+    // Queued before the worker starts, so its first batch takes all three signals.
+    await harness.EnqueueDrainStreamAsync(twice, cts.Token);
+    await harness.EnqueueDrainStreamAsync(twice, cts.Token);
+    await harness.EnqueueDrainStreamAsync(once, cts.Token);
+
+    await worker.StartAsync(cts.Token);
+    await logger.WhenLoggedAsync(PerspectiveWorker.UNEXPECTED_BATCH_FAILURE_EVENT_ID, cancellationToken);
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* teardown */ }
+
+    var line = logger.LinesWith(PerspectiveWorker.UNEXPECTED_BATCH_FAILURE_EVENT_ID).Single();
+    await Assert.That(line.Message).Contains("2 stream(s)", StringComparison.Ordinal)
+      .Because("the count is of distinct streams, not of the signals that named them");
+    await Assert.That(line.Message.Split(twice.ToString()).Length - 1).IsEqualTo(1)
+      .Because("each stream is listed once");
+    Guid[] distinct = [twice, once];
+    await Assert.That(coordinator.PerspectiveLeaseReleases.Single()).IsEquivalentTo(distinct)
+      .Because("each stream's leases are released once");
+  }
 }

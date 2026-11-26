@@ -59,6 +59,50 @@ public interface IJsonbPersistenceAdapter<T> {
 /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
 public record JsonbPersistenceModel {
   /// <summary>
+  /// The message id of a stored event in the Dapper store's form: its <c>message_id</c> key, or, when the row left it
+  /// out because it equals the row's event id (#2323), the event id.
+  /// </summary>
+  /// <param name="metadata">The row's metadata keys.</param>
+  /// <param name="eventId">The row's event id, when the read selected it.</param>
+  /// <returns>The message id the event was written with.</returns>
+  /// <exception cref="InvalidOperationException">The metadata has no message id and the read selected no event id.</exception>
+  /// <docs>data/event-store#row-values</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStoredMetadataRowValuesTests.cs:MessageIdOf_TheStoredKey_ElseTheRowsEventId_ElseTheRowCannotBeReadAsync</tests>
+  public static Guid MessageIdOf(Dictionary<string, System.Text.Json.JsonElement> metadata, Guid? eventId) {
+    ArgumentNullException.ThrowIfNull(metadata);
+    if (metadata.TryGetValue("message_id", out var stored)) {
+      return Guid.Parse(stored.GetString()!);
+    }
+    return eventId ?? throw new InvalidOperationException("message_id not found in metadata");
+  }
+
+  /// <summary>
+  /// The row's event id (<c>wh_event_store.event_id</c>), when the read selected it: the message id of a row whose
+  /// metadata left it out (#2323).
+  /// </summary>
+  /// <docs>data/event-store#row-values</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStoredMetadataRowValuesTests.cs:EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync</tests>
+  public Guid? EventId { get; init; }
+
+  /// <summary>
+  /// The service the row's event was received from (<c>wh_event_store.origin_service_id</c>), when the read selected it;
+  /// null for a local event. The envelope rebuilt from the row carries it as its
+  /// <see cref="Observability.MessageEnvelope{TMessage}.SourceServiceId"/>, as the EF Core store's reads do (#2509).
+  /// </summary>
+  /// <docs>fundamentals/events/event-store#read-order</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventOriginReadTests.cs:EveryReader_CarriesEachEventsOrigin_OntoItsEnvelopeAsync</tests>
+  public Guid? OriginServiceId { get; init; }
+
+  /// <summary>
+  /// The row's event's position at the service it was received from (<c>wh_event_store.origin_commit_sequence</c>), when
+  /// the read selected it; null for a local event. The envelope rebuilt from the row carries it as its
+  /// <see cref="Observability.MessageEnvelope{TMessage}.SourceCommitSequence"/> (#2509).
+  /// </summary>
+  /// <docs>fundamentals/events/event-store#read-order</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventOriginReadTests.cs:EveryReader_CarriesEachEventsOrigin_OntoItsEnvelopeAsync</tests>
+  public long? OriginCommitSequence { get; init; }
+
+  /// <summary>
   /// Event data or model data (3-6 KiB typical).
   /// </summary>
   public string DataJson { get; init; } = string.Empty;

@@ -27,13 +27,17 @@ public sealed partial class ScheduleWorker : BackgroundService, Whizbang.Core.Ru
   private readonly ISignalSubscription? _dueSubscription;
   private readonly SemaphoreSlim _wake = new(0, 1);
   private readonly ScheduleTimer _timer;
+  private readonly TemporalMetrics? _metrics;
+  // The last overdue set reported (#2575), so a warning marks a change instead of repeating every tick.
+  private int _reportedOverdueCount;
+  private Guid? _reportedOldestOverdue;
 
   /// <summary>The run permit each tick takes a hold of (#2045).</summary>
   public Whizbang.Core.RunControl.WhizbangRunPermit RunPermit { get; }
 
   /// <summary>
   /// Constructor. The time provider is optional, and so is the run permit: a worker built without one is under no run
-  /// control.
+  /// control. The metrics are optional too: without them a stuck schedule is still logged (#2575).
   /// </summary>
   public ScheduleWorker(
     IServiceScopeFactory scopeFactory,
@@ -42,7 +46,8 @@ public sealed partial class ScheduleWorker : BackgroundService, Whizbang.Core.Ru
     ILoggerFactory loggerFactory,
     ISignalBus signalBus,
     TimeProvider? timeProvider = null,
-    Whizbang.Core.RunControl.WhizbangRunPermit? runPermit = null) {
+    Whizbang.Core.RunControl.WhizbangRunPermit? runPermit = null,
+    TemporalMetrics? metrics = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     RunPermit = runPermit ?? new Whizbang.Core.RunControl.WhizbangRunPermit();
     _scopeFactory = scopeFactory;
@@ -50,6 +55,7 @@ public sealed partial class ScheduleWorker : BackgroundService, Whizbang.Core.Ru
     ArgumentNullException.ThrowIfNull(logger);
     _logger = logger;
     _signalBus = signalBus;
+    _metrics = metrics;
 
     // The in-memory precise wake: when the earliest owned schedule is due, ring our own doorbell.
     _timer = new ScheduleTimer(timeProvider ?? TimeProvider.System, () => {
@@ -98,6 +104,8 @@ public sealed partial class ScheduleWorker : BackgroundService, Whizbang.Core.Ru
         // Arm the precise wake to the next owned fire time, so the following fire lands on time
         // rather than at backstop latency. Re-armed every cycle (and on each ScheduleDueSignal).
         await ArmTimerOnceAsync(stoppingToken);
+        // #2575: a schedule no instance fires is reported, not left silent.
+        _ = await CheckOverdueOnceAsync(stoppingToken);
       } catch (OperationCanceledException) {
         break;
       } catch (Exception ex) {
@@ -150,6 +158,58 @@ public sealed partial class ScheduleWorker : BackgroundService, Whizbang.Core.Ru
     _timer.ArmFor(next);
   }
 
+  /// <summary>
+  /// Reads the Active schedules overdue beyond <see cref="TemporalOptions.OverdueWarningMilliseconds"/>, whoever owns
+  /// them, publishes the reading on <see cref="TemporalMetrics"/>, and logs a warning naming the oldest when the
+  /// overdue set appears or changes, and once when it clears (#2575). Returns the reading, or <c>null</c> when the
+  /// check is off, there is no claimer, or the reading is unknown. Public test seam, run on every drain pass.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token; its cancellation propagates, any other failure is logged.</param>
+  /// <returns>The reading, or null.</returns>
+  /// <docs>fundamentals/temporal/temporal-engine#a-schedule-that-does-not-fire-is-reported</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Temporal/ScheduleWorkerOverdueTests.cs</tests>
+  public async Task<ScheduleOverdueReading?> CheckOverdueOnceAsync(CancellationToken cancellationToken = default) {
+    var bound = TimeSpan.FromMilliseconds(_options.OverdueWarningMilliseconds);
+    if (bound <= TimeSpan.Zero) {
+      return null;
+    }
+    using var scope = _scopeFactory.CreateScope();
+    var claimer = scope.ServiceProvider.GetService<IScheduleClaimer>();
+    if (claimer is null) {
+      return null;
+    }
+
+    ScheduleOverdueReading? reading;
+    try {
+      reading = await claimer.GetOverdueSchedulesAsync(bound, cancellationToken).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested) {
+      // A failure, or a cancellation that is not ours (a command timeout), is an unknown reading; the next pass retries.
+      LogOverdueReadFailed(_logger, ex);
+      reading = null;
+    }
+    _metrics?.Record(reading);
+    if (reading is { } known) {
+      _report(known, bound);
+    }
+    return reading;
+  }
+
+  private void _report(ScheduleOverdueReading reading, TimeSpan bound) {
+    if (reading.Count > 0) {
+      if (reading.Count != _reportedOverdueCount || reading.OldestScheduleId != _reportedOldestOverdue) {
+        LogSchedulesOverdue(_logger, reading.Count, bound.TotalSeconds, reading.OldestScheduleKey,
+          reading.OldestScheduleId, reading.OldestAge.TotalSeconds);
+      }
+    } else if (_reportedOverdueCount > 0) {
+      LogSchedulesOverdueCleared(_logger);
+    }
+    _reportedOverdueCount = reading.Count;
+    _reportedOldestOverdue = reading.OldestScheduleId;
+  }
+
+  /// <summary>Test seam: whether the worker was given its overdue gauges.</summary>
+  internal bool HasMetricsForTests => _metrics is not null;
+
   /// <summary>Test seam: consumes and reports whether a wake is currently pending.</summary>
   internal bool TryConsumeWakeForTests() => _wake.Wait(0);
 
@@ -175,4 +235,16 @@ public sealed partial class ScheduleWorker : BackgroundService, Whizbang.Core.Ru
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "ScheduleWorker stopped")]
   private static partial void LogStopped(ILogger logger);
+
+  [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
+    Message = "{Count} Active schedule(s) are overdue by more than {BoundSeconds} s and no instance has fired them; the oldest, '{ScheduleKey}' ({ScheduleId}), was due {AgeSeconds} s ago")]
+  private static partial void LogSchedulesOverdue(
+    ILogger logger, int count, double boundSeconds, string? scheduleKey, Guid? scheduleId, double ageSeconds);
+
+  [LoggerMessage(EventId = 6, Level = LogLevel.Information, Message = "No Active schedule is overdue any longer")]
+  private static partial void LogSchedulesOverdueCleared(ILogger logger);
+
+  [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
+    Message = "Could not read the overdue schedules; the next drain pass retries")]
+  private static partial void LogOverdueReadFailed(ILogger logger, Exception exception);
 }

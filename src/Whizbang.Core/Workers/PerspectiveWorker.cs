@@ -101,9 +101,10 @@ public partial class PerspectiveWorker(
   // When a run of transient database failures escalates to one Error, and its recovery line (#1986); null takes the
   // defaults.
   DatabaseFailureEscalationOptions? databaseFailureEscalation = null
-) : BackgroundService, Whizbang.Core.Startup.IStartAbandonedObserver {
+) : BackgroundService, Whizbang.Core.Startup.IStartAbandonedObserver, IPartitionHandoverParticipant {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
+  private const string METRIC_TAG_REASON = "reason";
 
   /// <summary>
   /// The detached lifecycle stages this worker started and that are still running. Its stop waits for them, so they finish
@@ -384,6 +385,8 @@ public partial class PerspectiveWorker(
     }
     _collectiveHoldWakes.Clear();
     await base.StopAsync(cancellationToken).ConfigureAwait(false);
+    // #2247: the loops have stopped, so the held models are flushed before the detached stages are waited for.
+    await _stopWriteBehindAsync(cancellationToken).ConfigureAwait(false);
     await DetachedWork.DrainAsync(cancellationToken).ConfigureAwait(false);
   }
   private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions = leaseRenewalOptions.Value;
@@ -891,6 +894,12 @@ public partial class PerspectiveWorker(
   /// </summary>
   /// <remarks>
   /// <para>
+  /// The release ends this instance's ownership of the streams, owner included (#2545), so each goes to
+  /// the live instance its partition is assigned to: a sibling when the partition is assigned to one (a
+  /// stream this instance kept across a change of assignment), and this instance again when it is assigned
+  /// to it, which then claims it at its next poll with the attempt refunded rather than waiting out the lease.
+  /// </para>
+  /// <para>
   /// Best effort by design: a store that does not implement the release, and a release that fails
   /// against the same database that just failed, both leave the rows to their leases, which is what
   /// happened before this existed. Neither may raise out of the recovery path, because the recovery
@@ -1032,6 +1041,8 @@ public partial class PerspectiveWorker(
     }
 
     _perspectivesPerEventType = _buildPerspectivesPerEventTypeMap(registeredPerspectives);
+    // #2247: before anything is applied, the write-behind bounds are checked and its cache made.
+    _initWriteBehind(registeredPerspectives.Select(p => p.ClrTypeName));
     return true;
   }
 
@@ -1394,8 +1405,9 @@ public partial class PerspectiveWorker(
         // and that is the statement a sibling instance's schema DDL deadlocked. Its failure costs the
         // drained streams their leases and nothing else: the claimed per-event work that shares this
         // batch still runs below, and the loop that owns this batch keeps going either way.
+        // #2591: one signal per event, so a stream can be listed more than once; it is reported and released once.
         await _recoverFailedBatchAsync(
-          ex, [.. workBatch.PerspectiveStreamIds], cancellationToken).ConfigureAwait(false);
+          ex, [.. workBatch.PerspectiveStreamIds.Distinct()], cancellationToken).ConfigureAwait(false);
       }
       if (!drainAppliedGroups.IsEmpty) {
         groupedWork = [.. groupedWork.Where(g => !drainAppliedGroups.ContainsKey(g.Key))];
@@ -1428,7 +1440,7 @@ public partial class PerspectiveWorker(
     // preserved exactly as today (different streams → different per-stream workers); only
     // same-stream concurrency is serialized.
     var claimedBatch = new ClaimedBatchContext(batchActivity, effectiveParent, batchProcessedEvents, batchIsNewByEventId);
-    if (groupedWork.Exists(g => _writeModeOf(g.Key.PerspectiveName) == PerspectiveWriteMode.SetBased)) {
+    if (groupedWork.Exists(g => _isBatched(_writeModeOf(g.Key.PerspectiveName)))) {
       // #2246: the batch's set-based pairs are prepared together, written with one statement per table and shape, and
       // completed; every other pair runs the per-pair path inside the same batch.
       await _processClaimedGroupsSetBasedAsync(groupedWork, claimedBatch, cancellationToken).ConfigureAwait(false);
@@ -1460,28 +1472,8 @@ public partial class PerspectiveWorker(
         });
     }
 
-    if (!batchProcessedEvents.IsEmpty) {
-      var priorPostLifecycle = Interlocked.Exchange(ref _pendingPostLifecycle, null);
-      if (priorPostLifecycle is not null) {
-        try {
-          await priorPostLifecycle;
-        } catch (Exception ex) when (ex is not OperationCanceledException) {
-          LogPriorPostLifecycleFaulted(_logger, ex);
-        }
-      }
-      var bgProcessedEvents = batchProcessedEvents;
-      var bgGroupedWork = groupedWork;
-      var bgIsNew = batchIsNewByEventId;
-      var bgCoordinator = lifecycleCoordinator;
-      var bgCt = cancellationToken;
-      _pendingPostLifecycle = BackgroundStageDispatch.StartLongRunning(async () => {
-        await using var bgScope = _scopeFactory.CreateAsyncScope();
-        var bgReceptorInvoker = bgScope.ServiceProvider.GetService<IReceptorInvoker>();
-        await FirePostLifecycleDetachedAsync(
-          bgProcessedEvents, bgCoordinator, bgReceptorInvoker, bgGroupedWork,
-          bgScope.ServiceProvider, bgCt, bgIsNew);
-      }, cancellationToken);
-    }
+    await _startBatchPostLifecycleAsync(
+      batchProcessedEvents, groupedWork, batchIsNewByEventId, lifecycleCoordinator, cancellationToken).ConfigureAwait(false);
 
     _logBatchSummary([], [], workBatch);
     _metrics?.BatchesProcessed.Add(1);
@@ -1490,6 +1482,36 @@ public partial class PerspectiveWorker(
       LogDrainCycleComplete(_logger, !IsIdle, batchProcessedEvents.Count, batchSw.ElapsedMilliseconds);
     }
     OnBatchCycleComplete?.Invoke();
+  }
+
+  /// <summary>
+  /// Starts the batch-level post-lifecycle stages of the events a batch (or a write-behind flush, #2247) processed, after
+  /// the previous batch's have ended, so they keep the order the batches applied in.
+  /// </summary>
+  private async Task _startBatchPostLifecycleAsync(
+      ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> batchProcessedEvents,
+      List<IGrouping<(Guid StreamId, string PerspectiveName), PerspectiveWork>> groupedWork,
+      ConcurrentDictionary<Guid, bool> batchIsNewByEventId,
+      ILifecycleCoordinator? lifecycleCoordinator,
+      CancellationToken cancellationToken) {
+    if (batchProcessedEvents.IsEmpty) {
+      return;
+    }
+    var priorPostLifecycle = Interlocked.Exchange(ref _pendingPostLifecycle, null);
+    if (priorPostLifecycle is not null) {
+      try {
+        await priorPostLifecycle;
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogPriorPostLifecycleFaulted(_logger, ex);
+      }
+    }
+    _pendingPostLifecycle = BackgroundStageDispatch.StartLongRunning(async () => {
+      await using var bgScope = _scopeFactory.CreateAsyncScope();
+      var bgReceptorInvoker = bgScope.ServiceProvider.GetService<IReceptorInvoker>();
+      await FirePostLifecycleDetachedAsync(
+        batchProcessedEvents, lifecycleCoordinator, bgReceptorInvoker, groupedWork,
+        bgScope.ServiceProvider, cancellationToken, batchIsNewByEventId);
+    }, cancellationToken);
   }
 
   /// <summary>
@@ -1681,7 +1703,7 @@ public partial class PerspectiveWorker(
   static partial void LogAwaitingAbandonedApplies(ILogger logger, int count);
 
   /// <summary>One affinity gate held by an apply in progress: who holds it, where it is, and for how long.</summary>
-  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  /// <docs>operations/workers/perspective-worker#affinity-hold-watchdog</docs>
   public readonly record struct AffinityHold(Guid StreamId, string PerspectiveName, string Path, string Phase, TimeSpan Held);
 
   /// <summary>
@@ -1888,7 +1910,7 @@ public partial class PerspectiveWorker(
   /// Full lifecycle chain: PrePerspective → RunWithEvents → PostPerspective → signal coordinator.
   /// PostAllPerspectives + PostLifecycle fire via FirePostLifecycleDetachedAsync after this returns.
   /// </summary>
-  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  /// <docs>operations/workers/perspective-worker#the-perspective-work-pipeline</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.cs</tests>
   private async Task _processDrainModeStreamsAsync(
       AsyncServiceScope scope,
@@ -1915,7 +1937,7 @@ public partial class PerspectiveWorker(
     var drainBatchContext = new DrainBatchContext(
       rawByEventId, typeNameCache, batchProcessedEvents, batchIsNewByEventId, lifecycleCoordinator, appliedGroups, cursorsReadFor);
     if (eventsByStream.Any(stream => _collectDrainModePerspectiveNames(stream.Value, typeNameCache)
-          .Any(name => _writeModeOf(name) == PerspectiveWriteMode.SetBased))) {
+          .Any(name => _isBatched(_writeModeOf(name))))) {
       // #2246: the first lap of every stream is applied as one set-based batch; later laps run per pair.
       await _processDrainModeStreamsSetBasedAsync(scope, workCoordinator, eventsByStream, drainBatchContext, cancellationToken).ConfigureAwait(false);
       return;
@@ -1971,7 +1993,7 @@ public partial class PerspectiveWorker(
             LogOrphanedPerspectiveRowsReaped(_logger, reaped);
             _deadLetterMetrics?.Added.Add(reaped,
               new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.PERSPECTIVE_EVENTS),
-              new KeyValuePair<string, object?>("reason", "PerspectiveSourceEventMissing"));
+              new KeyValuePair<string, object?>(METRIC_TAG_REASON, "PerspectiveSourceEventMissing"));
           }
         } catch (Exception ex) when (ex is not OperationCanceledException) {
 #pragma warning disable CA1848
@@ -1991,6 +2013,8 @@ public partial class PerspectiveWorker(
     // are both present; otherwise the row stays in wh_perspective_events and is
     // re-claimed by the orphan path as before (legacy v0.501 behavior).
     rawEvents = await FilterDeadLetteredAsync(rawEvents, cancellationToken).ConfigureAwait(false);
+    // #2591: a row the read returned without its event (a reaped body) is failed by name, alone; the rest go on.
+    rawEvents = await FailRowsReadWithoutTheirEventAsync(rawEvents, cancellationToken).ConfigureAwait(false);
     if (rawEvents.Count == 0) {
       return null;
     }
@@ -2028,6 +2052,118 @@ public partial class PerspectiveWorker(
     // that must be completed individually.
     return (typedEvents, rawEvents.ToLookup(r => r.EventId));
   }
+
+  /// <summary>
+  /// Takes each fetched row whose event the read could not return (<see cref="StreamEventData.UnreadableReason"/>) out of
+  /// the batch, alone and by name, and returns the rest in their order (#2591):
+  /// </summary>
+  /// <remarks>
+  /// <list type="bullet">
+  /// <item><description>
+  /// <b>An ephemeral event whose body was reaped</b> (<see cref="StreamEventData.BODY_REAPED"/>) is dead-lettered on
+  /// first sight with <see cref="MessageFailureReason.EventBodyMissing"/>, and logged at Warning (EventId 84): the body
+  /// never comes back, so a retry would only be spent. When this worker has no dead-letter store, or the move fails, the
+  /// row is failed for the bounded retry instead (EventId 86), so it is never leased again with nothing recorded.
+  /// </description></item>
+  /// <item><description>
+  /// <b>Any other event without a body</b> (<see cref="StreamEventData.BODY_MISSING"/>) is failed through the failure
+  /// channel with <see cref="MessageFailureReason.EventBodyMissing"/> and logged at Error (EventId 85): a Sourced body is
+  /// never reaped, so its absence means something else is wrong. The database backs the retry off, and the pre-apply
+  /// dead-letter filter (<see cref="FilterDeadLetteredAsync"/>) moves the row once its failures pass
+  /// <see cref="PerspectiveWorkerOptions.MaxPerspectiveEventAttempts"/>.
+  /// </description></item>
+  /// </list>
+  /// Before, the read cast the missing body and threw, so the whole batch was lost, released, and leased again with the
+  /// same row in it: nothing was ever recorded against the row, and every batch it joined failed.
+  /// </remarks>
+  /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerUnreadableFetchedRowTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReapedBodyBatchIsolationTests.cs:AReapedStreamSharingABatch_FailsOnlyItself_AndIsDeadLetteredOnFirstSightAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReapedBodyBatchIsolationTests.cs:AStreamMissingASourcedBody_FailsOnlyItself_IsRetriedBoundedly_AndIsDeadLetteredAtErrorAsync</tests>
+  internal async Task<List<StreamEventData>> FailRowsReadWithoutTheirEventAsync(
+      List<StreamEventData> rows, CancellationToken cancellationToken) {
+    List<StreamEventData>? readable = null;
+    for (var i = 0; i < rows.Count; i++) {
+      var row = rows[i];
+      if (row.UnreadableReason is null) {
+        readable?.Add(row);
+        continue;
+      }
+      readable ??= rows.GetRange(0, i);
+      var error = $"Perspective {row.PerspectiveName} cannot read event {row.EventId} (version {row.Version}, type {row.EventType}) "
+        + $"of stream {row.StreamId}: {row.UnreadableReason}";
+      if (string.Equals(row.UnreadableReason, StreamEventData.BODY_REAPED, StringComparison.Ordinal)) {
+        if (await _tryDeadLetterReapedRowAsync(row, error, cancellationToken).ConfigureAwait(false)) {
+          continue;
+        }
+      } else {
+        LogRowWithoutItsBody(_logger, row.PerspectiveName, row.StreamId, row.EventId, row.Version, row.EventType,
+          row.UnreadableReason, row.Failures);
+      }
+      await _parkLeasedRowsAsync([row.EventWorkId], error, MessageFailureReason.EventBodyMissing, cancellationToken).ConfigureAwait(false);
+    }
+    return readable ?? rows;
+  }
+
+  /// <summary>
+  /// Dead-letters a row whose ephemeral body was reaped, with the one dead-letter record and count. False, with a Warning
+  /// that says why, when this worker has no dead-letter store or the move fails: the caller then fails the row for retry.
+  /// </summary>
+  private async Task<bool> _tryDeadLetterReapedRowAsync(StreamEventData row, string error, CancellationToken cancellationToken) {
+    Exception? failure = null;
+    if (_deadLetterStore.IsConfigured) {
+      try {
+        await _deadLetterStore.MoveAsync(
+          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
+          sourceTable: DeadLetterSourceTable.PERSPECTIVE_EVENTS,
+          sourceId: row.EventWorkId,
+          failureReason: MessageFailureReason.EventBodyMissing,
+          errorText: error,
+          instanceId: _instanceProvider.InstanceId,
+          generation: _generationProvider.GetGeneration(),
+          ct: cancellationToken).ConfigureAwait(false);
+        _deadLetterMetrics?.Added.Add(1,
+          new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.PERSPECTIVE_EVENTS),
+          new KeyValuePair<string, object?>(METRIC_TAG_REASON, nameof(MessageFailureReason.EventBodyMissing)));
+        DeadLetterLog.MessageDeadLettered(_logger, _deadLetterLevel, exception: null, row.EventWorkId, row.EventType,
+          nameof(MessageFailureReason.EventBodyMissing), error);
+        LogReapedRowDeadLettered(_logger, row.PerspectiveName, row.StreamId, row.EventId, row.Version, row.EventType);
+        return true;
+      } catch (Exception ex) {
+        // Not swallowed: logged below with the exception, and the row is failed for retry by the caller.
+        failure = ex;
+      }
+    }
+    LogReapedRowNotDeadLettered(_logger, failure, row.PerspectiveName, row.StreamId, row.EventId, row.Version, row.EventType);
+    return false;
+  }
+
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
+    Justification = "A generated structured log message: each value is its own searchable property.")]
+  [LoggerMessage(EventId = 84, Level = LogLevel.Warning,
+    Message = "Perspective {PerspectiveName} cannot read event {EventId} (version {Version}, type {EventType}) of stream {StreamId}: "
+            + "the event is ephemeral and its body was reaped past its retention. The row is dead-lettered on first sight; "
+            + "the rest of the batch is applied")]
+  static partial void LogReapedRowDeadLettered(ILogger logger, string? perspectiveName, Guid streamId, Guid eventId, long? version,
+    string eventType);
+
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
+    Justification = "A generated structured log message: each value is its own searchable property.")]
+  [LoggerMessage(EventId = 85, Level = LogLevel.Error,
+    Message = "Perspective {PerspectiveName} cannot read event {EventId} (version {Version}, type {EventType}) of stream {StreamId}: "
+            + "{Reason}. Something other than the ephemeral reap deleted it. The row is failed alone (failures before this "
+            + "one: {Failures}) and dead-lettered once its failures pass MaxPerspectiveEventAttempts; the rest of the batch is applied")]
+  static partial void LogRowWithoutItsBody(ILogger logger, string? perspectiveName, Guid streamId, Guid eventId, long? version,
+    string eventType, string reason, int failures);
+
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
+    Justification = "A generated structured log message: each value is its own searchable property.")]
+  [LoggerMessage(EventId = 86, Level = LogLevel.Warning,
+    Message = "Perspective {PerspectiveName} cannot read event {EventId} (version {Version}, type {EventType}) of stream {StreamId}: "
+            + "the event is ephemeral and its body was reaped, but the row could not be dead-lettered (no dead-letter store "
+            + "is registered, or the move failed). It is failed for the bounded retry instead")]
+  static partial void LogReapedRowNotDeadLettered(ILogger logger, Exception? exception, string? perspectiveName, Guid streamId,
+    Guid eventId, long? version, string eventType);
 
   /// <summary>
   /// Reads the fetched rows into typed envelopes. When the read throws for the batch (a store or decorator that does not skip a row
@@ -2262,7 +2398,7 @@ public partial class PerspectiveWorker(
             ct: cancellationToken).ConfigureAwait(false);
           _deadLetterMetrics?.Added.Add(1,
             new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.PERSPECTIVE_EVENTS),
-            new KeyValuePair<string, object?>("reason", "MaxAttemptsExceeded"));
+            new KeyValuePair<string, object?>(METRIC_TAG_REASON, "MaxAttemptsExceeded"));
           DeadLetterLog.MessageDeadLettered(_logger, _deadLetterLevel, exception: null, raw.EventWorkId, raw.EventType,
             nameof(Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded), errorText);
           // Row was DELETEd by move_to_dead_letters() inside the SQL function; do not
@@ -2308,7 +2444,8 @@ public partial class PerspectiveWorker(
       .GroupBy(e => rawByEventId[e.MessageId.Value].First().StreamId)
       .ToDictionary(
         g => g.Key,
-        g => g.DistinctBy(e => e.MessageId.Value).OrderByMessageId().ToList());
+        // #2551: each stream by the version each event carries, never by id.
+        g => StreamOrder.InStreamOrder(g.DistinctBy(e => e.MessageId.Value)));
   }
 
   /// <summary>
@@ -2536,7 +2673,7 @@ public partial class PerspectiveWorker(
   /// <remarks>
   /// PrePerspective receptor invocation is intentionally NOT done here. The generated
   /// IPerspectiveRunner (RunWithEventsAsync) fires PrePerspectiveDetached + PrePerspectiveInline
-  /// itself at the start of its processing loop (see PerspectiveRunnerTemplate.cs). Firing them
+  /// itself at the start of its processing loop (see PerspectiveRunnerBase.cs). Firing them
   /// here too would double-invoke every registered Pre* receptor.
   /// </remarks>
   private void _registerDrainModeLifecycleTracking(
@@ -2639,7 +2776,7 @@ public partial class PerspectiveWorker(
     }
     _metrics?.ReadFailures.Add(1,
       new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName),
-      new KeyValuePair<string, object?>("reason", Whizbang.Core.Perspectives.StoredFormUnreadable.REASON));
+      new KeyValuePair<string, object?>(METRIC_TAG_REASON, Whizbang.Core.Perspectives.StoredFormUnreadable.REASON));
 
     var error = $"Stored form unreadable at {path}: {unreadable.Detail}";
     await _parkLeasedRowsAsync(workIds, error, MessageFailureReason.SerializationError, ct).ConfigureAwait(false);
@@ -4585,7 +4722,9 @@ public partial class PerspectiveWorker(
     // completion's last event, as the range read below returns them.
     List<MessageEnvelope<IEvent>> processedEvents = [];
     if (shouldLoadEvents && prefetched is { } batchRead) {
-      processedEvents = [.. batchRead.Upcoming.Where(e => e.MessageId.Value.CompareTo(result.LastEventId) <= 0)];
+      // #2551: the prefix of the stream, in stream order, through the completion's last event; never an id range.
+      var through = batchRead.Upcoming.FindIndex(e => e.MessageId.Value == result.LastEventId);
+      processedEvents = batchRead.Upcoming.GetRange(0, through + 1);
     } else if (shouldLoadEvents) {
       processedEvents = await _loadProcessedEventsAsync(eventStore!, streamId, perspectiveName, lastProcessedEventId, result.LastEventId, cancellationToken);
     }
@@ -6022,11 +6161,21 @@ public class PerspectiveWorkerOptions {
   /// prepares every (stream, perspective) pair of a batch and writes the batch's rows with a few set-based statements
   /// per table; <see cref="PerspectiveWriteMode.PerStream"/> writes each pair on its own, as before set-based writes. A
   /// perspective overrides it with <see cref="PerspectiveWriteModeAttribute"/>; a perspective with no generated runner
-  /// is always written per stream.
+  /// is always written per stream. A rebuild in place follows the same mode for each batch of streams it reads (#2522).
   /// </summary>
   /// <docs>fundamentals/perspectives/write-modes#selection</docs>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveWriteModesTests.cs:WorkerOptions_DefaultToSetBasedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveRebuilderBatchedWriteTests.cs:Rebuild_InPlace_OfAServiceThatWritesPerStream_WritesEachRowOnItsOwnAsync</tests>
   public PerspectiveWriteMode WriteMode { get; set; } = PerspectiveWriteMode.SetBased;
+
+  /// <summary>
+  /// The bounds of the write-behind model cache (#2247), bound from <c>Whizbang:Workers:Perspective:WriteBehind</c>.
+  /// Required (<see cref="PerspectiveWriteBehindOptions.MaxModels"/> and <see cref="PerspectiveWriteBehindOptions.MaxBytes"/>)
+  /// whenever any perspective writes behind; the worker does not start without them.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#write-behind</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveWriteBehindOptionsTests.cs</tests>
+  public PerspectiveWriteBehindOptions WriteBehind { get; set; } = new();
 
   /// <summary>
   /// Slice 17: number of parallel consumer loops running on the channel reader. Each loop
@@ -6098,7 +6247,7 @@ public class PerspectiveWorkerOptions {
   /// separate apply cycle. With 300 ms the window almost always coalesces all 46
   /// into one apply pass.
   /// </remarks>
-  /// <docs>fundamentals/perspectives/drain-mode#sliding-window</docs>
+  /// <docs>operations/workers/perspective-worker#sliding-window-drain-batching</docs>
   public SlidingWindowBatcherOptions DrainBatcher { get; set; } = new() {
     SlidingWindow = TimeSpan.FromMilliseconds(300),
     MaxWait = TimeSpan.FromSeconds(3),

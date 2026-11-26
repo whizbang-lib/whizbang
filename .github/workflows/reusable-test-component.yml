@@ -13,6 +13,14 @@ on:
         type: string
         required: false
         default: '"ubuntu-latest"'
+      runner-plan-attempt:
+        description: >-
+          The run attempt the runs-on plan was made in (the picker's attempt output). The job takes runs-on only in that
+          attempt, so a job re-run without the picker ("re-run failed jobs") runs on ubuntu-latest rather than on labels
+          chosen for an earlier attempt, which may name machines that have since left the pool (#1880). Empty: ubuntu-latest.
+        type: string
+        required: false
+        default: ''
       artifact-name:
         description: 'Build artifact to download (enables -NoBuild with coverage)'
         type: string
@@ -57,7 +65,7 @@ jobs:
       FRAMEWORK_SUFFIX: ${{ strategy.job-total > 1 && format('-{0}', matrix.framework) || '' }}
       # Whether this leg measures coverage: the coverage framework's leg, or every leg when none is named (#2135).
       COVERAGE_LEG: ${{ inputs.coverage-framework == '' || matrix.framework == '' || matrix.framework == inputs.coverage-framework }}
-    runs-on: ${{ fromJSON(inputs.runs-on || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(inputs.runner-plan-attempt == github.run_attempt && inputs.runs-on || '"ubuntu-latest"') }}
     timeout-minutes: 20
 
     steps:

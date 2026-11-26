@@ -1,0 +1,53 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using System.Collections.Immutable;
+using System.Linq;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
+
+namespace Whizbang.Generators;
+
+/// <summary>
+/// Registers every type in the assembly that carries <c>[SuppressGuidOrderingValidation]</c> into
+/// <c>GuidOrderingSuppressions</c> from a <c>[ModuleInitializer]</c>, by its stored name (<c>Namespace.Type, Assembly</c>;
+/// a generic type by its definition, <c>Namespace.Wrapper`1, Assembly</c>), so the time-ordering check reads no attribute
+/// by reflection (#2528). Registration by name needs no <c>typeof</c>, so a type generated code cannot name is honored
+/// too. The attribute is not inherited, so only the declarations that carry it are registered; a method carrying it is a
+/// compile-time opt-out (WHIZ037), not a message type, and is skipped.
+/// </summary>
+/// <docs>fundamentals/identity/whizbang-ids#time-ordering-checks</docs>
+/// <tests>tests/Whizbang.Generators.Tests/GuidOrderingSuppressionRegistryGeneratorTests.cs</tests>
+[Generator]
+public class GuidOrderingSuppressionRegistryGenerator : IIncrementalGenerator {
+  private const string SUPPRESS_ATTRIBUTE = "Whizbang.Core.SuppressGuidOrderingValidationAttribute";
+
+  /// <inheritdoc/>
+  public void Initialize(IncrementalGeneratorInitializationContext context) {
+    var names = context.SyntaxProvider.ForAttributeWithMetadataName(
+        SUPPRESS_ATTRIBUTE,
+        // Type declarations only: a method carrying the attribute is the analyzer's (WHIZ037), not a message type
+        predicate: static (node, _) => node is TypeDeclarationSyntax,
+        transform: static (ctx, _) => TypeNameUtilities.FormatTypeNameForRuntime((INamedTypeSymbol)ctx.TargetSymbol));
+
+    context.RegisterSourceOutput(names.Collect(), static (ctx, all) => _generate(ctx, all));
+  }
+
+  private static void _generate(SourceProductionContext context, ImmutableArray<string> all) {
+    var names = all.Distinct().OrderBy(static n => n, System.StringComparer.Ordinal).ToList();
+    if (names.Count == 0) {
+      return;
+    }
+
+    var assembly = typeof(GuidOrderingSuppressionRegistryGenerator).Assembly;
+    var registration = TemplateUtilities.ExtractSnippet(assembly, "GuidOrderingSuppressionSnippets.cs", "REGISTRATION").TrimEnd();
+    var registrations = string.Join("\n", names.Select(name => registration.Replace("__TYPE_NAME__", name)));
+
+    var result = TemplateUtilities.GetEmbeddedTemplate(assembly, "GuidOrderingSuppressionsTemplate.cs");
+    result = TemplateUtilities.ReplaceHeaderRegion(assembly, result);
+    result = TemplateUtilities.ReplaceRegion(result, "REGISTRATIONS", registrations);
+
+    context.AddSource("GuidOrderingSuppressions.g.cs", result);
+  }
+}

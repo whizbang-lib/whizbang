@@ -11,31 +11,27 @@
 
 namespace System.Runtime.CompilerServices {
   /// <summary>
-  /// Specifies the location where an interceptor method intercepts a call.
-  /// This attribute is used by C# 12+ interceptors feature.
+  /// Specifies the location where an interceptor method intercepts a call, in the compiler's encoded form.
   /// </summary>
   [global::System.AttributeUsage(
       global::System.AttributeTargets.Method,
       AllowMultiple = true,
       Inherited = false)]
   file sealed class InterceptsLocationAttribute : global::System.Attribute {
-    public InterceptsLocationAttribute(string filePath, int line, int column) {
-      FilePath = filePath;
-      Line = line;
-      Column = column;
+    public InterceptsLocationAttribute(int version, string data) {
+      Version = version;
+      Data = data;
     }
 
-    public string FilePath { get; }
-    public int Line { get; }
-    public int Column { get; }
+    public int Version { get; }
+    public string Data { get; }
   }
 }
 
 namespace Whizbang.Generators.Generated {
   /// <summary>
-  /// Auto-generated interceptors for GUID creation calls.
-  /// Wraps Guid.NewGuid(), Guid.CreateVersion7(), and third-party GUID library calls
-  /// with TrackedGuid to enable metadata tracking.
+  /// Auto-generated interceptors for GUID creation calls. Each replaces a System.Guid NewGuid or CreateVersion7
+  /// call with a framework UUIDv7 (TrackedGuid.New()), which is time-ordered with counter precision.
   /// </summary>
   file static class GuidInterceptors {
     #region INTERCEPTOR_METHODS

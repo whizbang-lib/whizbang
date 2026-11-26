@@ -22,9 +22,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Shard3")]
 public class PartitionAssignerRegistrationTests {
-  private static ServiceProvider _build(Action<IServiceCollection>? extra = null) {
+  private static ServiceProvider _build(Action<IServiceCollection>? extra = null, Dictionary<string, string?>? settings = null) {
     var services = new ServiceCollection();
-    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection([]).Build());
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(settings ?? []).Build());
     services.AddLogging();
     services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>();
     services.AddSingleton<IWorkNotificationListener, NoOpWorkNotificationListener>();
@@ -50,9 +50,57 @@ public class PartitionAssignerRegistrationTests {
   }
 
   [Test]
-  public async Task AddWhizbangPostgresNotifications_WithTheAssignerDisabled_LeavesItsRoleOutAsync() {
-    await using var sp = _build(services => services.Configure<PartitionAssignerOptions>(o => o.Enabled = false));
+  public async Task TheRemovedEnabledKey_SetToFalse_TurnsNothingOffAsync() {
+    // #2559: the assigner always runs. The removed key is reported at startup as removed, and the role is still held.
+    await using var sp = _build(settings: new Dictionary<string, string?> { ["Whizbang:Database:PartitionAssigner:Enabled"] = "false" });
 
-    await Assert.That(sp.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value.Roles).DoesNotContain(PartitionAssignerOptions.ROLE);
+    await Assert.That(sp.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value.Roles).Contains(PartitionAssignerOptions.ROLE)
+      .Because("the published assignment is the one source of stream ownership, so nothing turns its assigner off");
+  }
+
+  [Test]
+  public async Task AddWhizbangPostgresNotifications_BindsEveryAssignerKeyFromConfigurationAsync() {
+    await using var sp = _build(settings: new() {
+      ["Whizbang:Database:PartitionAssigner:SettleWindow"] = "00:00:09",
+      ["Whizbang:Database:PartitionAssigner:AssignmentLease"] = "00:02:00",
+      ["Whizbang:Database:PartitionAssigner:RepublishInterval"] = "00:07:00",
+      ["Whizbang:Database:PartitionAssigner:HandoverDeadline"] = "00:00:45",
+      ["Whizbang:Database:PartitionAssigner:OwnershipByMap"] = "false",
+    });
+
+    var options = sp.GetRequiredService<IOptions<PartitionAssignerOptions>>().Value;
+
+    await Assert.That(options.SettleWindow).IsEqualTo(TimeSpan.FromSeconds(9))
+      .Because("#2558: the settle window is measured on a deployed environment, so an operator must be able to set it");
+    await Assert.That(options.AssignmentLease).IsEqualTo(TimeSpan.FromMinutes(2));
+    await Assert.That(options.RepublishInterval).IsEqualTo(TimeSpan.FromMinutes(7));
+    await Assert.That(options.HandoverDeadline).IsEqualTo(TimeSpan.FromSeconds(45))
+      .Because("#2557: the handover deadline is measured on a deployed environment, so an operator must be able to set it");
+    await Assert.That(options.OwnershipByMap).IsFalse()
+      .Because("an operator can keep the stored-owner rules while a fleet's rollout is staged");
+  }
+
+  [Test]
+  public async Task AddWhizbangPostgresNotifications_WithNoAssignerKeys_KeepsTheDefaultsAsync() {
+    await using var sp = _build(settings: new() {
+      ["Whizbang:Database:PartitionAssigner:SettleWindow"] = "not a duration",
+    });
+
+    var options = sp.GetRequiredService<IOptions<PartitionAssignerOptions>>().Value;
+
+    await Assert.That(options.SettleWindow).IsEqualTo(TimeSpan.FromSeconds(5));
+    await Assert.That(options.AssignmentLease).IsEqualTo(TimeSpan.FromSeconds(90));
+    await Assert.That(options.RepublishInterval).IsEqualTo(TimeSpan.FromMinutes(5));
+    await Assert.That(options.HandoverDeadline).IsEqualTo(TimeSpan.FromSeconds(30));
+    await Assert.That(options.OwnershipByMap).IsTrue();
+  }
+
+  [Test]
+  public async Task AddWhizbangPostgresNotifications_AHostsOwnConfigureOfTheAssigner_StillWinsAsync() {
+    await using var sp = _build(
+      services => services.Configure<PartitionAssignerOptions>(o => o.SettleWindow = TimeSpan.FromSeconds(1)),
+      new() { ["Whizbang:Database:PartitionAssigner:SettleWindow"] = "00:00:09" });
+
+    await Assert.That(sp.GetRequiredService<IOptions<PartitionAssignerOptions>>().Value.SettleWindow).IsEqualTo(TimeSpan.FromSeconds(1));
   }
 }

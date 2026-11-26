@@ -28,11 +28,29 @@ public abstract class DapperEventStoreBase : IEventStore {
   protected IDbExecutor Executor { get; }
   protected JsonSerializerOptions JsonOptions { get; }
 
+  /// <summary>The time-ordering check every append runs before anything is stored (#2528).</summary>
+  protected Whizbang.Core.Validation.GuidOrderingValidator GuidOrdering { get; }
+
   protected DapperEventStoreBase(
     IDbConnectionFactory connectionFactory,
     IDbExecutor executor,
     JsonSerializerOptions jsonOptions
+  ) : this(connectionFactory, executor, jsonOptions, guidOrdering: null) { }
+
+  /// <summary>
+  /// Initializes the store with the time-ordering check its appends run (#2528).
+  /// </summary>
+  /// <param name="connectionFactory">The connection factory.</param>
+  /// <param name="executor">The executor.</param>
+  /// <param name="jsonOptions">The JSON options.</param>
+  /// <param name="guidOrdering">The time-ordering check, or null for the default validator.</param>
+  protected DapperEventStoreBase(
+    IDbConnectionFactory connectionFactory,
+    IDbExecutor executor,
+    JsonSerializerOptions jsonOptions,
+    Whizbang.Core.Validation.GuidOrderingValidator? guidOrdering
   ) {
+    GuidOrdering = guidOrdering ?? Whizbang.Core.Validation.GuidOrderingValidator.Default;
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(executor);
     ArgumentNullException.ThrowIfNull(jsonOptions);
@@ -156,6 +174,7 @@ public abstract class DapperEventStoreBase : IEventStore {
   protected abstract string GetEventsBetweenSql();
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStoredMetadataRowValuesTests.cs:EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync</tests>
   public async Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(
       Guid streamId,
       Guid? afterEventId,
@@ -188,6 +207,7 @@ public abstract class DapperEventStoreBase : IEventStore {
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStoredMetadataRowValuesTests.cs:EveryReader_ReadsATrimmedRow_AsItReadTheSameRowInTheSlimFormAsync</tests>
   public async Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
       Guid streamId,
       Guid? afterEventId,
@@ -266,7 +286,7 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// Builds a MessageEnvelope from deserialized event data and the raw row metadata/scope.
   /// </summary>
   private MessageEnvelope<TMessage> _buildEnvelope<TMessage>(TMessage payload, EventRow row) {
-    var (messageId, hops, dispatchContext) = _deserializeMetadataAndHops(row.Metadata, row.EventType);
+    var (messageId, hops, dispatchContext) = _deserializeMetadataAndHops(row.Metadata, row.EventType, row.EventId);
     StoredScope.RestoreInto(hops, StoredScope.Read(row.Scope, JsonOptions));
 
     return new MessageEnvelope<TMessage> {
@@ -276,17 +296,20 @@ public abstract class DapperEventStoreBase : IEventStore {
       DispatchContext = dispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
       // #1738: the stream version, when the read selects it, which is how the archive seam sees a gap at a stream's start.
       LocalStreamVersion = row.Version,
+      // #2509: the event's origin, when the read selects it, as the EF Core store carries it: a replay deals a received
+      // stream into its origin's order by it.
+      SourceServiceId = row.OriginServiceId ?? Guid.Empty,
+      SourceCommitSequence = row.OriginCommitSequence ?? 0,
     };
   }
 
-  private (Guid messageId, List<MessageHop> hops, MessageDispatchContext? dispatchContext) _deserializeMetadataAndHops(string metadataJson, string eventType) {
+  private (Guid messageId, List<MessageHop> hops, MessageDispatchContext? dispatchContext) _deserializeMetadataAndHops(string metadataJson, string eventType, Guid? eventId) {
     var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
     var metadataDict = JsonSerializer.Deserialize(metadataJson, metadataDictTypeInfo) as Dictionary<string, JsonElement>
                        ?? throw new InvalidOperationException($"Failed to deserialize metadata for event type {eventType}");
 
-    var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
-      ? Guid.Parse(msgIdElem.GetString()!)
-      : throw new InvalidOperationException("message_id not found in metadata");
+    // #2323: a row whose message id is its event id leaves it out.
+    var messageId = JsonbPersistenceModel.MessageIdOf(metadataDict, eventId);
 
     List<MessageHop> hops;
     if (metadataDict.TryGetValue("hops", out var hopsElem)) {
@@ -309,6 +332,11 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// Internal row structure for Dapper mapping (3-column JSONB pattern).
   /// </summary>
   protected class EventRow {
+    /// <summary>
+    /// The row's event id (<c>wh_event_store.event_id</c>), when the read selects it: the message id of a row whose
+    /// metadata left it out (#2323).
+    /// </summary>
+    public Guid? EventId { get; set; }
     public string EventType { get; set; } = string.Empty;
     public string EventData { get; set; } = string.Empty;
     public string Metadata { get; set; } = string.Empty;
@@ -320,6 +348,16 @@ public abstract class DapperEventStoreBase : IEventStore {
     /// stream holds no version 0.
     /// </summary>
     public bool IsFirstInStream { get; set; }
+    /// <summary>
+    /// The service the event was received from (<c>wh_event_store.origin_service_id</c>), when the read selects it; null
+    /// for a local event (#2509).
+    /// </summary>
+    public Guid? OriginServiceId { get; set; }
+    /// <summary>
+    /// The event's position at the service it was received from (<c>wh_event_store.origin_commit_sequence</c>), when the
+    /// read selects it; null for a local event (#2509).
+    /// </summary>
+    public long? OriginCommitSequence { get; set; }
   }
 
   /// <inheritdoc />

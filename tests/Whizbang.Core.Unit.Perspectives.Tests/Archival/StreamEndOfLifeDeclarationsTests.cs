@@ -75,8 +75,10 @@ public class StreamEndOfLifeDeclarationsTests {
   public async Task Register_KeepsTheFirstDeclarationOfAStreamType_AndRefusesNullAsync() {
     var key = "Whizbang.Tests.EolRegisteredTwice";
 
-    StreamEndOfLifeDeclarations.Register(new StreamEndOfLifeDeclaration(key, "1.00:00:00", null, 0, 0, StreamLifecycleAction.Archive));
-    StreamEndOfLifeDeclarations.Register(new StreamEndOfLifeDeclaration(key, "9.00:00:00", null, 0, 0, StreamLifecycleAction.Purge));
+    // The kept declaration purges: a process-wide declaration that archived would make every host this assembly builds
+    // without an archive store fail its start (#2503).
+    StreamEndOfLifeDeclarations.Register(new StreamEndOfLifeDeclaration(key, "1.00:00:00", null, 0, 0, StreamLifecycleAction.Purge));
+    StreamEndOfLifeDeclarations.Register(new StreamEndOfLifeDeclaration(key, "9.00:00:00", null, 0, 0, StreamLifecycleAction.Archive));
 
     await Assert.That(StreamEndOfLifeDeclarations.All().Single(d => d.StreamType == key).IdleTtl).IsEqualTo("1.00:00:00");
     await Assert.That(() => StreamEndOfLifeDeclarations.Register(null!)).Throws<ArgumentNullException>();

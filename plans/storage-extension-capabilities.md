@@ -104,7 +104,7 @@ requires go to Debug.
 |---|---|---|
 | explicit | yes | proceed |
 | explicit | no (known state) | **throw at startup** with the verdict line |
-| explicit | Unknown | warn; the feature fails loudly when it runs |
+| explicit | Unknown | probe again up to three times, then **throw at startup** (decided in #1672); warn only where nothing probed it |
 | implicit | yes | use it |
 | implicit | no | degrade with a warning |
 
@@ -323,6 +323,11 @@ All decided on 2026-10-22 in #1672 (the owner accepted the recommendations).
 1. **Unknown plus explicit.** When the probe can't tell whether an explicitly configured extension
    is usable, startup throws after a bounded retry. Explicit configuration means the feature is
    required.
+   **Status (2026-11-21):** implemented for #1513. The `Capabilities` step probes again up to
+   three times (1, 2 and 4 seconds, `StartupAssessmentSource.RetryDelay`) while an explicit
+   requirement reads Unknown, then the verdict fails it (`CapabilityVerdict.Evaluate(..., probed)`).
+   It still warns where nothing probed the capability: the probe turned off, or no provider
+   describes it or probes the requirement's scope. The validation table above is updated to match.
 2. **Unknown configuration keys.** 1.0 ships `Warn` as the default, with `Throw` available as an
    opt-in.
 3. **Startup order.** The `Capabilities` step stays after `Migrate` in 1.0. A provider that needs no

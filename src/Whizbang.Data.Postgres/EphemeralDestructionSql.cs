@@ -33,6 +33,7 @@ namespace Whizbang.Data.Postgres;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralDestructionHoldSqlTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralReapSeenSetTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEphemeralDestructionHookTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralReapScanFloorSqlTests.cs:Scans_ACycleAfterTheFirst_ReadOnlyThePointersAboveTheFloorAsync</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "Identifiers cannot be parameterized: the schema prefix is built by PgIdentifier and the table names are constants. Every value is a bound parameter.")]
 internal static class EphemeralDestructionSql {
   private const string HOLD_TABLE = "wh_event_destruction_hold";
@@ -52,6 +53,8 @@ internal static class EphemeralDestructionSql {
       $"JOIN {prefix}wh_event_store es ON es.event_id = eb.event_id " +
       $"LEFT JOIN {prefix}wh_ephemeral_type_grace g ON g.event_type = es.event_type " +
       "WHERE (es.flags & 8) = 8 " +
+      // 597 (#2574): from the oldest ephemeral event that still has a body; no body lies below it for the reap to delete.
+      $"AND {EphemeralReapScanFloorSql.AtOrAboveFloor(prefix)} " +
       // E2-3: skip bodies a hook already held (Cancel/Defer); they are not re-offered until the hold lapses.
       $"AND NOT EXISTS (SELECT 1 FROM {prefix}{HOLD_TABLE} h WHERE h.event_id = eb.event_id AND h.hold_until > NOW()) " +
       "AND es.created_at < NOW() - (COALESCE(g.grace_seconds, " +
@@ -70,7 +73,9 @@ internal static class EphemeralDestructionSql {
       $"  AND NOT EXISTS (SELECT 1 FROM {prefix}wh_perspective_snapshots s WHERE s.stream_id = es.stream_id " +
       // 209: by version, matching the migration. Any drift from the DELETE this mirrors reports bodies that survive or
       // hides bodies that go.
-      "    AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version) " +
+      "    AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version " +
+      // 534 (#2456): a snapshot whose own event is still inside its grace window covers nothing, as in the reap.
+      $"    AND {EphemeralSnapshotFloorSql.SnapshotEventPastGrace(prefix)}) " +
       // 403 (#2294): the perspective's purge marker covers the stream's bodies at or before its purge event, as in the reap.
       $"  AND NOT EXISTS (SELECT 1 FROM {prefix}wh_stream_purge_markers pm JOIN {prefix}wh_event_store pv " +
       "    ON pv.event_id = pm.purge_event_id AND pv.stream_id = pm.stream_id " +

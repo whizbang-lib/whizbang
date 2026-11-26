@@ -121,7 +121,9 @@ public class DapperWorkCoordinatorNamedSchemaTests {
       new { i = instanceId, m = leased });
     await Assert.That(await coordinator.FetchOutboxBatchAsync([streamId], instanceId)).Count().IsEqualTo(1);
     await Assert.That(await coordinator.FetchOutboxBatchAsync([streamId], instanceId, 10, maxBytes: 1_000_000)).Count().IsEqualTo(1);
-    await Assert.That(await coordinator.ContinueOutboxStreamsAsync([new OutboxStreamCursor(streamId, leased)], instanceId, 3, null)).IsEmpty();
+    var leasedAt = await _scalarAsync<long>($"SELECT emission_position FROM {SCHEMA}.wh_outbox WHERE message_id = @m", new { m = leased });
+    await Assert.That(await coordinator.ContinueOutboxStreamsAsync(
+      [new OutboxStreamCursor(streamId, leased) { LastPublishedPosition = leasedAt }], instanceId, 3, null)).IsEmpty();
     await Assert.That(await coordinator.RenewHeldLeasesAsync(WorkCategory.Outbox, instanceId, [leased], 120)).IsEmpty();
     await coordinator.ReportFailuresAsync(WorkCategory.Outbox,
       [new MessageFailure { MessageId = leased, CompletedStatus = MessageProcessingStatus.Stored, Error = "named-schema failure" }]);

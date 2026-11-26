@@ -20,7 +20,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// #2261: the maintenance tick keeps the derived completion gauges. Every instance writes the buckets its own counters
 /// opened and closed into the service's shared tally, so the figures are per service and survive a restart; the instance
 /// whose turn it is to do the maintainer's work reads the tally over the rolling window and reports
-/// <c>repair_progress_percent</c> and <c>backlog_eta_seconds</c>, as it reports the backlog; every instance reports
+/// <c>repair_close_ratio_percent</c> and <c>backlog_eta_seconds</c>, as it reports the backlog; every instance reports
 /// <c>verified_percent</c> from the seals it already reads. Each is switched off by configuration.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/MaintenanceWorker.cs</code-under-test>
@@ -191,20 +191,20 @@ public class MaintenanceWorkerIntegrityCompletionTests {
       .Throws<OperationCanceledException>();
   }
 
-  // ── repair_progress_percent and backlog_eta_seconds ──────────────────────────────────────────
+  // ── repair_close_ratio_percent and backlog_eta_seconds ──────────────────────────────────────────
 
   [Test]
   public async Task TheMaintainer_ReportsProgressAndEta_OverTheWindowAsync() {
     var coordinator = new CompletionCoordinator();
     var duty = await Whizbang.Core.Tests.Startup.MaintainerDutyHolders.ElectedAsync(grants: true);
-    var (worker, metrics) = _build(coordinator, new StreamIntegrityOptions { RepairProgressWindowMinutes = 30 }, duty);
+    var (worker, metrics) = _build(coordinator, new StreamIntegrityOptions { CompletionWindowMinutes = 30 }, duty);
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
     await Assert.That(coordinator.TallyReads).IsEquivalentTo(_halfAnHourBack);
-    var reading = metrics.CurrentRepairProgressForTest;
+    var reading = metrics.CurrentRepairRatesForTest;
     await Assert.That(reading.Reported).IsTrue();
-    await Assert.That(reading.ProgressPercent).IsEqualTo(400.0).Because("400 closed of 100 opened in the window");
+    await Assert.That(reading.CloseRatioPercent).IsEqualTo(400.0).Because("400 closed of 100 opened in the window");
     await Assert.That(reading.EtaSeconds).IsEqualTo(5_400.0)
       .Because("900 repairable open buckets at a net 300 per 30 minutes; the 40 unhealable ones are not repair's to close");
   }
@@ -219,7 +219,7 @@ public class MaintenanceWorkerIntegrityCompletionTests {
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
     await Assert.That(coordinator.TallyReads).IsEmpty();
-    await Assert.That(metrics.CurrentRepairProgressForTest.Reported).IsFalse()
+    await Assert.That(metrics.CurrentRepairRatesForTest.Reported).IsFalse()
       .Because("one instance per service reports these, or a sum across instances would count them twice");
     await Assert.That(coordinator.TallyWrites.Count).IsEqualTo(1)
       .Because("the counts this instance made belong in the service's figures whoever reports them");
@@ -228,31 +228,31 @@ public class MaintenanceWorkerIntegrityCompletionTests {
   [Test]
   public async Task EachDerivedGauge_SwitchesOffOnItsOwnAsync() {
     var noProgress = new CompletionCoordinator();
-    var (worker1, metrics1) = _build(noProgress, new StreamIntegrityOptions { RepairProgressGaugeEnabled = false });
+    var (worker1, metrics1) = _build(noProgress, new StreamIntegrityOptions { RepairCloseRatioGaugeEnabled = false });
     await worker1.RunMaintenanceOnceAsync(CancellationToken.None);
 
     var noEta = new CompletionCoordinator();
     var (worker2, metrics2) = _build(noEta, new StreamIntegrityOptions { BacklogEtaGaugeEnabled = false });
     await worker2.RunMaintenanceOnceAsync(CancellationToken.None);
 
-    await Assert.That(metrics1.CurrentRepairProgressForTest.ProgressPercent).IsNull();
-    await Assert.That(metrics1.CurrentRepairProgressForTest.EtaSeconds).IsEqualTo(10_800.0);
-    await Assert.That(metrics2.CurrentRepairProgressForTest.ProgressPercent).IsEqualTo(400.0);
-    await Assert.That(metrics2.CurrentRepairProgressForTest.EtaSeconds).IsNull();
+    await Assert.That(metrics1.CurrentRepairRatesForTest.CloseRatioPercent).IsNull();
+    await Assert.That(metrics1.CurrentRepairRatesForTest.EtaSeconds).IsEqualTo(10_800.0);
+    await Assert.That(metrics2.CurrentRepairRatesForTest.CloseRatioPercent).IsEqualTo(400.0);
+    await Assert.That(metrics2.CurrentRepairRatesForTest.EtaSeconds).IsNull();
   }
 
   [Test]
   public async Task BothSwitchedOff_NeitherWritesNorReadsTheTallyAsync() {
     var coordinator = new CompletionCoordinator();
     var (worker, metrics) = _build(coordinator,
-      new StreamIntegrityOptions { RepairProgressGaugeEnabled = false, BacklogEtaGaugeEnabled = false });
+      new StreamIntegrityOptions { RepairCloseRatioGaugeEnabled = false, BacklogEtaGaugeEnabled = false });
     _count(metrics, opened: 5, closed: 5);
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
     await Assert.That(coordinator.TallyWrites).IsEmpty().Because("a tally nothing reads is not worth a write per tick");
     await Assert.That(coordinator.TallyReads).IsEmpty();
-    await Assert.That(metrics.CurrentRepairProgressForTest.Reported).IsFalse();
+    await Assert.That(metrics.CurrentRepairRatesForTest.Reported).IsFalse();
   }
 
   [Test]
@@ -264,7 +264,7 @@ public class MaintenanceWorkerIntegrityCompletionTests {
     coordinator.Tally = null;
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
-    await Assert.That(metrics.CurrentRepairProgressForTest.Reported).IsFalse()
+    await Assert.That(metrics.CurrentRepairRatesForTest.Reported).IsFalse()
       .Because("a figure that can no longer be refreshed is stale; no series beats a frozen one");
   }
 
@@ -275,8 +275,8 @@ public class MaintenanceWorkerIntegrityCompletionTests {
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
-    await Assert.That(metrics.CurrentRepairProgressForTest.ProgressPercent).IsEqualTo(400.0);
-    await Assert.That(metrics.CurrentRepairProgressForTest.EtaSeconds).IsNull()
+    await Assert.That(metrics.CurrentRepairRatesForTest.CloseRatioPercent).IsEqualTo(400.0);
+    await Assert.That(metrics.CurrentRepairRatesForTest.EtaSeconds).IsNull()
       .Because("an ETA needs the open backlog it divides");
   }
 }

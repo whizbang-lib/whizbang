@@ -155,9 +155,7 @@ public sealed partial class PerspectiveSyncAwaiter(
       PerspectiveSyncOptions options,
       CancellationToken ct) {
     // Create span for perspective sync wait - shows blocking time in traces
-    using var syncActivity = ActivitySource.StartActivity(
-      $"PerspectiveSync {TypeNameFormatter.ForLog(perspectiveType)}",
-      ActivityKind.Internal);
+    using var syncActivity = WhizbangActivitySource.StartForType(ActivitySource, "PerspectiveSync", perspectiveType);
     syncActivity?.SetTag("whizbang.sync.perspective", TypeNameFormatter.DisplayName(perspectiveType));
     syncActivity?.SetTag("whizbang.sync.timeout_ms", options.Timeout.TotalMilliseconds);
 
@@ -241,9 +239,7 @@ public sealed partial class PerspectiveSyncAwaiter(
       TimeSpan timeout,
       Guid? eventIdToAwait,
       CancellationToken ct) {
-    using var syncActivity = ActivitySource.StartActivity(
-      $"PerspectiveSync {TypeNameFormatter.ForLog(perspectiveType)} Stream",
-      ActivityKind.Internal);
+    using var syncActivity = WhizbangActivitySource.StartForType(ActivitySource, "PerspectiveSync", perspectiveType, "Stream");
     _setStreamSyncActivityTags(syncActivity, perspectiveType, streamId, timeout, eventIdToAwait);
 
     var perspectiveName = _getPerspectiveName(perspectiveType);

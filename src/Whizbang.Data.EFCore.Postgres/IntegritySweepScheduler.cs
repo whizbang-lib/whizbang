@@ -20,7 +20,9 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <summary>
 /// #2353: one schedule per enabled opt-in check, the full-history compare (key <c>wh-integrity-sweep</c>, cron
 /// <see cref="FullHistoryCompareOptions.Schedule"/>) and the sealed-history re-check (key <c>wh-seal-recheck</c>, cron
-/// <see cref="SealRecheckOptions.Schedule"/>); each occurrence names its check. A check that is off registers nothing.
+/// <see cref="SealRecheckOptions.Schedule"/>); each occurrence names its check. #2586: a check that is off, or on with an
+/// empty schedule, has the schedule stored under its key canceled at every start, so one registered while the check was
+/// on a cron stops firing (a removal that fails is logged, and the occurrence handler still ignores a check that is off).
 /// #80-D: puts the full integrity sweep on the temporal engine's clock. Registers an
 /// idempotent-by-key cron schedule whose occurrences are <see cref="ScheduledIntegritySweep"/>
 /// commands, so the heaviest verification runs at a configured IDLE hour instead of wherever the
@@ -39,6 +41,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </remarks>
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegritySweepSchedulingTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegritySweepScheduleRemovalTests.cs</tests>
 public sealed partial class IntegritySweepScheduler(
     IServiceProvider services,
     IOptions<StreamIntegrityOptions> options,
@@ -62,14 +65,28 @@ public sealed partial class IntegritySweepScheduler(
     var recheck = options.Value.SealRecheck;
     var wantCompare = compare.Enabled && !string.IsNullOrWhiteSpace(compare.Schedule);
     var wantRecheck = recheck.Enabled && !string.IsNullOrWhiteSpace(recheck.Schedule);
-    if (!wantCompare && !wantRecheck) {
-      return;   // nothing to schedule: a check that is on with no schedule stays on the every-Nth-audit counter.
-    }
     var manager = services.GetService<IScheduleManager>();
+    if (manager is null) {
+      if (wantCompare || wantRecheck) {
+        LogNoTemporalEngine(logger);
+      }
+      return;   // no engine: nothing stored to remove, counter fallback; the cron flags stay false by design.
+    }
+
+    // #2586: a check that wants no schedule (off, or on the every-Nth-audit counter) ends with none under its key.
+    if (!wantCompare) {
+      await _removeAsync(manager, SCHEDULE_KEY, IntegrityCheck.FullHistoryCompare, cancellationToken).ConfigureAwait(false);
+    }
+    if (!wantRecheck) {
+      await _removeAsync(manager, RECHECK_SCHEDULE_KEY, IntegrityCheck.SealRecheck, cancellationToken).ConfigureAwait(false);
+    }
+    if (!wantCompare && !wantRecheck) {
+      return;
+    }
     var instanceProvider = services.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>();
-    if (manager is null || instanceProvider is null) {
+    if (instanceProvider is null) {
       LogNoTemporalEngine(logger);
-      return;   // no engine: counter fallback; the cron flags stay false by design.
+      return;
     }
 
     // #1334: the schedule function arrives with the migrations. The host starts this scheduler at Accept commands
@@ -114,6 +131,17 @@ public sealed partial class IntegritySweepScheduler(
     }
   }
 
+  private async Task _removeAsync(IScheduleManager manager, string key, IntegrityCheck check, CancellationToken cancellationToken) {
+    try {
+      if (await manager.CancelByKeyAsync(key, cancellationToken).ConfigureAwait(false)) {
+        LogScheduleRemoved(logger, check, key);
+      }
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      // The start goes on: the occurrence handler turns an occurrence of a check that is off into a no-op.
+      LogScheduleRemoveFailed(logger, check, key, ex);
+    }
+  }
+
   public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
   /// <summary>Replaces a default (<c>0</c>) minute field with the service's stable splay minute.</summary>
@@ -147,6 +175,14 @@ public sealed partial class IntegritySweepScheduler(
   [LoggerMessage(EventId = 97, Level = LogLevel.Warning,
     Message = "Failed to register the schedule of integrity check {Check}; the every-Nth-audit counter fallback keeps running it")]
   static partial void LogSweepScheduleFailed(ILogger logger, IntegrityCheck check, Exception ex);
+
+  [LoggerMessage(EventId = 101, Level = LogLevel.Information,
+    Message = "Integrity check {Check} wants no schedule (off, or on with no Schedule); its stored schedule '{Key}' is canceled")]
+  static partial void LogScheduleRemoved(ILogger logger, IntegrityCheck check, string key);
+
+  [LoggerMessage(EventId = 102, Level = LogLevel.Warning,
+    Message = "Failed to cancel the stored schedule '{Key}' of integrity check {Check}; it may keep firing until a later start removes it")]
+  static partial void LogScheduleRemoveFailed(ILogger logger, IntegrityCheck check, string key, Exception ex);
 }
 
 /// <summary>

@@ -48,6 +48,7 @@ public class RuleSemanticsGoldenTests {
       Terminal = true,
       EndOfLife = "Archive",
       DigestExempt = true,
+      Retired = true,
     };
     var set = new RuleSet(RuleSemantics.VERSION, RuleSemantics.ELIGIBILITY_SQL_VERSION,
       new Dictionary<string, string>(StringComparer.Ordinal) { [reference.TypeName] = reference.Hash() });

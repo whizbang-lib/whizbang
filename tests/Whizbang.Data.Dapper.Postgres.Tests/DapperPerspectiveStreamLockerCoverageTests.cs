@@ -24,7 +24,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// PostgreSQL instance, since every locker method executes a live UPDATE against
 /// wh_perspective_cursors.
 /// </summary>
-public sealed class DapperPerspectiveStreamLockerCoverageTests : IDisposable {
+public sealed class DapperPerspectiveStreamLockerCoverageTests {
   private TestFixture _testBase = null!;
   private PerspectiveStreamLockOptions _lockOptions = null!;
 
@@ -38,14 +38,9 @@ public sealed class DapperPerspectiveStreamLockerCoverageTests : IDisposable {
     };
   }
 
-  public void Dispose() {
-    _testBase?.DisposeAsync().AsTask().GetAwaiter().GetResult();
-    GC.SuppressFinalize(this);
-  }
-
   [After(Test)]
   public async Task CleanupAsync() {
-    await _testBase.DisposeAsync();
+    await _testBase.TeardownAsync();
   }
 
   /// <summary>Captures the fully formatted message of every log call, and reports itself enabled for

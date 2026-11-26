@@ -23,19 +23,54 @@ namespace Whizbang.Core.Security;
 /// </remarks>
 /// <docs>fundamentals/security/security#receptor-permission-gate</docs>
 /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorPipelineTests.cs</tests>
-/// <remarks>
-/// Creates a pipeline from the supplied interceptors. Empty input is a no-op pipeline
-/// that always allows.
-/// </remarks>
-public sealed class ReceptorInterceptorPipeline(IEnumerable<IReceptorInterceptor> interceptors) {
-  private readonly IReadOnlyList<IReceptorInterceptor> _interceptors = [.. interceptors];
+public sealed class ReceptorInterceptorPipeline {
+  private readonly IReadOnlyList<IReceptorInterceptor> _interceptors;
+  private readonly IReadOnlyList<IReceptorAdmissionRecorder> _recorders;
 
   /// <summary>
-  /// True when no interceptor is registered. The dispatcher and the receptor invoker read this once, when they are
-  /// built, and skip the gate entirely for an empty pipeline, so a host without interceptors pays nothing per message.
+  /// Creates a pipeline from the supplied interceptors. Empty input is a no-op pipeline that always allows.
+  /// </summary>
+  /// <param name="interceptors">The interceptors, run in order.</param>
+  public ReceptorInterceptorPipeline(IEnumerable<IReceptorInterceptor> interceptors) : this(interceptors, []) {
+  }
+
+  /// <summary>
+  /// Creates a pipeline from the supplied interceptors and the recorders run for every invocation they admit (#2470).
+  /// </summary>
+  internal ReceptorInterceptorPipeline(IEnumerable<IReceptorInterceptor> interceptors, IEnumerable<IReceptorAdmissionRecorder> recorders) {
+    _interceptors = [.. interceptors];
+    _recorders = [.. recorders];
+  }
+
+  /// <summary>
+  /// True when no interceptor is registered and nothing records admitted invocations. The dispatcher and the receptor
+  /// invoker read this once, when they are built, and skip the gate entirely for an empty pipeline, so a host without
+  /// interceptors pays nothing per message.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Security/ReceptorInterceptorGateTests.cs:Active_NoInterceptorsRegistered_IsNullAsync</tests>
-  public bool IsEmpty => _interceptors.Count == 0;
+  public bool IsEmpty => _interceptors.Count == 0 && _recorders.Count == 0;
+
+  /// <summary>
+  /// True when at least one interceptor decides. A pipeline that only records (command audit, #2470) can deny nothing,
+  /// so the workers' ahead-of-time admission checks skip it.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/SystemEvents/CommandAuditDispatchTests.cs:CommandAuditOnly_HoldsAPipelineThatDecidesNothingAsync</tests>
+  internal bool HasInterceptors => _interceptors.Count > 0;
+
+  /// <summary>Runs every recorder for an invocation the interceptors admitted.</summary>
+  internal async ValueTask RecordAdmittedAsync(Type receptorType, IMessageEnvelope envelope, IScopeContext? context,
+      IServiceProvider? scopedProvider, CancellationToken cancellationToken) {
+    foreach (var recorder in _recorders) {
+      await recorder.RecordAsync(receptorType, envelope, context, scopedProvider, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  /// <summary><see cref="RecordAdmittedAsync"/> for a synchronous receptor: no recorder blocks the caller's thread.</summary>
+  internal void RecordAdmitted(Type receptorType, IMessageEnvelope envelope, IScopeContext? context, IServiceProvider scopedProvider) {
+    foreach (var recorder in _recorders) {
+      recorder.Record(receptorType, envelope, context, scopedProvider);
+    }
+  }
 
   /// <summary>
   /// Runs interceptors in order, short-circuiting on the first denial. Fastest path —
@@ -57,7 +92,7 @@ public sealed class ReceptorInterceptorPipeline(IEnumerable<IReceptorInterceptor
 
   /// <summary>
   /// Asks the interceptors whether <paramref name="receptorType"/> may handle the message, and applies the answer the
-  /// way every framework invocation path does: true to invoke; false for a <see cref="DeniedAction.DropQuiet"/> denial,
+  /// way every framework invocation path does, recording an admitted invocation (command audit, #2470): true to invoke; false for a <see cref="DeniedAction.DropQuiet"/> denial,
   /// logged as a warning; and <see cref="Exceptions.ReceptorInvocationDeniedException"/> for every other denial. Use it
   /// from code that invokes a receptor outside the dispatcher and the receptor invoker.
   /// </summary>
@@ -79,7 +114,11 @@ public sealed class ReceptorInterceptorPipeline(IEnumerable<IReceptorInterceptor
     ArgumentNullException.ThrowIfNull(receptorType);
     ArgumentNullException.ThrowIfNull(envelope);
     var result = await EvaluateFirstDenialAsync(receptorType, envelope, context, cancellationToken).ConfigureAwait(false);
-    return ReceptorInterceptorGate.Decide(result, receptorType, envelope, logger);
+    if (!ReceptorInterceptorGate.Decide(result, receptorType, envelope, logger)) {
+      return false;
+    }
+    await RecordAdmittedAsync(receptorType, envelope, context, scopedProvider: null, cancellationToken).ConfigureAwait(false);
+    return true;
   }
 
   /// <summary>

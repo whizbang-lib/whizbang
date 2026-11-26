@@ -42,7 +42,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCorePerspectiveTableSwapperFactory.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard2")]
-public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
+public partial class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
   private const string PERSPECTIVE = "Whizbang.Data.EFCore.Postgres.Tests.Perspectives.RebuildBalancePerspective";
   // The registry is keyed by the MODEL, which is what the schema pass writes. Seeding it under the
   // PERSPECTIVE name built a world where the old lookup worked, which is how #1308 kept green
@@ -428,13 +428,21 @@ public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
 
   // ── Fixture ─────────────────────────────────────────────────────────────────────────────────
 
-  private ServiceProvider _services(Func<Task> beforeEachStream, Func<IServiceProvider, Task> onFirstRun, PgRoleElector? elector = null) {
+  private ServiceProvider _services(
+      Func<Task> beforeEachStream, Func<IServiceProvider, Task> onFirstRun, PgRoleElector? elector = null,
+      BlueGreenRebuildOptions? options = null, PerspectiveRebuildOptions? rebuildOptions = null, bool observed = true) {
     var services = new ServiceCollection();
     if (elector is not null) {
       services.AddSingleton<IDutyElector>(elector);
       services.AddSingleton<IRoleAssignmentReader>(elector);
     }
     services.AddLogging();
+    if (options is not null) {
+      services.AddSingleton(Options.Create(options));
+    }
+    if (rebuildOptions is not null) {
+      services.AddSingleton(Options.Create(rebuildOptions));
+    }
     services.AddScoped(_ => new WorkCoordinationDbContext(DbContextOptions));
     services.AddScoped<DbContext>(s => s.GetRequiredService<WorkCoordinationDbContext>());
     services.AddScoped<IEventStore>(s => new EFCoreEventStore<WorkCoordinationDbContext>(s.GetRequiredService<WorkCoordinationDbContext>()));
@@ -447,9 +455,21 @@ public class BlueGreenRebuildIntegrationTests : EFCoreTestBase {
     var registryType = asm.GetTypes().Single(t => t.Name == "PerspectiveRunnerRegistry" &&
       t.Namespace == "Whizbang.Data.EFCore.Postgres.Tests.Generated");
     services.AddSingleton(registryType);
-    services.AddSingleton<IPerspectiveRunnerRegistry>(s =>
-      new ObservingRegistry((IPerspectiveRunnerRegistry)s.GetRequiredService(registryType), beforeEachStream,
-        () => onFirstRun(s)));
+    // An observed runner wraps the generated one and reads each stream on its own; an unobserved one is the generated
+    // runner itself, as a host runs it.
+    services.AddSingleton<IPerspectiveRunnerRegistry>(s => observed
+      ? new ObservingRegistry((IPerspectiveRunnerRegistry)s.GetRequiredService(registryType), beforeEachStream, () => onFirstRun(s))
+      : (IPerspectiveRunnerRegistry)s.GetRequiredService(registryType));
+    // What the driver registers beside the rebuild (#2513): the purge markers a missing row is probed in, and the state
+    // source that reads a batch's rows, markers and commit sequences with one statement each.
+    services.AddSingleton<IPerspectivePurgeMarkerStore>(_ =>
+      new Whizbang.Data.Postgres.PostgresPerspectivePurgeMarkerStore(NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync));
+    services.AddSingleton<IPerspectiveStateSource, BatchedPerspectiveStateSource>();
+    // The write sinks the driver registers (#2246), unkeyed and under the context, which a rebuild in place writes each
+    // batch's rows through (#2522).
+    services.AddScoped<IPerspectiveWriteSink>(s => new EFCorePostgresPerspectiveWriteSink(s.GetRequiredService<WorkCoordinationDbContext>()));
+    services.AddKeyedScoped<IPerspectiveWriteSink>(typeof(WorkCoordinationDbContext), (s, _) =>
+      new EFCorePostgresPerspectiveWriteSink(s.GetRequiredService<WorkCoordinationDbContext>()));
     services.AddScoped<IPerspectiveCheckpointCompleter>(s =>
       new EFCorePostgresPerspectiveCheckpointCompleter(s.GetRequiredService<WorkCoordinationDbContext>()));
     services.AddSingleton<IPerspectiveTableSwapper>(s =>

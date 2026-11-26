@@ -330,6 +330,51 @@ public class MessageTypeCatalogGeneratorTests {
   }
 
   [Test]
+  public async Task Generator_StampsSequenceIntegrityOnEntriesAsync() {
+    // The sequence integrity policy reads a type's own setting from the catalog, so [SequenceIntegrity] must reach it at
+    // compile time, with its hold time, including through a base type.
+    const string source = """
+
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+      using Whizbang.Core.Messaging;
+
+      namespace MyApp;
+
+      [SequenceIntegrity(SequenceIntegrity.UntilStamped)]
+      public record LedgerEvent : IEvent;
+
+      [SequenceIntegrity(SequenceIntegrity.None)]
+      public record HeartbeatEvent : IEvent;
+
+      [SequenceIntegrity(SequenceIntegrity.Bounded, 2500)]
+      public record PatientEvent : IEvent;
+
+      [SequenceIntegrity((SequenceIntegrity)7)]
+      public record FutureModeEvent : IEvent;
+
+      public record DerivedLedgerEvent : LedgerEvent;
+
+      public record PlainEvent : IEvent;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var lines = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs")!.Split('\n');
+    string line(string type) => lines.Single(l => l.Contains($"typeof(global::MyApp.{type})"));
+
+    await Assert.That(line("LedgerEvent")).Contains("SequenceIntegrity = global::Whizbang.Core.Messaging.SequenceIntegrity.UntilStamped");
+    await Assert.That(line("LedgerEvent").Contains("SequenceHoldMilliseconds")).IsFalse();
+    await Assert.That(line("HeartbeatEvent")).Contains("SequenceIntegrity = global::Whizbang.Core.Messaging.SequenceIntegrity.None");
+    await Assert.That(line("PatientEvent")).Contains("SequenceIntegrity = global::Whizbang.Core.Messaging.SequenceIntegrity.Bounded");
+    await Assert.That(line("PatientEvent")).Contains("SequenceHoldMilliseconds = 2500");
+    await Assert.That(line("FutureModeEvent")).Contains("SequenceIntegrity = (global::Whizbang.Core.Messaging.SequenceIntegrity)7");
+    await Assert.That(line("DerivedLedgerEvent")).Contains("SequenceIntegrity = global::Whizbang.Core.Messaging.SequenceIntegrity.UntilStamped")
+      .Because("the attribute is inherited, so a derived event keeps its base type's setting");
+    await Assert.That(line("PlainEvent").Contains("SequenceIntegrity")).IsFalse();
+  }
+
+  [Test]
   public async Task Generator_StampsMaxPayloadSizeOnEntriesAsync() {
     // The payload limit reads a type's own limit from the catalog, so a type's [MaxPayloadSize]
     // must reach it at compile time, including through a base type and on commands.

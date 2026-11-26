@@ -21,7 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <tests>src/Whizbang.Data.Postgres/EnumColumnRewriteSql.cs</tests>
 [Category("Integration")]
 [Category("Shard1")]
-public class EnumColumnRewriteTests : IAsyncDisposable {
+public class EnumColumnRewriteTests {
   private const long LOCK_ID = 987654322;
   private const int TIMEOUT_SECONDS = 30;
   private static readonly (string Name, string Value)[] _stage = [("Draft", "0"), ("Open", "1"), ("Closed", "2")];
@@ -42,11 +42,10 @@ public class EnumColumnRewriteTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_databaseName is not null) {
       await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
-    GC.SuppressFinalize(this);
   }
 
   private static (string Name, string Sql) _rewrite() =>

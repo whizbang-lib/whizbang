@@ -30,6 +30,12 @@ namespace Whizbang.Core.Tests.Dispatcher;
 public sealed record SweepDynamicRegisteredEvent([property: StreamId] Guid Id, string Name) : IEvent;
 
 /// <summary>
+/// Opts out of the event and message id time-ordering check (#2528), so a cascade may carry a non-v7 id for it.
+/// </summary>
+[SuppressGuidOrderingValidation]
+public sealed record SweepSuppressedOrderingEvent([property: StreamId] Guid Id, string Name) : IEvent;
+
+/// <summary>
 /// Registered variant carrying a settable StreamId so the dynamic-path IHasStreamId
 /// inheritance branch can be observed.
 /// </summary>
@@ -112,6 +118,9 @@ public class DispatcherCoverageSweepOutboxTests {
     public Task CallCascadeByRuntimeTypeAsync(IMessage message, Guid? eventId) =>
       CascadeByRuntimeTypeAsync(message, message.GetType(), sourceEnvelope: null, eventId, eventStoreOnly: false);
 
+    public MessageId CallCascadeMessageIdFor(IMessage message, IMessageEnvelope? sourceEnvelope, Guid? eventId) =>
+      CascadeMessageIdFor(message, sourceEnvelope, eventId);
+
     public Task CallPublishToOutboxDynamicAsync(IMessage eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false) =>
       PublishToOutboxDynamicAsync(eventData, eventType, messageId, sourceEnvelope, eventStoreOnly);
 
@@ -176,6 +185,18 @@ public class DispatcherCoverageSweepOutboxTests {
       SetCalls.Add((message, streamId));
       _assigned[message] = streamId;
       return true;
+    }
+  }
+
+  /// <summary>Extractor that records every type it is asked for a stream id type about.</summary>
+  private sealed class StreamIdTypeRecordingExtractor : IStreamIdExtractor {
+    public List<Type> StreamIdTypeQueries { get; } = [];
+
+    public Guid? ExtractStreamId(object message, Type messageType) => null;
+
+    public Type? GetStreamIdType(Type messageType) {
+      StreamIdTypeQueries.Add(messageType);
+      return null;
     }
   }
 
@@ -942,6 +963,72 @@ public class DispatcherCoverageSweepOutboxTests {
   }
 
   /// <summary>
+  /// The cascade's preset id is checked by the message's type (#2528): a type carrying
+  /// [SuppressGuidOrderingValidation] is written under a non-v7 id, an unattributed type is refused, and the empty
+  /// id is refused even for the opted-out type.
+  /// </summary>
+  [Test]
+  public async Task CascadeByRuntimeType_ASuppressedTypeTakesANonV7Id_OthersAndTheEmptyIdAreRefusedAsync() {
+    var strategy = new SweepWorkStrategy();
+    var dispatcher = new SweepOutboxDispatcher(_buildProvider(strategy: strategy));
+    var v4 = Guid.Parse("919108f7-52d1-4320-9bac-f847db4148a8");
+
+    await dispatcher.CallCascadeByRuntimeTypeAsync(new SweepSuppressedOrderingEvent(Guid.CreateVersion7(), "opted-out"), v4);
+
+    await Assert.That(strategy.Queued).Count().IsEqualTo(1);
+    await Assert.That(strategy.Queued[0].MessageId).IsEqualTo(v4);
+
+    await Assert.That(async () => await dispatcher.CallCascadeByRuntimeTypeAsync(
+        new SweepDynamicRegisteredEvent(Guid.CreateVersion7(), "not opted out"), v4))
+      .Throws<GuidOrderingException>();
+    await Assert.That(async () => await dispatcher.CallCascadeByRuntimeTypeAsync(
+        new SweepSuppressedOrderingEvent(Guid.CreateVersion7(), "empty"), Guid.Empty))
+      .Throws<GuidOrderingException>();
+    await Assert.That(strategy.Queued).Count().IsEqualTo(1).Because("nothing refused was queued");
+  }
+
+  /// <summary>
+  /// The id generated cascade code writes a copy under when the dispatcher gave it none (#2543): the given id when there
+  /// is one; otherwise one derived from the cascade's source envelope, or from the receptor handling the cascade runs in,
+  /// and minted only outside both.
+  /// </summary>
+  [Test]
+  public async Task CascadeMessageIdFor_TakesTheGivenIdOrDerivesFromTheSourceOrTheHandlingAsync() {
+    var dispatcher = new SweepOutboxDispatcher(_buildProvider());
+    var serviceName = new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()).ServiceName;
+    var message = new SweepDynamicRegisteredEvent(Guid.NewGuid(), "fallthrough");
+    var type = TypeNameFormatter.Format(typeof(SweepDynamicRegisteredEvent));
+    var given = (Guid)TrackedGuid.New();
+    var source = (Guid)TrackedGuid.New();
+    var handled = (Guid)TrackedGuid.New();
+
+    var fromGiven = dispatcher.CallCascadeMessageIdFor(message, _sweepHandling(source), given);
+    var fromSource = dispatcher.CallCascadeMessageIdFor(message, _sweepHandling(source), eventId: null);
+    MessageId fromHandling;
+    using (ReceptorHandling.Enter(_sweepHandling(handled))) {
+      fromHandling = dispatcher.CallCascadeMessageIdFor(message, sourceEnvelope: null, eventId: null);
+    }
+    var outside = dispatcher.CallCascadeMessageIdFor(message, sourceEnvelope: null, eventId: null);
+
+    await Assert.That(fromGiven.Value).IsEqualTo(given);
+    await Assert.That(fromSource.Value).IsEqualTo(EmissionIdentity.Derive(source, serviceName, SWEEP_HANDLER, type, 0))
+      .Because("a cascade with a source envelope derives its id from it, so a retried handling writes the same copy");
+    await Assert.That(fromHandling.Value).IsEqualTo(EmissionIdentity.Derive(handled, serviceName, SWEEP_HANDLER, type, 0))
+      .Because("with no source envelope, the handling the cascade runs in is its cause");
+    await Assert.That(outside.Value.Version).IsEqualTo(7);
+    await Assert.That(outside.Value).IsNotEqualTo(fromHandling.Value);
+  }
+
+  private const string SWEEP_HANDLER = "SweepHandler";
+
+  private static MessageEnvelope<object> _sweepHandling(Guid id) => new() {
+    MessageId = MessageId.From(id),
+    Payload = "origin",
+    Hops = [],
+    DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local, HandlerName = SWEEP_HANDLER },
+  };
+
+  /// <summary>
   /// A typed local invoke under a selected policy that sends the message on writes its copy marked as
   /// handled here, with no stream id extractor registered as well (#1410 follow-up).
   /// </summary>
@@ -1332,6 +1419,44 @@ public class DispatcherCoverageSweepOutboxTests {
         await dispatcher.CallPublishToOutboxAsync(document.RootElement, typeof(JsonElement), MessageId.New()))
       .ThrowsExactly<InvalidOperationException>()
       .WithMessageContaining("BUG IN DISPATCHER");
+  }
+
+  [Test]
+  public async Task PublishToOutbox_NullPayload_ReportsTheStreamIdUnderTheDeclaredMessageTypeAsync() {
+    // Arrange - with no payload there is no runtime type, so the stream id report (#2528) asks the extractor about
+    // the declared message type
+    var strategy = new SweepWorkStrategy();
+    var extractor = new StreamIdTypeRecordingExtractor();
+    var dispatcher = new SweepOutboxDispatcher(
+      _buildProvider(strategy: strategy),
+      envelopeSerializer: new SweepEnvelopeSerializer(),
+      streamIdExtractor: extractor);
+
+    // Act
+    await dispatcher.CallPublishToOutboxAsync<SweepSourceCommand>(null!, typeof(SweepSourceCommand), MessageId.New());
+
+    // Assert
+    await Assert.That(strategy.Queued).Count().IsEqualTo(1);
+    await Assert.That(extractor.StreamIdTypeQueries).Contains(typeof(SweepSourceCommand));
+  }
+
+  [Test]
+  public async Task PublishToOutbox_Payload_ReportsTheStreamIdUnderItsRuntimeTypeAsync() {
+    // Arrange - a payload declared as object is reported under the type it actually is (#2528)
+    var strategy = new SweepWorkStrategy();
+    var extractor = new StreamIdTypeRecordingExtractor();
+    var dispatcher = new SweepOutboxDispatcher(
+      _buildProvider(strategy: strategy),
+      envelopeSerializer: new SweepEnvelopeSerializer(),
+      streamIdExtractor: extractor);
+
+    // Act
+    await dispatcher.CallPublishToOutboxAsync<object>(new SweepSourceCommand("x"), typeof(SweepSourceCommand), MessageId.New());
+
+    // Assert
+    await Assert.That(strategy.Queued).Count().IsEqualTo(1);
+    await Assert.That(extractor.StreamIdTypeQueries).Contains(typeof(SweepSourceCommand));
+    await Assert.That(extractor.StreamIdTypeQueries).DoesNotContain(typeof(object));
   }
 
   [Test]

@@ -469,6 +469,25 @@ public interface IWorkCoordinator {
       $"{TypeNameFormatter.ForLog(GetType())} does not implement CompleteOutboxPublishedAsync.");
 
   /// <summary>
+  /// Marks outbox rows complete after a successful publish, each under the partition epoch it was claimed under (#2556).
+  /// In map mode an id whose epoch is no longer its partition's is not marked: it is reported fenced and stays for the
+  /// current owner. A store that does not fence ignores <paramref name="epochs"/>.
+  /// </summary>
+  /// <param name="ids">Outbox message ids whose transport publish succeeded.</param>
+  /// <param name="epochs">The epoch each id was claimed under, by position; null (or a null entry) names none.</param>
+  /// <param name="debugMode">From <see cref="IWorkCoordinatorStrategy.DebugMode"/> at the call site.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Number of rows actually affected.</returns>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorOwnershipNoticesTests.cs:AFencedWrite_IsCountedByKind_AndLoggedAsync</tests>
+  Task<int> CompleteOutboxPublishedAsync(
+    IReadOnlyList<Guid> ids,
+    IReadOnlyList<long?>? epochs,
+    bool debugMode,
+    CancellationToken cancellationToken = default)
+    => CompleteOutboxPublishedAsync(ids, debugMode, cancellationToken);
+
+  /// <summary>
   /// Advances perspective cursors and deletes processed perspective_event rows in one round-trip.
   /// Coalesced flush from the C# PerspectiveCompletionFlushWorker.
   /// Phase B of work-pump decomposition.
@@ -500,6 +519,65 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
       $"{TypeNameFormatter.ForLog(GetType())} does not implement CompletePerspectiveAsync.");
+
+  /// <summary>
+  /// Advances cursors and retires perspective work, each work id under the partition epoch it was claimed under and each
+  /// cursor under the epoch it names (#2556). In map mode one whose epoch is no longer its partition's lands nowhere and
+  /// is reported fenced. A store that does not fence ignores the epochs.
+  /// </summary>
+  /// <param name="cursors">Cursor advancement specs, each naming its partition and epoch.</param>
+  /// <param name="eventWorkIds">Event-work ids to mark processed.</param>
+  /// <param name="eventWorkEpochs">The epoch each work id was claimed under, by position; null names none.</param>
+  /// <param name="debugMode">From <see cref="IWorkCoordinatorStrategy.DebugMode"/> at the call site.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorOwnershipNoticesTests.cs:AFencedPerspectiveCompletion_IsCountedAsync</tests>
+  Task CompletePerspectiveAsync(
+    IReadOnlyList<PerspectiveCursorCompletion> cursors,
+    IReadOnlyList<Guid> eventWorkIds,
+    IReadOnlyList<long?>? eventWorkEpochs,
+    bool debugMode,
+    CancellationToken cancellationToken = default)
+    => CompletePerspectiveAsync(cursors, eventWorkIds, debugMode, cancellationToken);
+
+  /// <summary>
+  /// The partitions <paramref name="instanceId"/> owns and is handing over (#2557), with the epoch each is handed over at.
+  /// Empty for a store that does not own partitions by map.
+  /// </summary>
+  /// <param name="instanceId">The old owner.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The partitions it hands over.</returns>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#handover</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorNamesTheClaimedEpochTests.cs:TheCoordinator_ListsWhatThisInstanceHandsOver_AndAcknowledgesItAsync</tests>
+  Task<IReadOnlyList<PartitionHandover>> GetPartitionsHandingOverAsync(Guid instanceId, CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<PartitionHandover>>([]);
+
+  /// <summary>
+  /// The old owner acknowledges the handovers it has finished (#2557): what it has not started there is released, and
+  /// each partition flips to its next owner at a raised epoch, fenced on the epoch named. Nothing for a store that does
+  /// not own partitions by map.
+  /// </summary>
+  /// <param name="instanceId">The old owner.</param>
+  /// <param name="handovers">The handovers it has finished.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The partitions flipped.</returns>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#handover</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorNamesTheClaimedEpochTests.cs:TheCoordinator_ListsWhatThisInstanceHandsOver_AndAcknowledgesItAsync</tests>
+  Task<IReadOnlyList<int>> AcknowledgeHandoverAsync(
+    Guid instanceId, IReadOnlyList<PartitionHandover> handovers, CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<int>>([]);
+
+  /// <summary>
+  /// What a leaving instance still owns, and whether another live instance could take it (#2557, graceful leave).
+  /// Nothing owned for a store that does not own partitions by map.
+  /// </summary>
+  /// <param name="instanceId">The leaving instance.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Its partitions owned and the other live candidates.</returns>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#graceful-leave</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorNamesTheClaimedEpochTests.cs:TheLeaveStatus_CountsWhatThisInstanceOwns_AndWhoElseCouldTakeItAsync</tests>
+  Task<PartitionLeaveStatus> GetLeaveStatusAsync(Guid instanceId, CancellationToken cancellationToken = default)
+    => Task.FromResult(default(PartitionLeaveStatus));
 
   /// <summary>
   /// Extends <c>lease_expiry</c> for the supplied ids in the chosen category that <paramref name="instanceId"/> still
@@ -797,6 +875,24 @@ public interface IWorkCoordinator {
     => Task.FromResult(false);
 
   /// <summary>
+  /// The arrival time of the oldest outbox event <paramref name="instanceId"/> holds for its commit-order stamp
+  /// (sequence integrity, #2542), read through <c>wh_oldest_sequence_held_outbox</c> from at most
+  /// <paramref name="maxRows"/> of the instance's oldest pending rows. Null when it holds none there, and from a
+  /// coordinator with no outbox (the default).
+  /// </summary>
+  /// <param name="instanceId">The instance whose holdings are read.</param>
+  /// <param name="maxRows">The most pending rows the reading walks.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/messaging/sequence-integrity#watching-held-messages</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SequenceIntegritySqlTests.cs:Coordinator_ReadsTheOldestHeldThroughTheFunctionAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSequenceHoldTests.cs</tests>
+  Task<DateTimeOffset?> GetOldestSequenceHeldOutboxAsync(
+    Guid instanceId,
+    int maxRows,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<DateTimeOffset?>(null);
+
+  /// <summary>
   /// Writes inbox messages the inbox batcher accepted and never stored to the dead-letter table, through the
   /// <c>wh_store_inbox_dead_letters</c> SQL function, as <c>wh_inbox</c> dead letters in the shape a stored inbox
   /// row's dead letter takes, so dead-letter recovery re-enters them through <c>store_inbox_messages</c> (#1885). The
@@ -922,7 +1018,7 @@ public interface IWorkCoordinator {
   /// <param name="streamIds">Stream IDs to fetch cursors for</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>List of cursor info for all streams that have checkpoints</returns>
-  /// <docs>fundamentals/perspectives/drain-mode#batch-cursor-fetch</docs>
+  /// <docs>fundamentals/perspectives/write-modes#batch-formation</docs>
   Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(
     Guid[] streamIds,
     CancellationToken cancellationToken = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
@@ -2261,6 +2357,61 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<bool>?>(null);
 
   /// <summary>
+  /// #2377: the pair guard's open halts (one per peer and side, not yet resumed), read once by a new process so a halt
+  /// that began before a restart keeps its halted-at time and its alert. Null = unsupported: the guard keeps its state in
+  /// memory, as before.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The open halts, or null.</returns>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityPairHaltSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityPairHalts_WithoutProviderSupport_KeepNothingAsync</tests>
+  Task<IReadOnlyList<IntegrityPairHaltRecord>?> IntegrityLoadPairHaltsAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<IntegrityPairHaltRecord>?>(null);
+
+  /// <summary>
+  /// #2377: keeps a pair's halt as it is now (a new halt, or the same pair halted for another reason). One open halt is
+  /// kept per peer and side: recording it again updates what it says and keeps the earliest halted-at, so a second
+  /// instance of the service, or a restart, runs the alert clock from when the pair first halted. Null = unsupported.
+  /// </summary>
+  /// <param name="halt">The halt.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The open halt as kept (its halted-at and alerted-at may be earlier than this call's), or null.</returns>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityPairHaltSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:IntegrityPairHalts_WithoutProviderSupport_KeepNothingAsync</tests>
+  Task<IntegrityPairHaltRecord?> IntegrityRecordPairHaltAsync(IntegrityPairHaltRecord halt, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IntegrityPairHaltRecord?>(null);
+
+  /// <summary>
+  /// #2377: stamps the open halt of a pair with the time it was alerted, once; a later call keeps the first time. A no-op
+  /// for engines that keep no halts.
+  /// </summary>
+  /// <param name="peer">The other service's name.</param>
+  /// <param name="side">Which end this service is.</param>
+  /// <param name="at">When the alert went out.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task.</returns>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityPairHaltSqlTests.cs</tests>
+  Task IntegrityRecordPairHaltAlertAsync(string peer, IntegrityPairSide side, DateTimeOffset at, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
+  /// #2377: closes the open halt of a pair with the time it resumed. The closed halt stays as history for the
+  /// <c>PairHistory</c> retention. A no-op for engines that keep no halts.
+  /// </summary>
+  /// <param name="peer">The other service's name.</param>
+  /// <param name="side">Which end this service is.</param>
+  /// <param name="at">When the pair resumed.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task.</returns>
+  /// <docs>resilience/stream-integrity#the-pair-guard</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityPairHaltSqlTests.cs</tests>
+  Task IntegrityRecordPairResumedAsync(string peer, IntegrityPairSide side, DateTimeOffset at, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  /// <summary>
   /// #2104: what the store keeps of the integrity gap tracker (known origins, pending gaps), read once by a new process.
   /// Null = unsupported: the tracker starts empty, as before, and learns from the next checkpoints.
   /// </summary>
@@ -2370,8 +2521,8 @@ public interface IWorkCoordinator {
 
   /// <summary>
   /// #2365: records a stream whose cut the seal gate holds (<paramref name="task"/> names the cut: <c>truncate</c> or
-  /// <c>archive</c>), or forgets it (null) once its cut answers otherwise, for <c>eligible_not_yet_deleted</c>. No-op =
-  /// unsupported.
+  /// <c>archive</c>), or forgets it (null) once its cut answers otherwise, for <c>eligible_not_yet_deleted</c>. Called by
+  /// the prefix truncator and, since #2529, by the end-of-life step for a whole-stream archive. No-op = unsupported.
   /// </summary>
   /// <param name="streamId">The stream.</param>
   /// <param name="task">The cut the seal holds, or null to forget the stream.</param>
@@ -2379,6 +2530,7 @@ public interface IWorkCoordinator {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>resilience/stream-integrity#integrity-instruments</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CutsAwaitingSealSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Lifecycle/StreamDispositionStepTests.cs:AWholeStreamArchiveTheSealHolds_IsRecordedAsAwaitingIt_ForEligibleNotYetDeletedAsync</tests>
   Task RecordCutAwaitingSealAsync(Guid streamId, string? task, DateTimeOffset now, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
 
@@ -2990,7 +3142,7 @@ public interface IWorkCoordinator {
 
   /// <summary>
   /// Reads the service's ledger buckets opened and closed since <paramref name="since"/> from the shared tally (#2261),
-  /// for <c>repair_progress_percent</c> and <c>backlog_eta_seconds</c>. Defaults to null (no reading) for engines with no
+  /// for <c>repair_close_ratio_percent</c> and <c>backlog_eta_seconds</c>. Defaults to null (no reading) for engines with no
   /// ledger: the gauges then report no series, never a zero.
   /// </summary>
   /// <param name="since">The window's start.</param>
@@ -3515,7 +3667,7 @@ public interface IWorkCoordinator {
   /// <param name="workItemIds">Array of event_work_id values to delete</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Number of rows deleted</returns>
-  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  /// <docs>operations/workers/perspective-worker#completion-flush-path</docs>
   Task<int> CompletePerspectiveEventsAsync(
     Guid[] workItemIds,
     CancellationToken cancellationToken = default) => CompletePerspectiveEventsAsync(workItemIds, debugMode: false, cancellationToken);
@@ -3544,7 +3696,7 @@ public interface IWorkCoordinator {
   /// <param name="streamIds">Stream IDs to fetch events for</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>List of stream event data for processing</returns>
-  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  /// <docs>operations/workers/perspective-worker#the-perspective-work-pipeline</docs>
   Task<List<StreamEventData>> GetStreamEventsAsync(
     Guid instanceId,
     Guid[] streamIds,
@@ -3559,7 +3711,7 @@ public interface IWorkCoordinator {
   /// unambiguously an orphan, so attempts (not age) are the safety. Returns the count reaped.
   /// Default is a no-op for coordinators that do not back a relational event store.
   /// </summary>
-  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  /// <docs>operations/workers/perspective-worker#error-tracking-retry</docs>
   Task<int> ReapExhaustedOrphanedPerspectiveRowsAsync(
     Guid instanceId,
     IReadOnlyList<Guid> streamIds,
@@ -4502,6 +4654,34 @@ public record WorkBatch {
   public bool PartitionAssignmentStale { get; init; }
 
   /// <summary>
+  /// The partition epoch this instance held each claimed stream's partition at when it claimed it, keyed by stream id
+  /// (#2556). Present only when the service owns partitions by map. A write that commits a result for the stream names
+  /// it, and lands only while it is still the partition's epoch. A value of -1 means the claim was made without owning
+  /// the partition, so nothing written under it lands. Empty when the service does not own by map, or the store does
+  /// not report epochs.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorOwnershipNoticesTests.cs:AClaimInMapMode_CarriesTheEpochOfEachStreamsPartitionAsync</tests>
+  public IReadOnlyDictionary<Guid, long> StreamEpochs { get; init; } = new Dictionary<Guid, long>();
+
+  /// <summary>
+  /// The partition number of each claimed stream, keyed by stream id, as the claim reported it; read with
+  /// <see cref="StreamEpochs"/> to name a write's tenure. Empty when the store does not report it.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorOwnershipNoticesTests.cs:AClaimInMapMode_CarriesTheEpochOfEachStreamsPartitionAsync</tests>
+  public IReadOnlyDictionary<Guid, int> StreamPartitions { get; init; } = new Dictionary<Guid, int>();
+
+  /// <summary>
+  /// True when the service owns partitions by map and the claim found no valid partition map, so it claimed nothing and
+  /// the instance waits for the assigner to publish one (#2554). The coordinator counts and warns about it; the caller
+  /// may back off. False when the store does not report it.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorOwnershipNoticesTests.cs:AClaimWithNoValidMap_IsCounted_AndWarnedOncePerStreakAsync</tests>
+  public bool PartitionMapUnavailable { get; init; }
+
+  /// <summary>
   /// This instance's untruncated outstanding-work counts, taken in the SAME round trip and snapshot
   /// as the claim, when the request asked for them (<see cref="ClaimWorkRequest.IncludeOutstanding"/>)
   /// and the store supports it. Null means "not measured here" — the caller must fall back to
@@ -4582,6 +4762,15 @@ public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
   public int Priority { get; init; }
 
   /// <summary>
+  /// How long the outbox holds this event for its commit-order stamp before publishing it: zero for no hold,
+  /// <see cref="SequenceHold.UNTIL_STAMPED_MILLISECONDS"/> to hold until stamped, otherwise the most it is held, in
+  /// milliseconds. Decided by the dispatcher (<see cref="SequenceIntegrityPolicy"/>) and stored by
+  /// <c>store_outbox_messages</c> as the row's <c>sequence_hold_until</c>. Ignored on a message that is not an event.
+  /// </summary>
+  /// <docs>fundamentals/messaging/sequence-integrity</docs>
+  public int SequenceHoldMilliseconds { get; init; }
+
+  /// <summary>
   /// Whether this message is a composite event (implements
   /// <see cref="Whizbang.Core.Minting.ICompositeEvent"/>) that the
   /// receiver fans out into N inner events. Set at producer-side dispatch
@@ -4657,6 +4846,21 @@ public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Tags/CoalesceGroupResolverTests.cs:Apply_BoundTag_StampsGroupAndMaxDelayFloorAsync</tests>
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/CoalesceMintStampingTests.cs:AddOutboxMessage_BoundTag_StampsGroupAndFloorAsync</tests>
   public string? CoalesceGroup { get; init; }
+
+  /// <summary>
+  /// The position this message's stored event holds in this service's commit lane, the
+  /// <c>SourceCommitSequence</c> a direct delivery of it carries under this service's id (#1628). Read
+  /// by <see cref="IWorkCoordinator.FetchPendingCoalesceAsync"/> so a fold can hand each child of its
+  /// composite the sequence the child would have carried on its own. Null when the message is not
+  /// stored as an event here, when the commit stamper has not reached it yet, when it was forwarded
+  /// from another origin (its direct delivery carries that origin's identity, which one composite
+  /// cannot carry per child), and on every message not read back by that fetch.
+  /// </summary>
+  /// <remarks>Never written: storing a message ignores it, and the store stamps the sequence itself.</remarks>
+  /// <docs>fundamentals/messages/message-tags#coalescing</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoalesceFoldCoordinatorSqlTests.cs:FetchPendingCoalesce_ReadsEachSinglesPositionInThisServicesCommitLaneAsync</tests>
+  [JsonIgnore]
+  public long? SourceCommitSequence { get; init; }
 
   /// <summary>
   /// Set on a collective with an ordering key (#1003): the type it is named by when it becomes a predecessor
@@ -4897,6 +5101,18 @@ public record MessageFailure {
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureTests.cs:MessageFailure_WithoutReason_DefaultsToUnknownAsync</tests>
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/MessageFailureTests.cs:MessageFailure_AllReasonTypes_CanBeAssignedAsync</tests>
   public MessageFailureReason Reason { get; init; } = MessageFailureReason.Unknown;
+
+  /// <summary>
+  /// The partition this work belongs to and the epoch it was claimed under (<see cref="WorkBatch.StreamEpochs"/>), when
+  /// the service owns partitions by map. The write lands only while that epoch is still the partition's; otherwise it is
+  /// reported fenced and the work stays for the current owner (#2556). Null names none, and the write is not fenced.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  public int? PartitionNumber { get; init; }
+
+  /// <inheritdoc cref="PartitionNumber"/>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  public long? PartitionEpoch { get; init; }
 }
 
 /// <summary>
@@ -5152,6 +5368,19 @@ public record PerspectiveCursorCompletion {
   /// </remarks>
   /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
   public long? LastCommitSequence { get; init; }
+
+  /// <summary>
+  /// The partition this work belongs to and the epoch it was claimed under (<see cref="WorkBatch.StreamEpochs"/>), when
+  /// the service owns partitions by map. The write lands only while that epoch is still the partition's; otherwise it is
+  /// reported fenced and the work stays for the current owner (#2556). Null names none, and the write is not fenced.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  public int? PartitionNumber { get; init; }
+
+  /// <inheritdoc cref="PartitionNumber"/>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  public long? PartitionEpoch { get; init; }
+
 
   /// <summary>
   /// The commit-sequence frontier a completed replay (a rewind or a rebuild) read through: every event of the stream
@@ -5428,6 +5657,41 @@ public record StreamEventData {
   /// <docs>fundamentals/perspectives/perspectives-with-actions#no-row-contract</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FirstEventInStreamReadTests.cs:GetStreamEvents_ReturnsWhetherEachEventIsTheFirstInItsStreamAsync</tests>
   public bool IsFirstInStream { get; init; }
+
+  /// <summary>
+  /// The event's stream version (<c>get_stream_events_in_stream_order.out_version</c>, #2551), its position in its stream. The drain
+  /// carries it onto the envelope (<see cref="Observability.MessageEnvelope{T}.LocalStreamVersion"/>) and applies a
+  /// stream in this order, never by id. Null for a driver or function revision that does not return it, and then the
+  /// events keep the order the read returned them in.
+  /// </summary>
+  /// <docs>fundamentals/event-store/version-ordering#dispatch-order</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FetchInboxBatchStreamOrderSqlTests.cs</tests>
+  public long? Version { get; init; }
+
+  /// <summary>
+  /// What a driver says, in <see cref="UnreadableReason"/>, about an ephemeral event whose body is gone: the reap deleted
+  /// it past its retention, so it never comes back.
+  /// </summary>
+  /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
+  public const string BODY_REAPED = "the event is ephemeral and its body was reaped past its retention";
+
+  /// <summary>
+  /// What a driver says, in <see cref="UnreadableReason"/>, about an event that is not ephemeral and has no stored body.
+  /// A Sourced body is never reaped, so its absence means something else deleted it.
+  /// </summary>
+  /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
+  public const string BODY_MISSING = "the event is not ephemeral and has no stored body; nothing in the framework deletes it";
+
+  /// <summary>
+  /// Why the row's event cannot be read, when the read could tell (#2591): <see cref="BODY_REAPED"/> for an ephemeral event
+  /// whose body the reap deleted, <see cref="BODY_MISSING"/> for any other event without a body. Null for a readable row.
+  /// Such a row carries its identity (stream, event, work id, perspective, counts) and an empty <see cref="EventData"/>.
+  /// The perspective worker dead-letters a reaped one on first sight, fails a missing one for the bounded retry, and
+  /// applies the other rows of the batch.
+  /// </summary>
+  /// <docs>operations/workers/perspective-worker#unreadable-stored-events</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReapedBodyStreamReadTests.cs</tests>
+  public string? UnreadableReason { get; init; }
 }
 
 /// <summary>
@@ -5471,7 +5735,15 @@ public sealed record PendingPerspectiveEvent(Guid EventWorkId, Guid EventId, lon
 /// <param name="StreamId">The outbox stream.</param>
 /// <param name="LastPublishedMessageId">The last message the drain published on the stream.</param>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
-public sealed record OutboxStreamCursor(Guid StreamId, Guid LastPublishedMessageId);
+public sealed record OutboxStreamCursor(Guid StreamId, Guid LastPublishedMessageId) {
+  /// <summary>
+  /// The stream position of the last row the drain published (<see cref="OutboxBatchRow.StreamPosition"/>, #2551): the
+  /// continuation returns the rows after it in emission order. 0 when nothing carries one.
+  /// </summary>
+  /// <docs>fundamentals/event-store/version-ordering#dispatch-order</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxEmissionOrderTests.cs:TheContinuation_ResumesAfterTheLastPositionPublished_NotTheLargestIdAsync</tests>
+  public long LastPublishedPosition { get; init; }
+}
 
 /// <summary>
 /// One leased outbox row returned from <see cref="IWorkCoordinator.FetchOutboxBatchAsync"/>.
@@ -5479,6 +5751,14 @@ public sealed record OutboxStreamCursor(Guid StreamId, Guid LastPublishedMessage
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
 public sealed record OutboxBatchRow : Whizbang.Core.Priority.IPrioritized {
+  /// <summary>
+  /// The row's position in its stream (#2551): its emission position, the order store_outbox_messages was handed the
+  /// stream's messages in. The drain publishes a stream in this order and never by id; 0 when the fetch predates it.
+  /// </summary>
+  /// <docs>fundamentals/event-store/version-ordering#dispatch-order</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxEmissionOrderTests.cs:AStreamsRows_AreFetchedInEmissionOrder_WithTheirPositions_ThoughTheirIdsSortOtherwiseAsync</tests>
+  public long StreamPosition { get; init; }
+
   /// <summary>Priority step 1: the number the producer declared, stored on the row (0 when the fetch predates the column).</summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MessagePrioritySqlTests.cs:FetchOutboxBatch_ReturnsTheRowsPriorityAsync</tests>
   public int Priority { get; init; }
@@ -5574,6 +5854,16 @@ public sealed record InboxBatchRow : Whizbang.Core.Priority.IPrioritized {
   public int? PartitionNumber { get; init; }
   /// <summary>True if this inbox message is also written to the event store.</summary>
   public bool IsEvent { get; init; }
+
+  /// <summary>
+  /// The row's position in its stream, as <c>fetch_inbox_batch_in_stream_order</c> ranked it (#2551): a received event by its stored
+  /// version (the receive order), a command by its arrival, each kind in the arrival slots it holds. The drain
+  /// dispatches a stream in this order and never by id. 0 when the fetch predates the column, and then the rows keep the
+  /// order the fetch returned them in.
+  /// </summary>
+  /// <docs>fundamentals/event-store/version-ordering#dispatch-order</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FetchInboxBatchStreamOrderSqlTests.cs</tests>
+  public long StreamPosition { get; init; }
 
   /// <summary>The row's effective priority (<see cref="Whizbang.Core.Priority.WorkPriority"/>).</summary>
   /// <docs>fundamentals/messaging/message-priority#declaration</docs>

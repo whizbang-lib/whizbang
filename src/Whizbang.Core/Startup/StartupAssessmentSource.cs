@@ -111,11 +111,7 @@ public sealed partial class StartupAssessmentSource : IStartupAssessor {
     while (true) {
       try {
         var verdict = await _assessor.AssessAsync(cancellationToken).ConfigureAwait(false);
-        if (verdict.OverriddenReason is { } overridden) {
-          // #2022: loud at every start, in the words the stand-down would have used.
-          LogRunningPastAnIncompatibility(_logger, Whizbang.Core.Versioning.UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY,
-            nameof(StartupVerdict.StandDown), overridden);
-        }
+        _logOverrides(verdict);
         Verdict = verdict;
         attempt.SetResult(verdict);
         return;
@@ -155,6 +151,26 @@ public sealed partial class StartupAssessmentSource : IStartupAssessor {
     }
   }
 
+  // #2022: loud at every start, in the words the stand-down would have used. #2553: a side overridden on its own is
+  // named, with its own key and what still runs; a verdict judged as one (no sides) keeps the shared message.
+  private void _logOverrides(StartupAssessment verdict) {
+    var sides = new[] { verdict.Platform, verdict.Application }.OfType<SchemaSideVerdict>()
+      .Where(side => side.OverriddenReason is not null).ToList();
+    foreach (var side in sides) {
+      var platform = side.Side == Versioning.SchemaChangeKind.Platform;
+      LogRunningPastASideIncompatibility(_logger, side.Name,
+        platform ? Versioning.UpgradeOrder.PLATFORM_OVERRIDE_INCOMPATIBILITY_KEY : Versioning.UpgradeOrder.APPLICATION_OVERRIDE_INCOMPATIBILITY_KEY,
+        Versioning.UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY, nameof(StartupVerdict.StandDown), side.OverriddenReason!,
+        platform
+          ? "nothing of the W! migrations is applied and no W! migration runs"
+          : "the application schema is left as it is, and the W! migrations still run");
+    }
+    if (sides.Count == 0 && verdict.OverriddenReason is { } overridden) {
+      LogRunningPastAnIncompatibility(_logger, Versioning.UpgradeOrder.OVERRIDE_INCOMPATIBILITY_KEY,
+        nameof(StartupVerdict.StandDown), overridden);
+    }
+  }
+
   [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
     Message = "The schema version record could not be read ({Reason}); Assess retries in {DelayMs} ms (failure {Failures})")]
   static partial void LogRetrying(ILogger logger, Exception ex, string reason, int failures, long delayMs);
@@ -170,6 +186,12 @@ public sealed partial class StartupAssessmentSource : IStartupAssessor {
       + "This build serves a schema it did not create; nothing is applied and no migration runs, and the instance row "
       + "records the override")]
   static partial void LogRunningPastAnIncompatibility(ILogger logger, string key, string verdict, string reason);
+
+  [LoggerMessage(EventId = 4, Level = LogLevel.Error,
+    Message = "Running past the {Side} incompatibility verdict because {Key} (or {SharedKey}) is on: its verdict was {Verdict}: "
+      + "{Reason}. This build serves that side as it is: {Consequence}; the instance row records the override")]
+  static partial void LogRunningPastASideIncompatibility(
+    ILogger logger, string side, string key, string sharedKey, string verdict, string reason, string consequence);
 }
 
 /// <summary>Registers the one <see cref="StartupAssessmentSource"/> of a host (#1992).</summary>

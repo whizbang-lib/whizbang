@@ -28,6 +28,9 @@ public class InMemoryEventStore : IEventStore {
   private readonly ConcurrentDictionary<Guid, StreamData> _streams = new();
   private readonly IEnvelopeRegistry? _envelopeRegistry;
 
+  /// <summary>The time-ordering check every append runs before anything is stored (#2528); the default validator unless set.</summary>
+  public Whizbang.Core.Validation.GuidOrderingValidator GuidOrdering { get; init; } = Whizbang.Core.Validation.GuidOrderingValidator.Default;
+
   /// <summary>
   /// Creates an InMemoryEventStore without envelope registry support.
   /// Messages passed to the raw AppendAsync overload will use minimal envelopes.
@@ -55,6 +58,7 @@ public class InMemoryEventStore : IEventStore {
   /// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
   public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
+    GuidOrdering.ValidateAppend(streamId, envelope, "InMemoryEventStore.Append");
 
     var stream = _streams.GetOrAdd(streamId, _ => new StreamData());
     stream.Append(envelope);
@@ -278,30 +282,24 @@ public class InMemoryEventStore : IEventStore {
 
     public IEnumerable<IMessageEnvelope> Read(long fromSequence) {
       lock (_lock) {
-        // ORDER BY EventId (UUIDv7 = chronological) matches the SQL event store contract.
-        // Sorting by Version (insertion order) would diverge from real-Postgres reads when
-        // events are appended out of UUIDv7 order (e.g., concurrent producers, late-arrival
-        // events). Downstream cursor-comparison code in PerspectiveRunner relies on this
-        // event_id-sorted retrieval to keep idempotency + cursor-inversion logic consistent
-        // with production behavior.
+        // #2551: in stream order, the version, as the Postgres stores read a stream. An id is time-ordered and never a
+        // stream position.
         return [.. _events
           .Where(e => e.Version >= fromSequence)
-          .OrderBy(e => e.EventId)
+          .OrderBy(e => e.Version)
           .Select(e => e.Envelope)];
       }
     }
 
     public IEnumerable<IMessageEnvelope> ReadByEventId(Guid? fromEventId) {
       lock (_lock) {
-        if (fromEventId == null) {
-          return [.. _events
-            .OrderBy(e => e.EventId)
-            .Select(e => e.Envelope)];
-        }
-
+        // #2551: in stream order; after an anchor the stream holds, by its version. An anchor the stream does not hold
+        // has no position in it and is compared by id, as the Postgres stores read it (#2379).
+        var anchor = fromEventId is { } from ? _events.FirstOrDefault(e => e.EventId == from) : null;
         return [.. _events
-          .Where(e => e.EventId.CompareTo(fromEventId.Value) > 0)
-          .OrderBy(e => e.EventId)
+          .Where(e => fromEventId == null
+            || (anchor is not null ? e.Version > anchor.Version : e.EventId.CompareTo(fromEventId.Value) > 0))
+          .OrderBy(e => e.Version)
           .Select(e => e.Envelope)];
       }
     }

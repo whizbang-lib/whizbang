@@ -883,6 +883,14 @@ public sealed class StreamIntegrityOptions {
   public IntegrityPairGuardOptions PairGuard { get; set; } = new();
 
   /// <summary>
+  /// Filling the origin positions of received events stored without one (<c>Whizbang:StreamIntegrity:OriginPositionFill</c>,
+  /// #2544). On by default.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/OriginPositionFillOptionsTests.cs</tests>
+  public OriginPositionFillOptions OriginPositionFill { get; set; } = new();
+
+  /// <summary>
   /// Publish <see cref="IntegrityDivergenceDetected"/> / <see cref="IntegrityGapDetected"/> as
   /// durable events (default <c>false</c>).
   /// </summary>
@@ -942,17 +950,41 @@ public sealed class StreamIntegrityOptions {
   public bool VerifiedPercentGaugeEnabled { get; set; } = true;
 
   /// <summary>
-  /// Report <c>whizbang.stream_integrity.repair_progress_percent</c> (default true; #2261): ledger buckets closed as a
-  /// percentage of buckets opened over <see cref="RepairProgressWindowMinutes"/>, per service. Derived from
-  /// <c>ledger_buckets_opened</c> and <c>ledger_buckets_closed</c>; a team that computes it from those itself can switch
-  /// it off.
+  /// Alias for one release (#2317) of <see cref="RepairCloseRatioGaugeEnabled"/>, the switch's name while the gauge was
+  /// called <c>repair_progress_percent</c>; the new key wins over it.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#configuration-aliases</docs>
+  [Obsolete("Renamed RepairCloseRatioGaugeEnabled (#2317): the gauge is a close-to-open ratio, not progress. This alias is removed in the next release.")]
+  public bool RepairProgressGaugeEnabled {
+    get => RepairCloseRatioGaugeEnabled;
+    set => RepairCloseRatioGaugeEnabled = value;
+  }
+
+  /// <summary>
+  /// Alias for one release (#2317) of <see cref="CompletionWindowMinutes"/>; the new key wins over it.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#configuration-aliases</docs>
+  [Obsolete("Renamed CompletionWindowMinutes (#2317): the window drives both the close ratio and the backlog ETA. This alias is removed in the next release.")]
+  public int RepairProgressWindowMinutes {
+    get => CompletionWindowMinutes;
+    set => CompletionWindowMinutes = value;
+  }
+
+  /// <summary>
+  /// Report <c>whizbang.stream_integrity.repair_close_ratio_percent</c> (default true; #2261, renamed by #2317): ledger
+  /// buckets closed as a percentage of buckets opened over <see cref="CompletionWindowMinutes"/>, per service. A
+  /// direction signal: above 100 the backlog shrinks, below 100 it grows. How much is left, and when it will be done,
+  /// are <c>ledger_open_buckets</c> and <c>backlog_eta_seconds</c>. Derived from <c>ledger_buckets_opened</c> and
+  /// <c>ledger_buckets_closed</c>; a team that computes it from those itself can switch it off. Declared after its alias
+  /// so the new key, bound last, wins when both are set.
   /// </summary>
   /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
-  public bool RepairProgressGaugeEnabled { get; set; } = true;
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RepairCloseRatioOptionsTests.cs</tests>
+  public bool RepairCloseRatioGaugeEnabled { get; set; } = true;
 
   /// <summary>
   /// Report <c>whizbang.stream_integrity.backlog_eta_seconds</c> (default true; #2261): the repairable open buckets
-  /// divided by the net close rate over <see cref="RepairProgressWindowMinutes"/>, and no measurement while the backlog
+  /// divided by the net close rate over <see cref="CompletionWindowMinutes"/>, and no measurement while the backlog
   /// is flat or growing. Derived from <c>ledger_open_buckets</c> and the opened and closed counters; a team that computes
   /// it from those itself can switch it off.
   /// </summary>
@@ -960,11 +992,12 @@ public sealed class StreamIntegrityOptions {
   public bool BacklogEtaGaugeEnabled { get; set; } = true;
 
   /// <summary>
-  /// The rolling window <c>repair_progress_percent</c> and <c>backlog_eta_seconds</c> are computed over, in minutes
-  /// (default 60; #2261). At least 1.
+  /// The rolling window <c>repair_close_ratio_percent</c> and <c>backlog_eta_seconds</c> are computed over, in minutes
+  /// (default 60; #2261, renamed by #2317). At least 1. Declared after its alias so the new key wins when both are set.
   /// </summary>
   /// <docs>resilience/stream-integrity#derived-completion-meters</docs>
-  public int RepairProgressWindowMinutes { get; set; } = 60;
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/RepairCloseRatioOptionsTests.cs</tests>
+  public int CompletionWindowMinutes { get; set; } = 60;
 
   /// <summary>
   /// How far back, from a repaired event's origin time, this service can prove whether it handled the event

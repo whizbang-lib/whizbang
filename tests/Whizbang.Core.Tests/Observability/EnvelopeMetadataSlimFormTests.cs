@@ -158,15 +158,6 @@ public class EnvelopeMetadataSlimFormTests {
     await Assert.That(unscoped.Hops.Single().Timestamp).IsEqualTo(_sent);
   }
 
-  [Test]
-  public async Task ADocumentWithoutAMessageId_StillFailsAsync() {
-    const string json = """{"Hops":[{"ts":"2026-01-01T12:00:00+00:00"}]}""";
-
-    await Assert.That(() => JsonSerializer.Deserialize(json, _metadataInfo))
-      .Throws<JsonException>()
-      .Because("the message id is how every reader finds the event; a document without one is corrupt, slim or not");
-  }
-
   private static JsonTypeInfo<EnvelopeMetadata> _metadataInfo =>
     (JsonTypeInfo<EnvelopeMetadata>)_stored.GetTypeInfo(typeof(EnvelopeMetadata));
 

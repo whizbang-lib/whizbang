@@ -17,7 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>update_perspective_cursors</c> (migration 016) so future SQL refactors
 /// cannot accidentally weaken it. The production forensic that motivated the plan
 /// concerned the rewind path's checkpoint (already addressed in Slice 2 via
-/// the catch-up loop in <c>PerspectiveRunnerTemplate.cs</c>); this Slice 3
+/// the catch-up loop in <c>PerspectiveRunnerBase.cs</c>); this Slice 3
 /// test holds the normal-completion path's invariant in place independently.
 ///
 /// <para><strong>Invariant:</strong> when N events for a (stream, perspective)
@@ -32,7 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Otherwise event 3 is silently lost — exactly the symptom produced in
 /// production at the projection level, with a handful of line numbers missing.</para>
 /// </summary>
-/// <docs>fundamentals/perspectives/rewind-invariants</docs>
+/// <docs>operations/workers/perspective-worker#the-perspective-work-pipeline</docs>
 [Category("Shard3")]
 public class PerspectiveCursorAdvanceTests : EFCoreTestBase {
 

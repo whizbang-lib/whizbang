@@ -41,7 +41,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 [SuppressMessage("Readability", "RCS1118:Mark local variable as const",
   Justification = "These locals are captured into an expression tree on purpose. A const local is inlined by the compiler as a literal, which turns the parameterized filter under test into a constant one: in the matrix that collapses every /param row onto its /const twin, and elsewhere it stops exercising the captured-parameter path altogether.")]
 [NotInParallel] // Switches the process-wide containment mode every perspective query compiles under: runs alone.
-public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable", Justification = "#1954: the [After(Test)] hook disposes them, the fixture's one teardown; a disposable fixture would be disposed by TUnit a second time.")]
+public class ContainmentTypeEligibilityProbeTests {
   private const string TABLE = "wh_per_eligibility";
 
   /// <summary>The codes PostgreSQL refuses a null character with, depending on the path in.</summary>
@@ -260,7 +261,7 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_context is not null) {
       await _context.DisposeAsync();
       _context = null;
@@ -272,7 +273,6 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
 
     }
 
-    GC.SuppressFinalize(this);
   }
 
   private async Task<string?> _scalarAsync(string sql, params (string Name, object Value)[] parameters) {

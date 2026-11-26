@@ -3,7 +3,6 @@
 
 #pragma warning disable CA1707
 
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -27,7 +26,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </summary>
 [Category("Integration")]
 [Category("Shard4")]
-public class SplitModeProductionTests : IAsyncDisposable {
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable", Justification = "#1954: the [After(Test)] hook disposes them, the fixture's one teardown; a disposable fixture would be disposed by TUnit a second time.")]
+public class SplitModeProductionTests {
   private static readonly Uuid7IdProvider _idProvider = new();
 
   static SplitModeProductionTests() {
@@ -192,8 +192,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
     }
   }
 
-  public async ValueTask DisposeAsync() { await TeardownAsync(); GC.SuppressFinalize(this); }
-
   private async Task _initializeSchemaAsync() {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync();
@@ -234,7 +232,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   // ========================================================================
 
   [Test]
-  [Timeout(60000)]
   public async Task Write_SplitModel_PhysicalColumnsHaveCorrectValuesAsync(CancellationToken ct) {
     // Arrange & Act
     var tenantId = Guid.CreateVersion7();
@@ -255,7 +252,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   // ========================================================================
 
   [Test]
-  [Timeout(60000)]
   public async Task Read_FullEntity_PhysicalFieldsPopulatedFromColumnsAsync(CancellationToken ct) {
     var tenantId = Guid.CreateVersion7();
     await _insertSplitRowAsync(tenantId, "electronics", 42.00m, "Gadget", "A gadget", [0.4f, 0.5f, 0.6f], null);
@@ -278,7 +274,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task Read_FullEntity_VectorFieldPopulatedFromColumnAsync(CancellationToken ct) {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "vec", 10.00m, "VecItem", "vec desc", [0.1f, 0.2f, 0.3f], null);
 
@@ -295,7 +290,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task Read_FullEntity_NonPhysicalFieldsFromJsonbAsync(CancellationToken ct) {
     var tagId = Guid.CreateVersion7();
     await _insertSplitRowAsync(Guid.CreateVersion7(), "cat", 10.00m, "NameFromJsonb", "DescFromJsonb", [0.1f, 0.2f, 0.3f], [tagId]);
@@ -313,7 +307,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task Read_FullEntity_NullableCollectionInJsonb_NoExceptionAsync(CancellationToken ct) {
     // TagIds is null — this is what crashed with ComplexProperty().ToJson()
     await _insertSplitRowAsync(Guid.CreateVersion7(), "cat", 10.00m, "NullTags", "desc", [0.1f, 0.2f, 0.3f], null);
@@ -332,7 +325,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   // ========================================================================
 
   [Test]
-  [Timeout(60000)]
   public async Task Select_VectorField_ViaEFProperty_ReturnsRealValuesAsync(CancellationToken ct) {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "cat", 10.00m, "Item", "desc", [0.7f, 0.8f, 0.9f], null);
 
@@ -354,7 +346,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task Select_PhysicalGuidField_ReturnsRealValueAsync(CancellationToken ct) {
     var tenantId = Guid.CreateVersion7();
     await _insertSplitRowAsync(tenantId, "cat", 10.00m, "Item", "desc", [0.1f, 0.2f, 0.3f], null);
@@ -370,7 +361,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task Select_PhysicalStringField_ReturnsRealValueAsync(CancellationToken ct) {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "electronics", 10.00m, "Item", "desc", [0.1f, 0.2f, 0.3f], null);
 
@@ -389,7 +379,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   // ========================================================================
 
   [Test]
-  [Timeout(60000)]
   public async Task Where_PhysicalGuidField_FiltersCorrectlyAsync(CancellationToken ct) {
     var targetTenantId = Guid.CreateVersion7();
     var otherTenantId = Guid.CreateVersion7();
@@ -408,7 +397,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task Where_PhysicalStringField_FiltersCorrectlyAsync(CancellationToken ct) {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "electronics", 10.00m, "Gadget", "desc", [0.1f, 0.2f, 0.3f], null);
     await _insertSplitRowAsync(Guid.CreateVersion7(), "clothing", 20.00m, "Shirt", "desc", [0.4f, 0.5f, 0.6f], null);
@@ -425,7 +413,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task Where_PhysicalDecimalField_ComparisonAsync(CancellationToken ct) {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "a", 10.00m, "Cheap", "desc", [0.1f, 0.2f, 0.3f], null);
     await _insertSplitRowAsync(Guid.CreateVersion7(), "b", 100.00m, "Expensive", "desc", [0.4f, 0.5f, 0.6f], null);
@@ -446,7 +433,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   // ========================================================================
 
   [Test]
-  [Timeout(60000)]
   public async Task OrderBy_PhysicalField_OrdersCorrectlyAsync(CancellationToken ct) {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "a", 30.00m, "Mid", "desc", [0.1f, 0.2f, 0.3f], null);
     await _insertSplitRowAsync(Guid.CreateVersion7(), "b", 10.00m, "Low", "desc", [0.4f, 0.5f, 0.6f], null);
@@ -469,7 +455,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   // ========================================================================
 
   [Test]
-  [Timeout(60000)]
   public async Task OrderByCosineDistance_VectorField_ReturnsResultsAsync(CancellationToken ct) {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "a", 10.00m, "Similar", "desc", [1.0f, 0.0f, 0.0f], null);
     await _insertSplitRowAsync(Guid.CreateVersion7(), "b", 20.00m, "Different", "desc", [0.0f, 1.0f, 0.0f], null);
@@ -491,12 +476,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
   // ========================================================================
 
   [Test]
-  [Timeout(60000)]
-  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
-    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
-  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
-    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
-  public async Task Where_PhysicalField_SqlUsesColumn_NotJsonbAsync(CancellationToken ct) {
+  public async Task Where_PhysicalField_SqlUsesColumn_NotJsonbAsync() {
     var query = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .Where(r => r.Data.Price >= 50.00m);
 
@@ -516,7 +496,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   // ========================================================================
 
   [Test]
-  [Timeout(60000)]
   public async Task GroupBy_PhysicalField_TranslatesToSqlAsync(CancellationToken ct) {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "electronics", 10.00m, "A", "desc", [0.1f, 0.2f, 0.3f], null);
     await _insertSplitRowAsync(Guid.CreateVersion7(), "electronics", 20.00m, "B", "desc", [0.4f, 0.5f, 0.6f], null);
@@ -538,7 +517,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task Count_WherePhysicalField_TranslatesToSqlAsync(CancellationToken ct) {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "a", 10.00m, "Cheap", "desc", [0.1f, 0.2f, 0.3f], null);
     await _insertSplitRowAsync(Guid.CreateVersion7(), "b", 50.00m, "Mid", "desc", [0.4f, 0.5f, 0.6f], null);
@@ -552,7 +530,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task Any_WherePhysicalField_TranslatesToSqlAsync(CancellationToken ct) {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "electronics", 10.00m, "Item", "desc", [0.1f, 0.2f, 0.3f], null);
 
@@ -568,7 +545,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task SkipTake_OrderByPhysicalField_TranslatesToSqlAsync(CancellationToken ct) {
     for (var i = 1; i <= 5; i++) {
       await _insertSplitRowAsync(Guid.CreateVersion7(), $"cat{i}", i * 10.00m, $"Item{i}", "desc", [0.1f * i, 0.2f * i, 0.3f * i], null);
@@ -589,12 +565,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
-  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
-    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
-  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
-    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
-  public async Task GroupBy_PhysicalField_SqlNotClientEvalAsync(CancellationToken ct) {
+  public async Task GroupBy_PhysicalField_SqlNotClientEvalAsync() {
     var query = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .GroupBy(r => r.Data.Category)
         .Select(g => new { Category = g.Key, Count = g.Count() });
@@ -612,7 +583,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   // Select(r => r.Data). The document holds each promoted field's default, so a read of the document put every row in
   // one group and summed zeros, and the query still succeeded.
   [Test]
-  [Timeout(60000)]
   public async Task GroupBy_OverTheProjectedModel_GroupsAndSumsByTheColumnsAsync(CancellationToken ct) {
     var tenantId = Guid.CreateVersion7();
     await _insertSplitRowAsync(tenantId, "books", 10.00m, "A", "a", null, null);
@@ -633,7 +603,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
 
   // #2424: an aggregate straight over the projected model reads the column too.
   [Test]
-  [Timeout(60000)]
   public async Task Aggregate_OverTheProjectedModel_ReadsTheColumnAsync(CancellationToken ct) {
     var tenantId = Guid.CreateVersion7();
     await _insertSplitRowAsync(tenantId, "books", 10.00m, "A", "a", null, null);
@@ -649,12 +618,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
-  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
-    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
-  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
-    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
-  public async Task OrderBy_PhysicalField_SqlNotClientEvalAsync(CancellationToken ct) {
+  public async Task OrderBy_PhysicalField_SqlNotClientEvalAsync() {
     var query = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .OrderBy(r => r.Data.Price);
 
@@ -671,7 +635,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   // ========================================================================
 
   [Test]
-  [Timeout(60000)]
   public async Task Join_OnPhysicalField_TranslatesToSqlJoinAsync(CancellationToken ct) {
     // Arrange — products with categories, join on category code
     await _insertSplitRowAsync(Guid.CreateVersion7(), "electronics", 50.00m, "Laptop", "desc", [0.1f, 0.2f, 0.3f], null);
@@ -703,12 +666,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
-  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
-    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
-  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
-    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
-  public async Task Sql_Join_OnPhysicalField_UsesColumnNotJsonbAsync(CancellationToken ct) {
+  public async Task Sql_Join_OnPhysicalField_UsesColumnNotJsonbAsync() {
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .Join(
             _context.Set<PerspectiveRow<CategoryModel>>(),
@@ -729,12 +687,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
   // ========================================================================
 
   [Test]
-  [Timeout(60000)]
-  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
-    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
-  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
-    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
-  public async Task Sql_Where_GuidField_UsesPhysicalColumnAsync(CancellationToken ct) {
+  public async Task Sql_Where_GuidField_UsesPhysicalColumnAsync() {
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .Where(r => r.Data.TenantId == Guid.Empty)
         .ToQueryString();
@@ -744,12 +697,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
-  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
-    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
-  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
-    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
-  public async Task Sql_Where_StringField_UsesPhysicalColumnAsync(CancellationToken ct) {
+  public async Task Sql_Where_StringField_UsesPhysicalColumnAsync() {
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .Where(r => r.Data.Category == "test")
         .ToQueryString();
@@ -759,12 +707,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
-  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
-    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
-  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
-    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
-  public async Task Sql_Where_DecimalField_UsesPhysicalColumnAsync(CancellationToken ct) {
+  public async Task Sql_Where_DecimalField_UsesPhysicalColumnAsync() {
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .Where(r => r.Data.Price >= 50.0m)
         .ToQueryString();
@@ -774,12 +717,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
-  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
-    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
-  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
-    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
-  public async Task Sql_OrderBy_UsesPhysicalColumnAsync(CancellationToken ct) {
+  public async Task Sql_OrderBy_UsesPhysicalColumnAsync() {
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .OrderBy(r => r.Data.Price)
         .ToQueryString();
@@ -789,12 +727,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
-  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
-    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
-  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
-    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
-  public async Task Sql_GroupBy_UsesPhysicalColumnAsync(CancellationToken ct) {
+  public async Task Sql_GroupBy_UsesPhysicalColumnAsync() {
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .GroupBy(r => r.Data.Category)
         .Select(g => new { Category = g.Key, Count = g.Count() })
@@ -805,12 +738,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
-  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
-    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
-  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
-    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
-  public async Task Sql_Select_VectorField_ViaEFProperty_UsesPhysicalColumnAsync(CancellationToken ct) {
+  public async Task Sql_Select_VectorField_ViaEFProperty_UsesPhysicalColumnAsync() {
     // Vector Select projections use EF.Property<Vector?> directly (not the expression visitor)
     // because shadow property type (Vector) differs from model type (float[])
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
@@ -822,12 +750,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
-  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
-    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
-  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
-    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
-  public async Task Sql_Select_GuidField_UsesPhysicalColumnAsync(CancellationToken ct) {
+  public async Task Sql_Select_GuidField_UsesPhysicalColumnAsync() {
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .Select(r => r.Data.TenantId)
         .ToQueryString();
@@ -837,12 +760,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
-  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
-    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
-  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
-    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
-  public async Task Sql_Count_Where_UsesPhysicalColumnAsync(CancellationToken ct) {
+  public async Task Sql_Count_Where_UsesPhysicalColumnAsync() {
     var sql = _context!.Set<PerspectiveRow<SplitProductionModel>>()
         .Where(r => r.Data.Price > 50.0m)
         .Select(r => r.Id)  // Need to materialize something for ToQueryString
@@ -865,7 +783,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
       new(_context!, "wh_per_category_test");
 
   [Test]
-  [Timeout(60000)]
   public async Task LensQuery_GetByIdAsync_PhysicalFieldsHydratedAsync(CancellationToken ct) {
     var tenantId = Guid.CreateVersion7();
     var id = await _insertSplitRowReturningIdAsync(tenantId, "lens-cat", 55.55m, "LensItem", "desc", [0.1f, 0.2f, 0.3f], null);
@@ -885,7 +802,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task LensQuery_GetByIdAsync_VectorFieldHydratedAsync(CancellationToken ct) {
     var id = await _insertSplitRowReturningIdAsync(Guid.CreateVersion7(), "vec", 10.00m, "VecItem", "desc", [0.4f, 0.5f, 0.6f], null);
 
@@ -898,14 +814,12 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task LensQuery_GetByIdAsync_NonExistent_ReturnsNullAsync(CancellationToken ct) {
     var model = await _createLensQuery().GetByIdAsync(Guid.CreateVersion7(), ct);
     await Assert.That(model).IsNull();
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task LensQuery_Query_ToListAsync_PhysicalFieldsHydratedAsync(CancellationToken ct) {
     var tenant1 = Guid.CreateVersion7();
     var tenant2 = Guid.CreateVersion7();
@@ -925,7 +839,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task LensQuery_Query_Where_PhysicalField_FiltersCorrectlyAsync(CancellationToken ct) {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "target", 10.00m, "Target", "desc", [0.1f, 0.2f, 0.3f], null);
     await _insertSplitRowAsync(Guid.CreateVersion7(), "other", 20.00m, "Other", "desc", [0.4f, 0.5f, 0.6f], null);
@@ -940,7 +853,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task LensQuery_Query_OrderBy_PhysicalFieldAsync(CancellationToken ct) {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "c", 30.00m, "High", "desc", [0.1f, 0.2f, 0.3f], null);
     await _insertSplitRowAsync(Guid.CreateVersion7(), "a", 10.00m, "Low", "desc", [0.4f, 0.5f, 0.6f], null);
@@ -955,7 +867,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task LensQuery_Query_Select_PhysicalFieldAsync(CancellationToken ct) {
     var tenantId = Guid.CreateVersion7();
     await _insertSplitRowAsync(tenantId, "sel-cat", 42.00m, "SelItem", "desc", [0.1f, 0.2f, 0.3f], null);
@@ -969,7 +880,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task LensQuery_Query_GroupBy_PhysicalFieldAsync(CancellationToken ct) {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "electronics", 10.00m, "A", "desc", [0.1f, 0.2f, 0.3f], null);
     await _insertSplitRowAsync(Guid.CreateVersion7(), "electronics", 20.00m, "B", "desc", [0.4f, 0.5f, 0.6f], null);
@@ -989,7 +899,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task LensQuery_Query_CountAsync_PhysicalFieldPredicateAsync(CancellationToken ct) {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "a", 10.00m, "Cheap", "desc", [0.1f, 0.2f, 0.3f], null);
     await _insertSplitRowAsync(Guid.CreateVersion7(), "b", 100.00m, "Expensive", "desc", [0.4f, 0.5f, 0.6f], null);
@@ -1001,7 +910,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task LensQuery_Query_AnyAsync_PhysicalFieldPredicateAsync(CancellationToken ct) {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "electronics", 10.00m, "Item", "desc", [0.1f, 0.2f, 0.3f], null);
 
@@ -1013,7 +921,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task LensQuery_Query_SkipTake_PhysicalFieldOrderingAsync(CancellationToken ct) {
     for (var i = 1; i <= 5; i++) {
       await _insertSplitRowAsync(Guid.CreateVersion7(), $"cat{i}", i * 10.00m, $"Item{i}", "desc", [0.1f * i, 0.2f * i, 0.3f * i], null);
@@ -1030,7 +937,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task LensQuery_SplitModel_EntitiesDetachedAfterQueryAsync(CancellationToken ct) {
     await _insertSplitRowAsync(Guid.CreateVersion7(), "detach", 10.00m, "DetachItem", "desc", [0.1f, 0.2f, 0.3f], null);
 
@@ -1044,7 +950,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task LensQuery_NonSplitModel_StillUsesAsNoTrackingAsync(CancellationToken ct) {
     await _insertCategoryRowAsync("notrack-code", "NoTrack Display");
 
@@ -1057,7 +962,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task LensQuery_NullablePhysicalField_ReturnsNullAsync(CancellationToken ct) {
     // ParentId is Guid? — stored as null in physical column
     var id = await _insertSplitRowReturningIdAsync(Guid.CreateVersion7(), "nullable", 10.00m, "NullableItem", "desc", [0.1f, 0.2f, 0.3f], null);
@@ -1070,7 +974,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task LensQuery_LargeResultSet_AllHydratedAsync(CancellationToken ct) {
     // Insert 50 rows to verify no detach-during-iteration bugs
     for (var i = 0; i < 50; i++) {
@@ -1094,7 +997,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task LensQuery_EmptyResult_NoExceptionAsync(CancellationToken ct) {
     // No data inserted — query should return empty, not crash
     var rows = await _createLensQuery().Query.ToListAsync(ct);
@@ -1109,7 +1011,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   // ========================================================================
 
   [Test]
-  [Timeout(60000)]
   public async Task ChangeTrackerTracked_FiresAfterComplexPropertyPopulatedAsync(CancellationToken ct) {
     // This test validates the fundamental assumption of our hydration approach:
     // ChangeTracker.Tracked fires AFTER ComplexProperty().ToJson() populates Data.
@@ -1147,7 +1048,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task ChangeTrackerTracked_CanReadShadowPropertiesAsync(CancellationToken ct) {
     // Validates that shadow properties (physical columns) are accessible via EntityEntry
     // within the Tracked event handler — needed for hydration.
@@ -1187,7 +1087,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task ChangeTrackerTracked_CanHydrateAndDetachAsync(CancellationToken ct) {
     // Validates the full hydration + immediate detach pattern works:
     // 1. Tracked fires with Data populated
@@ -1228,7 +1127,6 @@ public class SplitModeProductionTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(60000)]
   public async Task ChangeTrackerTracked_BulkResults_AllHydratedAndDetachedAsync(CancellationToken ct) {
     // Validates that immediate detach during bulk materialization doesn't break iteration.
     // Each row is hydrated and detached as it's tracked, while ToListAsync is still collecting rows.

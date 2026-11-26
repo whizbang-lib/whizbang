@@ -43,7 +43,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 [Category("Integration")]
 [Category("Shard5")]
-public class JsonIndexUsageTests : IAsyncDisposable {
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable", Justification = "#1954: the [After(Test)] hook disposes them, the fixture's one teardown; a disposable fixture would be disposed by TUnit a second time.")]
+public class JsonIndexUsageTests {
   private const string TABLE = "wh_per_json_index";
 
   // Enough rows that a sequential scan is genuinely the worse plan for a selective range. Without
@@ -176,7 +177,7 @@ public class JsonIndexUsageTests : IAsyncDisposable {
   }
 
   [After(Test)]
-  public async ValueTask DisposeAsync() {
+  public async Task TeardownAsync() {
     if (_context is not null) {
       await _context.DisposeAsync();
       _context = null;
@@ -188,7 +189,6 @@ public class JsonIndexUsageTests : IAsyncDisposable {
 
     }
 
-    GC.SuppressFinalize(this);
   }
 
   private static async Task _execAsync(NpgsqlConnection db, string sql) {

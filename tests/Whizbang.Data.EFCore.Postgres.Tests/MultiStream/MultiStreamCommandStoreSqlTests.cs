@@ -140,6 +140,28 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
     await Assert.That(byB.Select(i => i.StreamId).ToHashSet().SetEquals(streams.Except(expectedA))).IsTrue();
   }
 
+  [Test]
+  public async Task ClaimAsync_UnderAPublishedMap_EachInstanceClaimsThePartitionsTheMapGivesItAsync() {
+    // #2558: the map that inverts the modulo (member 1 owns the even partitions), so the map and the modulo disagree on
+    // every stream.
+    var (a, b) = _twoInstancesInIdOrder();
+    await using var conn = await _openAsync();
+    var inverted = Enumerable.Range(0, PARTITIONS).Select(p => (short)(p % 2 == 0 ? 1 : 0)).ToArray();
+    var version = await _assignAsync(conn, [a, b], inverted);
+    var streams = Enumerable.Range(0, 40).Select(_ => Guid.CreateVersion7()).ToArray();
+    var store = _store();
+    _ = await store.RecordRunAsync(_run(streams), CancellationToken.None);
+
+    var byA = await store.ClaimAsync(new MultiStreamClaim(a, 100, _lease, version), CancellationToken.None);
+    var byB = await store.ClaimAsync(new MultiStreamClaim(b, 100, _lease, version), CancellationToken.None);
+
+    var partitions = await _partitionsAsync(conn, streams);
+    var expectedB = streams.Where(s => partitions[s] % 2 == 0).ToHashSet();
+    await Assert.That(byB.Select(i => i.StreamId).ToHashSet().SetEquals(expectedB)).IsTrue()
+      .Because("the map gives member 1 the even partitions; the modulo would have given it the odd ones");
+    await Assert.That(byA.Select(i => i.StreamId).ToHashSet().SetEquals(streams.Except(expectedB))).IsTrue();
+  }
+
   /// <summary>
   /// The rows a claim returns for one run carry that run's payload once: every one of them shares the same string. The
   /// claim returns the payload on each row, and a payload materialized per row held one copy per stream of the batch,
@@ -587,19 +609,22 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
-  /// <summary>Elects the first member, publishes <paramref name="members"/> in order, and returns the version to claim under.</summary>
-  private static async Task<PartitionAssignmentVersion> _assignAsync(NpgsqlConnection conn, Guid[] members) {
+  /// <summary>Elects the first member, publishes <paramref name="members"/> in order (with the map, when given), and returns the version to claim under.</summary>
+  private static async Task<PartitionAssignmentVersion> _assignAsync(NpgsqlConnection conn, Guid[] members, short[]? owners = null) {
     foreach (var member in members) {
       await _heartbeatAsync(conn, member);
     }
     var epoch = await _scalarAsync<long>(conn,
       $"SELECT epoch FROM wh_vote_role('{PartitionAssignerOptions.ROLE}', '{members[0]}'::uuid, INTERVAL '30 seconds', INTERVAL '5 seconds', NULL, ARRAY[1, 0], NULL) v WHERE v.outcome = 'granted'");
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT wh_publish_partition_assignment(@role, @inst, @epoch, @members, INTERVAL '90 seconds')";
+    cmd.CommandText = "SELECT wh_publish_partition_assignment(@role, @inst, @epoch, @members, INTERVAL '90 seconds', @owners)";
     cmd.Parameters.AddWithValue("role", PartitionAssignerOptions.ROLE);
     cmd.Parameters.AddWithValue("inst", members[0]);
     cmd.Parameters.AddWithValue(nameof(epoch), epoch);
     cmd.Parameters.AddWithValue(nameof(members), members);
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(owners), NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Smallint) {
+      Value = (object?)owners ?? DBNull.Value,
+    });
     var revision = Convert.ToInt64(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
     return new PartitionAssignmentVersion(epoch, revision);
   }

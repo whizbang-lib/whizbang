@@ -25,7 +25,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// <see cref="DapperTypeHandlers"/> module initializer.
 /// </remarks>
 [NotInParallel("PostgreSQL")]
-public abstract class PostgresTestBase : IAsyncDisposable {
+public abstract class PostgresTestBase {
   static PostgresTestBase() {
     // Configure Npgsql to use DateTimeOffset for TIMESTAMPTZ columns globally
     AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
@@ -111,11 +111,6 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       _testDatabaseName = null;
       _connectionFactory = null;
     }
-  }
-
-  public async ValueTask DisposeAsync() {
-    await TeardownAsync();
-    GC.SuppressFinalize(this);
   }
 
   private async Task _initializeDatabaseAsync() {

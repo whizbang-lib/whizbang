@@ -82,7 +82,7 @@ public class CoalescingOutboxBatchStrategyTests {
 
   [Test]
   [Timeout(60000)]
-  public async Task WithinAFlush_MessagesAreOrderedByStream_ThenByMessageIdAsync(CancellationToken cancellationToken) {
+  public async Task WithinAFlush_MessagesAreGroupedByStream_EachInTheOrderAppendedAsync(CancellationToken cancellationToken) {
     var flush = new RecordingFlush(1);
     await using var sut = new CoalescingOutboxBatchStrategy(flush.FlushAsync, null, _options(maxSize: 4), new FakeTimeProvider(), null, null);
     var streamA = Guid.NewGuid();
@@ -92,14 +92,16 @@ public class CoalescingOutboxBatchStrategyTests {
     var b1 = _message(streamB);
     var b2 = _message(streamB);
 
+    // #2551: each stream keeps the order its messages were appended in (b2 before b1, a2 before a1), against their ids.
     foreach (var message in new[] { b2, a2, a1, b1 }) {
       await sut.AppendAsync(message, cancellationToken);
     }
     await flush.AllFlushed.Task.WaitAsync(cancellationToken);
 
-    var expected = new[] { a1, a2, b1, b2 }.OrderBy(m => m.StreamId).ThenBy(m => m.MessageId).Select(m => m.MessageId);
+    var expected = (streamA.CompareTo(streamB) < 0 ? new[] { a2, a1, b2, b1 } : [b2, b1, a2, a1]).Select(m => m.MessageId);
     await Assert.That(flush.Batches.Single().Select(m => m.MessageId)).IsEquivalentTo(expected,
-      TUnit.Assertions.Enums.CollectionOrdering.Matching);
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the streams are grouped in stream order for the store's locks; within a stream the emission order stands");
   }
 
   [Test]

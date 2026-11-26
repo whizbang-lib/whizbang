@@ -539,6 +539,18 @@ dotnet_diagnostic.IDE0031.severity = none
 # carries no [Flags]; the same decision as S3265 above.
 dotnet_diagnostic.RCS1130.severity = none
 
+[src/**.cs]
+# The two Sonar rules the merge queue's quality gate fails library code on, at SonarCloud's thresholds for this
+# project (#2515): cognitive complexity above 15 (S3776; 3 for a property accessor) and more than 7 parameters (S107).
+# SonarAnalyzer.CSharp ships both turned off, so without these lines a clean build said nothing and the first signal
+# was a queue run that dequeued the pull request. As warnings they are errors in the build (TreatWarningsAsErrors).
+# Library code only: SonarCloud runs its test-code rules on test projects, which include neither rule, and does not
+# analyze samples, benchmarks or tools (sonar.config). src/ had no violation when these were turned on, so there is no
+# baseline; a reviewed exception carries [SuppressMessage] with its reason, as the existing ones do.
+# tests/Whizbang.RepoAnalyzers.Tests/SonarQueueRulesTests.cs fails if either rule, its threshold or its scope changes.
+dotnet_diagnostic.S3776.severity = warning
+dotnet_diagnostic.S107.severity = warning
+
 [src/Whizbang.Data.Dapper.Postgres/DapperWorkCoordinator.cs]
 # S3459 sees the row classes Dapper materializes as never assigned: Dapper sets them by column name
 # through reflection, which the analyzer cannot see. The classes exist only to be filled that way.

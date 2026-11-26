@@ -129,7 +129,8 @@ a table saying which tier each class got and, for a GitHub-hosted class, why the
    requests never reach the pool. The runner-pool app can read the runner group; the group lets this
    repository in (visibility "all", or "selected" with this repository selected), allows public
    repositories, and is not restricted to selected workflows; an online, idle runner carries every label
-   of the class; and this repository's jobs already queued for those runners leave one spare.
+   of the class and has a recent passing self-check showing what the class needs (below); and this
+   repository's jobs already queued for those runners leave one spare.
 2. **`ubuntu-latest`.** Anything else: an untrusted run, a missing token, an API error, a timeout (10
    seconds a request, 60 for the whole picker), or an unexpected response.
 
@@ -142,6 +143,49 @@ a table saying which tier each class got and, for a GitHub-hosted class, why the
 | `linux-docker` | `self-hosted`, `whizbang`, `Linux`, `X64`, `docker` | every integration suite (PostgreSQL, InMemory, RabbitMQ, Service Bus, Azure Blob, Integration) | Testcontainers and `docker run` need a Linux Docker host; their steps are still bash |
 | `analyze` | none: never the pool | Analyze · Quality build, Analyze · Quality | The two halves of Quality (#2068) must check out at the same path, since the scan's state names files absolutely, which GitHub-hosted runners guarantee; and on a release PR the second half still waits up to an hour for its release-branch run's coverage, holding whatever machine it is on |
 | `linux` | `self-hosted`, `whizbang`, `Linux`, `X64` | none today | For a Linux-only job with no containers |
+
+**Self-checks: capability, not just liveness (#1880).** A machine can be online and idle and still unable
+to do the job (no PowerShell, a full disk, an upload too slow for the compile's artifacts, a broken
+Docker). `Runner self-check` (`runner-self-check.yml`, every 6 hours and by hand) runs
+`.github/scripts/Test-CiRunnerCapability.ps1` on each online pool machine and records the result as an
+Actions cache entry, `ci-runner-check/v1/<runner>/<ok|fail>/up-<MB/s>/docker-<yes|no>/<nonce>`; the key is
+the record and its creation time says when. The picker sends a job only to a machine whose latest record
+passed within `RUNNER_POOL_CHECK_MAX_AGE_HOURS`; `compile` also needs an upload speed of at least
+`RUNNER_POOL_MIN_UPLOAD_MBPS` (it uploads the build, about 1 GB), and `linux-docker` a working Docker. A
+machine passes with PowerShell 7 or later and `RUNNER_POOL_MIN_DISK_GB` free. A machine with no record
+(new, or where the check could not even start, such as one without pwsh) gets no job, so missing is as
+safe as failing; the summary of Pick runners names each skipped machine and why. The weekly cache cleanup
+leaves these records alone. The upload speed includes the upload action's start-up, so it is a lower bound.
+
+**Fallback when a pool machine never starts a job or is lost during one (#1880).** GitHub cannot move a
+queued job to another runner, nor re-run one job while its run is going, so the fallback works at the
+run's edges. Rules: `.github/scripts/Invoke-CiRunnerFallback.ps1`.
+
+- `Plan · Watch self-hosted jobs` (`ci.yml`, job `runner-watch`) runs on `ubuntu-latest` only when the
+  plan sent a class to the pool. A pool job is stuck once it has been queued 10 minutes with no online
+  machine carrying its labels, or 45 minutes whatever the machines say. When a job is stuck and no other
+  job of the run is still running, the watcher starts `CI runner fallback` and cancels the run.
+- `CI runner fallback` (`ci-runner-fallback.yml`, from the default branch) re-runs the run's failed jobs
+  when the watcher canceled it, or when CI failed and every failed job was a pool job whose machine was
+  lost (its annotations say it lost communication, received a shutdown signal, exceeded its time, or was
+  never acquired), or the gate failing after it. If any job failed for another reason, nothing is re-run:
+  a re-run would not change the result, and no flaky test gets a second try. At most 3 attempts.
+- The re-run jobs take `ubuntu-latest` (next paragraph), and must pass there: no gate is relaxed.
+
+The trade-off: the watcher never touches a running job, so a slow but alive machine is left to the job's
+own timeout rather than run twice, and it cancels only once nothing else is running, so no finished work
+is thrown away; the cost is that a stuck job is noticed up to the run's longest job later. A job queued
+behind a busy but alive machine waits its turn up to 45 minutes before it counts as stuck. A job that times
+out on a pool machine is treated as lost and re-run on `ubuntu-latest` once. **The merge queue is not
+covered:** the queue removes the pull request when its run fails or is canceled, and a re-run of that run
+cannot put it back, so the pull request must be queued again.
+
+**Re-runs re-plan (#1880).** The picker's `attempt` output says which attempt its plan is for, and every
+routed job (and every reusable workflow, through its `runner-plan-attempt` input) takes the plan only in
+that attempt. "Re-run failed jobs" does not re-run the picker, so the jobs it re-runs go to
+`ubuntu-latest` instead of labels chosen for an earlier attempt, which may name a machine that has since
+left the pool. "Re-run all jobs" re-runs the picker, so its plan is fresh. A test fails if a routed job
+reads the plan without the attempt check.
 
 **Coverage from another checkout.** The build's coverage source-root mappings name the build machine's
 checkout. A suite that checks out anywhere else (a team machine, Windows, macOS) rewrites them first
@@ -166,6 +210,9 @@ runner group is `Default` unless the `RUNNER_POOL_GROUP` variable names another.
 |---|---|
 | `RUNNER_POOL_DISABLED` | `true` turns the self-hosted tier off without touching the secrets |
 | `RUNNER_POOL_GROUP` | The runner group holding the pool. Default `Default` |
+| `RUNNER_POOL_CHECK_MAX_AGE_HOURS` | How old a machine's latest passing self-check may be. Default `24` |
+| `RUNNER_POOL_MIN_UPLOAD_MBPS` | The upload speed, in MB/s, a self-check must have measured for the `compile` class. Default `10` |
+| `RUNNER_POOL_MIN_DISK_GB` | The free disk a machine needs to pass its self-check. Default `20` |
 
 **One-time setup for the self-hosted tier (owner).** All three are needed; until then the tier is skipped.
 
@@ -194,11 +241,15 @@ runner group is `Default` unless the `RUNNER_POOL_GROUP` variable names another.
   `git config --system core.longpaths true`): the test output paths are deep.
 - A machine that is not wiped between jobs is fine for the `any-os` jobs: the checkout's clean removes
   the previous job's build and test results, and `dotnet-coverage` is installed with `update`.
-- Register it in the runner group, then add `whizbang` (and `docker` where it applies). Watch one run's
-  Pick runners summary to confirm the class it serves.
+- Register it in the runner group, then add `whizbang` (and `docker` where it applies). Run
+  `Runner self-check` by hand (Actions > Runner self-check > Run workflow): until it passes there, the
+  machine gets no job. Watch one run's Pick runners summary to confirm the class it serves.
+- A machine that leaves the pool (sleeps, is rebuilt, loses its network) needs no label change: it drops
+  out when it goes offline or its self-check goes stale, and the fallback above covers the jobs it held.
 
 **Limits.** The picker decides once, at the start of the run, so a machine that is idle then may be busy
-when a later job of the run starts, and that job waits for it rather than falling back. Every job of a
+when a later job of the run starts, and that job waits for it (up to the watcher's 45 minutes) rather than
+falling back. Every job of a
 class in the run goes to the same label set, so one pool machine serves a run's jobs of that class one
 at a time; the pool pays off when it has a machine per concurrent job. Only this repository's queue is
 visible; other repositories' load shows up only as busy runners.

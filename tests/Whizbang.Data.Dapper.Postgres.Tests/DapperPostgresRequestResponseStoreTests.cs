@@ -13,7 +13,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// Each test gets its own isolated PostgreSQL container for parallel execution.
 /// </summary>
 [InheritsTests]
-public sealed class DapperPostgresRequestResponseStoreTests : RequestResponseStoreContractTests, IDisposable {
+public sealed class DapperPostgresRequestResponseStoreTests : RequestResponseStoreContractTests {
   private PostgresTestBase _testBase = null!;
 
   [Before(Test)]
@@ -25,13 +25,8 @@ public sealed class DapperPostgresRequestResponseStoreTests : RequestResponseSto
   [After(Test)]
   public async Task CleanupAsync() {
     if (_testBase != null) {
-      await _testBase.DisposeAsync();
+      await _testBase.TeardownAsync();
     }
-  }
-
-  public void Dispose() {
-    _testBase?.DisposeAsync().AsTask().Wait();
-    GC.SuppressFinalize(this);
   }
 
   protected override Task<IRequestResponseStore> CreateStoreAsync() {

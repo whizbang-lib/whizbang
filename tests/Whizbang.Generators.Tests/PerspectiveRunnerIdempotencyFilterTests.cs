@@ -39,7 +39,7 @@ namespace TestNamespace {
 
   private static string? _runner() {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(SOURCE);
-    return GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    return GeneratorTestHelper.GetRunnerSource(result, "OrderPerspectiveRunner.g.cs");
   }
 
   [Test]

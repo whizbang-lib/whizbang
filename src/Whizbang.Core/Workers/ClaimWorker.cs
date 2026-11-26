@@ -659,10 +659,9 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
   }
 
   private async Task _distributeAsync(WorkBatch batch, CancellationToken ct) {
-    // Ordering invariant: write each category in MessageId order so downstream channel readers
-    // (which preserve enqueue order) receive same-stream items chronologically. See
-    // plans/ordered-stream-invariant.md.
-    foreach (var ow in batch.OutboxWork.OrderByMessageId()) {
+    // #2551: each category is handed on in the order the claim returned it, never re-sorted by id. A claimed item is a
+    // signal that its stream has work; the drain fetches the stream's rows in stream order (StreamOrder).
+    foreach (var ow in batch.OutboxWork) {
       await _outboxChannel.WriteAsync(ow, ct);
     }
     // The claim already charged an attempt against every row here. If this loop is cut short —
@@ -682,7 +681,6 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
     // eligible again on its own, so the failure is self-healing rather than permanent.
     var ordered = batch.InboxWork
       .Where(w => !_inboxChannel.IsInFlight(w.MessageId))
-      .OrderByMessageId()
       .ToList();
     var handedOff = 0;
     try {
@@ -841,11 +839,20 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
   /// has begun are never released. The store does the row selection; this only names the streams.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// A stuck instance looks idle from outside, and today nothing else can act: siblings cannot take
   /// work from a heartbeating instance (by design, #722), so the instance itself has to let go of
   /// what it is not working on. The release is scoped to this instance's own leases, refunds the
-  /// attempt the claim charged, and ends its ownership of the released streams. One release per
-  /// streak; the streak resets on any productive claim.
+  /// attempt the claim charged, and ends its ownership of the released streams, owner included (#2545).
+  /// One release per streak; the streak resets on any productive claim.
+  /// </para>
+  /// <para>
+  /// Who takes a released stream next is the partition assignment's answer, not this release's (the
+  /// published assignment, or the claim's own ranking while none is published). An inbox stream goes to
+  /// the instance its partition is assigned to, or to an idle sibling allowed to steal (#725). A
+  /// perspective stream goes to the instance its partition is assigned to and nothing steals it, so a
+  /// stream of a partition assigned to this instance comes back to it, with its attempt refunded.
+  /// </para>
   /// </remarks>
   private async Task _releaseUnstartedIfStuckAsync(WorkBatch batch, CancellationToken ct) {
     var streak = _cycleReport.CurrentRepeatStreak;
@@ -880,6 +887,11 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
   /// has started are released, as the #724 release does, so a peer takes them over at once. A stream a drain has begun is
   /// finished here, never released under it.
   /// </summary>
+  /// <remarks>
+  /// The release clears this instance's ownership of each stream (#2545), and a pausing, standing-down or stopping
+  /// instance is no longer eligible for work, so its partitions are assigned to the peers and the peer each released
+  /// stream's partition is assigned to claims it at its next poll, perspective streams included.
+  /// </remarks>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>A task that completes when the release is done.</returns>
   public async Task ReleaseHeldWorkAsync(CancellationToken cancellationToken) {
@@ -966,8 +978,8 @@ public sealed partial class ClaimWorker : BackgroundService, Whizbang.Core.RunCo
 
     // #1254: the assignment's version, from memory while the cached copy is current. Null when there is none, it has
     // expired, or this instance is not in it: the claim then ranks itself, so a missing assignment never stops a claim.
-    // Resolved from the claim's scope, as the coordinator is; a host without the assigner registered ranks every claim
-    // itself, as before.
+    // Resolved from the claim's scope, as the coordinator is. Every Postgres driver runs the elected assigner (#2559); a
+    // host with no source registered ranks every claim itself, as before.
     var partitionAssignments = scope.ServiceProvider.GetService<IPartitionAssignmentSource>();
     // #1286: whether this instance holds its alive-lock. A direct instance holding it beats on the slow cadence and is
     // ranked by the lock, so the claim does not ask it to re-register between beats. Resolved from the claim's scope;

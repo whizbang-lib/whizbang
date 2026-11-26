@@ -69,14 +69,20 @@ internal static class CoalesceSql {
         AND NOT EXISTS (
           SELECT 1 FROM {prefix}wh_service_instances si
           WHERE si.instance_id = @p_instance_id AND NOT {prefix}wh_instance_may_claim(si))";
+    // #1628: each single's position in this service's commit lane, read as the outbox fetch reads it for a direct
+    // delivery (the event stored under the message's id), so the fold can hand it to the composite's child. A forwarded
+    // event's direct delivery carries its origin's identity instead, which one composite cannot carry per child, so it
+    // reads as none. The join is on the event store's key; only the outbox rows are locked.
     cmd.CommandText = $@"
-      SELECT message_id, stream_id, destination, message_type, envelope_type,
-             event_data::text, metadata::text, is_event, scheduled_for, priority
-      FROM {prefix}wh_outbox
-      WHERE coalesce_group = @p_group AND processed_at IS NULL{callerMayClaim}
-      ORDER BY created_at
+      SELECT o.message_id, o.stream_id, o.destination, o.message_type, o.envelope_type,
+             o.event_data::text, o.metadata::text, o.is_event, o.scheduled_for, o.priority,
+             CASE WHEN es.origin_service_id IS NULL THEN es.commit_sequence END
+      FROM {prefix}wh_outbox o
+      LEFT JOIN {prefix}wh_event_store es ON o.is_event AND es.event_id = o.message_id
+      WHERE o.coalesce_group = @p_group AND o.processed_at IS NULL{callerMayClaim}
+      ORDER BY o.created_at
       LIMIT @p_limit
-      FOR UPDATE SKIP LOCKED";
+      FOR UPDATE OF o SKIP LOCKED";
     cmd.Parameters.Add(new NpgsqlParameter("p_group", group));
     cmd.Parameters.Add(new NpgsqlParameter("p_limit", limit));
     if (callerInstanceId is { } instanceId) {
@@ -115,6 +121,7 @@ internal static class CoalesceSql {
           : await reader.GetFieldValueAsync<DateTimeOffset>(8, cancellationToken).ConfigureAwait(false),
         Priority = reader.GetInt32(9),
         CoalesceGroup = group,
+        SourceCommitSequence = await reader.IsDBNullAsync(10, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(10),
       });
     }
     return results;

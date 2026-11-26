@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <WhizbangTestTags>Unit</WhizbangTestTags>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <OutputType>Exe</OutputType>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <!-- Unit: the configuration, the turnkey registration, the locations and the stores with the Azure SDK mocked; no
+         container, no database. The earlier packages are referenced too, so their calls are shown to compile and work. -->
+    <WhizbangTestType>Unit</WhizbangTestType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
+    <PackageReference Include="TUnit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Storage.AzureBlob/Whizbang.Storage.AzureBlob.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Offloads.AzureBlob/Whizbang.Offloads.AzureBlob.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Archive.AzureBlob/Whizbang.Archive.AzureBlob.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Data.Dapper.Postgres/Whizbang.Data.Dapper.Postgres.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

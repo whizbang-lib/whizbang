@@ -7,7 +7,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Pipeline;
 
 namespace Whizbang.Core.SystemEvents;
 
@@ -28,6 +27,8 @@ public static class SystemEventServiceCollectionExtensions {
   /// - <see cref="ITransportPublishFilter"/> for transport filtering
   /// - the default <see cref="ISystemEventEmitter"/> (the same one <c>AddWhizbang</c> registers), unless one is already registered
   /// - <see cref="AuditingEventStoreDecorator"/> when event audit is enabled
+  /// - command auditing when command audit is enabled: one <see cref="CommandAudited"/> for each receptor admitted to
+  ///   handle an <see cref="ICommand"/>, on every dispatch path (#2470)
   /// </para>
   /// <para>
   /// The decorator uses <see cref="IDeferredOutboxChannel"/> (singleton) to queue
@@ -72,6 +73,13 @@ public static class SystemEventServiceCollectionExtensions {
     }
     if (options.EventDescriptionHumanizer != null) {
       Audit.AuditEventProjection.CustomDescriptionHumanizer = options.EventDescriptionHumanizer;
+    }
+
+    // Command audit runs where every receptor invocation is admitted, so no path handles a command without it (#2470).
+    // Registered only when enabled: without a recorder or an interceptor the gate is skipped and costs nothing.
+    if (options.CommandAuditEnabled) {
+      services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Security.IReceptorAdmissionRecorder, CommandAuditRecorder>(
+        sp => new CommandAuditRecorder(sp, sp.GetRequiredService<ILogger<CommandAuditRecorder>>())));
     }
 
     // Register core services
@@ -142,8 +150,11 @@ public static class SystemEventServiceCollectionExtensions {
   /// This method registers all system event services plus:
   /// - Wraps <see cref="IEventStore"/> with <see cref="AuditingEventStoreDecorator"/>
   ///   for automatic event auditing
-  /// - Registers <see cref="CommandAuditPipelineBehavior{TCommand,TResponse}"/>
-  ///   for command auditing
+  /// </para>
+  /// <para>
+  /// Command auditing needs nothing more than <see cref="SystemEventOptions.EnableCommandAudit"/>:
+  /// <see cref="AddSystemEvents"/> registers it, and it runs before every receptor that handles a command, on every
+  /// dispatch path (#2470).
   /// </para>
   /// <para>
   /// Call this method AFTER registering your IEventStore implementation.
@@ -168,12 +179,6 @@ public static class SystemEventServiceCollectionExtensions {
       Action<SystemEventOptions>? configure = null) {
     // Add base system event services
     services.AddSystemEvents(configure);
-
-    // Register pipeline behavior for command auditing
-    // This will be applied to all commands flowing through the pipeline
-    services.TryAddSingleton(
-        typeof(IPipelineBehavior<,>),
-        typeof(CommandAuditPipelineBehavior<,>));
 
     return services;
   }

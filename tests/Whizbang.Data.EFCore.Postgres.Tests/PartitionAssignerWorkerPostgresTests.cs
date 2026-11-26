@@ -50,8 +50,8 @@ public class PartitionAssignerWorkerPostgresTests : EFCoreTestBase {
 
   private PgPartitionAssignmentStore _store() => new(Options.Create(_notification()), _config());
 
-  private PartitionAssignerWorker _workerFor(Pod pod, PartitionAssignerOptions? options = null) {
-    var roles = _roles();
+  private PartitionAssignerWorker _workerFor(Pod pod, PartitionAssignerOptions? options = null, RoleAssignmentOptions? roleOptions = null) {
+    var roles = roleOptions ?? _roles();
     var elector = new PgRoleElector(Options.Create(_notification()), Options.Create(roles), _config(), pod,
       NullLogger<PgRoleElector>.Instance, null);
     return new PartitionAssignerWorker(elector, _store(), NullInstanceConnectionModeSource.Instance, pod,
@@ -75,6 +75,61 @@ public class PartitionAssignerWorkerPostgresTests : EFCoreTestBase {
       }
     });
     return signal.Task;
+  }
+
+  /// <summary>Registers an instance in a startup phase, as its own registration records it.</summary>
+  private async Task _registerInPhaseAsync(Guid instance, string phase) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      INSERT INTO wh_service_instances
+        (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, connection_mode, lifecycle_phase)
+      VALUES (@id, 'test', 'test-host', 1, NOW(), NOW(), 'pooled', @phase)
+      """;
+    cmd.Parameters.AddWithValue("id", instance);
+    cmd.Parameters.AddWithValue(nameof(phase), phase);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  private async Task _recordPhaseAsync(Guid instance, string phase) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT record_instance_state('{instance}'::uuid, '{phase}')";
+    if (await cmd.ExecuteScalarAsync() is not true) {
+      throw new InvalidOperationException($"the phase of {instance} was not recorded");
+    }
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task AJoiningInstance_GetsPartitions_OnlyOnceItsStartupReportsReadyAsync(CancellationToken cancellationToken) {
+    // #2558, ready before assigned: the assigner's candidates are the instances eligible for work, so an instance still
+    // migrating is no member and the map gives it nothing; the transition into AcceptingCommands makes it one.
+    var pod = new Pod(Guid.CreateVersion7());
+    var joiner = Guid.CreateVersion7();
+    await _registerAsync(pod.InstanceId);
+    await _registerInPhaseAsync(joiner, nameof(Whizbang.Core.RunControl.LifecyclePhase.Migrating));
+    var worker = _workerFor(pod, new PartitionAssignerOptions { SettleWindow = TimeSpan.Zero });
+    var first = _signal<PartitionAssignment>(handler => worker.OnPublished += handler);
+    var withJoiner = _signal<PartitionAssignment>(handler => worker.OnPublished += handler, a => a.Members.Contains(joiner));
+
+    await worker.StartAsync(cancellationToken);
+    try {
+      var whileStarting = await first.WaitAsync(_signalDeadline, cancellationToken);
+      await _recordPhaseAsync(joiner, nameof(Whizbang.Core.RunControl.LifecyclePhase.AcceptingCommands));
+      var onceReady = await withJoiner.WaitAsync(_signalDeadline, cancellationToken);
+
+      await Assert.That(whileStarting.Members).DoesNotContain(joiner);
+      await Assert.That(PartitionMap.FromPublished(whileStarting).CountOf(joiner)).IsEqualTo(0);
+      var map = PartitionMap.FromPublished(onceReady);
+      await Assert.That(map.CountOf(joiner)).IsEqualTo(PartitionMap.PARTITION_COUNT / 2);
+      await Assert.That(map.MovesTo(PartitionMap.FromPublished(whileStarting))).IsEqualTo(PartitionMap.PARTITION_COUNT / 2)
+        .Because("only the joiner's share moves");
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
   }
 
   [Test]
@@ -198,9 +253,11 @@ public class PartitionAssignerWorkerPostgresTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
-  public async Task Disabled_TheWorkerNeverVotesAsync(CancellationToken cancellationToken) {
+  public async Task WithoutTheRoleInTheDutyLoop_TheWorkerNeverVotesAsync(CancellationToken cancellationToken) {
+    // #2559: nothing turns the assigner off; the driver always adds its role. A host that builds the worker over role
+    // options without it (no duty loop holds the role) still gets a worker that stands aside rather than vote.
     var pod = new Pod(Guid.CreateVersion7());
-    var worker = _workerFor(pod, new PartitionAssignerOptions { Enabled = false });
+    var worker = _workerFor(pod, roleOptions: new RoleAssignmentOptions { RenewInterval = TimeSpan.FromMilliseconds(250) });
 
     await worker.StartAsync(cancellationToken);
     // The signal for this transition: the worker's own task completes when it decides not to run.

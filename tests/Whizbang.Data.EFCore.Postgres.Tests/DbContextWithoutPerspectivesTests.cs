@@ -20,7 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Uses SharedPostgresContainer with per-test database isolation.
 /// </summary>
 [Category("Shard4")]
-public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
+public class DbContextWithoutPerspectivesTests {
   private string? _testDatabaseName;
   private string _connectionString = null!;
   private DbContextOptions<MinimalDbContext> _dbContextOptions = null!;
@@ -177,10 +177,6 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     }
   }
 
-  public async ValueTask DisposeAsync() {
-    await CleanupAsync();
-    GC.SuppressFinalize(this);
-  }
 }
 
 /// <summary>

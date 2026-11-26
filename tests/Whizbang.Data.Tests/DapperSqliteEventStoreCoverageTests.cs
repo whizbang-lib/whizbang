@@ -30,7 +30,7 @@ namespace Whizbang.Data.Tests;
 /// Whizbang.Data.Postgres implements, so divergence between the two stores on any of these edge
 /// cases is the bug worth catching.
 /// </summary>
-public sealed class DapperSqliteEventStoreCoverageTests : IDisposable {
+public sealed class DapperSqliteEventStoreCoverageTests {
   private DapperTestBase _testBase = null!;
 
   [Before(Test)]
@@ -42,11 +42,6 @@ public sealed class DapperSqliteEventStoreCoverageTests : IDisposable {
   [After(Test)]
   public void Cleanup() {
     _testBase?.Cleanup();
-  }
-
-  public void Dispose() {
-    _testBase?.DisposeAsync().AsTask().Wait();
-    GC.SuppressFinalize(this);
   }
 
   // ========================================

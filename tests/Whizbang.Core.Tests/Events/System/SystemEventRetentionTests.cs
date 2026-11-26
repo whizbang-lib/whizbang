@@ -21,7 +21,7 @@ namespace Whizbang.Core.Tests.Events.System;
 /// <summary>
 /// #2320: the framework's own rewind and rebuild events are operational bookkeeping, each in a stream of its own, and
 /// were stored forever (millions of rows, a large share of a database's event bytes). They are ephemeral now, kept for
-/// 30 days by default, configurable under <c>Whizbang:Ephemeral:SystemEvents:Ttl</c>. The retention reaches the TTL a new
+/// 14 days by default (30 before #2585), configurable under <c>Whizbang:Ephemeral:SystemEvents:Ttl</c>. The retention reaches the TTL a new
 /// event is stamped with and the per-type grace the reaper measures from each stored event's creation time, so a
 /// reclassified historical event ages out on the same rule.
 /// </summary>
@@ -31,6 +31,7 @@ namespace Whizbang.Core.Tests.Events.System;
 [Category("Ephemeral")]
 public class SystemEventRetentionTests {
   private const int SEVEN_DAYS = 7 * 24 * 60 * 60;
+  private const int FOURTEEN_DAYS = 14 * 24 * 60 * 60;
 
   private static readonly Type[] _systemEvents = [
     typeof(PerspectiveRebuildStarted),
@@ -45,14 +46,14 @@ public class SystemEventRetentionTests {
     new Whizbang.Core.Generated.GeneratedMessageTypeCatalog().GetAll().Single(e => e.Type == type);
 
   [Test]
-  public async Task EveryRewindAndRebuildEvent_IsEphemeral_ForThirtyDaysByDefaultAsync() {
+  public async Task EveryRewindAndRebuildEvent_IsEphemeral_ForFourteenDaysByDefaultAsync() {
     foreach (var type in _systemEvents) {
       var entry = _entryOf(type);
 
       await Assert.That(entry.Ephemeral).IsNotNull().Because($"{type.Name} is bookkeeping in a stream of its own");
       await Assert.That(entry.Ephemeral!.Destruction).IsEqualTo(Destruction.AfterTtl);
-      await Assert.That(entry.Ephemeral.TtlSeconds).IsEqualTo(SystemEventRetention.DEFAULT_TTL_SECONDS);
-      await Assert.That(entry.Ephemeral.RewindGraceSeconds).IsEqualTo(SystemEventRetention.DEFAULT_TTL_SECONDS)
+      await Assert.That(entry.Ephemeral.TtlSeconds).IsEqualTo(FOURTEEN_DAYS);
+      await Assert.That(entry.Ephemeral.RewindGraceSeconds).IsEqualTo(FOURTEEN_DAYS)
         .Because("the reaper measures the grace from the stored creation time, so a reclassified historical event, which "
           + "carries no stamped expiry, is still kept for the TTL");
       await Assert.That(typeof(IEphemeralSystemEvent).IsAssignableFrom(type)).IsTrue();
@@ -99,8 +100,9 @@ public class SystemEventRetentionTests {
   }
 
   [Test]
-  public async Task SystemEventsTtl_DefaultsToThirtyDaysAsync() {
-    await Assert.That(new EphemeralOptions().SystemEvents.Ttl).IsEqualTo(TimeSpan.FromDays(30));
+  public async Task SystemEventsTtl_DefaultsToFourteenDaysAsync() {
+    await Assert.That(new EphemeralOptions().SystemEvents.Ttl).IsEqualTo(TimeSpan.FromDays(14))
+      .Because("#2585: the default retention of rewind and rebuild events is 14 days");
   }
 
   [Test]
