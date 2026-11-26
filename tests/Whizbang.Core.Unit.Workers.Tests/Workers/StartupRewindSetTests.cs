@@ -148,6 +148,7 @@ public class StartupRewindSetTests {
     var b = Guid.CreateVersion7();
     var set = new StartupRewindSet([_flagged(a, ORDERS), _flagged(b, ORDERS)]);
 
+    set.RecordLeases(a, ORDERS, attempts: 60, failures: 0);
     set.RecordLeases(a, ORDERS, attempts: 62, failures: 0);
     set.RecordLeases(a, ORDERS, attempts: 61, failures: 0);
     set.RecordLeases(Guid.CreateVersion7(), INVOICES, attempts: 9, failures: 0);
