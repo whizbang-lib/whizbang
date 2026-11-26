@@ -165,6 +165,12 @@ public sealed class PostgresSchemaInitializer {
   internal IDutyGrant? MigratorGrant { get; set; }
 
   /// <summary>
+  /// The host's services, set by the runner (#2596): the Converge stage's heavy work reads the fleet-wide cap, the stage
+  /// reporter and the clock from them. Null (a direct call with no host) runs the work as before the cap existed.
+  /// </summary>
+  internal IServiceProvider? Services { get; set; }
+
+  /// <summary>
   /// What the shared migrator election needs from this driver (#2561): the schema this initialization installs into
   /// (created when the connection string names one that does not exist), and the bootstrap closure: the core tables,
   /// then the marked regions of the library's migrations rendered for that schema, in order.
@@ -246,11 +252,12 @@ public sealed class PostgresSchemaInitializer {
 
     // Everything up to the managed-object reconcile runs under the schema initialization lock, the key the EF Core
     // driver's DDL transaction takes, so instances starting together migrate one after the other.
+    bool passApplied;
     await using (await SchemaInitializationLock.AcquireAsync(_connectionString, schema, Observers, cancellationToken)) {
-      await _migrateAsync(connection, schemaSql, schema, cancellationToken);
+      passApplied = await _migrateAsync(connection, schemaSql, schema, cancellationToken);
     }
 
-    await _convergeAsync(connection, schema, cancellationToken);
+    await _convergeAsync(connection, schema, cancellationToken, passApplied);
   }
 
   /// <summary>
@@ -444,7 +451,8 @@ public sealed class PostgresSchemaInitializer {
   /// What follows the schema work on every start: the managed-object reconcile and each perspective table's storage
   /// settings. Neither takes the schema lock to wait.
   /// </summary>
-  private async Task _convergeAsync(NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
+  private async Task _convergeAsync(
+      NpgsqlConnection connection, string schema, CancellationToken cancellationToken, bool passApplied = false) {
     // #2563: the Converge stage is entered on every start that converges, as on the EF Core driver, held or not.
     if (Converging is { } converging) {
       await converging(cancellationToken).ConfigureAwait(false);
@@ -452,19 +460,30 @@ public sealed class PostgresSchemaInitializer {
     if (ApplicationHeld) {
       return;   // #2553: the registry, managed objects and storage settings are the application's, left as they are
     }
-    // #2561: the perspective registry, at every start. No hash covers it, so a start that ran no pass (a schema Assess
-    // found current, a waiter behind a migrator of another build, a restored database) checks what is stored against
-    // what this build declares, and reconciles only when they differ, under the schema lock. Never fatal.
-    _ = await PerspectiveRegistryCurrency.ReconcileIfStaleAsync(
-      () => new NpgsqlConnection(_connectionString), schema, PerspectiveRegistry ?? [],
-      SchemaCommandTimeout.Resolve(_connectionString), services: null, Logger, cancellationToken);
+    // #2596: every unit of heavy work runs through the session: shared work once per schema per build, and all of it
+    // under one of the fleet's heavy-start permits, given back when this method returns.
+    await using var work = StartupWorkSessions.Begin(
+      () => new NpgsqlConnection(_connectionString), schema, Services, passApplied, Logger, Instance?.InstanceId);
+    var registry = PerspectiveRegistry ?? [];
+    // #2561: the perspective registry. No hash covers it, so a start that ran no pass (a schema Assess found current, a
+    // waiter behind a migrator of another build, a restored database) checks what is stored against what this build
+    // declares, and reconciles only when they differ, under the schema lock. Never fatal; a check that failed is not
+    // recorded done, so the next start tries again.
+    _ = await work.RunAsync(FrameworkStartupWork.PERSPECTIVE_REGISTRY, StartupWorkInputs.Of(registry), async ct =>
+      await PerspectiveRegistryCurrency.ConvergeAsync(
+        () => new NpgsqlConnection(_connectionString), schema, registry, SchemaCommandTimeout.Resolve(_connectionString),
+        services: null, Logger, ct).ConfigureAwait(false) != PerspectiveRegistryConvergence.Failed, cancellationToken)
+      .ConfigureAwait(false);
     // The managed-object reconcile, after the lock is released (it takes the same lock itself, with a try). Never
     // fatal, as on the EF Core driver: a reconcile that cannot finish leaves every object where it is, and the next
-    // start tries again.
+    // start tries again. Per instance: each run records what this instance declares for the drop gate.
     if (ManagedObjects is { } declared) {
       try {
-        await ManagedSchemaReconciler.RunAsync(
-          connection, schema, declared, ManagedObjectSettings, Instance?.InstanceId, Logger, cancellationToken);
+        _ = await work.RunAsync(FrameworkStartupWork.MANAGED_OBJECT_RECONCILE, "", async ct => {
+          _ = await ManagedSchemaReconciler.RunAsync(
+            connection, schema, declared, ManagedObjectSettings, Instance?.InstanceId, Logger, ct).ConfigureAwait(false);
+          return true;
+        }, cancellationToken).ConfigureAwait(false);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         if (Logger is { } logger) {
           _logReconcileFailed(logger, ex);
@@ -472,10 +491,12 @@ public sealed class PostgresSchemaInitializer {
       }
     }
 
-    // Each perspective table's fillfactor and autovacuum settings follow its model at every start, whether or not its
-    // schema changed, except on the tables listed in perspective_storage_manual_tables (#1747). Never fatal.
-    await PerspectiveStorageParameters.ReconcileAsync(
-      connection, schema, (_perspectiveEntries ?? []).Select(e => e.Value), Logger, cancellationToken);
+    // Each perspective table's fillfactor and autovacuum settings follow its model (#1747), once per schema per build,
+    // except on the tables listed in perspective_storage_manual_tables. Never fatal.
+    var perspectiveSql = (_perspectiveEntries ?? []).Select(e => e.Value).ToList();
+    _ = await work.RunAsync(FrameworkStartupWork.PERSPECTIVE_STORAGE_SETTINGS, StartupWorkInputs.Of(perspectiveSql), async ct =>
+      (await PerspectiveStorageParameters.ReconcileAsync(connection, schema, perspectiveSql, Logger, ct).ConfigureAwait(false))
+        .Completed, cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -496,7 +517,8 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>The migration pass, under the schema lock: infrastructure, migrations, perspectives, then this instance.</summary>
-  private async Task _migrateAsync(
+  /// <returns>Whether any step of the pass applied work (#2596).</returns>
+  private async Task<bool> _migrateAsync(
       NpgsqlConnection connection, string schemaSql, string schema, CancellationToken cancellationToken) {
     // Execute infrastructure schema (event store, inbox, outbox, etc.), catalog-checked (#1636): it re-asserts every
     // column and index at every start, and each would otherwise take its table's lock to find it already there.
@@ -542,6 +564,7 @@ public sealed class PostgresSchemaInitializer {
         () => new NpgsqlConnection(_connectionString), schema, instance, liveness: RegistrationLiveness,
         cancellationToken: cancellationToken);
     }
+    return pass.Applied > 0;
   }
 
   /// <summary>The application's share of the pass: its objects, its perspective tables, their registry and stored keys.</summary>

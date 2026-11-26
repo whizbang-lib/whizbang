@@ -109,13 +109,17 @@ public class SchemaMigratorDeferralGenerationTests {
     var output = await _generatedAsync(MINIMAL_CONTEXT);
 
     var held = output.IndexOf("if (incompatibilityOverride is not null || applicationHeld) {", StringComparison.Ordinal);
-    var check = output.IndexOf("Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ReconcileIfStaleAsync(", StringComparison.Ordinal);
+    var check = output.IndexOf("Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ConvergeAsync(", StringComparison.Ordinal);
     await Assert.That(held).IsGreaterThan(output.IndexOf("var retryAttempt = 0;", StringComparison.Ordinal))
       .Because("the converge follows the pass loop, which every start reaches");
     await Assert.That(check).IsGreaterThan(held).Because("a held application schema leaves its registry as it is");
     await Assert.That(output[check..]).Contains(
       "segmentConnectionFactory, \"", StringComparison.Ordinal);
-    await Assert.That(output).Contains("_perspectiveRegistryPayloads(), _schemaCommandTimeoutSeconds, serviceProvider,", StringComparison.Ordinal);
+    await Assert.That(output).Contains("var registryPayloads = _perspectiveRegistryPayloads();", StringComparison.Ordinal);
+    await Assert.That(output).Contains("registryPayloads, _schemaCommandTimeoutSeconds, serviceProvider,", StringComparison.Ordinal);
+    // #2596: the check is shared work, run once per schema per build through the start's session.
+    await Assert.That(output[held..check]).Contains(
+      "global::Whizbang.Core.Startup.FrameworkStartupWork.PERSPECTIVE_REGISTRY", StringComparison.Ordinal);
     var accessor = output.IndexOf("_perspectiveRegistryPayloads() {", StringComparison.Ordinal);
     await Assert.That(output[accessor..]).Contains("new Whizbang.Core.Perspectives.PerspectiveRegistryPayload(", StringComparison.Ordinal);
     await Assert.That(output).DoesNotContain("__PERSPECTIVE_REGISTRY_JSON__", StringComparison.Ordinal)
@@ -132,11 +136,11 @@ public class SchemaMigratorDeferralGenerationTests {
     var output = await _generatedAsync(MINIMAL_CONTEXT);
 
     var held = output.IndexOf("if (incompatibilityOverride is not null || applicationHeld) {", StringComparison.Ordinal);
-    var check = output.IndexOf("Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ReconcileIfStaleAsync(", held, StringComparison.Ordinal);
+    var check = output.IndexOf("Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ConvergeAsync(", held, StringComparison.Ordinal);
     var between = output[held..check];
     await Assert.That(between).DoesNotContain("if (segmentConnectionFactory is not null) {", StringComparison.Ordinal)
       .Because("no connection registration skips the check");
-    var borrowed = output.IndexOf("Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ReconcileIfStaleAsync(", check + 1, StringComparison.Ordinal);
+    var borrowed = output.IndexOf("Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ConvergeAsync(", check + 1, StringComparison.Ordinal);
     await Assert.That(borrowed).IsGreaterThan(check);
     var call = output[borrowed..output.IndexOf(';', borrowed)];
     await Assert.That(call).Contains("(Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection()", StringComparison.Ordinal)

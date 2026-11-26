@@ -117,6 +117,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     _collectiveEventTypes.Value = Whizbang.Data.EFCore.Postgres.SchemaCollectiveHandlers.Resolve(dbContext, serviceProvider);
     var sw = global::System.Diagnostics.Stopwatch.StartNew();
     var migrationsApplied = 0;
+    // #2596: whether this start's own pass applied anything, so the Converge stage runs its shared work again.
+    var passApplied = false;
     var phases = new global::System.Collections.Generic.List<(string Name, long Ms, string Status)>();
     var phaseSw = new global::System.Diagnostics.Stopwatch();
     // Process-stable, so every instance initializing this schema computes the SAME key and the
@@ -610,6 +612,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             break;
           }
           steps.CompletePass();
+          passApplied = steps.AppliedAny;
 
           sw.Stop();
           var phaseSummary = string.Join(", ", phases.Select(p => $"{p.Name}={p.Ms}ms({p.Status})"));
@@ -680,32 +683,48 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       // #2553: nor does a start that holds the application's schema, whose tables these all concern.
       return;
     }
-    await _analyzeNewlyIndexedTablesAsync(dbContext, segmentConnectionFactory, logger, cancellationToken);
+    // #2596: every unit of heavy work runs through the session: shared work once per schema per build, and all of it
+    // under one of the fleet's heavy-start permits, given back when this method returns. Without a connection of its
+    // own there is no ledger to claim from, and the work runs as before the cap existed.
+    await using var startupWork = Whizbang.Data.Postgres.StartupWorkSessions.Begin(
+      segmentConnectionFactory, "__SCHEMA__", serviceProvider, passApplied, logger);
+    await _analyzeNewlyIndexedTablesAsync(dbContext, segmentConnectionFactory, startupWork, logger, cancellationToken);
 
     // The managed-object reconcile runs at every start, the fast path included: an object retired by a release
     // whose schema hash did not change, or dropped by hand, is found by reading the catalog, not the hash. After
     // the commit, on a connection of its own, because DROP INDEX CONCURRENTLY cannot run in a transaction.
-    await _reconcileManagedObjectsAsync(dbContext, reconcileSettings, segmentConnectionFactory, serviceProvider, logger, cancellationToken);
+    await _reconcileManagedObjectsAsync(dbContext, reconcileSettings, segmentConnectionFactory, serviceProvider, startupWork, logger, cancellationToken);
 
-    // #2561: the perspective registry, at every start, the fast path included. No hash covers it, so a start that skips
-    // the pass's registries step (a hash-clean restart, a Current schema, a waiter behind a migrator of another build, a
+    // #2561: the perspective registry, once per schema per build (#2596). No hash covers it, so a start that skips the
+    // pass's registries step (a hash-clean restart, a Current schema, a waiter behind a migrator of another build, a
     // restored database) checks what is stored against what this build declares, and reconciles only when they differ,
-    // under the schema lock. Never fatal. #2578: whatever the connection registration: on a connection of its own when
-    // one can be opened, otherwise on the context's, which a host that registers no separate connection configured.
-    _ = segmentConnectionFactory is not null
-      ? await Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ReconcileIfStaleAsync(
-        segmentConnectionFactory, "__SCHEMA__", _perspectiveRegistryPayloads(), _schemaCommandTimeoutSeconds, serviceProvider,
-        logger, cancellationToken)
-      : await Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ReconcileIfStaleAsync(
-        (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection(), "__SCHEMA__", _perspectiveRegistryPayloads(),
-        _schemaCommandTimeoutSeconds, serviceProvider, logger, cancellationToken);
+    // under the schema lock. Never fatal; a check that failed is not recorded done. #2578: whatever the connection
+    // registration: on a connection of its own when one can be opened, otherwise on the context's, which a host that
+    // registers no separate connection configured.
+    var registryPayloads = _perspectiveRegistryPayloads();
+    _ = await startupWork.RunAsync(
+      global::Whizbang.Core.Startup.FrameworkStartupWork.PERSPECTIVE_REGISTRY,
+      Whizbang.Data.Postgres.StartupWorkInputs.Of(registryPayloads), async ct =>
+        (segmentConnectionFactory is not null
+          ? await Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ConvergeAsync(
+            segmentConnectionFactory, "__SCHEMA__", registryPayloads, _schemaCommandTimeoutSeconds, serviceProvider, logger, ct)
+          : await Whizbang.Data.Postgres.PerspectiveRegistryCurrency.ConvergeAsync(
+            (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection(), "__SCHEMA__", registryPayloads,
+            _schemaCommandTimeoutSeconds, serviceProvider, logger, ct))
+        != Whizbang.Data.Postgres.PerspectiveRegistryConvergence.Failed,
+      cancellationToken);
 
-    // Each perspective table's fillfactor and autovacuum settings follow its model at every start, the fast path
-    // included, except on the tables listed in perspective_storage_manual_tables (#1747). One catalog read; a table
-    // already in line is not altered. Never fatal.
-    await Whizbang.Data.EFCore.Postgres.PerspectiveStorageReconcile.RunAsync(
-      dbContext, "__SCHEMA__", global::System.Linq.Enumerable.Select(GetPerspectiveEntries(), e => e.Sql), segmentConnectionFactory,
-      logger, cancellationToken);
+    // Each perspective table's fillfactor and autovacuum settings follow its model, once per schema per build (#2596),
+    // except on the tables listed in perspective_storage_manual_tables (#1747). One catalog read; a table already in
+    // line is not altered. Never fatal; a run that left a table behind is not recorded done.
+    var perspectiveSql = global::System.Linq.Enumerable.ToList(
+      global::System.Linq.Enumerable.Select(GetPerspectiveEntries(), e => e.Sql));
+    _ = await startupWork.RunAsync(
+      global::Whizbang.Core.Startup.FrameworkStartupWork.PERSPECTIVE_STORAGE_SETTINGS,
+      Whizbang.Data.Postgres.StartupWorkInputs.Of(perspectiveSql), async ct =>
+        (await Whizbang.Data.EFCore.Postgres.PerspectiveStorageReconcile.RunAsync(
+          dbContext, "__SCHEMA__", perspectiveSql, segmentConnectionFactory, logger, ct)).Completed,
+      cancellationToken);
 
     // No maintenance here (#1351). Schema initialization runs on every instance at every start, and a
     // service that scales out on its backlog starts instances at the peak of a load: the purge runs in
@@ -2697,23 +2716,27 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   private static async Task _analyzeNewlyIndexedTablesAsync(
     __DBCONTEXT_FQN__ dbContext,
     Func<Npgsql.NpgsqlConnection>? segmentConnectionFactory,
+    global::Whizbang.Core.Startup.StartupWorkSession startupWork,
     ILogger? logger,
     CancellationToken cancellationToken) {
     try {
-      if (segmentConnectionFactory is not null) {
-        await using var connection = segmentConnectionFactory();
-        await connection.OpenAsync(cancellationToken);
-        await Whizbang.Data.Postgres.IndexStatistics.AnalyzeQueuedAsync(
-          connection, @"__QUOTED_SCHEMA__", logger, cancellationToken);
-        return;
-      }
-      await dbContext.Database.OpenConnectionAsync(cancellationToken);
-      try {
-        await Whizbang.Data.Postgres.IndexStatistics.AnalyzeQueuedAsync(
-          (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection(), @"__QUOTED_SCHEMA__", logger, cancellationToken);
-      } finally {
-        await dbContext.Database.CloseConnectionAsync();
-      }
+      _ = await startupWork.RunAsync(global::Whizbang.Core.Startup.FrameworkStartupWork.ANALYZE_NEW_INDEXES, "", async ct => {
+        if (segmentConnectionFactory is not null) {
+          await using var connection = segmentConnectionFactory();
+          await connection.OpenAsync(ct);
+          await Whizbang.Data.Postgres.IndexStatistics.AnalyzeQueuedAsync(
+            connection, @"__QUOTED_SCHEMA__", logger, ct);
+          return true;
+        }
+        await dbContext.Database.OpenConnectionAsync(ct);
+        try {
+          await Whizbang.Data.Postgres.IndexStatistics.AnalyzeQueuedAsync(
+            (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection(), @"__QUOTED_SCHEMA__", logger, ct);
+        } finally {
+          await dbContext.Database.CloseConnectionAsync();
+        }
+        return true;
+      }, cancellationToken);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       logger?.LogWarning(ex,
         "Could not analyze the tables the schema pass indexed for {Schema}; the index-statistics "
@@ -2732,14 +2755,18 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     global::Whizbang.Data.Postgres.Schema.ManagedSchemaSettings settings,
     Func<Npgsql.NpgsqlConnection>? segmentConnectionFactory,
     IServiceProvider? serviceProvider,
+    global::Whizbang.Core.Startup.StartupWorkSession startupWork,
     ILogger? logger,
     CancellationToken cancellationToken) {
     // The settings were read at the top of initialization, outside any catch: a setting that is not one fails the
     // start, rather than being ignored into a drop the operator meant to switch off.
     try {
-      await Whizbang.Data.EFCore.Postgres.ManagedSchemaReconcile.RunAsync(
-        dbContext, new global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest(typeof(__DBCONTEXT_FQN__), "__SCHEMA__", GetManagedSchemaObjects),
-        settings, segmentConnectionFactory, serviceProvider, logger, cancellationToken);
+      _ = await startupWork.RunAsync(global::Whizbang.Core.Startup.FrameworkStartupWork.MANAGED_OBJECT_RECONCILE, "", async ct => {
+        _ = await Whizbang.Data.EFCore.Postgres.ManagedSchemaReconcile.RunAsync(
+          dbContext, new global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest(typeof(__DBCONTEXT_FQN__), "__SCHEMA__", GetManagedSchemaObjects),
+          settings, segmentConnectionFactory, serviceProvider, logger, ct);
+        return true;
+      }, cancellationToken);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       logger?.LogWarning(ex,
         "The managed-object reconcile for {Schema} failed; nothing was dropped that it did not report, and the "

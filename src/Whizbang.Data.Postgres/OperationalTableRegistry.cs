@@ -191,6 +191,8 @@ public static class OperationalTableRegistry {
     _rolling("wh_stacks", OperationalCategory.Reports,
       "a stack past the Reports retention that no dead letter and no daily history row names is removed (#2359)", sweptHere: true),
     _state("wh_standby_requests", "one row: the standby handshake"),
+    _state("wh_startup_permits", "instances: one row per instance holding a heavy-start permit, freed when it is no longer live (#2596)"),
+    _state("wh_startup_work", "one row per declared unit of shared startup work (#2596)"),
     _state("wh_stored_form_migrations", "configuration: declared stored-form migrations"),
     _state("wh_stream_digests", "streams and types"),
     _state("wh_stream_lifecycle", "streams: floors and the lifecycle of each stream"),

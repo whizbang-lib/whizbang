@@ -109,6 +109,8 @@ internal sealed class DapperSchemaInitializationRunner(
   private PostgresSchemaInitializer _reportingStages(PostgresSchemaInitializer initializer) {
     initializer.Applying = (steps, ct) => SchemaInitializationStages.ApplyingAsync(services, steps, ct);
     initializer.Converging = ct => SchemaInitializationStages.ConvergingAsync(services, ct);
+    // #2596: the Converge work reads the fleet-wide cap, the stage reporter and the clock from the host.
+    initializer.Services = services;
     return initializer;
   }
 }

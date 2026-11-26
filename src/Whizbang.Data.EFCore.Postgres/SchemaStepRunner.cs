@@ -130,6 +130,12 @@ public sealed class SchemaStepRunner {
   /// <summary>Logs the summary of a pass in which every step succeeded.</summary>
   public void CompletePass() => _pass.Complete();
 
+  /// <summary>
+  /// Whether any step of this pass applied work (#2596), so the Converge stage claims its shared work even when the
+  /// record says this build already did it.
+  /// </summary>
+  public bool AppliedAny => _pass.Applied > 0;
+
   /// <summary>A failure as the ledger and the step lines give it: the SQLSTATE, or the exception's type, and its message.</summary>
   /// <param name="exception">The failure.</param>
   /// <returns>For example <c>40P01 deadlock detected</c>.</returns>
