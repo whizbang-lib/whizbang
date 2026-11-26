@@ -39,6 +39,9 @@ internal sealed partial class MigrationPassProgress(ILogger? logger, TimeProvide
   /// <summary>Whether a pass has begun, so its steps are counted.</summary>
   public bool Counted => Total > 0;
 
+  /// <summary>How many steps of this pass applied work (#2596): a pass that applied any re-runs the shared Converge work.</summary>
+  public int Applied => _applied;
+
   private int _applied;
   private int _skipped;
 

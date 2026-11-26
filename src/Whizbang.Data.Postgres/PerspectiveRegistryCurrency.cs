@@ -50,20 +50,9 @@ public static partial class PerspectiveRegistryCurrency {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/PerspectiveRegistryRestartTests.cs</tests>
   public static async Task<bool> ReconcileIfStaleAsync(
       Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<PerspectiveRegistryPayload> payloads,
-      int commandTimeoutSeconds, IServiceProvider? services, ILogger? logger, CancellationToken cancellationToken) {
-    ArgumentNullException.ThrowIfNull(connectionFactory);
-    ArgumentNullException.ThrowIfNull(payloads);
-    var log = logger ?? NullLogger.Instance;
-    try {
-      await using var connection = connectionFactory();
-      await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-      return await _reconcileIfStaleAsync(connection, schema, payloads, commandTimeoutSeconds, services, log, cancellationToken)
-        .ConfigureAwait(false);
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
-      LogFailed(log, ex, schema);
-      return false;
-    }
-  }
+      int commandTimeoutSeconds, IServiceProvider? services, ILogger? logger, CancellationToken cancellationToken) =>
+    await ConvergeAsync(connectionFactory, schema, payloads, commandTimeoutSeconds, services, logger, cancellationToken)
+      .ConfigureAwait(false) == PerspectiveRegistryConvergence.Reconciled;
 
   /// <summary>
   /// Reconciles the stored registry from <paramref name="payloads"/> when, and only when, it differs from them, on a
@@ -85,6 +74,57 @@ public static partial class PerspectiveRegistryCurrency {
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMigratorElectionTests.cs:ABorrowedConnection_WhoseRegistryCannotBeReconciled_IsNotFatal_AndIsClosedAgainAsync</tests>
   public static async Task<bool> ReconcileIfStaleAsync(
       NpgsqlConnection connection, string schema, IReadOnlyList<PerspectiveRegistryPayload> payloads,
+      int commandTimeoutSeconds, IServiceProvider? services, ILogger? logger, CancellationToken cancellationToken) =>
+    await ConvergeAsync(connection, schema, payloads, commandTimeoutSeconds, services, logger, cancellationToken)
+      .ConfigureAwait(false) == PerspectiveRegistryConvergence.Reconciled;
+
+  /// <summary>
+  /// Reconciles the stored registry from <paramref name="payloads"/> when, and only when, it differs from them, and says
+  /// which of the three it was (#2596): current, reconciled, or failed (said at Warning), so the Converge stage records
+  /// the work done for this build only when it was.
+  /// </summary>
+  /// <param name="connectionFactory">Opens a connection of its own.</param>
+  /// <param name="schema">The schema, unquoted; its schema initialization lock is the one taken.</param>
+  /// <param name="payloads">This build's registry payloads.</param>
+  /// <param name="commandTimeoutSeconds">The budget for one statement, and for the wait on the lock.</param>
+  /// <param name="services">Where the observers are registered; told when the lock is held elsewhere.</param>
+  /// <param name="logger">Optional logger.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>What the check found and did.</returns>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMigratorElectionTests.cs:ARegistryThatCannotBeReconciled_IsNotFatalAsync</tests>
+  public static async Task<PerspectiveRegistryConvergence> ConvergeAsync(
+      Func<NpgsqlConnection> connectionFactory, string schema, IReadOnlyList<PerspectiveRegistryPayload> payloads,
+      int commandTimeoutSeconds, IServiceProvider? services, ILogger? logger, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(connectionFactory);
+    ArgumentNullException.ThrowIfNull(payloads);
+    var log = logger ?? NullLogger.Instance;
+    try {
+      await using var connection = connectionFactory();
+      await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+      return await _convergeOpenAsync(connection, schema, payloads, commandTimeoutSeconds, services, log, cancellationToken)
+        .ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogFailed(log, ex, schema);
+      return PerspectiveRegistryConvergence.Failed;
+    }
+  }
+
+  /// <summary>
+  /// Reconciles the stored registry from <paramref name="payloads"/> when, and only when, it differs from them, on a
+  /// connection the caller owns, and says which of the three it was (#2596). Opened here when it is closed, and closed
+  /// again afterwards; never disposed, and left open when it was found open.
+  /// </summary>
+  /// <param name="connection">The connection to borrow; no transaction may be open on it.</param>
+  /// <param name="schema">The schema, unquoted; its schema initialization lock is the one taken.</param>
+  /// <param name="payloads">This build's registry payloads.</param>
+  /// <param name="commandTimeoutSeconds">The budget for one statement, and for the wait on the lock.</param>
+  /// <param name="services">Where the observers are registered; told when the lock is held elsewhere.</param>
+  /// <param name="logger">Optional logger.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>What the check found and did.</returns>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMigratorElectionTests.cs:ABorrowedConnection_WhoseRegistryCannotBeReconciled_IsNotFatal_AndIsClosedAgainAsync</tests>
+  public static async Task<PerspectiveRegistryConvergence> ConvergeAsync(
+      NpgsqlConnection connection, string schema, IReadOnlyList<PerspectiveRegistryPayload> payloads,
       int commandTimeoutSeconds, IServiceProvider? services, ILogger? logger, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(connection);
     ArgumentNullException.ThrowIfNull(payloads);
@@ -95,11 +135,11 @@ public static partial class PerspectiveRegistryCurrency {
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         opened = true;
       }
-      return await _reconcileIfStaleAsync(connection, schema, payloads, commandTimeoutSeconds, services, log, cancellationToken)
+      return await _convergeOpenAsync(connection, schema, payloads, commandTimeoutSeconds, services, log, cancellationToken)
         .ConfigureAwait(false);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogFailed(log, ex, schema);
-      return false;
+      return PerspectiveRegistryConvergence.Failed;
     } finally {
       if (opened) {
         await connection.CloseAsync().ConfigureAwait(false);
@@ -108,6 +148,14 @@ public static partial class PerspectiveRegistryCurrency {
   }
 
   /// <summary>The check, then the reconcile under the lock when the registry differs, on an open connection.</summary>
+  private static async Task<PerspectiveRegistryConvergence> _convergeOpenAsync(
+      NpgsqlConnection connection, string schema, IReadOnlyList<PerspectiveRegistryPayload> payloads,
+      int commandTimeoutSeconds, IServiceProvider? services, ILogger log, CancellationToken cancellationToken) =>
+    await _reconcileIfStaleAsync(connection, schema, payloads, commandTimeoutSeconds, services, log, cancellationToken)
+      .ConfigureAwait(false)
+      ? PerspectiveRegistryConvergence.Reconciled
+      : PerspectiveRegistryConvergence.Current;
+
   private static async Task<bool> _reconcileIfStaleAsync(
       NpgsqlConnection connection, string schema, IReadOnlyList<PerspectiveRegistryPayload> payloads,
       int commandTimeoutSeconds, IServiceProvider? services, ILogger log, CancellationToken cancellationToken) {
@@ -201,4 +249,17 @@ public static partial class PerspectiveRegistryCurrency {
   [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
     Message = "Could not check or reconcile the perspective registry of schema {Schema}; it is left as it is, and the next start tries again")]
   static partial void LogFailed(ILogger logger, Exception exception, string schema);
+}
+
+/// <summary>What one check of the stored perspective registry found and did (#2596).</summary>
+/// <docs>operations/startup/startup-pipeline#heavy-startup-work</docs>
+public enum PerspectiveRegistryConvergence {
+  /// <summary>The stored registry already said what this build declares.</summary>
+  Current,
+
+  /// <summary>It differed, and this call reconciled it.</summary>
+  Reconciled,
+
+  /// <summary>It could not be read or reconciled; said at Warning, and the next start tries again.</summary>
+  Failed,
 }

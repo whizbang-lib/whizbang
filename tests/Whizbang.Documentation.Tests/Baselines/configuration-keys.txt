@@ -112,6 +112,9 @@ Whizbang:Database:Stamper:FencedRetryInterval
 Whizbang:Database:Stamper:LeaderElectionRetry
 Whizbang:Database:Stamper:NotifyHealthyPollingInterval
 Whizbang:Database:Stamper:PollingInterval
+Whizbang:Database:StartupWork:MaxConcurrentHeavyStarts
+Whizbang:Database:StartupWork:PermitPollInterval
+Whizbang:Database:StartupWork:PermitWaitLimit
 Whizbang:Database:TcpKeepAliveInterval
 Whizbang:Database:TcpKeepAliveTime
 Whizbang:DatabaseFailureEscalation:ConsecutiveFailures

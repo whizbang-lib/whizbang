@@ -46,7 +46,7 @@ public static partial class PerspectiveStorageReconcile {
         connection, schema, perspectiveSql, logger, cancellationToken).ConfigureAwait(false);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogConnectionFailed(logger, schema, ex.Message);
-      return PerspectiveStorageReport.Empty;
+      return PerspectiveStorageReport.Unread;
     } finally {
       if (owned is not null) {
         await owned.DisposeAsync().ConfigureAwait(false);

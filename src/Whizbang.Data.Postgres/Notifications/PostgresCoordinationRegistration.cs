@@ -35,6 +35,8 @@ internal static class PostgresCoordinationRegistration {
     services.AddWhizbangPartitionAssigner();
     // #2595: each instance reads, logs and reports its own assignment, on every driver alike.
     services.AddWhizbangInstanceAssignmentMonitor();
+    // #2596: the fleet-wide cap on concurrent heavy starts, bound from configuration with a default.
+    services.AddWhizbangStartupWorkCap();
     return services;
   }
 
