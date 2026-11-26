@@ -22,6 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/StartupWorkSessions.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Schema/PerspectiveStorageParameters.cs</code-under-test>
 [Category("Startup")]
+[Category("Shard2")]
 public class StartupWorkSessionsTests {
   [Test]
   public async Task WithNoHostAndNoConnection_TheWorkRunsDirectlyAsync() {
