@@ -1265,7 +1265,10 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) => Task.FromResult(-1L);
   }
 
-  private sealed class MultiRunnerRegistry(IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {
+  /// <summary>A runner registry over the given runners, every one of them applying <paramref name="readTypes"/>.</summary>
+  /// <param name="eventTypes">The event types the service registers.</param>
+  /// <param name="readTypes">The event types each perspective applies; every registered type when null.</param>
+  private sealed class MultiRunnerRegistry(IReadOnlyList<Type> eventTypes, IReadOnlyList<Type>? readTypes = null) : IPerspectiveRunnerRegistry {
     private readonly ConcurrentDictionary<string, IPerspectiveRunner> _runners = new(StringComparer.Ordinal);
 
     public void Add(string perspectiveName, IPerspectiveRunner runner) => _runners[perspectiveName] = runner;
@@ -1278,7 +1281,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
         name,
         $"global::{name}",
         "global::Test.DrainDeepModel",
-        [.. eventTypes.Select(TypeNameFormatter.Format)]))];
+        [.. (readTypes ?? eventTypes).Select(TypeNameFormatter.Format)]))];
 
     public IReadOnlyList<Type> GetEventTypes() => eventTypes;
     public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
@@ -1408,8 +1411,18 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
 
     public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, long? triggeringCommitSequence, CancellationToken cancellationToken = default) {
       RewindCalls.Enqueue((triggeringEventId, triggeringCommitSequence));
-      return Task.FromResult(_rewound(streamId, perspectiveName, triggeringEventId));
+      if (RewindException is not null) {
+        return Task.FromException<PerspectiveCursorCompletion>(RewindException);
+      }
+      var rewound = _rewound(streamId, perspectiveName, triggeringEventId);
+      return Task.FromResult(rewound.DroppedStragglers.Length > 0 ? rewound : rewound with { Status = RewindCompletionStatus });
     }
+
+    /// <summary>When set, every rewind throws it.</summary>
+    public Exception? RewindException { get; init; }
+
+    /// <summary>The status a rewind reports: one that does not complete is a lock held elsewhere, for instance.</summary>
+    public PerspectiveProcessingStatus RewindCompletionStatus { get; init; } = PerspectiveProcessingStatus.Completed;
 
     private PerspectiveCursorCompletion _rewound(Guid streamId, string perspectiveName, Guid triggeringEventId) =>
       Stragglers.Contains(triggeringEventId)

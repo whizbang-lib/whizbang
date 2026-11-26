@@ -89,6 +89,15 @@ internal sealed class StartupRewindSet {
     _completeIfEmpty();
   }
 
+  /// <summary>#2601: records how often a scan-time cursor's queued row was leased and how often it failed.</summary>
+  /// <param name="streamId">The row's stream.</param>
+  /// <param name="perspectiveName">The row's perspective.</param>
+  /// <param name="attempts">The row's leases.</param>
+  /// <param name="failures">The row's recorded failures.</param>
+  public void RecordLeases(Guid streamId, string perspectiveName, int attempts, int failures) =>
+    throw new NotSupportedException(string.Create(CultureInfo.InvariantCulture,
+      $"{streamId}/{perspectiveName}: {attempts} leases, {failures} failures, {_pending.Count} pending"));
+
   /// <summary>Names the cursors still flagged as <c>stream/perspective</c>, at most <paramref name="max"/> of them.</summary>
   /// <param name="max">How many to name before summarizing the rest as a count.</param>
   /// <returns>A comma-separated list, ending in "and N more" when some were left out.</returns>

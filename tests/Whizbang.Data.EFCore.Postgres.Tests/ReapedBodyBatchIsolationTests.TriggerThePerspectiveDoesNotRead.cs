@@ -25,8 +25,8 @@ public partial class ReapedBodyBatchIsolationTests {
 
   /// <summary>
   /// The stream: version 1 is an event of a type the service does not register, with its body; versions 2 and 3 are the
-  /// perspective's own events, applied. The fill's rewind is raised through the real function, from version 1, while the
-  /// worker runs. The rewind completes: the queued replay is completed, the cursor is no longer flagged and the model
+  /// perspective's own events, applied. The cursor is flagged from version 1 and version 1 queued for it, as a database
+  /// flagged before migration 602 holds it, while the worker runs. The rewind completes: the queued replay is completed, the cursor is no longer flagged and the model
   /// holds the stream's last amount.
   /// </summary>
   [Test]
@@ -49,17 +49,24 @@ public partial class ReapedBodyBatchIsolationTests {
     await pipeline.Completed.WaitAsync(items => ownWork.All(items.Contains), cancellationToken);
     await Assert.That(await _readAmountAsync(conn, stream, cancellationToken)).IsEqualTo(20m);
 
-    // The fill's rewind, through the function the fill calls, from the stream's first event.
-    await using (var rewind = conn.CreateCommand()) {
-      rewind.CommandText = "SELECT _wh_rewind_perspectives_from(@s, @p, @t, NOW())";
-      rewind.Parameters.AddWithValue("s", new[] { stream });
-      rewind.Parameters.AddWithValue("p", new[] { perspective });
-      rewind.Parameters.AddWithValue("t", new[] { unread });
-      await Assert.That(Convert.ToInt32(await rewind.ExecuteScalarAsync(cancellationToken), System.Globalization.CultureInfo.InvariantCulture))
-        .IsEqualTo(1).Because("the cursor is flagged: the trigger's body is present");
+    // The flag as a database raised before migration 602 holds it: the cursor flagged from the stream's first event and
+    // that event queued for the perspective. Since 602 the rewind floors such a trigger to the first event it reads, so the
+    // shape is seeded as stored; the worker has to resolve it either way.
+    await using (var flag = conn.CreateCommand()) {
+      flag.CommandText = """
+        UPDATE wh_perspective_cursors SET status = status | 32, rewind_trigger_event_id = @t, rewind_flagged_at = NOW(),
+                                          rewind_first_flagged_at = NOW()
+        WHERE stream_id = @s AND perspective_name = @p;
+        INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at)
+        VALUES (gen_random_uuid(), @s, @p, @t, compute_partition(@s, 10000), 1, 62, NOW());
+        """;
+      flag.Parameters.AddWithValue("s", stream);
+      flag.Parameters.AddWithValue("p", perspective);
+      flag.Parameters.AddWithValue("t", unread);
+      await flag.ExecuteNonQueryAsync(cancellationToken);
     }
     var queued = await _pendingWorkAsync(conn, stream, cancellationToken);
-    await Assert.That(queued).IsNotEmpty().Because("the rewind queues its replay");
+    await Assert.That(queued.Count).IsEqualTo(1).Because("the trigger is queued for the perspective");
 
     // The replay is completed, unless the stream is claimed again and again with it still pending: then the drain gave
     // it up each time, and the test ends with what the database recorded against the row.
