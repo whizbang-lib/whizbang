@@ -49,51 +49,61 @@ Describe 'a CI build' {
   }
 }
 
-# Every generator assembly is merged twice from the same compiler output, in the same build: once in place with symbols,
-# for the tests and for coverage of the Whizbang.Generators.Shared code merged into it (a merge without symbols left
-# that code reported as never run), and once without symbols for the package. ILRepack writes the symbol file's path,
-# under a per-run temp folder, into the assembly, so only the merge without symbols is the same in two builds. Pack
-# ships that one whether or not it rebuilds (CI packs the tested build with --no-build), so no build setting, and no
-# step that must remember a property, decides which merge ships.
+# Every generator assembly is merged once, in place, with its symbols embedded, and that one file is what the tests
+# load, what coverage reads (the Whizbang.Generators.Shared code merged into it needs the symbols) and what the package
+# ships. ILRepack writes the merged assembly to a per-run temp folder and records the symbol file's path from the stream
+# it wrote; a separate symbol file therefore puts that temp path in the assembly, while an embedded one is written from
+# memory, so the assembly records only the file name and is the same in two builds of one commit. A build of a generator
+# that does not embed its symbols fails (WhizbangRequireEmbeddedSymbols, Directory.Build.targets), so a new generator
+# cannot ship a temp path by leaving the setting out.
 Describe 'every ILRepack merge' {
   BeforeAll {
     $script:Targets = @(Get-ChildItem -Path (Join-Path $script:RepoRoot 'src') -Filter 'ILRepack.targets' -Recurse -File)
+    $script:Projects = @($script:Targets | ForEach-Object {
+        Get-ChildItem -LiteralPath $_.DirectoryName -Filter '*.csproj' -File | Select-Object -First 1 })
   }
 
   It 'is found, so the checks below read something' {
     $script:Targets.Count | Should -BeGreaterThan 4
+    $script:Projects.Count | Should -Be $script:Targets.Count
   }
 
-  It 'keeps symbols in the merge the tests run, and writes the packaged merge without them' {
+  It 'merges once, in place, with symbols, so the tests, coverage and the package read one file' {
     foreach ($file in $script:Targets) {
       [xml]$xml = Get-Content -Raw -LiteralPath $file.FullName
       $tasks = @($xml.SelectNodes('//*[local-name()="ILRepack"]'))
-      $tasks.Count | Should -Be 2 -Because "$($file.FullName) merges once for the tests and once for the package"
-      $tested = @($tasks | Where-Object { $_.GetAttribute('OutputFile') -eq "@(IntermediateAssembly->'%(FullPath)')" })
-      $packaged = @($tasks | Where-Object { $_.GetAttribute('OutputFile') -eq '$(WhizbangPackagedAnalyzer)' })
-      $tested.Count | Should -Be 1 -Because "$($file.FullName) merges in place for the tests"
-      $packaged.Count | Should -Be 1 -Because "$($file.FullName) merges the package's copy"
-      $tested[0].GetAttribute('DebugInfo') | Should -Be 'true' -Because 'coverage of the merged Shared code needs the symbols'
-      $packaged[0].GetAttribute('DebugInfo') | Should -Be 'false' -Because 'the symbol path is a per-run temp folder'
-      foreach ($attribute in 'InputAssemblies', 'Internalize', 'TargetKind', 'KeyFile', 'LibraryPath') {
-        $packaged[0].GetAttribute($attribute) | Should -Be $tested[0].GetAttribute($attribute) -Because "both merges in $($file.FullName) take the same inputs"
-      }
+      $tasks.Count | Should -Be 1 -Because "$($file.FullName) merges once, and that merge is the tested and the shipped one"
+      $tasks[0].GetAttribute('OutputFile') | Should -Be "@(IntermediateAssembly->'%(FullPath)')" -Because "$($file.FullName) merges in place"
+      $tasks[0].GetAttribute('DebugInfo') | Should -Be 'true' -Because 'coverage of the merged Shared code needs the symbols'
     }
   }
 
-  It 'puts the packaged merge in the build output pack reads' {
-    (Get-BuildProperty $script:Generators @('WhizbangPackagedAnalyzer') @('CI=true', 'Configuration=Release')).WhizbangPackagedAnalyzer |
-      Should -Match '[\\/]obj[\\/]Release[\\/]netstandard2\.0[\\/]packaged[\\/]Whizbang\.Generators\.dll$'
+  It 'embeds the symbols, so the assembly records no temp path' {
+    foreach ($project in $script:Projects) {
+      $evaluated = Get-BuildProperty $project.FullName @('DebugType', 'ILRepackEnabled') @('CI=true', 'Configuration=Release')
+      $evaluated.ILRepackEnabled | Should -Be 'true' -Because "$($project.Name) has an ILRepack.targets"
+      $evaluated.DebugType | Should -Be 'embedded' -Because "$($project.Name) is merged by ILRepack"
+    }
   }
 
-  It 'is what each generator package ships, never the merge the tests run' {
-    foreach ($file in $script:Targets) {
-      $project = Get-ChildItem -LiteralPath $file.DirectoryName -Filter '*.csproj' -File | Select-Object -First 1
+  It 'fails the build of a generator that does not embed its symbols' {
+    $output = & dotnet msbuild $script:Generators -nologo -t:WhizbangRequireEmbeddedSymbols -p:DebugType=portable 2>&1
+    $LASTEXITCODE | Should -Not -Be 0
+    ($output -join "`n") | Should -Match 'DebugType'
+  }
+
+  It 'passes the build of a generator that embeds them' {
+    & dotnet msbuild $script:Generators -nologo -t:WhizbangRequireEmbeddedSymbols 2>&1 | Out-Null
+    $LASTEXITCODE | Should -Be 0
+  }
+
+  It 'is what each generator package ships: the build output the tests load, not a copy of its own' {
+    foreach ($project in $script:Projects) {
       [xml]$xml = Get-Content -Raw -LiteralPath $project.FullName
       $analyzers = @($xml.SelectNodes('//*[@PackagePath]') | Where-Object {
           $_.GetAttribute('PackagePath') -like 'analyzers/dotnet/cs*' -and $_.GetAttribute('Include') -notlike '*CodeFixes*' })
       $analyzers.Count | Should -Be 1 -Because "$($project.Name) packs its generator assembly once"
-      $analyzers[0].GetAttribute('Include') | Should -Be '$(WhizbangPackagedAnalyzer)' -Because "$($project.Name) must ship the merge without symbols"
+      $analyzers[0].GetAttribute('Include') | Should -BeIn @('$(TargetPath)', '$(OutputPath)/$(AssemblyName).dll') -Because "$($project.Name) must ship the assembly its build wrote"
     }
   }
 }
