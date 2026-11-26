@@ -5,8 +5,6 @@ using System;
 
 namespace Whizbang.Core.Startup;
 
-#pragma warning disable S2325, CA1822, IDE0060 // RED stub, replaced by the implementation
-
 /// <summary>
 /// The fleet-wide cap on concurrent heavy starts (#2596), bound from <c>Whizbang:Database:StartupWork</c>. A host that
 /// configures nothing is capped at <see cref="DEFAULT_MAX_CONCURRENT_HEAVY_STARTS"/>.
@@ -36,5 +34,16 @@ public sealed class StartupWorkOptions {
 
   /// <summary>Throws when the options describe a configuration that cannot work.</summary>
   /// <exception cref="ArgumentOutOfRangeException">A cap below 1, or a non-positive interval or limit.</exception>
-  public void Validate() => throw new NotImplementedException();
+  public void Validate() {
+    if (MaxConcurrentHeavyStarts < 1) {
+      throw new ArgumentOutOfRangeException(nameof(MaxConcurrentHeavyStarts), MaxConcurrentHeavyStarts,
+        "The heavy-start cap must be at least 1.");
+    }
+    if (PermitPollInterval <= TimeSpan.Zero) {
+      throw new ArgumentOutOfRangeException(nameof(PermitPollInterval), PermitPollInterval, "The permit poll interval must be positive.");
+    }
+    if (PermitWaitLimit <= TimeSpan.Zero) {
+      throw new ArgumentOutOfRangeException(nameof(PermitWaitLimit), PermitWaitLimit, "The permit wait limit must be positive.");
+    }
+  }
 }

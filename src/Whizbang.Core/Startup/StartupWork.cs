@@ -9,8 +9,6 @@ using System.Threading.Tasks;
 
 namespace Whizbang.Core.Startup;
 
-#pragma warning disable S2325, CA1822, IDE0060 // RED stub, replaced by the implementation
-
 /// <summary>
 /// Where a unit of heavy startup work has its effect, and so how often the fleet runs it (#2596).
 /// </summary>
@@ -45,7 +43,13 @@ public sealed record StartupWorkDeclaration {
   /// <exception cref="ArgumentException"><paramref name="name"/> is null, empty or white space.</exception>
   /// <exception cref="ArgumentOutOfRangeException"><paramref name="scope"/> is not a defined scope.</exception>
   public StartupWorkDeclaration(string name, StartupWorkScope scope) {
-    throw new NotImplementedException();
+    ArgumentException.ThrowIfNullOrWhiteSpace(name);
+    if (scope is not (StartupWorkScope.PerInstance or StartupWorkScope.PerSchemaPerBuild)) {
+      throw new ArgumentOutOfRangeException(nameof(scope), scope,
+        "Startup work states its scope: PerInstance or PerSchemaPerBuild.");
+    }
+    Name = name;
+    Scope = scope;
   }
 
   /// <summary>The stable name.</summary>
@@ -81,12 +85,18 @@ public static class FrameworkStartupWork {
 #pragma warning restore CA1707
 
   /// <summary>Every framework declaration.</summary>
-  public static IReadOnlyList<StartupWorkDeclaration> Declarations { get; } = [];
+  public static IReadOnlyList<StartupWorkDeclaration> Declarations { get; } = [
+    new(ANALYZE_NEW_INDEXES, StartupWorkScope.PerInstance),
+    new(MANAGED_OBJECT_RECONCILE, StartupWorkScope.PerInstance),
+    new(PERSPECTIVE_REGISTRY, StartupWorkScope.PerSchemaPerBuild),
+    new(PERSPECTIVE_STORAGE_SETTINGS, StartupWorkScope.PerSchemaPerBuild),
+  ];
 
   /// <summary>The declaration named <paramref name="name"/>, or null when nothing declares it.</summary>
   /// <param name="name">The name.</param>
   /// <returns>The declaration, or null.</returns>
-  public static StartupWorkDeclaration? Find(string name) => throw new NotImplementedException();
+  public static StartupWorkDeclaration? Find(string name) =>
+    Declarations.FirstOrDefault(d => string.Equals(d.Name, name, StringComparison.Ordinal));
 }
 
 /// <summary>What the database answered to a claim on per-schema-per-build work (#2596).</summary>

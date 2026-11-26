@@ -340,6 +340,27 @@ public class StartupWorkSessionTests {
   }
 
   [Test]
+  public async Task ACanceledLedgerCall_IsNotTakenForAFailure_AndReachesTheCallerAsync() {
+    // Each ledger failure falls back to running the work; a cancellation is the start stopping, never a failure.
+    var canceled = new OperationCanceledException();
+    foreach (var ledger in new[] {
+      new FakeStartupWorkLedger { AvailableThrows = canceled },
+      new FakeStartupWorkLedger { ClaimThrows = canceled },
+      new FakeStartupWorkLedger { AcquireThrows = canceled },
+    }) {
+      await using var session = _session(ledger);
+      var ran = false;
+
+      await Assert.That(async () => await session.RunAsync(FrameworkStartupWork.PERSPECTIVE_REGISTRY, "x", _ => {
+        ran = true;
+        return Task.FromResult(true);
+      }, CancellationToken.None)).Throws<OperationCanceledException>();
+
+      await Assert.That(ran).IsFalse();
+    }
+  }
+
+  [Test]
   public async Task TheDefaultWait_IsADelayOnTheSessionsClockAsync() {
     var ledger = new FakeStartupWorkLedger();
     ledger.Permits.Enqueue(new StartupPermitAnswer(false, 2));
