@@ -200,21 +200,32 @@ public partial class DapperWorkCoordinator {
   /// <c>DROP INDEX CONCURRENTLY</c> cannot run in a transaction, so it runs on the coordinator's connection outside any,
   /// and only once the catalog has said the name is an invalid index on a queue table the coordinator's role owns.
   /// </remarks>
-  public Task<bool> DropInvalidQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) {
+  public Task<bool> DropInvalidQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) =>
+    DropInvalidQueueIndexAsync(indexName, QueueIndexRebuild.DefaultLockTimeout, cancellationToken);
+
+  /// <inheritdoc />
+  /// <remarks>Each lock the drop waits for is bounded by <paramref name="lockTimeout"/> (#2611).</remarks>
+  public Task<bool> DropInvalidQueueIndexAsync(string indexName, TimeSpan lockTimeout, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(indexName);
     return _onQueueIndexAsync(indexName, wantValid: false, QueueIndexSql.DROPPED, refused: false,
-      TableMaintenanceSql.DropIndexConcurrentlyAsync, cancellationToken);
+      (conn, qualified, ct) => TableMaintenanceSql.DropIndexConcurrentlyAsync(conn, qualified, lockTimeout, ct), cancellationToken);
   }
 
   /// <inheritdoc />
   /// <remarks>
-  /// <c>REINDEX INDEX CONCURRENTLY</c> runs as <see cref="DropInvalidQueueIndexAsync"/> does, only on a valid index on a
-  /// queue table the coordinator's role owns.
+  /// <c>REINDEX INDEX CONCURRENTLY</c> runs as <see cref="DropInvalidQueueIndexAsync(string, CancellationToken)"/> does,
+  /// only on a valid index on a queue table the coordinator's role owns, bounded by the default lock timeout.
   /// </remarks>
-  public Task<long?> ReindexQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) {
+  public async Task<long?> ReindexQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) =>
+    (await RebuildQueueIndexAsync(indexName, QueueIndexRebuild.DefaultLockTimeout, cancellationToken).ConfigureAwait(false)).SizeAfterBytes;
+
+  /// <inheritdoc />
+  /// <remarks>Each lock the rebuild waits for is bounded by <paramref name="lockTimeout"/> (#2611).</remarks>
+  public Task<QueueIndexRebuild> RebuildQueueIndexAsync(
+      string indexName, TimeSpan lockTimeout, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(indexName);
-    return _onQueueIndexAsync(indexName, wantValid: true, QueueIndexSql.REBUILT, refused: null,
-      TableMaintenanceSql.ReindexConcurrentlyAsync, cancellationToken);
+    return _onQueueIndexAsync(indexName, wantValid: true, QueueIndexSql.REBUILT, refused: new QueueIndexRebuild(null),
+      (conn, qualified, ct) => TableMaintenanceSql.ReindexConcurrentlyAsync(conn, qualified, lockTimeout, ct), cancellationToken);
   }
 
   /// <summary>

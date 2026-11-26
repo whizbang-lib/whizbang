@@ -57,6 +57,9 @@ public sealed partial class QueueIndexReindexStep(
   /// <summary>The configuration key of the threshold, as logs and validation name it.</summary>
   internal const string THRESHOLD_KEY = "Whizbang:Workers:Maintenance:ReindexBloatThreshold";
 
+  /// <summary>The configuration key of the lock timeout, as logs and validation name it (#2611).</summary>
+  internal const string LOCK_TIMEOUT_KEY = "Whizbang:Workers:Maintenance:ReindexLockTimeout";
+
   private const string CLAIM_PREFIX = "whizbang:queue-reindex:";
 
   private readonly IOptions<MaintenanceWorkerOptions> _options = ArgumentGuard.NotNull(options);
@@ -87,14 +90,21 @@ public sealed partial class QueueIndexReindexStep(
       LogBuildInProgress(_logger, building.TableName);
       return;
     }
+    var lockTimeout = settings.ReindexLockTimeout;
     foreach (var leftover in survey.Where(s => s.IsReindexLeftover)) {
-      await _dropAsync(coordinator, leftover, cancellationToken).ConfigureAwait(false);
+      await _dropAsync(coordinator, leftover, lockTimeout, cancellationToken).ConfigureAwait(false);
     }
     if (Choose(survey, threshold) is not { } chosen) {
       LogNothingOver(_logger, THRESHOLD_KEY, threshold, MIN_REINDEX_BYTES);
       return;
     }
-    await _rebuildAsync(coordinator, chosen, threshold, cancellationToken).ConfigureAwait(false);
+    if (!await _rebuildAsync(coordinator, chosen, threshold, lockTimeout, services, cancellationToken).ConfigureAwait(false)) {
+      // #2611: a rebuild that failed or gave up leaves its copy invalid on the table, written on every insert; drop it now.
+      var after = await coordinator.GetQueueIndexBloatAsync(cancellationToken).ConfigureAwait(false);
+      foreach (var leftover in after.Where(s => s.IsReindexLeftover && s.TableName == chosen.TableName && !s.BuildInProgress)) {
+        await _dropAsync(coordinator, leftover, lockTimeout, cancellationToken).ConfigureAwait(false);
+      }
+    }
   }
 
   /// <summary>
@@ -108,6 +118,39 @@ public sealed partial class QueueIndexReindexStep(
       .ThenBy(index => index.IndexName, StringComparer.Ordinal)
       .Select(index => (QueueIndexBloat?)index)
       .FirstOrDefault();
+
+  /// <summary>
+  /// Why <paramref name="lockTimeout"/> is not a usable <see cref="MaintenanceWorkerOptions.ReindexLockTimeout"/>, or
+  /// nothing: it must be positive, and fit the milliseconds <c>lock_timeout</c> takes (#2611).
+  /// </summary>
+  internal static List<string> ValidateLockTimeout(TimeSpan lockTimeout) =>
+    lockTimeout > TimeSpan.Zero && lockTimeout.TotalMilliseconds <= int.MaxValue
+      ? []
+      : [$"{LOCK_TIMEOUT_KEY} must be positive and at most {int.MaxValue} milliseconds (was {lockTimeout:c}); zero would let the "
+         + "rebuild wait on an old transaction for as long as that transaction stays open."];
+
+  /// <summary>
+  /// The sessions a rebuild that gave up was waiting on, as the warning names them: each pid with how long its transaction
+  /// has been open, and how many sessions this role could not see.
+  /// </summary>
+  internal static string DescribeBlockers(QueueIndexRebuild outcome) {
+    if (outcome.Blockers.Count == 0 && outcome.HiddenSessions == 0) {
+      return "The sessions it waited on had ended by the time it looked.";
+    }
+    var named = outcome.Blockers.Count == 0
+      ? "No session it could see was in its way"
+      : "It was waiting on " + string.Join(", ", outcome.Blockers.Select(_describe));
+    return outcome.HiddenSessions == 0
+      ? named + "."
+      : string.Create(CultureInfo.InvariantCulture,
+          $"{named}; {outcome.HiddenSessions} other session(s) in the database are not visible to this role (grant pg_monitor to see them).");
+  }
+
+  private static string _describe(QueueIndexBlocker blocker) =>
+    blocker.TransactionAge is { } age
+      ? string.Create(CultureInfo.InvariantCulture,
+          $"pid {blocker.Pid} (transaction open {new TimeSpan(age.Ticks - (age.Ticks % TimeSpan.TicksPerSecond)):c})")
+      : string.Create(CultureInfo.InvariantCulture, $"pid {blocker.Pid} (transaction age not visible to this role)");
 
   /// <summary>
   /// Why <paramref name="threshold"/> is not a usable <see cref="MaintenanceWorkerOptions.ReindexBloatThreshold"/>, or
@@ -136,9 +179,10 @@ public sealed partial class QueueIndexReindexStep(
 
   private static long _reclaimable(QueueIndexBloat index) => index.SizeBytes - index.ExpectedBytes.GetValueOrDefault();
 
-  private async Task _dropAsync(IWorkCoordinator coordinator, QueueIndexBloat leftover, CancellationToken cancellationToken) {
+  private async Task _dropAsync(
+      IWorkCoordinator coordinator, QueueIndexBloat leftover, TimeSpan lockTimeout, CancellationToken cancellationToken) {
     try {
-      if (await coordinator.DropInvalidQueueIndexAsync(leftover.IndexName, cancellationToken).ConfigureAwait(false)) {
+      if (await coordinator.DropInvalidQueueIndexAsync(leftover.IndexName, lockTimeout, cancellationToken).ConfigureAwait(false)) {
         LogDropped(_logger, leftover.IndexName, leftover.TableName);
       } else {
         LogNotDropped(_logger, leftover.IndexName, leftover.TableName);
@@ -148,24 +192,34 @@ public sealed partial class QueueIndexReindexStep(
     }
   }
 
-  private async Task _rebuildAsync(
-      IWorkCoordinator coordinator, QueueIndexBloat chosen, double threshold, CancellationToken cancellationToken) {
+  /// <summary>Rebuilds the chosen index; false when the rebuild failed or gave up, so it may have left an invalid copy.</summary>
+  private async Task<bool> _rebuildAsync(
+      IWorkCoordinator coordinator, QueueIndexBloat chosen, double threshold, TimeSpan lockTimeout,
+      IServiceProvider services, CancellationToken cancellationToken) {
     var ratio = Math.Round(chosen.Ratio.GetValueOrDefault(), 2);
     var expected = chosen.ExpectedBytes.GetValueOrDefault();
     var method = chosen.Method.ToValue();
     LogChosen(_logger, chosen.IndexName, chosen.TableName, ratio, expected, method, threshold);
-    long? after;
+    QueueIndexRebuild outcome;
     try {
-      after = await coordinator.ReindexQueueIndexAsync(chosen.IndexName, cancellationToken).ConfigureAwait(false);
+      outcome = await coordinator.RebuildQueueIndexAsync(chosen.IndexName, lockTimeout, cancellationToken).ConfigureAwait(false);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogRebuildFailed(_logger, chosen.IndexName, chosen.TableName, ex);
-      return;
+      return false;
     }
-    if (after is not { } afterBytes) {
+    if (outcome.GaveUp) {
+      services.GetService<MaintenanceMetrics>()?.QueueIndexRebuildsGaveUp.Add(1,
+        new KeyValuePair<string, object?>(MaintenanceMetrics.INDEX_TAG, chosen.IndexName),
+        new KeyValuePair<string, object?>(MaintenanceMetrics.TABLE_TAG, chosen.TableName));
+      LogGaveUp(_logger, chosen.IndexName, chosen.TableName, LOCK_TIMEOUT_KEY, lockTimeout, DescribeBlockers(outcome));
+      return false;
+    }
+    if (outcome.SizeAfterBytes is not { } afterBytes) {
       LogNotRebuilt(_logger, chosen.IndexName, chosen.TableName);
-      return;
+      return true;
     }
     LogRebuilt(_logger, chosen.IndexName, chosen.TableName, chosen.SizeBytes, afterBytes);
+    return true;
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Debug,
@@ -203,8 +257,12 @@ public sealed partial class QueueIndexReindexStep(
   static partial void LogNotRebuilt(ILogger logger, string index, string table);
 
   [LoggerMessage(EventId = 8, Level = LogLevel.Warning,
-    Message = "Queue index rebuild of {Index} on {Table} failed; its invalid copy, if one was left, is dropped next cycle")]
+    Message = "Queue index rebuild of {Index} on {Table} failed; its invalid copy, if one was left, is dropped now")]
   static partial void LogRebuildFailed(ILogger logger, string index, string table, Exception exception);
+
+  [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
+    Message = "Queue index rebuild of {Index} on {Table} gave up: a lock wait passed {Key} ({LockTimeout}). {Blockers} It is tried again on a later cycle")]
+  static partial void LogGaveUp(ILogger logger, string index, string table, string key, TimeSpan lockTimeout, string blockers);
 
   [LoggerMessage(EventId = 9, Level = LogLevel.Debug,
     Message = "Queue index rebuild: no index on a queue table is over {Key} ({Threshold}) and at least {Floor} bytes")]

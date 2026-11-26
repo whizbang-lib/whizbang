@@ -574,6 +574,24 @@ public class WorkCoordinatorDefaultsTests {
     await Assert.That(await coordinator.ReindexQueueIndexAsync("idx_x")).IsNull();
   }
 
+  /// <summary>
+  /// The bounded overloads (#2611) fall back to the unbounded calls on a backend that does not implement them: nothing
+  /// dropped, nothing rebuilt, and never reported as given up.
+  /// </summary>
+  [Test]
+  public async Task BoundedQueueIndexCalls_WithoutProviderSupport_DropAndRebuildNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var dropped = await coordinator.DropInvalidQueueIndexAsync("idx_x_ccnew", TimeSpan.FromSeconds(1));
+    var rebuilt = await coordinator.RebuildQueueIndexAsync("idx_x", TimeSpan.FromSeconds(1));
+
+    await Assert.That(dropped).IsFalse();
+    await Assert.That(rebuilt.SizeAfterBytes).IsNull();
+    await Assert.That(rebuilt.GaveUp).IsFalse();
+    await Assert.That(rebuilt.Blockers).IsEmpty();
+    await Assert.That(rebuilt.HiddenSessions).IsEqualTo(0);
+  }
+
   [Test]
   public async Task RecordInstanceTransitionAsync_WithoutProviderSupport_RecordsNothingAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();

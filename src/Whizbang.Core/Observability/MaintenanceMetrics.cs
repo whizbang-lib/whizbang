@@ -57,6 +57,22 @@ public sealed class MaintenanceMetrics {
   /// <docs>operations/infrastructure/operational-retention#metrics</docs>
   public PassiveCounter<long> OperationalRowsExpired { get; }
 
+  /// <summary>Tag on <see cref="QueueIndexRebuildsGaveUp"/>: the index whose rebuild gave up.</summary>
+  public const string INDEX_TAG = "index";
+
+  /// <summary>Tag on <see cref="QueueIndexRebuildsGaveUp"/>: the queue table the index is on.</summary>
+  public const string TABLE_TAG = "table";
+
+  /// <summary>
+  /// Concurrent rebuilds of a queue index that gave up because a lock wait passed
+  /// <c>Whizbang:Workers:Maintenance:ReindexLockTimeout</c> (#2611), tagged <see cref="INDEX_TAG"/> and
+  /// <see cref="TABLE_TAG"/>. The rebuild is tried again on a later cycle; sustained non-zero means a transaction stays
+  /// open across cycles, and the step's warning names it.
+  /// </summary>
+  /// <docs>operations/observability/metrics#queue-index-rebuild</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs:TheStep_BehindAnIdleTransaction_GivesUp_NamesTheBlocker_CountsIt_AndLeavesNoLeftoverAsync</tests>
+  public PassiveCounter<long> QueueIndexRebuildsGaveUp { get; }
+
   // The latest operational retention reading (#2354), replaced whole by each one.
   private IReadOnlyList<Whizbang.Core.Workers.OperationalRetentionSweepResult> _operational = [];
 
@@ -82,6 +98,9 @@ public sealed class MaintenanceMetrics {
       "whizbang.maintenance.operational_rows_expired",
       description: "Operational records the retention sweep removed past their resting period; tagged by category");
     OperationalRowsExpired.Touch(CATEGORY_TAG, Enum.GetNames<Whizbang.Core.Workers.OperationalCategory>());
+    QueueIndexRebuildsGaveUp = meter.CreatePassiveCounter<long>(
+      "whizbang.maintenance.queue_index_rebuild.gave_up",
+      description: "Concurrent rebuilds of a queue index that gave up because a lock wait passed ReindexLockTimeout; tagged by index and table");
     meter.CreateObservableGauge(
       "whizbang.maintenance.operational_rows",
       _observeOperationalRows,

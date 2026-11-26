@@ -162,6 +162,7 @@ public static class OperationalTableRegistry {
     _state("wh_perspective_snapshots", "streams and perspectives: the newest snapshots are kept"),
     _state("wh_physical_column_fills", "the model's physical fields"),
     _state("wh_published_partition_assignment", "one row"),
+    _state("wh_queue_statistics_backoff", "queue tables: one row per queue table whose statistics refresh backed off (#2611)"),
     _rolling("wh_receptor_handled", OperationalCategory.Deliveries, "own retention: StreamIntegrity:RepairReceptorLookback (7 days), daily partitions"),
     _state("wh_receptor_handled_coverage", "one row: where the handled ledger starts"),
     _rolling("wh_request_response", OperationalCategory.Queues,

@@ -217,6 +217,30 @@ queue table's statistics are part of the claim's correctness, and the claim keep
 autovacuum cannot. Any test that asserts a plan bound states which statistics it ran on; the fixtures
 above analyze after every fill on purpose, and that is why none of them could see this.
 
+### The refresh must never wait (#2611)
+
+A lock timeout bounded each wait, but nothing bounded how many claims waited. The turn was a blocking advisory
+lock, so while one claimant sat in ANALYZE behind a lock, every other claimant queued behind the turn and then
+waited out its own five seconds. Measured on a deployed service: a maintenance `REINDEX INDEX CONCURRENTLY`
+waited three hours on an idle application transaction while holding `ShareUpdateExclusiveLock` on
+`wh_inbox_state`; the table stayed stale, and `claim_work` averaged 8.2 s, nearly all of it in the refresh and its
+advisory lock, against 20 to 40 ms for every other service on the server.
+
+Migration 661 makes the refresh free when it cannot run: the turn is `pg_try_advisory_xact_lock` (a claimant that
+finds it taken moves on), the analyze is `ANALYZE (SKIP_LOCKED)` (a conflicting lock skips it; `pg_locks` says
+whether it ran), and an analyze, a skip or a failure backs the table off for 60 seconds in
+`wh_queue_statistics_backoff`, read by key and written only by the turn's holder. The analyze backs off too because,
+with the lock gone, the same service's inbox state table (a few dozen live rows, thousands of changes a minute) read
+as stale again right after every analyze: the refresh ran ANALYZE about 90 times a minute and was most of each
+claim's time (387 ms a claim). The staleness rule compares changes since the last analyze to the live rows, which a
+churning queue always fails; the interval, not the rule, is what bounds the cost. The one wait kept is the one that ends a stuck autovacuum: when only
+autovacuum workers hold a conflicting lock, the turn's holder runs the plain ANALYZE under a lock timeout of
+`deadlock_timeout` plus one second. The healthy path is unchanged; the stale path adds a key probe per stale table.
+
+**Rule:** a statement on the claim path may wait only for something it ends, and work the claim path repeats is
+bounded per interval across the fleet, never per claim. Waiting for a peer, or for a lock
+whose holder is itself waiting on someone else, turns one stuck session into a stuck fleet.
+
 ## Finding 1, round five: the drain's calls read the queue and the history, not their batch (#2286)
 
 A fan-out to 100,000 new streams applied at about 80 rows a second against 389 at 10,000, and the time per 1,000

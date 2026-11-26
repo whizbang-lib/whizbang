@@ -124,6 +124,9 @@ public partial class MigrationTransactionBoundaryGuardTests {
     ["wh_store_inbox_dead_letters"] =
       "257 (#1885): reads wh_inbox only by message_id (kept) to skip a message already stored; failure_reason, "
       + "attempts and error are the wh_dead_letters columns it writes",
+    ["wh_refresh_stale_queue_statistics"] =
+      "661 (#2611): names wh_inbox only as a table to analyze ('wh_inbox'::REGCLASS) and reads no column of it; "
+      + "\"error\" is the v_error variable that carries the ANALYZE failure's message",
   };
 
   private const string CUTOVER_MIGRATION = "162_InboxWorkStateSideTable";

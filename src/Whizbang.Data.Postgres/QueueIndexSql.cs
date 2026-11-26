@@ -93,4 +93,33 @@ internal static class QueueIndexSql {
     WHERE i.indexrelid = to_regclass(@prefix || quote_ident(@index))
       AND tc.oid IN (SELECT to_regclass(@prefix || quote_ident(t)) FROM unnest(@tables) t)
     """;
+
+  /// <summary>
+  /// The sessions a concurrent rebuild of <c>@q</c> that started at <c>@started</c> was waiting on (#2611): every other
+  /// session of this database whose transaction began before the rebuild and still holds a snapshot or a transaction id,
+  /// and every session holding a lock on the index's table. One row per session (pid, seconds its transaction has been
+  /// open, or NULL when this role may not read it), oldest first, then one row with a NULL pid carrying how many sessions
+  /// in the database this role may not read at all.
+  /// </summary>
+  internal const string BLOCKERS = """
+    WITH tbl AS (SELECT i.indrelid FROM pg_index i WHERE i.indexrelid = to_regclass(@q)),
+    blockers AS (
+      SELECT l.pid FROM pg_locks l, tbl
+      WHERE l.locktype = 'relation' AND l.relation = tbl.indrelid AND l.granted AND l.pid <> pg_backend_pid()
+        AND l.database = (SELECT d.oid FROM pg_database d WHERE d.datname = current_database())
+      UNION
+      SELECT a.pid FROM pg_stat_activity a
+      WHERE a.datname = current_database() AND a.pid <> pg_backend_pid() AND a.xact_start <= @started
+        AND (a.backend_xmin IS NOT NULL OR a.backend_xid IS NOT NULL)
+    )
+    SELECT r.pid, r.age_seconds, r.hidden FROM (
+      SELECT b.pid, EXTRACT(EPOCH FROM clock_timestamp() - a.xact_start)::FLOAT8 AS age_seconds, 0 AS hidden, a.xact_start
+      FROM blockers b LEFT JOIN pg_stat_activity a ON a.pid = b.pid
+      UNION ALL
+      SELECT NULL::INT, NULL::FLOAT8, count(*)::INT, NULL::TIMESTAMPTZ
+      FROM pg_stat_activity a
+      WHERE a.datname = current_database() AND a.pid <> pg_backend_pid() AND a.query = '<insufficient privilege>'
+    ) r
+    ORDER BY r.pid IS NULL, r.xact_start NULLS LAST, r.pid
+    """;
 }

@@ -2233,6 +2233,20 @@ public interface IWorkCoordinator {
     Task.FromResult(false);
 
   /// <summary>
+  /// Drops an invalid index on a queue table as <see cref="DropInvalidQueueIndexAsync(string, CancellationToken)"/> does,
+  /// waiting at most <paramref name="lockTimeout"/> for each lock the drop needs (#2611). A drop that times out throws, and
+  /// the leftover is dropped on a later cycle. Default: the drop without a bound.
+  /// </summary>
+  /// <param name="indexName">An index <see cref="GetQueueIndexBloatAsync"/> reported as a leftover.</param>
+  /// <param name="lockTimeout">The longest the drop waits for any one lock (<c>lock_timeout</c>).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>True when it was dropped; false when it was not (the coordinator logs why), or by default.</returns>
+  /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs</tests>
+  Task<bool> DropInvalidQueueIndexAsync(string indexName, TimeSpan lockTimeout, CancellationToken cancellationToken = default) =>
+    DropInvalidQueueIndexAsync(indexName, cancellationToken);
+
+  /// <summary>
   /// Rebuilds a valid index on a queue table with <c>REINDEX INDEX CONCURRENTLY</c>, which cannot run inside a
   /// transaction and so runs on a connection of its own, and returns the index's size afterwards.
   /// </summary>
@@ -2243,6 +2257,22 @@ public interface IWorkCoordinator {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs</tests>
   Task<long?> ReindexQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) =>
     Task.FromResult<long?>(null);
+
+  /// <summary>
+  /// Rebuilds a valid index on a queue table as <see cref="ReindexQueueIndexAsync(string, CancellationToken)"/> does,
+  /// waiting at most <paramref name="lockTimeout"/> for each lock the rebuild needs, the waits for older transactions
+  /// included (#2611). A rebuild that times out gives up and names the sessions it waited on, rather than holding its
+  /// lock on the table while an old transaction stays open.
+  /// </summary>
+  /// <param name="indexName">An index <see cref="GetQueueIndexBloatAsync"/> reported.</param>
+  /// <param name="lockTimeout">The longest the rebuild waits for any one lock (<c>lock_timeout</c>).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>What the rebuild did. Default: the unbounded rebuild's size, never given up.</returns>
+  /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs</tests>
+  async Task<QueueIndexRebuild> RebuildQueueIndexAsync(
+      string indexName, TimeSpan lockTimeout, CancellationToken cancellationToken = default) =>
+    new(await ReindexQueueIndexAsync(indexName, cancellationToken).ConfigureAwait(false));
 
   /// <summary>
   /// Records one transition on this instance's own row (#1636): the stage, what it is doing, the lifecycle phase and
@@ -6016,6 +6046,45 @@ public readonly record struct QueueIndexBloat(string IndexName, string TableName
   /// </summary>
   public bool IsReindexLeftover => !Valid && QueueIndexNames.IsReindexLeftoverName(IndexName);
 }
+
+/// <summary>
+/// What one bounded rebuild of a queue index did (#2611): rebuilt, with its size after; not run; or given up after a lock
+/// wait passed its bound, with the sessions it was waiting on.
+/// </summary>
+/// <param name="SizeAfterBytes">The index's size after the rebuild; null when it was not rebuilt.</param>
+/// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+/// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/QueueIndexReindexStepTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs</tests>
+public sealed record QueueIndexRebuild(long? SizeAfterBytes) {
+  /// <summary>
+  /// How long a rebuild or a leftover's drop waits for any one lock unless configured otherwise: one minute. A concurrent
+  /// rebuild waits for every transaction older than it, so an idle transaction could otherwise hold it, and the table lock
+  /// it holds meanwhile, for as long as that transaction stays open.
+  /// </summary>
+  public static readonly TimeSpan DefaultLockTimeout = TimeSpan.FromMinutes(1);
+
+  /// <summary>True when the rebuild gave up because a lock wait passed its bound; it is tried again on a later cycle.</summary>
+  public bool GaveUp { get; init; }
+
+  /// <summary>
+  /// The sessions the rebuild was waiting on when it gave up, oldest transaction first: those whose transaction is older
+  /// than the rebuild and still open, and those holding a lock on the table. Empty when it did not give up, or when
+  /// none was still there by the time it looked.
+  /// </summary>
+  public IReadOnlyList<QueueIndexBlocker> Blockers { get; init; } = [];
+
+  /// <summary>
+  /// Sessions in the database whose activity this role may not read (it needs <c>pg_read_all_stats</c>, which
+  /// <c>pg_monitor</c> grants), so whether they were among the blockers is not known. Zero when every session is visible.
+  /// </summary>
+  public int HiddenSessions { get; init; }
+}
+
+/// <summary>A session a queue-index rebuild was waiting on when it gave up (#2611).</summary>
+/// <param name="Pid">The session's backend process id (<c>pg_stat_activity.pid</c>).</param>
+/// <param name="TransactionAge">How long its transaction has been open; null when this role may not read it.</param>
+/// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+public readonly record struct QueueIndexBlocker(int Pid, TimeSpan? TransactionAge);
 
 /// <summary>The names <c>REINDEX CONCURRENTLY</c> gives the indexes it builds and retires (#1746).</summary>
 /// <docs>operations/infrastructure/storage-maintenance#queue-index-leftovers</docs>
