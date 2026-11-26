@@ -3452,8 +3452,7 @@ public abstract partial class Dispatcher(
   /// wrapper) so they cannot collide with the top-level handler's emissions of the same type. Empty when the handling's
   /// envelope carries no id.
   /// </summary>
-  private static Guid _emissionAnchor(IMessageEnvelope handling) =>
-    handling is CascadeEnvelopeWrapper { EmissionAnchor: { } nestedAnchor } ? nestedAnchor : handling.MessageId.Value;
+  private static Guid _emissionAnchor(IMessageEnvelope handling) => ReceptorHandling.AnchorOf(handling);
 
   /// <summary>
   /// The stream a <c>[GenerateStreamId]</c> message starts when nothing it carries derives one: the one path every

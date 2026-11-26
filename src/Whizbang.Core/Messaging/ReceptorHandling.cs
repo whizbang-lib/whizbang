@@ -21,32 +21,62 @@ namespace Whizbang.Core.Messaging;
 /// Outside a receptor body there is no handling and a dispatch mints a fresh id, as before. The handling flows with
 /// the execution context, so work the body starts and awaits (a local receptor of what it publishes) is part of it.
 /// </para>
+/// <para>
+/// The handling is kept as a <see cref="Handling"/>, which also names the service and the receptor, so a strong id
+/// derives from it (#2604). Disposing the scope ends that handling.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/message-cascade#every-dispatch-path-derives</docs>
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorHandlingTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Unit.Dispatcher.Tests/Dispatcher/DispatcherDerivedIdentityInHandlingTests.cs</tests>
 internal static class ReceptorHandling {
-  private static readonly AsyncLocal<IMessageEnvelope?> _current = new();
+  private static readonly AsyncLocal<Handling?> _current = new();
 
   /// <summary>The envelope of the handling the current flow runs in, or null outside a receptor body.</summary>
-  internal static IMessageEnvelope? Current => _current.Value;
+  internal static IMessageEnvelope? Current => _current.Value?.Envelope;
 
-  /// <summary>Enters <paramref name="envelope"/>'s handling until the returned scope is disposed.</summary>
+  /// <summary>The handling the current flow runs in, or null outside a receptor body.</summary>
+  internal static Handling? CurrentHandling => _current.Value;
+
+  /// <summary>Enters <paramref name="envelope"/>'s handling, naming no service or receptor, until the scope is disposed.</summary>
   /// <exception cref="ArgumentNullException"><paramref name="envelope"/> is null.</exception>
-  internal static Scope Enter(IMessageEnvelope envelope) {
+  internal static Scope Enter(IMessageEnvelope envelope) => Enter(envelope, serviceName: null, receptorId: null);
+
+  /// <summary>
+  /// Enters <paramref name="envelope"/>'s handling by <paramref name="serviceName"/>'s receptor <paramref name="receptorId"/>
+  /// until the returned scope is disposed.
+  /// </summary>
+  /// <exception cref="ArgumentNullException"><paramref name="envelope"/> is null.</exception>
+  internal static Scope Enter(IMessageEnvelope envelope, string? serviceName, string? receptorId) {
     ArgumentNullException.ThrowIfNull(envelope);
     var previous = _current.Value;
-    _current.Value = envelope;
-    return new Scope(previous);
+    var handling = new Handling(envelope, serviceName ?? string.Empty, receptorId);
+    _current.Value = handling;
+    return new Scope(previous, handling);
   }
 
-  /// <summary>Restores the handling that was current before <see cref="Enter"/>.</summary>
-  internal readonly struct Scope : IDisposable {
-    private readonly IMessageEnvelope? _previous;
+  /// <summary>
+  /// The message a handling's derived ids anchor on. A nested local cascade hands receptors a wrapper that reports the
+  /// inbound message's id and handler; their derivations anchor on the cascaded message that caused them (carried by the
+  /// wrapper) so they cannot collide with the top-level handler's. Empty when the handling's envelope carries no id.
+  /// </summary>
+  internal static Guid AnchorOf(IMessageEnvelope handling) =>
+    handling is CascadeEnvelopeWrapper { EmissionAnchor: { } nestedAnchor } ? nestedAnchor : handling.MessageId.Value;
 
-    internal Scope(IMessageEnvelope? previous) => _previous = previous;
+  /// <summary>Ends the handling <see cref="Enter(IMessageEnvelope, string?, string?)"/> entered and restores the one before it.</summary>
+  internal readonly struct Scope : IDisposable {
+    private readonly Handling? _previous;
+    private readonly Handling _entered;
+
+    internal Scope(Handling? previous, Handling entered) {
+      _previous = previous;
+      _entered = entered;
+    }
 
     /// <inheritdoc />
-    public void Dispose() => _current.Value = _previous;
+    public void Dispose() {
+      _entered.End();
+      _current.Value = _previous;
+    }
   }
 }
