@@ -192,7 +192,7 @@ BEGIN
           WHERE l.locktype = 'relation' AND l.relation = v_table AND l.pid = pg_backend_pid()
             AND l.mode = 'ShareUpdateExclusiveLock' AND l.granted) THEN
         IF __SCHEMA__._wh_only_autovacuum_blocks_analyze(v_table) THEN
-          -- 207 (#1349): an autovacuum worker stuck in its vacuum is cancelled once this has waited deadlock_timeout.
+          -- 207 (#1349): an autovacuum worker stuck in its vacuum is canceled once this has waited deadlock_timeout.
           PERFORM set_config('lock_timeout',
             ((EXTRACT(EPOCH FROM current_setting('deadlock_timeout')::INTERVAL) * 1000)::BIGINT + 1000)::TEXT || 'ms', TRUE);
           EXECUTE format('ANALYZE %s', v_table);

@@ -482,7 +482,7 @@ public class QueueIndexReindexSqlTests : EFCoreTestBase {
     await using var context = CreateDbContext();
 
     IWorkCoordinator coordinator = _coordinator(context);
-    var drop = async () => await coordinator.DropInvalidQueueIndexAsync(PKEY + "_ccnew", _bound, cancellationToken);
+    async Task drop() => await coordinator.DropInvalidQueueIndexAsync(PKEY + "_ccnew", _bound, cancellationToken);
 
     var thrown = await Assert.That(drop).Throws<PostgresException>();
     await hold.RollbackAsync(cancellationToken);
@@ -534,7 +534,7 @@ public class QueueIndexReindexSqlTests : EFCoreTestBase {
 
   /// <summary>
   /// What the deployed service was left with (#2611): a concurrent rebuild of the inbox state's held-lanes index, waiting
-  /// on an idle transaction, cancelled by hand, leaves <c>idx_inbox_state_held_lanes_covering_ccnew</c> invalid on the
+  /// on an idle transaction, canceled by hand, leaves <c>idx_inbox_state_held_lanes_covering_ccnew</c> invalid on the
   /// table, maintained on every write. The next cycle drops it, with the idle transaction still open.
   /// </summary>
   /// <docs>operations/infrastructure/storage-maintenance#queue-index-leftovers</docs>
@@ -563,7 +563,7 @@ public class QueueIndexReindexSqlTests : EFCoreTestBase {
     await Assert.That(async () => await reindex).Throws<PostgresException>();
     await Assert.That(await _scalarAsync<bool>(
       $"SELECT NOT indisvalid FROM pg_index WHERE indexrelid = to_regclass('{held}_ccnew')", cancellationToken)).IsTrue()
-      .Because("precondition: the cancelled rebuild left its copy invalid on the table, as on the deployed service");
+      .Because("precondition: the canceled rebuild left its copy invalid on the table, as on the deployed service");
     await using var context = CreateDbContext();
 
     await _runStepAsync(context, _coordinator(context), cancellationToken);

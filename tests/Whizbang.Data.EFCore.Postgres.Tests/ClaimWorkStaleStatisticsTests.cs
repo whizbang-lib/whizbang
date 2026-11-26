@@ -434,7 +434,7 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
     await holderTransaction.RollbackAsync(cancellationToken);
 
     await Assert.That(waited).IsTrue().Because("an autovacuum is waited for, so that PostgreSQL cancels it");
-    await Assert.That(refreshed).IsEqualTo(0).Because("the holder here is not an autovacuum, so nothing cancelled it");
+    await Assert.That(refreshed).IsEqualTo(0).Because("the holder here is not an autovacuum, so nothing canceled it");
     await Assert.That(_skips(notices)).IsEquivalentTo([(QUEUE_TABLE, "lock_timeout")])
       .Because("the wait is bounded, and a wait that reached its bound backs the table off like a skip");
     await Assert.That(notices.Single(n => n.MessageText == SKIP_NOTICE).Hint).Contains("lock timeout");
