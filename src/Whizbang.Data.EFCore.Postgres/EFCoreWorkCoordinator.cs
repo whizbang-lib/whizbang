@@ -6466,15 +6466,21 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     // 576 (#2551): the event's version, its stream position.
     var versionOrdinal = reader.GetOrdinal("out_version");
+    var eventDataOrdinal = reader.GetOrdinal("out_event_data");
     while (await reader.ReadAsync(cancellationToken)) {
       // AOT-safe: read columns by ordinal, parse event_data as string
       var metadataOrdinal = reader.GetOrdinal("out_metadata");
       var scopeOrdinal = reader.GetOrdinal("out_scope");
+      // #2591: a body the reap deleted reads as NULL. The row is returned named as unreadable, never cast: a cast threw
+      // for the whole read and lost every other stream of the batch with it.
+      var bodyMissing = await reader.IsDBNullAsync(eventDataOrdinal, cancellationToken).ConfigureAwait(false);
       results.Add(new StreamEventData {
         StreamId = reader.GetGuid(reader.GetOrdinal("out_stream_id")),
         EventId = reader.GetGuid(reader.GetOrdinal("out_event_id")),
         EventType = reader.GetString(reader.GetOrdinal("out_event_type")),
-        EventData = reader.GetString(reader.GetOrdinal("out_event_data")),
+        EventData = bodyMissing ? string.Empty : reader.GetString(eventDataOrdinal),
+        // Named reaped or missing by MissingEventBodySql below, once the read is done.
+        UnreadableReason = bodyMissing ? StreamEventData.BODY_MISSING : null,
         Metadata = await reader.IsDBNullAsync(metadataOrdinal, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(metadataOrdinal),
         Scope = await reader.IsDBNullAsync(scopeOrdinal, cancellationToken).ConfigureAwait(false) ? null : reader.GetString(scopeOrdinal),
         EventWorkId = reader.GetGuid(reader.GetOrdinal("out_event_work_id")),
@@ -6494,6 +6500,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Version = reader.GetInt64(versionOrdinal),
       });
     }
+
+    await reader.CloseAsync().ConfigureAwait(false);
+    // #2591: a row without a body is named reaped (an ephemeral event) or missing (any other).
+    results = await Whizbang.Data.Postgres.MissingEventBodySql.NameAsync(
+      dbConnection, PgIdentifier.QualifyPrefix(schema), results, cancellationToken).ConfigureAwait(false);
 
     // #2556: each fetched piece of work is recorded under its stream's claimed tenure, which its result then names.
     TenureFill.RecordFetchedPerspective(_tenures, results, r => r.EventWorkId, r => r.StreamId);

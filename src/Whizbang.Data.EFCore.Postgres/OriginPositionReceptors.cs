@@ -110,6 +110,10 @@ public sealed partial class OriginPositionsAnswerReceptor(
       metrics.OriginPositionsUnfilled.Add(message.NotYetStamped.Count, origin, new KeyValuePair<string, object?>("answer", "not_yet_stamped"));
       metrics.OriginPositionsUnfilled.Add(message.Unknown.Count, origin, new KeyValuePair<string, object?>("answer", "unknown"));
       metrics.OriginPositionRewinds.Add(result.PerspectivesRewound);
+      metrics.OriginPositionRewindsSkipped.Add(result.RewindsSkipped);
+    }
+    if (result.FirstSkippedRewind is { } first) {
+      LogRewindsSkipped(logger, result.RewindsSkipped, first.PerspectiveName, first.StreamId, first.TriggerEventId);
     }
     LogFilled(logger, result.Filled, message.Positions.Count, message.OriginServiceName, message.OriginServiceId,
       message.NotYetStamped.Count, result.UnknownRecorded, result.StreamsReordered, result.PerspectivesRewound);
@@ -123,6 +127,12 @@ public sealed partial class OriginPositionsAnswerReceptor(
               "{Reordered} stream(s) reordered, {Rewound} perspective cursor(s) rewound (#2544)")]
   static partial void LogFilled(ILogger logger, int filled, int answered, string? originServiceName, Guid originServiceId,
     int notYet, int unknown, int reordered, int rewound);
+
+  [LoggerMessage(EventId = 3, Level = LogLevel.Warning,
+    Message = "Skipped {Count} rewind(s) the filled positions asked for: no event at or after the changed version that the " +
+              "perspective reads still has a body (reaped past its retention), so nothing can be replayed and the cursor " +
+              "stays where it is (first: perspective {PerspectiveName}, stream {StreamId}, from event {TriggerEventId}) (#2591)")]
+  static partial void LogRewindsSkipped(ILogger logger, int count, string perspectiveName, Guid streamId, Guid triggerEventId);
 
   [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
     Message = "Origin positions answered by {OriginServiceId} received, but no database connection is registered; ignored")]
