@@ -136,14 +136,21 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
   /// table's turn analyzes, and every other claimant moves on at once with the statistics it has (#2611).
   /// </summary>
   /// <remarks>
+  /// <para>
   /// The turn used to be a blocking advisory lock. While a peer held it, every claim queued behind it, and when the peer
   /// itself waited (on an ANALYZE a reindex blocked), every claim of the service waited as long, up to the lock timeout.
   /// A claimant that finds the turn taken leaves the table to its holder and writes no back-off: the holder decides.
+  /// </para>
+  /// <para>
+  /// The name is 207's, and says what 207 did: the claimant waited for the peer's turn. Migrations 207 and 463 cite this
+  /// test by that name in their <c>&lt;tests&gt;</c> tags, and a shipped migration is never edited, so the name stays
+  /// while the assertions below say what the claimant does since 661: it does not wait, and does not analyze again.
+  /// </para>
   /// </remarks>
   /// <docs>fundamentals/work-coordinator/claim-loop#the-statistics-refresh-never-waits</docs>
   [Test]
   [Timeout(600000)]
-  public async Task RefreshStaleQueueStatistics_WhileAPeerHoldsTheTablesTurn_MovesOnWithoutWaitingAsync(
+  public async Task RefreshStaleQueueStatistics_WhileAPeerRefreshesTheTable_WaitsAndDoesNotAnalyzeAgainAsync(
       CancellationToken cancellationToken) {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext, cancellationToken);
