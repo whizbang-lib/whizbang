@@ -1007,9 +1007,10 @@ evidence: anyone with the commit and the SDK in `global.json` can rebuild the pu
 compare their hashes.
 
 **The check.** `reusable-reproducible-build.yml` builds the commit twice, on two runners, from checkouts
-at two different paths, packs exactly what ships (the projects behind `.github/nuget-packages.txt`, via
+at two different paths, builds exactly what ships (the projects behind `.github/nuget-packages.txt`, and
+any project whose bin output one of them packs, such as the code fixes inside Whizbang.Generators, via
 `.github/scripts/New-PackableSolutionFilter.ps1`) with the release build's frameworks at one version,
-and compares the two package sets with `.github/scripts/Compare-PackageSets.ps1`. Any difference fails
+packs that build with `--no-build` as CI packs the tested build, and compares the two package sets with `.github/scripts/Compare-PackageSets.ps1`. Any difference fails
 it, naming each differing entry (`content`, `timestamp`, `entry order`, or present in one build only),
 and both sides of every differing entry are uploaded as `reproducible-differences-<run>` for a byte-level
 look.
@@ -1036,8 +1037,9 @@ small set of causes. The weekly run finds a break within a week; a release branc
 | ILRepack writing a symbol file's path, under a per-run temp folder, into each generator assembly | every generator that ILRepack merges embeds its symbols (`DebugType` `embedded`), and is merged once, in place, with them. An embedded symbol file is written from memory, so the assembly records only its file name, and its debug entry and module id are the same in two builds. That one assembly is what the tests load, what coverage reads and what the package ships, so the generator packages carry their symbols inside the assembly. A merged generator that does not embed them fails its build (`WhizbangRequireEmbeddedSymbols`, in `Directory.Build.targets`) |
 | Package entries stamped with each file's write time (NuGet's default) | `DeterministicTimestamp` fixed at `2000-01-01T00:00:00Z` |
 
-**Reproducing a release locally.** Check out the tag, install the SDK in `global.json`, and run
-`dotnet pack` over the packable projects with `-c Release -p:ContinuousIntegrationBuild=true
+**Reproducing a release locally.** Check out the tag, install the SDK in `global.json`, write the filter
+(`pwsh .github/scripts/New-PackableSolutionFilter.ps1 -OutputPath packable.slnf`), and run `dotnet build`
+and then `dotnet pack --no-build` over it, each with `-c Release -p:ContinuousIntegrationBuild=true
 -p:WhizbangReleaseBuild=true -p:Version=<the release version>`, then compare with the published
 packages (`pwsh .github/scripts/Compare-PackageSets.ps1 -Left <yours> -Right <downloaded>`). Two inputs
 outside the commit must match: the SDK, and the absence of a documentation checkout beside the

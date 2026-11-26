@@ -77,9 +77,14 @@ jobs:
           set -euo pipefail
           pwsh -NoProfile -File .github/scripts/New-PackableSolutionFilter.ps1 -OutputPath "$RUNNER_TEMP/packable.slnf"
           dotnet restore "$RUNNER_TEMP/packable.slnf" --locked-mode
+          # Built first, then packed with no build, as CI packs the tested build: a pack that builds as it goes
+          # packs each project after building only what it references, and Whizbang.Generators bundles the code
+          # fixes from a sibling project's bin folder.
+          dotnet build "$RUNNER_TEMP/packable.slnf" --no-restore --configuration Release -mt:false \
+            -p:Version="$VERSION" -p:WhizbangReleaseBuild=true
           # Package validation compares against the last released package and changes no byte of the output;
           # it is off here so a scheduled run's placeholder version is never refused for sorting below it.
-          dotnet pack "$RUNNER_TEMP/packable.slnf" --no-restore --configuration Release -mt:false \
+          dotnet pack "$RUNNER_TEMP/packable.slnf" --no-build --no-restore --configuration Release \
             -p:Version="$VERSION" -p:WhizbangReleaseBuild=true -p:EnablePackageValidation=false --output "$OUT"
           echo "packed $(find "$OUT" -name '*.nupkg' | wc -l) packages and $(find "$OUT" -name '*.snupkg' | wc -l) symbol packages"
 
