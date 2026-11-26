@@ -33,6 +33,17 @@ public class WhizbangIdJsonConverterReadTests {
   }
 
   [Test]
+  public async Task WritesUuidStringWith_TellsWhizbangsOptionsFromAnApplicationsOwnAsync() {
+    var whizbangs = global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var applications = new JsonSerializerOptions { TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver() };
+    _ = RoutedThingId.New();
+
+    await Assert.That(global::Whizbang.Core.Perspectives.WhizbangIdDocumentForm.WritesUuidStringWith(whizbangs)).IsTrue();
+    await Assert.That(global::Whizbang.Core.Perspectives.WhizbangIdDocumentForm.WritesUuidStringWith(applications)).IsFalse()
+      .Because("without Whizbang's converters an id is serialized as the object {\"Value\": ...}");
+  }
+
+  [Test]
   public async Task Read_AnObjectWithNoValue_IsRefusedAsync() {
     var refused = Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<RoutedThingId>("{\"Other\":1}", _options));
 

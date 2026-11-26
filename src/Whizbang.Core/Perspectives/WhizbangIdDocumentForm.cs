@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Immutable;
+using System.Text.Json;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Perspectives;
 
@@ -88,6 +90,31 @@ public static class WhizbangIdDocumentForm {
     string[] keys = [.. schemas.Select(schema => WhizbangIdDocumentFormState.Key(database, schema)).Distinct(StringComparer.Ordinal)];
     _target.Value = keys.Length == 0 ? [WhizbangIdDocumentFormState.NONE] : keys;
     return new TargetScope(previous);
+  }
+
+  /// <summary>
+  /// Whether serializer options write every registered strongly-typed id as its UUID string: what a store that serializes
+  /// documents with them writes, whatever the gate says (the Dapper store). Options without Whizbang's converters write the
+  /// object <c>{"Value": ...}</c>. An id type the options cannot serialize is not asked, since no document written with them
+  /// holds one; with no id type registered, nothing is written either way, and this is true.
+  /// </summary>
+  /// <param name="options">The serializer options the store writes documents with.</param>
+  /// <returns>True when every registered id the options serialize comes out as a JSON string.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/WhizbangIdJsonConverterReadTests.cs:WritesUuidStringWith_TellsWhizbangsOptionsFromAnApplicationsOwnAsync</tests>
+  public static bool WritesUuidStringWith(JsonSerializerOptions options) {
+    ArgumentNullException.ThrowIfNull(options);
+    var value = TrackedGuid.New().Value;
+    foreach (var (idType, fromGuid) in WhizbangIdProviderRegistry.GetGuidConversions()) {
+      // An id whose rule refuses a version 7 UUID is not built here; every generated id has the same converter, so the
+      // others answer for it.
+      if (!WhizbangIdProviderRegistry.AcceptsStreamId(idType, value) || !options.TryGetTypeInfo(idType, out var typeInfo)) {
+        continue;
+      }
+      if (!JsonSerializer.Serialize(fromGuid(value), typeInfo).StartsWith('"')) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /// <summary>

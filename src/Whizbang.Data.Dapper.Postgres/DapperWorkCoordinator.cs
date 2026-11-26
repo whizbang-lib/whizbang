@@ -68,6 +68,9 @@ public partial class DapperWorkCoordinator(
   private const string INBOX_ENTRY_POINT = "DapperWorkCoordinator.InboxWrite";
   private readonly string _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
+
+  /// <summary>Whether the store's serializer options write a strongly-typed id as its UUID string, asked once (#2518).</summary>
+  private bool? _writesUuidStrings;
   private readonly ILogger<DapperWorkCoordinator>? _logger = logger;
   private readonly WorkCoordinatorGate? _gate = gate;
   // The schema every statement is qualified with (#1508): the one this coordinator was given, else the first the
@@ -1082,8 +1085,11 @@ public partial class DapperWorkCoordinator(
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     // #2323: the metadata with this build's stored form level, which the trim gate counts. #2518: the Dapper store writes
-    // a strongly-typed id as its UUID string whatever the gate says, so the heartbeat says so from its first beat.
-    var metadataJson = request.MetadataJson(writesUuidStrings: true);
+    // a strongly-typed id in whatever form its serializer options give it, whatever the gate says, so the heartbeat says
+    // that form from its first beat: the UUID string with Whizbang's converters, the object form with an application's
+    // own options that lack them.
+    _writesUuidStrings ??= Whizbang.Core.Perspectives.WhizbangIdDocumentForm.WritesUuidStringWith(_jsonOptions);
+    var metadataJson = request.MetadataJson(_writesUuidStrings.Value);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);

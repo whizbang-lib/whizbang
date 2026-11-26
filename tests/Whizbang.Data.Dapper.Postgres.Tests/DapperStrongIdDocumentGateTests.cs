@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Text.Json;
 using Dapper;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -42,12 +43,12 @@ public class DapperStrongIdDocumentGateTests {
   [After(Test)]
   public async Task TeardownAsync() => await PerTestDatabaseFactory.DropAsync(_database.Name);
 
-  private ServiceProvider _provider() {
+  private ServiceProvider _provider(JsonSerializerOptions? jsonOptions = null) {
     var services = new ServiceCollection();
     services.AddLogging();
     services.Configure<SchemaInitializationOptions>(o => o.NonBlockingSchemaInit = false);
     services.AddWhizbangPostgres(
-      _database.ConnectionString, JsonContextRegistry.CreateCombinedOptions(), initializeSchema: true,
+      _database.ConnectionString, jsonOptions ?? JsonContextRegistry.CreateCombinedOptions(), initializeSchema: true,
       perspectiveEntries: [], managedObjects: null);
     return services.BuildServiceProvider();
   }
@@ -99,6 +100,29 @@ public class DapperStrongIdDocumentGateTests {
   }
 
   /// <summary>
+  /// A Dapper store built with an application's own serializer options, without Whizbang's id converters, writes a
+  /// strongly-typed id as the object <c>{"Value": ...}</c>, so its heartbeat does not say it writes the UUID string, and the
+  /// stored-form rewrite waits for it (#2518).
+  /// </summary>
+  [Test]
+  public async Task TheDapperHeartbeat_WithAnApplicationsOwnOptions_SaysWhatThoseOptionsWriteAsync() {
+    var applications = new JsonSerializerOptions(JsonContextRegistry.CreateCombinedOptions());
+    applications.Converters.Clear();
+    applications.TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver();
+    await Assert.That(JsonSerializer.Serialize(DapperProbeId.New(), applications)).StartsWith("{");
+    await using var provider = _provider(applications);
+    var self = provider.GetRequiredService<IServiceInstanceProvider>().InstanceId;
+    using var scope = provider.CreateScope();
+    var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+    await _startAsync(provider);
+
+    await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(self, "dapper-svc", "dapper-host", 2));
+
+    await Assert.That(await _metadataAsync(self)).DoesNotContain("strong_id_document_form")
+      .Because("these options write the object form, so the heartbeat must not let the rewrite start");
+  }
+
+  /// <summary>
   /// A schema with an Entity Framework instance and a Dapper instance reaches the rewrite, driven through the real Dapper
   /// coordinator and the real maintenance step: the Dapper heartbeat says it writes the UUID string, and the step's
   /// check, which every instance in the fleet reads, opens the gate.
@@ -126,3 +150,7 @@ public class DapperStrongIdDocumentGateTests {
     await Assert.That(hold).IsNull().Because("every live instance, the Dapper one included, writes the UUID string");
   }
 }
+
+/// <summary>A strongly-typed id registered in this test assembly, so the Dapper heartbeat has one to ask about (#2518).</summary>
+[Whizbang.Core.WhizbangId]
+public readonly partial struct DapperProbeId;
