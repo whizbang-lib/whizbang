@@ -68,8 +68,8 @@ public class PartitionHandoverSqlTests : EFCoreTestBase {
       ("p", MOVED))).IsTrue();
   }
 
-  // #2577 changed this contract: before 610 the partition moved at once, and 571 and 581 still link this test as
-  // Publish_InMapMode_AMovedPartitionWhoseOwnerIsNotLive_FlipsAtOnceAsync.
+  // #2577 changed this contract: before 610 the partition moved at once. 571, 581 and the down scripts that restore
+  // them link this test for the publish function they define.
   [Test]
   public async Task Publish_InMapMode_AMovedPartitionWhoseOwnerIsNotLive_HandsOverWithAnImmediateDeadline_AndTheSweepFlipsItAsync() {
     await using var conn = await _openAsync();
