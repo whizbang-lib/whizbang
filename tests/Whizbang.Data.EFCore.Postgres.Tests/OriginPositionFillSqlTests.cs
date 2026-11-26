@@ -38,7 +38,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
 [Category("Integration")]
 [Category("Shard4")]
-public class OriginPositionFillSqlTests : EFCoreTestBase {
+public partial class OriginPositionFillSqlTests : EFCoreTestBase {
   private const string TYPE = "Whizbang.Tests.PositionFillEvent, Whizbang.Tests";
   private const string OTHER_TYPE = "Whizbang.Tests.PositionFillOtherEvent, Whizbang.Tests";
   private const string READS_TYPE = "Reads";
