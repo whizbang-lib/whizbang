@@ -1540,6 +1540,8 @@ public partial class DapperWorkCoordinator(
       assignmentStale |= string.Equals(e.Notice.MessageText, PARTITION_ASSIGNMENT_STALE_NOTICE, StringComparison.Ordinal);
     }
     __scope.Connection.Notice += OnClaimNotice;
+    // #2611: a stale queue table the claim's statistics refresh could not analyze is counted and warned, once per back-off.
+    var statisticsSkips = QueueStatisticsRefreshNotices.Watch(__scope.Connection, _metrics, _logger);
     IEnumerable<ClaimWorkRow> rows;
     try {
       // Phase C lands the full envelope-deserializing path. For now Dapper backend
@@ -1579,6 +1581,7 @@ public partial class DapperWorkCoordinator(
         commandTimeout: CoordinatorCommandTimeout.SECONDS);
     } finally {
       __scope.Connection.Notice -= OnClaimNotice;
+      statisticsSkips.Dispose();
     }
     // #2554: a claim that waited for a map is counted, and warned once per streak; one that had a map ends the streak.
     CoordinatorOwnershipNotices.ReportPartitionMap(mapUnavailable, _metrics, _logger);

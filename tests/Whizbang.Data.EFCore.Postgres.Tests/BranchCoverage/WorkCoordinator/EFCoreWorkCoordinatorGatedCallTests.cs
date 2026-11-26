@@ -195,6 +195,11 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
         .Because("no such index is on a queue table, so nothing is dropped"));
     register("ReindexQueueIndex", "_onQueueIndexAsync", async (c, _) =>
       await Assert.That((await c.ReindexQueueIndexAsync("wh_active_streams_pkey")).HasValue).IsTrue());
+    // #2611: the bounded overloads take the same slot.
+    register("DropInvalidQueueIndexBounded", "_onQueueIndexAsync", async (c, _) =>
+      await Assert.That(await c.DropInvalidQueueIndexAsync("idx_absent_ccnew", TimeSpan.FromSeconds(5))).IsFalse());
+    register("RebuildQueueIndex", "_onQueueIndexAsync", async (c, _) =>
+      await Assert.That((await c.RebuildQueueIndexAsync("wh_active_streams_pkey", TimeSpan.FromSeconds(5))).SizeAfterBytes.HasValue).IsTrue());
     register("PruneAncientEphemeralPointers", "PruneAncientEphemeralPointersAsync", (c, _) => c.PruneAncientEphemeralPointersAsync());
     register("CloseDigestEpochs", "CloseDigestEpochsAsync", (c, _) => c.CloseDigestEpochsAsync(60, 10));
     // #2354: the operational retention sweep takes the gate before its connection.

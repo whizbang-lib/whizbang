@@ -372,6 +372,77 @@ public class QueueIndexReindexSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// A rebuild an operator cancels while it waits is a failure, not a give-up: the cancellation reaches the caller (the
+  /// step logs it and drops the copy), and nothing is reported as a blocker.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+  [Test]
+  [Timeout(90000)]
+  public async Task Rebuild_CanceledByAnOperatorWhileItWaits_IsAFailureNotAGiveUpAsync(CancellationToken cancellationToken) {
+    await using var holder = new NpgsqlConnection(ConnectionString);
+    await holder.OpenAsync(cancellationToken);
+    var holderPid = await _pidAsync(holder, cancellationToken);
+    await using var idle = await _idleWithASnapshotAsync(holder, cancellationToken);
+    await using var context = CreateDbContext();
+    IWorkCoordinator coordinator = _coordinator(context);
+
+    var rebuild = coordinator.RebuildQueueIndexAsync(PKEY, TimeSpan.FromMinutes(10), cancellationToken);
+    var waiter = await _theBackendWaitingOnAnOlderTransactionAsync(holderPid, rebuild, cancellationToken);
+    await _execAsync($"SELECT pg_cancel_backend({waiter})", cancellationToken);
+    var thrown = await Assert.That(async () => await rebuild).Throws<OperationCanceledException>();
+    await idle.RollbackAsync(cancellationToken);
+
+    await Assert.That((thrown!.InnerException as PostgresException)?.SqlState).IsEqualTo(PostgresErrorCodes.QueryCanceled)
+      .Because("the server canceled the statement; Npgsql reports that as a cancellation");
+  }
+
+  /// <summary>
+  /// A rebuild that fails for any reason other than its lock bound is a failure too: the error reaches the caller
+  /// unchanged. Here an expression index raises while it is rebuilt.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+  [Test]
+  [Timeout(90000)]
+  public async Task Rebuild_ThatFailsOtherThanAtItsBound_RaisesTheErrorAsync(CancellationToken cancellationToken) {
+    await _execAsync("""
+      CREATE TABLE wh_test_rebuild_fails (on_ BOOLEAN);
+      CREATE FUNCTION wh_test_rebuild_fails_expr(p INTEGER) RETURNS INTEGER LANGUAGE plpgsql IMMUTABLE AS $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM public.wh_test_rebuild_fails) THEN
+          RAISE EXCEPTION 'the expression refused to be indexed';
+        END IF;
+        RETURN p;
+      END $$;
+      INSERT INTO wh_active_streams (stream_id, partition_number) VALUES (gen_random_uuid(), 1);
+      CREATE INDEX wh_test_rebuild_fails_idx ON wh_active_streams (wh_test_rebuild_fails_expr(partition_number));
+      INSERT INTO wh_test_rebuild_fails VALUES (TRUE);
+      """, cancellationToken);
+    await using var context = CreateDbContext();
+    IWorkCoordinator coordinator = _coordinator(context);
+
+    var thrown = await Assert.That(async () => await coordinator.RebuildQueueIndexAsync("wh_test_rebuild_fails_idx", _bound, cancellationToken))
+      .Throws<PostgresException>();
+
+    await Assert.That(thrown!.SqlState).IsEqualTo(PostgresErrorCodes.RaiseException);
+  }
+
+  /// <summary>The backend, other than the holder, waiting on a virtual transaction id; throws if the call finished first.</summary>
+  private async Task<int> _theBackendWaitingOnAnOlderTransactionAsync(int holderPid, Task call, CancellationToken cancellationToken) {
+    while (true) {
+      var pid = await _scalarAsync<object?>(
+        $"SELECT pid FROM pg_locks WHERE locktype = 'virtualxid' AND NOT granted AND pid <> {holderPid} LIMIT 1", cancellationToken);
+      if (pid is int waiting) {
+        return waiting;
+      }
+      if (call.IsCompleted) {
+        await call;
+        throw new InvalidOperationException("precondition: the rebuild finished without waiting on the idle transaction");
+      }
+      cancellationToken.ThrowIfCancellationRequested();
+    }
+  }
+
+  /// <summary>
   /// With nothing older in its way the bounded rebuild runs as before: it rebuilds and reports the size.
   /// </summary>
   /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>

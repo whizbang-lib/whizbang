@@ -2822,24 +2822,40 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// table, and then quoted.
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs</tests>
-  public async Task<bool> DropInvalidQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) {
+  public Task<bool> DropInvalidQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) =>
+    DropInvalidQueueIndexAsync(indexName, QueueIndexRebuild.DefaultLockTimeout, cancellationToken);
+
+  /// <inheritdoc />
+  /// <remarks>Each lock the drop waits for is bounded by <paramref name="lockTimeout"/> (#2611).</remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs:Drop_BehindATransactionHoldingTheTable_GivesUpWithinTheLockTimeoutAsync</tests>
+  public async Task<bool> DropInvalidQueueIndexAsync(string indexName, TimeSpan lockTimeout, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(indexName);
     return await _onQueueIndexAsync(indexName, wantValid: false, QueueIndexSql.DROPPED, refused: false,
-      TableMaintenanceSql.DropIndexConcurrentlyAsync, cancellationToken).ConfigureAwait(false);
+      (conn, qualified, ct) => TableMaintenanceSql.DropIndexConcurrentlyAsync(conn, qualified, lockTimeout, ct), cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
   /// <remarks>
   /// <c>REINDEX INDEX CONCURRENTLY</c> cannot run in a transaction, so it runs on a connection of its own, chosen as for
-  /// <see cref="DropInvalidQueueIndexAsync"/>. It builds a copy while the table stays readable and writable and swaps it
-  /// in, so it has no timeout: one index per cycle bounds it. An interruption leaves the copy invalid, and the next
-  /// cycle drops it.
+  /// <see cref="DropInvalidQueueIndexAsync(string, CancellationToken)"/>. It builds a copy while the table stays readable
+  /// and writable and swaps it in, bounded by the default lock timeout (#2611).
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs</tests>
-  public async Task<long?> ReindexQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) {
+  public async Task<long?> ReindexQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) =>
+    (await RebuildQueueIndexAsync(indexName, QueueIndexRebuild.DefaultLockTimeout, cancellationToken).ConfigureAwait(false)).SizeAfterBytes;
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// Each lock the rebuild waits for, the waits for older transactions included, is bounded by
+  /// <paramref name="lockTimeout"/> (#2611). Given up, it names the sessions it was waiting on; the invalid copy it left
+  /// is the maintenance step's to drop.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueueIndexReindexSqlTests.cs:Rebuild_BehindAnIdleTransaction_GivesUpWithinTheLockTimeout_AndNamesTheBlockerAsync</tests>
+  public async Task<QueueIndexRebuild> RebuildQueueIndexAsync(
+      string indexName, TimeSpan lockTimeout, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(indexName);
-    return await _onQueueIndexAsync(indexName, wantValid: true, QueueIndexSql.REBUILT, refused: null,
-      TableMaintenanceSql.ReindexConcurrentlyAsync, cancellationToken).ConfigureAwait(false);
+    return await _onQueueIndexAsync(indexName, wantValid: true, QueueIndexSql.REBUILT, refused: new QueueIndexRebuild(null),
+      (conn, qualified, ct) => TableMaintenanceSql.ReindexConcurrentlyAsync(conn, qualified, lockTimeout, ct), cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>Runs <paramref name="work"/> on a connection of its own opened from the schema-initialization connection string.</summary>
@@ -3983,6 +3999,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       assignmentStale |= string.Equals(e.Notice.MessageText, OutboxClaimNotices.PARTITION_ASSIGNMENT_STALE, StringComparison.Ordinal);
     }
     conn.Notice += OnClaimNotice;
+    // #2611: a stale queue table the claim's statistics refresh could not analyze is counted and warned, once per back-off.
+    var statisticsSkips = Whizbang.Data.Postgres.QueueStatisticsRefreshNotices.Watch(conn, _metrics, _logger);
     try {
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
       while (await reader.ReadAsync(cancellationToken)) {
@@ -4022,6 +4040,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       }
     } finally {
       conn.Notice -= OnClaimNotice;
+      statisticsSkips.Dispose();
     }
     // #2554: a claim that waited for a map is counted, and warned once per streak; one that had a map ends the streak.
     Whizbang.Data.Postgres.CoordinatorOwnershipNotices.ReportPartitionMap(mapUnavailable, _metrics, _logger);

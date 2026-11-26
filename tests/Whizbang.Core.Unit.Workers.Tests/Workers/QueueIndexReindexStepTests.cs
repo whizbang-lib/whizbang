@@ -549,14 +549,18 @@ public class QueueIndexReindexStepTests {
   public async Task Run_ARebuildThatFailed_DropsTheCopyItLeft_RightAwayAsync() {
     var coordinator = new ReindexCoordinator {
       Survey = [_index("idx_b", 40 * MIB, 8 * MIB)],
-      SurveyAfterRebuild = [_index("idx_b", 40 * MIB, 8 * MIB), _leftover("idx_b_ccnew"), _leftover("idx_other_ccold", "wh_inbox")],
+      SurveyAfterRebuild = [
+        _index("idx_b", 40 * MIB, 8 * MIB), _leftover("idx_b_ccnew"), _leftover("idx_other_ccold", "wh_inbox"),
+        _leftover("idx_b2_ccnew") with { BuildInProgress = true },
+      ],
       Throws = { "idx_b" },
     };
 
     await _runAsync(coordinator);
 
     await Assert.That(coordinator.Calls).IsEquivalentTo(["reindex:idx_b", "drop:idx_b_ccnew"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("the copy the failed rebuild left on its table is dropped now; another table's leftover waits for the next cycle's sweep");
+      .Because("the copy the failed rebuild left on its table is dropped now; another table's leftover waits for the next "
+        + "cycle's sweep, and one a build is still working on is left to that build");
   }
 
   // ── The bounded wait (#2611) ────────────────────────────────────────────
@@ -658,6 +662,38 @@ public class QueueIndexReindexStepTests {
     await Assert.That(warning.Message).IsEqualTo(
       "Queue index rebuild of idx_a on wh_outbox gave up: a lock wait passed " + LOCK_TIMEOUT_KEY + " (00:01:00). "
       + "The sessions it waited on had ended by the time it looked. It is tried again on a later cycle");
+  }
+
+  /// <summary>
+  /// Gave up with only sessions this role cannot see in the way: the warning says so and names the grant that shows them.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+  [Test]
+  public async Task DescribeBlockers_OnlyHiddenSessions_SaysSoAndNamesTheGrantAsync() {
+    var described = QueueIndexReindexStep.DescribeBlockers(new QueueIndexRebuild(null) { GaveUp = true, HiddenSessions = 3 });
+
+    await Assert.That(described).IsEqualTo(
+      "No session it could see was in its way; 3 other session(s) in the database are not visible to this role (grant pg_monitor to see them).");
+  }
+
+  /// <summary>Visible sessions only: each is named, and nothing is said about hidden ones.</summary>
+  [Test]
+  public async Task DescribeBlockers_VisibleSessionsOnly_NamesEachAsync() {
+    var outcome = new QueueIndexRebuild(null) { GaveUp = true, Blockers = [new QueueIndexBlocker(12, TimeSpan.FromSeconds(61.75))] };
+
+    var described = QueueIndexReindexStep.DescribeBlockers(outcome);
+
+    await Assert.That(described).IsEqualTo("It was waiting on pid 12 (transaction open 00:01:01).");
+  }
+
+  /// <summary>A lock timeout too long for <c>lock_timeout</c>'s milliseconds is refused too.</summary>
+  [Test]
+  public async Task Validate_ALockTimeoutPastWhatPostgresTakes_IsRefusedAsync() {
+    var result = new MaintenanceWorkerOptionsValidator().Validate(
+      null, new MaintenanceWorkerOptions { ReindexLockTimeout = TimeSpan.FromDays(30) });
+
+    await Assert.That(result.Failed).IsTrue();
+    await Assert.That(result.FailureMessage).Contains(LOCK_TIMEOUT_KEY);
   }
 
   private static List<(long, string?, string?)> _gaveUp(MaintenanceMetrics metrics) {

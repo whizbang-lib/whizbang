@@ -29,6 +29,7 @@ public sealed class MaintenanceWorkerOptionsValidator : IValidateOptions<Mainten
     var failures = RetentionSettingsBridge.Validate(options.Retention);
     failures.AddRange(MaintenancePartitioningOptions.Validate(options.Partitioning));
     failures.AddRange(QueueIndexReindexStep.ValidateThreshold(options.ReindexBloatThreshold));
+    failures.AddRange(QueueIndexReindexStep.ValidateLockTimeout(options.ReindexLockTimeout));
     failures.AddRange(TableRewriteSettings.Validate(options));
     return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
   }

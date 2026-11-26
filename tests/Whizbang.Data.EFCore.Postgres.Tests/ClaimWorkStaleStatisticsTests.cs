@@ -193,6 +193,10 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext, cancellationToken);
     await _analyzeAtOnePageThenFillAsync(connection, rows: 5_000);
+    // As on the deployed table: far more changes than live rows. A concurrent rebuild records the rows it indexed as the
+    // table's row count, so with every row live the table would no longer read as stale once the rebuild has built.
+    await _executeAsync(connection, "DELETE FROM wh_perspective_events WHERE ctid NOT IN (SELECT ctid FROM wh_perspective_events LIMIT 20)");
+    await _executeAsync(connection, "SELECT pg_stat_force_next_flush()");
     await Assert.That(await _isStaleAsync(connection)).IsTrue()
       .Because("precondition: the table must be stale, or the refresh never reaches the ANALYZE and this proves nothing");
 
@@ -208,6 +212,8 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
     var reindex = _executeAsync(reindexer, $"REINDEX INDEX CONCURRENTLY {index}");
     try {
       await _untilWaitingOnVirtualXidAsync(connection, reindexerPid, reindex, cancellationToken);
+      await Assert.That(await _isStaleAsync(connection)).IsTrue()
+        .Because("precondition: with the rebuild built and waiting, the table must still read as stale");
 
       var notices = new List<PostgresNotice>();
       await using var claimant = new NpgsqlConnection(ConnectionString);
@@ -611,8 +617,10 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Whether any backend was seen waiting for a lock on the perspective-event table, or for an advisory lock, while
-  /// <paramref name="call"/> ran. The holder's own lock is granted, so a waiter here can only be the claim.
+  /// Whether any backend of this test's database was seen waiting for a lock on the perspective-event table, or for an
+  /// advisory lock, while <paramref name="call"/> ran. The holder's own lock is granted, so a waiter here can only be the
+  /// claim. Other tests' databases share the server, and the table has the same oid in each (they are copies of one
+  /// template), so the database is named.
   /// </summary>
   private static async Task<bool> _anyoneWaitedOnTheTableAsync(
       NpgsqlConnection observer, Task call, CancellationToken cancellationToken) {
@@ -620,7 +628,8 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
     cmd.CommandText = """
       SELECT EXISTS (
         SELECT 1 FROM pg_locks
-        WHERE NOT granted AND (relation = 'wh_perspective_events'::regclass OR locktype = 'advisory'))
+        WHERE NOT granted AND (relation = 'wh_perspective_events'::regclass OR locktype = 'advisory')
+          AND database = (SELECT oid FROM pg_database WHERE datname = current_database()))
       """;
     var waited = false;
     while (!call.IsCompleted) {

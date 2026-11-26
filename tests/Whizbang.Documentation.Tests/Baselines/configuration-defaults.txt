@@ -484,6 +484,7 @@ Whizbang:Workers:Maintenance:Partitioning:CreateAhead=3
 Whizbang:Workers:Maintenance:Partitioning:Enabled=false
 Whizbang:Workers:Maintenance:Partitioning:Strategy=Auto
 Whizbang:Workers:Maintenance:ReindexBloatThreshold=3
+Whizbang:Workers:Maintenance:ReindexLockTimeout=00:01:00
 Whizbang:Workers:Maintenance:RowCapSweepClaimWindowMinutes=60
 Whizbang:Workers:Maintenance:RowCascadeDrainLimit=1000
 Whizbang:Workers:Maintenance:RowGuardCollectLimit=500

@@ -36,6 +36,8 @@ public class DapperParityGatedCallTests : PostgresTestBase {
     [nameof(DapperWorkCoordinator.GetQueueIndexBloatAsync)] = c => c.GetQueueIndexBloatAsync(),
     [nameof(DapperWorkCoordinator.VacuumWorkTablesAsync)] = c => c.VacuumWorkTablesAsync(),
     [nameof(DapperWorkCoordinator.DropInvalidQueueIndexAsync)] = c => c.DropInvalidQueueIndexAsync("wh_active_streams_pkey"),
+    // #2611: the bounded rebuild takes a slot under its own name.
+    [nameof(DapperWorkCoordinator.RebuildQueueIndexAsync)] = c => c.RebuildQueueIndexAsync("wh_active_streams_pkey", TimeSpan.FromSeconds(5)),
     [nameof(DapperWorkCoordinator.CleanupLifecycleCompletionsAsync)] = c => c.CleanupLifecycleCompletionsAsync(TimeSpan.FromDays(7)),
     [nameof(DapperWorkCoordinator.CompleteCoalesceFoldAsync)] = c => c.CompleteCoalesceFoldAsync([Guid.NewGuid()], [], partitionCount: 100),
     [nameof(DapperWorkCoordinator.ReleaseMaturedCoalesceAsync)] = c => c.ReleaseMaturedCoalesceAsync("group-gated"),

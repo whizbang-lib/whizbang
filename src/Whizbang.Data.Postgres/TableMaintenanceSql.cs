@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Data.Common;
+using System.Globalization;
 using Npgsql;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -354,30 +355,102 @@ internal static class TableMaintenanceSql {
 
   /// <summary>
   /// <c>DROP INDEX CONCURRENTLY</c> of an index the catalog confirmed. It waits for the transactions using the table to
-  /// finish, as a concurrent drop must, so it has no timeout.
+  /// finish, as a concurrent drop must, for at most <paramref name="lockTimeout"/> per lock (#2611): past it the drop throws
+  /// (<c>55P03</c>) and the leftover stays for a later cycle. The command itself has no timeout.
   /// </summary>
-  internal static async Task<bool> DropIndexConcurrentlyAsync(DbConnection conn, string qualified, CancellationToken cancellationToken) {
-    await using var drop = conn.CreateWhizbangCommand();
-    drop.CommandText = $"DROP INDEX CONCURRENTLY IF EXISTS {qualified}";
-    drop.CommandTimeout = 0;
-    await drop.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-    return true;
+  internal static async Task<bool> DropIndexConcurrentlyAsync(
+      DbConnection conn, string qualified, TimeSpan lockTimeout, CancellationToken cancellationToken) {
+    var before = await _boundLockWaitsAsync(conn, lockTimeout, cancellationToken).ConfigureAwait(false);
+    try {
+      await using var drop = conn.CreateWhizbangCommand();
+      drop.CommandText = $"DROP INDEX CONCURRENTLY IF EXISTS {qualified}";
+      drop.CommandTimeout = 0;
+      await drop.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      return true;
+    } finally {
+      await _restoreLockTimeoutAsync(conn, before).ConfigureAwait(false);
+    }
   }
 
   /// <summary>
   /// <c>REINDEX INDEX CONCURRENTLY</c> of an index the catalog confirmed, then its size. It builds a copy while the table
-  /// stays readable and writable, so it has no timeout: one index per cycle bounds it.
+  /// stays readable and writable, so the command has no timeout, but each lock it waits for, the waits for every
+  /// transaction older than it included, is bounded by <paramref name="lockTimeout"/> (#2611). Past the bound it gives up
+  /// and names the sessions it was waiting on (<see cref="QueueIndexBlockersAsync"/>); the invalid copy it leaves is the
+  /// caller's to drop.
   /// </summary>
-  internal static async Task<long?> ReindexConcurrentlyAsync(DbConnection conn, string qualified, CancellationToken cancellationToken) {
-    await using (var reindex = conn.CreateWhizbangCommand()) {
+  internal static async Task<QueueIndexRebuild> ReindexConcurrentlyAsync(
+      DbConnection conn, string qualified, TimeSpan lockTimeout, CancellationToken cancellationToken) {
+    DateTime started;
+    await using (var now = CoordinatorCommandTimeout.Apply(conn.CreateWhizbangCommand())) {
+      now.CommandText = "SELECT clock_timestamp()";
+      started = (DateTime)(await now.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+    }
+    var before = await _boundLockWaitsAsync(conn, lockTimeout, cancellationToken).ConfigureAwait(false);
+    try {
+      await using var reindex = conn.CreateWhizbangCommand();
       reindex.CommandText = $"REINDEX INDEX CONCURRENTLY {qualified}";
       reindex.CommandTimeout = 0;
       await reindex.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.LockNotAvailable) {
+      return await QueueIndexBlockersAsync(conn, qualified, started, cancellationToken).ConfigureAwait(false);
+    } finally {
+      await _restoreLockTimeoutAsync(conn, before).ConfigureAwait(false);
     }
     await using var size = CoordinatorCommandTimeout.Apply(conn.CreateWhizbangCommand());
     size.CommandText = "SELECT pg_relation_size(to_regclass(@q))";
     size.Parameters.Add(new NpgsqlParameter("q", qualified));
-    return (long)(await size.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+    return new QueueIndexRebuild((long)(await size.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!);
+  }
+
+  /// <summary>
+  /// The given-up outcome of a rebuild that started at <paramref name="started"/>: the sessions it was waiting on, oldest
+  /// transaction first, and how many sessions in the database this role may not read.
+  /// </summary>
+  /// <remarks>
+  /// <c>pg_blocking_pids</c> answers only while the wait is in progress, and the wait ends with the lock timeout's error,
+  /// so the sessions are found by the rule PostgreSQL waited by: a concurrent rebuild waits for every session of the
+  /// database whose transaction is older than it and still holds a snapshot or a transaction id, and for every session
+  /// holding a lock on the table. Their transaction's age is readable only to the same role or one granted
+  /// <c>pg_read_all_stats</c>; a session this role may not read is counted in <see cref="QueueIndexRebuild.HiddenSessions"/>.
+  /// </remarks>
+  internal static async Task<QueueIndexRebuild> QueueIndexBlockersAsync(
+      DbConnection conn, string qualified, DateTime started, CancellationToken cancellationToken) {
+    await using var cmd = CoordinatorCommandTimeout.Apply(conn.CreateWhizbangCommand());
+    cmd.CommandText = QueueIndexSql.BLOCKERS;
+    cmd.Parameters.Add(new NpgsqlParameter("q", qualified));
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(started), started));
+    var blockers = new List<QueueIndexBlocker>();
+    var hidden = 0;
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      if (reader.IsDBNull(0)) {
+        hidden = reader.GetInt32(2);
+        continue;
+      }
+      blockers.Add(new QueueIndexBlocker(
+        reader.GetInt32(0), reader.IsDBNull(1) ? null : TimeSpan.FromSeconds(reader.GetDouble(1))));
+    }
+    return new QueueIndexRebuild(null) { GaveUp = true, Blockers = blockers, HiddenSessions = hidden };
+  }
+
+  /// <summary>Sets the session's <c>lock_timeout</c> to <paramref name="lockTimeout"/> and returns the value it replaced.</summary>
+  private static async Task<string> _boundLockWaitsAsync(DbConnection conn, TimeSpan lockTimeout, CancellationToken cancellationToken) {
+    await using var set = CoordinatorCommandTimeout.Apply(conn.CreateWhizbangCommand());
+    set.CommandText = "SELECT current_setting('lock_timeout'), set_config('lock_timeout', @v, false)";
+    set.Parameters.Add(new NpgsqlParameter("v",
+      Math.Max(1L, (long)Math.Ceiling(lockTimeout.TotalMilliseconds)).ToString(CultureInfo.InvariantCulture) + "ms"));
+    await using var reader = await set.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+    return reader.GetString(0);
+  }
+
+  /// <summary>Puts the session's <c>lock_timeout</c> back, even when the caller is being canceled.</summary>
+  private static async Task _restoreLockTimeoutAsync(DbConnection conn, string before) {
+    await using var restore = CoordinatorCommandTimeout.Apply(conn.CreateWhizbangCommand());
+    restore.CommandText = "SELECT set_config('lock_timeout', @v, false)";
+    restore.Parameters.Add(new NpgsqlParameter("v", before));
+    await restore.ExecuteNonQueryAsync(CancellationToken.None).ConfigureAwait(false);
   }
 
   private static async Task _tableFunctionAsync(DbCommand cmd, string function, string tableName, CancellationToken cancellationToken) {
