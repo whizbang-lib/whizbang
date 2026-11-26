@@ -25,6 +25,9 @@ public sealed class WorkCoordinatorMetrics {
   /// <summary>Tag on <see cref="OutboxFlushFailedMessages"/>: where the messages went, <see cref="OUTCOME_DEAD_LETTERED"/> or <see cref="OUTCOME_NOT_RECORDED"/>.</summary>
   public const string OUTCOME_TAG = "outcome";
 
+  /// <summary>Tag on <see cref="QueueStatisticsRefreshSkips"/>: the queue table whose statistics were not refreshed.</summary>
+  public const string TABLE_TAG = "table";
+
   /// <summary>The messages were written to the dead-letter table, from where recovery stores them again.</summary>
   public const string OUTCOME_DEAD_LETTERED = "dead_lettered";
 
@@ -168,6 +171,17 @@ public sealed class WorkCoordinatorMetrics {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorOwnershipNoticesTests.cs:AClaimWithNoValidMap_IsCounted_AndWarnedOncePerStreakAsync</tests>
   public PassiveCounter<long> PartitionMapUnavailableClaims { get; }
 
+  /// <summary>
+  /// Queue tables whose stale planner statistics a claim could not refresh (#2611), tagged <see cref="TABLE_TAG"/> and
+  /// <see cref="REASON_TAG"/>: <c>lock_not_available</c> when another session held a lock that conflicts with ANALYZE (a
+  /// concurrent index build, or a transaction that locked the table), <c>lock_timeout</c> when a lock wait passed the
+  /// refresh's short backstop, <c>failed</c> when ANALYZE raised an error. Counted once per back-off: the table is then left
+  /// alone for a bounded interval, so each count is one stretch of claims planned on stale statistics.
+  /// </summary>
+  /// <docs>operations/observability/metrics#queue-statistics-refresh</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkStaleStatisticsTests.cs:ClaimWork_WhileTheRefreshCannotAnalyze_NeverWaits_CountsTheSkip_AndWarnsOncePerBackoffAsync</tests>
+  public PassiveCounter<long> QueueStatisticsRefreshSkips { get; }
+
   // 1 while the claims of this process find no valid partition map, so the warning is written once per streak.
   private int _partitionMapUnavailable;
 
@@ -282,5 +296,7 @@ public sealed class WorkCoordinatorMetrics {
       description: "Writes that landed nowhere because the partition's ownership moved on since the work was claimed; tagged by kind");
     PartitionMapUnavailableClaims = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.partition_map_unavailable",
       description: "Claims that claimed nothing because no valid partition map was published (ownership by map)");
+    QueueStatisticsRefreshSkips = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.queue_statistics.refresh_skipped",
+      description: "Queue tables whose stale planner statistics a claim could not refresh, once per back-off; tagged by table and reason");
   }
 }

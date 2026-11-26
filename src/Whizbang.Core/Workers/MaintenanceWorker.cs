@@ -1853,6 +1853,18 @@ public sealed class MaintenanceWorkerOptions {
   public double ReindexBloatThreshold { get; set; } = QueueIndexReindexStep.DEFAULT_THRESHOLD;
 
   /// <summary>
+  /// The longest the queue-index rebuild, or the drop of a leftover, waits for any one lock
+  /// (<c>Whizbang:Workers:Maintenance:ReindexLockTimeout</c>, applied as <c>lock_timeout</c>). Default one minute. A
+  /// concurrent rebuild waits for every transaction older than it while it holds a lock on the table that blocks
+  /// <c>ANALYZE</c>, so an idle transaction would otherwise hold both for as long as it stays open. Past the bound the
+  /// rebuild gives up, warns naming the sessions it waited on, drops the invalid copy it left, and is tried again on a later
+  /// cycle (#2611). Must be positive.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/QueueIndexReindexStepTests.cs:TheLockTimeout_DefaultsToOneMinute_AndBindsFromConfigurationAsync</tests>
+  public TimeSpan ReindexLockTimeout { get; set; } = QueueIndexRebuild.DefaultLockTimeout;
+
+  /// <summary>
   /// The bloat ratio at or above which a table is offered for rewrite
   /// (<c>Whizbang:Workers:Maintenance:TableRewriteBloatThreshold</c>, written to <c>wh_settings.table_rewrite_bloat_threshold</c>).
   /// Unset (the default), it is 2.0 when this start rewrites with an online tool (pg_squeeze, pg_repack,

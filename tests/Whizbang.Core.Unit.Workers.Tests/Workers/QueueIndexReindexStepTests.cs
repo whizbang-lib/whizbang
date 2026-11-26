@@ -33,6 +33,7 @@ namespace Whizbang.Core.Tests.Workers;
 public class QueueIndexReindexStepTests {
   private const long MIB = 1024 * 1024;
   private const string KEY = "Whizbang:Workers:Maintenance:ReindexBloatThreshold";
+  private const string LOCK_TIMEOUT_KEY = "Whizbang:Workers:Maintenance:ReindexLockTimeout";
 
   // A fixed instant: the claim window is read from the step's clock, never the host's.
   private static readonly DateTimeOffset _noon = new(2026, 10, 29, 12, 0, 0, TimeSpan.Zero);
@@ -50,12 +51,27 @@ public class QueueIndexReindexStepTests {
     public HashSet<string> NotDropped { get; init; } = new(StringComparer.Ordinal);
     public HashSet<string> Throws { get; init; } = new(StringComparer.Ordinal);
     public HashSet<string> Cancels { get; init; } = new(StringComparer.Ordinal);
+    public Dictionary<string, QueueIndexRebuild> GivesUp { get; init; } = new(StringComparer.Ordinal);
+    public List<QueueIndexBloat>? SurveyAfterRebuild { get; init; }
     public List<string> Calls { get; } = [];
+    public List<TimeSpan> LockTimeouts { get; } = [];
     public int Scans { get; private set; }
+    private bool _rebuilt;
 
     public Task<IReadOnlyList<QueueIndexBloat>> GetQueueIndexBloatAsync(CancellationToken cancellationToken = default) {
       Scans++;
-      return Task.FromResult<IReadOnlyList<QueueIndexBloat>>(Survey);
+      return Task.FromResult<IReadOnlyList<QueueIndexBloat>>(_rebuilt && SurveyAfterRebuild is { } after ? after : Survey);
+    }
+
+    public async Task<QueueIndexRebuild> RebuildQueueIndexAsync(
+        string indexName, TimeSpan lockTimeout, CancellationToken cancellationToken = default) {
+      LockTimeouts.Add(lockTimeout);
+      _rebuilt = true;
+      if (GivesUp.TryGetValue(indexName, out var gaveUp)) {
+        Calls.Add("reindex:" + indexName);
+        return gaveUp;
+      }
+      return new QueueIndexRebuild(await ReindexQueueIndexAsync(indexName, cancellationToken));
     }
 
     public Task<bool> DropInvalidQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) {
@@ -67,6 +83,11 @@ public class QueueIndexReindexStepTests {
         throw new InvalidOperationException($"drop of {indexName} failed");
       }
       return Task.FromResult(!NotDropped.Contains(indexName));
+    }
+
+    public Task<bool> DropInvalidQueueIndexAsync(string indexName, TimeSpan lockTimeout, CancellationToken cancellationToken = default) {
+      LockTimeouts.Add(lockTimeout);
+      return DropInvalidQueueIndexAsync(indexName, cancellationToken);
     }
 
     public Task<long?> ReindexQueueIndexAsync(string indexName, CancellationToken cancellationToken = default) {
@@ -103,11 +124,19 @@ public class QueueIndexReindexStepTests {
       double threshold = 3.0,
       Claims? claims = null,
       bool noClaimStore = false,
-      bool noCoordinator = false) {
+      bool noCoordinator = false,
+      TimeSpan? lockTimeout = null,
+      MaintenanceMetrics? metrics = null) {
     var logger = new FakeLogger<QueueIndexReindexStep>();
-    var step = new QueueIndexReindexStep(
-      Options.Create(new MaintenanceWorkerOptions { ReindexBloatThreshold = threshold }), logger, new FakeTimeProvider(_noon));
+    var options = new MaintenanceWorkerOptions { ReindexBloatThreshold = threshold };
+    if (lockTimeout is { } timeout) {
+      options.ReindexLockTimeout = timeout;
+    }
+    var step = new QueueIndexReindexStep(Options.Create(options), logger, new FakeTimeProvider(_noon));
     var services = new ServiceCollection();
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
+    }
     if (!noCoordinator) {
       services.AddSingleton<IWorkCoordinator>(coordinator);
     }
@@ -508,7 +537,155 @@ public class QueueIndexReindexStepTests {
     var failure = failedLog.Collector.GetSnapshot().Single(r => r.Exception is not null);
     await Assert.That(failure.Level).IsEqualTo(LogLevel.Warning);
     await Assert.That(failure.Message).IsEqualTo(
-      "Queue index rebuild of idx_b on wh_outbox failed; its invalid copy, if one was left, is dropped next cycle");
+      "Queue index rebuild of idx_b on wh_outbox failed; its invalid copy, if one was left, is dropped now");
+  }
+
+  /// <summary>
+  /// A rebuild that fails leaves an invalid copy behind; the step surveys again at once and drops it, rather than leaving
+  /// it to be written on every insert until the next cycle (#2611).
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+  [Test]
+  public async Task Run_ARebuildThatFailed_DropsTheCopyItLeft_RightAwayAsync() {
+    var coordinator = new ReindexCoordinator {
+      Survey = [_index("idx_b", 40 * MIB, 8 * MIB)],
+      SurveyAfterRebuild = [_index("idx_b", 40 * MIB, 8 * MIB), _leftover("idx_b_ccnew"), _leftover("idx_other_ccold", "wh_inbox")],
+      Throws = { "idx_b" },
+    };
+
+    await _runAsync(coordinator);
+
+    await Assert.That(coordinator.Calls).IsEquivalentTo(["reindex:idx_b", "drop:idx_b_ccnew"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the copy the failed rebuild left on its table is dropped now; another table's leftover waits for the next cycle's sweep");
+  }
+
+  // ── The bounded wait (#2611) ────────────────────────────────────────────
+
+  /// <summary>The lock timeout defaults to one minute and binds from configuration.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+  [Test]
+  public async Task TheLockTimeout_DefaultsToOneMinute_AndBindsFromConfigurationAsync() {
+    await Assert.That(new MaintenanceWorkerOptions().ReindexLockTimeout).IsEqualTo(TimeSpan.FromMinutes(1));
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+      [LOCK_TIMEOUT_KEY] = "00:00:05",
+    }).Build());
+    services.AddWhizbangWorkers();
+    await using var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetRequiredService<IOptions<MaintenanceWorkerOptions>>().Value.ReindexLockTimeout)
+      .IsEqualTo(TimeSpan.FromSeconds(5));
+  }
+
+  /// <summary>
+  /// A lock timeout that is not positive is refused, naming the key: zero is Postgres's "wait forever", the very wait the
+  /// bound exists to end, and a negative one is meaningless.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+  [Test]
+  [Arguments(1, true)]
+  [Arguments(60_000, true)]
+  [Arguments(0, false)]
+  [Arguments(-1, false)]
+  public async Task Validate_TheLockTimeoutMustBePositiveAsync(int milliseconds, bool valid) {
+    var result = new MaintenanceWorkerOptionsValidator().Validate(
+      null, new MaintenanceWorkerOptions { ReindexLockTimeout = TimeSpan.FromMilliseconds(milliseconds) });
+
+    await Assert.That(result.Succeeded).IsEqualTo(valid);
+    if (!valid) {
+      await Assert.That(result.FailureMessage).Contains(LOCK_TIMEOUT_KEY);
+    }
+  }
+
+  /// <summary>The configured lock timeout reaches the leftover's drop and the rebuild alike.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+  [Test]
+  public async Task Run_TheLockTimeoutReachesTheDropAndTheRebuildAsync() {
+    var coordinator = new ReindexCoordinator { Survey = [_index("idx_a", 400 * MIB, 10 * MIB), _leftover("idx_a_ccnew")] };
+
+    await _runAsync(coordinator, lockTimeout: TimeSpan.FromSeconds(7));
+
+    await Assert.That(coordinator.LockTimeouts).IsEquivalentTo([TimeSpan.FromSeconds(7), TimeSpan.FromSeconds(7)]);
+  }
+
+  /// <summary>
+  /// A rebuild that gave up behind an old transaction warns naming the index, each session it waited on with how long its
+  /// transaction has been open, and any it could not see; counts on <c>whizbang.maintenance.queue_index_rebuild.gave_up</c>
+  /// by index and table; and drops the invalid copy it left right away. It is tried again on a later cycle.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+  [Test]
+  public async Task Run_ARebuildThatGaveUp_WarnsNamingTheBlockers_CountsIt_AndDropsItsCopyAsync() {
+    var metrics = new MaintenanceMetrics(new WhizbangMetrics(
+      new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    var coordinator = new ReindexCoordinator {
+      Survey = [_index("idx_a", 400 * MIB, 10 * MIB, "wh_inbox_state")],
+      SurveyAfterRebuild = [_index("idx_a", 400 * MIB, 10 * MIB, "wh_inbox_state"), _leftover("idx_a_ccnew", "wh_inbox_state")],
+      GivesUp = {
+        ["idx_a"] = new QueueIndexRebuild(null) {
+          GaveUp = true,
+          Blockers = [new QueueIndexBlocker(4242, new TimeSpan(3, 17, 5)), new QueueIndexBlocker(77, null)],
+          HiddenSessions = 2,
+        },
+      },
+    };
+
+    var (_, logger) = await _runAsync(coordinator, lockTimeout: TimeSpan.FromSeconds(30), metrics: metrics);
+
+    var warning = logger.Collector.GetSnapshot().Single(r => r.Level == LogLevel.Warning);
+    await Assert.That(warning.Message).IsEqualTo(
+      "Queue index rebuild of idx_a on wh_inbox_state gave up: a lock wait passed " + LOCK_TIMEOUT_KEY + " (00:00:30). "
+      + "It was waiting on pid 4242 (transaction open 03:17:05), pid 77 (transaction age not visible to this role); "
+      + "2 other session(s) in the database are not visible to this role (grant pg_monitor to see them). "
+      + "It is tried again on a later cycle");
+    await Assert.That(coordinator.Calls).IsEquivalentTo(["reindex:idx_a", "drop:idx_a_ccnew"], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(_gaveUp(metrics)).IsEquivalentTo([(1L, (string?)"idx_a", (string?)"wh_inbox_state")]);
+  }
+
+  /// <summary>Gave up with nothing still to name: the warning says the sessions it waited on have gone.</summary>
+  /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+  [Test]
+  public async Task Run_ARebuildThatGaveUp_WithNoBlockerLeft_SaysSo_AndRunsWithoutMetricsAsync() {
+    var coordinator = new ReindexCoordinator {
+      Survey = [_index("idx_a", 400 * MIB, 10 * MIB)],
+      GivesUp = { ["idx_a"] = new QueueIndexRebuild(null) { GaveUp = true } },
+    };
+
+    var (_, logger) = await _runAsync(coordinator);
+
+    var warning = logger.Collector.GetSnapshot().Single(r => r.Level == LogLevel.Warning);
+    await Assert.That(warning.Message).IsEqualTo(
+      "Queue index rebuild of idx_a on wh_outbox gave up: a lock wait passed " + LOCK_TIMEOUT_KEY + " (00:01:00). "
+      + "The sessions it waited on had ended by the time it looked. It is tried again on a later cycle");
+  }
+
+  private static List<(long, string?, string?)> _gaveUp(MaintenanceMetrics metrics) {
+    var cells = new List<(long, string?, string?)>();
+    using var listener = new System.Diagnostics.Metrics.MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (ReferenceEquals(instrument.Meter, metrics.QueueIndexRebuildsGaveUp.Meter)
+          && instrument.Name == "whizbang.maintenance.queue_index_rebuild.gave_up") {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
+      string? index = null;
+      string? table = null;
+      foreach (var tag in tags) {
+        if (tag.Key == MaintenanceMetrics.INDEX_TAG) {
+          index = tag.Value as string;
+        } else if (tag.Key == MaintenanceMetrics.TABLE_TAG) {
+          table = tag.Value as string;
+        }
+      }
+      if (value > 0) {
+        cells.Add((value, index, table));
+      }
+    });
+    listener.Start();
+    listener.RecordObservableInstruments();
+    return cells;
   }
 
   /// <summary>Nothing over the line is a quiet cycle: no rebuild, and a debug line naming the line.</summary>

@@ -1,11 +1,17 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Diagnostics.Metrics;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Serialization;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -126,55 +132,132 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Claimants that find the same table stale do not all analyze it: one does, the others wait for
-  /// its turn, read the statistics again once it has committed, and go on without analyzing.
+  /// Claimants that find the same table stale do not all analyze it, and none waits for another: the one that takes the
+  /// table's turn analyzes, and every other claimant moves on at once with the statistics it has (#2611).
   /// </summary>
   /// <remarks>
-  /// The peer here holds the table's turn and analyzes while the waiter is queued behind it, which is
-  /// the interleaving the turn exists for. The statistics a claimant reads are cached for its
-  /// transaction, so the waiter would analyze a second time if it did not read them again after the
-  /// wait.
+  /// The turn used to be a blocking advisory lock. While a peer held it, every claim queued behind it, and when the peer
+  /// itself waited (on an ANALYZE a reindex blocked), every claim of the service waited as long, up to the lock timeout.
+  /// A claimant that finds the turn taken leaves the table to its holder and writes no back-off: the holder decides.
   /// </remarks>
+  /// <docs>fundamentals/work-coordinator/claim-loop#the-statistics-refresh-never-waits</docs>
   [Test]
   [Timeout(600000)]
-  public async Task RefreshStaleQueueStatistics_WhileAPeerRefreshesTheTable_WaitsAndDoesNotAnalyzeAgainAsync(
+  public async Task RefreshStaleQueueStatistics_WhileAPeerHoldsTheTablesTurn_MovesOnWithoutWaitingAsync(
       CancellationToken cancellationToken) {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext, cancellationToken);
     await _analyzeAtOnePageThenFillAsync(connection, rows: 5_000);
     await Assert.That(await _isStaleAsync(connection)).IsTrue()
-      .Because("precondition: the waiter must find the table stale, or it never queues for the turn and this proves nothing");
+      .Because("precondition: the claimant must find the table stale, or it never reaches the turn and this proves nothing");
 
     await using var peer = new NpgsqlConnection(ConnectionString);
     await peer.OpenAsync(cancellationToken);
     await using var peerTransaction = await peer.BeginTransactionAsync(cancellationToken);
-    await _executeAsync(peer,
-      "SELECT pg_advisory_xact_lock(hashtext('wh_refresh_stale_queue_statistics'), 'wh_perspective_events'::regclass::oid::integer)");
+    await _executeAsync(peer, $"SELECT pg_advisory_xact_lock({TURN_LOCK_KEY})");
+    var analyzedBefore = await _analyzeCountAsync(connection);
 
-    await using var waiter = new NpgsqlConnection(ConnectionString);
-    await waiter.OpenAsync(cancellationToken);
-    await using var waiterTransaction = await waiter.BeginTransactionAsync(cancellationToken);
-    var waiterPid = await _backendPidAsync(waiter);
-    var waiting = _refreshAsync(waiter);
-    var waitedForTheTurn = await _untilWaitingOnAdvisoryLockAsync(connection, waiterPid, waiting, cancellationToken);
-    await _executeAsync(peer, "ANALYZE wh_perspective_events");
-    var analyzedByPeer = await _analyzeCountAsync(connection);
-    await peerTransaction.CommitAsync(cancellationToken);
-    var refreshedByWaiter = await waiting;
+    await using var claimant = new NpgsqlConnection(ConnectionString);
+    await claimant.OpenAsync(cancellationToken);
+    var claimantPid = await _backendPidAsync(claimant);
+    var refreshing = _refreshAsync(claimant);
+    var waited = await _everWaitedOnALockAsync(connection, claimantPid, refreshing, cancellationToken);
+    var refreshed = await refreshing;
+    await peerTransaction.RollbackAsync(cancellationToken);
 
-    await Assert.That(waitedForTheTurn).IsTrue()
-      .Because("the waiter must have queued behind the peer's turn, or the count below proves nothing");
-    await Assert.That(refreshedByWaiter).IsEqualTo(0)
-      .Because("the peer analyzed the table while this claimant waited for its turn, so nothing was left stale");
-    await Assert.That(await _analyzeCountAsync(connection)).IsEqualTo(analyzedByPeer)
-      .Because("the table is analyzed once, by the claimant that held the turn");
+    await Assert.That(waited).IsFalse()
+      .Because("a claimant that finds another holding the table's turn moves on; it never queues behind it");
+    await Assert.That(refreshed).IsEqualTo(0).Because("the table is left to the claimant that holds its turn");
+    await Assert.That(await _analyzeCountAsync(connection)).IsEqualTo(analyzedBefore);
+    await Assert.That(await _backoffAsync(connection)).IsNull()
+      .Because("the turn's holder decides whether the table backs off; a claimant that only found it taken writes nothing");
   }
 
   /// <summary>
-  /// A claimant that cannot take the table's lock within the timeout gives up, says so, and claims on
-  /// the statistics it has. The holder here is an ordinary session, which Postgres never cancels on
-  /// the refresh's behalf, as it does an autovacuum; nothing the refresh waits on may stop a claim.
+  /// The shape measured on a deployed service (#2611): an application transaction left idle for hours, a concurrent
+  /// reindex of a queue index waiting on it while it holds the table's ShareUpdateExclusiveLock, and the table's
+  /// statistics stale. The refresh never waits on that lock: <c>ANALYZE (SKIP_LOCKED)</c> skips the table, the table
+  /// backs off, and the skip is reported once, naming the table and the reason. While the back-off lasts no claim tries
+  /// again; once it has passed, the next one does.
   /// </summary>
+  /// <remarks>
+  /// Before, every claim queued on the refresh's lock, then on the ANALYZE under its five second lock timeout, and gave
+  /// up: the service's claims averaged 8.2 s against 20 to 40 ms elsewhere. The back-off's expiry is moved into the past
+  /// rather than waited for: the test reads no clock.
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/claim-loop#the-statistics-refresh-never-waits</docs>
+  [Test]
+  [Timeout(600000)]
+  public async Task RefreshStaleQueueStatistics_WhileAReindexWaitsOnAnIdleTransaction_NeverWaits_AndBacksOffAsync(
+      CancellationToken cancellationToken) {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext, cancellationToken);
+    await _analyzeAtOnePageThenFillAsync(connection, rows: 5_000);
+    await Assert.That(await _isStaleAsync(connection)).IsTrue()
+      .Because("precondition: the table must be stale, or the refresh never reaches the ANALYZE and this proves nothing");
+
+    await using var idle = new NpgsqlConnection(ConnectionString);
+    await idle.OpenAsync(cancellationToken);
+    await using var idleTransaction = await idle.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, cancellationToken);
+    await _executeAsync(idle, "SELECT count(*) FROM wh_settings");
+    await using var reindexer = new NpgsqlConnection(ConnectionString);
+    await reindexer.OpenAsync(cancellationToken);
+    var reindexerPid = await _backendPidAsync(reindexer);
+    var index = await _scalarAsync<string>(connection,
+      "SELECT indexrelid::regclass::text FROM pg_index WHERE indrelid = 'wh_perspective_events'::regclass ORDER BY 1 LIMIT 1");
+    var reindex = _executeAsync(reindexer, $"REINDEX INDEX CONCURRENTLY {index}");
+    try {
+      await _untilWaitingOnVirtualXidAsync(connection, reindexerPid, reindex, cancellationToken);
+
+      var notices = new List<PostgresNotice>();
+      await using var claimant = new NpgsqlConnection(ConnectionString);
+      await claimant.OpenAsync(cancellationToken);
+      claimant.Notice += (_, e) => { lock (notices) { notices.Add(e.Notice); } };
+      var claimantPid = await _backendPidAsync(claimant);
+      var first = _refreshAsync(claimant);
+      var waited = await _everWaitedOnALockAsync(connection, claimantPid, first, cancellationToken);
+      var refreshed = await first;
+      var backoff = await _backoffAsync(connection);
+      var afterFirst = _skips(notices);
+      var skippedByAnalyze = _analyzeSkips(notices);
+
+      await Assert.That(waited).IsFalse()
+        .Because("the refresh may not wait on a lock the reindex holds, however long the reindex itself waits");
+      await Assert.That(refreshed).IsEqualTo(0).Because("the table could not be analyzed while the reindex held it");
+      await Assert.That(skippedByAnalyze).IsEqualTo(1).Because("ANALYZE (SKIP_LOCKED) is what skipped the table");
+      await Assert.That(afterFirst).IsEquivalentTo([(QUEUE_TABLE, LOCK_NOT_AVAILABLE)])
+        .Because("the skip is reported once, naming the table and the reason");
+      await Assert.That(backoff.HasValue).IsTrue();
+      await Assert.That(backoff!.Value.Reason).IsEqualTo(LOCK_NOT_AVAILABLE);
+      await Assert.That(backoff.Value.InTheFuture).IsTrue().Because("the table backs off for a bounded interval");
+
+      notices.Clear();
+      var duringBackoff = await _refreshAsync(claimant);
+      await Assert.That(duringBackoff).IsEqualTo(0);
+      await Assert.That(_analyzeSkips(notices)).IsEqualTo(0)
+        .Because("while the table backs off, no claim tries to analyze it at all");
+      await Assert.That(_skips(notices)).IsEmpty().Because("the skip is reported once per back-off, not once per claim");
+
+      await _executeAsync(connection, "UPDATE wh_queue_statistics_backoff SET retry_after = NOW() - INTERVAL '1 second'");
+      notices.Clear();
+      _ = await _refreshAsync(claimant);
+      await Assert.That(_analyzeSkips(notices)).IsEqualTo(1).Because("once the back-off has passed, the next claim tries again");
+      await Assert.That(_skips(notices)).IsEquivalentTo([(QUEUE_TABLE, LOCK_NOT_AVAILABLE)])
+        .Because("the reindex still holds the table, so it backs off again and says so again");
+    } finally {
+      await _executeAsync(connection, $"SELECT pg_cancel_backend({reindexerPid})");
+      await idleTransaction.RollbackAsync(cancellationToken);
+      await Assert.That(async () => await reindex).Throws<PostgresException>();
+    }
+  }
+
+  /// <summary>
+  /// An ordinary session holding a lock that conflicts with ANALYZE skips the table as a reindex does: the refresh gives
+  /// up at once rather than at its lock timeout (it never waits), reports the skip, backs off, and leaves the statistics
+  /// for a later claim. The holder is an ordinary session, which Postgres never cancels on the refresh's behalf, as it
+  /// does an autovacuum.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/claim-loop#the-statistics-refresh-never-waits</docs>
   [Test]
   [Timeout(600000)]
   public async Task RefreshStaleQueueStatistics_WhileAnotherSessionHoldsTheTable_GivesUpWithinTheLockTimeoutAsync(
@@ -190,17 +273,192 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
     await using var holderTransaction = await holder.BeginTransactionAsync(cancellationToken);
     await _executeAsync(holder, "LOCK TABLE wh_perspective_events IN SHARE UPDATE EXCLUSIVE MODE");
 
-    var notices = new List<string>();
-    connection.Notice += (_, e) => notices.Add(e.Notice.MessageText);
-    var refreshed = await _refreshAsync(connection);
+    var notices = new List<PostgresNotice>();
+    await using var claimant = new NpgsqlConnection(ConnectionString);
+    await claimant.OpenAsync(cancellationToken);
+    claimant.Notice += (_, e) => { lock (notices) { notices.Add(e.Notice); } };
+    var claimantPid = await _backendPidAsync(claimant);
+    var refreshing = _refreshAsync(claimant);
+    var waited = await _everWaitedOnALockAsync(connection, claimantPid, refreshing, cancellationToken);
+    var refreshed = await refreshing;
+    await holderTransaction.RollbackAsync(cancellationToken);
 
+    await Assert.That(waited).IsFalse().Because("nothing the refresh would wait on may hold a claim");
     await Assert.That(refreshed).IsEqualTo(0).Because("the table could not be analyzed while another session held it");
+    await Assert.That(_skips(notices)).IsEquivalentTo([(QUEUE_TABLE, LOCK_NOT_AVAILABLE)])
+      .Because($"skipping is reported, never silent (notices: {string.Join(" | ", notices.Select(n => n.MessageText))})");
+    await Assert.That(notices.Single(n => n.MessageText == SKIP_NOTICE).Hint).Contains("wh_perspective_events");
     await Assert.That(await _isStaleAsync(connection)).IsTrue()
-      .Because("nothing was analyzed, so the next claim still finds the table stale and tries again");
-    await Assert.That(notices.Any(n => n.Contains("could not refresh the planner statistics", StringComparison.Ordinal))).IsTrue()
-      .Because($"giving up is reported, with what failed, never swallowed (notices: {string.Join(" | ", notices)})");
-    await Assert.That(await _plannerRowEstimateAsync(connection)).IsLessThan(5_000 / 100)
-      .Because("the statistics are left as they were, for the next claim to refresh");
+      .Because("nothing was analyzed, so the statistics are left for a claim after the back-off");
+    await Assert.That(await _plannerRowEstimateAsync(connection)).IsLessThan(5_000 / 100);
+  }
+
+  /// <summary>
+  /// An ANALYZE that fails, rather than skips, backs the table off too and says what failed: the claim goes on with the
+  /// statistics it has instead of failing with it. Here an expression index raises while the table is analyzed.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/claim-loop#the-statistics-refresh-never-waits</docs>
+  [Test]
+  [Timeout(600000)]
+  public async Task RefreshStaleQueueStatistics_WhenTheAnalyzeFails_BacksOff_AndSaysWhatFailedAsync(
+      CancellationToken cancellationToken) {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext, cancellationToken);
+    await _executeAsync(connection, """
+      CREATE FUNCTION wh_test_analyze_fails(p UUID) RETURNS UUID LANGUAGE plpgsql IMMUTABLE AS $$
+      BEGIN
+        IF current_setting('whizbang_test.analyze_fails', TRUE) = 'on' THEN
+          RAISE EXCEPTION 'the expression index refused to be analyzed';
+        END IF;
+        RETURN p;
+      END $$;
+      CREATE INDEX wh_test_analyze_fails_idx ON wh_perspective_events (wh_test_analyze_fails(stream_id));
+      """);
+    await _analyzeAtOnePageThenFillAsync(connection, rows: 5_000);
+    await Assert.That(await _isStaleAsync(connection)).IsTrue()
+      .Because("precondition: the table must be stale, or the refresh never runs the ANALYZE that fails");
+
+    var notices = new List<PostgresNotice>();
+    await using var claimant = new NpgsqlConnection(ConnectionString);
+    await claimant.OpenAsync(cancellationToken);
+    claimant.Notice += (_, e) => { lock (notices) { notices.Add(e.Notice); } };
+    await _executeAsync(claimant, "SET whizbang_test.analyze_fails = 'on'");
+    var refreshed = await _refreshAsync(claimant);
+
+    await Assert.That(refreshed).IsEqualTo(0);
+    await Assert.That(_skips(notices)).IsEquivalentTo([(QUEUE_TABLE, "failed")]);
+    await Assert.That(notices.Single(n => n.MessageText == SKIP_NOTICE).Hint)
+      .Contains("the expression index refused to be analyzed").Because("the failure is named, never swallowed");
+    await Assert.That((await _backoffAsync(connection))!.Value.Reason).IsEqualTo("failed");
+  }
+
+  /// <summary>
+  /// 207's remedy for a stuck autovacuum (#1349) survives: when the only sessions holding a lock that conflicts with
+  /// ANALYZE are autovacuum workers, the turn's holder waits for the lock, so PostgreSQL cancels the worker after
+  /// deadlock_timeout, and the wait is bounded by deadlock_timeout plus one second. No test can make PostgreSQL run an
+  /// autovacuum on demand, so the classification is replaced in this test's database to call the holder one, and the
+  /// holder is a client session Postgres never cancels: the wait then ends at its bound, and the table backs off.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/claim-loop#the-statistics-refresh-never-waits</docs>
+  [Test]
+  [Timeout(600000)]
+  public async Task RefreshStaleQueueStatistics_WhenOnlyAutovacuumHoldsTheTable_WaitsForItBoundedByTheDeadlockTimeoutAsync(
+      CancellationToken cancellationToken) {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext, cancellationToken);
+    await _analyzeAtOnePageThenFillAsync(connection, rows: 5_000);
+    await _executeAsync(connection,
+      "CREATE OR REPLACE FUNCTION _wh_only_autovacuum_blocks_analyze(p_table REGCLASS) RETURNS BOOLEAN LANGUAGE sql STABLE AS 'SELECT TRUE'");
+    await using var holder = new NpgsqlConnection(ConnectionString);
+    await holder.OpenAsync(cancellationToken);
+    await using var holderTransaction = await holder.BeginTransactionAsync(cancellationToken);
+    await _executeAsync(holder, "LOCK TABLE wh_perspective_events IN SHARE UPDATE EXCLUSIVE MODE");
+
+    var notices = new List<PostgresNotice>();
+    await using var claimant = new NpgsqlConnection(ConnectionString);
+    await claimant.OpenAsync(cancellationToken);
+    claimant.Notice += (_, e) => { lock (notices) { notices.Add(e.Notice); } };
+    var claimantPid = await _backendPidAsync(claimant);
+    var refreshing = _refreshAsync(claimant);
+    var waited = await _everWaitedOnALockAsync(connection, claimantPid, refreshing, cancellationToken);
+    var refreshed = await refreshing;
+    await holderTransaction.RollbackAsync(cancellationToken);
+
+    await Assert.That(waited).IsTrue().Because("an autovacuum is waited for, so that PostgreSQL cancels it");
+    await Assert.That(refreshed).IsEqualTo(0).Because("the holder here is not an autovacuum, so nothing cancelled it");
+    await Assert.That(_skips(notices)).IsEquivalentTo([(QUEUE_TABLE, "lock_timeout")])
+      .Because("the wait is bounded, and a wait that reached its bound backs the table off like a skip");
+    await Assert.That(notices.Single(n => n.MessageText == SKIP_NOTICE).Hint).Contains("lock timeout");
+  }
+
+  /// <summary>
+  /// Who counts as an autovacuum worker for that wait: every session holding a lock that conflicts with ANALYZE must be
+  /// one, read from <c>backend_type</c>, or, for a role not allowed to read it, from a session connected to the database
+  /// with no user. A client session, or no holder at all, is not. The holder is a real session holding a real lock; a
+  /// temporary view stands in for <c>pg_stat_activity</c> in this session only to give it each type, as in
+  /// <c>StampFenceAutovacuumSqlTests</c>. The refresh itself pins <c>pg_catalog</c> first, where no view can stand in.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/claim-loop#the-statistics-refresh-never-waits</docs>
+  [Test]
+  [Timeout(600000)]
+  public async Task OnlyAutovacuumBlocksAnalyze_IsTrueOnlyWhenEveryConflictingHolderIsAnAutovacuumWorkerAsync(
+      CancellationToken cancellationToken) {
+    await using var observer = new NpgsqlConnection(ConnectionString);
+    await observer.OpenAsync(cancellationToken);
+    var nobody = await _scalarAsync<bool>(observer, "SELECT _wh_only_autovacuum_blocks_analyze('wh_perspective_events')");
+    await using var holder = new NpgsqlConnection(ConnectionString);
+    await holder.OpenAsync(cancellationToken);
+    var holderPid = await _backendPidAsync(holder);
+    await using var holderTransaction = await holder.BeginTransactionAsync(cancellationToken);
+    await _executeAsync(holder, "LOCK TABLE wh_perspective_events IN SHARE UPDATE EXCLUSIVE MODE");
+
+    var autovacuum = await _onlyAutovacuumAsSeenAsync(observer, holderPid, "'autovacuum worker'", "a.usesysid");
+    var hidden = await _onlyAutovacuumAsSeenAsync(observer, holderPid, "NULL::text", "NULL::oid");
+    var client = await _onlyAutovacuumAsSeenAsync(observer, holderPid, "'client backend'", "a.usesysid");
+    var hiddenClient = await _onlyAutovacuumAsSeenAsync(observer, holderPid, "NULL::text", "a.usesysid");
+    await holderTransaction.RollbackAsync(cancellationToken);
+
+    await Assert.That(nobody).IsFalse().Because("with no holder there is nothing to wait for");
+    await Assert.That(autovacuum).IsTrue();
+    await Assert.That(hidden).IsTrue().Because("a hidden session in the database with no user is an autovacuum worker");
+    await Assert.That(client).IsFalse();
+    await Assert.That(hiddenClient).IsFalse().Because("a hidden session with a user is a client, and is never waited for");
+  }
+
+  /// <summary>The classification as this session sees it with the holder given a backend type and a user.</summary>
+  private static async Task<bool> _onlyAutovacuumAsSeenAsync(NpgsqlConnection observer, int holderPid, string type, string user) {
+    var pid = holderPid.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    await _executeAsync(observer, $"""
+      CREATE OR REPLACE TEMP VIEW pg_stat_activity AS
+      SELECT a.datid, a.pid,
+             CASE WHEN a.pid = {pid} THEN {user} ELSE a.usesysid END AS usesysid,
+             CASE WHEN a.pid = {pid} THEN {type} ELSE a.backend_type END AS backend_type
+      FROM pg_catalog.pg_stat_activity a
+      """);
+    return await _scalarAsync<bool>(observer, "SELECT _wh_only_autovacuum_blocks_analyze('wh_perspective_events')");
+  }
+
+  /// <summary>
+  /// Through the coordinator, as a service claims: with the refresh unable to analyze, the claim never waits on a lock,
+  /// still claims, counts the skip on <c>whizbang.work_coordinator.queue_statistics.refresh_skipped</c> by table and
+  /// reason, and warns once per back-off, naming the table.
+  /// </summary>
+  /// <docs>operations/observability/metrics#queue-statistics-refresh</docs>
+  [Test]
+  [Timeout(600000)]
+  public async Task ClaimWork_WhileTheRefreshCannotAnalyze_NeverWaits_CountsTheSkip_AndWarnsOncePerBackoffAsync(
+      CancellationToken cancellationToken) {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext, cancellationToken);
+    var poller = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    await _heartbeatAsync(connection, poller);
+    await _analyzeAtOnePageThenFillAsync(connection, rows: 5_000);
+    await using var holder = new NpgsqlConnection(ConnectionString);
+    await holder.OpenAsync(cancellationToken);
+    await using var holderTransaction = await holder.BeginTransactionAsync(cancellationToken);
+    await _executeAsync(holder, "LOCK TABLE wh_perspective_events IN SHARE UPDATE EXCLUSIVE MODE");
+    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+    var logger = new WarningLogger();
+    await using var claimContext = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      claimContext, JsonContextRegistry.CreateCombinedOptions(), logger, metrics);
+    var request = new ClaimWorkRequest(poller, "test", "test-host", 1, MaxStreams: BATCH);
+
+    var claiming = coordinator.ClaimWorkAsync(request, cancellationToken);
+    var waited = await _anyoneWaitedOnTheTableAsync(connection, claiming, cancellationToken);
+    var batch = await claiming;
+    _ = await coordinator.ClaimWorkAsync(request, cancellationToken);
+    await holderTransaction.RollbackAsync(cancellationToken);
+    var skips = _skipCounts(metrics);
+
+    await Assert.That(waited).IsFalse().Because("a claim never waits on the statistics refresh");
+    await Assert.That(batch.PerspectiveStreamIds).IsNotEmpty().Because("the claim goes on with the statistics it has");
+    await Assert.That(skips).IsEquivalentTo([(1L, (string?)QUEUE_TABLE, (string?)LOCK_NOT_AVAILABLE)])
+      .Because("the skip is counted by table and reason, once per back-off");
+    await Assert.That(logger.Warnings.Count(w => w.Contains(QUEUE_TABLE, StringComparison.Ordinal)
+        && w.Contains("could not be refreshed", StringComparison.Ordinal))).IsEqualTo(1)
+      .Because($"the skip is warned once per back-off, naming the table (warnings: {string.Join(" | ", logger.Warnings)})");
   }
 
   /// <summary>
@@ -250,6 +508,143 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
         .Because("the table was analyzed once");
     } finally {
       await _executeAsync(connection, $"DROP OWNED BY {role}; DROP ROLE {role}");
+    }
+  }
+
+  /// <summary>The refresh's turn on the perspective-event table: its advisory lock's two keys.</summary>
+  private const string TURN_LOCK_KEY =
+    "hashtext('wh_refresh_stale_queue_statistics'), 'wh_perspective_events'::regclass::oid::integer";
+  private const string QUEUE_TABLE = "wh_perspective_events";
+  private const string LOCK_NOT_AVAILABLE = "lock_not_available";
+  private const string SKIP_NOTICE = "whizbang.queue_statistics_refresh_skipped";
+  private const string SKIP_COUNTER = "whizbang.work_coordinator.queue_statistics.refresh_skipped";
+
+  /// <summary>The warnings a coordinator writes.</summary>
+  private sealed class WarningLogger : ILogger<EFCoreWorkCoordinator<WorkCoordinationDbContext>> {
+    private readonly List<string> _warnings = [];
+    public List<string> Warnings { get { lock (_warnings) { return [.. _warnings]; } } }
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (logLevel == LogLevel.Warning) {
+        lock (_warnings) { _warnings.Add(formatter(state, exception)); }
+      }
+    }
+  }
+
+  /// <summary>The skip counter's non-zero series, as (count, table, reason), read at one collection.</summary>
+  private static List<(long Value, string? Table, string? Reason)> _skipCounts(WorkCoordinatorMetrics metrics) {
+    var cells = new List<(long, string?, string?)>();
+    using var listener = new MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (ReferenceEquals(instrument.Meter, metrics.QueueStatisticsRefreshSkips.Meter) && instrument.Name == SKIP_COUNTER) {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
+      string? table = null;
+      string? reason = null;
+      foreach (var tag in tags) {
+        if (tag.Key == WorkCoordinatorMetrics.TABLE_TAG) {
+          table = tag.Value as string;
+        } else if (tag.Key == WorkCoordinatorMetrics.REASON_TAG) {
+          reason = tag.Value as string;
+        }
+      }
+      if (value > 0) {
+        cells.Add((value, table, reason));
+      }
+    });
+    listener.Start();
+    listener.RecordObservableInstruments();
+    return cells;
+  }
+
+  /// <summary>The refresh-skipped notices among <paramref name="notices"/>, as (table, reason) from their detail.</summary>
+  private static List<(string, string)> _skips(List<PostgresNotice> notices) {
+    lock (notices) {
+      return [.. notices.Where(n => n.MessageText == SKIP_NOTICE).Select(n => {
+        var detail = n.Detail ?? "";
+        var split = detail.IndexOf('=', StringComparison.Ordinal);
+        return split < 0 ? (detail, "") : (detail[..split], detail[(split + 1)..]);
+      })];
+    }
+  }
+
+  /// <summary>How many times ANALYZE (SKIP_LOCKED) itself said it skipped a table.</summary>
+  private static int _analyzeSkips(List<PostgresNotice> notices) {
+    lock (notices) {
+      return notices.Count(n => n.MessageText.StartsWith("skipping analyze of", StringComparison.Ordinal));
+    }
+  }
+
+  /// <summary>The perspective-event table's back-off, if it has one: its reason and whether it lasts past now.</summary>
+  private static async Task<(string Reason, bool InTheFuture)?> _backoffAsync(NpgsqlConnection connection) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT reason, retry_after > NOW() FROM wh_queue_statistics_backoff WHERE table_name = @t";
+    cmd.Parameters.AddWithValue("t", QUEUE_TABLE);
+    await using var reader = await cmd.ExecuteReaderAsync();
+    return await reader.ReadAsync() ? (reader.GetString(0), reader.GetBoolean(1)) : null;
+  }
+
+  private static async Task<T> _scalarAsync<T>(NpgsqlConnection connection, string sql) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = sql;
+    return (T)(await cmd.ExecuteScalarAsync())!;
+  }
+
+  /// <summary>
+  /// Whether the given backend was ever seen waiting for a lock while <paramref name="call"/> ran: read from
+  /// <c>pg_locks</c> until the call finishes. A call that waits shows here for as long as it waits.
+  /// </summary>
+  private static async Task<bool> _everWaitedOnALockAsync(
+      NpgsqlConnection observer, int pid, Task call, CancellationToken cancellationToken) {
+    await using var cmd = observer.CreateCommand();
+    cmd.CommandText = "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = @pid AND NOT granted)";
+    cmd.Parameters.AddWithValue(nameof(pid), pid);
+    var waited = false;
+    while (!call.IsCompleted) {
+      waited |= (bool)(await cmd.ExecuteScalarAsync(cancellationToken))!;
+      await Task.Yield();
+    }
+    return waited;
+  }
+
+  /// <summary>
+  /// Whether any backend was seen waiting for a lock on the perspective-event table, or for an advisory lock, while
+  /// <paramref name="call"/> ran. The holder's own lock is granted, so a waiter here can only be the claim.
+  /// </summary>
+  private static async Task<bool> _anyoneWaitedOnTheTableAsync(
+      NpgsqlConnection observer, Task call, CancellationToken cancellationToken) {
+    await using var cmd = observer.CreateCommand();
+    cmd.CommandText = """
+      SELECT EXISTS (
+        SELECT 1 FROM pg_locks
+        WHERE NOT granted AND (relation = 'wh_perspective_events'::regclass OR locktype = 'advisory'))
+      """;
+    var waited = false;
+    while (!call.IsCompleted) {
+      waited |= (bool)(await cmd.ExecuteScalarAsync(cancellationToken))!;
+      await Task.Yield();
+    }
+    return waited;
+  }
+
+  /// <summary>
+  /// Returns once the given backend waits on another transaction's virtual transaction id, which is where a concurrent
+  /// reindex waits for the transactions older than it: the signal, not a delay. Throws if the call finished first.
+  /// </summary>
+  private static async Task _untilWaitingOnVirtualXidAsync(
+      NpgsqlConnection observer, int pid, Task call, CancellationToken cancellationToken) {
+    await using var cmd = observer.CreateCommand();
+    cmd.CommandText = "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = @pid AND locktype = 'virtualxid' AND NOT granted)";
+    cmd.Parameters.AddWithValue(nameof(pid), pid);
+    while (!(bool)(await cmd.ExecuteScalarAsync(cancellationToken))!) {
+      if (call.IsCompleted) {
+        await call;
+        throw new InvalidOperationException("precondition: the reindex finished without waiting on the idle transaction");
+      }
+      await Task.Yield();
     }
   }
 
@@ -375,25 +770,6 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = "SELECT pg_backend_pid()";
     return Convert.ToInt32(await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
-  }
-
-  /// <summary>
-  /// Returns once the given backend is waiting on an advisory lock: the signal, not a delay. Also
-  /// returns if the call that should be waiting has already finished, so a call that never waits fails
-  /// the assertions after it instead of hanging the test.
-  /// </summary>
-  private static async Task<bool> _untilWaitingOnAdvisoryLockAsync(
-      NpgsqlConnection observer, int pid, Task call, CancellationToken cancellationToken) {
-    await using var cmd = observer.CreateCommand();
-    cmd.CommandText = "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = @pid AND locktype = 'advisory' AND NOT granted)";
-    cmd.Parameters.AddWithValue(nameof(pid), pid);
-    while (!call.IsCompleted) {
-      if ((bool)(await cmd.ExecuteScalarAsync(cancellationToken))!) {
-        return true;
-      }
-      await Task.Yield();
-    }
-    return false;
   }
 
   /// <summary>How many times the perspective-event table has been analyzed by hand, cluster counters flushed.</summary>

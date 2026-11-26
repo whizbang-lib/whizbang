@@ -33,6 +33,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class QueueIndexReindexSqlTests : EFCoreTestBase {
   private const string PKEY = "wh_active_streams_pkey";
   private const long MIB = 1024 * 1024;
+  // The lock timeout these tests give the rebuild and the drop: long enough for a lock nothing holds, short for a test.
+  private static readonly TimeSpan _bound = TimeSpan.FromMilliseconds(500);
   private static readonly string[] _queueTables =
     ["wh_outbox", "wh_inbox", "wh_inbox_state", "wh_perspective_events", "wh_active_streams", "wh_doorbell_queue"];
 
@@ -338,6 +340,209 @@ public class QueueIndexReindexSqlTests : EFCoreTestBase {
     }
   }
 
+  // ── The bounded wait (#2611) ────────────────────────────────────────────
+
+  /// <summary>
+  /// A concurrent rebuild waits for every transaction older than it, while it holds a lock on the table that blocks
+  /// ANALYZE. Behind an idle transaction it used to wait for as long as that transaction stayed open (over three hours on
+  /// a deployed service). With a lock timeout it gives up within the bound, and names the session it waited on and how
+  /// long that session's transaction has been open.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+  [Test]
+  [Timeout(90000)]
+  public async Task Rebuild_BehindAnIdleTransaction_GivesUpWithinTheLockTimeout_AndNamesTheBlockerAsync(
+      CancellationToken cancellationToken) {
+    await using var holder = new NpgsqlConnection(ConnectionString);
+    await holder.OpenAsync(cancellationToken);
+    var holderPid = await _pidAsync(holder, cancellationToken);
+    await using var idle = await _idleWithASnapshotAsync(holder, cancellationToken);
+    await using var context = CreateDbContext();
+
+    IWorkCoordinator coordinator = _coordinator(context);
+    var outcome = await coordinator.RebuildQueueIndexAsync(PKEY, _bound, cancellationToken);
+    await idle.RollbackAsync(cancellationToken);
+
+    await Assert.That(outcome.GaveUp).IsTrue().Because("the rebuild may wait for the idle transaction only up to the bound");
+    await Assert.That(outcome.SizeAfterBytes).IsNull();
+    await Assert.That(outcome.Blockers.Select(b => b.Pid)).Contains(holderPid)
+      .Because("the session the rebuild waited on is named, so an operator can find it");
+    await Assert.That(outcome.Blockers.Single(b => b.Pid == holderPid).TransactionAge!.Value).IsGreaterThan(TimeSpan.Zero);
+    await Assert.That(outcome.HiddenSessions).IsEqualTo(0).Because("the test's role sees every session");
+  }
+
+  /// <summary>
+  /// With nothing older in its way the bounded rebuild runs as before: it rebuilds and reports the size.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+  [Test]
+  [Timeout(90000)]
+  public async Task Rebuild_WithNothingInItsWay_RebuildsWithinTheBoundAsync(CancellationToken cancellationToken) {
+    await using var context = CreateDbContext();
+
+    IWorkCoordinator coordinator = _coordinator(context);
+    var outcome = await coordinator.RebuildQueueIndexAsync(PKEY, _bound, cancellationToken);
+
+    await Assert.That(outcome.GaveUp).IsFalse();
+    await Assert.That(outcome.SizeAfterBytes).IsEqualTo(await _sizeAsync(PKEY, cancellationToken));
+    await Assert.That(outcome.Blockers).IsEmpty();
+  }
+
+  /// <summary>
+  /// A leftover's drop waits for every session holding a lock on the table. With a lock timeout it gives up within the
+  /// bound instead, and the leftover stays for a later cycle.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+  [Test]
+  [Timeout(90000)]
+  public async Task Drop_BehindATransactionHoldingTheTable_GivesUpWithinTheLockTimeoutAsync(CancellationToken cancellationToken) {
+    await _leaveAnInvalidLeftoverAsync(PKEY + "_ccnew", cancellationToken);
+    await using var holder = new NpgsqlConnection(ConnectionString);
+    await holder.OpenAsync(cancellationToken);
+    await using var hold = await holder.BeginTransactionAsync(cancellationToken);
+    await using (var touch = new NpgsqlCommand("SELECT count(*) FROM wh_active_streams", holder, hold)) {
+      await touch.ExecuteScalarAsync(cancellationToken);
+    }
+    await using var context = CreateDbContext();
+
+    IWorkCoordinator coordinator = _coordinator(context);
+    var drop = async () => await coordinator.DropInvalidQueueIndexAsync(PKEY + "_ccnew", _bound, cancellationToken);
+
+    var thrown = await Assert.That(drop).Throws<PostgresException>();
+    await hold.RollbackAsync(cancellationToken);
+    await Assert.That(thrown!.SqlState).IsEqualTo(PostgresErrorCodes.LockNotAvailable);
+    await Assert.That(await _existsAsync(PKEY + "_ccnew", cancellationToken)).IsTrue().Because("it is dropped on a later cycle");
+  }
+
+  /// <summary>
+  /// The step, behind an idle transaction: the rebuild gives up within the configured bound, the warning names the index
+  /// and the session it waited on, <c>whizbang.maintenance.queue_index_rebuild.gave_up</c> counts it, and the invalid copy
+  /// the attempt left is dropped at once. Once the transaction has ended, a later cycle rebuilds.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
+  [Test]
+  [Timeout(180000)]
+  public async Task TheStep_BehindAnIdleTransaction_GivesUp_NamesTheBlocker_CountsIt_AndLeavesNoLeftoverAsync(
+      CancellationToken cancellationToken) {
+    await _churnToEmptyAsync(cancellationToken);
+    await using var context = CreateDbContext();
+    var coordinator = _coordinator(context);
+    var (chosen, before) = await _mostReclaimableAsync(coordinator, cancellationToken);
+    await using var holder = new NpgsqlConnection(ConnectionString);
+    await holder.OpenAsync(cancellationToken);
+    var holderPid = await _pidAsync(holder, cancellationToken);
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 11, 26, 12, 0, 0, TimeSpan.Zero));
+    var metrics = new MaintenanceMetrics(new WhizbangMetrics(
+      new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>()));
+    var logger = new CapturingLogger<QueueIndexReindexStep>();
+
+    await using (var idle = await _idleWithASnapshotAsync(holder, cancellationToken)) {
+      await _runStepAsync(context, coordinator, cancellationToken, logger, clock, metrics);
+      await idle.RollbackAsync(cancellationToken);
+    }
+    var leftovers = (await coordinator.GetQueueIndexBloatAsync(cancellationToken)).Where(s => s.IsReindexLeftover).ToArray();
+    var sizeAfterGivingUp = await _sizeAsync(chosen, cancellationToken);
+    // Past the claim window (half the maintenance interval), so the next cycle claims the step again.
+    clock.Advance(TimeSpan.FromDays(1));
+    await _runStepAsync(context, coordinator, cancellationToken, logger, clock, metrics);
+
+    await Assert.That(logger.Messages.Any(m => m.Contains($"rebuild of {chosen} on wh_active_streams gave up", StringComparison.Ordinal)
+        && m.Contains($"pid {holderPid} (transaction open ", StringComparison.Ordinal))).IsTrue()
+      .Because($"the warning names the index and the session it waited on (log: {string.Join(" | ", logger.Messages)})");
+    await Assert.That(_gaveUpTotal(metrics)).IsEqualTo(1L);
+    await Assert.That(leftovers).IsEmpty().Because("the copy the attempt left is dropped right away, not written on every insert until later");
+    await Assert.That(sizeAfterGivingUp).IsEqualTo(before);
+    await Assert.That(await _sizeAsync(chosen, cancellationToken)).IsLessThan(before / 10)
+      .Because("once the transaction has ended, a later cycle rebuilds");
+  }
+
+  /// <summary>
+  /// What the deployed service was left with (#2611): a concurrent rebuild of the inbox state's held-lanes index, waiting
+  /// on an idle transaction, cancelled by hand, leaves <c>idx_inbox_state_held_lanes_covering_ccnew</c> invalid on the
+  /// table, maintained on every write. The next cycle drops it, with the idle transaction still open.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#queue-index-leftovers</docs>
+  [Test]
+  [Timeout(180000)]
+  public async Task TheStep_DropsTheCopyACancelledRebuildLeftOnTheInboxState_WhileTheIdleTransactionIsStillOpenAsync(
+      CancellationToken cancellationToken) {
+    const string held = "idx_inbox_state_held_lanes_covering";
+    await _execAsync(
+      "CREATE INDEX IF NOT EXISTS " + held + " ON wh_inbox_state (instance_id, (CASE WHEN priority <= 99 THEN 0 WHEN priority <= 199 THEN 1 "
+      + "WHEN priority <= 399 THEN 2 ELSE 3 END), is_event, ((attempts = 0)), stream_id, received_at, message_id) "
+      + "INCLUDE (priority, attempts, partition_number, status, lease_expiry, chain_emitted_at) WHERE processed_at IS NULL",
+      cancellationToken);
+    await using var holder = new NpgsqlConnection(ConnectionString);
+    await holder.OpenAsync(cancellationToken);
+    await using var idle = await _idleWithASnapshotAsync(holder, cancellationToken);
+    await using var reindexer = new NpgsqlConnection(ConnectionString);
+    await reindexer.OpenAsync(cancellationToken);
+    var reindexerPid = await _pidAsync(reindexer, cancellationToken);
+    var reindex = Task.Run(async () => {
+      await using var command = new NpgsqlCommand($"REINDEX INDEX CONCURRENTLY {held}", reindexer) { CommandTimeout = 0 };
+      await command.ExecuteNonQueryAsync(cancellationToken);
+    }, cancellationToken);
+    await _untilWaitingOnAnOlderTransactionAsync(reindexerPid, reindex, cancellationToken);
+    await _execAsync($"SELECT pg_cancel_backend({reindexerPid})", cancellationToken);
+    await Assert.That(async () => await reindex).Throws<PostgresException>();
+    await Assert.That(await _scalarAsync<bool>(
+      $"SELECT NOT indisvalid FROM pg_index WHERE indexrelid = to_regclass('{held}_ccnew')", cancellationToken)).IsTrue()
+      .Because("precondition: the cancelled rebuild left its copy invalid on the table, as on the deployed service");
+    await using var context = CreateDbContext();
+
+    await _runStepAsync(context, _coordinator(context), cancellationToken);
+
+    await Assert.That(await _existsAsync(held + "_ccnew", cancellationToken)).IsFalse();
+    await Assert.That(await _existsAsync(held, cancellationToken)).IsTrue();
+    await idle.RollbackAsync(cancellationToken);
+  }
+
+  private static async Task<int> _pidAsync(NpgsqlConnection connection, CancellationToken cancellationToken) {
+    await using var command = new NpgsqlCommand("SELECT pg_backend_pid()", connection);
+    return (int)(await command.ExecuteScalarAsync(cancellationToken))!;
+  }
+
+  /// <summary>
+  /// An application transaction left idle holding a snapshot, as a long run-once job holds one: a concurrent index build
+  /// waits for it.
+  /// </summary>
+  private static async Task<NpgsqlTransaction> _idleWithASnapshotAsync(NpgsqlConnection connection, CancellationToken cancellationToken) {
+    var transaction = await connection.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, cancellationToken);
+    await using var snapshot = new NpgsqlCommand("SELECT count(*) FROM wh_settings", connection, transaction);
+    await snapshot.ExecuteScalarAsync(cancellationToken);
+    return transaction;
+  }
+
+  /// <summary>
+  /// Waits until the backend waits on another transaction's virtual transaction id, where a concurrent rebuild waits for
+  /// the transactions older than it. Throws if the rebuild finished first.
+  /// </summary>
+  private async Task _untilWaitingOnAnOlderTransactionAsync(int pid, Task call, CancellationToken cancellationToken) {
+    while (!await _scalarAsync<bool>(
+      $"SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = {pid} AND locktype = 'virtualxid' AND NOT granted)", cancellationToken)) {
+      if (call.IsCompleted) {
+        await call;
+        throw new InvalidOperationException("precondition: the rebuild finished without waiting on the idle transaction");
+      }
+      cancellationToken.ThrowIfCancellationRequested();
+    }
+  }
+
+  private static long _gaveUpTotal(MaintenanceMetrics metrics) {
+    long total = 0;
+    using var listener = new System.Diagnostics.Metrics.MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (ReferenceEquals(instrument.Meter, metrics.QueueIndexRebuildsGaveUp.Meter)
+          && instrument.Name == "whizbang.maintenance.queue_index_rebuild.gave_up") {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, _, _) => total += value);
+    listener.Start();
+    listener.RecordObservableInstruments();
+    return total;
+  }
+
   /// <summary>
   /// A failed concurrent build leaves its index behind, invalid: a unique index over a column with duplicates, as a
   /// rebuild interrupted part way leaves its copy.
@@ -382,13 +587,17 @@ public class QueueIndexReindexSqlTests : EFCoreTestBase {
   }
 
   private static async Task _runStepAsync(
-      WorkCoordinationDbContext context, IWorkCoordinator coordinator, CancellationToken cancellationToken) {
+      WorkCoordinationDbContext context, IWorkCoordinator coordinator, CancellationToken cancellationToken,
+      ILogger<QueueIndexReindexStep>? logger = null, TimeProvider? clock = null, MaintenanceMetrics? metrics = null) {
     var step = new QueueIndexReindexStep(
-      Options.Create(new MaintenanceWorkerOptions()), NullLogger<QueueIndexReindexStep>.Instance);
-    await using var services = new ServiceCollection()
+      Options.Create(new MaintenanceWorkerOptions { ReindexLockTimeout = _bound }), logger ?? NullLogger<QueueIndexReindexStep>.Instance, clock);
+    var services = new ServiceCollection()
       .AddSingleton(coordinator)
-      .AddSingleton<IClaimedEmissionStore>(new EFCoreClaimedEmissionStore(context))
-      .BuildServiceProvider();
-    await step.RunAsync(services, cancellationToken);
+      .AddSingleton<IClaimedEmissionStore>(new EFCoreClaimedEmissionStore(context));
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
+    }
+    await using var provider = services.BuildServiceProvider();
+    await step.RunAsync(provider, cancellationToken);
   }
 }
