@@ -21,7 +21,7 @@ namespace Whizbang.Generators.Analyzers;
 /// <item>WHIZ120 (error) — a pinned type whose current CLR name is neither the ledger's recorded name nor one of
 /// its former names: an un-acknowledged RENAME. The code fix records the former name so old events still resolve.</item>
 /// <item>WHIZ121 (warning) — a ledger entry whose pinned id has no living type: a removed type or changed id.</item>
-/// <item>WHIZ119 (error) — the same for a strong id (kind <c>strong-id</c>, #2604): its pinned id fixes every id it
+/// <item>WHIZ119 (error): the same for a strong id (kind <c>strong-id</c>, #2604): its pinned id fixes every id it
 /// derives, so a changed pin is never only a warning.</item>
 /// </list>
 /// The analyzer is INERT when no <c>.whizbang/pinned-type-ledger.json</c> is supplied via AdditionalFiles, so adoption
@@ -105,7 +105,7 @@ public class PinnedTypeRenameAnalyzer : DiagnosticAnalyzer {
       }
     }
 
-    // WHIZ121 — a ledger entry with no living type of that pinned id; WHIZ119 (an error) for a strong id, whose pin
+    // WHIZ121: a ledger entry with no living type of that pinned id; WHIZ119 (an error) for a strong id, whose pin
     // fixes every id it derives (#2604).
     foreach (var entry in ledger.Types) {
       if (!living.ContainsKey(entry.PinnedId)) {

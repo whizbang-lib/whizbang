@@ -863,7 +863,7 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ118: Error — <c>DeriveFrom</c> is called on a strong id that has no pinned id (#2604).
+  /// WHIZ118: Error: <c>DeriveFrom</c> is called on a strong id that has no pinned id (#2604).
   /// </summary>
   /// <docs>operations/diagnostics/whiz118</docs>
   /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StrongIdDeriveFromAnalyzerTests.cs</tests>
@@ -878,7 +878,7 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ119: Error — the pinned-type ledger records a strong id whose pinned id no living id carries (#2604).
+  /// WHIZ119: Error: the pinned-type ledger records a strong id whose pinned id no living id carries (#2604).
   /// </summary>
   /// <docs>operations/diagnostics/whiz119</docs>
   /// <tests>tests/Whizbang.Generators.Tests/PinnedStrongIdTests.cs</tests>
@@ -894,7 +894,7 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ123: Error — the declarations of one strong id pin it differently (#2604).
+  /// WHIZ123: Error: the declarations of one strong id pin it differently (#2604).
   /// </summary>
   /// <docs>operations/diagnostics/whiz123</docs>
   /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdDeriveFromTests.cs</tests>
