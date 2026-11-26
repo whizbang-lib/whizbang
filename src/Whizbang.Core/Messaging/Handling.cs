@@ -27,7 +27,7 @@ namespace Whizbang.Core.Messaging;
 public sealed class Handling {
   private static readonly Handling _none = new(null, string.Empty, null);
 
-  private readonly object _gate = new();
+  private readonly Lock _gate = new();
   private HashSet<(Guid PinnedId, string Purpose)>? _purposes;
   private volatile bool _ended;
 
