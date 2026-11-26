@@ -107,3 +107,22 @@ Describe 'every ILRepack merge' {
     }
   }
 }
+
+# The check packs what ships the way CI does: it builds the filter, then packs with no build. A pack that builds as it
+# goes packs each project after building only what that project references, so a package that bundles another
+# project's bin output (Whizbang.Generators and its code fixes) depends on project order to carry it.
+Describe 'the reproducible-build check' {
+  BeforeAll {
+    $script:Workflow = Get-Content -Raw -LiteralPath (Join-Path $script:RepoRoot '.github/workflows/reusable-reproducible-build.yml')
+  }
+
+  It 'builds the packable filter before it packs' {
+    $script:Workflow | Should -Match 'dotnet build "\$RUNNER_TEMP/packable\.slnf"'
+  }
+
+  It 'packs that build without building again' {
+    $pack = [regex]::Match($script:Workflow, 'dotnet pack "\$RUNNER_TEMP/packable\.slnf"(?:[^\n]*\\\n)*[^\n]*').Value
+    $pack | Should -Not -BeNullOrEmpty
+    $pack | Should -Match '--no-build'
+  }
+}
