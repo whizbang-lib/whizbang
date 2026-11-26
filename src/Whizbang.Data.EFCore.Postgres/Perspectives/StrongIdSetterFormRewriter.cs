@@ -51,13 +51,14 @@ internal sealed class StrongIdSetterFormRewriter(
 
   /// <summary>
   /// Whether the statement running in <paramref name="context"/> sets an id as its UUID string: whether the gate of the
-  /// schema it updates, in the database the context is connected to, is open (#2518).
+  /// schema it updates, in the database the context's connection reaches (as the server names it), is open (#2518).
   /// </summary>
   /// <param name="context">The running query's context.</param>
   /// <param name="schema">The updated table's schema; null is <c>public</c>.</param>
   /// <returns>True to set the UUID string.</returns>
   internal static bool WritesUuidStringFor(QueryContext context, string? schema) =>
-    WhizbangIdDocumentForm.WritesUuidStringTo(context.Context.Database.GetDbConnection().Database, schema);
+    WhizbangIdDocumentForm.WritesUuidStringTo(
+      Whizbang.Data.Postgres.PostgresServerDatabase.KeyOf(context.Context.Database.GetDbConnection()), schema);
 
   /// <inheritdoc/>
   protected override Expression VisitExtension(Expression node) {

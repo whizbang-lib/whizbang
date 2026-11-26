@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Data.Common;
 using System.Diagnostics.Metrics;
 using System.Linq;
 using System.Threading;
@@ -123,16 +124,17 @@ public static class StrongIdDocumentGate {
       NpgsqlConnection connection, string? schema, ILogger? logger, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(connection);
     var target = string.IsNullOrEmpty(schema) ? "public" : schema;
+    var database = await PostgresServerDatabase.ResolveAsync(connection, cancellationToken).ConfigureAwait(false);
     var answer = await _askAsync(connection, target, cancellationToken).ConfigureAwait(false);
     switch (answer.State) {
       case StrongIdDocumentGateState.Open or StrongIdDocumentGateState.Ready:
-        WhizbangIdDocumentForm.Open(connection.Database, target);
+        WhizbangIdDocumentForm.Open(database, target);
         break;
       default:
-        WhizbangIdDocumentForm.Hold(connection.Database, target);
+        WhizbangIdDocumentForm.Hold(database, target);
         break;
     }
-    _report(connection.Database, target, answer.Unreadable, logger ?? NullLogger.Instance);
+    _report(database, target, answer.Unreadable, logger ?? NullLogger.Instance);
     return answer;
   }
 
@@ -140,9 +142,11 @@ public static class StrongIdDocumentGate {
   /// Holds a schema whose gate could not be asked (a lost connection, a timeout), so the process keeps writing the object
   /// form every release reads until a later check answers. Holding only ever keeps the form every release reads.
   /// </summary>
-  /// <param name="database">The database the schema is in.</param>
+  /// <param name="connection">The connection the gate was to be asked on, open or not: the schema is held under the name
+  /// the server gives its database, or a provisional one until that is known (<see cref="PostgresServerDatabase"/>).</param>
   /// <param name="schema">The schema; null or empty is <c>public</c>.</param>
-  public static void HoldUnasked(string? database, string? schema) => WhizbangIdDocumentForm.Hold(database, schema);
+  public static void HoldUnasked(DbConnection connection, string? schema) =>
+    WhizbangIdDocumentForm.Hold(PostgresServerDatabase.KeyOf(connection), schema);
 
   /// <summary>
   /// Why the strong-id stored-form rewrite must wait, as a batched rewrite's hold asks it: null once every live instance

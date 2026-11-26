@@ -378,13 +378,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = _resolveSchema(typeof(OutboxRecord));
     var functionName = BuildSchemaQualifiedName(schema, "record_heartbeat");
 
-    // #2323: the metadata with this build's stored form level, which the trim gate counts. #2518: and whether this process
-    // writes strongly-typed ids into this schema's documents as UUID strings, which its own gate decides.
-    string metadataJson;
-    using (Perspectives.StrongIdDocumentTarget.Of(_dbContext, schema)) {
-      metadataJson = request.MetadataJson();
-    }
-
     // record_heartbeat returns BOOLEAN (migration 106): false means this instance_id has been
     // tombstoned in wh_instance_evictions and the caller must stop heartbeating. ExecuteSqlRawAsync
     // discards the function's own return value (it reports affected ROWS, not the result), so the
@@ -393,6 +386,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = scope.Connection;
+
+    // #2323: the metadata with this build's stored form level, which the trim gate counts. #2518: and whether this process
+    // writes strongly-typed ids into this schema's documents as UUID strings, which its own gate decides, keyed on the
+    // name the server gives the database this connection reaches.
+    var database = await Whizbang.Data.Postgres.PostgresServerDatabase.ResolveAsync(conn, cancellationToken);
+    string metadataJson;
+    using (Whizbang.Core.Perspectives.WhizbangIdDocumentForm.WritingTo(database, schema)) {
+      metadataJson = request.MetadataJson();
+    }
+
     await using var cmd = conn.CreateCoordinatorCommand();
 #pragma warning disable S2077
     cmd.CommandText = $"SELECT {functionName}(@instanceId, @serviceName, @hostName, @processId, @metadata::jsonb, @phase, @version, @staleSeconds, @connectionMode, @applicationVersion)";

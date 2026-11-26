@@ -606,8 +606,9 @@ public class EFCorePostgresPerspectiveStore<TModel>(
     // For EF Core, ensure all tracked changes are committed to the database
     // This is critical for PostPerspectiveInline lifecycle stage which guarantees
     // data is persisted and queryable before receptors fire. A strongly-typed id in the documents it writes takes the
-    // form this table's schema's gate allows (#2518).
-    using (Perspectives.StrongIdDocumentTarget.Of(_context, typeof(PerspectiveRow<TModel>))) {
+    // form the gates of every schema the save writes into allow, whichever perspectives' rows it holds (#2518).
+    await Perspectives.StrongIdDocumentTarget.ResolveAsync(_context, cancellationToken);
+    using (Perspectives.StrongIdDocumentTarget.OfTracked(_context)) {
       await _context.SaveChangesAsync(cancellationToken);
     }
   }

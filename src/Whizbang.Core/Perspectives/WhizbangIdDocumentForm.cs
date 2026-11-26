@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Collections.Immutable;
+
 namespace Whizbang.Core.Perspectives;
 
 /// <summary>
@@ -38,7 +40,7 @@ namespace Whizbang.Core.Perspectives;
 public static class WhizbangIdDocumentForm {
   private static readonly WhizbangIdDocumentFormState _process = new();
   private static readonly AsyncLocal<bool?> _scoped = new();
-  private static readonly AsyncLocal<string?> _target = new();
+  private static readonly AsyncLocal<string[]?> _target = new();
 
   /// <summary>
   /// Whether a document written here stores a strongly-typed id as its UUID string: the scoped choice when one is set
@@ -46,7 +48,7 @@ public static class WhizbangIdDocumentForm {
   /// process's (<see cref="ProcessWritesUuidString"/>).
   /// </summary>
   public static bool WritesUuidString =>
-    _scoped.Value ?? (_target.Value is { } key ? _process.IsOpen(key) : _process.WritesUuidString);
+    _scoped.Value ?? (_target.Value is { } keys ? Array.TrueForAll(keys, _process.IsOpen) : _process.WritesUuidString);
 
   /// <summary>
   /// Whether a document written to a database schema stores a strongly-typed id as its UUID string: the scoped choice
@@ -69,9 +71,22 @@ public static class WhizbangIdDocumentForm {
   /// <param name="schema">The schema; null or empty is <c>public</c>.</param>
   /// <returns>The scope; disposing it restores the target before.</returns>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/WhizbangIdDocumentFormTests.cs:AWriteToAnOpenSchema_WritesTheUuidString_WhileAnotherIsHeldAsync</tests>
-  public static IDisposable WritingTo(string? database, string? schema) {
+  public static IDisposable WritingTo(string? database, string? schema) => WritingTo(database, [schema]);
+
+  /// <summary>
+  /// Names every database schema one write targets (a save that writes rows of several tables, for example), so
+  /// <see cref="WritesUuidString"/> writes the UUID string only while every one of their gates is open, and the object
+  /// form every release reads otherwise.
+  /// </summary>
+  /// <param name="database">The database the schemas are in.</param>
+  /// <param name="schemas">The schemas; a null or empty one is <c>public</c>. None writes the object form.</param>
+  /// <returns>The scope; disposing it restores the target before.</returns>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/WhizbangIdDocumentFormTests.cs:AWriteToSeveralSchemas_WritesTheUuidString_OnlyWhileEveryOneIsOpenAsync</tests>
+  public static IDisposable WritingTo(string? database, IEnumerable<string?> schemas) {
+    ArgumentNullException.ThrowIfNull(schemas);
     var previous = _target.Value;
-    _target.Value = WhizbangIdDocumentFormState.Key(database, schema);
+    string[] keys = [.. schemas.Select(schema => WhizbangIdDocumentFormState.Key(database, schema)).Distinct(StringComparer.Ordinal)];
+    _target.Value = keys.Length == 0 ? [WhizbangIdDocumentFormState.NONE] : keys;
     return new TargetScope(previous);
   }
 
@@ -92,6 +107,9 @@ public static class WhizbangIdDocumentForm {
   /// <param name="database">The database the schema is in.</param>
   /// <param name="schema">The schema; null or empty is <c>public</c>.</param>
   internal static void Open(string? database, string? schema) => _process.Open(database, schema);
+
+  /// <inheritdoc cref="WhizbangIdDocumentFormState.Rename"/>
+  internal static void Rename(string provisional, string database) => _process.Rename(provisional, database);
 
   /// <summary>Whether this process has seen the gate of a database schema open.</summary>
   /// <param name="database">The database the schema is in.</param>
@@ -121,53 +139,64 @@ public static class WhizbangIdDocumentForm {
     public void Dispose() => _scoped.Value = previous;
   }
 
-  private sealed class TargetScope(string? previous) : IDisposable {
+  private sealed class TargetScope(string[]? previous) : IDisposable {
     public void Dispose() => _target.Value = previous;
   }
 }
 
 /// <summary>The database schemas one process writes documents to, and whether each one's gate is open (#2518).</summary>
+/// <remarks>
+/// Read on every strongly-typed id a document write serializes, from every perspective worker, so a read never locks: the
+/// schemas are an immutable snapshot, replaced whole under <see cref="_gate"/> by the rare writer (a gate check, once per
+/// schema per maintenance cycle).
+/// </remarks>
 /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/WhizbangIdDocumentFormTests.cs</tests>
 internal sealed class WhizbangIdDocumentFormState {
   /// <summary>The schema name a null or empty one stands for.</summary>
   private const string DEFAULT_SCHEMA = "public";
 
-  private readonly Dictionary<string, bool> _schemas = new(StringComparer.Ordinal);
+  /// <summary>The key of a write that targets no schema: never open.</summary>
+  internal const string NONE = "";
+
   private readonly Lock _gate = new();
-  private volatile bool _writesUuidString;
+  private volatile Snapshot _snapshot = new(ImmutableDictionary<string, bool>.Empty.WithComparers(StringComparer.Ordinal), false);
 
   /// <summary>At least one schema is known, and every schema known is open.</summary>
-  public bool WritesUuidString => _writesUuidString;
+  public bool WritesUuidString => _snapshot.WritesUuidString;
 
   /// <summary>Records a schema not known to be open; one already open stays open.</summary>
   /// <param name="database">The database the schema is in.</param>
   /// <param name="schema">The schema; null or empty is <c>public</c>.</param>
-  public void Hold(string? database, string? schema) {
-    lock (_gate) {
-      _schemas.TryAdd(Key(database, schema), false);
-      _recompute();
-    }
-  }
+  public void Hold(string? database, string? schema) => _change(schemas => _held(schemas, Key(database, schema)));
 
   /// <summary>Records that a schema is open.</summary>
   /// <param name="database">The database the schema is in.</param>
   /// <param name="schema">The schema; null or empty is <c>public</c>.</param>
-  public void Open(string? database, string? schema) {
-    lock (_gate) {
-      _schemas[Key(database, schema)] = true;
-      _recompute();
-    }
+  public void Open(string? database, string? schema) => _change(schemas => schemas.SetItem(Key(database, schema), true));
+
+  /// <summary>
+  /// Moves every schema held under a name a database was known by before the server named it to the server's name, so a
+  /// hold recorded while the database could not be asked keeps holding the schema it meant. A schema already known under
+  /// the server's name keeps its state.
+  /// </summary>
+  /// <param name="provisional">The name the schemas were held under.</param>
+  /// <param name="database">The name the server reports.</param>
+  public void Rename(string provisional, string database) {
+    var prefix = provisional + "/";
+    _change(schemas => {
+      foreach (var key in schemas.Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToList()) {
+        schemas = _held(schemas.Remove(key), database + "/" + key[prefix.Length..]);
+      }
+      return schemas;
+    });
   }
 
   /// <summary>Whether a schema is known and not open.</summary>
   /// <param name="database">The database the schema is in.</param>
   /// <param name="schema">The schema; null or empty is <c>public</c>.</param>
   /// <returns>True while held.</returns>
-  public bool IsHeld(string? database, string? schema) {
-    lock (_gate) {
-      return _schemas.TryGetValue(Key(database, schema), out var open) && !open;
-    }
-  }
+  public bool IsHeld(string? database, string? schema) =>
+    _snapshot.Schemas.TryGetValue(Key(database, schema), out var open) && !open;
 
   /// <summary>Whether a schema is known and open.</summary>
   /// <param name="database">The database the schema is in.</param>
@@ -178,11 +207,7 @@ internal sealed class WhizbangIdDocumentFormState {
   /// <summary>Whether a schema is known and open, by its <see cref="Key"/>.</summary>
   /// <param name="key">The schema's key.</param>
   /// <returns>True once open.</returns>
-  public bool IsOpen(string key) {
-    lock (_gate) {
-      return _schemas.TryGetValue(key, out var open) && open;
-    }
-  }
+  public bool IsOpen(string key) => _snapshot.Schemas.TryGetValue(key, out var open) && open;
 
   /// <summary>The key a database schema is known by.</summary>
   /// <param name="database">The database the schema is in.</param>
@@ -191,6 +216,15 @@ internal sealed class WhizbangIdDocumentFormState {
   public static string Key(string? database, string? schema) =>
     (database ?? string.Empty) + "/" + (string.IsNullOrEmpty(schema) ? DEFAULT_SCHEMA : schema);
 
-  /// <summary>Called under <see cref="_gate"/>.</summary>
-  private void _recompute() => _writesUuidString = _schemas.Count > 0 && _schemas.Values.All(open => open);
+  private static ImmutableDictionary<string, bool> _held(ImmutableDictionary<string, bool> schemas, string key) =>
+    schemas.ContainsKey(key) ? schemas : schemas.Add(key, false);
+
+  private void _change(Func<ImmutableDictionary<string, bool>, ImmutableDictionary<string, bool>> change) {
+    lock (_gate) {
+      var schemas = change(_snapshot.Schemas);
+      _snapshot = new Snapshot(schemas, !schemas.IsEmpty && schemas.Values.All(open => open));
+    }
+  }
+
+  private sealed record Snapshot(ImmutableDictionary<string, bool> Schemas, bool WritesUuidString);
 }

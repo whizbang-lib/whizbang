@@ -2753,7 +2753,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
         await dbContext.Database.CloseConnectionAsync();
       }
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      global::Whizbang.Data.Postgres.StrongIdDocumentGate.HoldUnasked(dbContext.Database.GetDbConnection().Database, "__SCHEMA__");
+      global::Whizbang.Data.Postgres.StrongIdDocumentGate.HoldUnasked(dbContext.Database.GetDbConnection(), "__SCHEMA__");
       logger?.LogWarning(ex,
         "Could not ask the strong-id document gate for {Schema}; strongly-typed ids in documents are written in the "
         + "object form every release reads until the maintenance cycle can", "__SCHEMA__");

@@ -100,6 +100,12 @@ public static class WhizbangDbContextOptionsExtensions {
       coreOptionsBuilder.AddInterceptors(WhizbangCommandAttributionInterceptor.Instance);
     }
 
+    // #2518: a strongly-typed id in a document follows the gate of its schema as the server names the database, which a
+    // pooler's alias or a connection string of the coordinator's own does not change. Added once, as above.
+    if (interceptors?.Contains(ServerDatabaseNameInterceptor.Instance) != true) {
+      coreOptionsBuilder.AddInterceptors(ServerDatabaseNameInterceptor.Instance);
+    }
+
     // Add our custom method call translator plugin to the existing collection
     // This preserves Npgsql's built-in translators while adding our own
     return _update(optionsBuilder, static existing => existing ?? new WhizbangOptionsExtension());

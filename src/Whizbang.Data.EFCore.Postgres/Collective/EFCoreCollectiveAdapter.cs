@@ -126,6 +126,7 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
     // Model-field (jsonb) setters = the spec's setters plus any the hooks added, minus any a hook removed. A strongly-typed
     // id among them is serialized in the form this schema's gate allows (#2518).
     List<CollectiveSettersRewriter.CollectiveSetterAssignment> assignments;
+    await Perspectives.StrongIdDocumentTarget.ResolveAsync(dbContext, cancellationToken);
     using (Perspectives.StrongIdDocumentTarget.Of(dbContext, schema)) {
       assignments = [.. CollectiveSettersRewriter.CollectAssignments(spec.Setters)
         .Concat(CollectiveSettersRewriter.FromHookSetters(hookPlan.ModelFieldSetters))

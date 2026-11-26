@@ -255,12 +255,23 @@ public class StrongIdDocumentGateTests : EFCoreTestBase {
     await Assert.That(WhizbangIdDocumentForm.WritesUuidStringTo(conn.Database, "no_such_schema")).IsFalse();
   }
 
-  /// <summary>A gate that could not be asked holds its schema, so the process keeps the form every release reads.</summary>
+  /// <summary>
+  /// A gate that could not be asked holds its schema, so the process keeps the form every release reads: under a
+  /// provisional name while the server has not named the database, and under the server's name once it has.
+  /// </summary>
   [Test]
-  public async Task HoldUnasked_HoldsTheSchemaAsync() {
-    StrongIdDocumentGate.HoldUnasked("unasked_db", "unasked");
+  public async Task HoldUnasked_HoldsTheSchema_AndTheHoldFollowsTheServersNameAsync() {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    StrongIdDocumentGate.HoldUnasked(conn, "unasked");
+    var provisional = PostgresServerDatabase.KeyOf(conn);
 
-    await Assert.That(StrongIdDocumentForms.IsHeld("unasked_db", "unasked")).IsTrue();
+    await conn.OpenAsync();
+    var database = await PostgresServerDatabase.ResolveAsync(conn);
+
+    await Assert.That(provisional).StartsWith("?");
+    await Assert.That(StrongIdDocumentForms.IsHeld(provisional, "unasked")).IsFalse();
+    await Assert.That(StrongIdDocumentForms.IsHeld(database, "unasked")).IsTrue()
+      .Because("the hold moved to the name the server gives the database");
   }
 
   [Test]

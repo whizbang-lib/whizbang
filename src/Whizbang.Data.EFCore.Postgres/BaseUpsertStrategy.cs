@@ -229,6 +229,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       where TModel : class {
     var (planned, hookPlan, expiresAt, businessTime, mappedTable) = _planRowWrite(context, args);
     args = planned;
+    // #2518: the atomic write serializes the document before it opens a connection, so the name the server gives this
+    // context's database, which keys its schema's gate, is asked first (once for each connection string).
+    await Perspectives.StrongIdDocumentTarget.ResolveAsync(context, cancellationToken);
 
     // Path 1 atomic upsert. When this strategy uses it (see UsesAtomicUpsert) and it applies
     // (Npgsql, plain identifiers, a resolvable model), this single round-trip replaces
@@ -976,8 +979,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     }
 
     var copyStatement = DocumentCopySql<TModel>(context, physicalFieldValues);
-    // #2518: the document's strongly-typed ids in the form this table's schema's gate allows.
-    using (Perspectives.StrongIdDocumentTarget.Of(context, typeof(PerspectiveRow<TModel>))) {
+    // #2518: the document's strongly-typed ids in the form the gates of every schema this save writes into allow.
+    await Perspectives.StrongIdDocumentTarget.ResolveAsync(context, cancellationToken);
+    using (Perspectives.StrongIdDocumentTarget.OfTracked(context)) {
       if (copyStatement is null) {
         await context.SaveChangesAsync(cancellationToken);
       } else {

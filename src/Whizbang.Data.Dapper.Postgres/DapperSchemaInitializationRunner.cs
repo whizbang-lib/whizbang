@@ -115,7 +115,7 @@ internal sealed class DapperSchemaInitializationRunner(
       await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
       await StrongIdDocumentGate.CheckAsync(connection, "public", logger, cancellationToken).ConfigureAwait(false);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      StrongIdDocumentGate.HoldUnasked(connection.Database, "public");
+      StrongIdDocumentGate.HoldUnasked(connection, "public");
       DapperSchemaInitializationRunnerLog.GateUnasked(logger, ex);
     }
   }

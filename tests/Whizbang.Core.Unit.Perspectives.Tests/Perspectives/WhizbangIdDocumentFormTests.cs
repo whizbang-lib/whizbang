@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Perspectives;
 
@@ -118,6 +119,55 @@ public class WhizbangIdDocumentFormTests {
     await Assert.That(WhizbangIdDocumentForm.WritesUuidStringTo(database, "orders")).IsTrue();
     await Assert.That(WhizbangIdDocumentForm.WritesUuidStringTo(database, "no_gate")).IsFalse();
     await Assert.That(WhizbangIdDocumentForm.WritesUuidStringTo(database, "never_asked")).IsFalse();
+  }
+
+  [Test]
+  public async Task AHoldUnderTheNameADatabaseWasKnownByBefore_MovesToTheServersName_AndKeepsHoldingAsync() {
+    var state = new WhizbangIdDocumentFormState();
+    state.Hold("?pool/orders_alias", "public");
+    state.Open("orders", "audit");
+
+    state.Rename("?pool/orders_alias", "orders");
+
+    await Assert.That(state.IsHeld("orders", "public")).IsTrue().Because("the hold meant the schema the server names");
+    await Assert.That(state.IsHeld("?pool/orders_alias", "public")).IsFalse();
+    await Assert.That(state.WritesUuidString).IsFalse().Because("the moved hold still holds the process");
+    state.Open("orders", "public");
+    await Assert.That(state.WritesUuidString).IsTrue()
+      .Because("the gate opening under the server's name releases the hold made under the other name");
+  }
+
+  [Test]
+  public async Task Renaming_LeavesASchemaTheServersNameAlreadyOpened_OpenAsync() {
+    var state = new WhizbangIdDocumentFormState();
+    state.Open("orders", "public");
+    state.Hold("?pool/orders_alias", "public");
+
+    state.Rename("?pool/orders_alias", "orders");
+
+    await Assert.That(state.IsOpen("orders", "public")).IsTrue().Because("a gate seen open stays open");
+    await Assert.That(state.WritesUuidString).IsTrue();
+  }
+
+  [Test]
+  public async Task AWriteToSeveralSchemas_WritesTheUuidString_OnlyWhileEveryOneIsOpenAsync() {
+    var database = $"several-{TrackedGuid.New().Value}";
+    WhizbangIdDocumentForm.Open(database, "orders");
+    WhizbangIdDocumentForm.Hold(database, "audit");
+
+    bool oneHeld, bothOpen, none;
+    using (WhizbangIdDocumentForm.WritingTo(database, ["orders", "audit"])) {
+      oneHeld = WhizbangIdDocumentForm.WritesUuidString;
+      WhizbangIdDocumentForm.Open(database, "audit");
+      bothOpen = WhizbangIdDocumentForm.WritesUuidString;
+    }
+    using (WhizbangIdDocumentForm.WritingTo(database, [])) {
+      none = WhizbangIdDocumentForm.WritesUuidString;
+    }
+
+    await Assert.That(oneHeld).IsFalse().Because("one schema of the write is held, and its rows would get the UUID string");
+    await Assert.That(bothOpen).IsTrue();
+    await Assert.That(none).IsFalse().Because("a write that names no schema has no gate that allows the UUID string");
   }
 
   [Test]
