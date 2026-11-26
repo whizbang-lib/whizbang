@@ -139,6 +139,27 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await Assert.That(harness.CompletionCapture.EventWorkIds).IsEquivalentTo([companionWork]);
   }
 
+  [Test]
+  [Timeout(30000)]
+  public async Task DrainMode_OnlyTheUnappliedPairsOwnFlaggedCursorWithATrigger_IsRewoundAsync(CancellationToken cancellationToken) {
+    // The batch read returns every cursor of the stream: one flagged with no trigger for the pair, and one flagged with a
+    // trigger for another perspective of the same stream. Neither is a rewind this pair can run from.
+    var (streamId, eventId, work) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+    var coordinator = new DrainWorkCoordinator {
+      CursorsBatchToReturn = [
+        _flaggedCursor(streamId, eventId) with { RewindTriggerEventId = null },
+        _flaggedCursor(streamId, eventId) with { PerspectiveName = "Other.Perspective+Projection" }],
+    };
+    var (eventStore, companionWork) = _withACompanionStream(coordinator, _raw(streamId, eventId, work) with { EventType = UNREAD_EVENT_TYPE });
+    var runner = new DrainRunner();
+    var (worker, harness, _) = _createWorker(coordinator, eventStore, _registry(runner));
+
+    await _drainOnceAsync(worker, harness, streamId, harness.CompletionCapture.WaitForEventWorkIdsAsync(_signalWait, companionWork), cancellationToken);
+
+    await Assert.That(runner.RewindCalls).IsEmpty();
+    await Assert.That(harness.CompletionCapture.EventWorkIds).IsEquivalentTo([companionWork]);
+  }
+
   /// <summary>
   /// Fetches <paramref name="row"/> in one batch with a healthy stream's row, which is applied after the batch's rows are
   /// sorted: its completion is the signal that the batch was handled. Returns the store and the healthy row's work id.

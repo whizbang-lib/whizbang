@@ -41,6 +41,9 @@ public class UnregisteredPerspectiveCleanupStepTests : EFCoreTestBase {
   private const string COLLECTIVE = "__collective__";
   private const string EVENT_TYPE = "Probe.Contracts.ToolInvoked, Probe.Contracts";
   private const string REMOVED_METRIC = "whizbang.perspective.unregistered_cursors_removed";
+  private const string CURSORS = "wh_perspective_cursors";
+  private const string QUEUED_ROWS = "wh_perspective_events";
+  private const string SNAPSHOTS = "wh_perspective_snapshots";
 
   [Test]
   public async Task Clean_RemovesTheCursorsRowsAndSnapshotsOfAPerspectiveNothingRuns_AndLeavesTheRestAsync() {
@@ -67,14 +70,14 @@ public class UnregisteredPerspectiveCleanupStepTests : EFCoreTestBase {
     await Assert.That((result.CursorsRemoved, result.RowsRemoved, result.SnapshotsRemoved)).IsEqualTo((3, 3, 3))
       .Because("each of the retired perspective's three cursors goes, with its queued row and its snapshot");
     await Assert.That(result.Perspectives).IsEquivalentTo([RETIRED]);
-    await Assert.That(await _countAsync(conn, "wh_perspective_cursors", RETIRED)).IsEqualTo(0L);
-    await Assert.That(await _countAsync(conn, "wh_perspective_events", RETIRED)).IsEqualTo(0L);
-    await Assert.That(await _countAsync(conn, "wh_perspective_snapshots", RETIRED)).IsEqualTo(0L);
-    await Assert.That(await _countAsync(conn, "wh_perspective_cursors", REGISTERED)).IsEqualTo(3L)
+    await Assert.That(await _countAsync(conn, CURSORS, RETIRED)).IsEqualTo(0L);
+    await Assert.That(await _countAsync(conn, QUEUED_ROWS, RETIRED)).IsEqualTo(0L);
+    await Assert.That(await _countAsync(conn, SNAPSHOTS, RETIRED)).IsEqualTo(0L);
+    await Assert.That(await _countAsync(conn, CURSORS, REGISTERED)).IsEqualTo(3L)
       .Because("this service registers it");
-    await Assert.That(await _countAsync(conn, "wh_perspective_cursors", ELSEWHERE)).IsEqualTo(3L)
+    await Assert.That(await _countAsync(conn, CURSORS, ELSEWHERE)).IsEqualTo(3L)
       .Because("another service's association rows name it: that service, or a newer instance of this one, runs it");
-    await Assert.That(await _countAsync(conn, "wh_perspective_cursors", COLLECTIVE)).IsEqualTo(3L)
+    await Assert.That(await _countAsync(conn, CURSORS, COLLECTIVE)).IsEqualTo(3L)
       .Because("the collective sink has no registration of its own");
     listener.RecordObservableInstruments();
     await Assert.That(removed.Sum()).IsEqualTo(3L);
@@ -92,7 +95,8 @@ public class UnregisteredPerspectiveCleanupStepTests : EFCoreTestBase {
       var stream = (Guid)TrackedGuid.New();
       await _seedCursorAsync(conn, stream, RETIRED, await _seedEventAsync(conn, stream), flagged: false);
     }
-    await using var services = _services(new UnregisteredPerspectiveCleanupOptions { BatchCursors = 1, MaxBatchesPerCycle = 2 });
+    // No schema named: the step reaches the tables through the connection's search path.
+    await using var services = _services(new UnregisteredPerspectiveCleanupOptions { BatchCursors = 1, MaxBatchesPerCycle = 2 }, schema: null);
 
     var first = await new UnregisteredPerspectiveCleanupStep(NullLogger.Instance).CleanAsync(services, CancellationToken.None);
     var second = await new UnregisteredPerspectiveCleanupStep(NullLogger.Instance).CleanAsync(services, CancellationToken.None);
@@ -117,7 +121,7 @@ public class UnregisteredPerspectiveCleanupStepTests : EFCoreTestBase {
     await Assert.That(turnedOff.Status).IsEqualTo("skipped (turned off)");
     await Assert.That(unregistered.Status).IsEqualTo("skipped (no perspective registry)")
       .Because("a service that registers no perspectives cannot say which ones it runs");
-    await Assert.That(await _countAsync(conn, "wh_perspective_cursors", RETIRED)).IsEqualTo(1L);
+    await Assert.That(await _countAsync(conn, CURSORS, RETIRED)).IsEqualTo(1L);
   }
 
   [Test]
@@ -167,13 +171,14 @@ public class UnregisteredPerspectiveCleanupStepTests : EFCoreTestBase {
     public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
 
-  private ServiceProvider _services(UnregisteredPerspectiveCleanupOptions cleanup, PerspectiveMetrics? metrics = null, bool registry = true) {
+  private ServiceProvider _services(UnregisteredPerspectiveCleanupOptions cleanup, PerspectiveMetrics? metrics = null, bool registry = true,
+      string? schema = "public") {
     var services = new ServiceCollection()
       .AddSingleton(new PostgresArchiveConnection(async ct => {
         var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync(ct);
         return connection;
-      }, "public"))
+      }, schema))
       .AddSingleton(Options.Create(new PerspectiveWorkerOptions { UnregisteredPerspectiveCleanup = cleanup }));
     if (registry) {
       services.AddSingleton<IPerspectiveRunnerRegistry>(new OneRegistered());

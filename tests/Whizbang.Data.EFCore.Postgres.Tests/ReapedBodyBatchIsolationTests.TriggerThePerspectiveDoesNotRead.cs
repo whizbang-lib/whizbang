@@ -1,12 +1,16 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -73,7 +77,13 @@ public partial class ReapedBodyBatchIsolationTests {
     var replayed = pipeline.Completed.WaitAsync(items => queued.All(items.Contains), cancellationToken, fromNow: true);
     var givenUp = pipeline.Claims.WaitAsync(
       items => items.Count(c => c.Contains(stream)) >= CLAIMS_WITH_THE_REWIND_UNDONE, cancellationToken, fromNow: true);
-    var first = await Task.WhenAny(replayed, givenUp);
+    var failed = pipeline.Failures.WaitAsync(items => items.Any(f => queued.Contains(f.MessageId)), cancellationToken, fromNow: true);
+    var first = await Task.WhenAny(replayed, givenUp, failed);
+    if (first == failed && failed.IsCompletedSuccessfully && !replayed.IsCompleted) {
+      var failure = pipeline.Failures.Snapshot().First(f => queued.Contains(f.MessageId));
+      var warnings = string.Join(" | ", pipeline.Logs.Snapshot().Where(l => l.Level >= LogLevel.Warning).Select(l => $"{l.EventId}: {l.Message} {l.Exception}"));
+      Assert.Fail($"the rewind failed its row: {failure.Error}. Warnings: {warnings}");
+    }
     if (first == givenUp && givenUp.IsCompletedSuccessfully && !replayed.IsCompleted) {
       var row = await _rowStateAsync(conn, queued[0], cancellationToken);
       Assert.Fail($"the rewind never ran: the stream was claimed {CLAIMS_WITH_THE_REWIND_UNDONE} times after the flag and its "
@@ -88,8 +98,8 @@ public partial class ReapedBodyBatchIsolationTests {
   }
 
   /// <summary>
-  /// Version 1 of the stream: an event of a type no perspective or handler here registers, stamped, with its body, as a
-  /// received event of another service's contract is stored. Returns its id.
+  /// Version 1 of the stream: an event of a type no perspective or handler here registers, stamped, with its body and the
+  /// stored metadata of a real envelope, as a received event of another service's contract is stored. Returns its id.
   /// </summary>
   private static async Task<Guid> _seedAnEventOfATypeNoOneHereReadsAsync(NpgsqlConnection conn, Guid streamId, CancellationToken ct) {
     var id = (Guid)TrackedGuid.New();
@@ -99,9 +109,12 @@ public partial class ReapedBodyBatchIsolationTests {
                                   commit_sequence, flags)
       VALUES (@id, @sid, @sid, 'Order', 1, 'Elsewhere.Contracts.StepApprovedEvent, Elsewhere.Contracts', NULL, NOW(),
               nextval('wh_commit_seq'), 0);
-      INSERT INTO wh_event_body (event_id, event_data, metadata) VALUES (@id, '{"Step": 1}'::jsonb, '{}'::jsonb);
+      INSERT INTO wh_event_body (event_id, event_data, metadata) VALUES (@id, '{"Step": 1}'::jsonb, @metadata::jsonb);
       """;
+    var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
+    var metadata = new EnvelopeMetadata { MessageId = MessageId.From(id), Hops = [] };
     cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(metadata), JsonSerializer.Serialize(metadata, jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata))));
     cmd.Parameters.AddWithValue("sid", streamId);
     await cmd.ExecuteNonQueryAsync(ct);
     return id;
@@ -134,6 +147,6 @@ public partial class ReapedBodyBatchIsolationTests {
     cmd.CommandText = "SELECT status FROM wh_perspective_cursors WHERE stream_id = @sid AND perspective_name = @p";
     cmd.Parameters.AddWithValue("sid", streamId);
     cmd.Parameters.AddWithValue("p", perspective);
-    return (int)(await cmd.ExecuteScalarAsync(ct))!;
+    return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct), System.Globalization.CultureInfo.InvariantCulture);
   }
 }

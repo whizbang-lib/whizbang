@@ -412,6 +412,12 @@ public static class PostgresDriverExtensions {
         // <docs>fundamentals/events/retired-event-types</docs>
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, RetiredEventTypePurgeStep>(
           RetiredEventTypePurgeStep.FromServices));
+        // TURNKEY: the maintenance step that removes the cursors, queued rows and snapshots of a perspective no service
+        // runs any more (#2601): not registered here and named by no association row. Opt out under
+        // Whizbang:Workers:Perspective:UnregisteredPerspectiveCleanup:Enabled.
+        // <docs>fundamentals/perspectives/rewind#perspectives-no-longer-registered</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, UnregisteredPerspectiveCleanupStep>(
+          UnregisteredPerspectiveCleanupStep.FromServices));
         // TURNKEY: the maintenance step that re-attributes stored events recorded under an origin that does not own their
         // type to their owner (#2116), under the maintainer duty, idle-gated.
         // <docs>resilience/stream-integrity#an-origin-that-does-not-own-the-type</docs>

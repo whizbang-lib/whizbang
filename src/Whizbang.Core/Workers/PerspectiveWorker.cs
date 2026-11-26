@@ -2018,6 +2018,8 @@ public partial class PerspectiveWorker(
     if (rawEvents.Count == 0) {
       return null;
     }
+    // #2601: a row leased again and again with no failure is one nothing runs; it is warned about and counted.
+    _warnRowsLeasedWithoutFailure(rawEvents);
 
     // #1759: a row in the cooldown cache was applied by an earlier session of its stream and is only waiting for its
     // completion to delete it; the cooldown partition below would discard it after parsing. Parse only the rest. Every
@@ -2039,6 +2041,9 @@ public partial class PerspectiveWorker(
       // No perspective here: concluding the rows nothing applies was all there was to do.
       return null;
     }
+    // #2601: a flagged cursor whose rows hold no event its perspective applies forms no pair below; it is rewound here.
+    await _rewindFlaggedPairsWithNothingToApplyAsync(workCoordinator, rowsToParse, typedEvents, _perspectivesPerEventType, cancellationToken)
+      .ConfigureAwait(false);
     if (typedEvents.Count == 0) {
 #pragma warning disable CA1848
       _logger.LogWarning("Drain mode: DeserializeStreamEvents returned 0 typed events from {RawCount} raw events", rowsToParse.Count);
