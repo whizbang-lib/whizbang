@@ -372,7 +372,7 @@ public class QueueIndexReindexSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// A rebuild an operator cancels while it waits is a failure, not a give-up: the cancellation reaches the caller (the
+  /// A rebuild an operator cancels while it waits is a failure, not a give-up: the error reaches the caller (the
   /// step logs it and drops the copy), and nothing is reported as a blocker.
   /// </summary>
   /// <docs>operations/infrastructure/storage-maintenance#a-rebuild-never-waits-for-hours</docs>
@@ -389,11 +389,11 @@ public class QueueIndexReindexSqlTests : EFCoreTestBase {
     var rebuild = coordinator.RebuildQueueIndexAsync(PKEY, TimeSpan.FromMinutes(10), cancellationToken);
     var waiter = await _theBackendWaitingOnAnOlderTransactionAsync(holderPid, rebuild, cancellationToken);
     await _execAsync($"SELECT pg_cancel_backend({waiter})", cancellationToken);
-    var thrown = await Assert.That(async () => await rebuild).Throws<OperationCanceledException>();
+    var thrown = await Assert.That(async () => await rebuild).Throws<PostgresException>();
     await idle.RollbackAsync(cancellationToken);
 
-    await Assert.That((thrown!.InnerException as PostgresException)?.SqlState).IsEqualTo(PostgresErrorCodes.QueryCanceled)
-      .Because("the server canceled the statement; Npgsql reports that as a cancellation");
+    await Assert.That(thrown!.SqlState).IsEqualTo(PostgresErrorCodes.QueryCanceled)
+      .Because("the server canceled the statement at an operator's request, which is not the lock bound");
   }
 
   /// <summary>
@@ -426,11 +426,16 @@ public class QueueIndexReindexSqlTests : EFCoreTestBase {
     await Assert.That(thrown!.SqlState).IsEqualTo(PostgresErrorCodes.RaiseException);
   }
 
-  /// <summary>The backend, other than the holder, waiting on a virtual transaction id; throws if the call finished first.</summary>
+  /// <summary>
+  /// The backend of this test's database, other than the holder, waiting on a virtual transaction id (such a lock names
+  /// no database, so the session's is read); throws if the call finished first.
+  /// </summary>
   private async Task<int> _theBackendWaitingOnAnOlderTransactionAsync(int holderPid, Task call, CancellationToken cancellationToken) {
     while (true) {
       var pid = await _scalarAsync<object?>(
-        $"SELECT pid FROM pg_locks WHERE locktype = 'virtualxid' AND NOT granted AND pid <> {holderPid} LIMIT 1", cancellationToken);
+        "SELECT l.pid FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid "
+        + $"WHERE l.locktype = 'virtualxid' AND NOT l.granted AND l.pid <> {holderPid} AND a.datname = current_database() LIMIT 1",
+        cancellationToken);
       if (pid is int waiting) {
         return waiting;
       }

@@ -90,6 +90,8 @@ public partial class CoordinationSourceGuardTests {
     ["src/Whizbang.Data.Postgres/AdvisoryLockProbe.cs"] = "reads whether the transaction-scoped schema lock is held elsewhere, so a "
       + "contender waits for the session doing schema work instead of queueing behind it: the state of an exclusion lock, which "
       + "judges no instance and holds no duty (#2044)",
+    ["src/Whizbang.Data.Postgres/QueueIndexSql.cs"] = "names the sessions a queue-index rebuild that gave up was waiting on, and how "
+      + "long their transactions have been open, so an operator can find them (#2611); it judges no instance",
   };
 
   /// <summary>SQL functions (by their last definition) that may judge liveness or read session activity.</summary>
@@ -100,6 +102,10 @@ public partial class CoordinationSourceGuardTests {
     ["_role_backend_active"] = "whether a role holder's own long statement is still running: a lease extension, not a liveness verdict",
     ["wh_mark_role_duty_backend"] = "marks the backend running a role's statement: a lease extension, not a liveness verdict",
     ["stamp_pending_commit_sequences"] = "the visibility fence reads in-flight transaction ids; it judges no instance",
+    ["wh_refresh_stale_queue_statistics"] = "reads whether its own ANALYZE (SKIP_LOCKED) took the table's lock, to tell a skip from "
+      + "a run (#2611); it judges no instance",
+    ["_wh_only_autovacuum_blocks_analyze"] = "whether only autovacuum workers hold a lock that conflicts with ANALYZE, the one holder "
+      + "the statistics refresh waits for (#2611); it judges no instance",
   };
 
   /// <summary>
