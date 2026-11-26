@@ -156,6 +156,32 @@ public class InstanceAssignmentDriverParityTests : EFCoreTestBase {
       .Because("a kind a newer release writes must not read as a known one");
   }
 
+  /// <summary>
+  /// A name only near a known one is still unknown: the reader matches each name exactly, so a kind a newer release
+  /// writes (or a name with a typo, a different case, or a known name's length) never reads as one this release knows.
+  /// Each row is a different way the match can miss: no name at all, a length no kind has, the length of one or two
+  /// kinds with any other text, and every kind's own name with one character changed.
+  /// </summary>
+  [Test]
+  [Arguments(null)]
+  [Arguments("")]
+  [Arguments("standard-worker-pool")]
+  [Arguments("nine-char")]
+  [Arguments("twelve-chars")]
+  [Arguments("thirteen-char")]
+  [Arguments("xtarting")]
+  [Arguments("startinG")]
+  [Arguments("drainin_")]
+  [Arguments("Standard-worker")]
+  [Arguments("role-holdeR")]
+  [Arguments("awaiting-sharE")]
+  [Arguments("ineligiblE")]
+  [Arguments("evicteD")]
+  public async Task KindOf_ANameNoKindHasExactly_IsRefusedAsync(string? name) {
+    await Assert.That(() => Whizbang.Data.Postgres.PostgresFleetStatus.KindOf(name!)).Throws<InvalidOperationException>()
+      .Because($"'{name}' is not exactly a name wh_instance_assignments() writes, so it must not read as a known kind");
+  }
+
   [Test]
   [Timeout(120000)]
   public async Task TheFleet_BeforeTheAssignmentFunctionExists_StillReads_WithNoAssignmentAsync(CancellationToken cancellationToken) {

@@ -82,7 +82,8 @@ internal static class PostgresFleetStatus {
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = "SELECT to_regprocedure(@fn) IS NOT NULL";
     _ = cmd.Parameters.AddWithValue("fn", prefix + ASSIGNMENTS_FUNCTION);
-    return await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+    // "x IS NOT NULL" is never NULL, and a one-expression SELECT always returns its row: the answer is always a boolean.
+    return (bool)(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
   }
 
   private static async Task<List<FleetInstanceStatus>> _readInstancesAsync(
