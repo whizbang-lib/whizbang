@@ -44,6 +44,14 @@ public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
   public static bool IsAttributedTypeCandidate(SyntaxNode node) =>
       node is TypeDeclarationSyntax { AttributeLists.Count: > 0 };
 
+  /// <summary>Whether a node can declare a strong id by a [WhizbangId] property (#2604); the same test the id generator uses.</summary>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsStrongIdPropertyCandidate(SyntaxNode node) => WhizbangIdGenerator.IsAttributedPropertyCandidate(node);
+
+  /// <summary>Whether a node can declare a strong id by a [WhizbangId] parameter (#2604); the same test the id generator uses.</summary>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsStrongIdParameterCandidate(SyntaxNode node) => WhizbangIdGenerator.IsAttributedParameterCandidate(node);
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover every [PinnedId] message/perspective type, and every pinned strong id (#2604), in this assembly.
@@ -56,13 +64,13 @@ public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
     // A strong id declared by a property or a parameter has no declaration of its own. A property or parameter
     // declaration in its own compilation always has its symbol.
     var propertyIds = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => WhizbangIdGenerator.IsAttributedPropertyCandidate(node),
+        predicate: static (node, _) => IsStrongIdPropertyCandidate(node),
         transform: static (ctx, ct) => _strongIdOf(ctx.SemanticModel.GetDeclaredSymbol(ctx.Node, ct)!, ct))
       .Where(static t => t is not null)
       .Select(static (t, _) => t!)
       .Collect();
     var parameterIds = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => WhizbangIdGenerator.IsAttributedParameterCandidate(node),
+        predicate: static (node, _) => IsStrongIdParameterCandidate(node),
         transform: static (ctx, ct) => _strongIdOf(ctx.SemanticModel.GetDeclaredSymbol(ctx.Node, ct)!, ct))
       .Where(static t => t is not null)
       .Select(static (t, _) => t!)

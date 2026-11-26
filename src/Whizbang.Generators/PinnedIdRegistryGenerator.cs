@@ -29,6 +29,18 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
       node is (ClassDeclarationSyntax or RecordDeclarationSyntax or StructDeclarationSyntax) and TypeDeclarationSyntax type &&
       SyntaxCandidates.MayHaveBaseTypes(type) && SyntaxCandidates.MayHaveAttributes(type);
 
+  /// <summary>Whether a node can declare a strong id by a [WhizbangId] struct (#2604); the same test the id generator uses.</summary>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsStrongIdStructCandidate(SyntaxNode node) => WhizbangIdGenerator.IsAttributedStructCandidate(node);
+
+  /// <summary>Whether a node can declare a strong id by a [WhizbangId] property (#2604); the same test the id generator uses.</summary>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsStrongIdPropertyCandidate(SyntaxNode node) => WhizbangIdGenerator.IsAttributedPropertyCandidate(node);
+
+  /// <summary>Whether a node can declare a strong id by a [WhizbangId] parameter (#2604); the same test the id generator uses.</summary>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsStrongIdParameterCandidate(SyntaxNode node) => WhizbangIdGenerator.IsAttributedParameterCandidate(node);
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     var pinnedTypes = context.SyntaxProvider.CreateSyntaxProvider(
@@ -39,15 +51,15 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
     // Pinned strong ids (#2604), from each route a [WhizbangId] can be declared by. A declaration in its own
     // compilation always has its symbol.
     var structIds = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => WhizbangIdGenerator.IsAttributedStructCandidate(node),
+        predicate: static (node, _) => IsStrongIdStructCandidate(node),
         transform: static (ctx, ct) => _strongIdOf(ctx.SemanticModel.GetDeclaredSymbol(ctx.Node, ct)!, ct)
     ).Where(static info => info is not null);
     var propertyIds = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => WhizbangIdGenerator.IsAttributedPropertyCandidate(node),
+        predicate: static (node, _) => IsStrongIdPropertyCandidate(node),
         transform: static (ctx, ct) => _strongIdOf(ctx.SemanticModel.GetDeclaredSymbol(ctx.Node, ct)!, ct)
     ).Where(static info => info is not null);
     var parameterIds = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => WhizbangIdGenerator.IsAttributedParameterCandidate(node),
+        predicate: static (node, _) => IsStrongIdParameterCandidate(node),
         transform: static (ctx, ct) => _strongIdOf(ctx.SemanticModel.GetDeclaredSymbol(ctx.Node, ct)!, ct)
     ).Where(static info => info is not null);
     var allPinned = pinnedTypes.Collect().Combine(structIds.Collect()).Combine(propertyIds.Collect()).Combine(parameterIds.Collect())
