@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- The reverse of 602_ARewindStartsOnlyFromAnEventThePerspectiveReads.sql (#2601): 600's floor comes back verbatim, and the
+-- The reverse of 660_ARewindStartsOnlyFromAnEventThePerspectiveReads.sql (#2601): 600's floor comes back verbatim, and the
 -- repair function and its setting go.
 --
 -- What the repair changed is not restored. It cleared rewinds whose perspective reads nothing at or after the trigger,

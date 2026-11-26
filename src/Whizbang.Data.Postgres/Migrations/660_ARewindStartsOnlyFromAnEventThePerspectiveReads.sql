@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 602_ARewindStartsOnlyFromAnEventThePerspectiveReads.sql
+-- Migration: 660_ARewindStartsOnlyFromAnEventThePerspectiveReads.sql
 -- Date: 2026-11-25
 -- Description: A rewind starts only from an event of a type the perspective reads (#2601).
 --
@@ -37,7 +37,7 @@
 --              pass on every start), then walks each flagged cursor's stream from its trigger, and touches only the
 --              flagged cursors' rows by key.
 --
---              Number 602: 601 is taken; 610 and above belong to a change in flight.
+--              Number 660: develop ends at 626, and 630 to 659 belong to a change in flight.
 --
 -- Reversal: reversible (600's floor comes back; the repair function and its setting are dropped; what the repair cleared
 --           or moved is not restored, since each was a rewind that could never run)
@@ -78,7 +78,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.wh_rewind_reap_floor(
 $$ LANGUAGE sql STABLE;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_rewind_reap_floor(UUID[], TEXT[], UUID[]) IS
-'602 (#2601, from 600): for each (stream, perspective, trigger) triple whose trigger the store holds, the first event of the stream at or after the trigger''s version that still has a body and whose type the perspective''s association rows name (the trigger counts only when the perspective reads it; a perspective with no association rows reads nothing); NULL when there is none, and then the replay cannot happen.';
+'660 (#2601, from 600): for each (stream, perspective, trigger) triple whose trigger the store holds, the first event of the stream at or after the trigger''s version that still has a body and whose type the perspective''s association rows name (the trigger counts only when the perspective reads it; a perspective with no association rows reads nothing); NULL when there is none, and then the replay cannot happen.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- Once per database: the read floor applied to the rewinds already flagged. Cleared where the perspective reads nothing at
@@ -102,7 +102,7 @@ BEGIN
   -- Claimed first, in the migration's transaction: a failure rolls the claim back with the work.
   INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description)
   VALUES ('rewind_read_floor_repaired', 'true', 'boolean',
-          '602 (#2601): the rewinds already flagged from events their perspective does not read have been repaired.')
+          '660 (#2601): the rewinds already flagged from events their perspective does not read have been repaired.')
   ON CONFLICT (setting_key) DO NOTHING;
   IF NOT FOUND THEN
     RETURN QUERY SELECT 0, 0, 0;
@@ -172,17 +172,17 @@ BEGIN
   END IF;
 
   UPDATE __SCHEMA__.wh_settings
-  SET description = format('602 (#2601): the rewinds already flagged from events their perspective does not read have been repaired: %s cleared, %s moved to the first event read, %s queued rows nothing would apply deleted.',
+  SET description = format('660 (#2601): the rewinds already flagged from events their perspective does not read have been repaired: %s cleared, %s moved to the first event read, %s queued rows nothing would apply deleted.',
                            v_cleared, v_moved, v_deleted)
   WHERE setting_key = 'rewind_read_floor_repaired';
-  RAISE NOTICE '602 (#2601): % rewind(s) from events nothing reads cleared, % moved to the first event their perspective reads, % queued row(s) nothing would apply deleted',
+  RAISE NOTICE '660 (#2601): % rewind(s) from events nothing reads cleared, % moved to the first event their perspective reads, % queued row(s) nothing would apply deleted',
     v_cleared, v_moved, v_deleted;
   RETURN QUERY SELECT v_cleared, v_moved, v_deleted;
 END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_repair_rewinds_from_unread_events() IS
-'602 (#2601), once per database (the rewind_read_floor_repaired setting): every flagged perspective cursor whose perspective reads nothing at or after its trigger is unflagged, one whose first read event is above its trigger is moved to it and it queued, and those cursors'' queued rows nothing would apply (an unread type, or no body) are deleted. Returns the counts and raises them as a NOTICE.';
+'660 (#2601), once per database (the rewind_read_floor_repaired setting): every flagged perspective cursor whose perspective reads nothing at or after its trigger is unflagged, one whose first read event is above its trigger is moved to it and it queued, and those cursors'' queued rows nothing would apply (an unread type, or no body) are deleted. Returns the counts and raises them as a NOTICE.';
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 -- What is left of a perspective no service runs: its cursors, queued rows and snapshots, a bounded batch at a time.
@@ -259,6 +259,6 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_remove_unregistered_perspective_cursors(TEXT[], INTEGER) IS
-'602 (#2601): removes up to p_batch cursors of the perspectives no service runs (a cursor''s name not in p_registered, not the collective sink, and named by no association row), with their queued rows and snapshots. Returns the counts per perspective; no rows when nothing is left.';
+'660 (#2601): removes up to p_batch cursors of the perspectives no service runs (a cursor''s name not in p_registered, not the collective sink, and named by no association row), with their queued rows and snapshots. Returns the counts per perspective; no rows when nothing is left.';
 
 SELECT * FROM __SCHEMA__._wh_repair_rewinds_from_unread_events();

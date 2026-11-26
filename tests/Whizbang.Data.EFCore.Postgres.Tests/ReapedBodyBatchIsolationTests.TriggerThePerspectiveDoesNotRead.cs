@@ -30,7 +30,7 @@ public partial class ReapedBodyBatchIsolationTests {
   /// <summary>
   /// The stream: version 1 is an event of a type the service does not register, with its body; versions 2 and 3 are the
   /// perspective's own events, applied. The cursor is flagged from version 1 and version 1 queued for it, as a database
-  /// flagged before migration 602 holds it, while the worker runs. The rewind completes: the queued replay is completed, the cursor is no longer flagged and the model
+  /// flagged before migration 660 holds it, while the worker runs. The rewind completes: the queued replay is completed, the cursor is no longer flagged and the model
   /// holds the stream's last amount.
   /// </summary>
   [Test]
@@ -53,8 +53,8 @@ public partial class ReapedBodyBatchIsolationTests {
     await pipeline.Completed.WaitAsync(items => ownWork.All(items.Contains), cancellationToken);
     await Assert.That(await _readAmountAsync(conn, stream, cancellationToken)).IsEqualTo(20m);
 
-    // The flag as a database raised before migration 602 holds it: the cursor flagged from the stream's first event and
-    // that event queued for the perspective. Since 602 the rewind floors such a trigger to the first event it reads, so the
+    // The flag as a database raised before migration 660 holds it: the cursor flagged from the stream's first event and
+    // that event queued for the perspective. Since 660 the rewind floors such a trigger to the first event it reads, so the
     // shape is seeded as stored; the worker has to resolve it either way.
     await using (var flag = conn.CreateCommand()) {
       flag.CommandText = """

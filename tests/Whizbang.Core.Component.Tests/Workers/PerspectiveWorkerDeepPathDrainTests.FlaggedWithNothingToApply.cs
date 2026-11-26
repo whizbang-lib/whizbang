@@ -13,7 +13,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// <summary>
 /// #2601: a cursor flagged RewindRequired whose queued rows hold no event its perspective applies is still rewound. The
 /// drain forms a pair only for an event the perspective reads, and the rewind ran only from a pair, so a trigger the
-/// perspective does not read (one a database flagged before migration 602, or a type this service does not register) was
+/// perspective does not read (one a database flagged before migration 660, or a type this service does not register) was
 /// never replayed: its row was leased on every pass with nothing recorded and the cursor stayed flagged. The worker now
 /// runs the flagged rewind from the stored trigger and completes the rows; only a flagged cursor takes this path.
 /// </summary>
