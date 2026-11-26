@@ -2,16 +2,21 @@
 -- SPDX-License-Identifier: MIT
 
 -- The reverse of 626_ScheduleOccurrenceIdsAreTimeOrdered.sql (#2599): wh_claim_due_schedules goes back to its last word
--- before 626 (579) and wh_trigger_schedule_now to its (070), and the three id functions are dropped. Ids minted while
+-- before 626 (601) and wh_trigger_schedule_now to its (070), and the three id functions are dropped. Ids minted while
 -- 626 was applied stay as stored.
 
 -- ---------------------------------------------------------------------------------------------
--- wh_claim_due_schedules: its last word before 626 (579).
+-- wh_claim_due_schedules: its last word before 626 (601).
 -- ---------------------------------------------------------------------------------------------
 SELECT __SCHEMA__.drop_all_overloads('wh_claim_due_schedules');
 
--- <docs>fundamentals/temporal/temporal-engine</docs>
+-- <docs>fundamentals/temporal/temporal-engine#which-instance-fires-a-schedule</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TemporalScheduleClaimSqlTests.cs:DueOwned_SpawnsOccurrence_AdvancesNextFire_LogsRunAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TemporalScheduleOwnerlessClaimSqlTests.cs:DueSchedule_OnAStreamNothingHasWritten_FiresOnce_AndPinsItsStreamToTheClaimerAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TemporalScheduleOwnerlessClaimSqlTests.cs:DueSchedule_WhoseStreamOwnerIsNotLive_IsTakenOverByALiveInstanceAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TemporalScheduleOwnerlessClaimSqlTests.cs:DueSchedule_WhoseStreamIsPinnedToAnotherLiveInstance_IsLeftToThatInstanceAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TemporalScheduleOwnerlessClaimSqlTests.cs:OwnerlessSchedule_ClaimedConcurrently_FiresExactlyOnceAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapClaimSqlTests.Schedules.cs:InMapMode_AScheduleWithNoLedgerRow_FiresOnItsPartitionsOwnerOnlyAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TemporalScheduleClaimSqlTests.cs:NotOwned_NotClaimedAsync</tests>
 -- <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OwnershipByMapClaimSqlTests.cs:Schedules_FireOnThePartitionsOwner_NotTheStoredOwnerAsync</tests>
@@ -43,6 +48,10 @@ DECLARE
   v_now TIMESTAMPTZ := COALESCE(p_now, NOW());
   -- 566 (#2554, #2555): the service's switch, read once: on, the partition ownership table alone decides.
   v_map BOOLEAN := __SCHEMA__.wh_partition_ownership_by_map();
+  -- 601 (#2575): the legacy mode's live instances, read once per claim (the alive-lock read is not per row). Map mode
+  -- does not read them.
+  v_live UUID[] := CASE WHEN v_map THEN NULL
+                        ELSE ARRAY(SELECT l.instance_id FROM __SCHEMA__.wh_live_instance_ids() l) END;
 BEGIN
   FOR v_sched IN
     SELECT sc.*
@@ -50,10 +59,13 @@ BEGIN
     -- 566 (#2555): in map mode a schedule fires on the owner of its stream's partition (wh_i_own), the schedule's own
     -- number (compute_partition for a row without one). The stored owner is the legacy mode's test, and a stream with no
     -- ledger row fires nowhere in it, as before.
+    -- 601 (#2575): in the legacy mode a stream no live instance holds (no ledger row, an unassigned row, or an owner the
+    -- liveness rule calls dead) is any live claimer's (wh_schedule_owner_admits); the row lock below keeps the fire
+    -- exactly-once, and the fire pins the stream. A stream another live instance holds stays that instance's.
     LEFT JOIN __SCHEMA__.wh_active_streams s ON s.stream_id = sc.stream_id
     WHERE CASE WHEN v_map
                THEN __SCHEMA__.wh_i_own(COALESCE(sc.partition_number, __SCHEMA__.compute_partition(sc.stream_id, p_partition_count)), p_instance_id) IS NOT NULL
-               ELSE s.assigned_instance_id = p_instance_id END
+               ELSE __SCHEMA__.wh_schedule_owner_admits(s.assigned_instance_id, p_instance_id, v_live) END
       AND sc.status = 0
       AND sc.next_fire_at <= v_now
     ORDER BY sc.next_fire_at
@@ -143,10 +155,11 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_claim_due_schedules(UUID, TIMESTAMPTZ, INTEGER, INTEGER, TIMESTAMPTZ) IS
-  'Temporal engine authoritative fire: leases due Active owned schedules (SKIP LOCKED), spawns each '
-  'occurrence into the outbox, advances next_fire_at (wh_schedule_next_fire + until/max bounds; '
-  'completion => status 2), and logs a wh_schedule_runs row, all atomically (exactly-once creation). 566 (#2554, '
-  '#2555): with the service''s switch on (wh_partition_ownership_by_map), a schedule is owned through wh_i_own alone.';
+  'Temporal engine authoritative fire: leases due Active schedules this instance may fire (SKIP LOCKED), spawns each '
+  'occurrence into the outbox, advances next_fire_at (wh_schedule_next_fire + until/max bounds; completion => status 2), '
+  'and logs a wh_schedule_runs row, all atomically (exactly-once creation). 566: in map mode the owner of the schedule''s '
+  'partition (wh_i_own). 601 (#2575): otherwise the stream''s stored owner, or any instance when no live instance holds '
+  'the stream (wh_schedule_owner_admits).';
 
 -- ---------------------------------------------------------------------------------------------
 -- wh_trigger_schedule_now: its last word before 626 (070).
