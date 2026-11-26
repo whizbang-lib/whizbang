@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Concurrent;
-using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Workers;
@@ -64,10 +63,4 @@ public partial class PerspectiveWorker {
     }
     return warned.TryAdd(workId, 0);
   }
-
-  [LoggerMessage(EventId = 94, Level = LogLevel.Warning,
-    Message = "Perspective {PerspectiveName} row for stream {StreamId}, event {EventId}, has been leased {Attempts} times with "
-            + "no failure recorded: nothing applies, fails or completes it, so the dead-letter bound never sees it. Warned "
-            + "once per row (#2601)")]
-  private static partial void LogRowLeasedWithoutFailure(ILogger logger, string? perspectiveName, Guid streamId, Guid eventId, int attempts);
 }

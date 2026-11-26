@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Concurrent;
-using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
@@ -417,16 +416,4 @@ public partial class PerspectiveWorker {
     public Task FlushBeforeWriteAsync(IReadOnlyList<PerspectiveApplyBatch.Pair> written, CancellationToken cancellationToken) =>
       worker._flushWriteBehindHeldAsync(written.Select(p => (p.StreamId, p.PerspectiveName)), takeApplyLocks: false, cancellationToken);
   }
-
-  [LoggerMessage(EventId = 90, Level = LogLevel.Warning,
-    Message = "Write-behind perspective flush failed; the batches it held were released unwritten and replay from their checkpoints")]
-  static partial void LogWriteBehindFlushFailed(ILogger logger, Exception exception);
-
-  [LoggerMessage(EventId = 91, Level = LogLevel.Warning,
-    Message = "Write-behind model of {PerspectiveName} on stream {StreamId} outlived its lease and is dropped unwritten; its {BatchCount} held batch(es) replay from the checkpoint wherever the stream is claimed next")]
-  static partial void LogWriteBehindDropped(ILogger logger, string perspectiveName, Guid streamId, int batchCount);
-
-  [LoggerMessage(EventId = 92, Level = LogLevel.Debug,
-    Message = "Write-behind model of {PerspectiveName} on stream {StreamId} was fenced: its partition's ownership moved on, so it is dropped unwritten and its {BatchCount} held batch(es) are replayed by the current owner")]
-  static partial void LogWriteBehindFenced(ILogger logger, string perspectiveName, Guid streamId, int batchCount);
 }

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
@@ -118,10 +117,4 @@ public partial class PerspectiveWorker {
       }
     }, ct).ConfigureAwait(false);
   }
-
-  [LoggerMessage(EventId = 93, Level = LogLevel.Information,
-    Message = "Cursor for stream {StreamId} / perspective {PerspectiveName} is flagged for a rewind (trigger {TriggerEventId}) and "
-            + "its {RowCount} queued row(s) hold no event it applies: rewinding from the stored trigger (#2601)")]
-  private static partial void LogFlaggedRewindWithNothingToApply(
-    ILogger logger, Guid streamId, string perspectiveName, Guid triggerEventId, int rowCount);
 }
