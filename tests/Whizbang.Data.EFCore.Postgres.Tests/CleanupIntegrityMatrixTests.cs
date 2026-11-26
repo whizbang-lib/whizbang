@@ -805,7 +805,7 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
         emit.Parameters.AddWithValue("now", _clock);
         _ = await emit.ExecuteScalarAsync();
       }
-      await _executeAsync(conn, "SELECT stamp_pending_commit_sequences(1000)");
+      await _stampAsync(conn, ids, Origin);
       for (var i = 0; i < events.Length; i++) {
         var seq = await _scalarAsync(conn, "SELECT commit_sequence FROM wh_event_store WHERE event_id = @id", ("id", ids[i]));
         _emitted[ids[i]] = (events[i].Stream, events[i].Type, events[i].Flags, events[i].Key, seq);
@@ -871,9 +871,27 @@ public class CleanupIntegrityMatrixTests : EFCoreTestBase {
       // Settled inbox rows leave, so a later redelivery of the same id is judged by the event store, as in production.
       await _executeAsync(conn, "DELETE FROM wh_inbox_state WHERE message_id = ANY(@ids)", ("ids", ids));
       await _executeAsync(conn, "DELETE FROM wh_inbox WHERE message_id = ANY(@ids)", ("ids", ids));
-      await _executeAsync(conn, "SELECT stamp_pending_commit_sequences(1000)");
+      await _stampAsync(conn, ids, Consumer);
       var after = await _idsPresentAsync(conn, ids);
       return [.. after.Except(before)];
+    }
+
+    /// <summary>
+    /// Stamps the commit order once, as the stamper's leader would on the commit's wake, and requires that every row
+    /// of <paramref name="ids"/> the store holds now has its sequence: the harness reads it back at once. Only a
+    /// backend that could still write this store's event store holds the stamp back (#2562), and the harness runs one
+    /// step at a time, so none exists; if one ever does, the step says so here instead of a later cell reading a row
+    /// with no sequence.
+    /// </summary>
+    private static async Task _stampAsync(NpgsqlConnection conn, Guid[] ids, Store store) {
+      await _executeAsync(conn, "SELECT stamp_pending_commit_sequences(1000)");
+      var unstamped = await _scalarAsync(conn,
+        "SELECT COUNT(*) FROM wh_event_store WHERE event_id = ANY(@ids) AND commit_sequence IS NULL", ("ids", ids));
+      if (unstamped != 0) {
+        throw new InvalidOperationException(
+          $"the {store.Name} left {unstamped} of the rows this step wrote unstamped: a transaction that could still write "
+          + "its event store was in flight beside the harness");
+      }
     }
 
     private static async Task<HashSet<Guid>> _idsPresentAsync(NpgsqlConnection conn, Guid[] ids) {

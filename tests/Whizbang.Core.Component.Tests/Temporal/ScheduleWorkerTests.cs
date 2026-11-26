@@ -32,6 +32,9 @@ public class ScheduleWorkerTests {
     }
     public Task<DateTimeOffset?> GetNextFireTimeAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult(NextFireTime);
+
+    public Task<ScheduleOverdueReading?> GetOverdueSchedulesAsync(TimeSpan bound, CancellationToken cancellationToken = default) =>
+      Task.FromResult<ScheduleOverdueReading?>(ScheduleOverdueReading.None);
   }
 
   private static (ScheduleWorker Worker, IScheduleClaimer? Claimer) _create(
@@ -91,6 +94,9 @@ public class ScheduleWorkerTests {
 
     public Task<DateTimeOffset?> GetNextFireTimeAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult<DateTimeOffset?>(null);
+
+    public Task<ScheduleOverdueReading?> GetOverdueSchedulesAsync(TimeSpan bound, CancellationToken cancellationToken = default) =>
+      Task.FromResult<ScheduleOverdueReading?>(ScheduleOverdueReading.None);
   }
 
   // ==================== ExecuteAsync — the BackgroundService drain loop ====================

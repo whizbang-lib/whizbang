@@ -3,6 +3,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
+using ECommerce.Contracts.Events;
 using ECommerce.Integration.Tests.Fixtures;
 
 namespace ECommerce.Integration.Tests.Lifecycle;
@@ -20,6 +21,12 @@ namespace ECommerce.Integration.Tests.Lifecycle;
 ///   <item>PostPerspectiveDetached - After perspective completes (non-blocking)</item>
 ///   <item>PostPerspectiveInline - After perspective completes (blocking) - NOW EXPLICITLY TESTED</item>
 /// </list>
+/// <para>
+/// Each perspective stage fires once per event per perspective that folds it (#2581), so every wait names how many
+/// firings it expects (<see cref="LifecycleStageTestExtensions.PerspectivesFolding{TEvent}"/>, read from the host's own
+/// runner registry) and every assertion requires exactly that many: a stage that fired once per batch, or twice for one
+/// perspective, fails here. The waits are on the BFF host, which receives the events over Service Bus.
+/// </para>
 /// </remarks>
 /// <docs>core-concepts/lifecycle-stages</docs>
 /// <docs>testing/lifecycle-synchronization</docs>
@@ -49,51 +56,48 @@ public class PerspectiveLifecycleTests {
   // ========================================
 
   /// <summary>
-  /// Verifies that PrePerspectiveInline lifecycle stage fires before perspective event processing (blocking).
-  /// Perspective processing should wait for this receptor to complete.
+  /// Verifies that PrePerspectiveInline fires before perspective event processing (blocking),
+  /// once for each perspective that folds the event.
   /// </summary>
   [Test]
-  public async Task PrePerspectiveInline_FiresBeforePerspectiveProcessing_BlocksUntilCompleteAsync() {
-    // Arrange
+  public async Task PrePerspectiveInline_FiresBeforePerspectiveProcessing_BlocksUntilCompleteAsync(CancellationToken cancellationToken) {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    var command = _command();
+    var perspectives = fixture.BffHost.PerspectivesFolding<ProductCreatedEvent>();
+    bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
 
-    var command = new CreateProductCommand {
-      ProductId = ProductId.New(),
-      Name = "Test Product",
-      Description = "Test Description",
-      Price = 99.99m,
-      InitialStock = 10
-    };
-
-    // Act - Use hook to wait for perspective processing
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    // Armed before the send, so no firing of this product can be missed.
+    var stage0 = fixture.BffHost.WaitForPrePerspectiveInlineAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
     await fixture.Dispatcher.SendAsync(command);
-    await perspectiveTask;
+    await Task.WhenAll(stage0);
+
+    // Once per perspective that folds the event, and no more
+    await _assertOncePerPerspectiveAsync(await stage0, perspectives, command, "PrePerspectiveInline");
   }
 
   /// <summary>
-  /// Verifies that PrePerspectiveInline fires before perspective data is saved.
-  /// Tests the "no events processed yet" guarantee.
+  /// Verifies that PrePerspectiveInline fires before perspective data is saved: the stage and the
+  /// perspective completion it precedes both fire once per perspective.
   /// </summary>
   [Test]
-  public async Task PrePerspectiveInline_FiresBeforePerspectiveSave_NoEventsProcessedYetAsync() {
-    // Arrange
+  public async Task PrePerspectiveInline_FiresBeforePerspectiveSave_NoEventsProcessedYetAsync(CancellationToken cancellationToken) {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    var command = _command();
+    var perspectives = fixture.BffHost.PerspectivesFolding<ProductCreatedEvent>();
+    bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
 
-    var command = new CreateProductCommand {
-      ProductId = ProductId.New(),
-      Name = "Test Product",
-      Description = "Test Description",
-      Price = 99.99m,
-      InitialStock = 10
-    };
-
-    // Act - Use hook to wait for perspective processing
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    // Armed before the send, so no firing of this product can be missed.
+    var stage0 = fixture.BffHost.WaitForPrePerspectiveInlineAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
+    var stage1 = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
     await fixture.Dispatcher.SendAsync(command);
-    await perspectiveTask;
+    await Task.WhenAll(stage0, stage1);
+
+    // Once per perspective that folds the event, and no more
+    await _assertOncePerPerspectiveAsync(await stage0, perspectives, command, "PrePerspectiveInline");
+    await _assertOncePerPerspectiveAsync(await stage1, perspectives, command, "PostPerspectiveInline");
   }
 
   // ========================================
@@ -101,51 +105,48 @@ public class PerspectiveLifecycleTests {
   // ========================================
 
   /// <summary>
-  /// Verifies that PrePerspectiveDetached lifecycle stage fires parallel with perspective RunAsync (non-blocking).
-  /// Should use Task.Run and not block perspective processing.
+  /// Verifies that PrePerspectiveDetached fires parallel with perspective RunAsync (non-blocking),
+  /// once for each perspective that folds the event.
   /// </summary>
   [Test]
-  public async Task PrePerspectiveDetached_FiresParallelWithProcessing_NonBlockingAsync() {
-    // Arrange
+  public async Task PrePerspectiveDetached_FiresParallelWithProcessing_NonBlockingAsync(CancellationToken cancellationToken) {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    var command = _command();
+    var perspectives = fixture.BffHost.PerspectivesFolding<ProductCreatedEvent>();
+    bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
 
-    var command = new CreateProductCommand {
-      ProductId = ProductId.New(),
-      Name = "Test Product",
-      Description = "Test Description",
-      Price = 99.99m,
-      InitialStock = 10
-    };
-
-    // Act - Use hook to wait for perspective processing
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    // Armed before the send, so no firing of this product can be missed.
+    var stage0 = fixture.BffHost.WaitForPrePerspectiveDetachedAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
     await fixture.Dispatcher.SendAsync(command);
-    await perspectiveTask;
+    await Task.WhenAll(stage0);
+
+    // Once per perspective that folds the event, and no more
+    await _assertOncePerPerspectiveAsync(await stage0, perspectives, command, "PrePerspectiveDetached");
   }
 
   /// <summary>
-  /// Verifies that PrePerspectiveDetached may complete after perspective finishes.
-  /// Tests the "perspective may complete before this stage finishes" guarantee.
+  /// Verifies that PrePerspectiveDetached completes even when the perspective finishes first, still
+  /// once per perspective.
   /// </summary>
   [Test]
-  public async Task PrePerspectiveDetached_MayCompleteAfterPerspective_NonBlockingGuaranteeAsync() {
-    // Arrange
+  public async Task PrePerspectiveDetached_MayCompleteAfterPerspective_NonBlockingGuaranteeAsync(CancellationToken cancellationToken) {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    var command = _command();
+    var perspectives = fixture.BffHost.PerspectivesFolding<ProductCreatedEvent>();
+    bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
 
-    var command = new CreateProductCommand {
-      ProductId = ProductId.New(),
-      Name = "Test Product",
-      Description = "Test Description",
-      Price = 99.99m,
-      InitialStock = 10
-    };
-
-    // Act - Use hook to wait for perspective processing
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 60000, hostFilter: "inventory");
+    // Armed before the send, so no firing of this product can be missed.
+    var stage0 = fixture.BffHost.WaitForPrePerspectiveDetachedAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
+    var stage1 = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
     await fixture.Dispatcher.SendAsync(command);
-    await perspectiveTask;
+    await Task.WhenAll(stage0, stage1);
+
+    // Once per perspective that folds the event, and no more
+    await _assertOncePerPerspectiveAsync(await stage0, perspectives, command, "PrePerspectiveDetached");
+    await _assertOncePerPerspectiveAsync(await stage1, perspectives, command, "PostPerspectiveInline");
   }
 
   // ========================================
@@ -153,75 +154,72 @@ public class PerspectiveLifecycleTests {
   // ========================================
 
   /// <summary>
-  /// Verifies that PostPerspectiveDetached lifecycle stage fires after perspective completes (non-blocking).
-  /// Should use Task.Run and not block checkpoint reporting.
+  /// Verifies that PostPerspectiveDetached fires after the perspective completes (non-blocking),
+  /// once for each perspective that folds the event.
   /// </summary>
   [Test]
-  public async Task PostPerspectiveDetached_FiresAfterPerspectiveCompletes_NonBlockingAsync() {
-    // Arrange
+  public async Task PostPerspectiveDetached_FiresAfterPerspectiveCompletes_NonBlockingAsync(CancellationToken cancellationToken) {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    var command = _command();
+    var perspectives = fixture.BffHost.PerspectivesFolding<ProductCreatedEvent>();
+    bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
 
-    var command = new CreateProductCommand {
-      ProductId = ProductId.New(),
-      Name = "Test Product",
-      Description = "Test Description",
-      Price = 99.99m,
-      InitialStock = 10
-    };
-
-    // Act - Use hook to wait for perspective processing
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    // Armed before the send, so no firing of this product can be missed.
+    var stage0 = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
     await fixture.Dispatcher.SendAsync(command);
-    await perspectiveTask;
+    await Task.WhenAll(stage0);
+
+    // Once per perspective that folds the event, and no more
+    await _assertOncePerPerspectiveAsync(await stage0, perspectives, command, "PostPerspectiveDetached");
   }
 
   /// <summary>
-  /// Verifies that PostPerspectiveDetached fires after perspective has processed all events.
-  /// Tests the "perspective has processed all events" guarantee.
+  /// Verifies that PostPerspectiveDetached fires after the perspective processed the event: the
+  /// pre stage and the post stage each fire once per perspective.
   /// </summary>
   [Test]
-  public async Task PostPerspectiveDetached_FiresAfterEventsProcessed_GuaranteesCompletionAsync() {
-    // Arrange
+  public async Task PostPerspectiveDetached_FiresAfterEventsProcessed_GuaranteesCompletionAsync(CancellationToken cancellationToken) {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    var command = _command();
+    var perspectives = fixture.BffHost.PerspectivesFolding<ProductCreatedEvent>();
+    bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
 
-    var command = new CreateProductCommand {
-      ProductId = ProductId.New(),
-      Name = "Test Product",
-      Description = "Test Description",
-      Price = 99.99m,
-      InitialStock = 10
-    };
-
-    // Act - Use hook to wait for perspective processing
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    // Armed before the send, so no firing of this product can be missed.
+    var stage0 = fixture.BffHost.WaitForPrePerspectiveInlineAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
+    var stage1 = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
     await fixture.Dispatcher.SendAsync(command);
-    await perspectiveTask;
+    await Task.WhenAll(stage0, stage1);
+
+    // Once per perspective that folds the event, and no more
+    await _assertOncePerPerspectiveAsync(await stage0, perspectives, command, "PrePerspectiveInline");
+    await _assertOncePerPerspectiveAsync(await stage1, perspectives, command, "PostPerspectiveDetached");
   }
 
   /// <summary>
-  /// Verifies that PostPerspectiveDetached fires before checkpoint is reported.
-  /// Tests the "checkpoint not yet reported to coordinator" guarantee.
+  /// Verifies that both PostPerspective stages fire, once per perspective, before the checkpoint
+  /// is reported.
   /// </summary>
   [Test]
-  public async Task PostPerspectiveDetached_FiresBeforeCheckpointReported_TimingGuaranteeAsync() {
-    // Arrange
+  public async Task PostPerspectiveDetached_FiresBeforeCheckpointReported_TimingGuaranteeAsync(CancellationToken cancellationToken) {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    var command = _command();
+    var perspectives = fixture.BffHost.PerspectivesFolding<ProductCreatedEvent>();
+    bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
 
-    var command = new CreateProductCommand {
-      ProductId = ProductId.New(),
-      Name = "Test Product",
-      Description = "Test Description",
-      Price = 99.99m,
-      InitialStock = 10
-    };
-
-    // Act - Use hook to wait for perspective processing (covers both PostPerspective stages)
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    // Armed before the send, so no firing of this product can be missed.
+    var stage0 = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
+    var stage1 = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
     await fixture.Dispatcher.SendAsync(command);
-    await perspectiveTask;
+    await Task.WhenAll(stage0, stage1);
+
+    // Once per perspective that folds the event, and no more
+    await _assertOncePerPerspectiveAsync(await stage0, perspectives, command, "PostPerspectiveDetached");
+    await _assertOncePerPerspectiveAsync(await stage1, perspectives, command, "PostPerspectiveInline");
   }
 
   // ========================================
@@ -229,89 +227,56 @@ public class PerspectiveLifecycleTests {
   // ========================================
 
   /// <summary>
-  /// Verifies that PostPerspectiveInline lifecycle stage fires after perspective completes (blocking).
-  /// This is the CRITICAL stage for test synchronization - guarantees perspective data is saved.
+  /// Verifies that PostPerspectiveInline fires after the perspective completes (blocking), once
+  /// for each perspective that folds the event.
   /// </summary>
   [Test]
-  public async Task PostPerspectiveInline_FiresAfterPerspectiveCompletes_BlocksCheckpointAsync() {
-    // Arrange
+  public async Task PostPerspectiveInline_FiresAfterPerspectiveCompletes_BlocksCheckpointAsync(CancellationToken cancellationToken) {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    var command = _command();
+    var perspectives = fixture.BffHost.PerspectivesFolding<ProductCreatedEvent>();
+    bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
 
-    var command = new CreateProductCommand {
-      ProductId = ProductId.New(),
-      Name = "Test Product",
-      Description = "Test Description",
-      Price = 99.99m,
-      InitialStock = 10
-    };
-
-    // Act - Use hook to wait for perspective processing
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    // Armed before the send, so no firing of this product can be missed.
+    var stage0 = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
     await fixture.Dispatcher.SendAsync(command);
-    await perspectiveTask;
+    await Task.WhenAll(stage0);
+
+    // Once per perspective that folds the event, and no more
+    await _assertOncePerPerspectiveAsync(await stage0, perspectives, command, "PostPerspectiveInline");
   }
 
   /// <summary>
-  /// Verifies that PostPerspectiveInline blocks checkpoint reporting.
-  /// Tests the "checkpoint not yet reported to coordinator" guarantee.
+  /// Verifies that PostPerspectiveInline blocks checkpoint reporting: it fires once per
+  /// perspective, after the pre stage did.
   /// </summary>
   [Test]
-  [Timeout(120_000)]
-  public async Task PostPerspectiveInline_BlocksCheckpointReporting_GuaranteesDataSavedAsync() {
-    // Arrange
+  public async Task PostPerspectiveInline_BlocksCheckpointReporting_GuaranteesDataSavedAsync(CancellationToken cancellationToken) {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    var command = _command();
+    var perspectives = fixture.BffHost.PerspectivesFolding<ProductCreatedEvent>();
+    bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
 
-    var command = new CreateProductCommand {
-      ProductId = ProductId.New(),
-      Name = "Test Product",
-      Description = "Test Description",
-      Price = 99.99m,
-      InitialStock = 10
-    };
-
-    // Act - Use hook to wait for perspective processing
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 90000, hostFilter: "inventory");
+    // Armed before the send, so no firing of this product can be missed.
+    var stage0 = fixture.BffHost.WaitForPrePerspectiveInlineAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
+    var stage1 = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
     await fixture.Dispatcher.SendAsync(command);
-    await perspectiveTask;
+    await Task.WhenAll(stage0, stage1);
+
+    // Once per perspective that folds the event, and no more
+    await _assertOncePerPerspectiveAsync(await stage0, perspectives, command, "PrePerspectiveInline");
+    await _assertOncePerPerspectiveAsync(await stage1, perspectives, command, "PostPerspectiveInline");
   }
 
   /// <summary>
-  /// Verifies that PostPerspectiveInline fires for each event processed by the perspective.
-  /// Tests that the stage fires during the event processing loop, not just once per batch.
+  /// Verifies that PostPerspectiveInline fires for each event processed by each perspective, not once per batch.
   /// </summary>
   [Test]
-  public async Task PostPerspectiveInline_FiresForEachEvent_MultipleInvocationsAsync() {
-    // Arrange
-    var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-
-    var commands = new[] {
-      new CreateProductCommand {
-        ProductId = ProductId.New(),
-        Name = "Product 1",
-        Description = "Description 1",
-        Price = 10.00m,
-        InitialStock = 5
-      },
-      new CreateProductCommand {
-        ProductId = ProductId.New(),
-        Name = "Product 2",
-        Description = "Description 2",
-        Price = 20.00m,
-        InitialStock = 15
-      }
-    };
-
-    // Act - Wait for all perspective processing
-    // Each command applies 3 events on its own stream (ProductCreated x2 perspectives +
-    // InventoryRestocked x1): 2 commands x 3 = 6 total
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 6, streamIds: [.. commands.Select(c => c.ProductId.Value)], timeoutMilliseconds: 45000, hostFilter: "inventory");
-    foreach (var command in commands) {
-      await fixture.Dispatcher.SendAsync(command);
-    }
-    await perspectiveTask;
+  public async Task PostPerspectiveInline_FiresForEachEvent_MultipleInvocationsAsync(CancellationToken cancellationToken) {
+    await _assertEveryEventFiresOncePerPerspectiveAsync([_postInline], cancellationToken);
   }
 
   // ========================================
@@ -319,27 +284,33 @@ public class PerspectiveLifecycleTests {
   // ========================================
 
   /// <summary>
-  /// Verifies that all 4 Perspective stages fire in correct order:
+  /// Verifies that all 4 Perspective stages fire for the event, each once per perspective:
   /// PrePerspectiveInline -> PrePerspectiveDetached (parallel) -> PostPerspectiveDetached -> PostPerspectiveInline
   /// </summary>
   [Test]
-  public async Task PerspectiveStages_FireInCorrectOrder_AllStagesInvokedAsync() {
-    // Arrange
+  public async Task PerspectiveStages_FireInCorrectOrder_AllStagesInvokedAsync(CancellationToken cancellationToken) {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    var command = _command();
+    var perspectives = fixture.BffHost.PerspectivesFolding<ProductCreatedEvent>();
+    bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
 
-    var command = new CreateProductCommand {
-      ProductId = ProductId.New(),
-      Name = "Test Product",
-      Description = "Test Description",
-      Price = 99.99m,
-      InitialStock = 10
-    };
-
-    // Act - Use hook to wait for perspective processing (all stages fire in order)
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    // Armed before the send, so no firing of this product can be missed.
+    var stage0 = fixture.BffHost.WaitForPrePerspectiveInlineAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
+    var stage1 = fixture.BffHost.WaitForPrePerspectiveDetachedAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
+    var stage2 = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
+    var stage3 = fixture.BffHost.WaitForPostPerspectiveInlineAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
     await fixture.Dispatcher.SendAsync(command);
-    await perspectiveTask;
+    await Task.WhenAll(stage0, stage1, stage2, stage3);
+
+    // Once per perspective that folds the event, and no more
+    await _assertOncePerPerspectiveAsync(await stage0, perspectives, command, "PrePerspectiveInline");
+    await _assertOncePerPerspectiveAsync(await stage1, perspectives, command, "PrePerspectiveDetached");
+    await _assertOncePerPerspectiveAsync(await stage2, perspectives, command, "PostPerspectiveDetached");
+    await _assertOncePerPerspectiveAsync(await stage3, perspectives, command, "PostPerspectiveInline");
   }
 
   // ========================================
@@ -349,31 +320,29 @@ public class PerspectiveLifecycleTests {
 
   /// <summary>
   /// CRITICAL: Verifies that a receptor registered at PostPerspectiveDetached
-  /// does NOT fire during PrePerspective stages (temporal ordering verification).
-  /// This is the core test for the reported bug - receptors firing before perspective processes.
+  /// does NOT fire during PrePerspective stages: each stage counts exactly its own firings, once per perspective.
   /// </summary>
   /// <docs>core-concepts/lifecycle-receptors#stage-isolation</docs>
-  [Test]
   [Category("StageIsolation")]
   [Category("PostPerspectiveDetached")]
-  public async Task PostPerspectiveDetachedReceptor_FiresAfterPrePerspective_TemporalOrderingAsync() {
-    // Arrange
+  [Test]
+  public async Task PostPerspectiveDetachedReceptor_FiresAfterPrePerspective_TemporalOrderingAsync(CancellationToken cancellationToken) {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    var command = _command();
+    var perspectives = fixture.BffHost.PerspectivesFolding<ProductCreatedEvent>();
+    bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
 
-    var command = new CreateProductCommand {
-      ProductId = ProductId.New(),
-      Name = "Stage Isolation Test Product",
-      Description = "Testing stage isolation",
-      Price = 99.99m,
-      InitialStock = 10
-    };
-
-    // Act - Use hook to wait for perspective processing
-    // If perspectives complete, all stages have fired in correct order
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 3, streamId: command.ProductId.Value, timeoutMilliseconds: 45000, hostFilter: "inventory");
+    // Armed before the send, so no firing of this product can be missed.
+    var stage0 = fixture.BffHost.WaitForPrePerspectiveInlineAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
+    var stage1 = fixture.BffHost.WaitForPostPerspectiveDetachedAsync<ProductCreatedEvent>(
+      messageFilter: filter, expectedFirings: perspectives, cancellationToken: cancellationToken);
     await fixture.Dispatcher.SendAsync(command);
-    await perspectiveTask;
+    await Task.WhenAll(stage0, stage1);
+
+    // Once per perspective that folds the event, and no more
+    await _assertOncePerPerspectiveAsync(await stage0, perspectives, command, "PrePerspectiveInline");
+    await _assertOncePerPerspectiveAsync(await stage1, perspectives, command, "PostPerspectiveDetached");
   }
 
   /// <summary>
@@ -413,37 +382,70 @@ public class PerspectiveLifecycleTests {
   }
 
   /// <summary>
-  /// Verifies that multiple events trigger all Perspective stages for each event.
+  /// Verifies that multiple events trigger all Perspective stages for each event, once per perspective.
   /// </summary>
   [Test]
-  public async Task PerspectiveStages_MultipleEvents_AllStagesFireForEachAsync() {
-    // Arrange
+  public async Task PerspectiveStages_MultipleEvents_AllStagesFireForEachAsync(CancellationToken cancellationToken) {
+    await _assertEveryEventFiresOncePerPerspectiveAsync([_preInline, _preDetached, _postDetached, _postInline], cancellationToken);
+  }
+
+  private delegate Task<GenericLifecycleCompletionReceptor<ProductCreatedEvent>> _stageWait(
+    Microsoft.Extensions.Hosting.IHost host, Func<ProductCreatedEvent, bool> filter, int expectedFirings,
+    CancellationToken cancellationToken);
+
+  private static readonly _stageWait _preInline = (h, f, n, ct) =>
+    h.WaitForPrePerspectiveInlineAsync(messageFilter: f, expectedFirings: n, cancellationToken: ct);
+  private static readonly _stageWait _preDetached = (h, f, n, ct) =>
+    h.WaitForPrePerspectiveDetachedAsync(messageFilter: f, expectedFirings: n, cancellationToken: ct);
+  private static readonly _stageWait _postDetached = (h, f, n, ct) =>
+    h.WaitForPostPerspectiveDetachedAsync(messageFilter: f, expectedFirings: n, cancellationToken: ct);
+  private static readonly _stageWait _postInline = (h, f, n, ct) =>
+    h.WaitForPostPerspectiveInlineAsync(messageFilter: f, expectedFirings: n, cancellationToken: ct);
+
+  /// <summary>
+  /// Sends two products and requires each stage to fire once per event per perspective. One wait per stage covers both
+  /// products (the firing observer counts every test receptor a stage invokes, so two waits at one stage would count
+  /// each firing twice), and each product's own firings are counted from what the receptor recorded.
+  /// </summary>
+  private async Task _assertEveryEventFiresOncePerPerspectiveAsync(_stageWait[] stages, CancellationToken cancellationToken) {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    CreateProductCommand[] commands = [_command(), _command()];
+    var perspectives = fixture.BffHost.PerspectivesFolding<ProductCreatedEvent>();
+    var ids = commands.Select(c => c.ProductId.Value).ToHashSet();
 
-    var commands = new[] {
-      new CreateProductCommand {
-        ProductId = ProductId.New(),
-        Name = "Product 1",
-        Description = "Description 1",
-        Price = 10.00m,
-        InitialStock = 5
-      },
-      new CreateProductCommand {
-        ProductId = ProductId.New(),
-        Name = "Product 2",
-        Description = "Description 2",
-        Price = 20.00m,
-        InitialStock = 15
-      }
-    };
-
-    // Act - Wait for all perspective processing
-    // 2 commands x 3 events each (ProductCreated x2 perspectives + InventoryRestocked x1) = 6 total
-    var perspectiveTask = fixture.WaitForPerspectiveProcessingAsync(
-      expectedCompletions: 6, streamIds: [.. commands.Select(c => c.ProductId.Value)], timeoutMilliseconds: 45000, hostFilter: "inventory");
+    // Armed before the sends, so no firing of these products can be missed.
+    var waits = stages
+      .Select(stage => stage(fixture.BffHost, e => ids.Contains(e.ProductId), commands.Length * perspectives, cancellationToken))
+      .ToArray();
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
     }
-    await perspectiveTask;
+    var receptors = await Task.WhenAll(waits);
+
+    foreach (var receptor in receptors) {
+      await Assert.That(receptor.InvocationCount).IsEqualTo(commands.Length * perspectives)
+        .Because("each stage fires once per event per perspective that folds it");
+      foreach (var id in ids) {
+        await Assert.That(receptor.CountedMessages.Count(m => m.ProductId == id)).IsEqualTo(perspectives)
+          .Because($"product {id}'s event reaches the stage once per perspective, not another product's share");
+      }
+    }
   }
+
+  private static async Task _assertOncePerPerspectiveAsync(
+      GenericLifecycleCompletionReceptor<ProductCreatedEvent> receptor, int perspectives, CreateProductCommand command,
+      string stage) {
+    await Assert.That(receptor.InvocationCount).IsEqualTo(perspectives)
+      .Because($"{stage} fires once for each of the {perspectives} perspectives that fold the event, and no more");
+    await Assert.That(receptor.LastMessage).IsNotNull();
+    await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId.Value);
+  }
+
+  private static CreateProductCommand _command() => new() {
+    ProductId = ProductId.New(),
+    Name = "Test Product",
+    Description = "Test Description",
+    Price = 99.99m,
+    InitialStock = 10
+  };
 }

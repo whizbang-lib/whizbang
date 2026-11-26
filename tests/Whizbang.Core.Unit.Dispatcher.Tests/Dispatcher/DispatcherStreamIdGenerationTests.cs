@@ -279,6 +279,27 @@ public class DispatcherStreamIdGenerationTests {
     await Assert.That(result.StreamId).IsEqualTo(Guid.Empty);
   }
 
+  [Test]
+  public async Task PublishManyAsync_NullStreamIdExtractor_TheLocalReceiptNamesNoStream_ThoughTheEventHasOneAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceInstanceProvider>(
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
+    services.AddReceptors();
+    services.AddWhizbangDispatcher();
+    // Every registration of the extractor, so the dispatcher is built with none at all.
+    Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.RemoveAll<IStreamIdExtractor>(services);
+    var dispatcher = services.BuildServiceProvider().GetRequiredService<IDispatcher>();
+
+    var receipts = (await dispatcher.PublishManyAsync([new NoExtractorEvent((Guid)Whizbang.Core.ValueObjects.TrackedGuid.New())], new Whizbang.Core.Dispatch.DispatchOptions())).ToList();
+
+    await Assert.That(receipts).Count().IsEqualTo(1);
+    await Assert.That(receipts[0].StreamId).IsNull()
+      .Because("the event declares a stream id, but with no extractor the local run's receipt cannot name it, and the publish still succeeds");
+  }
+
+  /// <summary>An event that declares its stream id, published where no stream id extractor is registered.</summary>
+  public sealed record NoExtractorEvent([property: StreamId] Guid OrderId) : IEvent;
+
   // ========================================
   // Tests: Event with [GenerateStreamId] in _createEnvelope path
   // ========================================

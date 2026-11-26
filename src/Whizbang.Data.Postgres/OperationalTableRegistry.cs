@@ -86,6 +86,8 @@ public static class OperationalTableRegistry {
       "own retention: recovered rows go after dead_letter_retention_days (7); unresolved rows are work"),
     _state("wh_definition_lineage", "type definitions"),
     _state("wh_digest_epoch_frontiers", "lanes"),
+    _state("wh_digest_epoch_heal_queue",
+      "sealed received epochs queued once on upgrade for a one-off re-check, removed as each is checked (#2572)"),
     _state("wh_digest_epoch_removed", "epochs per lane, tenant and type a cut removed events from (#2363)"),
     _state("wh_digest_epoch_seals", "sealed epochs: when each was sealed and last re-checked (#2353)"),
     _state("wh_digest_epochs", "sealed epochs per lane, tenant and type"),
@@ -146,7 +148,11 @@ public static class OperationalTableRegistry {
     _rolling("wh_multi_stream_runs", OperationalCategory.Queues, "own retention: MultiStreamCommandOptions.CompletedRunRetention (7 days)"),
     _state("wh_notify_state", "instances and notification keys"),
     _state("wh_offload_claims", "offloaded bodies; expire after MessageBodyOffloadOptions.PassiveExpiry"),
+    _state("wh_origin_position_unknown",
+      "received events held without a position that their origin cannot place: a row leaves with its event (#2544)"),
+    _state("wh_origin_position_walk", "origins: one position-fill cursor each (#2544)"),
     _state("wh_outbox", WORK_IN_FLIGHT_REMOVED_ON_COMPLETION),
+    _state("wh_partition_ownership", "partitions: one row per partition (10,000)"),
     _rolling("wh_perspective_applied", OperationalCategory.Deliveries, "own retention: one hour"),
     _state("wh_perspective_cursors", "streams and perspectives"),
     _state("wh_perspective_events", WORK_IN_FLIGHT_REMOVED_ON_COMPLETION),
@@ -169,6 +175,7 @@ public static class OperationalTableRegistry {
     _state("wh_schedules", "configuration: schedules"),
     _state("wh_schema_migrations", "migrations"),
     _state("wh_schema_versions", "library releases applied"),
+    _state("wh_sealed_epoch_touches", "work in flight: the sealed epochs a transaction changed, removed at its commit (#2572)"),
     _state("wh_sequences", "sequence names"),
     _state("wh_service_config", "one row"),
     _state("wh_service_instances", "live instances"),
@@ -204,6 +211,7 @@ public static class OperationalTableRegistry {
     _state("wh_unsequenced_digest_changes",
       "work in flight: each change is deleted by the fold that takes it in, and the maintenance fold runs whoever asks (#2351)"),
     _state("wh_unsequenced_digest_totals", "origins, tenants and types: one row each (#2351)"),
+    _state("wh_written_here_restoration", "one cursor: the one-off return of events written here to the local lane (#2573)"),
   ];
 
   /// <summary>The entry for a table, or null when the table is not classified.</summary>

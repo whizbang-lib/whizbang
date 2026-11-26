@@ -103,13 +103,15 @@ public class PartitionAssignerWorkerTests {
   }
 
   [Test]
-  public async Task Tick_WhenAPeerGoesStale_RepublishesWithoutItAsync() {
-    var (worker, store, _, _) = _create();
+  public async Task Tick_WhenAPeerGoesStale_RepublishesWithoutIt_OnceTheChangeHasSettledAsync() {
+    var (worker, store, _, clock) = _create();
     var grant = new FakeDutyGrant(7);
     store.Candidates.Insert(0, _pooled(_peer, 1));
     _ = await worker.TickAsync(grant, CancellationToken.None);
 
     store.Candidates[0] = _pooled(_peer, 3600);
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    clock.Advance(new PartitionAssignerOptions().SettleWindow);
     _ = await worker.TickAsync(grant, CancellationToken.None);
 
     await Assert.That(store.Publishes).Count().IsEqualTo(2);
@@ -127,6 +129,153 @@ public class PartitionAssignerWorkerTests {
     _ = await worker.TickAsync(grant, CancellationToken.None);
 
     await Assert.That(store.Publishes).Count().IsEqualTo(2);
+    await Assert.That(store.Publishes[1].MovesTo(store.Publishes[0])).IsEqualTo(0)
+      .Because("the backstop republishes the map it has, unchanged");
+  }
+
+  // --- the map and the settle window (#2558) ----------------------------------------------------
+
+  private static readonly Guid _joinerA = new("00000000-0000-0000-0000-00000000000b");
+  private static readonly Guid _joinerB = new("00000000-0000-0000-0000-00000000000c");
+  private static readonly TimeSpan _window = new PartitionAssignerOptions().SettleWindow;
+
+  [Test]
+  public async Task Tick_KJoinsInsideTheSettleWindow_PublishOnceAsync() {
+    var (worker, store, _, clock) = _create();
+    var grant = new FakeDutyGrant(7);
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    var reasons = new List<PartitionAssignerReason>();
+    worker.OnEvaluated += e => reasons.Add(e.Reason);
+
+    store.Candidates.Add(_pooled(_joinerA, 1));
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    clock.Advance(TimeSpan.FromSeconds(2));
+    store.Candidates.Add(_pooled(_joinerB, 1));
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    clock.Advance(_window - TimeSpan.FromSeconds(2));
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+
+    await Assert.That(store.Publishes).Count().IsEqualTo(2)
+      .Because("two joins inside one window publish one map, not one per join");
+    await Assert.That(reasons).IsEquivalentTo(
+      [PartitionAssignerReason.Settling, PartitionAssignerReason.Settling, PartitionAssignerReason.MembershipChanged],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the window runs from the first change seen, so a steady trickle of joins cannot postpone the publish");
+    await Assert.That(worker.LastPublished!.Members).IsEquivalentTo([_self, _joinerA, _joinerB]);
+  }
+
+  [Test]
+  public async Task Tick_AfterAPublish_TheNextChangeWaitsAWindowOfItsOwnAsync() {
+    var (worker, store, _, clock) = _create();
+    var grant = new FakeDutyGrant(7);
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    store.Candidates.Add(_pooled(_joinerA, 1));
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    clock.Advance(_window);
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+
+    store.Candidates.Add(_pooled(_joinerB, 1));
+    clock.Advance(_window);
+    var evaluations = new List<PartitionAssignerEvaluation>();
+    worker.OnEvaluated += evaluations.Add;
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+
+    await Assert.That(evaluations.Single().Reason).IsEqualTo(PartitionAssignerReason.Settling);
+    await Assert.That(store.Publishes).Count().IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task Tick_AChangeThatRevertsInsideTheWindow_PublishesNothing_AndTheNextChangeStartsAFreshWindowAsync() {
+    var (worker, store, _, clock) = _create();
+    var grant = new FakeDutyGrant(7);
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    var reasons = new List<PartitionAssignerReason>();
+    worker.OnEvaluated += e => reasons.Add(e.Reason);
+
+    store.Candidates.Add(_pooled(_joinerA, 1));
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    clock.Advance(TimeSpan.FromSeconds(3));
+    store.Candidates.RemoveAt(store.Candidates.Count - 1);
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    clock.Advance(TimeSpan.FromSeconds(3));
+    store.Candidates.Add(_pooled(_joinerA, 1));
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+
+    await Assert.That(store.Publishes).Count().IsEqualTo(1).Because("a flap that settles back moves nothing");
+    await Assert.That(reasons).IsEquivalentTo(
+      [PartitionAssignerReason.Settling, PartitionAssignerReason.Unchanged, PartitionAssignerReason.Settling],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  [Test]
+  public async Task Tick_WhileSettling_RenewsTheLeaseWhileTheLockIsHeldAsync() {
+    var (worker, store, aliveLock, _) = _create();
+    var grant = new FakeDutyGrant(7);
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    aliveLock.IsAliveLockHeld = true;
+
+    store.Candidates.Add(_pooled(_joinerA, 1));
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+
+    await Assert.That(store.Renewals).IsEquivalentTo([(_self, 7L)])
+      .Because("the published map stays valid while the change settles, so its lease must not lapse");
+  }
+
+  [Test]
+  public async Task Tick_AJoin_PublishesAMapThatMovesOnlyTheJoinersShareAsync() {
+    var (worker, store, _, clock) = _create();
+    var grant = new FakeDutyGrant(7);
+    store.Candidates.Insert(0, _pooled(_peer, 1));
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+
+    store.Candidates.Add(_pooled(_joinerB, 1));
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    clock.Advance(_window);
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+
+    var before = store.Publishes[0];
+    var after = store.Publishes[1];
+    await Assert.That(after.MovesTo(before)).IsEqualTo(after.CountOf(_joinerB));
+    await Assert.That(after.CountOf(_joinerB)).IsEqualTo(PartitionMap.PARTITION_COUNT / 3);
+    await Assert.That(Enumerable.Range(0, PartitionMap.PARTITION_COUNT)
+      .Where(p => after.OwnerOf(p) != before.OwnerOf(p)).All(p => after.OwnerOf(p) == _joinerB)).IsTrue();
+    await Assert.That(worker.LastPublished!.Owners).IsEquivalentTo(after.Owners, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the published assignment carries the map, not just the member list");
+  }
+
+  [Test]
+  public async Task Tick_ANewTenure_StartsFromThePublishedMap_SoItMovesNothingAsync() {
+    var (worker, store, _, _) = _create();
+    store.Candidates.Insert(0, _pooled(_peer, 1));
+    var previous = PartitionMap.Initial([_self, _peer, _joinerA]).Rebalance([_self, _peer]);
+    store.Published = new PartitionAssignmentRead(
+      new PartitionAssignment(6, 3, _peer, previous.Members, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddMinutes(1), previous.Owners),
+      TimeSpan.FromSeconds(30));
+
+    _ = await worker.TickAsync(new FakeDutyGrant(7), CancellationToken.None);
+
+    await Assert.That(PartitionMap.Initial([_self, _peer]).MovesTo(previous)).IsGreaterThan(0)
+      .Because("the control: the previous tenure's map is not the modulo, so starting afresh would move partitions");
+    await Assert.That(store.Publishes.Single().MovesTo(previous)).IsEqualTo(0)
+      .Because("a new assigner continues from the published map; a failover alone moves nothing");
+  }
+
+  [Test]
+  public async Task Tick_AnInstanceNotYetReady_IsGivenNothing_UntilItIsACandidateAsync() {
+    // The candidates are the instances whose startup reports ready (wh_partition_assignment_candidates, #1638): one
+    // still starting is not among them, so it is not a member and the map gives it nothing.
+    var (worker, store, _, clock) = _create();
+    var grant = new FakeDutyGrant(7);
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    var whileStarting = store.Publishes.Single();
+
+    store.Candidates.Add(_pooled(_joinerA, 1));
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    clock.Advance(_window);
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+
+    await Assert.That(whileStarting.CountOf(_joinerA)).IsEqualTo(0);
+    await Assert.That(store.Publishes[1].CountOf(_joinerA)).IsEqualTo(PartitionMap.PARTITION_COUNT / 2);
   }
 
   [Test]
@@ -153,6 +302,143 @@ public class PartitionAssignerWorkerTests {
     await Assert.That(worker.Epoch).IsEqualTo(8);
     await Assert.That(store.Publishes).Count().IsEqualTo(2);
     await Assert.That(worker.LastPublished!.Epoch).IsEqualTo(8);
+  }
+
+  [Test]
+  public async Task Tick_WithOwnershipByMapOff_NeverAsksForTheSwitchAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = false });
+
+    _ = await worker.TickAsync(new FakeDutyGrant(7), CancellationToken.None);
+
+    await Assert.That(store.SwitchRequests).IsEmpty()
+      .Because("an operator who turns ownership by map off keeps the stored-owner rules, so the assigner never asks");
+  }
+
+  [Test]
+  public async Task Options_OwnershipByMap_DefaultsOn_AndTheDefaultStillWaitsForEveryInstanceAsync() {
+    var (worker, store, _, _) = _create();
+    store.SwitchAnswer = "closed (1 of 2 live instances support ownership by map)";
+    var grant = new FakeDutyGrant(7);
+
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+
+    await Assert.That(new PartitionAssignerOptions().OwnershipByMap).IsTrue()
+      .Because("#2556 and #2557 make a moved partition safe, so the published map is the owner of a stream by default");
+    await Assert.That(store.SwitchRequests).Count().IsEqualTo(2)
+      .Because("the default asks for the switch, and the database turns it on only once every live instance supports it");
+    await Assert.That(store.ExpiryRequests).IsEmpty().Because("while the switch stays off, nothing hands over");
+  }
+
+  [Test]
+  public async Task Tick_WithOwnershipByMapOn_AsksForTheSwitchAfterPublishing_AtItsEpochAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = true });
+
+    var continues = await worker.TickAsync(new FakeDutyGrant(7), CancellationToken.None);
+
+    await Assert.That(continues).IsTrue();
+    await Assert.That(store.Publishes).Count().IsEqualTo(1);
+    await Assert.That(store.SwitchRequests).IsEquivalentTo([(_self, 7L)]);
+  }
+
+  [Test]
+  public async Task Tick_PublishesWithTheConfiguredHandoverDeadlineAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { HandoverDeadline = TimeSpan.FromSeconds(45) });
+
+    _ = await worker.TickAsync(new FakeDutyGrant(7), CancellationToken.None);
+
+    await Assert.That(store.HandoverDeadlines).IsEquivalentTo([TimeSpan.FromSeconds(45)])
+      .Because("#2557: the deadline a moved partition may hand over for is the operator's, passed with every publish");
+  }
+
+  [Test]
+  public async Task Options_HandoverDeadline_DefaultsToThirtySeconds_AndANonPositiveOneIsRefusedAsync() {
+    await Assert.That(new PartitionAssignerOptions().HandoverDeadline).IsEqualTo(TimeSpan.FromSeconds(30));
+    await Assert.That(() => new PartitionAssignerOptions { HandoverDeadline = TimeSpan.Zero }.Validate())
+      .Throws<InvalidOperationException>();
+  }
+
+  [Test]
+  public async Task Tick_InMapMode_CompletesTheHandoversPastTheirDeadline_AtItsEpochAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = true });
+    store.ExpiryAnswer = 3;
+    var grant = new FakeDutyGrant(7);
+
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    var continues = await worker.TickAsync(grant, CancellationToken.None);
+
+    await Assert.That(continues).IsTrue();
+    await Assert.That(store.ExpiryRequests).IsEquivalentTo([(_self, 7L), (_self, 7L)])
+      .Because("#2557: once the service owns by map, every tick completes what is past its deadline, changed or not");
+  }
+
+  [Test]
+  public async Task Tick_BeforeMapMode_NeverCompletesAHandoverAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = true });
+    store.SwitchAnswer = "closed (1 of 2 live instances support ownership by map)";
+
+    _ = await worker.TickAsync(new FakeDutyGrant(7), CancellationToken.None);
+
+    await Assert.That(store.ExpiryRequests).IsEmpty().Because("off, a publish moves a partition at once, so nothing hands over");
+  }
+
+  [Test]
+  public async Task Tick_WhenTheExpiryIsFenced_EndsTheTenureAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = true });
+    store.ExpiryAnswer = null;
+
+    var continues = await worker.TickAsync(new FakeDutyGrant(7), CancellationToken.None);
+
+    await Assert.That(continues).IsFalse().Because("a deposed assigner completes no handover and gives the tenure up");
+  }
+
+  [Test]
+  public async Task Tick_OnceTheSwitchIsOn_DoesNotAskAgainAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = true });
+    var grant = new FakeDutyGrant(7);
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+    store.SwitchAnswer = "open";
+
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+
+    await Assert.That(store.SwitchRequests).Count().IsEqualTo(1).Because("the switch is one-way, so once on it is never asked for again");
+  }
+
+  [Test]
+  public async Task Tick_WhileTheSwitchStaysOff_AsksAgainOnTheNextTickAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = true });
+    store.SwitchAnswer = "closed (1 of 2 live instances support ownership by map)";
+    var grant = new FakeDutyGrant(7);
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+
+    _ = await worker.TickAsync(grant, CancellationToken.None);
+
+    await Assert.That(store.SwitchRequests).Count().IsEqualTo(2)
+      .Because("an instance that does not support the mode may leave at any time, so the assigner keeps asking");
+  }
+
+  [Test]
+  public async Task Tick_WhenTheFenceRefusesTheSwitch_EndsTheTenureAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = true });
+    store.SwitchAnswer = null;
+    var evaluations = 0;
+    worker.OnEvaluated += _ => evaluations++;
+
+    var continues = await worker.TickAsync(new FakeDutyGrant(7), CancellationToken.None);
+
+    await Assert.That(continues).IsFalse();
+    await Assert.That(evaluations).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Tick_UnderANewTenure_AsksForTheSwitchAgainAsync() {
+    var (worker, store, _, _) = _create(new PartitionAssignerOptions { OwnershipByMap = true });
+    _ = await worker.TickAsync(new FakeDutyGrant(7), CancellationToken.None);
+
+    _ = await worker.TickAsync(new FakeDutyGrant(8), CancellationToken.None);
+
+    await Assert.That(store.SwitchRequests).IsEquivalentTo([(_self, 7L), (_self, 8L)])
+      .Because("what one tenure learned is not carried into the next; the database answers again at the new epoch");
   }
 
   [Test]

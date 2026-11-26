@@ -670,6 +670,30 @@ more than the ranking it replaced; reading the table's one page without its inde
 `PartitionAssignmentClaimCostScenarioTests` gates it: the assigned claim costs no more than the
 self-ranked one, at 20 and at 400 registered instances.
 
+## Sequence integrity: the hold adds no read to the drain (#2542)
+
+Migration 558 lets the outbox hold an event until the commit-order stamper has given it a commit
+sequence. The hold had to be decided inside `fetch_outbox_batch` and `wh_continue_outbox_streams`,
+the two statements the drain runs per offered stream, so it was built to read nothing they did not
+already read:
+
+- The test is `sequence_hold_until > NOW() AND es.commit_sequence IS NULL`. The row's own column, and
+  the event store row both functions already join by primary key to put the commit sequence on the
+  wire. No index was added to the outbox, and no new join or scan.
+- The cut is one more window (`bool_or ... ROWS UNBOUNDED PRECEDING`) over the rows the fetch already
+  ranks and sorts, partitioned by stream; it costs the batch, never the backlog.
+- The stamper's outbox ring probes `idx_outbox_stream_run` once per stamped stream, with the index's
+  own key as the `ORDER BY` (the 161 rule), and only rings when the stream has a pending row.
+- The held-age reading walks one instance's pending rows through `idx_outbox_held_arrival` and stops
+  at 1,000 rows, every 15 seconds.
+
+**What to watch:** held streams stay leased and are re-offered by every claim poll until their stamp
+lands, so under a stamp backlog with `UntilStamped` events, each poll re-fetches them and finds
+nothing to publish. The cost per poll is still bounded by the re-offer batch, but it is spent on
+streams that cannot move. `whizbang.outbox.sequence_hold.oldest_age_seconds` rising is the sign. A
+re-offer that skips a stream whose head is held (as 349 does for the inbox) is the next step if it
+shows up in a measurement.
+
 ## Two consumer-side findings, recorded because the framework cannot detect them
 
 - A consumer-owned trigger cast a document key's text to `timestamptz`, which fails on the canonical

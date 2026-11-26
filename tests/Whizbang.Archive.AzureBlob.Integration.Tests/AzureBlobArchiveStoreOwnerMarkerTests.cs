@@ -18,7 +18,7 @@ using Whizbang.Data.Dapper.Postgres;
 using Whizbang.Data.Postgres;
 using Whizbang.Testing.Containers;
 
-namespace Whizbang.Archive.AzureBlob.Integration.Tests;
+namespace Whizbang.Storage.AzureBlob.Integration.Tests;
 
 /// <summary>
 /// #2367: one database per container. The first write claims the container with a create-only owner marker naming
@@ -57,7 +57,7 @@ public partial class AzureBlobArchiveStoreTests {
       var (secondStream, _) = await _seedAsync(3, second.ConnectionString);
       var logger = new ListLogger();
       using var metrics = new SweepMetricsRecorder();
-      var other = new AzureBlobArchiveStore(_databaseAt(second.ConnectionString), _container(),
+      var other = AzureBlobArchive.Create(_databaseAt(second.ConnectionString), _container(),
         new AzureBlobArchiveOptions { MaxEventsPerChunk = 2, ContainerName = _containerName, DeleteAfter = _delay }, logger, clock,
         metrics.Metrics);
       _ = await first.WriteAsync(ArchiveBatch.WholeStream(firstStream));
@@ -73,8 +73,8 @@ public partial class AzureBlobArchiveStoreTests {
       await Assert.That(swept).IsEqualTo(0);
       await Assert.That(await _objectsAsync()).IsEquivalentTo(everything)
         .Because("the second database names none of the first's objects, so a sweep would have deleted them all: it refuses");
-      await Assert.That(metrics.Refused(AzureBlobArchiveStore.SweepRefusal.FOREIGN_MARKER)).IsEqualTo(1L);
-      await Assert.That(logger.Messages).Contains(m => m.Level == LogLevel.Warning && m.Text.Contains(AzureBlobArchiveStore.SweepRefusal.FOREIGN_MARKER, StringComparison.Ordinal));
+      await Assert.That(metrics.Refused(PostgresObjectArchiveStore.SweepRefusal.FOREIGN_MARKER)).IsEqualTo(1L);
+      await Assert.That(logger.Messages).Contains(m => m.Level == LogLevel.Warning && m.Text.Contains(PostgresObjectArchiveStore.SweepRefusal.FOREIGN_MARKER, StringComparison.Ordinal));
       await Assert.That(await _markerAsync()).IsEqualTo(await _databaseIdAsync(_db.ConnectionString))
         .Because("the marker is never updated");
       await Assert.That(await _databaseIdAsync(second.ConnectionString)).IsNotEqualTo(await _databaseIdAsync(_db.ConnectionString))
@@ -93,8 +93,8 @@ public partial class AzureBlobArchiveStoreTests {
     try {
       // The restored database writes (and crashes) into its own container, then sweeps it.
       await _crashAfterUploadAsync(orphan, clock, restored.ConnectionString);
-      var store = new AzureBlobArchiveStore(_databaseAt(restored.ConnectionString), _container(),
-        new AzureBlobArchiveOptions { ContainerName = _containerName, DeleteAfter = _delay }, logger: null, clock);
+      var store = AzureBlobArchive.Create(_databaseAt(restored.ConnectionString), _container(),
+        new AzureBlobArchiveOptions { ContainerName = _containerName, DeleteAfter = _delay }, logger: null, timeProvider: clock);
 
       var swept = await store.SweepOrphanedObjectsAsync();
 
@@ -117,12 +117,12 @@ public partial class AzureBlobArchiveStoreTests {
       var target = $"archive-{Guid.NewGuid():N}";
       await _copyObjectsAsync(_containerName, target);
       var options = new AzureBlobArchiveOptions { MaxEventsPerChunk = 10, ContainerName = target, DeleteAfter = _delay };
-      var moved = new AzureBlobArchiveStore(_databaseAt(copy.ConnectionString), _container(target), options, logger: null, clock);
+      var moved = AzureBlobArchive.Create(_databaseAt(copy.ConnectionString), _container(target), options, logger: null, timeProvider: clock);
       var refused = await Assert.That(() => _completedAsync(_readAllAsync(moved, stream))).Throws<ArchiveLocationMismatchException>();
       _ = await moved.RepointLocationAsync(refused!.RecordedLocationId!.Value);
-      var crashing = new AzureBlobArchiveStore(_databaseAt(copy.ConnectionString), _container(target, new FaultObjectWrites(afterSending: true)),
-        options, logger: null, clock);
-      await Assert.That(() => _completedAsync(crashing.WriteAsync(ArchiveBatch.WholeStream(orphan)))).Throws<RequestFailedException>();
+      var crashing = AzureBlobArchive.Create(_databaseAt(copy.ConnectionString), _container(target, new FaultObjectWrites(afterSending: true)),
+        options, logger: null, timeProvider: clock);
+      await Assert.That(() => _completedAsync(crashing.WriteAsync(ArchiveBatch.WholeStream(orphan)))).Throws<ArchiveObjectStoreException>();
       var withTheOrphan = await _objectsAsync(target);
 
       var swept = await moved.SweepOrphanedObjectsAsync();
@@ -142,20 +142,20 @@ public partial class AzureBlobArchiveStoreTests {
   public async Task Sweep_AForeignMarkerPlacedFirst_Refuses_AndTheWriteStillSucceedsAsync() {
     var clock = new ManualClock(_farFuture);
     _ = await _container().CreateIfNotExistsAsync();
-    _ = await _container().GetBlobClient(AzureBlobArchiveStore.OWNER_MARKER_NAME).UploadAsync(BinaryData.FromString("some-other-database"));
+    _ = await _container().GetBlobClient(PostgresObjectArchiveStore.OWNER_MARKER_NAME).UploadAsync(BinaryData.FromString("some-other-database"));
     var (orphan, _) = await _seedAsync(3);
     var named = await _archiveAnotherStreamAsync();
     await _crashAfterUploadAsync(orphan, clock);
     using var metrics = new SweepMetricsRecorder();
-    var store = new AzureBlobArchiveStore(_database(), _container(),
-      new AzureBlobArchiveOptions { ContainerName = _containerName, DeleteAfter = _delay }, logger: null, clock, metrics.Metrics);
+    var store = AzureBlobArchive.Create(_database(), _container(),
+      new AzureBlobArchiveOptions { ContainerName = _containerName, DeleteAfter = _delay }, logger: null, timeProvider: clock, metrics: metrics.Metrics);
 
     var swept = await store.SweepOrphanedObjectsAsync();
 
     await Assert.That(named).IsNotEmpty().Because("the write into a container another database claimed still succeeded");
     await Assert.That(swept).IsEqualTo(0);
     await Assert.That(await _objectsAsync()).Count().IsEqualTo(named.Count + 1).Because("the orphan stays: nothing is swept");
-    await Assert.That(metrics.Refused(AzureBlobArchiveStore.SweepRefusal.FOREIGN_MARKER)).IsEqualTo(1L);
+    await Assert.That(metrics.Refused(PostgresObjectArchiveStore.SweepRefusal.FOREIGN_MARKER)).IsEqualTo(1L);
     await Assert.That(await _markerAsync()).IsEqualTo("some-other-database").Because("a marker is never updated");
   }
 
@@ -174,7 +174,7 @@ public partial class AzureBlobArchiveStoreTests {
       // A marker is there, written by this database, but cannot be read back.
       _ = await _store(maxEventsPerChunk: 10).WriteAsync(ArchiveBatch.WholeStream(stream));
     }
-    var store = new AzureBlobArchiveStore(_database(), _container(fault: fault), options, logger, clock, metrics.Metrics);
+    var store = AzureBlobArchive.Create(_database(), _container(fault: fault), options, logger, clock, metrics.Metrics);
     if (failing == "PUT") {
       _ = await store.WriteAsync(ArchiveBatch.WholeStream(stream));
     }
@@ -187,9 +187,9 @@ public partial class AzureBlobArchiveStoreTests {
     await Assert.That(await _readAllAsync(_store(), stream)).Count().IsEqualTo(3).Because("the write succeeded without its marker");
     await Assert.That(swept).IsEqualTo(0);
     await Assert.That(await _objectsAsync()).IsEquivalentTo(before);
-    await Assert.That(metrics.Refused(AzureBlobArchiveStore.SweepRefusal.MARKER_UNCLAIMABLE)).IsEqualTo(1L);
+    await Assert.That(metrics.Refused(PostgresObjectArchiveStore.SweepRefusal.MARKER_UNCLAIMABLE)).IsEqualTo(1L);
     await Assert.That(logger.Messages).Contains(m => m.Level == LogLevel.Warning
-      && m.Text.Contains(AzureBlobArchiveStore.SweepRefusal.MARKER_UNCLAIMABLE, StringComparison.Ordinal));
+      && m.Text.Contains(PostgresObjectArchiveStore.SweepRefusal.MARKER_UNCLAIMABLE, StringComparison.Ordinal));
   }
 
   [Test]
@@ -198,10 +198,10 @@ public partial class AzureBlobArchiveStoreTests {
     var (orphan, _) = await _seedAsync(3);
     var named = await _archiveAnotherStreamAsync();
     // A container written before markers existed: no marker.
-    _ = await _container().GetBlobClient(AzureBlobArchiveStore.OWNER_MARKER_NAME).DeleteAsync();
+    _ = await _container().GetBlobClient(PostgresObjectArchiveStore.OWNER_MARKER_NAME).DeleteAsync();
     await _crashAfterUploadAsync(orphan, clock);
-    var store = new AzureBlobArchiveStore(_database(), _container(),
-      new AzureBlobArchiveOptions { ContainerName = _containerName, DeleteAfter = _delay }, logger: null, clock);
+    var store = AzureBlobArchive.Create(_database(), _container(),
+      new AzureBlobArchiveOptions { ContainerName = _containerName, DeleteAfter = _delay }, logger: null, timeProvider: clock);
 
     var swept = await store.SweepOrphanedObjectsAsync();
 
@@ -213,25 +213,25 @@ public partial class AzureBlobArchiveStoreTests {
   [Test]
   public async Task Sweep_InADatabaseThatNeverWroteToTheLocation_CountsTheRefusalAsync() {
     using var metrics = new SweepMetricsRecorder();
-    var store = new AzureBlobArchiveStore(_database(), _container(),
+    var store = AzureBlobArchive.Create(_database(), _container(),
       new AzureBlobArchiveOptions { ContainerName = _containerName, DeleteAfter = _delay }, logger: null, new ManualClock(_farFuture), metrics.Metrics);
 
     await Assert.That(await store.SweepOrphanedObjectsAsync()).IsEqualTo(0);
-    await Assert.That(metrics.Refused(AzureBlobArchiveStore.SweepRefusal.UNKNOWN_LOCATION)).IsEqualTo(1L);
+    await Assert.That(metrics.Refused(PostgresObjectArchiveStore.SweepRefusal.UNKNOWN_LOCATION)).IsEqualTo(1L);
   }
 
   // ── Arrange ────────────────────────────────────────────────────────────────────────────────────────
 
   // An upload that reaches storage while its write never commits: an orphan, in this container.
   private async Task _crashAfterUploadAsync(Guid stream, TimeProvider clock, string? connectionString = null) {
-    var crashing = new AzureBlobArchiveStore(connectionString is null ? _database() : _databaseAt(connectionString),
+    var crashing = AzureBlobArchive.Create(connectionString is null ? _database() : _databaseAt(connectionString),
       _container(fault: new FaultObjectWrites(afterSending: true)),
-      new AzureBlobArchiveOptions { MaxEventsPerChunk = 10, ContainerName = _containerName, DeleteAfter = _delay }, logger: null, clock);
-    await Assert.That(() => _completedAsync(crashing.WriteAsync(ArchiveBatch.WholeStream(stream)))).Throws<RequestFailedException>();
+      new AzureBlobArchiveOptions { MaxEventsPerChunk = 10, ContainerName = _containerName, DeleteAfter = _delay }, logger: null, timeProvider: clock);
+    await Assert.That(() => _completedAsync(crashing.WriteAsync(ArchiveBatch.WholeStream(stream)))).Throws<ArchiveObjectStoreException>();
   }
 
   private async Task<string?> _markerAsync(string? container = null) {
-    var blob = _container(container).GetBlobClient(AzureBlobArchiveStore.OWNER_MARKER_NAME);
+    var blob = _container(container).GetBlobClient(PostgresObjectArchiveStore.OWNER_MARKER_NAME);
     return (await blob.ExistsAsync()).Value ? (await blob.DownloadContentAsync()).Value.Content.ToString() : null;
   }
 
@@ -252,7 +252,7 @@ public partial class AzureBlobArchiveStoreTests {
 
     public override ValueTask ProcessAsync(HttpMessage message, ReadOnlyMemory<HttpPipelinePolicy> pipeline) {
       if (message.Request.Method == method
-          && message.Request.Uri.Path.EndsWith("/" + AzureBlobArchiveStore.OWNER_MARKER_NAME, StringComparison.Ordinal)) {
+          && message.Request.Uri.Path.EndsWith("/" + PostgresObjectArchiveStore.OWNER_MARKER_NAME, StringComparison.Ordinal)) {
         Faulted++;
         throw new RequestFailedException(503, "injected: the marker request failed");
       }

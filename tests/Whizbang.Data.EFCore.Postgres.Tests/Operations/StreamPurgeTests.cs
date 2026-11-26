@@ -294,6 +294,8 @@ public class StreamPurgeTests : EFCoreTestBase {
     await Assert.That(sp.GetRequiredService<IStreamPurger>()).IsTypeOf<PostgresStreamPurger>();
     await Assert.That(sp.GetRequiredService<IFanoutChildRefiler>()).IsTypeOf<PostgresFanoutChildRefiler>()
       .Because("the driver registers the composite-child repair (#1798) over the same data source");
+    await Assert.That(sp.GetRequiredService<IReceivedStreamResequencer>()).IsTypeOf<PostgresReceivedStreamResequencer>()
+      .Because("the driver registers the received-stream re-sequence (#1629) over the same data source");
     await Assert.That(sp.GetService<IPerspectiveTableSwapper>()).IsTypeOf<Whizbang.Data.Postgres.Perspectives.PostgresPerspectiveTableSwapper>()
       .Because("the driver registers the blue-green rebuild's swapper over an independent connection");
   }

@@ -45,6 +45,13 @@ public enum PerspectiveWriteStatus {
 
   /// <summary>The database rejected this row. Nothing was written for it; the batch's other rows were.</summary>
   Failed = 3,
+
+  /// <summary>
+  /// The stream's partition is no longer owned at the epoch its work was claimed under (#2556): nothing was written, and
+  /// the work stays for the partition's current owner. A held model is dropped, never written later.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#fencing</docs>
+  Fenced = 4,
 }
 
 /// <summary>The outcome of one pending perspective write.</summary>
@@ -60,6 +67,10 @@ public readonly record struct PerspectiveWriteOutcome(
 
   /// <summary>The ordering guard refused the write.</summary>
   public static PerspectiveWriteOutcome Refused => new(PerspectiveWriteStatus.Refused, PerspectiveRowVersion.Unchecked, null);
+
+  /// <summary>The partition's ownership moved on since the work was claimed (#2556).</summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveWritesAreFencedTests.cs</tests>
+  public static PerspectiveWriteOutcome Fenced => new(PerspectiveWriteStatus.Fenced, PerspectiveRowVersion.Unchecked, null);
 
   /// <summary>The row moved since the apply read it.</summary>
   /// <param name="actual">The version the row is at, or absent.</param>

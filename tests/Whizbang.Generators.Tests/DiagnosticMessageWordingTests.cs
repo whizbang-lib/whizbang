@@ -20,7 +20,7 @@ public class DiagnosticMessageWordingTests {
   /// <summary>Every descriptor declared in the generator assemblies, found by reflection rather than listed.</summary>
   [RequiresUnreferencedCode("Reads the descriptor fields by reflection.")]
   private static List<DiagnosticDescriptor> _allDescriptors() =>
-    [.. new[] { typeof(DiagnosticDescriptors).Assembly, typeof(PerspectiveModelDictionaryAnalyzer).Assembly }
+    [.. new[] { typeof(DiagnosticDescriptors).Assembly, typeof(PerspectiveModelPolymorphicAnalyzer).Assembly }
       .SelectMany(static a => a.GetTypes())
       // Analyzers declare their own descriptors as private fields; the scan has to see those too, read-only.
 #pragma warning disable S3011 // Reading private descriptor fields in a test, never writing them
@@ -138,27 +138,6 @@ public class DiagnosticMessageWordingTests {
     var message = _message(diagnostics.Single(d => d.Id == "WHIZ100"));
     await Assert.That(message).Contains("ValueTask<Order>");
     await Assert.That(message).DoesNotContain("'Task<");
-  }
-
-  /// <summary>WHIZ810 suggests what its description and tested fix use: a list of a key/value class.</summary>
-  [Test]
-  [RequiresAssemblyFiles]
-  public async Task Whiz810_SuggestsAKeyValueClassAsync() {
-    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveModelDictionaryAnalyzer>("""
-      using System.Collections.Generic;
-      using Whizbang.Core.Perspectives;
-      namespace Shop;
-      public record Order { public Dictionary<string, int> Counts { get; init; } = []; }
-      public record OrderPlaced;
-      public class OrderPerspective : IPerspectiveFor<Order, OrderPlaced> {
-        public Order Apply(Order current, OrderPlaced @event) => current;
-      }
-      """);
-
-    var message = _message(diagnostics.Single(d => d.Id == "WHIZ810"));
-    await Assert.That(message).DoesNotContain("KeyValuePair");
-    await Assert.That(message).Contains("Key");
-    await Assert.That(message).Contains("Value");
   }
 
   private const string PERSPECTIVE_PREFIX = """

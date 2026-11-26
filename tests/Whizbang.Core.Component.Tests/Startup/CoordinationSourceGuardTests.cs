@@ -73,11 +73,12 @@ public partial class CoordinationSourceGuardTests {
     ["src/Whizbang.Data.Postgres/SchemaBootstrapPhase.cs"] = EXCLUSION,
     ["src/Whizbang.Data.Postgres/CanonicalTemporalRewritePhase.cs"] = EXCLUSION,
     ["src/Whizbang.Data.Postgres/SchemaRollback.cs"] = EXCLUSION,
+    ["src/Whizbang.Data.Postgres/PerspectiveRegistryCurrency.cs"] = EXCLUSION,
     ["src/Whizbang.Data.Postgres/PostgresCapabilityProvisioner.cs"] = EXCLUSION,
     ["src/Whizbang.Data.EFCore.Postgres/SchemaStepRunner.cs"] = EXCLUSION,
     ["src/Whizbang.Data.EFCore.Postgres/Collective/EFCoreCollectiveAdapter.cs"] = EXCLUSION,
     ["src/Whizbang.Data.Dapper.Postgres/Collective/DapperCollectiveEventApplier.cs"] = EXCLUSION,
-    ["src/Whizbang.Archive.AzureBlob/AzureBlobArchiveStore.cs"] = EXCLUSION,
+    ["src/Whizbang.Data.Postgres/PostgresObjectArchiveStore.cs"] = EXCLUSION,
   };
 
   /// <summary>C# files that may compare a heartbeat's age or read session activity.</summary>
@@ -108,11 +109,16 @@ public partial class CoordinationSourceGuardTests {
   private static readonly Dictionary<string, string> _sqlLeaseAllowlist = new(StringComparer.Ordinal) {
     ["_role_lapse_reason"] = "the role's lease, and past it the one liveness rule through _role_holder_kept_live (#2140)",
     ["wh_assert_role_epoch"] = "the fence: the role's lease, and past it the one liveness rule through _role_holder_kept_live (#2140)",
+    ["wh_role_assignment_status"] = "reports a held role whose holder is past its lease, its backend's statement and its "
+      + "progress window (through _role_holder_kept_live) and is kept only because no peer can take it (#2593); it judges "
+      + "no holder live, _role_lapse_reason does",
     ["_role_lapse_is_fleet_wide"] = "bounds the window a lapse is classified in (fleet-wide or the holder's own); it judges no holder live",
     ["_role_void_reason"] = "173's phase-1 lapse helper, which no current function calls; its callers were redefined by 184",
     ["claim_work"] = "the partition assignment's lease: which partitions an instance owns, published by the assigner, whose role "
       + "is judged by the rule",
     ["wh_claim_multi_stream_work"] = "the partition assignment's lease, as claim_work reads it",
+    ["wh_partition_map_is_valid"] = "the published map's lease, and past it every member judged by the one liveness rule "
+      + "(wh_live_instance_ids, #2554)",
   };
 
   /// <summary>SQL functions (by their last definition) that may take a SESSION advisory lock.</summary>
@@ -167,8 +173,6 @@ public partial class CoordinationSourceGuardTests {
   private static readonly Dictionary<string, string> _overrideAllowlist = new(StringComparer.Ordinal) {
     ["src/Whizbang.Core/Versioning/UpgradeOrder.cs"] = "the setting's key, read once, beside the rule it overrides",
     ["src/Whizbang.Data.Postgres/PostgresStartupAssessment.cs"] = "THE verdict: the only place an incompatibility becomes a start",
-    ["src/Whizbang.Data.EFCore.Postgres/PostgresDriverExtensions.cs"] = "hands the setting to the EF Core driver's assessor",
-    ["src/Whizbang.Data.Dapper.Postgres/ServiceCollectionExtensions.cs"] = "hands the setting to the Dapper driver's assessor",
   };
 
   [GeneratedRegex(@"IsIncompatibilityOverridden\(|OverrideIncompatibility""|OverriddenReason\s*=(?!=)")]

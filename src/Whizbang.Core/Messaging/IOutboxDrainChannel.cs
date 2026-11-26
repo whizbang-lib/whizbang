@@ -41,6 +41,10 @@ public interface IOutboxDrainChannel {
 
   /// <summary>Clears the in-flight marker. Called by <c>OutboxDrainWorker</c> after fetch + publish + completion enqueue.</summary>
   void MarkDrained(Guid streamId) { }
+
+  /// <summary>The streams being drained now (#2557): a partition is handed over only once none of its streams is.</summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#handover</docs>
+  IEnumerable<Guid> InFlightStreams => [];
 }
 
 /// <summary>Default unbounded channel implementation.</summary>
@@ -76,4 +80,7 @@ public sealed class OutboxDrainChannel : IOutboxDrainChannel {
 
   /// <inheritdoc />
   public void MarkDrained(Guid streamId) => _inFlight.TryRemove(streamId, out _);
+
+  /// <inheritdoc />
+  public IEnumerable<Guid> InFlightStreams => _inFlight.Keys;
 }

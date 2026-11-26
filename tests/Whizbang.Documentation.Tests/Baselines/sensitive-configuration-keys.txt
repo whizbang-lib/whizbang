@@ -7,4 +7,7 @@ Whizbang:BodyOffload:Cipher:KeyEncryptionKey
 Whizbang:BodyOffload:Cipher:PreviousKeyEncryptionKey
 Whizbang:Database:DirectConnectionString
 Whizbang:Offloads:AzureBlob:*:ConnectionString
+Whizbang:Storage:AzureBlob:Archive:ConnectionString
+Whizbang:Storage:AzureBlob:ConnectionString
+Whizbang:Storage:AzureBlob:Offloads:ConnectionString
 Whizbang:Workers:PinnedPool:ConnectionString

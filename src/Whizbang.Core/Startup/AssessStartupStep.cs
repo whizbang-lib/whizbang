@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -53,6 +54,56 @@ public sealed record StartupAssessment(StartupVerdict Verdict, string Reason) {
   /// </summary>
   /// <docs>operations/startup/rolling-upgrades#rolling-back</docs>
   public RollbackPlan? Rollback { get; init; }
+
+  /// <summary>
+  /// The W! migrations' own verdict (#2553, owner decision 2), judged apart from the application's schema; null when the
+  /// assessor judged the schema as one (no ledger, or a refusal that is the whole instance's).
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#two-verdicts</docs>
+  public SchemaSideVerdict? Platform { get; init; }
+
+  /// <summary>The application schema's own verdict (#2553), judged apart from the W! migrations; null as for <see cref="Platform"/>.</summary>
+  /// <docs>operations/startup/rolling-upgrades#two-verdicts</docs>
+  public SchemaSideVerdict? Application { get; init; }
+
+  /// <summary>
+  /// Whether the instance stands down without applying anything (#2553): the W! migrations stood down, the instance as a
+  /// whole did, or the W! migrations are served as they are while the application's schema stands down. A stand-down of
+  /// the application's schema alone, with the W! migrations to serve or migrate, still lets them run first.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#two-verdicts</docs>
+  public bool StandsDownWithoutMigrating =>
+    Verdict == StartupVerdict.StandDown && Platform is not { Verdict: StartupVerdict.Migrate or StartupVerdict.Serve };
+
+  /// <summary>
+  /// Whether this start leaves the application's schema as it is (#2553): it stood down, or runs past its incompatibility
+  /// as it is. The schema pass then applies the W! migrations alone.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#two-verdicts</docs>
+  public bool HoldsApplication => Application is { Verdict: StartupVerdict.StandDown } or { OverriddenReason: not null };
+}
+
+/// <summary>One side's verdict (#2553, owner decision 2): the W! migrations or the application's schema, judged apart.</summary>
+/// <param name="Side">Which side.</param>
+/// <param name="Verdict">Its verdict: Serve (nothing applied since this version), Migrate (with the rollback it owes),
+/// StandDown, or Current when the side's own override serves it as it is.</param>
+/// <param name="Reason">Why, naming the changes applied since this version.</param>
+/// <docs>operations/startup/rolling-upgrades#two-verdicts</docs>
+public sealed record SchemaSideVerdict(Versioning.SchemaChangeKind Side, StartupVerdict Verdict, string Reason) {
+  /// <summary>When the side's override served it as it is: the reason it would otherwise have stood down; else null.</summary>
+  public string? OverriddenReason { get; init; }
+
+  /// <summary>The rollback this side owes; null when it owes none.</summary>
+  public RollbackPlan? Rollback { get; init; }
+
+  /// <summary>The side as the verdict's reasons name it.</summary>
+  public string Name => NameOf(Side);
+
+  /// <summary>A side as the verdict's reasons name it: <c>W! migrations</c> or <c>application schema</c>.</summary>
+  /// <param name="side">The side.</param>
+  /// <returns>Its name.</returns>
+  public static string NameOf(Versioning.SchemaChangeKind side) =>
+    side == Versioning.SchemaChangeKind.Platform ? "W! migrations" : "application schema";
 }
 
 /// <summary>A rollback <c>Assess</c> decided on (#2122): the changes applied since this version, and whether the operator
@@ -60,7 +111,26 @@ public sealed record StartupAssessment(StartupVerdict Verdict, string Reason) {
 /// <param name="Changes">The changes to reverse, as the ledger recorded them.</param>
 /// <param name="AllowLossy">Whether a reversal that discards data may run (<see cref="Versioning.UpgradeOrder.ALLOW_LOSSY_ROLLBACK_KEY"/>).</param>
 /// <docs>operations/startup/rolling-upgrades#rolling-back</docs>
-public sealed record RollbackPlan(IReadOnlyList<Versioning.AppliedSchemaChange> Changes, bool AllowLossy);
+public sealed record RollbackPlan(IReadOnlyList<Versioning.AppliedSchemaChange> Changes, bool AllowLossy) {
+  /// <summary>
+  /// The sides this rollback may reverse (#2553), each with whether its reversal may discard data; null means both, with
+  /// <see cref="AllowLossy"/>. A side not listed is held this start, and the rollback leaves it as it is.
+  /// </summary>
+  /// <docs>operations/startup/rolling-upgrades#rolling-back</docs>
+  public IReadOnlyDictionary<Versioning.SchemaChangeKind, bool>? Sides { get; init; }
+
+  /// <summary>Whether this rollback may reverse <paramref name="side"/>, and whether it may discard data doing so.</summary>
+  /// <param name="side">The side.</param>
+  /// <param name="allowLossy">Whether a reversal of that side may discard data.</param>
+  /// <returns><see langword="true"/> when the side is this rollback's to reverse.</returns>
+  public bool Reverses(Versioning.SchemaChangeKind side, out bool allowLossy) {
+    if (Sides is null) {
+      allowLossy = AllowLossy;
+      return true;
+    }
+    return Sides.TryGetValue(side, out allowLossy);
+  }
+}
 
 /// <summary>
 /// Computes the <c>Assess</c> verdict: this binary's library version against the versions the
@@ -120,6 +190,10 @@ public sealed partial class AssessStartupStep(IStartupAssessor assessor, ILogger
 
     var assessment = await _assessor.AssessAsync(cancellationToken).ConfigureAwait(false);
     LogVerdict(_logger, assessment.Verdict, assessment.Reason);
+    // #2553: each side's verdict is logged on its own, naming its side.
+    foreach (var side in new[] { assessment.Platform, assessment.Application }.OfType<SchemaSideVerdict>()) {
+      LogSideVerdict(_logger, side.Name, side.Verdict, side.Reason);
+    }
 
     return assessment.Verdict switch {
       // Standing down is fail-closed by construction: a failed blocking step keeps readiness
@@ -132,6 +206,10 @@ public sealed partial class AssessStartupStep(IStartupAssessor assessor, ILogger
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "Assess verdict: {Verdict} — {Reason}")]
   static partial void LogVerdict(ILogger logger, StartupVerdict verdict, string reason);
+
+  [LoggerMessage(EventId = 2, Level = LogLevel.Information,
+    Message = "Assess verdict for the {Side}: {Verdict}: {Reason}")]
+  static partial void LogSideVerdict(ILogger logger, string side, StartupVerdict verdict, string reason);
 }
 
 /// <summary>

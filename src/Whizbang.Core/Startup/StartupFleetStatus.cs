@@ -32,7 +32,18 @@ namespace Whizbang.Core.Startup;
 public sealed record FleetInstanceStatus(
   Guid InstanceId, string ServiceName, string HostName, DateTimeOffset LastHeartbeatAt,
   IReadOnlyList<string> Capabilities, string? LifecyclePhase = null, string? LibraryVersion = null,
-  bool Evicted = false, bool IsLive = false);
+  bool Evicted = false, bool IsLive = false) {
+  /// <summary>
+  /// What the instance has been given to do (#2595), from the database's one derived assignment; null when the database
+  /// cannot answer yet (a fleet read during a cold boot, before this release's migration created the function).
+  /// </summary>
+  /// <docs>operations/startup/startup-status#instance-assignments</docs>
+  public InstanceAssignmentKind? Assignment { get; init; }
+
+  /// <summary>How many of the partitions the instance owns (#2595); null when <see cref="Assignment"/> is.</summary>
+  /// <docs>operations/startup/startup-status#instance-assignments</docs>
+  public int? OwnedPartitions { get; init; }
+}
 
 /// <summary>
 /// The fleet section of a status response: either the live instances from the database, or an

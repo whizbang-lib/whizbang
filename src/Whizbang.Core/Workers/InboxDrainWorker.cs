@@ -370,7 +370,8 @@ public sealed partial class InboxDrainWorker(
       // rows). The drain channel feeds the same key, so dispatch can look it up.
       var perStream = rowsRaw
         .GroupBy(r => DrainKey.For(r.StreamId, r.MessageId))
-        .ToDictionary(g => g.Key, g => g.OrderByMessageId().ToList());
+        // #2551: each stream by the position the fetch ranked its rows at, never by id.
+        .ToDictionary(g => g.Key, g => StreamOrder.InStreamOrder(g));
 
       // Observe per STREAM against the cap THAT stream was actually fetched with — a stream in the
       // floor bucket and one in the ceiling bucket saturate at very different widths, so a single
@@ -488,10 +489,9 @@ public sealed partial class InboxDrainWorker(
         return;
       }
 
-      // Ordering invariant: defensive sort by message_id. SQL fetch_inbox_batch already
-      // orders by (stream_id, message_id), but the apply boundary trusts only message_id.
-      // See plans/ordered-stream-invariant.md.
-      var rows = rowsRaw.OrderByMessageId().ToList();
+      // #2551: the stream by the position the fetch ranked each row at (a received event's stored version, a command's
+      // arrival), never by id.
+      var rows = StreamOrder.InStreamOrder(rowsRaw);
 
       var newRows = 0;
       var full = false;

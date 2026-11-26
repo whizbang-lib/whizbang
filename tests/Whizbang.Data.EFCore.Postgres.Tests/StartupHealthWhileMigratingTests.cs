@@ -54,7 +54,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard4")]
 public sealed class StartupHealthWhileMigratingTests {
   private static readonly long _schemaLock = SchemaInitializationLockKey.Compute("public");
-  private static readonly TimeSpan _deadline = TimeSpan.FromSeconds(120);
 
   private PerTestDatabase _database;
 
@@ -71,7 +70,6 @@ public sealed class StartupHealthWhileMigratingTests {
   }
 
   [Test]
-  [Timeout(300000)]
   [Arguments(false, HttpStatusCode.OK, "Degraded")]
   [Arguments(true, HttpStatusCode.ServiceUnavailable, "Unhealthy")]
   public async Task HeldInMigrate_LivenessIsHealthy_AndReadinessSaysNotReadyWithTheStageAsync(
@@ -85,8 +83,8 @@ public sealed class StartupHealthWhileMigratingTests {
     // Not awaited: the host finishes starting only once startup is ready (the ready service waits in StartedAsync). The
     // server is already serving by then, because it started with the hosted services, before any StartedAsync ran.
     var starting = app.StartAsync(cancellationToken);
-    await hold.HeldInMigrate.WaitAsync(_deadline, cancellationToken);
-    await hold.ServerStarted.WaitAsync(_deadline, cancellationToken);
+    await hold.HeldInMigrate.WaitAsync(cancellationToken);
+    await hold.ServerStarted.WaitAsync(cancellationToken);
     using var client = app.GetTestClient();
 
     var live = await client.GetAsync("/health/live", cancellationToken);
@@ -108,18 +106,18 @@ public sealed class StartupHealthWhileMigratingTests {
     await using (var release = new NpgsqlCommand($"SELECT pg_advisory_unlock({_schemaLock})", holder)) {
       await release.ExecuteNonQueryAsync(cancellationToken);
     }
-    await hold.Running.WaitAsync(_deadline, cancellationToken);
-    await starting.WaitAsync(_deadline, cancellationToken);
+    await hold.Running.WaitAsync(cancellationToken);
+    await starting.WaitAsync(cancellationToken);
     // #2418: the roles component is Operational once every standing role is held, and the workers that vote for them
     // start at Coordinate and vote on their own cadence, so Running can come first. Under Strict a role not yet held
     // makes readiness 503 for that moment, which is correct and not what this test is about: it waits for the votes.
-    await rolesHeld.WaitAsync(_deadline, cancellationToken);
+    await rolesHeld.WaitAsync(cancellationToken);
     // #2425: the stage reaching Running is not the lifecycle phase reaching Running. The phase worker advances the
     // phase on its own, and the phase changes only once every run-control participant has acknowledged it; until then
     // the transport, offload and signal-bus components report PausedByDesign, which Strict holds out of rotation. The
     // worker's run ends only after the phase is set, so it is the signal for the exact transition asserted next.
     var phaseWorker = app.Services.GetServices<IHostedService>().OfType<LifecyclePhaseWorker>().Single();
-    await phaseWorker.ExecuteTask!.WaitAsync(_deadline, cancellationToken);
+    await phaseWorker.ExecuteTask!.WaitAsync(cancellationToken);
     await Assert.That(app.Services.GetRequiredService<IWhizbangLifecycleState>().Phase).IsEqualTo(LifecyclePhase.Running)
       .Because("readiness is asked once the lifecycle phase, not only the startup stage, is Running");
     var readyAtRunning = await client.GetAsync("/health/ready", cancellationToken);
@@ -137,8 +135,8 @@ public sealed class StartupHealthWhileMigratingTests {
   /// host starts, so no win is missed.
   /// </summary>
   private static Task _standingRolesHeld(WebApplication app) {
-    var roles = app.Services.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value.Roles
-      .Where(role => !RoleAssignmentOptions.IsEpisodic(role));
+    var options = app.Services.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value;
+    var roles = options.Roles.Where(role => !options.IsEpisodic(role));
     var held = roles.ToDictionary(role => role, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
     void won(string role) {
       if (held.TryGetValue(role, out var signal)) {

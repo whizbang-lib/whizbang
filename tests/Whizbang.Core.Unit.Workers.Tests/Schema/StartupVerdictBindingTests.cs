@@ -55,6 +55,28 @@ public class StartupVerdictBindingTests {
   }
 
   [Test]
+  public async Task AnApplicationStandDown_IsHandedToThePass_SoTheWMigrationsRunFirst_ButAWStandDownIsRefusedAsync() {
+    // #2553: W! first. The application's stand-down never blocks the W! migrations, so the pass runs them with the
+    // application's schema held; a W! stand-down (or W! served as it is while the application stands down) runs nothing.
+    var applicationOnly = new StartupAssessment(StartupVerdict.StandDown, "application schema: newer columns") {
+      Platform = new SchemaSideVerdict(Whizbang.Core.Versioning.SchemaChangeKind.Platform, StartupVerdict.Serve, "nothing applied since"),
+      Application = new SchemaSideVerdict(Whizbang.Core.Versioning.SchemaChangeKind.Application, StartupVerdict.StandDown, "newer columns"),
+    };
+    var wAsItIs = applicationOnly with {
+      Platform = new SchemaSideVerdict(Whizbang.Core.Versioning.SchemaChangeKind.Platform, StartupVerdict.Current, "served as it is"),
+    };
+    await using var host = _host(new Fixed(applicationOnly));
+    await using var asItIs = _host(new Fixed(wAsItIs));
+
+    var read = await StartupVerdictBinding.ReadAsync(host, CancellationToken.None);
+
+    await Assert.That(read).IsSameReferenceAs(applicationOnly);
+    await Assert.That(read!.HoldsApplication).IsTrue().Because("the pass applies the W! migrations alone");
+    await Assert.That(async () => await StartupVerdictBinding.ReadAsync(asItIs, CancellationToken.None))
+      .ThrowsExactly<SchemaStandDownException>();
+  }
+
+  [Test]
   public async Task TheRefusal_CarriesItsStandardShapesAsync() {
     var cause = new InvalidOperationException("x");
 

@@ -44,9 +44,12 @@ public partial class ImmediateWorkCoordinatorStrategy(
   WorkCoordinatorMetrics? metrics = null,
   LifecycleMetrics? lifecycleMetrics = null,
   Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null,
-  AuditTypeResolver? auditEventTypes = null
+  AuditTypeResolver? auditEventTypes = null,
+  Whizbang.Core.Validation.GuidOrderingValidator? guidOrdering = null
   ) : IWorkCoordinatorStrategy, IWorkFlusher {
 #pragma warning restore S107
+  // #2528: a message id that is not a UUIDv7 is refused where it is queued, before it can join a batch.
+  private readonly Whizbang.Core.Validation.GuidOrderingValidator _guidOrdering = guidOrdering ?? Whizbang.Core.Validation.GuidOrderingValidator.Default;
   private const string STRATEGY_NAME = "immediate";
   private readonly IWorkCoordinator _coordinator = ArgumentGuard.NotNull(coordinator);
   private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
@@ -71,6 +74,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesOnCallAsync</tests>
   public void QueueOutboxMessage(OutboxMessage message) {
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ImmediateStrategy.QueueOutbox", message.MessageType);
+    _guidOrdering.ValidateMessageId(message.MessageId, message.MessageType, "ImmediateStrategy.QueueOutbox");
     _queues.AddOutboxMessage(message, _systemEventOptions);
     LogOutboxMessageQueued(_logger);
   }
@@ -81,6 +85,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueInboxMessage_FlushesOnCallAsync</tests>
   public void QueueInboxMessage(InboxMessage message) {
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ImmediateStrategy.QueueInbox", message.MessageType);
+    _guidOrdering.ValidateMessageId(message.MessageId, message.MessageType, "ImmediateStrategy.QueueInbox");
     _queues.AddInboxMessage(message);
     LogInboxMessageQueued(_logger);
   }

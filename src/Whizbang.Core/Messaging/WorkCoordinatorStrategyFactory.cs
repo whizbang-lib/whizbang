@@ -72,7 +72,8 @@ public static class WorkCoordinatorStrategyFactory {
       coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
       auditEventTypes: sp.GetService<Whizbang.Core.SystemEvents.AuditTypeResolver>(),
       // #2220: the scope is the publisher's, so its open transaction is the one the publish runs inside.
-      holdsOpenTransaction: () => OpenTransactionProbe.HoldsOpenTransaction(sp));
+      holdsOpenTransaction: () => OpenTransactionProbe.HoldsOpenTransaction(sp),
+      guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>());
   }
 
   private static ScopedWorkCoordinatorStrategy _createScoped(IServiceProvider sp) {
@@ -89,7 +90,8 @@ public static class WorkCoordinatorStrategyFactory {
       CoalesceResolver = sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
       AuditDecisionHook = sp.GetService<Whizbang.Core.SystemEvents.IAuditDecisionHook>(),
       AuditEventTypes = sp.GetService<Whizbang.Core.SystemEvents.AuditTypeResolver>(),
-      DeferredChannel = sp.GetRequiredService<IDeferredOutboxChannel>()
+      DeferredChannel = sp.GetRequiredService<IDeferredOutboxChannel>(),
+      GuidOrdering = sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>()
     };
     return new ScopedWorkCoordinatorStrategy(
       coordinator,
@@ -123,7 +125,8 @@ public static class WorkCoordinatorStrategyFactory {
       auditDecisionHook: sp.GetService<Whizbang.Core.SystemEvents.IAuditDecisionHook>(),
       detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(),
       coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
-      auditEventTypes: sp.GetService<Whizbang.Core.SystemEvents.AuditTypeResolver>()
+      auditEventTypes: sp.GetService<Whizbang.Core.SystemEvents.AuditTypeResolver>(),
+      guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>()
     );
   }
 
@@ -146,7 +149,8 @@ public static class WorkCoordinatorStrategyFactory {
       detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(),
       deferredChannel: sp.GetRequiredService<IDeferredOutboxChannel>(),
       metrics: sp.GetService<WorkCoordinatorMetrics>(),
-      lifecycleMetrics: sp.GetService<LifecycleMetrics>()
+      lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
+      guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>()
     );
   }
 
@@ -168,7 +172,8 @@ public static class WorkCoordinatorStrategyFactory {
       detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(),
       deferredChannel: sp.GetRequiredService<IDeferredOutboxChannel>(),
       metrics: sp.GetService<WorkCoordinatorMetrics>(),
-      lifecycleMetrics: sp.GetService<LifecycleMetrics>()
+      lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
+      guidOrdering: sp.GetService<Whizbang.Core.Validation.GuidOrderingValidator>()
     );
   }
 }

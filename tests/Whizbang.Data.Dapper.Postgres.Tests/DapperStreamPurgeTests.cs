@@ -34,6 +34,7 @@ public class DapperStreamPurgeTests : PostgresTestBase {
       await Assert.That(provider.GetRequiredService<IPerspectivePurgeMarkerStore>()).IsTypeOf<PostgresPerspectivePurgeMarkerStore>();
       await Assert.That(provider.GetRequiredService<IStreamPurger>()).IsTypeOf<PostgresStreamPurger>();
       await Assert.That(provider.GetRequiredService<IFanoutChildRefiler>()).IsTypeOf<PostgresFanoutChildRefiler>();
+      await Assert.That(provider.GetRequiredService<IReceivedStreamResequencer>()).IsTypeOf<PostgresReceivedStreamResequencer>();
     }
   }
 
@@ -52,6 +53,40 @@ public class DapperStreamPurgeTests : PostgresTestBase {
 
     await Assert.That(report.Scanned).IsEqualTo(0).Because("a fresh database stores no composite children");
     await Assert.That(report.Moves).IsEmpty();
+  }
+
+  /// <summary>
+  /// The received-stream re-sequence (#1629) runs on a Dapper-migrated database through the driver's registration. A
+  /// Dapper read carries no origin, so a replay there folds in stored order: the re-sequence is what puts it right.
+  /// </summary>
+  [Test]
+  public async Task Resequence_OnADapperMigratedDatabase_StoresAReceivedStreamInItsOriginsOrderAsync() {
+    var services = new ServiceCollection().AddLogging();
+    services.AddWhizbangPostgres(ConnectionString, JsonContextRegistry.CreateCombinedOptions(), initializeSchema: false, _noEntries, configureOptions: null);
+    await using var provider = services.BuildServiceProvider();
+    var stream = Whizbang.Core.ValueObjects.TrackedGuid.New().Value;
+    var origin = Whizbang.Core.ValueObjects.TrackedGuid.New().Value;
+    Guid[] ids = [.. new[] { Whizbang.Core.ValueObjects.TrackedGuid.New().Value, Whizbang.Core.ValueObjects.TrackedGuid.New().Value }
+      .OrderBy(g => g.ToString("D"), StringComparer.Ordinal)];
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+    for (var i = 0; i < 2; i++) {
+      // Stored backward: the lower id (minted first by the origin) at the later version.
+      await connection.ExecuteAsync("""
+        INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at, origin_service_id)
+        VALUES (@EventId, @StreamId, @StreamId, 'Resequence.Tests', 'Resequence.Tests.Happened', @Version, NOW(), @Origin)
+        """, new { EventId = ids[i], StreamId = stream, Version = 2 - i, Origin = origin });
+    }
+
+    var report = await provider.GetRequiredService<IReceivedStreamResequencer>().ResequenceAsync(new ReceivedStreamResequenceRequest {
+      RequestedBy = "operator-1",
+      Reason = "streams stored before the receive-order fix",
+    });
+
+    await Assert.That(report.Resequenced.Select(s => s.StreamId)).IsEquivalentTo([stream]);
+    var order = (await connection.QueryAsync<Guid>(
+      "SELECT event_id FROM wh_event_store WHERE stream_id = @StreamId ORDER BY version", new { StreamId = stream })).ToArray();
+    await Assert.That(order).IsEquivalentTo(ids, TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
 
   [Test]

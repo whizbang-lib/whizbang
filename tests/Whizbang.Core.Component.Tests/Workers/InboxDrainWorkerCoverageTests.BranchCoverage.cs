@@ -288,7 +288,10 @@ public partial class InboxDrainWorkerCoverageTests {
     var coord = new YieldingFetchCoordinator {
       // Call 1 is the batched fetch and fills the cap of 2, which hands the stream to the tail
       // drain; call 2 is the tail drain's fetch and finds nothing more.
-      Respond = call => call == 1 ? [_row(second, streamId), _row(first, streamId)] : [],
+      // #2551: the rows carry their stream positions; the fetch returns them out of that order.
+      Respond = call => call == 1
+        ? [_row(first, streamId) with { StreamPosition = 2 }, _row(second, streamId) with { StreamPosition = 1 }]
+        : [],
     };
     var drain = new DrainedSignalingChannel();
     var inbox = new YieldingInboxChannel();
@@ -314,13 +317,13 @@ public partial class InboxDrainWorkerCoverageTests {
     await cts.CancelAsync();
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
-    Guid[] expectedOrder = [.. new[] { first, second }.Order()];
+    Guid[] expectedOrder = [second, first];
     var written = inbox.Written;
     await Assert.That(written).Count().IsEqualTo(2)
       .Because("both rows are handed over, each after its suspended write resumes");
     await Assert.That(written[0]).IsEqualTo(expectedOrder[0]);
     await Assert.That(written[1]).IsEqualTo(expectedOrder[1])
-      .Because("the page is dispatched in message-id order even though the fetch returned it reversed");
+      .Because("the page is dispatched by stream position, never by id, whatever order the fetch returned it in");
     await Assert.That(coord.CallCount).IsEqualTo(2)
       .Because("a page that filled the cap must still reach the tail drain after the writes resumed");
   }

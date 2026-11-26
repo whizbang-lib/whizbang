@@ -31,11 +31,17 @@ public class HandledLedgerSqlTests : EFCoreTestBase {
 
   // Typed as the interface the workers call through, so a member left at its default is what this would reach.
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance", Justification = "Deliberate: an unimplemented member reaches the interface default here as it does in the workers.")]
-  private IWorkCoordinator _coordinator() {
+  private IWorkCoordinator _coordinator(Whizbang.Core.Validation.GuidOrderingValidator? guidOrdering = null) {
     var ctx = CreateDbContext();
     _contexts.Add(ctx);
-    return new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, JsonContextRegistry.CreateCombinedOptions());
+    return new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, JsonContextRegistry.CreateCombinedOptions(), guidOrdering: guidOrdering);
   }
+
+  // The inbox write refuses an untimed id by default (#2528); this test is about the database's own guard behind it, so
+  // it lowers the check to a warning to reach the SQL.
+  private static Whizbang.Core.Validation.GuidOrderingValidator _lenient() => new(
+    new Whizbang.Core.Configuration.WhizbangOptions { GuidOrderingViolationSeverity = Whizbang.Core.Configuration.GuidOrderingSeverity.Warning },
+    Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
 
   [After(Test)]
   public async Task DisposeContextsAsync() {
@@ -117,7 +123,7 @@ public class HandledLedgerSqlTests : EFCoreTestBase {
     var unprocessed = TrackedGuid.New().Value;
     var command = TrackedGuid.New().Value;
     var untimed = TrackedGuid.NewRandom().Value;
-    await _coordinator().StoreInboxMessagesAsync(
+    await _coordinator(_lenient()).StoreInboxMessagesAsync(
       [_message(unprocessed, isEvent: true), _message(command, isEvent: false), _message(untimed, isEvent: true)], partitionCount: 100);
     await using var conn = await _openAsync();
 

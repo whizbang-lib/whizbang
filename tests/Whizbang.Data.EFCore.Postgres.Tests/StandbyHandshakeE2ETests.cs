@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using TUnit.Assertions;
@@ -129,13 +130,31 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     return new PodRig(pod, watcher, hostLifetime, lifecycle, reviveProbe, services);
   }
 
-  private static StandbyHandshake _handshakeFor(PodRig rig) => new(
+  private static StandbyHandshake _handshakeFor(PodRig rig, ILogger<StandbyHandshake>? logger = null) => new(
     rig.Services.GetRequiredService<IServiceScopeFactory>(),
     new EFCorePostgresStartupFleetStatusSource(
       rig.Services.GetRequiredService<IServiceScopeFactory>(), typeof(WorkCoordinationDbContext)),
     rig.Pod,
-    NullLogger<StandbyHandshake>.Instance,
+    logger ?? NullLogger<StandbyHandshake>.Instance,
     _fastOptions());
+
+  /// <summary>
+  /// The handshake's "waiting for peers" log is the signal that a poll found a peer still blocking: this records the
+  /// count it names and cancels the wait right there, so a test proves the wait blocked on the peer without racing a
+  /// timer against the first fleet read.
+  /// </summary>
+  private sealed class CancelWhenWaiting(CancellationTokenSource wait) : ILogger<StandbyHandshake> {
+    public List<int> BlockingCounts { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (eventId.Name == "LogWaitingForPeers" && state is IReadOnlyList<KeyValuePair<string, object?>> values) {
+        BlockingCounts.Add((int)values.First(v => v.Key == "Count").Value!);
+        wait.Cancel();
+      }
+    }
+  }
 
   private async Task<List<(int Id, string Version)>> _captureLedgerVersionsAsync(CancellationToken ct) {
     await using var conn = new NpgsqlConnection(ConnectionString);
@@ -157,6 +176,14 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     cmd.CommandText = "UPDATE wh_schema_versions SET library_version = @v";
     cmd.Parameters.AddWithValue("v", version);
     await cmd.ExecuteNonQueryAsync(ct);
+    // The newer version's migration changed what was applied: a change this binary does not define (#2553). One it
+    // defines identically would be current, whichever version the ledger says applied it.
+    await using var applied = conn.CreateCommand();
+    applied.CommandText = """
+      UPDATE wh_schema_migrations SET content_hash = 'committed-by-the-newer-version', status = 2
+      WHERE file_name = (SELECT max(file_name) FROM wh_schema_migrations WHERE owner = 'whizbang')
+      """;
+    await applied.ExecuteNonQueryAsync(ct);
   }
 
   private async Task _restoreLedgerVersionsAsync(List<(int Id, string Version)> rows, CancellationToken ct) {
@@ -278,16 +305,18 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
       CancellationToken cancellationToken) {
     var stuckRig = await _bootPodAsync(OLD_VERSION, cancellationToken);   // never ticks — wedged
     var newRig = await _bootPodAsync(NEW_VERSION, cancellationToken);
-    var handshake = _handshakeFor(newRig);
+    using var blockedWait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    var waiting = new CancelWhenWaiting(blockedWait);
+    var handshake = _handshakeFor(newRig, waiting);
     try {
       await Assert.That(await handshake.RequestAsync(NEW_VERSION, cancellationToken)).IsTrue();
 
-      // The wedged peer never acknowledges; the wait would block on it forever.
-      using (var shortWait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)) {
-        shortWait.CancelAfter(TimeSpan.FromMilliseconds(400));
-        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
-          await handshake.AwaitPeersStandingByAsync(NEW_VERSION, shortWait.Token));
-      }
+      // The wedged peer never acknowledges; the wait would block on it forever. The wait is canceled at the signal that
+      // it is blocked on the peer (its "waiting for peers" log), never by a timer that could fire before the first poll.
+      await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+        await handshake.AwaitPeersStandingByAsync(NEW_VERSION, blockedWait.Token));
+      await Assert.That(waiting.BlockingCounts).IsEquivalentTo([1])
+        .Because("the wait ended because it found the wedged peer blocking, not because it was cut short before it looked");
 
       // Eviction is deliberate — taken by the migrator during a breaking handshake — and it is
       // what turns the decision into a guarantee: the fenced peer no longer counts.

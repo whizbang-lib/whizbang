@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Collections.Concurrent;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 
@@ -66,12 +67,19 @@ public sealed class GenericLifecycleCompletionReceptor<TMessage>(
   private readonly string? _perspectiveName = perspectiveName;
   private readonly Func<TMessage, bool>? _messageFilter = messageFilter;
   private int _invocationCount;
+  private readonly ConcurrentQueue<TMessage> _counted = new();
   private static readonly AsyncLocal<ILifecycleContext?> _asyncLocalContext = new();
 
   /// <summary>
   /// Gets the number of times this receptor has been invoked.
   /// </summary>
   public int InvocationCount => _invocationCount;
+
+  /// <summary>
+  /// The messages of the invocations <see cref="InvocationCount"/> counted, one entry per invocation, so a test that
+  /// waits on several messages can require each one's own count (#2581).
+  /// </summary>
+  public IReadOnlyCollection<TMessage> CountedMessages => _counted;
 
   /// <summary>
   /// Gets the lifecycle context from the last invocation (if context injection is used).
@@ -144,6 +152,7 @@ public sealed class GenericLifecycleCompletionReceptor<TMessage>(
     }
 
     // Increment invocation count ONLY if we passed all filters
+    _counted.Enqueue(message);
     var newCount = Interlocked.Increment(ref _invocationCount);
     Console.WriteLine($"[RECEPTOR] Invocation count incremented to: {newCount}");
 
@@ -176,6 +185,7 @@ public sealed class GenericLifecycleCompletionReceptor<TMessage>(
   /// </summary>
   public void Reset() {
     _invocationCount = 0;
+    _counted.Clear();
     LastMessage = default;
     _asyncLocalContext.Value = null;
   }

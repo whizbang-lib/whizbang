@@ -41,7 +41,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>cleanup_completed_streams</c> doesn't evict actively-claimed streams.</description></item>
 /// </list>
 /// </summary>
-/// <docs>fundamentals/work-coordinator/stream-ownership</docs>
+/// <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
 [Category("Shard3")]
 public class ClaimOrphanedActiveStreamsPinningSqlTests : EFCoreTestBase {
 

@@ -12,7 +12,7 @@ using Whizbang.Core.Archival;
 using Whizbang.Core.Messaging;
 using Whizbang.Data.Postgres;
 
-namespace Whizbang.Archive.AzureBlob.Integration.Tests;
+namespace Whizbang.Storage.AzureBlob.Integration.Tests;
 
 /// <summary>
 /// #2367: an archived object is written once and never updated, and the store never purges what the storage account
@@ -71,13 +71,13 @@ public partial class AzureBlobArchiveStoreTests {
     _ = await new PostgresStreamPurger(_database().Open).PurgeAsync(
       new StreamPurgeRequest { StreamIds = [purged], RequestedBy = "operator-1", Reason = "test" });
     await new ArchiveObjectDeletionStep(store).RunAsync(_noServices, CancellationToken.None);
-    await Assert.That(() => _completedAsync(crashing.WriteAsync(ArchiveBatch.WholeStream(retried)))).Throws<RequestFailedException>();
+    await Assert.That(() => _completedAsync(crashing.WriteAsync(ArchiveBatch.WholeStream(retried)))).Throws<ArchiveObjectStoreException>();
     crash.Armed = false;
     _ = await crashing.WriteAsync(ArchiveBatch.WholeStream(retried));
     // With a deletion delay: the queue drained once the delay has passed, and the orphan sweep (the one listing).
     var (orphan, _) = await _seedAsync(3);
     crash.Armed = true;
-    await Assert.That(() => _completedAsync(crashing.WriteAsync(ArchiveBatch.WholeStream(orphan)))).Throws<RequestFailedException>();
+    await Assert.That(() => _completedAsync(crashing.WriteAsync(ArchiveBatch.WholeStream(orphan)))).Throws<ArchiveObjectStoreException>();
     var delayed = _recordedStore(recorder, options: new AzureBlobArchiveOptions { MaxEventsPerChunk = 2, DeleteAfter = TimeSpan.FromDays(1) },
       clock: new ManualClock(new DateTimeOffset(2999, 1, 1, 0, 0, 0, TimeSpan.Zero)));
     _ = await delayed.RestoreAsync(restored);
@@ -93,7 +93,7 @@ public partial class AzureBlobArchiveStoreTests {
   }
 
   // A store whose every request passes the recorder, and optionally a fault after it.
-  private AzureBlobArchiveStore _recordedStore(
+  private PostgresObjectArchiveStore _recordedStore(
       RecordRequests recorder, HttpPipelinePolicy? fault = null, AzureBlobArchiveOptions? options = null, TimeProvider? clock = null) {
     var clientOptions = new BlobClientOptions();
     clientOptions.AddPolicy(recorder, HttpPipelinePosition.PerCall);
@@ -103,7 +103,7 @@ public partial class AzureBlobArchiveStoreTests {
     var client = new BlobContainerClient(_azurite, _containerName, clientOptions);
     options ??= new AzureBlobArchiveOptions { MaxEventsPerChunk = 2 };
     options.ContainerName = client.Name;
-    return new AzureBlobArchiveStore(_database(), client, options, logger: null, clock);
+    return AzureBlobArchive.Create(_database(), client, options, logger: null, timeProvider: clock);
   }
 
   /// <summary>

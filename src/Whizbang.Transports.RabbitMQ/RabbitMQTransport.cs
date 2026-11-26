@@ -1175,29 +1175,39 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     List<string> routingPatterns,
     CancellationToken cancellationToken
   ) {
-    var channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
-
-    await channel.BasicQosAsync(
-      prefetchSize: 0,
-      prefetchCount: _options.PrefetchCount,
-      global: false,
-      cancellationToken: cancellationToken
-    );
+    var channel = await _openConsumerChannelAsync(cancellationToken);
 
     // Delegates to RabbitMQEntityProvisioning — the ONE code path shared with the
     // manifest-driven DARK provisioning (phase 5) so exchange/queue arguments and binding
     // shapes can never drift between subscribe-time and boot-time provisioning.
-    await RabbitMQEntityProvisioning.DeclareSubscriptionInfrastructureAsync(
-      channel, _options, exchangeName, queueName, routingPatterns, _logger, cancellationToken);
+    var live = await RabbitMQEntityProvisioning.DeclareSubscriptionInfrastructureAsync(
+      channel, _openConsumerChannelAsync, _options, exchangeName, queueName, routingPatterns, _logger, cancellationToken);
+    if (!ReferenceEquals(live, channel)) {
+      // #2421: the broker closed the first channel when it refused a queue an earlier version declared; the queue was
+      // declared again on a fresh consumer channel, which this subscription consumes on.
+      channel.Dispose();
+    }
 
     // The helper declares the DLQ under this same option; the transport still has to REMEMBER
     // the name, because ActiveDeadLetterQueues is what the fleet dead-letter drainer enumerates
     // on every pass. Extracting the declaration must not take the bookkeeping with it —
     // otherwise queues declared at subscribe time never get their broker DLQ drained.
     if (_options.AutoDeclareDeadLetterExchange) {
-      _declaredDeadLetterQueues.TryAdd($"{queueName}.dlq", 0);
+      _declaredDeadLetterQueues.TryAdd(RabbitMQEntityProvisioning.DeadLetterQueueName(queueName), 0);
     }
 
+    return live;
+  }
+
+  /// <summary>A consumer channel: opened on the connection with this transport's prefetch.</summary>
+  private async Task<IChannel> _openConsumerChannelAsync(CancellationToken cancellationToken) {
+    var channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
+    await channel.BasicQosAsync(
+      prefetchSize: 0,
+      prefetchCount: _options.PrefetchCount,
+      global: false,
+      cancellationToken: cancellationToken
+    );
     return channel;
   }
 

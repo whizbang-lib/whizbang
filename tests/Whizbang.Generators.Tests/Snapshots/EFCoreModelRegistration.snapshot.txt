@@ -52,7 +52,9 @@ public static class GeneratedModelRegistration {
             jsonOptions,
             sp.GetService<global::Microsoft.Extensions.Logging.ILogger<global::Whizbang.Data.EFCore.Postgres.EFCoreEventStore<global::TestApp.TestDbContext>>>(),
             // #1546: an appended event's kind is the one the dispatch path stamps, [Ephemeral] on a type included.
-            sp.GetService<global::Whizbang.Core.IEphemeralModeResolver>()
+            sp.GetService<global::Whizbang.Core.IEphemeralModeResolver>(),
+            // #2528: the time-ordering check for appended event ids, with the configured severity.
+            sp.GetService<global::Whizbang.Core.Validation.GuidOrderingValidator>()
           );
         });
         services.AddScoped<global::Whizbang.Core.Messaging.IWorkCoordinator, global::Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator<global::TestApp.TestDbContext>>();
@@ -114,7 +116,9 @@ public static class GeneratedModelRegistration {
             inboxChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IInboxChannelWriter>(),
             detachedWork: sp.GetRequiredService<global::Whizbang.Core.Messaging.DetachedLifecycleWork>(),
             // #2228: the deferred outbox channel every strategy drains at the start of its flush.
-            deferredChannel: sp.GetRequiredService<global::Whizbang.Core.Messaging.IDeferredOutboxChannel>()
+            deferredChannel: sp.GetRequiredService<global::Whizbang.Core.Messaging.IDeferredOutboxChannel>(),
+            // #2528: the time-ordering check for queued message ids, with the configured severity.
+            guidOrdering: sp.GetService<global::Whizbang.Core.Validation.GuidOrderingValidator>()
           );
         });
         services.AddSingleton<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>(sp => {
@@ -135,7 +139,9 @@ public static class GeneratedModelRegistration {
             workChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkChannelWriter>(),
             detachedWork: sp.GetRequiredService<global::Whizbang.Core.Messaging.DetachedLifecycleWork>(),
             // #2228: the deferred outbox channel every strategy drains at the start of its flush.
-            deferredChannel: sp.GetRequiredService<global::Whizbang.Core.Messaging.IDeferredOutboxChannel>()
+            deferredChannel: sp.GetRequiredService<global::Whizbang.Core.Messaging.IDeferredOutboxChannel>(),
+            // #2528: the time-ordering check for queued message ids, with the configured severity.
+            guidOrdering: sp.GetService<global::Whizbang.Core.Validation.GuidOrderingValidator>()
           );
         });
 
@@ -667,6 +673,10 @@ public static class GeneratedModelRegistration {
       var dbContext = scope.ServiceProvider.GetService<global::TestApp.TestDbContext>();
       return dbContext is null ? null : await dbContext.IsWhizbangSchemaCurrentAsync(ct, scope.ServiceProvider);
     });
+
+    // Lets the rollback gate judge a recorded change this build defines identically as current, whoever applied it
+    DbContextInitializationRegistry.RegisterSchemaContent<global::TestApp.TestDbContext>(
+      (dbContext, sp) => dbContext.GetWhizbangSchemaContent(sp));
 
   }
 }

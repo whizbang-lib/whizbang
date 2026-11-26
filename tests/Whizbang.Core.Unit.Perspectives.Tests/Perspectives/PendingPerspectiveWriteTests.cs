@@ -106,4 +106,81 @@ public class PendingPerspectiveWriteTests {
     await Assert.That(failed.Error).IsSameReferenceAs(error);
     await Assert.That(() => PerspectiveWriteOutcome.Failed(null!)).Throws<ArgumentNullException>();
   }
+
+  [Test]
+  public async Task FollowedBy_WritesTheLaterValuesOnTheEarlierRowAsync() {
+    var id = Guid.CreateVersion7();
+    var first = PendingPerspectiveWrite.Write(TABLE, id, PerspectiveRowVersion.Absent, _row).ForSink("context-a");
+    var laterRow = _row with {
+      Data = "{\"n\":2}",
+      Metadata = "{\"e\":2}",
+      Scope = "{\"t\":2}",
+      OrdersOnEventId = true,
+      CreatedAt = _row.CreatedAt.AddDays(1),
+      UpdatedAt = _row.UpdatedAt.AddDays(1),
+      ExpiresAt = _row.UpdatedAt.AddDays(9),
+      PhysicalValues = [new PerspectivePhysicalValue("amount", 2, "integer", false)],
+    };
+    // The later write was prepared on the held model, so it reads the row as present at the same base version.
+    var later = PendingPerspectiveWrite.Write(TABLE, id, PerspectiveRowVersion.Absent, laterRow);
+
+    var merged = first.FollowedBy(later);
+
+    await Assert.That(merged.Operation).IsEqualTo(PerspectiveWriteOperation.Insert)
+      .Because("the database still has no row: the merged write inserts it");
+    await Assert.That(merged.ExpectedVersion).IsEqualTo(PerspectiveRowVersion.Absent);
+    await Assert.That(merged.SinkKey).IsEqualTo("context-a");
+    await Assert.That(merged.StreamId).IsEqualTo(id);
+    await Assert.That(merged.Table).IsEqualTo(TABLE);
+    await Assert.That(merged.Row!.Data).IsEqualTo(laterRow.Data);
+    await Assert.That(merged.Row.Metadata).IsEqualTo(laterRow.Metadata);
+    await Assert.That(merged.Row.Scope).IsEqualTo(laterRow.Scope);
+    await Assert.That(merged.Row.OrdersOnEventId).IsTrue();
+    await Assert.That(merged.Row.ExpiresAt).IsEqualTo(laterRow.ExpiresAt);
+    await Assert.That(merged.Row.PhysicalValues).IsSameReferenceAs(laterRow.PhysicalValues);
+    await Assert.That(merged.Row.CreatedAt).IsEqualTo(_row.CreatedAt)
+      .Because("an inserted row is dated at the first event folded into it, which the first write resolved");
+    await Assert.That(merged.Row.UpdatedAt).IsEqualTo(laterRow.UpdatedAt);
+  }
+
+  [Test]
+  public async Task FollowedBy_KeepsTheLastStampedActivity_AndAnyScopeOrVersionMoveAsync() {
+    var id = Guid.CreateVersion7();
+    var first = PendingPerspectiveWrite.Write(TABLE, id, PerspectiveRowVersion.Of(7), _row with { ForceUpdateScope = true, BumpVersion = false });
+    var quiet = PendingPerspectiveWrite.Write(TABLE, id, PerspectiveRowVersion.Of(7), _row with {
+      UpdatedAt = _row.UpdatedAt.AddDays(3),
+      SuppressActivity = true,
+      ForceUpdateScope = false,
+      BumpVersion = true,
+    });
+
+    var merged = first.FollowedBy(quiet);
+
+    await Assert.That(merged.Operation).IsEqualTo(PerspectiveWriteOperation.Update);
+    await Assert.That(merged.ExpectedVersion).IsEqualTo(PerspectiveRowVersion.Of(7));
+    await Assert.That(merged.Row!.UpdatedAt).IsEqualTo(_row.UpdatedAt)
+      .Because("a non-activity event keeps the business time the earlier write stamped");
+    await Assert.That(merged.Row.SuppressActivity).IsFalse();
+    await Assert.That(merged.Row.ForceUpdateScope).IsTrue().Because("the earlier write replaced the stored scope");
+    await Assert.That(merged.Row.BumpVersion).IsTrue();
+
+    var bothQuiet = PendingPerspectiveWrite.Write(TABLE, id, PerspectiveRowVersion.Of(7), _row with { SuppressActivity = true })
+      .FollowedBy(quiet);
+    await Assert.That(bothQuiet.Row!.SuppressActivity).IsTrue().Because("neither write stamped a business time");
+  }
+
+  [Test]
+  public async Task FollowedBy_RefusesAPurgeOrAnotherRowAsync() {
+    var id = Guid.CreateVersion7();
+    var write = PendingPerspectiveWrite.Write(TABLE, id, PerspectiveRowVersion.Of(1), _row);
+    var purge = PendingPerspectiveWrite.Purge(TABLE, id);
+
+    await Assert.That(() => write.FollowedBy(null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => write.FollowedBy(purge)).Throws<ArgumentException>();
+    await Assert.That(() => purge.FollowedBy(write)).Throws<ArgumentException>();
+    await Assert.That(() => write.FollowedBy(PendingPerspectiveWrite.Write(TABLE, Guid.CreateVersion7(), PerspectiveRowVersion.Of(1), _row)))
+      .Throws<ArgumentException>();
+    await Assert.That(() => write.FollowedBy(PendingPerspectiveWrite.Write("wh_per_other", id, PerspectiveRowVersion.Of(1), _row)))
+      .Throws<ArgumentException>();
+  }
 }

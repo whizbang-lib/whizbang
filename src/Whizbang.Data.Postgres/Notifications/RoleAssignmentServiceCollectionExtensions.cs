@@ -82,6 +82,7 @@ public static class RoleAssignmentServiceCollectionExtensions {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       IConfigureOptions<RoleAssignmentOptions>, ConfigureRoleAssignmentOptionsFromConfiguration>());
 
+    services.AddWhizbangRoleCatalog();
     services.AddMetrics();
     services.TryAddSingleton<WhizbangMetrics>();
     services.TryAddSingleton<RoleAssignmentMetrics>();
@@ -97,7 +98,9 @@ public static class RoleAssignmentServiceCollectionExtensions {
       sp.GetService<INotificationDataSource>(),
       metrics: sp.GetRequiredService<RoleAssignmentMetrics>(),
       // #2045: the instance's one run permit, when the host runs the worker pipeline (which registers it).
-      runPermit: sp.GetService<Whizbang.Core.RunControl.WhizbangRunPermit>()));
+      runPermit: sp.GetService<Whizbang.Core.RunControl.WhizbangRunPermit>(),
+      // #2594: the one declared catalog; an undeclared role is refused before it reaches the vote.
+      roleCatalog: sp.GetRequiredService<RoleCatalog>()));
     services.AddSingleton<IRoleAssignmentReader>(sp => sp.GetRequiredService<PgRoleElector>());
     // The health source reads through a deferred reader: listing health sources must not build the
     // elector, whose construction resolves the notification data source (and through it, under

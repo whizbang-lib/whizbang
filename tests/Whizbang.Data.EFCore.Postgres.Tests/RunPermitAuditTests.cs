@@ -64,6 +64,8 @@ public sealed class RunPermitAuditTests {
     "OutboxDrainWorker", "InboxDrainWorker", "PerspectiveWorker", "InboxDispatchWorker", "OutboxPublishWorker",
     "InboxHandlerWorker", "OutboxCompletionFlushWorker", "PerspectiveCompletionFlushWorker", "FailureFlushWorker",
     "LeaseRenewalWorker", "BatchStrategyShutdownFlush",
+    // Hands over the partitions this instance owns once their work in hand is done (#2557).
+    "PartitionHandoverWorker",
   };
 
   /// <summary>Takes no work for this instance.</summary>
@@ -75,8 +77,10 @@ public sealed class RunPermitAuditTests {
     "WhizbangDatabaseInitializerService", "StartupPipelineWorker", "StartupStageHostLifecycle", "StartupReadyService",
     "LifecyclePhaseWorker", "ReadModelsReadyDriver", "TypeDefinitionReconcilerHostedService",
     // Measurement and in-process state.
-    "TableStatisticsCollector", "EventTypeBytesSampler", "NotifyDebounceStatsCollector", "BacklogAgeWorker",
+    "TableStatisticsCollector", "EventTypeBytesSampler", "NotifyDebounceStatsCollector", "BacklogAgeWorker", "SequenceHoldWorker",
     "RecentlyProcessedEventCacheSweepWorker", "InProcessTrackerSweepWorker", "HealthCheckPublisherHostedService",
+    // Reads and logs this instance's own assignment (#2595); it takes no work.
+    "InstanceAssignmentMonitor",
     // Counts what cleanup has left on one instance per window; it reads and never deletes (#2289).
     "PendingReclamationSampler",
     // Wakes, registrations and checks: each wakes or configures a worker above, which obeys the permit itself.
@@ -88,11 +92,13 @@ public sealed class RunPermitAuditTests {
     "StartupSettingsReportService",
     // Logs at Debug which assemblies the host's service scope included and excluded, from the anchors (#2243).
     "ServiceAssemblyScopeStartupReporter",
+    // Logs which provider each storage feature uses and why, from the registrations and configuration (#2502).
+    "StorageProviderStartupReport",
     "WhizbangStartupLogger", "UnsealedOffloadStartupWarning", "TagPolicyStartupValidator", "NoTransportConfiguredNotice",
     "UnobservedExceptionDiagnosticsWarmUp", "PerspectiveRowRetentionConfigurator", "ArchivedStreamRowsConfigurator",
     "CapabilityVerdictEnforcer", "MultiStreamCommandReceptorRegistrar", "IntegrityCheckpointReceptorRegistrar",
-    "IntegrityManifestReceptorRegistrar", "RebuildCommandReceptorRegistrar", "RedeliveryRequestReceptorRegistrar",
-    "ScheduledPrefixTruncateReceptorRegistrar", "ScheduledIntegritySweepReceptorRegistrar", "SagaWatchdogTickRouterRegistrar",
+    "IntegrityManifestReceptorRegistrar", "OriginPositionReceptorRegistrar", "RebuildCommandReceptorRegistrar",
+    "RedeliveryRequestReceptorRegistrar", "ScheduledPrefixTruncateReceptorRegistrar", "ScheduledIntegritySweepReceptorRegistrar", "SagaWatchdogTickRouterRegistrar",
     "DefaultBackupTickRegistrar", "IdleActivityTouchHookBinder", "IntegritySweepScheduler",
     // Operator-driven or fleet-wide recovery: it returns dead letters to the queues for every instance; this instance
     // takes them back only through the claim worker and the consumer, which obey the permit.

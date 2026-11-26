@@ -11,12 +11,13 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/DiagnosticDescriptorsTests.cs</tests>
 public static class DiagnosticDescriptors {
   /// <summary>
-  /// Diagnostic IDs that were declared but never reported and have been retired (#1427). A retired ID is
-  /// never given a new meaning, so a suppression or a search for it can never match something else.
+  /// Diagnostic IDs that have been retired: declared but never reported (#1427), or no longer needed (WHIZ810, #1911:
+  /// a dictionary member is now stored as an array of key/value pairs, so nothing asks for the rewrite it suggested).
+  /// A retired ID is never given a new meaning, so a suppression or a search for it can never match something else.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/DiagnosticDescriptorsTests.cs:RetiredDiagnosticIds_AreNeverDeclaredAgainAsync</tests>
   public static readonly System.Collections.Immutable.ImmutableArray<string> RETIRED_IDS = [
-    "WHIZ003", "WHIZ005", "WHIZ017", "WHIZ020", "WHIZ023", "WHIZ042", "WHIZ050", "WHIZ051", "WHIZ052", "WHIZ057", "WHIZ803",
+    "WHIZ003", "WHIZ005", "WHIZ017", "WHIZ020", "WHIZ023", "WHIZ042", "WHIZ050", "WHIZ051", "WHIZ052", "WHIZ057", "WHIZ803", "WHIZ810",
   ];
 
   private const string CATEGORY = "Whizbang.SourceGeneration";
@@ -516,11 +517,11 @@ public static class DiagnosticDescriptors {
   public static readonly DiagnosticDescriptor GuidNewGuidUsage = new(
       id: "WHIZ055",
       title: "Guid.NewGuid() Usage",
-      messageFormat: "Use TrackedGuid.New() or a [WhizbangId] type instead of Guid.NewGuid(). UUIDv4 is not time-ordered.",
+      messageFormat: "Use TrackedGuid.New() or a [WhizbangId] type instead of Guid.NewGuid(). UUIDv4 is not time-ordered; with interception on (the default) this call is replaced with TrackedGuid.New().", // review-checks:allow (the message names the call; it does not make one)
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "Guid.NewGuid() creates UUIDv4 which is not time-ordered. Use TrackedGuid.New() or a [WhizbangId] type for UUIDv7 with sub-millisecond precision."
+      description: "Guid.NewGuid() creates UUIDv4, which is not time-ordered. With Guid interception on (the default) the call is replaced with TrackedGuid.New(), a UUIDv7 with sub-millisecond precision; write TrackedGuid.New() or a [WhizbangId] type so the code says what it gets. [SuppressGuidInterception] keeps a deliberate v4." // review-checks:allow (the description names the call; it does not make one)
   );
 
   /// <summary>
@@ -532,26 +533,42 @@ public static class DiagnosticDescriptors {
   public static readonly DiagnosticDescriptor GuidCreateVersion7Usage = new(
       id: "WHIZ056",
       title: "Guid.CreateVersion7() Usage",
-      messageFormat: "Use TrackedGuid.New() for sub-millisecond precision instead of Guid.CreateVersion7()",
+      messageFormat: "Use TrackedGuid.New() for sub-millisecond precision instead of Guid.CreateVersion7(); with interception on (the default) this call is replaced with TrackedGuid.New()",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "Guid.CreateVersion7() only has millisecond precision. Use TrackedGuid.New() or a [WhizbangId] type for sub-millisecond precision."
+      description: "Guid.CreateVersion7() only has millisecond precision. With Guid interception on (the default) the call is replaced with TrackedGuid.New(), which orders within a millisecond by its counter; write TrackedGuid.New() or a [WhizbangId] type so the code says what it gets."
   );
 
   /// <summary>
-  /// WHIZ058: Info - Guid generation call intercepted and wrapped with TrackedGuid.
+  /// WHIZ037: Warning - a Guid built from bytes or a string, or parsed, flows into a message id, an event id or a
+  /// [StreamId] member (#2528). Interception cannot reach a constructor or a value from the wire.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz037</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/NonTimeOrderedIdAnalyzerTests.cs:FlaggedShape_ReportsWHIZ037WarningAsync</tests>
+  public static readonly DiagnosticDescriptor NonTimeOrderedIdFlowsIntoId = new(
+      id: "WHIZ037",
+      title: "A Constructed Or Parsed Guid Flows Into An Id",
+      messageFormat: "{0} flows into {1}; event and message ids must be UUIDv7 (time-ordered) and stream ids should be. Mint it with TrackedGuid.New() or a [WhizbangId] type, or derive it from a message id.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "A Guid built with new Guid(bytes) or new Guid(\"...\"), or read with Guid.Parse or Guid.TryParse, carries whatever version its source had. Event and message ids that are not UUIDv7 are refused at run time, and a stream id that is not costs index locality. Guid interception cannot reach a constructor or a value from the wire, so this warning names the flow at compile time."
+  );
+
+  /// <summary>
+  /// WHIZ058: Info - Guid generation call intercepted and replaced with TrackedGuid.New() (#2528).
   /// </summary>
   /// <docs>operations/diagnostics/whiz058</docs>
   /// <tests>tests/Whizbang.Generators.Tests/GuidInterceptorGeneratorTests.cs:Generator_InterceptedCall_ReportsWHIZ058DiagnosticAsync</tests>
   public static readonly DiagnosticDescriptor GuidCallIntercepted = new(
       id: "WHIZ058",
       title: "Guid Call Intercepted",
-      messageFormat: "Intercepted {0} at {1}:{2} - wrapped with TrackedGuid for metadata tracking",
+      messageFormat: "Intercepted {0} at {1}:{2} - replaced with TrackedGuid.New(), a time-ordered UUIDv7",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A Guid generation call was intercepted and wrapped with TrackedGuid to enable metadata tracking. This allows Whizbang to validate time-ordering requirements at runtime."
+      description: "A Guid generation call was intercepted and replaced with TrackedGuid.New(), a UUIDv7 with counter precision, so the id is time-ordered wherever it is used. Interception is on by default; WhizbangGuidInterceptionEnabled=false turns it off, which is strongly advised against, and [SuppressGuidInterception] keeps one deliberate v4."
   );
 
   /// <summary>

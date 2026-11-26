@@ -8,3 +8,6 @@ is_global = true
 # project outside src/.
 dotnet_diagnostic.WHIZ607.severity = none
 dotnet_diagnostic.WHIZ608.severity = none
+# WHIZ610 (#2548) guards the library's own hot paths: a type name formatted for a debug log or an activity name is
+# read only once the level or a listener says it is consumed. Tests, tools, samples and benchmarks are outside it.
+dotnet_diagnostic.WHIZ610.severity = none

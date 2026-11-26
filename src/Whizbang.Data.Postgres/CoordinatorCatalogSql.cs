@@ -105,6 +105,7 @@ internal static class CoordinatorCatalogSql {
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperLifecycleAndCatalogTests.cs:EphemeralPairsNeedingSnapshot_APairWhoseRowThePerspectivePurged_IsNotATargetAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralOnlyReadModelReapSqlTests.cs:PairsNeedingSnapshot_AReadModelThatKeepsNoFloor_IsNotATarget_AndItsBodyIsOfferedForDestructionAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperLifecycleAndCatalogTests.cs:EphemeralPairsNeedingSnapshot_AReadModelThatKeepsNoRewindFloor_IsNotATargetAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EphemeralReapScanFloorSqlTests.cs:Scans_ACycleAfterTheFirst_ReadOnlyThePointersAboveTheFloorAsync</tests>
   internal static async Task<IReadOnlyList<EphemeralSnapshotTarget>> EphemeralPairsNeedingSnapshotAsync(
       DbCommand cmd, string prefix, CancellationToken cancellationToken) {
     cmd.CommandText =
@@ -120,6 +121,8 @@ internal static class CoordinatorCatalogSql {
       $"JOIN {prefix}wh_perspective_cursors c ON c.stream_id = es.stream_id AND c.perspective_name = ma.target_name " +
       // #13b4 safety gate: only EPHEMERAL events; consumed sourced bodies are never snapshot targets.
       "WHERE (es.flags & 8) = 8 " +
+      // 597 (#2574): from the oldest ephemeral event that still has a body, not every pointer the reap left behind.
+      $"AND {EphemeralReapScanFloorSql.AtOrAboveFloor(prefix)} " +
       "AND es.created_at < NOW() - (COALESCE(g.grace_seconds, " +
       $"    (SELECT setting_value::int FROM {prefix}wh_settings WHERE setting_key = 'ephemeral_rewind_grace_seconds'), 300) " +
       "  * INTERVAL '1 second') " +
@@ -130,7 +133,7 @@ internal static class CoordinatorCatalogSql {
       "  AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version " +
       // 534 (#2456): as in the reap, a snapshot whose own event is still inside its grace window covers nothing, so the
       // bodies below a tip snapshot are a target and the bootstrap writes the floor at the reap boundary.
-      $"  AND {EphemeralSnapshotFloorSql.SnapshotEventPastGrace(prefix)}) " +
+      $"  AND {EphemeralSnapshotFloorSql.CoversAsAFloor(prefix)}) " +
       // 403 (#2294): a body at or before the perspective's purge event is covered by the purge (a purged row has nothing
       // to snapshot, and selecting it again every cycle only repeated a bootstrap that found no row). A body after it
       // stays a target: a stale marker can stand on a resurrected, live row. As in the reap.

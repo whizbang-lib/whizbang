@@ -209,8 +209,8 @@ public static class GeneratorTestHelper {
 
   /// <summary>
   /// The code a generated perspective runner runs: the runner file and the runner base it derives from, which holds the
-  /// runner logic every perspective of the assembly shares and is generated once per assembly (#2401). Null when the
-  /// run wrote no such runner.
+  /// runner logic every perspective shares and is Whizbang.Core source (#2401, #2469). Null when the run wrote no such
+  /// runner.
   /// </summary>
   /// <remarks>
   /// For an assertion about that shared logic, which a runner used to repeat in full. An assertion about what one
@@ -218,7 +218,18 @@ public static class GeneratorTestHelper {
   /// </remarks>
   public static string? GetRunnerSource(GeneratorDriverRunResult result, string runnerFileName) {
     var runner = GetGeneratedSource(result, runnerFileName);
-    return runner is null ? null : runner + "\n" + GetRequiredGeneratedSource(result, "PerspectiveRunnerBase.g.cs");
+    return runner is null ? null : runner + "\n" + RunnerBaseSource();
+  }
+
+  /// <summary>
+  /// The source of Whizbang.Core's perspective runner base (#2469), the runner logic every generated runner derives,
+  /// embedded into this assembly at build time so no test reads a file at run time.
+  /// </summary>
+  public static string RunnerBaseSource() {
+    using var stream = typeof(GeneratorTestHelper).Assembly.GetManifestResourceStream("WhizbangCore/PerspectiveRunnerBase.cs")
+        ?? throw new InvalidOperationException("The runner base source is not embedded (see Whizbang.Generators.Tests.csproj).");
+    using var reader = new StreamReader(stream);
+    return reader.ReadToEnd();
   }
 
   /// <summary>
@@ -456,6 +467,48 @@ public static class GeneratorTestHelper {
         $"The generator {name} threw instead of generating. It emitted no source, {consequence}.",
         generatorResult.Exception);
     }
+  }
+
+  /// <summary>
+  /// Compiles <paramref name="source"/> with <paramref name="generator"/> the way a consumer build does, with the
+  /// interceptors feature turned on for <paramref name="interceptorsNamespace"/> and the given MSBuild global options
+  /// (null: none set, the default configuration), emits the result and loads it.
+  /// </summary>
+  /// <param name="generator">The generator to run.</param>
+  /// <param name="source">The compilation's only source file.</param>
+  /// <param name="interceptorsNamespace">The namespace the build enables interceptors in.</param>
+  /// <param name="globalOptions">MSBuild global options, or null for none.</param>
+  /// <returns>The loaded assembly.</returns>
+  /// <exception cref="InvalidOperationException">The compilation, generated code included, does not compile.</exception>
+  [RequiresAssemblyFiles()]
+  public static System.Reflection.Assembly CompileAndLoadWithInterceptors(
+      IIncrementalGenerator generator,
+      string source,
+      string interceptorsNamespace,
+      Dictionary<string, string>? globalOptions = null) {
+    ArgumentNullException.ThrowIfNull(generator);
+    var parseOptions = CSharpParseOptions.Default
+      .WithLanguageVersion(LanguageVersion.Preview)
+      .WithFeatures([new KeyValuePair<string, string>("InterceptorsNamespaces", interceptorsNamespace)]);
+    var compilation = CSharpCompilation.Create(
+        assemblyName: "InterceptedProbe" + Guid.CreateVersion7().ToString("N"),
+        syntaxTrees: [CSharpSyntaxTree.ParseText(source, parseOptions, path: "/probe/Probe.cs")],
+        references: _fullFrameworkReferences(),
+        options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+    var driver = CSharpGeneratorDriver.Create(
+        generators: [generator.AsSourceGenerator()],
+        parseOptions: parseOptions,
+        optionsProvider: new TestAnalyzerConfigOptionsProvider(globalOptions ?? []));
+    var ran = driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out _);
+    _throwIfAnyGeneratorFailed(ran.GetRunResult());
+    using var image = new MemoryStream();
+    var emitted = output.Emit(image);
+    if (!emitted.Success) {
+      throw new InvalidOperationException(
+        "The intercepted probe does not compile: "
+        + string.Join(Environment.NewLine, emitted.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)));
+    }
+    return System.Reflection.Assembly.Load(image.ToArray());
   }
 
   /// <summary>

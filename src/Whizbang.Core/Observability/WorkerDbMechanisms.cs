@@ -128,6 +128,11 @@ namespace Whizbang.Core.Workers {
     public DbMechanism DbMechanism => DbMechanism.Role;
   }
 
+  public partial class PartitionHandoverWorker : IDbMechanismOwner {
+    /// <inheritdoc />
+    public DbMechanism DbMechanism => DbMechanism.Role;
+  }
+
   public partial class WhizbangShutdownService : IDbMechanismOwner {
     /// <inheritdoc />
     public DbMechanism DbMechanism => DbMechanism.Lifecycle;
@@ -220,5 +225,13 @@ namespace Whizbang.Core.Configuration {
   internal partial class StartupSettingsReportService : IDbMechanismOwner {
     /// <inheritdoc />
     public DbMechanism DbMechanism => DbMechanism.Startup;
+  }
+}
+
+namespace Whizbang.Core.Startup {
+  // #2595: reads the instance's own role and partition assignment.
+  public sealed partial class InstanceAssignmentMonitor : IDbMechanismOwner {
+    /// <inheritdoc />
+    public DbMechanism DbMechanism => DbMechanism.Role;
   }
 }

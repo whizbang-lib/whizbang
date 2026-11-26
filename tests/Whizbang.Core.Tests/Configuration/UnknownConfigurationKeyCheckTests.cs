@@ -177,11 +177,14 @@ public sealed class UnknownConfigurationKeyCheckTests {
       ("Whizbang:Database:RoleAssignment:Enabled", []),
       ("Whizbang:Database:RoleAssignment:HoldLegacySessionLock", []),
       ("Whizbang:Database:Stamper:AdvisoryLockKey", []),
+      // #2559: the partition assigner always runs, in every driver, so nothing turns it off.
+      ("Whizbang:Database:PartitionAssigner:Enabled", []),
     ];
 
     var declared = _coreRemovedKeys();
 
-    await Assert.That(declared.Count).IsEqualTo(12).Because("the table held eight entries, #2027 removed one more and #2044 three");
+    await Assert.That(declared.Count).IsEqualTo(13)
+      .Because("the table held eight entries, #2027 removed one more, #2044 three and #2559 one");
     foreach (var (key, replacedBy) in expected) {
       var entry = declared.SingleOrDefault(d => d.Key == key);
       await Assert.That(entry).IsNotNull().Because($"{key} was in the table");

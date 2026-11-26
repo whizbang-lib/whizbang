@@ -1,0 +1,209 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using System.Security.Cryptography;
+using Azure;
+using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Whizbang.Core.Offloads;
+
+namespace Whizbang.Storage.AzureBlob;
+
+/// <summary>
+/// Production <see cref="IMessageBodyStore"/> backed by Azure Blob Storage.
+/// Works transparently against both the Azurite emulator and live Azure
+/// Blob — the connection string distinguishes them via the standard SDK
+/// conventions (<c>UseDevelopmentStorage=true</c> / emulator endpoint vs.
+/// account connection string).
+/// </summary>
+/// <remarks>
+/// <para>
+/// Uploads compute a SHA-256 hash so the receive-side rehydrate can
+/// integrity-check downloads. Storage keys are blob names within the
+/// configured container — opaque to callers; only the claim ticket matters.
+/// </para>
+/// <para>
+/// The provider lazily creates the configured container on first upload
+/// (CreateIfNotExists). For TTL-based cleanup, configure a blob lifecycle
+/// rule on the storage account; <see cref="DeleteAsync"/> defaults to
+/// idempotent so fan-out double-delete is safe.
+/// </para>
+/// </remarks>
+/// <docs>fundamentals/offloads/providers/azure-blob</docs>
+/// <tests>tests/Whizbang.Storage.AzureBlob.Tests/AzureBlobMessageBodyStoreCoverageTests.cs</tests>
+/// <tests>tests/Whizbang.Storage.AzureBlob.Integration.Tests/AzureBlobStoreRoundTripTests.cs</tests>
+public sealed class AzureBlobMessageBodyStore : IMessageBodyStore {
+  private readonly AzureBlobOffloadOptions _options;
+  private readonly BlobContainerClient _containerClient;
+  private int _containerEnsured;
+
+  /// <summary>
+  /// Builds the store from options bound by name (the provider-name DI key).
+  /// </summary>
+  public AzureBlobMessageBodyStore(
+      [ServiceKey] string providerName,
+      IOptionsMonitor<AzureBlobOffloadOptions> options) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(providerName);
+    ArgumentNullException.ThrowIfNull(options);
+    ProviderName = providerName;
+    _options = options.Get(providerName);
+    if (string.IsNullOrWhiteSpace(_options.ConnectionString?.Reveal())) {
+      // Fall back to the unnamed default binding for tests / single-provider setups.
+      _options = options.CurrentValue;
+    }
+
+    if (string.IsNullOrWhiteSpace(_options.ConnectionString?.Reveal())) {
+      throw new InvalidOperationException(
+        $"AzureBlobOffloadOptions.ConnectionString is required for provider '{providerName}'. " +
+        "Call services.Configure<AzureBlobOffloadOptions>(\"" + providerName + "\", opts => opts.ConnectionString = ...).");
+    }
+    if (string.IsNullOrWhiteSpace(_options.ContainerName)) {
+      throw new InvalidOperationException(
+        $"AzureBlobOffloadOptions.ContainerName is required for provider '{providerName}'.");
+    }
+
+    var serviceClient = new BlobServiceClient(_options.ConnectionString.Reveal());
+    _containerClient = serviceClient.GetBlobContainerClient(_options.ContainerName);
+  }
+
+  /// <summary>Builds the store over a container client built elsewhere: the storage registration (an account named by a
+  /// connection string or a service endpoint with a credential), and unit tests that hand-roll a mock.</summary>
+  internal AzureBlobMessageBodyStore(
+      string providerName,
+      AzureBlobOffloadOptions options,
+      BlobContainerClient containerClient) {
+    ProviderName = providerName;
+    _options = options;
+    _containerClient = containerClient;
+  }
+
+  /// <inheritdoc />
+  public string ProviderName { get; }
+
+  /// <inheritdoc />
+  public async Task<MessageBodyClaim> UploadAsync(
+      ReadOnlyMemory<byte> body, string contentType,
+      MessageBodyUploadOptions? options = null,
+      CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(contentType);
+    await _ensureContainerAsync(cancellationToken);
+
+    var storageKey = $"{DateTime.UtcNow:yyyy/MM/dd}/{Guid.NewGuid():N}.bin";
+    var blobClient = _containerClient.GetBlobClient(storageKey);
+
+    var hash = "sha256-" + Convert.ToHexString(SHA256.HashData(body.Span));
+
+    var uploadOptions = new BlobUploadOptions {
+      HttpHeaders = new BlobHttpHeaders {
+        ContentType = contentType,
+      },
+      AccessTier = _options.DefaultAccessTier,
+    };
+
+    if (options?.Metadata is { Count: > 0 } metaIn) {
+      uploadOptions.Metadata = new Dictionary<string, string>(metaIn);
+    } else {
+      uploadOptions.Metadata = new Dictionary<string, string>();
+    }
+    uploadOptions.Metadata["whizbang_content_hash"] = hash;
+
+    await using var stream = _toReadOnlyStream(body);
+    await blobClient.UploadAsync(stream, uploadOptions, cancellationToken);
+
+    return new MessageBodyClaim(
+      ProviderName: ProviderName,
+      StorageKey: storageKey,
+      Size: body.Length,
+      ContentHash: hash,
+      ContentType: contentType,
+      UploadedAt: DateTimeOffset.UtcNow);
+  }
+
+  /// <inheritdoc />
+  public async Task<ReadOnlyMemory<byte>> DownloadAsync(
+      MessageBodyClaim claim, MessageBodyDownloadOptions? options = null,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(claim);
+
+    var cap = options?.MaxBytes ?? _options.MaxDownloadBytes;
+    if (cap is long max && claim.Size > max) {
+      throw new InvalidOperationException(
+        $"Claim '{claim.StorageKey}' size {claim.Size} exceeds MaxBytes cap {max}; refusing download.");
+    }
+
+    var blobClient = _containerClient.GetBlobClient(claim.StorageKey);
+    try {
+      var response = await blobClient.DownloadStreamingAsync(cancellationToken: cancellationToken);
+      await using var content = response.Value.Content;
+      return await _readAtMostAsync(content, claim, cancellationToken);
+    } catch (RequestFailedException ex) when (ex.Status == 404) {
+      throw new InvalidOperationException(
+        $"Body not found at '{claim.StorageKey}' in container '{_options.ContainerName}'. " +
+        "TTL may have removed it before the receiver downloaded.", ex);
+    }
+  }
+
+  // The cap above trusts the size the claim declares, and the claim comes from the sender; the read
+  // stops one byte past that size, so a blob larger than its claim is never held in memory in full.
+  private static async Task<ReadOnlyMemory<byte>> _readAtMostAsync(
+      Stream content, MessageBodyClaim claim, CancellationToken cancellationToken) {
+    await using var buffer = new MemoryStream();
+    var chunk = new byte[81_920];
+    int read;
+    while ((read = await content.ReadAsync(chunk, cancellationToken)) > 0) {
+      if (buffer.Length + read > claim.Size) {
+        throw new InvalidOperationException(
+          $"Body at '{claim.StorageKey}' is larger than its claim of {claim.Size} bytes; refusing to read further.");
+      }
+      await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken);
+    }
+    return buffer.ToArray();
+  }
+
+  /// <inheritdoc />
+  public async Task DeleteAsync(
+      MessageBodyClaim claim, MessageBodyDeleteOptions? options = null,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(claim);
+
+    var blobClient = _containerClient.GetBlobClient(claim.StorageKey);
+    var ignoreMissing = options?.IgnoreMissing ?? new MessageBodyDeleteOptions().IgnoreMissing;
+    try {
+      var deleted = await blobClient.DeleteIfExistsAsync(DeleteSnapshotsOption.IncludeSnapshots, conditions: null, cancellationToken);
+      if (!deleted.Value && !ignoreMissing) {
+        throw new InvalidOperationException(
+          $"Blob '{claim.StorageKey}' not found in container '{_options.ContainerName}' and IgnoreMissing=false.");
+      }
+    } catch (RequestFailedException) when (ignoreMissing) {
+      // Tolerated: TTL or another consumer already deleted. Log left to caller.
+    }
+  }
+
+  /// <inheritdoc />
+  public async ValueTask<bool> CheckConnectivityAsync(CancellationToken cancellationToken = default) {
+    // A lightweight round-trip to the blob service; reaching it (container present or not) is healthy.
+    // A network/auth failure throws and is read as unreachable by ConnectivityHealthSource.
+    await _containerClient.ExistsAsync(cancellationToken).ConfigureAwait(false);
+    return true;
+  }
+
+  private async Task _ensureContainerAsync(CancellationToken cancellationToken) {
+    if (Interlocked.CompareExchange(ref _containerEnsured, 1, 0) != 0) {
+      return;
+    }
+    try {
+      await _containerClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
+    } catch (Exception) {
+      // Reset so a subsequent call can retry; first-write success is the target.
+      Interlocked.Exchange(ref _containerEnsured, 0);
+      throw;
+    }
+  }
+
+  private static MemoryStream _toReadOnlyStream(ReadOnlyMemory<byte> body) {
+    return new MemoryStream(body.ToArray(), writable: false);
+  }
+}

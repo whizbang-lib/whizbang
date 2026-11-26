@@ -227,6 +227,51 @@ public class StartupAssessmentSourceTests {
   }
 
   [Test]
+  public async Task AnOverrideOfOneSide_IsLoggedForThatSide_WithItsOwnKeyAndWhatStillRunsAsync() {
+    // #2553: the two sides are overridden apart, so the log names the side, its own key and what it leaves running.
+    const string APPLICATION_REASON = "the application schema is ahead of this build";
+    const string PLATFORM_REASON = "the W! migrations are ahead of this build";
+    var applicationOnly = new StartupAssessment(StartupVerdict.Migrate, "running past the application side") {
+      OverriddenReason = APPLICATION_REASON,
+      Platform = new SchemaSideVerdict(Whizbang.Core.Versioning.SchemaChangeKind.Platform, StartupVerdict.Migrate, "behind"),
+      Application = new SchemaSideVerdict(Whizbang.Core.Versioning.SchemaChangeKind.Application, StartupVerdict.StandDown, "ahead") {
+        OverriddenReason = APPLICATION_REASON,
+      },
+    };
+    var platformOnly = applicationOnly with {
+      OverriddenReason = PLATFORM_REASON,
+      Platform = new SchemaSideVerdict(Whizbang.Core.Versioning.SchemaChangeKind.Platform, StartupVerdict.StandDown, "ahead") {
+        OverriddenReason = PLATFORM_REASON,
+      },
+      Application = new SchemaSideVerdict(Whizbang.Core.Versioning.SchemaChangeKind.Application, StartupVerdict.Serve, "current"),
+    };
+
+    var application = await _overrideLineAsync(applicationOnly);
+    var platform = await _overrideLineAsync(platformOnly);
+
+    await Assert.That(application).Contains("Whizbang:Startup:Application:OverrideIncompatibility");
+    await Assert.That(application).Contains("application schema");
+    await Assert.That(application).Contains(APPLICATION_REASON);
+    await Assert.That(application).Contains("the W! migrations still run");
+    await Assert.That(application).DoesNotContain("no migration runs")
+      .Because("only the application side is overridden; the W! migrations are applied as usual");
+    await Assert.That(platform).Contains("Whizbang:Startup:Platform:OverrideIncompatibility");
+    await Assert.That(platform).Contains("W! migrations");
+    await Assert.That(platform).Contains(PLATFORM_REASON);
+    await Assert.That(platform).Contains("no W! migration runs");
+  }
+
+  private static async Task<string> _overrideLineAsync(StartupAssessment verdict) {
+    var logger = new FakeLogger<StartupAssessmentSource>();
+    var source = new StartupAssessmentSource(new CountingAssessor(_ => Task.FromResult(verdict)), NullStartupStageReporter.Instance,
+      new FakeTimeProvider(), logger);
+    await source.AssessAsync(CancellationToken.None);
+    var line = logger.Collector.GetSnapshot().Single();
+    await Assert.That(line.Level).IsEqualTo(LogLevel.Error);
+    return line.Message;
+  }
+
+  [Test]
   public async Task ACompatibleVerdict_LogsNoOverrideAsync() {
     var logger = new FakeLogger<StartupAssessmentSource>();
     var source = new StartupAssessmentSource(new CountingAssessor(_ => Task.FromResult(_serve)), NullStartupStageReporter.Instance,

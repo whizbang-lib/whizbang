@@ -22,4 +22,12 @@ internal static class ScalarResult {
   /// <summary>The <see cref="long"/> the scalar carries, else zero.</summary>
   /// <param name="value">The scalar.</param>
   internal static long LongOrZero(object? value) => value is long n ? n : 0L;
+
+  /// <summary>The UTC instant a <c>timestamptz</c> scalar carries, else null.</summary>
+  /// <param name="value">The scalar.</param>
+  internal static DateTimeOffset? InstantOrNull(object? value) => value switch {
+    DateTimeOffset instant => instant,
+    DateTime time => new DateTimeOffset(DateTime.SpecifyKind(time, DateTimeKind.Utc)),
+    _ => null,
+  };
 }

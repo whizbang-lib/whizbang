@@ -88,7 +88,7 @@ public class PartitionAssignerTests {
 
   [Test]
   public async Task Evaluate_NothingPublishedYet_PublishesAsANewTenureAsync() {
-    var evaluation = PartitionAssigner.Evaluate([_self, _a], published: null, epoch: 3, TimeSpan.Zero, _options);
+    var evaluation = PartitionAssigner.Evaluate([_self, _a], published: null, epoch: 3, TimeSpan.Zero, TimeSpan.Zero, _options);
 
     await Assert.That(evaluation.Reason).IsEqualTo(PartitionAssignerReason.NewTenure);
     await Assert.That(evaluation.Publishes).IsTrue();
@@ -96,21 +96,21 @@ public class PartitionAssignerTests {
 
   [Test]
   public async Task Evaluate_AnotherTenuresAssignment_PublishesAsANewTenureAsync() {
-    var evaluation = PartitionAssigner.Evaluate([_self, _a], _published(2, _self, _a), epoch: 3, TimeSpan.Zero, _options);
+    var evaluation = PartitionAssigner.Evaluate([_self, _a], _published(2, _self, _a), epoch: 3, TimeSpan.Zero, TimeSpan.Zero, _options);
 
     await Assert.That(evaluation.Reason).IsEqualTo(PartitionAssignerReason.NewTenure);
   }
 
   [Test]
   public async Task Evaluate_AMemberGoingStale_PublishesAsync() {
-    var evaluation = PartitionAssigner.Evaluate([_self], _published(3, _self, _a), epoch: 3, TimeSpan.FromSeconds(5), _options);
+    var evaluation = PartitionAssigner.Evaluate([_self], _published(3, _self, _a), epoch: 3, TimeSpan.FromSeconds(5), _options.SettleWindow, _options);
 
     await Assert.That(evaluation.Reason).IsEqualTo(PartitionAssignerReason.MembershipChanged);
   }
 
   [Test]
   public async Task Evaluate_AnInstanceBecomingLive_PublishesAsync() {
-    var evaluation = PartitionAssigner.Evaluate([_self, _a, _b], _published(3, _self, _a), epoch: 3, TimeSpan.FromSeconds(5), _options);
+    var evaluation = PartitionAssigner.Evaluate([_self, _a, _b], _published(3, _self, _a), epoch: 3, TimeSpan.FromSeconds(5), _options.SettleWindow, _options);
 
     await Assert.That(evaluation.Reason).IsEqualTo(PartitionAssignerReason.MembershipChanged);
   }
@@ -118,7 +118,7 @@ public class PartitionAssignerTests {
   [Test]
   public async Task Evaluate_NoChange_BeforeTheBackstop_DoesNotPublishAsync() {
     var evaluation = PartitionAssigner.Evaluate(
-      [_self, _a], _published(3, _self, _a), epoch: 3, _options.RepublishInterval - TimeSpan.FromTicks(1), _options);
+      [_self, _a], _published(3, _self, _a), epoch: 3, _options.RepublishInterval - TimeSpan.FromTicks(1), TimeSpan.Zero, _options);
 
     await Assert.That(evaluation.Reason).IsEqualTo(PartitionAssignerReason.Unchanged);
     await Assert.That(evaluation.Publishes).IsFalse();
@@ -126,9 +126,47 @@ public class PartitionAssignerTests {
 
   [Test]
   public async Task Evaluate_NoChange_AtTheBackstop_PublishesAsync() {
-    var evaluation = PartitionAssigner.Evaluate([_self, _a], _published(3, _self, _a), epoch: 3, _options.RepublishInterval, _options);
+    var evaluation = PartitionAssigner.Evaluate([_self, _a], _published(3, _self, _a), epoch: 3, _options.RepublishInterval, TimeSpan.Zero, _options);
 
     await Assert.That(evaluation.Reason).IsEqualTo(PartitionAssignerReason.Backstop);
+  }
+
+  // --- the settle window (#2558) ------------------------------------------------------------------
+
+  [Test]
+  public async Task Evaluate_AChangeInsideTheSettleWindow_SettlesWithoutPublishingAsync() {
+    var evaluation = PartitionAssigner.Evaluate(
+      [_self, _a, _b], _published(3, _self, _a), epoch: 3, TimeSpan.FromSeconds(1), _options.SettleWindow - TimeSpan.FromTicks(1), _options);
+
+    await Assert.That(evaluation.Reason).IsEqualTo(PartitionAssignerReason.Settling);
+    await Assert.That(evaluation.Publishes).IsFalse()
+      .Because("membership changes are collected for the window, so a rolling deploy publishes once per window, not per beat");
+  }
+
+  [Test]
+  public async Task Evaluate_AChangeInsideTheSettleWindow_SettlesEvenWhenTheBackstopIsDueAsync() {
+    var evaluation = PartitionAssigner.Evaluate(
+      [_self, _a, _b], _published(3, _self, _a), epoch: 3, _options.RepublishInterval, TimeSpan.Zero, _options);
+
+    await Assert.That(evaluation.Reason).IsEqualTo(PartitionAssignerReason.Settling)
+      .Because("the backstop republishes an unchanged map; a changing one waits for the window like any other change");
+  }
+
+  [Test]
+  public async Task Evaluate_AChangeWithAZeroWindow_PublishesAtOnceAsync() {
+    var options = new PartitionAssignerOptions { SettleWindow = TimeSpan.Zero };
+
+    var evaluation = PartitionAssigner.Evaluate([_self, _a, _b], _published(3, _self, _a), epoch: 3, TimeSpan.FromSeconds(1), TimeSpan.Zero, options);
+
+    await Assert.That(evaluation.Reason).IsEqualTo(PartitionAssignerReason.MembershipChanged);
+  }
+
+  [Test]
+  public async Task Evaluate_ANewTenure_PublishesAtOnce_WhateverTheWindowAsync() {
+    var evaluation = PartitionAssigner.Evaluate([_self, _a, _b], _published(2, _self, _a), epoch: 3, TimeSpan.Zero, TimeSpan.Zero, _options);
+
+    await Assert.That(evaluation.Reason).IsEqualTo(PartitionAssignerReason.NewTenure)
+      .Because("a new tenure fences the map under its own epoch; it starts from the published map, so it moves nothing");
   }
 
   // --- options ---------------------------------------------------------------------------------
@@ -143,6 +181,26 @@ public class PartitionAssignerTests {
     var options = new PartitionAssignerOptions { AssignmentLease = TimeSpan.FromSeconds(60) };
 
     await Assert.That(options.Validate).Throws<InvalidOperationException>();
+  }
+
+  [Test]
+  public async Task SettleWindow_DefaultsToFiveSecondsAsync() {
+    await Assert.That(new PartitionAssignerOptions().SettleWindow).IsEqualTo(TimeSpan.FromSeconds(5))
+      .Because("the owner's default (2026-11-23), to be measured on a deployed environment");
+  }
+
+  [Test]
+  public async Task Validate_ANegativeSettleWindow_IsRefusedAsync() {
+    var options = new PartitionAssignerOptions { SettleWindow = TimeSpan.FromTicks(-1) };
+
+    await Assert.That(options.Validate).Throws<InvalidOperationException>();
+  }
+
+  [Test]
+  public async Task Validate_AZeroSettleWindow_PassesAsync() {
+    var options = new PartitionAssignerOptions { SettleWindow = TimeSpan.Zero };
+
+    await Assert.That(options.Validate).ThrowsNothing();
   }
 
   [Test]

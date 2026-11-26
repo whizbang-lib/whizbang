@@ -6,6 +6,7 @@ using TUnit.Core;
 using Whizbang.Core.Events.System;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Perspectives;
 
@@ -651,6 +652,36 @@ public class PerspectiveSnapshotAndRewindTests {
     await Assert.That(await empty.GetLatestSnapshotFloorAsync(Guid.NewGuid(), "p")).IsNull();
   }
 
+  // #2463: a store written before tip snapshots keeps working. Its tip write stores nothing (the perspective keeps its
+  // floor alone, as before), and its tip removal removes nothing: neither may fall through to a floor write or a delete.
+  [Test]
+  public async Task CreateTipSnapshotAsync_DefaultImpl_StoresNothingAsync() {
+    var store = new LegacyOnlySnapshotStore();
+    using var data = System.Text.Json.JsonDocument.Parse("{}");
+
+    var write = ((IPerspectiveSnapshotStore)store).CreateTipSnapshotAsync(
+      (Guid)TrackedGuid.New(), "p", (Guid)TrackedGuid.New(), 7, data, collectivesThroughSequence: 40);
+    await write;
+
+    await Assert.That(write.IsCompletedSuccessfully).IsTrue();
+    await Assert.That(store.Created).IsEmpty()
+      .Because("a store that keeps no tips must not write the tip as a floor: a tip counted as a floor would let the reap pass it");
+    await Assert.That(store.Deletions).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task DeleteTipSnapshotFromAsync_DefaultImpl_RemovesNothingAsync() {
+    var store = new LegacyOnlySnapshotStore();
+
+    var removal = ((IPerspectiveSnapshotStore)store).DeleteTipSnapshotFromAsync((Guid)TrackedGuid.New(), "p", (Guid)TrackedGuid.New());
+    await removal;
+
+    await Assert.That(removal.IsCompletedSuccessfully).IsTrue();
+    await Assert.That(store.Deletions).IsEqualTo(0)
+      .Because("a store that keeps no tips has none to remove, and its floors are not tips: removing one would cost the rewind its restore point");
+    await Assert.That(store.Created).IsEmpty();
+  }
+
   /// <summary>
   /// Minimal stub implementing only the legacy interface methods. Does NOT override
   /// the production forensic G7 sibling — so calls fall through to the interface default-impl, which is
@@ -668,8 +699,15 @@ public class PerspectiveSnapshotAndRewindTests {
     public Task<(Guid SnapshotEventId, System.Text.Json.JsonDocument SnapshotData)?> GetLatestSnapshotBeforeAsync(Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) =>
       Task.FromResult<(Guid, System.Text.Json.JsonDocument)?>(null);
     public Task<bool> HasAnySnapshotAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) => Task.FromResult(false);
-    public Task PruneOldSnapshotsAsync(Guid streamId, string perspectiveName, int keepCount, CancellationToken ct = default) => Task.CompletedTask;
-    public Task DeleteAllSnapshotsAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) => Task.CompletedTask;
+    public int Deletions { get; private set; }
+    public Task PruneOldSnapshotsAsync(Guid streamId, string perspectiveName, int keepCount, CancellationToken ct = default) {
+      Deletions++;
+      return Task.CompletedTask;
+    }
+    public Task DeleteAllSnapshotsAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
+      Deletions++;
+      return Task.CompletedTask;
+    }
   }
 
   #endregion

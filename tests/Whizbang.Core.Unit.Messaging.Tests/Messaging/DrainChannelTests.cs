@@ -130,6 +130,8 @@ public class DrainChannelTests {
     await Assert.That(ch.IsInFlight(sid)).IsFalse();
     ch.MarkDrained(sid);
     await Assert.That(ch.IsInFlight(sid)).IsFalse();
+    await Assert.That(ch.InFlightStreams).IsEmpty()
+      .Because("a channel that tracks nothing reports no stream in flight, so it holds no handover back");
   }
 
   [Test]
@@ -142,6 +144,8 @@ public class DrainChannelTests {
     await Assert.That(ch.IsInFlight(sid)).IsFalse();
     ch.MarkDrained(sid);
     await Assert.That(ch.IsInFlight(sid)).IsFalse();
+    await Assert.That(ch.InFlightStreams).IsEmpty()
+      .Because("a channel that tracks nothing reports no stream in flight, so it holds no handover back");
   }
 
   private sealed class MinimalOutboxChannel : IOutboxDrainChannel {

@@ -28,8 +28,8 @@ public class WorkCoordinatorDrainTests {
   public async Task FlushAsync_DrainsDeferredChannel_IncludesInBatchAsync() {
     // Arrange: Deferred channel has pending messages
     var deferredChannel = new DeferredOutboxChannel();
-    var message1 = _createTestOutboxMessage(Guid.NewGuid());
-    var message2 = _createTestOutboxMessage(Guid.NewGuid());
+    var message1 = _createTestOutboxMessage((Guid)TrackedGuid.New());
+    var message2 = _createTestOutboxMessage((Guid)TrackedGuid.New());
     await deferredChannel.QueueAsync(message1);
     await deferredChannel.QueueAsync(message2);
 
@@ -55,7 +55,7 @@ public class WorkCoordinatorDrainTests {
     var strategy = _createStrategy(workCoordinator, deferredChannel: null);
 
     // Queue a message directly through the strategy
-    strategy.QueueOutboxMessage(_createTestOutboxMessage(Guid.NewGuid()));
+    strategy.QueueOutboxMessage(_createTestOutboxMessage((Guid)TrackedGuid.New()));
 
     // Act
     await strategy.FlushAsync(WorkBatchOptions.None);
@@ -73,7 +73,7 @@ public class WorkCoordinatorDrainTests {
     var strategy = _createStrategy(workCoordinator, deferredChannel);
 
     // Queue a message directly through the strategy
-    var directMessage = _createTestOutboxMessage(Guid.NewGuid());
+    var directMessage = _createTestOutboxMessage((Guid)TrackedGuid.New());
     strategy.QueueOutboxMessage(directMessage);
 
     // Act
@@ -89,13 +89,13 @@ public class WorkCoordinatorDrainTests {
   public async Task FlushAsync_DeferredAndDirectMessages_AllIncludedAsync() {
     // Arrange: Both deferred and direct messages
     var deferredChannel = new DeferredOutboxChannel();
-    var deferredMessage = _createTestOutboxMessage(Guid.NewGuid());
+    var deferredMessage = _createTestOutboxMessage((Guid)TrackedGuid.New());
     await deferredChannel.QueueAsync(deferredMessage);
 
     var workCoordinator = new StubWorkCoordinator();
     var strategy = _createStrategy(workCoordinator, deferredChannel);
 
-    var directMessage = _createTestOutboxMessage(Guid.NewGuid());
+    var directMessage = _createTestOutboxMessage((Guid)TrackedGuid.New());
     strategy.QueueOutboxMessage(directMessage);
 
     // Act
@@ -114,7 +114,7 @@ public class WorkCoordinatorDrainTests {
   public async Task FlushAsync_MultipleCalls_OnlyDrainsOncePerCallAsync() {
     // Arrange
     var deferredChannel = new DeferredOutboxChannel();
-    await deferredChannel.QueueAsync(_createTestOutboxMessage(Guid.NewGuid()));
+    await deferredChannel.QueueAsync(_createTestOutboxMessage((Guid)TrackedGuid.New()));
 
     var workCoordinator = new StubWorkCoordinator();
     var strategy = _createStrategy(workCoordinator, deferredChannel);
@@ -123,7 +123,7 @@ public class WorkCoordinatorDrainTests {
     await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Queue another deferred message
-    await deferredChannel.QueueAsync(_createTestOutboxMessage(Guid.NewGuid()));
+    await deferredChannel.QueueAsync(_createTestOutboxMessage((Guid)TrackedGuid.New()));
 
     // Act - second flush
     await strategy.FlushAsync(WorkBatchOptions.None);

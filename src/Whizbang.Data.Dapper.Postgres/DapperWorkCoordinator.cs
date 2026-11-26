@@ -32,13 +32,40 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperWorkCoordinatorNamedSchemaTests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "The schema prefix cannot be a bind parameter, so it is interpolated. It is built by PgIdentifier.Quote, which doubles any embedded quote, so it cannot terminate the identifier early. Every value is a bound parameter.")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1845:Use span-based 'string.Concat'", Justification = "Debug logging with substring truncation - span-based operations not worth complexity for diagnostic output")]
+#pragma warning disable S107 // Optional collaborators, each defaulted; DI supplies what is registered.
 public partial class DapperWorkCoordinator(
   string connectionString,
   JsonSerializerOptions jsonOptions,
   ILogger<DapperWorkCoordinator>? logger = null,
   WorkCoordinatorGate? gate = null,
-  string? schema = null
+  string? schema = null,
+  Whizbang.Core.Validation.GuidOrderingValidator? guidOrdering = null,
+  Whizbang.Core.Observability.WorkCoordinatorMetrics? metrics = null,
+  PartitionTenures? tenures = null
 ) : IWorkCoordinator {
+#pragma warning restore S107
+  // #2556: the process's tenure ledger. Claims and fetches record into it; every write that commits a result names the
+  // epoch its work was claimed under from it, so no worker has to carry the epoch.
+  private readonly PartitionTenures? _tenures = tenures;
+
+  private List<T> _recorded<T>(List<T> rows, Func<T, Guid> workId, Func<T, Guid?> streamId) {
+    TenureFill.RecordFetched(_tenures, rows, workId, streamId);
+    return rows;
+  }
+
+  // Perspective work also holds its stream's perspective writes until it ends (#2557).
+  private List<T> _recordedPerspective<T>(List<T> rows, Func<T, Guid> workId, Func<T, Guid?> streamId) {
+    TenureFill.RecordFetchedPerspective(_tenures, rows, workId, streamId);
+    return rows;
+  }
+
+  // #2554, #2556: counts fenced writes and claims that found no valid partition map.
+  private readonly Whizbang.Core.Observability.WorkCoordinatorMetrics? _metrics = metrics;
+  // #2528: every outbox and inbox write checks its message ids before any SQL runs.
+  private readonly Whizbang.Core.Validation.GuidOrderingValidator _guidOrdering =
+    guidOrdering ?? Whizbang.Core.Validation.GuidOrderingValidator.Default;
+  private const string OUTBOX_ENTRY_POINT = "DapperWorkCoordinator.OutboxWrite";
+  private const string INBOX_ENTRY_POINT = "DapperWorkCoordinator.InboxWrite";
   private readonly string _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<DapperWorkCoordinator>? _logger = logger;
@@ -300,6 +327,21 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
+  public async Task<DateTimeOffset?> GetOldestSequenceHeldOutboxAsync(
+    Guid instanceId,
+    int maxRows,
+    CancellationToken cancellationToken = default) {
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Attributed;
+    var prefix = await _prefixAsync(connection, cancellationToken);
+    var oldest = await connection.ExecuteScalarAsync(
+      $"SELECT {prefix}wh_oldest_sequence_held_outbox(@instanceId, @maxRows)",
+      new { instanceId, maxRows },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    return Whizbang.Data.Postgres.ScalarResult.InstantOrNull(oldest);
+  }
+
+  /// <inheritdoc />
   public async Task<int> CleanupCompletedStreamsAsync(
     IReadOnlyList<Guid> streamIds,
     CancellationToken cancellationToken = default) {
@@ -325,18 +367,33 @@ public partial class DapperWorkCoordinator(
     return JsonSerializer.Serialize(failures, typeInfo);
   }
 
+  // Every outbox write funnels through here, so the time-ordering check refuses a non-v7 message id before any SQL
+  // runs and nothing of the batch is written (#2528).
   private string _serializeNewOutboxMessages(OutboxMessage[] messages) {
     if (messages.Length == 0) {
       return "[]";
+    }
+    foreach (var message in messages) {
+      _guidOrdering.ValidateMessageId(message.MessageId, message.MessageType, OUTBOX_ENTRY_POINT);
     }
 
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(OutboxMessage[]));
     return JsonSerializer.Serialize(messages, typeInfo);
   }
 
+  // Every inbox write funnels through here, so the time-ordering check refuses a non-v7 message id before any SQL
+  // runs and nothing of the batch is written (#2528).
   private string _serializeNewInboxMessages(InboxMessage[] messages) {
     if (messages.Length == 0) {
       return "[]";
+    }
+    foreach (var message in messages) {
+      _guidOrdering.ValidateMessageId(message.MessageId, message.MessageType, INBOX_ENTRY_POINT);
+      if (message.StreamId is { } streamId) {
+        // A remote producer's stream id may reach this service only here (#2549): reported, or refused at Error
+        // before any SQL runs, resolved through the message type's stored name
+        _guidOrdering.ReportStreamId(streamId, message.MessageType, INBOX_ENTRY_POINT);
+      }
     }
 
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(InboxMessage[]));
@@ -435,21 +492,29 @@ public partial class DapperWorkCoordinator(
     var prefix = await _prefixAsync(connection, cancellationToken);
     var now = DateTimeOffset.UtcNow;
     var results = await connection.QueryAsync<StreamEventRow>(
-      $"SELECT * FROM {prefix}get_stream_events(@p_instance_id, @p_stream_ids, @p_now)",
+      // 576 (#2551): the read that carries each event's version, its stream position.
+      $"SELECT * FROM {prefix}get_stream_events_in_stream_order(@p_instance_id, @p_stream_ids, @p_now)",
       new { p_instance_id = instanceId, p_stream_ids = streamIds, p_now = now },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
-    return [.. results.Select(r => new StreamEventData {
+    // #2591: a row without a body is named reaped (an ephemeral event) or missing (any other).
+    var rows = await Whizbang.Data.Postgres.MissingEventBodySql.NameAsync(__scope.Connection, prefix, [.. results.Select(r => new StreamEventData {
       StreamId = r.out_stream_id,
       EventId = r.out_event_id,
       EventType = r.out_event_type,
-      EventData = r.out_event_data,
+      // #2591: a body that is gone reads as NULL; the row is named as unreadable rather than carrying a null body.
+      EventData = r.out_event_data ?? string.Empty,
+      UnreadableReason = r.out_event_data is null ? StreamEventData.BODY_MISSING : null,
       Metadata = r.out_metadata,
       Scope = r.out_scope,
       EventWorkId = r.out_event_work_id,
       Attempts = r.out_attempts,
       Failures = r.out_failures,
-    })];
+      Version = r.out_version,
+    })], cancellationToken).ConfigureAwait(false);
+
+    // #2556: each fetched piece of work is recorded under its stream's claimed tenure, which its result then names.
+    return _recordedPerspective(rows, r => r.EventWorkId, r => r.StreamId);
   }
 
   /// <inheritdoc />
@@ -477,11 +542,13 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
     var rows = await connection.QueryAsync<OutboxBatchRowDto>(
-      $"SELECT * FROM {prefix}fetch_outbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
+      // 579 (#2551): the stream-ordered fetch, which ranks each stream by emission position and returns it.
+      $"SELECT * FROM {prefix}fetch_outbox_batch_in_stream_order(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
       new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream, p_max_bytes = maxBytes },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
-    return [.. rows.Select(_toOutboxBatchRow)];
+    // #2556: each fetched message is recorded under its stream's claimed tenure, which its result then names.
+    return _recorded(rows.Select(_toOutboxBatchRow).ToList(), r => r.MessageId, r => r.StreamId);
   }
 
   /// <inheritdoc />
@@ -499,18 +566,20 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var prefix = await _prefixAsync(__scope.Connection, cancellationToken);
     var rows = await __scope.Attributed.QueryAsync<OutboxBatchRowDto>(
-      $"SELECT * FROM {prefix}wh_continue_outbox_streams(@p_instance_id, @p_stream_ids, @p_after_ids, @p_run_length, @p_max_bytes)",
+      // 579 (#2551): the continuation in emission order, after the last position the drain published.
+      $"SELECT * FROM {prefix}wh_continue_outbox_streams_in_emission_order(@p_instance_id, @p_stream_ids, @p_after_positions, @p_run_length, @p_max_bytes)",
       new {
         p_instance_id = instanceId,
         p_stream_ids = streams.Select(s => s.StreamId).ToArray(),
-        p_after_ids = streams.Select(s => s.LastPublishedMessageId).ToArray(),
+        p_after_positions = streams.Select(s => s.LastPublishedPosition).ToArray(),
         p_run_length = runLength,
         p_max_bytes = maxBytes
       },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
-    // Mapped exactly as fetch_outbox_batch is, whose shape the continuation returns.
-    return [.. rows.Select(_toOutboxBatchRow)];
+    // Mapped exactly as fetch_outbox_batch_in_stream_order is, whose shape the continuation returns.
+    // #2556: each fetched message is recorded under its stream's claimed tenure, which its result then names.
+    return _recorded(rows.Select(_toOutboxBatchRow).ToList(), r => r.MessageId, r => r.StreamId);
   }
 
   /// <inheritdoc />
@@ -538,12 +607,14 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
     var rows = await connection.QueryAsync<InboxBatchRowDto>(
-      $"SELECT * FROM {prefix}fetch_inbox_batch(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
+      // 576 (#2551): the fetch that ranks each stream in stream order and returns the rank.
+      $"SELECT * FROM {prefix}fetch_inbox_batch_in_stream_order(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
       // NULL = count bound only, the pre-byte-budget behavior.
       new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream, p_max_bytes = maxBytes },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
-    return [.. rows.Select(r => new InboxBatchRow {
+    // #2556: each fetched message is recorded under its stream's claimed tenure, which its result then names.
+    return _recorded(rows.Select(r => new InboxBatchRow {
       MessageId = r.message_id,
       StreamId = r.stream_id,
       HandlerName = r.handler_name,
@@ -557,7 +628,8 @@ public partial class DapperWorkCoordinator(
       IsEvent = r.is_event,
       Error = r.error,
       Priority = r.priority,
-    })];
+      StreamPosition = r.stream_position,
+    }).ToList(), r => r.MessageId, r => r.StreamId);
   }
 
   /// <inheritdoc />
@@ -702,6 +774,7 @@ public partial class DapperWorkCoordinator(
     IsEvent = r.is_event,
     Error = r.error,
     Priority = r.priority,
+    StreamPosition = r.stream_position,
   };
 
   private sealed class OutboxBatchRowDto {
@@ -721,6 +794,8 @@ public partial class DapperWorkCoordinator(
     public string? error { get; set; }
     // Priority step 1 (151): absent from a fetch_outbox_batch that predates 151, which Dapper leaves at zero.
     public int priority { get; set; }
+    // 579 (#2551): the row's emission position, its place in its stream.
+    public long stream_position { get; set; }
   }
 
   private sealed class InboxBatchRowDto {
@@ -737,6 +812,8 @@ public partial class DapperWorkCoordinator(
     public bool is_event { get; set; }
     public string? error { get; set; }
     public int priority { get; set; }
+    // 576 (#2551): the row's position in its stream.
+    public long stream_position { get; set; }
   }
 
   private sealed class PendingPerspectiveEventDto {
@@ -1155,7 +1232,54 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
-  public async Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, bool debugMode, CancellationToken cancellationToken = default) {
+  public async Task<IReadOnlyList<PartitionHandover>> GetPartitionsHandingOverAsync(
+    Guid instanceId, CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Attributed;
+    var prefix = await _prefixAsync(connection, cancellationToken);
+    var rows = await connection.QueryAsync<HandoverRow>(
+      $"SELECT partition_number AS Partition, epoch AS Epoch, next_owner_instance_id AS NextOwner FROM {prefix}wh_partitions_handing_over(@Id)",
+      new { Id = instanceId }, commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    return [.. rows.Select(r => new PartitionHandover(r.Partition, r.Epoch, r.NextOwner))];
+  }
+
+  /// <inheritdoc />
+  public async Task<PartitionLeaveStatus> GetLeaveStatusAsync(Guid instanceId, CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Attributed;
+    var prefix = await _prefixAsync(connection, cancellationToken);
+    var row = await connection.QuerySingleAsync<LeaveRow>(
+      PartitionLeaveSql.Status(prefix, "@Id"),
+      new { Id = instanceId }, commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    return new PartitionLeaveStatus(row.Owned, row.OtherLiveCandidates);
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<int>> AcknowledgeHandoverAsync(
+    Guid instanceId, IReadOnlyList<PartitionHandover> handovers, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(handovers);
+    if (handovers.Count == 0) {
+      return [];
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Attributed;
+    var prefix = await _prefixAsync(connection, cancellationToken);
+    return [.. await connection.QueryAsync<int>(
+      $"SELECT partition_number FROM {prefix}wh_acknowledge_handover(@Id, @Partitions, @Epochs)",
+      new { Id = instanceId, Partitions = handovers.Select(h => h.Partition).ToArray(), Epochs = handovers.Select(h => h.Epoch).ToArray() },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS)];
+  }
+
+  /// <inheritdoc />
+  public Task<int> CompleteOutboxPublishedAsync(IReadOnlyList<Guid> ids, bool debugMode, CancellationToken cancellationToken = default) =>
+    CompleteOutboxPublishedAsync(ids, epochs: null, debugMode, cancellationToken);
+
+  /// <inheritdoc />
+  public async Task<int> CompleteOutboxPublishedAsync(
+    IReadOnlyList<Guid> ids, IReadOnlyList<long?>? epochs, bool debugMode, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(ids);
     if (ids.Count == 0) {
       return 0;
@@ -1165,15 +1289,32 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
-    return await connection.ExecuteScalarAsync<int>(
-      $"SELECT {prefix}complete_outbox_published(@Ids, @DebugMode)", new { Ids = idArray, DebugMode = debugMode },
-      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    // 570 (#2556): the epoch each id was claimed under; a completion under one that moved on is fenced and reported.
+    int affected;
+    using (CoordinatorOwnershipNotices.WatchFencedWrites(__scope.Connection, _metrics, _logger, nameof(CompleteOutboxPublishedAsync))) {
+      affected = await connection.ExecuteScalarAsync<int>(
+        // complete_outbox_published keeps its two parameters; the fenced mark is its own function.
+        $"SELECT {prefix}wh_complete_outbox_published_fenced(@Ids, @DebugMode, @Epochs)",
+        new { Ids = idArray, DebugMode = debugMode, Epochs = _epochs(TenureFill.Epochs(_tenures, ids, epochs)) },
+        commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    }
+    TenureFill.Forget(_tenures, ids);
+    return affected;
   }
+
+  /// <inheritdoc />
+  public Task CompletePerspectiveAsync(
+    IReadOnlyList<PerspectiveCursorCompletion> cursors,
+    IReadOnlyList<Guid> eventWorkIds,
+    bool debugMode,
+    CancellationToken cancellationToken = default) =>
+    CompletePerspectiveAsync(cursors, eventWorkIds, eventWorkEpochs: null, debugMode, cancellationToken);
 
   /// <inheritdoc />
   public async Task CompletePerspectiveAsync(
     IReadOnlyList<PerspectiveCursorCompletion> cursors,
     IReadOnlyList<Guid> eventWorkIds,
+    IReadOnlyList<long?>? eventWorkEpochs,
     bool debugMode,
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(cursors);
@@ -1185,15 +1326,19 @@ public partial class DapperWorkCoordinator(
     // No caller-side emptiness test: the serializer already answers "[]" for an empty batch, and
     // duplicating that here left its own guard with no way to be reached (same shape as
     // SerializeFailures, which callers hand the array unconditionally).
-    var cursorsJson = _serializePerspectiveCompletions([.. cursors]);
+    // #2556: each cursor and work id names the epoch its work was claimed under.
+    var cursorsJson = _serializePerspectiveCompletions([.. TenureFill.Cursors(_tenures, cursors)]);
     var idArray = eventWorkIds is Guid[] earr ? earr : [.. eventWorkIds];
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
-    await connection.ExecuteAsync(
-      $"SELECT {prefix}complete_perspective(@Cursors::jsonb, @Ids, @DebugMode)",
-      new { Cursors = cursorsJson, Ids = idArray, DebugMode = debugMode },
-      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    using (CoordinatorOwnershipNotices.WatchFencedWrites(__scope.Connection, _metrics, _logger, nameof(CompletePerspectiveAsync))) {
+      await connection.ExecuteAsync(
+        $"SELECT {prefix}complete_perspective(@Cursors::jsonb, @Ids, @DebugMode, @Epochs)",
+        new { Cursors = cursorsJson, Ids = idArray, DebugMode = debugMode, Epochs = _epochs(TenureFill.Epochs(_tenures, eventWorkIds, eventWorkEpochs)) },
+        commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    }
+    TenureFill.Forget(_tenures, eventWorkIds);
     // #720: ring the doorbells the completion queued, after its commit.
     await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(__scope.Connection, prefix + DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
   }
@@ -1208,14 +1353,19 @@ public partial class DapperWorkCoordinator(
       return;
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
-    var failuresJson = SerializeFailures([.. failures]);
+    // #2556: each failure names its work's claimed epoch, and the fenced report (572) leaves out a stale one.
+    var failuresJson = SerializeFailures([.. TenureFill.Failures(_tenures, failures)]);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
-    await connection.ExecuteAsync(
-      $"SELECT {prefix}report_failures(@Category, @Failures::jsonb)",
-      new { Category = category.ToSqlCategory(), Failures = failuresJson },
-      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    using (CoordinatorOwnershipNotices.WatchFencedWrites(__scope.Connection, _metrics, _logger, nameof(ReportFailuresAsync))) {
+      await connection.ExecuteAsync(
+        $"SELECT {prefix}wh_report_failures_fenced(@Category, @Failures::jsonb)",
+        new { Category = category.ToSqlCategory(), Failures = failuresJson },
+        commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    }
+    // Failed work is no longer in hand; perspective work no longer holds its stream's writes (#2557).
+    TenureFill.Forget(_tenures, failures.Select(f => f.MessageId));
   }
 
   /// <inheritdoc />
@@ -1250,9 +1400,11 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
-    await connection.ExecuteAsync(
-      $"SELECT {prefix}commit_handler_result(@Payload::jsonb)", new { Payload = payload },
-      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    using (CoordinatorOwnershipNotices.WatchFencedWrites(__scope.Connection, _metrics, _logger, nameof(CommitHandlerResultAsync))) {
+      await connection.ExecuteAsync(
+        $"SELECT {prefix}commit_handler_result(@Payload::jsonb)", new { Payload = payload },
+        commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    }
     // #720: ring the doorbells the commit queued, after the commit.
     await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(__scope.Connection, prefix + DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
   }
@@ -1277,13 +1429,17 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
-    var rows = await connection.QueryAsync<HandlerBatchRow>(
-      $"SELECT handler_id AS HandlerId, success AS Success, error_message AS ErrorMessage FROM {prefix}commit_handler_batch(@Results::jsonb)",
-      new { Results = batchJson },
-      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    IEnumerable<HandlerBatchRow> rows;
+    using (CoordinatorOwnershipNotices.WatchFencedWrites(__scope.Connection, _metrics, _logger, nameof(CommitHandlerBatchAsync))) {
+      rows = await connection.QueryAsync<HandlerBatchRow>(
+        $"SELECT handler_id AS HandlerId, success AS Success, error_message AS ErrorMessage, tier AS Tier FROM {prefix}commit_handler_batch(@Results::jsonb)",
+        new { Results = batchJson },
+        commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    }
     // #720: ring the doorbells the commits queued, after the commits.
     await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(__scope.Connection, prefix + DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
-    return [.. rows.Select(r => new HandlerBatchResult(r.HandlerId, r.Success, r.ErrorMessage))];
+    // 570 (#2556): tier 0 is the fenced outcome: nothing committed, and the message stays for the current owner.
+    return [.. rows.Select(r => new HandlerBatchResult(r.HandlerId, r.Success, r.ErrorMessage, Fenced: r.Tier == FENCED_TIER))];
   }
 
   /// <inheritdoc />
@@ -1292,16 +1448,30 @@ public partial class DapperWorkCoordinator(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     Guid[] outboxIds = request.OutboxIds switch { null => [], Guid[] a => a, var ids => [.. ids] };
     Guid[] perspIds = request.PerspectiveEventWorkIds switch { null => [], Guid[] p => p, var ids => [.. ids] };
+    // #2556: each cursor and failure names the epoch its work was claimed under.
     var cursorsJson = request.PerspectiveCursors is null
-      ? "[]" : _serializePerspectiveCompletions([.. request.PerspectiveCursors]);
-    var failuresJson = _buildFailuresByCategoryJson(request.FailuresByCategory);
+      ? "[]" : _serializePerspectiveCompletions([.. TenureFill.Cursors(_tenures, request.PerspectiveCursors)]);
+    IReadOnlyList<CategoryFailures>? failures = request.FailuresByCategory?
+      .Select(g => g with { Items = TenureFill.Failures(_tenures, g.Items) }).ToList();
+    var failuresJson = _buildFailuresByCategoryJson(failures);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
-    await connection.ExecuteAsync(
-      $"SELECT {prefix}flush_completions(@Outbox, @Cursors::jsonb, @Persp, @Failures::jsonb)",
-      new { Outbox = outboxIds, Cursors = cursorsJson, Persp = perspIds, Failures = failuresJson },
-      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    using (CoordinatorOwnershipNotices.WatchFencedWrites(__scope.Connection, _metrics, _logger, nameof(FlushCompletionsAsync))) {
+      await connection.ExecuteAsync(
+        $"SELECT {prefix}flush_completions(@Outbox, @Cursors::jsonb, @Persp, @Failures::jsonb, @OutboxEpochs, @PerspEpochs)",
+        new {
+          Outbox = outboxIds,
+          Cursors = cursorsJson,
+          Persp = perspIds,
+          Failures = failuresJson,
+          // 570 (#2556): the epoch each id was claimed under; failures and cursors name their own.
+          OutboxEpochs = _epochs(TenureFill.Epochs(_tenures, outboxIds, request.OutboxEpochs)),
+          PerspEpochs = _epochs(TenureFill.Epochs(_tenures, perspIds, request.PerspectiveEventWorkEpochs))
+        },
+        commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    }
+    TenureFill.Forget(_tenures, outboxIds.Concat(perspIds).Concat(TenureFill.WorkOf(failures)));
     // #720: ring the doorbells the flush queued, after its commit.
     await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(__scope.Connection, prefix + DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
   }
@@ -1362,7 +1532,10 @@ public partial class DapperWorkCoordinator(
     var registrationStale = false;
     // 203 (#1254): the cached partition assignment was superseded or expired; the claim ranked itself.
     var assignmentStale = false;
+    // #2554: in map mode the claim found no valid partition map, so it claimed nothing and the instance waits.
+    var mapUnavailable = false;
     void OnClaimNotice(object? sender, NpgsqlNoticeEventArgs e) {
+      mapUnavailable |= string.Equals(e.Notice.MessageText, CoordinatorOwnershipNotices.PARTITION_MAP_UNAVAILABLE, StringComparison.Ordinal);
       registrationStale |= string.Equals(e.Notice.MessageText, REGISTRATION_STALE_NOTICE, StringComparison.Ordinal);
       assignmentStale |= string.Equals(e.Notice.MessageText, PARTITION_ASSIGNMENT_STALE_NOTICE, StringComparison.Ordinal);
     }
@@ -1372,9 +1545,14 @@ public partial class DapperWorkCoordinator(
       // Phase C lands the full envelope-deserializing path. For now Dapper backend
       // returns perspective_stream rows + throws on outbox/inbox to keep callers safe.
       rows = await connection.QueryAsync<ClaimWorkRow>(
-        $"SELECT source AS Source, work_id AS WorkId, work_stream_id AS StreamId FROM {prefix}claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease, @Fresh, @Rows, @Steal, @Persp, "
-        + "p_assignment_epoch => @AssignmentEpoch, p_assignment_revision => @AssignmentRevision, p_alive_lock_held => @AliveLockHeld, "
-        + "p_lifecycle_phase => @LifecyclePhase, p_acquire_inbox => @AcquireInbox)",
+        // 570 (#2556): each row carries the epoch this instance holds its partition at, read in the claim's own statement.
+        ClaimedTenures.ProjectEpochs(
+          prefix,
+          "c.source AS Source, c.work_id AS WorkId, c.work_stream_id AS StreamId",
+          prefix + "claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease, @Fresh, @Rows, @Steal, @Persp, "
+          + "p_assignment_epoch => @AssignmentEpoch, p_assignment_revision => @AssignmentRevision, p_alive_lock_held => @AliveLockHeld, "
+          + "p_lifecycle_phase => @LifecyclePhase, p_acquire_inbox => @AcquireInbox)",
+          "@Id", "@Part", epochColumn: "PartitionEpoch", partitionColumn: "TenurePartition"),
         new {
           Id = request.InstanceId,
           Svc = request.ServiceName,
@@ -1402,6 +1580,8 @@ public partial class DapperWorkCoordinator(
     } finally {
       __scope.Connection.Notice -= OnClaimNotice;
     }
+    // #2554: a claim that waited for a map is counted, and warned once per streak; one that had a map ends the streak.
+    CoordinatorOwnershipNotices.ReportPartitionMap(mapUnavailable, _metrics, _logger);
     // 463: the claim returns outbox, inbox and perspective_stream rows only (it no longer returns receptor work).
     var claimed = rows.ToList();
     var perspectiveStreamIds = claimed.Where(r => r.Source == "perspective_stream").Select(r => r.StreamId).OfType<Guid>().ToList();
@@ -1414,14 +1594,18 @@ public partial class DapperWorkCoordinator(
       // #720: a claim that leased work may have queued ownership doorbells; ring them after its commit.
       await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(__scope.Connection, prefix + DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
     }
-    return new WorkBatch {
+    return TenureFill.RecordClaim(_tenures, new WorkBatch {
       OutboxWork = [],
       InboxWork = [],
       PerspectiveWork = [],
       PerspectiveStreamIds = perspectiveStreamIds,
       InstanceRegistrationStale = registrationStale,
-      PartitionAssignmentStale = assignmentStale
-    };
+      PartitionAssignmentStale = assignmentStale,
+      PartitionMapUnavailable = mapUnavailable,
+      // 570 (#2556): the epoch each claimed stream's partition was held at; empty off map mode.
+      StreamEpochs = ClaimedTenures.Epochs(claimed, r => r.StreamId, r => r.PartitionEpoch),
+      StreamPartitions = ClaimedTenures.Partitions(claimed, r => r.StreamId, r => r.PartitionEpoch is null ? null : r.TenurePartition)
+    });
   }
 
   /// <summary>Raised by <c>claim_work</c> when the calling instance's registration is missing or stale (196).</summary>
@@ -1430,9 +1614,17 @@ public partial class DapperWorkCoordinator(
   /// <summary>Raised by <c>claim_work</c> when the partition assignment version it was handed is no longer current (203).</summary>
   internal const string PARTITION_ASSIGNMENT_STALE_NOTICE = "whizbang.partition_assignment_stale=true";
 
+  /// <summary>The tier <c>commit_handler_batch</c> returns for a fenced item (570, #2556).</summary>
+  internal const int FENCED_TIER = 0;
+
+  // 570 (#2556): the epochs a write was made under, by position; null when the caller names none, so nothing is fenced.
+  private static long?[]? _epochs(IReadOnlyList<long?>? epochs) => epochs is null ? null : epochs as long?[] ?? [.. epochs];
+
   // --- helpers shared by the new methods ---
 
   private string _buildHandlerCommitPayload(HandlerCommitRequest request) {
+    // #2556: the commit names its inbox message's claimed epoch, unless the caller named one.
+    request = TenureFill.Handler(_tenures, request);
     var sb = new System.Text.StringBuilder("{");
     sb.Append("\"handler_id\":\"").Append(request.HandlerId).Append('"');
     sb.Append(",\"instance_id\":\"").Append(request.InstanceId).Append('"');
@@ -1441,6 +1633,10 @@ public partial class DapperWorkCoordinator(
     sb.Append(",\"process_id\":").Append(request.ProcessId);
     sb.Append(",\"partition_count\":").Append(request.PartitionCount);
     sb.Append(",\"debug_mode\":").Append(request.DebugMode ? JSON_TRUE : JSON_FALSE);
+    // 570 (#2556): the epoch the message was claimed under; a commit under one that moved on commits nothing.
+    if (request.PartitionEpoch is { } partitionEpoch) {
+      sb.Append(",\"partition_epoch\":").Append(partitionEpoch.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
     sb.Append(",\"inbox_completion\":{")
       .Append("\"MessageId\":\"").Append(request.InboxCompletion.MessageId).Append("\",")
       .Append("\"Status\":").Append(request.InboxCompletion.Status)
@@ -1491,9 +1687,13 @@ public partial class DapperWorkCoordinator(
   private static string _jsonEscape(string s) =>
     s.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
 
-  private sealed record HandlerBatchRow(Guid HandlerId, bool Success, string? ErrorMessage);
+  private sealed record HandoverRow(int Partition, long Epoch, Guid NextOwner);
+
+  private sealed record LeaveRow(int Owned, int OtherLiveCandidates);
+
+  private sealed record HandlerBatchRow(Guid HandlerId, bool Success, string? ErrorMessage, int Tier);
   private sealed record SyncInquiryRow(Guid InquiryId, Guid StreamId, int PendingCount, int ProcessedCount);
-  private sealed record ClaimWorkRow(string Source, Guid? WorkId, Guid? StreamId);
+  private sealed record ClaimWorkRow(string Source, Guid? WorkId, Guid? StreamId, long? PartitionEpoch, int? TenurePartition);
 
   #endregion
 }
@@ -1530,7 +1730,8 @@ internal class StreamEventRow {
   public Guid out_stream_id { get; set; }
   public Guid out_event_id { get; set; }
   public string out_event_type { get; set; } = string.Empty;
-  public string out_event_data { get; set; } = string.Empty;
+  // #2591: NULL when the reap has deleted the event's body.
+  public string? out_event_data { get; set; }
   public string? out_metadata { get; set; }
   public string? out_scope { get; set; }
   public Guid out_event_work_id { get; set; }
@@ -1544,6 +1745,10 @@ internal class StreamEventRow {
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3459:Unassigned members should be removed",
     Justification = "Hydrated by Dapper at runtime via column name mapping; not visible to static analysis.")]
   public int out_failures { get; set; }
+  // 576 (#2551): the event's version, its stream position.
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3459:Unassigned members should be removed",
+    Justification = "Hydrated by Dapper at runtime via column name mapping; not visible to static analysis.")]
+  public long? out_version { get; set; }
 }
 
 /// <summary>

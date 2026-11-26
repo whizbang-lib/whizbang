@@ -178,7 +178,7 @@ public class CoordinatorRecordSurfaceTests {
   public async Task CategoryFailures_PositionalCtor_RoundTripsAsync() {
     var items = new[] {
       new MessageFailure {
-        MessageId = Guid.NewGuid(),
+        MessageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(),
         CompletedStatus = MessageProcessingStatus.Stored,
         Error = "boom",
       },

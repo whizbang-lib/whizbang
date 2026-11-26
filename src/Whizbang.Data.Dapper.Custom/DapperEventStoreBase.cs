@@ -28,11 +28,29 @@ public abstract class DapperEventStoreBase : IEventStore {
   protected IDbExecutor Executor { get; }
   protected JsonSerializerOptions JsonOptions { get; }
 
+  /// <summary>The time-ordering check every append runs before anything is stored (#2528).</summary>
+  protected Whizbang.Core.Validation.GuidOrderingValidator GuidOrdering { get; }
+
   protected DapperEventStoreBase(
     IDbConnectionFactory connectionFactory,
     IDbExecutor executor,
     JsonSerializerOptions jsonOptions
+  ) : this(connectionFactory, executor, jsonOptions, guidOrdering: null) { }
+
+  /// <summary>
+  /// Initializes the store with the time-ordering check its appends run (#2528).
+  /// </summary>
+  /// <param name="connectionFactory">The connection factory.</param>
+  /// <param name="executor">The executor.</param>
+  /// <param name="jsonOptions">The JSON options.</param>
+  /// <param name="guidOrdering">The time-ordering check, or null for the default validator.</param>
+  protected DapperEventStoreBase(
+    IDbConnectionFactory connectionFactory,
+    IDbExecutor executor,
+    JsonSerializerOptions jsonOptions,
+    Whizbang.Core.Validation.GuidOrderingValidator? guidOrdering
   ) {
+    GuidOrdering = guidOrdering ?? Whizbang.Core.Validation.GuidOrderingValidator.Default;
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(executor);
     ArgumentNullException.ThrowIfNull(jsonOptions);
@@ -278,6 +296,10 @@ public abstract class DapperEventStoreBase : IEventStore {
       DispatchContext = dispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
       // #1738: the stream version, when the read selects it, which is how the archive seam sees a gap at a stream's start.
       LocalStreamVersion = row.Version,
+      // #2509: the event's origin, when the read selects it, as the EF Core store carries it: a replay deals a received
+      // stream into its origin's order by it.
+      SourceServiceId = row.OriginServiceId ?? Guid.Empty,
+      SourceCommitSequence = row.OriginCommitSequence ?? 0,
     };
   }
 
@@ -326,6 +348,16 @@ public abstract class DapperEventStoreBase : IEventStore {
     /// stream holds no version 0.
     /// </summary>
     public bool IsFirstInStream { get; set; }
+    /// <summary>
+    /// The service the event was received from (<c>wh_event_store.origin_service_id</c>), when the read selects it; null
+    /// for a local event (#2509).
+    /// </summary>
+    public Guid? OriginServiceId { get; set; }
+    /// <summary>
+    /// The event's position at the service it was received from (<c>wh_event_store.origin_commit_sequence</c>), when the
+    /// read selects it; null for a local event (#2509).
+    /// </summary>
+    public long? OriginCommitSequence { get; set; }
   }
 
   /// <inheritdoc />

@@ -41,6 +41,7 @@ public static class WhizbangIdProviderRegistry {
   private static readonly Dictionary<Type, Func<Guid, object>> _guidConversions = [];
   private static readonly Dictionary<Type, MemberInfo> _valueMembers = [];
   private static readonly Lock _lock = new();
+  private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, byte> _anyVersionIds = new();
 
   /// <summary>
   /// Registers a factory for creating IWhizbangIdProvider{TId} instances.
@@ -166,6 +167,24 @@ public static class WhizbangIdProviderRegistry {
       _guidConversions[typeof(TId)] = guid => fromGuid(guid);
     }
   }
+
+  /// <summary>
+  /// Records that the id type was declared with <c>[WhizbangId(AcceptAnyVersion = true)]</c>, so a stream id of that type
+  /// is never reported as not time-ordered (#2528).
+  /// Called automatically by generated ModuleInitializer - users should not call this directly.
+  /// </summary>
+  /// <typeparam name="TId">The WhizbangId struct type</typeparam>
+  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingEntryPointValidationTests.cs:ReportStreamId_AnIdTypeThatAcceptsAnyVersion_IsNeverReportedAsync</tests>
+  public static void RegisterAcceptsAnyVersion<TId>() where TId : struct, IWhizbangId =>
+    _anyVersionIds.TryAdd(typeof(TId), 0);
+
+  /// <summary>
+  /// Whether <paramref name="idType"/> was declared with <c>[WhizbangId(AcceptAnyVersion = true)]</c>, as recorded by
+  /// <see cref="RegisterAcceptsAnyVersion{TId}"/>. Lock-free: it is read on the dispatch path.
+  /// </summary>
+  /// <param name="idType">The id type, or null.</param>
+  /// <returns>True only for a registered any-version id type.</returns>
+  public static bool AcceptsAnyVersion(Type? idType) => idType is not null && _anyVersionIds.ContainsKey(idType);
 
   /// <summary>
   /// Gets the Guid conversion of every id type that has one, recorded by <see cref="RegisterGuidConversion{TId}"/>:

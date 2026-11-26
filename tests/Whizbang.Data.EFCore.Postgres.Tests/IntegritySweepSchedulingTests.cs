@@ -49,6 +49,7 @@ public class IntegritySweepSchedulingTests {
     public Task<bool> PauseAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<bool> ResumeAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<bool> CancelAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task<bool> CancelByKeyAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(false);
     public Task<Guid?> TriggerNowAsync(Guid scheduleId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<ScheduleUpdateResult?> UpdateAsync(Guid scheduleId, ScheduleUpdate update, long? expectedVersion = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
   }

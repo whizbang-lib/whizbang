@@ -41,6 +41,13 @@ public class RoleAssignmentResilienceSqlTests : EFCoreTestBase {
     return conn;
   }
 
+  /// <summary>#2593: a live candidacy for <paramref name="role"/>, as a peer's own vote writes it, so a lapse has a successor.</summary>
+  private async Task _candidateAsync(string role, Guid instanceId, CancellationToken ct) =>
+    _ = await _scalarAsync("""
+      INSERT INTO wh_role_candidates (role, instance_id, version_key, last_voted_at) VALUES (@role, @id, '{}', now())
+      ON CONFLICT (role, instance_id) DO UPDATE SET last_voted_at = EXCLUDED.last_voted_at
+      """, ct, ("role", role), ("id", instanceId));
+
   private async Task<Guid> _joinAsync(CancellationToken ct) {
     var instanceId = (Guid)TrackedGuid.New();
     await using var ctx = CreateDbContext();
@@ -307,6 +314,8 @@ public class RoleAssignmentResilienceSqlTests : EFCoreTestBase {
     var newer = await _joinAsync(cancellationToken);
     _ = await _voteAsync(newer, cancellationToken, version: _new);
     await _ageAsync(ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
+    // #2593: a live peer votes for the role, so the holder has a successor and its lapse is a verdict.
+    await _candidateAsync(ROLE, older, cancellationToken);
     // The newer holder lapsed (no other role bears witness, so it is its own lapse) and is cooling down.
     await Assert.That((await _voteAsync(newer, cancellationToken, version: _new)).Outcome).IsEqualTo("cooling_down");
 
@@ -494,6 +503,9 @@ public class RoleAssignmentResilienceSqlTests : EFCoreTestBase {
     _ = await _voteAsync(b, cancellationToken, OTHER_ROLE);
     await _ageAsync(ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
     await _ageAsync(OTHER_ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
+    // #2593: a live peer votes for the role, so the holder has a successor and its lapse is a verdict.
+    await _candidateAsync(ROLE, b, cancellationToken);
+    await _candidateAsync(OTHER_ROLE, a, cancellationToken);
 
     var again = await _voteAsync(a, cancellationToken, ROLE);
     var againOther = await _voteAsync(b, cancellationToken, OTHER_ROLE);
@@ -518,6 +530,8 @@ public class RoleAssignmentResilienceSqlTests : EFCoreTestBase {
     _ = await _scalarAsync("UPDATE wh_role_assignments SET assigned_at = assigned_at - interval '1 hour' WHERE role = @role",
       cancellationToken, ("role", OTHER_ROLE));
     await _ageAsync(ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
+    // #2593: a live peer votes for the role, so the holder has a successor and its lapse is a verdict.
+    await _candidateAsync(ROLE, b, cancellationToken);
 
     var again = await _voteAsync(a, cancellationToken, ROLE);
 
@@ -533,6 +547,8 @@ public class RoleAssignmentResilienceSqlTests : EFCoreTestBase {
     _ = await _voteAsync(a, cancellationToken, ROLE);
     _ = await _voteAsync(b, cancellationToken, OTHER_ROLE);
     await _ageAsync(ROLE, _lease + TimeSpan.FromSeconds(1), cancellationToken);
+    // #2593: a live peer votes for the role, so the holder has a successor and its lapse is a verdict.
+    await _candidateAsync(ROLE, b, cancellationToken);
     // The other role was held from the start and has lapsed too, which alone would read as fleet-wide.
     // An instance vacated it inside this holder's final lease, though, so the database was reachable then.
     _ = await _scalarAsync("""

@@ -25,7 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// <docs>fundamentals/perspectives/write-modes</docs>
 [Category("Integration")]
 [Category("Shard3")]
-public class SetBasedPerspectiveWriteSinkTests : EFCoreTestBase {
+public partial class SetBasedPerspectiveWriteSinkTests : EFCoreTestBase {
   private const string ACTION_TABLE = "wh_per_action_test";
   private const string VERSIONED_TABLE = "wh_per_versioned_item";
   private const string EXTRACTED_TABLE = "wh_per_init_only_extracted";

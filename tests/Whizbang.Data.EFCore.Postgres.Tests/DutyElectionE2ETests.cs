@@ -52,7 +52,9 @@ public class DutyElectionE2ETests : EFCoreTestBase {
     pod,
     NullLogger<PgRoleElector>.Instance,
     libraryVersion: null,
-    timeProvider: time);
+    timeProvider: time,
+    // #2594: the step's own duty is declared, as a host declares it with AddWhizbangRole.
+    roleCatalog: new RoleCatalog([new RoleDeclaration("pipeline-duty", RoleKind.Episodic)]));
 
   private async Task _joinFleetAsync(Pod pod, CancellationToken ct) {
     await using var ctx = CreateDbContext();

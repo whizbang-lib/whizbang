@@ -97,6 +97,30 @@ public static class WhizbangActivitySource {
 
   /// <summary>
   /// Records a defensive exception that should never occur in normal operation.
+  /// Starts an activity named for a type, <c>{operation} {Type}</c> (with <paramref name="suffix"/> after it when given),
+  /// or returns null without building the name when nothing listens to <paramref name="source"/>. Every dispatch and
+  /// every perspective sync wait starts one, and the name reads the type's name, which the runtime caches behind a weak
+  /// handle, so building it with tracing off allocated each time (#2548).
+  /// </summary>
+  /// <param name="source">The source to start it on.</param>
+  /// <param name="operation">The operation, first in the name: <c>Dispatch</c>, <c>PerspectiveSync</c>.</param>
+  /// <param name="type">The type the activity is named for.</param>
+  /// <param name="suffix">Text after the type's name, such as <c>(Outbox)</c>, or null.</param>
+  /// <param name="kind">The activity's kind.</param>
+  /// <returns>The started activity, or null when nothing listens or the listener declines it.</returns>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Observability/DispatchActivityTests.cs</tests>
+  internal static Activity? StartForType(ActivitySource source, string operation, Type type, string? suffix = null,
+      ActivityKind kind = ActivityKind.Internal) {
+    if (!source.HasListeners()) {
+      return null;
+    }
+    var name = suffix is null
+      ? operation + " " + TypeNameFormatter.ForLog(type)
+      : operation + " " + TypeNameFormatter.ForLog(type) + " " + suffix;
+    return source.StartActivity(name, kind);
+  }
+
+  /// <summary>
   /// Sets activity status to Error and adds exception details.
   /// </summary>
   /// <param name="activity">The current activity (may be null if no listener).</param>

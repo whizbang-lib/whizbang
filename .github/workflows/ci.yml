@@ -1532,6 +1532,14 @@ jobs:
           $c.Run.Exit = $true
           $c.Output.Verbosity = 'Detailed'
           Invoke-Pester -Configuration $c
+      # Every <docs> tag must name a page, and an anchor on it, that exists on the docs site's develop
+      # branch (#2495). The script clones that public repository shallowly; when the clone fails it exits
+      # 2, so an unreachable docs repository fails this job instead of passing it unchecked. Targets that
+      # already dangled are in .github/scripts/docs-tag-target-baseline.txt, which only shrinks.
+      - name: Check <docs> tag targets against the docs site
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: ./.github/scripts/Test-DocsTagTarget.ps1
 
   dco:
     name: Gate · DCO sign-off
@@ -1694,7 +1702,7 @@ jobs:
         with:
           sparse-checkout: .github
       - name: Review the dependencies this pull request adds
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
         with:
           config-file: ./.github/dependency-review-config.yml
 

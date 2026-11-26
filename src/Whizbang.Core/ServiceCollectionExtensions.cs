@@ -270,6 +270,16 @@ public static class ServiceCollectionExtensions {
       ServiceRegistrationCallbacks.HostingIntegration?.Invoke(services);
     }
 
+    // Turnkey (#2502): every loaded storage provider package (Whizbang.Storage.AzureBlob) registers itself; each of its
+    // features activates when its configuration names an account. Opt out via AutoRegisterStorageProviders = false. The
+    // startup report names the provider each feature uses, and warns when configuration names an account for a package
+    // that is not loaded.
+    if (coreOptions.AutoRegisterStorageProviders) {
+      ServiceRegistrationCallbacks.InvokeStorageProviders(services);
+    }
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, Configuration.StorageProviderStartupReport>(
+      sp => new Configuration.StorageProviderStartupReport(sp)));
+
     // Auto-invoke WhizbangId provider DI callbacks if any were registered
     WhizbangIdProviderRegistry.InvokeDICallbacks(services);
 
@@ -452,6 +462,15 @@ public static class ServiceCollectionExtensions {
     // (idle footprint per periodic worker): both passive, every series present at zero.
     services.TryAddSingleton<InstanceLivenessMetrics>();
     services.TryAddSingleton<CompositeMetrics>();
+    // #2528: the time-ordering check every event and message id entry point runs, with the configured severity and
+    // the counters for what it accepts below Error.
+    services.TryAddSingleton<GuidOrderingMetrics>();
+    services.TryAddSingleton(static sp => new Whizbang.Core.Validation.GuidOrderingValidator(
+      sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.WhizbangOptions>>()?.Value
+        ?? new Whizbang.Core.Configuration.WhizbangOptions(),
+      sp.GetService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Validation.GuidOrderingValidator>>()
+        ?? (Microsoft.Extensions.Logging.ILogger)Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance,
+      sp.GetService<GuidOrderingMetrics>()));
     services.AddWhizbangPriority();
     services.TryAddSingleton<ProbeCadenceMetrics>();
     // Turn-key: registered here so a governor's decisions and the evidence behind them reach

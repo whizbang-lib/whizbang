@@ -176,10 +176,48 @@ public class PerspectiveRowConflictRetryTests {
 
     await Assert.That(store.WriteAttempts).IsEqualTo(2);
     await Assert.That(invoker.Count(LifecycleStage.PrePerspectiveInline)).IsEqualTo(1)
-      .Because("a retry re-reads and re-folds the row; it does not re-announce the batch");
+      .Because("a retry re-reads and re-folds the row; it does not re-announce the batch's events");
     await Assert.That(invoker.Count(LifecycleStage.PrePerspectiveDetached)).IsEqualTo(1);
     await Assert.That(invoker.Count(LifecycleStage.PostPerspectiveDetached)).IsEqualTo(1)
       .Because("the post stage follows the one write that landed");
+  }
+
+  [Test]
+  public async Task PreLifecycleReceptors_FireForEveryEventOfTheBatch_OncePerEventAsync() {
+    var streamId = Guid.CreateVersion7();
+    var store = new VersionedStore();
+    var invoker = new CountingReceptorInvoker();
+    var created = _envelope(new RowConflictCreated { StreamId = streamId, Name = "new", Value = 1 });
+    var changed = _envelope(new RowConflictValueChanged { StreamId = streamId, Value = 2 });
+
+    await _runner(store, invoker).RunWithEventsAsync(streamId, PERSPECTIVE_NAME, null, [created, changed], CancellationToken.None);
+
+    // Each perspective stage fires once per event per perspective (fundamentals/receptors/exactly-once-firing), so a
+    // receptor of an event that is not the batch's first still sees it: firing for the first event only skipped it.
+    foreach (var stage in new[] { LifecycleStage.PrePerspectiveInline, LifecycleStage.PrePerspectiveDetached }) {
+      await Assert.That(invoker.Count(stage, created.MessageId.Value)).IsEqualTo(1);
+      await Assert.That(invoker.Count(stage, changed.MessageId.Value)).IsEqualTo(1)
+        .Because($"{stage} fires for the batch's second event too, not for its first event alone");
+    }
+  }
+
+  [Test]
+  public async Task PreLifecycleReceptors_OnlyTheSecondEventsTypeHasOne_FireForThatEventAloneAsync() {
+    var streamId = Guid.CreateVersion7();
+    var store = new VersionedStore();
+    var invoker = new CountingReceptorInvoker();
+    var created = _envelope(new RowConflictCreated { StreamId = streamId, Name = "new", Value = 1 });
+    var changed = _envelope(new RowConflictValueChanged { StreamId = streamId, Value = 2 });
+
+    await _runner(store, invoker, new EveryStageRegistry(typeof(RowConflictValueChanged)))
+      .RunWithEventsAsync(streamId, PERSPECTIVE_NAME, null, [created, changed], CancellationToken.None);
+
+    foreach (var stage in new[] { LifecycleStage.PrePerspectiveInline, LifecycleStage.PrePerspectiveDetached }) {
+      await Assert.That(invoker.Count(stage, changed.MessageId.Value)).IsEqualTo(1)
+        .Because($"the second event's type has a {stage} receptor, so the stage fires for it");
+      await Assert.That(invoker.Count(stage, created.MessageId.Value)).IsEqualTo(0)
+        .Because("an event whose type has no receptor at the stage is not invoked there");
+    }
   }
 
   [Test]
@@ -198,13 +236,14 @@ public class PerspectiveRowConflictRetryTests {
 
   // -------------------------------------------------------------------------------------------
 
-  private static IPerspectiveRunner _runner(IPerspectiveStore<RowConflictModel> rows, CountingReceptorInvoker? invoker = null) {
+  private static IPerspectiveRunner _runner(
+      IPerspectiveStore<RowConflictModel> rows, CountingReceptorInvoker? invoker = null, EveryStageRegistry? registry = null) {
     var services = new ServiceCollection();
     services.AddLogging();
     services.AddSingleton<RowConflictPerspective>();
     if (invoker is not null) {
       services.AddSingleton<IReceptorInvoker>(invoker);
-      services.AddSingleton<IReceptorRegistry>(new EveryStageRegistry());
+      services.AddSingleton<IReceptorRegistry>(registry ?? new EveryStageRegistry());
     }
     var provider = services.BuildServiceProvider();
     // The real generated runner, resolved by name: naming a generated type in source does not
@@ -356,23 +395,32 @@ public class PerspectiveRowConflictRetryTests {
   /// <summary>Counts receptor invocations per lifecycle stage.</summary>
   private sealed class CountingReceptorInvoker : IReceptorInvoker {
     private readonly System.Collections.Concurrent.ConcurrentDictionary<LifecycleStage, int> _counts = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(LifecycleStage Stage, Guid MessageId), int> _byMessage = new();
 
     public int Count(LifecycleStage stage) => _counts.GetValueOrDefault(stage);
+
+    /// <summary>How many times <paramref name="stage"/> was invoked for the message <paramref name="messageId"/>.</summary>
+    public int Count(LifecycleStage stage, Guid messageId) => _byMessage.GetValueOrDefault((stage, messageId));
 
     public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null,
         CancellationToken cancellationToken = default) {
       _counts.AddOrUpdate(stage, 1, (_, n) => n + 1);
+      _byMessage.AddOrUpdate((stage, envelope.MessageId.Value), 1, (_, n) => n + 1);
       return ValueTask.CompletedTask;
     }
   }
 
-  /// <summary>Reports one receptor at every stage, so the runner invokes each stage it reaches.</summary>
-  private sealed class EveryStageRegistry : IReceptorRegistry {
+  /// <summary>
+  /// Reports one receptor at every stage, so the runner invokes each stage it reaches: for every message type, or for
+  /// <paramref name="onlyFor"/> alone when it is given.
+  /// </summary>
+  private sealed class EveryStageRegistry(Type? onlyFor = null) : IReceptorRegistry {
     private static readonly ReceptorInfo[] _one = [
       new ReceptorInfo(typeof(RowConflictValueChanged), "row-conflict-probe", (_, _, _, _, _) => ValueTask.FromResult<object?>(null))
     ];
 
-    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) => _one;
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) =>
+      onlyFor is null || onlyFor == messageType ? _one : [];
     public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
     public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;

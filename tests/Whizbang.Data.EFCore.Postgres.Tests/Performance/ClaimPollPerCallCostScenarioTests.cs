@@ -46,6 +46,10 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
   private const int STREAMS = 100;
   /// <summary>The claim's batch, in streams. Held constant across the depths.</summary>
   private const int BATCH = 10;
+  /// <summary>The instance that polls: fixed, as every id of the workload is (#2521).</summary>
+  private static readonly Guid _poller = Guid.Parse("01a20000-0000-7000-8000-000000002521");
+  /// <summary>Where the two-fill comparison starts every re-offer walk (#2580); production draws it at random.</summary>
+  private static readonly Guid _walkSeed = Guid.Parse("01a20000-0000-7000-8000-000000002580");
   /// <summary>Polls measured at each depth.</summary>
   private const int POLLS = 6;
   /// <summary>
@@ -54,7 +58,20 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
   /// having is that per-call cost is bounded by a number declared here rather than by a consumer's
   /// data shape, and a ceiling that holds only at the shallow end does not say that.
   /// </summary>
-  private static readonly int[] DEPTHS = [12, 50, 200];
+  /// <remarks>
+  /// 25 and 100 sit either side of 50 because the mid-depth cost was never a property of 50 alone (#2523): the claim's
+  /// per-stream walk was planned as a read of the stream's whole pending tail, sorted, with the ordering probe run on
+  /// every row of it, wherever the planner judged a stream too short for an ordered walk to stop early. That made 25,
+  /// 50 and 100 cost about 2, 6 and 2.5 times what 12 and 200 cost.
+  /// </remarks>
+  private static readonly int[] DEPTHS = [12, 25, 50, 100, 200];
+  /// <summary>
+  /// The id layouts each depth is measured over, as the seed of the stream and event ids. Every layout is fixed, so a run
+  /// measures the same workloads every time (#2521), and the ceiling holds against the dearest of them rather than against
+  /// one draw a cheaper layout happens to keep (#2523). The empty seed is the workload #2521 fixed, the dearest measured
+  /// before #2523; the others are five more, chosen before measuring and kept whatever they cost.
+  /// </summary>
+  private static readonly string[] LAYOUTS = ["", "a", "b", "c", "d", "e"];
 
   private static readonly string[] MEASURED_TABLES =
     ["wh_outbox", "wh_inbox", "wh_perspective_events", "wh_event_store"];
@@ -74,10 +91,20 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
 
     var measures = new List<DepthMeasure>();
     foreach (var depth in DEPTHS) {
-      var measured = await _measureAtDepthAsync(conn, recorder, depth, cancellationToken);
-      measures.Add(measured);
-      report.Measure($"claim.blocks_per_call.depth_{depth}", measured.BlocksPerCall, "blocks/call");
-      report.Measure($"claim.rows_leased_per_call.depth_{depth}", measured.RowsLeasedPerCall, "rows/call");
+      // The dearest layout is the depth's cost: a ceiling is a bound on every workload of that shape, not on an average.
+      var dearest = new DepthMeasure(0, 0, []);
+      foreach (var layout in LAYOUTS) {
+        var measured = await _measureAtDepthAsync(conn, recorder, depth, layout, cancellationToken);
+        Console.WriteLine($"depth {depth}, layout '{layout}': {measured.BlocksPerCall:F1} blocks/call, "
+          + $"{measured.RowsLeasedPerCall:F1} rows leased/call");
+        dearest = new DepthMeasure(
+          Math.Max(dearest.BlocksPerCall, measured.BlocksPerCall),
+          Math.Max(dearest.RowsLeasedPerCall, measured.RowsLeasedPerCall),
+          []);
+      }
+      measures.Add(dearest);
+      report.Measure($"claim.blocks_per_call.depth_{depth}", dearest.BlocksPerCall, "blocks/call");
+      report.Measure($"claim.rows_leased_per_call.depth_{depth}", dearest.RowsLeasedPerCall, "rows/call");
     }
     // Recorded, not gated. It says how much more a poll costs purely because the streams it found
     // are deeper, and it is the number that fell from near-linear to sublinear when the row bound
@@ -103,15 +130,107 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
         + "times a second, in the same process as its request handlers");
   }
 
-  private readonly record struct DepthMeasure(double BlocksPerCall, double RowsLeasedPerCall);
+  /// <summary>
+  /// The scenario measures its code, not a draw (#2521). Two fills of one depth must be the same workload, or the cost the
+  /// scenario reports is partly the luck of the ids it drew: the streams' ids decide their partitions, and so which streams
+  /// a poll takes and which index pages it reads. Drawn at random, five fills of the 50-deep workload cost 7,624 to 8,125
+  /// blocks a call against a ceiling of 8,000, and the scenario failed about one run in two.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The same workload is asserted as the same fill, the same rows leased and the same work, all exact: per measured
+  /// table, the index scans, the tuples they fetched, the sequential scans and their tuples, and the rows inserted and
+  /// updated. The claim's re-offer walk starts each lane at a stream drawn at random in production (fairness between
+  /// streams), and where the draw lands decides how many probes the walk makes before it wraps: two fills of one workload
+  /// made 1,060 to 1,081 index scans with nothing different but the draw (#2563). The scenario seeds the walk for its
+  /// session (<c>whizbang.claim_walk_seed</c>, #2580), so both fills walk the same streams and do the same work.
+  /// </para>
+  /// <para>
+  /// Blocks are reported, not compared (#2580). On a server other test processes share, the blocks a poll touches are not
+  /// a function of the workload alone: a relcache reset of the polling session, which another database's schema changes
+  /// cause by overflowing the server-wide invalidation queue, drops what the session had cached about the table and its
+  /// indexes, so the next accesses read pages they would otherwise have skipped. One forced invalidation between two polls
+  /// moved an otherwise exact comparison; one before every poll was exact alone and still not under load, because resets
+  /// also land between the statements of one poll. Nothing a single database can hold controls it. A tolerance would not
+  /// replace the comparison either: the load moved blocks by up to 1.1% a call, as much as the random walk did (0.5% to
+  /// 1.3%), so a tolerance wide enough to pass under load would pass the regression. The work counters are what the walk
+  /// changes and the invalidations do not.
+  /// </para>
+  /// <para>
+  /// The work counters need one variable held: the horizon. A scan walks past a dead version it may treat as removable,
+  /// and that decision on a shared server follows the oldest snapshot of every database, so under load the tuples the
+  /// polls fetched differed by a few (4,723 and 4,730) with every scan the same. The test holds a snapshot in its own
+  /// database from before the first fill, so no version either fill creates is removable in either.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(1800000)]
+  public async Task ClaimPollPerCallCost_TwoFillsOfOneDepth_AreOneWorkloadAtOneCostAsync(CancellationToken cancellationToken) {
+    await using var dbContext = CreateDbContext();
+    var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(cancellationToken);
+    }
+    var recorder = new WorkCostRecorder(ConnectionString);
+    const int depth = 50;
+    // The walk's start, fixed for this session only, so the two fills are polled the same way (#2580).
+    await using (var seed = conn.CreateCommand()) {
+      seed.CommandText = $"SET whizbang.claim_walk_seed = '{_walkSeed}'";
+      _ = await seed.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    // Whether a scan counts a dead version as removable, and so walks past it to the next, is decided against the
+    // horizon; on a shared server that check reads the oldest snapshot of every database, so other test processes
+    // decided it (#2580). A snapshot this database holds from before the first fill makes every version either fill
+    // creates unremovable, the same for both fills, whatever runs beside them.
+    await using var horizon = new NpgsqlConnection(ConnectionString);
+    await horizon.OpenAsync(cancellationToken);
+    await using var held = await horizon.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, cancellationToken);
+    await using (var snapshot = horizon.CreateCommand()) {
+      snapshot.Transaction = held;
+      snapshot.CommandText = "SELECT 1";
+      _ = await snapshot.ExecuteScalarAsync(cancellationToken);
+    }
+
+    var first = await _measureAtDepthAsync(conn, recorder, depth, LAYOUTS[0], cancellationToken);
+    var firstWorkload = await _workloadAsync(conn);
+    var second = await _measureAtDepthAsync(conn, recorder, depth, LAYOUTS[0], cancellationToken);
+    var secondWorkload = await _workloadAsync(conn);
+
+    await Assert.That(secondWorkload).IsEqualTo(firstWorkload)
+      .Because("each fill of a depth is the same streams and events, so the scenario measures the claim and not the draw");
+    await Assert.That(second.RowsLeasedPerCall).IsEqualTo(first.RowsLeasedPerCall)
+      .Because("the same workload, polled the same way, leases the same rows");
+    await Assert.That(second.Work).IsEquivalentTo(first.Work)
+      .Because($"the same workload, walked from the same seed, does the same work ({first.BlocksPerCall:F1} and "
+        + $"{second.BlocksPerCall:F1} blocks a call, which a shared server's invalidations move): "
+        + $"{string.Join("; ", first.Work)} against {string.Join("; ", second.Work)}");
+  }
+
+  /// <summary>The work rows, streams, events and poller of the current fill, as one fingerprint.</summary>
+  private static async Task<string> _workloadAsync(NpgsqlConnection conn) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      SELECT md5(string_agg(event_work_id::text || ':' || stream_id::text || ':' || event_id::text, ','
+                            ORDER BY stream_id, event_id))
+        || ' ' || (SELECT string_agg(instance_id::text, ',') FROM wh_service_instances)
+      FROM wh_perspective_events
+      """;
+    return (string)(await cmd.ExecuteScalarAsync())!;
+  }
+
+  /// <summary>One depth's measure: blocks and rows leased a call, and the window's work per measured table.</summary>
+  /// <param name="Work">Each measured table's counters for the window with its blocks left out, as text, so two windows
+  /// that did the same work compare equal (#2580).</param>
+  private readonly record struct DepthMeasure(double BlocksPerCall, double RowsLeasedPerCall, IReadOnlyList<string> Work);
 
   /// <summary>
-  /// Fills to one stream depth and measures the polls. Each depth gets its own fill, so the
-  /// measurements differ in depth and in nothing else.
+  /// Fills to one stream depth in one id layout and measures the polls. Each depth and layout gets its own fill, so the
+  /// measurements differ in depth and ids and in nothing else.
   /// </summary>
   private static async Task<DepthMeasure> _measureAtDepthAsync(
-      NpgsqlConnection conn, WorkCostRecorder recorder, int depth, CancellationToken cancellationToken) {
-    var poller = await _fillAtDepthAsync(conn, depth);
+      NpgsqlConnection conn, WorkCostRecorder recorder, int depth, string layout, CancellationToken cancellationToken) {
+    var poller = await _fillAtDepthAsync(conn, depth, layout);
     // The first poll after a fill does the one-time bookkeeping a steady state does not repeat.
     _ = await _claimAsync(conn, poller, cancellationToken);
 
@@ -126,7 +245,8 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
     var blocks = MEASURED_TABLES.Sum(t => window.Tables[t].Blocks);
     return new DepthMeasure(
       (double)blocks / POLLS,
-      (double)(leasedAfter - leasedBefore) / POLLS);
+      (double)(leasedAfter - leasedBefore) / POLLS,
+      [.. MEASURED_TABLES.Select(t => $"{t}: {window.Tables[t] with { Blocks = 0 }}")]);
   }
 
   /// <summary>Perspective events this instance holds a live lease on: what a poll leased.</summary>
@@ -157,8 +277,13 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
   /// A fresh workload at one stream depth: unowned perspective events over many streams, at mixed
   /// priorities, with autovacuum off and nothing vacuumed.
   /// </summary>
-  private static async Task<Guid> _fillAtDepthAsync(NpgsqlConnection conn, int depth) {
-    var poller = Guid.NewGuid();
+  private static async Task<Guid> _fillAtDepthAsync(NpgsqlConnection conn, int depth, string layout) {
+    // The poller and every id are fixed (#2521): the ids decide which rows a stream walk meets first and so which pages
+    // it reads, and ids drawn at random made the cost a draw. The work id too (#2580): left to its default it was drawn
+    // with gen_random_uuid, and a lease written through the primary key read different pages on every fill. The layout
+    // seeds the ids, so each layout is one fixed workload and the scenario holds the ceiling against the dearest of
+    // several (#2523).
+    var poller = _poller;
     await using var fill = conn.CreateCommand();
     fill.CommandText = @"
       ALTER TABLE wh_outbox SET (autovacuum_enabled = false);
@@ -174,19 +299,21 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
       VALUES (@poller, 'perf', 'perf-host', 1, NOW(), NOW(), '{}'::jsonb);
 
       INSERT INTO wh_perspective_events
-        (stream_id, perspective_name, event_id, status, attempts, created_at, partition_number, priority)
-      SELECT st.stream_id, 'TestPerspective', gen_random_uuid(), 0, 0,
+        (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at, partition_number, priority)
+      SELECT md5(@layout || 'claim-cost-work-' || st.ordinal || '-' || r)::uuid,
+             st.stream_id, 'TestPerspective', md5(@layout || 'claim-cost-event-' || st.ordinal || '-' || r)::uuid, 0, 0,
              NOW() - (st.ordinal * INTERVAL '1 millisecond') + (r * INTERVAL '1 microsecond'),
              compute_partition(st.stream_id),
              CASE st.ordinal % 3 WHEN 0 THEN 50 WHEN 1 THEN 150 ELSE 250 END
       FROM (
-        SELECT gen_random_uuid() AS stream_id, s AS ordinal FROM generate_series(1, @streams) s
+        SELECT md5(@layout || 'claim-cost-stream-' || s)::uuid AS stream_id, s AS ordinal FROM generate_series(1, @streams) s
       ) st CROSS JOIN generate_series(1, @depth) r;
 
       ANALYZE wh_perspective_events;";
     fill.Parameters.AddWithValue("poller", poller);
     fill.Parameters.AddWithValue("streams", STREAMS);
     fill.Parameters.AddWithValue(nameof(depth), depth);
+    fill.Parameters.AddWithValue(nameof(layout), layout);
     fill.CommandTimeout = 900;
     await fill.ExecuteNonQueryAsync();
     return poller;

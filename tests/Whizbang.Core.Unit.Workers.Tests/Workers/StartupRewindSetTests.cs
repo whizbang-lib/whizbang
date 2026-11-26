@@ -136,4 +136,27 @@ public class StartupRewindSetTests {
     var some = set.DescribeRemaining(2);
     await Assert.That(some).EndsWith("and 1 more");
   }
+
+  /// <summary>
+  /// #2601: the cap's Warning says how often the queued row of a cursor still rewinding was leased, and how often it
+  /// failed: a row leased many times with no failure is one nothing ever runs. Leases recorded for a key not in the set are
+  /// ignored, and the highest count recorded is the one named.
+  /// </summary>
+  [Test]
+  public async Task DescribeRemaining_NamesHowOftenTheQueuedRowWasLeased_ForAKeyThatRecordedLeasesAsync() {
+    var a = Guid.CreateVersion7();
+    var b = Guid.CreateVersion7();
+    var set = new StartupRewindSet([_flagged(a, ORDERS), _flagged(b, ORDERS)]);
+
+    set.RecordLeases(a, ORDERS, attempts: 60, failures: 0);
+    set.RecordLeases(a, ORDERS, attempts: 62, failures: 0);
+    set.RecordLeases(a, ORDERS, attempts: 61, failures: 0);
+    set.RecordLeases(Guid.CreateVersion7(), INVOICES, attempts: 9, failures: 0);
+
+    var described = set.DescribeRemaining(10);
+    await Assert.That(described).Contains($"{a}/{ORDERS} (queued row leased 62 times, 0 failures)");
+    await Assert.That(described).Contains($"{b}/{ORDERS}");
+    await Assert.That(described).DoesNotContain($"{b}/{ORDERS} (");
+    await Assert.That(described).DoesNotContain(INVOICES);
+  }
 }

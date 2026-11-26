@@ -40,7 +40,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/Sync/SyncEventTrackerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/SyncEventTrackerStaleSweepTests.cs:CleanupStaleEntries_RemovesAnEntryOnlyOnceTheInjectedClockPassesItsAgeAsync</tests>
 /// <param name="timeProvider">The clock entries are aged by; the system clock when omitted.</param>
-public sealed class SyncEventTracker(TimeProvider? timeProvider = null) : ISyncEventTracker {
+public sealed class SyncEventTracker(TimeProvider? timeProvider = null) : ISyncEventTracker, ISyncWaitAnnouncer {
   // Event id -> perspective name -> entry, so the same event is tracked once per perspective. Guarded by _gate.
   private readonly Dictionary<Guid, Dictionary<string, TrackedSyncEvent>> _trackedEvents = [];
   private readonly Lock _gate = new();
@@ -109,11 +109,15 @@ public sealed class SyncEventTracker(TimeProvider? timeProvider = null) : ISyncE
   }
 
   /// <inheritdoc />
+  public event Action<IReadOnlyList<Guid>>? WaitStarted;
+
+  /// <inheritdoc />
   public Task WhenAppliedAsync(Guid eventId, string perspectiveName, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(perspectiveName);
     if (cancellationToken.IsCancellationRequested) {
       return Task.FromCanceled(cancellationToken);
     }
+    WaitStarted?.Invoke([eventId]);
 
     var key = (eventId, perspectiveName);
     var waiterId = TrackedGuid.New().Value;
@@ -236,6 +240,7 @@ public sealed class SyncEventTracker(TimeProvider? timeProvider = null) : ISyncE
     if (eventIds is null || eventIds.Count == 0) {
       return Task.FromResult(true);
     }
+    WaitStarted?.Invoke(eventIds);
 
     var resolvedAwaiterId = awaiterId ?? TrackedGuid.New();
     var pendingKeys = eventIds.Where(_isEventPending).ToList();
@@ -287,6 +292,7 @@ public sealed class SyncEventTracker(TimeProvider? timeProvider = null) : ISyncE
     if (eventIds is null || eventIds.Count == 0) {
       return Task.FromResult(true);
     }
+    WaitStarted?.Invoke(eventIds);
 
     var resolvedAwaiterId = awaiterId ?? TrackedGuid.New();
     var pendingKeys = eventIds
@@ -312,6 +318,7 @@ public sealed class SyncEventTracker(TimeProvider? timeProvider = null) : ISyncE
     if (eventIds is null || eventIds.Count == 0) {
       return Task.FromResult(true);
     }
+    WaitStarted?.Invoke(eventIds);
 
     var resolvedAwaiterId = awaiterId ?? TrackedGuid.New();
     var pendingKeys = eventIds.Where(_isEventPending).ToList();

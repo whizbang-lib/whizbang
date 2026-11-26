@@ -164,6 +164,30 @@ public class EvictionCompanionCleanupSqlTests : EFCoreTestBase {
     await Assert.That(remaining.Contains(older) || remaining.Contains(versionless)).IsFalse();
   }
 
+  // #2463: a perspective mixing ephemeral and durable events keeps a tip beside its floor. Keeping only the latest
+  // snapshot kept the tip alone, and the floor its ephemeral bodies are reaped against went with the row.
+  [Test]
+  public async Task Eviction_KeepsTheLatestFloor_AndTheTipAboveIt_NotTheTipAloneAsync() {
+    await using var conn = await _openAsync();
+    await _arrangeAsync(conn, ttlSeconds: null, cap: null);
+    var stream = Guid.CreateVersion7();
+    await _seedRowAsync(conn, stream, updatedDaysAgo: 1, expiresInHours: null);
+    var olderFloor = await _seedSnapshotAsync(conn, stream, PERSPECTIVE_A, sequence: 1, version: 3);
+    var floor = await _seedSnapshotAsync(conn, stream, PERSPECTIVE_A, sequence: 2, version: 5);
+    var tip = await _seedSnapshotAsync(conn, stream, PERSPECTIVE_A, sequence: 3, version: 9);
+    await using (var mark = new NpgsqlCommand("UPDATE wh_perspective_snapshots SET is_tip = TRUE WHERE snapshot_event_id = @e", conn)) {
+      mark.Parameters.AddWithValue("e", tip);
+      await mark.ExecuteNonQueryAsync();
+    }
+
+    await _cascadeAsync(conn, stream);
+
+    var remaining = await _snapshotIdsAsync(conn, stream, PERSPECTIVE_A);
+    await Assert.That(remaining).IsEquivalentTo([floor, tip])
+      .Because("the floor holds the reaped ephemeral history and the tip shortens the rebuild; each kind keeps its latest");
+    await Assert.That(remaining.Contains(olderFloor)).IsFalse();
+  }
+
   [Test]
   public async Task Eviction_ModelWithNoKnownPerspectives_RemovesOnlyTheRowAsync() {
     // A registry row written before the generator carried perspective names has no mapping. The sweep

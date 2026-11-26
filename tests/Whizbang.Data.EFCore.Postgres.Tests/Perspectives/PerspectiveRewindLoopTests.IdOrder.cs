@@ -9,6 +9,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
@@ -133,6 +134,90 @@ public partial class PerspectiveRewindLoopTests {
   }
 
   /// <summary>
+  /// A derived event behind a newer one (#2519, found by #2274's test with #2379): the origin stores Completed, then a
+  /// retry of an older handling returns three Started events whose ids derive from that older cause (EmissionIdentity, the
+  /// derivation returned events have long used), so they sort before Completed although the origin stored them after it. The consumer receives them in the origin's order and holds Completed at version 1
+  /// with the stream's highest id and a snapshot there; left as a rewind for the lower-id events leaves it, one rewind
+  /// settles the stream, nothing loops, and the row is the fold in the producer's order (Completed, then the three
+  /// Started), not the fold in id order.
+  /// </summary>
+  [Test]
+  [NotInParallel("IntegrityManifestGates")]   // the manifest receptors' per-process gates are shared state
+  public async Task TwoServices_DerivedEventsBehindANewerEvent_WithASnapshotOnIt_ConvergeAfterOneRewindInProducerOrderAsync() {
+    var ct = CancellationToken.None;
+    var streamId = (Guid)TrackedGuid.New();
+    var workerLog = new RewindCountingLogger();
+    await using var pipeline = _composePipeline(workerLog, snapshots: true);
+    await using var conn = await _openAsync(ct);
+    await pipeline.RegisterAsync(conn, ct);
+    await _registerItemTrailAsync(conn, ct);
+    await using var h = await TwoServiceHarness.CreateAsync(ConnectionString, DbContextOptions, []);
+    var started = TypeNameFormatter.Format(typeof(ItemProgressStartedEvent));
+    var completed = TypeNameFormatter.Format(typeof(ItemProgressCompletedEvent));
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var startedPayload = JsonSerializer.Serialize(new ItemProgressStartedEvent { StreamId = streamId },
+      options.GetTypeInfo(typeof(ItemProgressStartedEvent)));
+    var completedPayload = JsonSerializer.Serialize(new ItemProgressCompletedEvent { StreamId = streamId },
+      options.GetTypeInfo(typeof(ItemProgressCompletedEvent)));
+
+    // The older handling's message, then the newer Completed; the retry of the older handling derives its emissions.
+    var olderCause = (Guid)TrackedGuid.New();
+    var completedIds = await h.EmitAsync(new TwoServiceEmit(streamId, completed, 0, null, completedPayload));
+    Guid[] derived = [.. Enumerable.Range(0, 3).Select(i => EmissionIdentity.Derive(olderCause, "origin", "ItemHandler", started, i))];
+    var startedIds = await h.EmitAsync([.. derived.Select(id => new TwoServiceEmit(streamId, started, 0, null, startedPayload, id))]);
+    await Assert.That(startedIds).IsEquivalentTo(derived, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(derived.All(id => string.CompareOrdinal(id.ToString(), completedIds[0].ToString()) < 0)).IsTrue()
+      .Because("positive control: the derived events sort before the newer event the origin stored ahead of them");
+
+    await Assert.That((await h.DeliverAsync(completedIds)).Count).IsEqualTo(1);
+    await Assert.That((await h.DeliverAsync(startedIds)).Count).IsEqualTo(3);
+    var specimen = new FirstEventHasTheHighestId(Version1: completedIds[0], Version2: derived[0], Version3: derived[1], Version4: derived[2]);
+    await _leftLoopingAsync(pipeline, conn, streamId, specimen, ct, snapshotTrail: "C");
+    var workIds = await _releasedWorkIdsAsync(conn, streamId, pipeline.InstanceProvider.InstanceId, ct);
+    await Assert.That(workIds.Count).IsEqualTo(2).Because("versions 3 and 4 are pending on the consumer");
+
+    await _convergesAfterOneRewindAsync(pipeline, workerLog, conn, streamId, specimen, workIds, ct,
+      producerOrderRow: _fold(started: 3, startedFirst: false),
+      otherOrderRow: _fold(started: 3, startedFirst: true));
+  }
+
+  /// <summary>
+  /// The same shape in one service (#2519), with nothing but the ids returned events already derived before #2274: the
+  /// stream commits Completed, then a retry of an older handling commits the three Started events it returns, whose
+  /// derived ids sort before Completed. With a snapshot at Completed and a rewind flagged for the lower-id events, one
+  /// rewind settles the stream and the row is the fold in the order the stream was written (Completed, then the three
+  /// Started). The rewind folded them, but the row's write was refused: its frontier named the highest id it replayed,
+  /// below the snapshot's event the row is stamped at, and a versioned-apply row takes only a write at or after that id.
+  /// </summary>
+  [Test]
+  public async Task OneService_ReturnedEventsDerivedBehindANewerEvent_WithASnapshotOnIt_ConvergeAfterOneRewindInStreamOrderAsync() {
+    var ct = CancellationToken.None;
+    var streamId = (Guid)TrackedGuid.New();
+    var workerLog = new RewindCountingLogger();
+    await using var pipeline = _composePipeline(workerLog, snapshots: true);
+    await using var conn = await _openAsync(ct);
+    await pipeline.RegisterAsync(conn, ct);
+    await _registerItemTrailAsync(conn, ct);
+
+    var olderCause = (Guid)TrackedGuid.New();
+    var completedId = (Guid)TrackedGuid.New();
+    var started = TypeNameFormatter.Format(typeof(ItemProgressStartedEvent));
+    Guid[] derived = [.. Enumerable.Range(0, 3).Select(i => EmissionIdentity.Derive(olderCause, "rewind-loop-svc", "ItemHandler", started, i))];
+    await Assert.That(derived.All(id => string.CompareOrdinal(id.ToString(), completedId.ToString()) < 0)).IsTrue()
+      .Because("positive control: the derived events sort before the newer event the stream holds ahead of them");
+    await pipeline.CommitEventsAsync(conn, streamId, [(completedId, new ItemProgressCompletedEvent { StreamId = streamId })], ct);
+    await pipeline.CommitEventsAsync(conn, streamId, [.. derived.Select(id => (id, (IEvent)new ItemProgressStartedEvent { StreamId = streamId }))], ct);
+    var specimen = new FirstEventHasTheHighestId(Version1: completedId, Version2: derived[0], Version3: derived[1], Version4: derived[2]);
+    await _leftLoopingAsync(pipeline, conn, streamId, specimen, ct, snapshotTrail: "C");
+    var workIds = await _workIdsAsync(conn, streamId, ct);
+    await Assert.That(workIds.Count).IsEqualTo(2).Because("versions 3 and 4 are pending");
+
+    await _convergesAfterOneRewindAsync(pipeline, workerLog, conn, streamId, specimen, workIds, ct,
+      producerOrderRow: _fold(started: 3, startedFirst: false),
+      otherOrderRow: _fold(started: 3, startedFirst: true));
+  }
+
+  /// <summary>
   /// Starts the pipeline and asserts the stream settles with one rewind: its work completes before the runners rewind it
   /// <see cref="LOOP_REWINDS"/> times, the cursor ends on version 4 with its flag clear, nothing is pending, no later poll
   /// claims it again, and the row keeps its Completed state.
@@ -140,7 +225,7 @@ public partial class PerspectiveRewindLoopTests {
   private static async Task _convergesAfterOneRewindAsync(
       Pipeline pipeline, RewindCountingLogger workerLog, NpgsqlConnection conn, Guid streamId,
       FirstEventHasTheHighestId specimen, List<Guid> workIds,
-      CancellationToken ct) {
+      CancellationToken ct, string? producerOrderRow = null, string? otherOrderRow = null) {
     var settled = Task.WhenAll(workIds.Select(pipeline.CompletionOf));
     try {
       await pipeline.StartAsync(ct);
@@ -174,8 +259,8 @@ public partial class PerspectiveRewindLoopTests {
       "SELECT format('%s %s', data->>'State', data->>'Trail') FROM wh_per_item_trail WHERE id = @id", streamId, ct);
     // The row the producer's order gives (three Started, then Completed), and the one the stored order gives: they
     // differ, so the row says which order was folded.
-    var inProducerOrder = _fold(started: 3, startedFirst: true);
-    var inVersionOrder = _fold(started: 3, startedFirst: false);
+    var inProducerOrder = producerOrderRow ?? _fold(started: 3, startedFirst: true);
+    var inVersionOrder = otherOrderRow ?? _fold(started: 3, startedFirst: false);
 
     await Assert.That(rewindsWhenSettled).IsEqualTo(1).Because("one rewind settles the stream");
     await Assert.That(pipeline.RunnerRewinds.Count).IsEqualTo(rewindsWhenSettled).Because("nothing rewinds it again");
@@ -255,7 +340,8 @@ public partial class PerspectiveRewindLoopTests {
   /// the row Completed and stamped at version 1's id with version 2's commit sequence, and one snapshot at version 1.
   /// </summary>
   private static async Task _leftLoopingAsync(
-      Pipeline pipeline, NpgsqlConnection conn, Guid streamId, FirstEventHasTheHighestId specimen, CancellationToken ct) {
+      Pipeline pipeline, NpgsqlConnection conn, Guid streamId, FirstEventHasTheHighestId specimen, CancellationToken ct,
+      string snapshotTrail = "SC") {
     await using (var shape = conn.CreateCommand()) {
       shape.CommandText = """
         -- Only this perspective's work: another perspective the shared database associates with these types is not under test.
@@ -270,7 +356,7 @@ public partial class PerspectiveRewindLoopTests {
               rewind_trigger_event_id = EXCLUDED.rewind_trigger_event_id;
         INSERT INTO wh_per_item_trail (id, data, metadata, scope, created_at, updated_at, version)
         VALUES (@stream,
-          jsonb_build_object('Id', @stream, 'State', 'Completed', 'Trail', 'SC'),
+          jsonb_build_object('Id', @stream, 'State', 'Completed', 'Trail', @trail::text),
           jsonb_build_object('EventId', @v1::text, 'EventType', @completedType, 'Timestamp', NOW(),
             'CommitSequence', (SELECT commit_sequence FROM wh_event_store WHERE event_id = @v2)),
           '{}'::jsonb, NOW(), NOW(), 2)
@@ -281,12 +367,13 @@ public partial class PerspectiveRewindLoopTests {
       shape.Parameters.AddWithValue("stream", streamId);
       shape.Parameters.AddWithValue("perspective", _itemTrailPerspective);
       shape.Parameters.AddWithValue("completedType", typeof(ItemProgressCompletedEvent).FullName!);
+      shape.Parameters.AddWithValue("trail", snapshotTrail);
       await shape.ExecuteNonQueryAsync(ct);
     }
 
     // The one snapshot, at version 1, in the format the runner writes.
     // As the deployed snapshot held it: taken at version 1 after a replay that folded version 2 before it (origin order).
-    var model = new ItemTrail { Id = streamId, State = "Completed", Trail = "SC" };
+    var model = new ItemTrail { Id = streamId, State = "Completed", Trail = snapshotTrail };
     using (var modelDoc = JsonSerializer.SerializeToDocument(model,
              JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(ItemTrail)))) {
       using var snapshot = SnapshotEnvelope.Wrap(modelDoc.RootElement, SerializationVersion.CURRENT);

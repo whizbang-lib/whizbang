@@ -23,7 +23,7 @@ namespace Whizbang.Core.Tests.Perspectives;
 /// <code-under-test>src/Whizbang.Core/Perspectives/PerspectiveRebuilder.cs</code-under-test>
 [Category("Unit")]
 [Category("Perspectives")]
-public class PerspectiveRebuilderBlueGreenTests {
+public partial class PerspectiveRebuilderBlueGreenTests {
   private const string PERSPECTIVE = "TestPerspective";
   private const string MODEL = "global::Test.Model";
   private const string TABLE = "wh_per_test";
@@ -448,7 +448,7 @@ public class PerspectiveRebuilderBlueGreenTests {
     public Fixture(
         FakeSwapper? swapper, BlueGreenRebuildOptions? options = null, FakeCollectives? collectives = null, bool withInfo = true,
         IDutyElector? elector = null, TimeProvider? time = null,
-        Microsoft.Extensions.Logging.ILogger<PerspectiveRebuilder>? logger = null) {
+        Microsoft.Extensions.Logging.ILogger<PerspectiveRebuilder>? logger = null, IPerspectiveCheckpointCompleter? completer = null) {
       Runner = new RecordingRunner();
       var services = new ServiceCollection();
       services.AddSingleton<IPerspectiveRunnerRegistry>(new Registry(Runner, withInfo));
@@ -467,6 +467,9 @@ public class PerspectiveRebuilderBlueGreenTests {
       }
       if (time is not null) {
         services.AddSingleton(time);
+      }
+      if (completer is not null) {
+        services.AddSingleton(completer);
       }
       var provider = services.BuildServiceProvider();
       Rebuilder = new PerspectiveRebuilder(provider.GetRequiredService<IServiceScopeFactory>(),
@@ -492,7 +495,7 @@ public class PerspectiveRebuilderBlueGreenTests {
       });
   }
 
-  private sealed record Run(Guid StreamId, string Table, RebuildPhase Phase, RebuildStatus? Status);
+  private sealed record Run(Guid StreamId, string Table, RebuildPhase Phase, RebuildStatus? Status, bool Staging = false);
 
   private sealed class RecordingRunner : IPerspectiveRunner {
     public List<Run> Runs { get; } = [];
@@ -500,10 +503,35 @@ public class PerspectiveRebuilderBlueGreenTests {
     public PerspectiveRebuilder? Rebuilder { get; set; }
     public Type PerspectiveType => typeof(object);
 
+    /// <summary>The sink each replayed row is staged through while a staging load is begun, as a driver's store stages it.</summary>
+    public IPerspectiveBulkLoadSink? Stage { get; set; }
+
+    /// <summary>A second row a physical stream's replay writes, as an upcaster that re-keys events onto it does.</summary>
+    public Dictionary<Guid, Guid> ExtraRows { get; } = [];
+
+    public async Task<IReadOnlyList<PerspectiveCursorCompletion>> RunRebuildAsync(
+        Guid physicalStreamId, string perspectiveName, CancellationToken cancellationToken = default) {
+      var own = await RunAsync(physicalStreamId, perspectiveName, null, cancellationToken);
+      if (!ExtraRows.TryGetValue(physicalStreamId, out var extra)) {
+        return [own];
+      }
+      _stage(extra);
+      return [own, own with { StreamId = extra }];
+    }
+
+    private void _stage(Guid row) {
+      if (Stage is not null && PerspectiveStagingLoad.For(PerspectiveTableRedirect.Resolve(TABLE)) is { } load) {
+        load.TryStage(PendingPerspectiveWrite.Write(PerspectiveTableRedirect.Resolve(TABLE), row, PerspectiveRowVersion.Absent,
+          new PerspectiveRowValues("{}", "{}", "{}", false, false, DateTime.UnixEpoch, DateTime.UnixEpoch, false, true, null, [])), Stage);
+      }
+    }
+
     public async Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) {
       var status = await Rebuilder!.GetRebuildStatusAsync(perspectiveName, cancellationToken);
-      Runs.Add(new Run(streamId, PerspectiveTableRedirect.Resolve(TABLE), status!.Phase, status));
+      Runs.Add(new Run(streamId, PerspectiveTableRedirect.Resolve(TABLE), status!.Phase, status,
+        PerspectiveStagingLoad.For(PerspectiveTableRedirect.Resolve(TABLE)) is not null));
+      _stage(streamId);
       if (Runs.Count == 1) {
         OnFirstRun?.Invoke();
       }
@@ -547,6 +575,22 @@ public class PerspectiveRebuilderBlueGreenTests {
 
     /// <summary>Runs inside the swap, before the write lock's catch-up, while the rebuild still holds its table (#2301).</summary>
     public Func<Task>? BeforeSwapAsync { get; set; }
+
+    /// <summary>The index calls of a staging load (#2248), with what had been written when each was made.</summary>
+    public List<string> IndexCalls { get; } = [];
+    public IReadOnlyList<string> Deferred { get; init; } = [];
+    public Exception? BuildFailure { get; init; }
+    public Func<string>? Progress { get; set; }
+
+    public Task<IReadOnlyList<string>> DeferIndexesAsync(string shadowTable, CancellationToken cancellationToken) {
+      IndexCalls.Add("defer " + shadowTable);
+      return Task.FromResult(Deferred);
+    }
+
+    public Task BuildDeferredIndexesAsync(string shadowTable, IReadOnlyList<string> definitions, CancellationToken cancellationToken) {
+      IndexCalls.Add($"build {shadowTable} [{string.Join(";", definitions)}] after {Progress?.Invoke()}");
+      return BuildFailure is null ? Task.CompletedTask : Task.FromException(BuildFailure);
+    }
 
     /// <summary>The name the rebuilder asked for. Recorded because asking for the wrong one is #1308.</summary>
     public string? FoundFor { get; private set; }

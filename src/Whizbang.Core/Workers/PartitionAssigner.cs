@@ -5,16 +5,17 @@ namespace Whizbang.Core.Workers;
 
 /// <summary>Options for the elected partition assigner (#1254).</summary>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
+/// <remarks>
+/// The assigner always runs, in every driver (#2559): the published assignment is the one source of stream ownership,
+/// so there is no switch that turns it off. A configured <c>Whizbang:Database:PartitionAssigner:Enabled</c> is reported
+/// at startup as a removed key and changes nothing.
+/// </remarks>
 /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerTests.cs:Validate_ALeaseNoLongerThanTheSlowHeartbeat_IsRefusedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Configuration/UnknownConfigurationKeyCheckTests.cs:Removed_WhizbangCoreDeclaresEveryFormerTableEntry_ThroughTheAttributeAsync</tests>
+[Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:Database:PartitionAssigner:Enabled")]
 public sealed class PartitionAssignerOptions {
   /// <summary>The role the assigner is elected to through the role election.</summary>
   public const string ROLE = "partition-assigner";
-
-  /// <summary>
-  /// Whether an assigner is elected and claimers use its assignment. Default true; it takes effect only where role
-  /// assignment is enabled. Off, every claimer ranks its peers itself, as before.
-  /// </summary>
-  public bool Enabled { get; set; } = true;
 
   /// <summary>
   /// How long a published assignment holds without renewal. The assigner renews it as part of its own liveness (its
@@ -28,9 +29,57 @@ public sealed class PartitionAssignerOptions {
   /// </summary>
   public TimeSpan RepublishInterval { get; set; } = TimeSpan.FromMinutes(5);
 
+  /// <summary>
+  /// Whether the assigner turns ownership by map on for this service (#2555): once every live instance of the service
+  /// supports it, the assigner writes the service's one-way switch, and from then on every claim decides through the
+  /// partition ownership table alone (<c>wh_i_own</c>), with no stored owner and no ranking of its own; a moved partition
+  /// is handed over (#2557) and a stale owner's writes are fenced (#2556). Default true. The switch still waits for every
+  /// live instance of the service to support the mode, so a rolling deploy of mixed releases keeps the stored-owner rules
+  /// until the last older instance is gone. False keeps the stored-owner rules. Bound from
+  /// <c>Whizbang:Database:PartitionAssigner:OwnershipByMap</c>.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#ownership-by-map</docs>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerWorkerTests.cs:Options_OwnershipByMap_DefaultsOn_AndTheDefaultStillWaitsForEveryInstanceAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerWorkerTests.cs:Tick_WithOwnershipByMapOff_NeverAsksForTheSwitchAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignerRegistrationTests.cs:AddWhizbangPostgresNotifications_BindsEveryAssignerKeyFromConfigurationAsync</tests>
+  public bool OwnershipByMap { get; set; } = true;
+
+  /// <summary>
+  /// How long a membership change is collected before one new map is published (#2558): the window runs from the first
+  /// change the assigner sees, every join and leave inside it lands in the same publish, and a change that reverts
+  /// inside it publishes nothing. A rolling deploy of K instances then causes K small moves, not a reshuffle per
+  /// heartbeat. A new tenure publishes at once, and the published map stays valid (and is renewed) while a change
+  /// settles. Default 5 seconds; zero publishes every change at once. Bound from
+  /// <c>Whizbang:Database:PartitionAssigner:SettleWindow</c>.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#settle-window</docs>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerWorkerTests.cs:Tick_KJoinsInsideTheSettleWindow_PublishOnceAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignerRegistrationTests.cs:AddWhizbangPostgresNotifications_BindsEveryAssignerKeyFromConfigurationAsync</tests>
+  public TimeSpan SettleWindow { get; set; } = TimeSpan.FromSeconds(5);
+
+  /// <summary>
+  /// How long a moved partition may hand over before the assigner completes the move itself (#2557). In map mode a
+  /// partition moving away from a live owner first goes 'handing_over': nobody claims it while its old owner finishes its
+  /// in-flight batch, saves its write-behind models and releases the rest, then acknowledges. Past this deadline (an old
+  /// owner that is stuck, or cut off) the assigner flips the partition to its next owner itself; the old owner's late
+  /// writes are then fenced and its held models dropped. Judged on the database's clock. Default 30 seconds; bound from
+  /// <c>Whizbang:Database:PartitionAssigner:HandoverDeadline</c>.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#handover</docs>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerWorkerTests.cs:Tick_PublishesWithTheConfiguredHandoverDeadlineAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignerRegistrationTests.cs:AddWhizbangPostgresNotifications_BindsEveryAssignerKeyFromConfigurationAsync</tests>
+  public TimeSpan HandoverDeadline { get; set; } = TimeSpan.FromSeconds(30);
+
   /// <summary>Throws when the options cannot work together.</summary>
-  /// <exception cref="InvalidOperationException">The backstop is not positive, or the lease is too short.</exception>
+  /// <exception cref="InvalidOperationException">The backstop is not positive, the lease is too short, the settle
+  /// window is negative, or the handover deadline is not positive.</exception>
   public void Validate() {
+    if (HandoverDeadline <= TimeSpan.Zero) {
+      throw new InvalidOperationException("PartitionAssigner.HandoverDeadline must be positive.");
+    }
+    if (SettleWindow < TimeSpan.Zero) {
+      throw new InvalidOperationException("PartitionAssigner.SettleWindow must not be negative.");
+    }
     if (RepublishInterval <= TimeSpan.Zero) {
       throw new InvalidOperationException("PartitionAssigner.RepublishInterval must be positive.");
     }
@@ -51,11 +100,19 @@ public enum PartitionAssignerReason {
   /// <summary>No assignment had been published, or it is another tenure's.</summary>
   NewTenure = 1,
 
-  /// <summary>An instance became live or stopped being live: an alive-lock gained or lost, a heartbeat fresh or stale.</summary>
+  /// <summary>
+  /// An instance became live or stopped being live (an alive-lock gained or lost, a heartbeat fresh or stale), and the
+  /// settle window since the first such change has run out.
+  /// </summary>
   MembershipChanged = 2,
 
   /// <summary>Nothing changed, and the backstop cadence came due.</summary>
   Backstop = 3,
+
+  /// <summary>
+  /// The membership changed, and the settle window since the first change seen has not run out: no publish yet (#2558).
+  /// </summary>
+  Settling = 4,
 }
 
 /// <summary>One evaluation by the assigner: the live members it found and whether that calls for a publish.</summary>
@@ -63,8 +120,8 @@ public enum PartitionAssignerReason {
 /// <param name="Reason">Why it publishes, or <see cref="PartitionAssignerReason.Unchanged"/>.</param>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 public sealed record PartitionAssignerEvaluation(IReadOnlyList<Guid> Members, PartitionAssignerReason Reason) {
-  /// <summary>Whether this evaluation publishes.</summary>
-  public bool Publishes => Reason != PartitionAssignerReason.Unchanged;
+  /// <summary>Whether this evaluation publishes: not while nothing changed, nor while a change settles (#2558).</summary>
+  public bool Publishes => Reason is not (PartitionAssignerReason.Unchanged or PartitionAssignerReason.Settling);
 }
 
 /// <summary>
@@ -74,6 +131,7 @@ public sealed record PartitionAssignerEvaluation(IReadOnlyList<Guid> Members, Pa
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
 /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerTests.cs:IsLive_IsTheRulesAnswer_WhateverTheLockOrTheHeartbeatAsync</tests>
 /// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerTests.cs:Evaluate_AMemberGoingStale_PublishesAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/PartitionAssignerTests.cs:Evaluate_AChangeInsideTheSettleWindow_SettlesWithoutPublishingAsync</tests>
 public static class PartitionAssigner {
   /// <summary>
   /// Whether a candidate is live: the answer of the database's one liveness rule (#2027, <c>wh_instance_liveness</c>),
@@ -103,31 +161,34 @@ public static class PartitionAssigner {
   }
 
   /// <summary>
-  /// Whether the live members call for a publish: no assignment of this tenure yet, a change in membership, or the
-  /// backstop come due.
+  /// Whether the live members call for a publish: no assignment of this tenure yet, a change in membership that has
+  /// settled (#2558), or the backstop come due.
   /// </summary>
   /// <param name="members">The live members, in rank order.</param>
   /// <param name="published">What this tenure last published, or null.</param>
   /// <param name="epoch">This tenure's role epoch.</param>
   /// <param name="sincePublished">How long ago, by the assigner's own clock, it last published.</param>
+  /// <param name="unsettledFor">How long, by the assigner's own clock, the members have differed from the published ones
+  /// (#2558): since the first change seen, zero when they have just started to differ.</param>
   /// <param name="options">The backstop cadence.</param>
   /// <returns>The evaluation.</returns>
   public static PartitionAssignerEvaluation Evaluate(
       IReadOnlyList<Guid> members, PartitionAssignment? published, long epoch, TimeSpan sincePublished,
-      PartitionAssignerOptions options) {
+      TimeSpan unsettledFor, PartitionAssignerOptions options) {
     ArgumentNullException.ThrowIfNull(members);
     ArgumentNullException.ThrowIfNull(options);
-    return new PartitionAssignerEvaluation(members, _reason(members, published, epoch, sincePublished, options));
+    return new PartitionAssignerEvaluation(members, _reason(members, published, epoch, sincePublished, unsettledFor, options));
   }
 
   private static PartitionAssignerReason _reason(
       IReadOnlyList<Guid> members, PartitionAssignment? published, long epoch, TimeSpan sincePublished,
-      PartitionAssignerOptions options) {
+      TimeSpan unsettledFor, PartitionAssignerOptions options) {
     if (published is null || published.Epoch != epoch) {
       return PartitionAssignerReason.NewTenure;
     }
     if (!published.Members.SequenceEqual(members)) {
-      return PartitionAssignerReason.MembershipChanged;
+      // #2558: the change waits out the settle window, so the joins and leaves inside it land in one publish.
+      return unsettledFor >= options.SettleWindow ? PartitionAssignerReason.MembershipChanged : PartitionAssignerReason.Settling;
     }
     return sincePublished >= options.RepublishInterval ? PartitionAssignerReason.Backstop : PartitionAssignerReason.Unchanged;
   }

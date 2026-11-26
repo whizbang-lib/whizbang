@@ -1,13 +1,10 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-extern alias shared;
-
 using System.Diagnostics.CodeAnalysis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using TemplateUtilities = shared::Whizbang.Generators.Shared.Utilities.TemplateUtilities;
 
 namespace Whizbang.Generators.Tests;
 
@@ -19,7 +16,7 @@ namespace Whizbang.Generators.Tests;
 /// whole batch across its write.
 /// </summary>
 /// <tests>src/Whizbang.Generators/PerspectiveRunnerGenerator.cs</tests>
-/// <tests>src/Whizbang.Generators/Templates/PerspectiveRunnerBaseTemplate.cs</tests>
+/// <tests>src/Whizbang.Core/Perspectives/PerspectiveRunnerBase.cs</tests>
 [Category("SourceGenerators")]
 public class PerspectiveRunnerPrepareCompleteTests {
   private const string SOURCE = """
@@ -77,17 +74,13 @@ public class PerspectiveRunnerPrepareCompleteTests {
     }
     """;
 
-  private static readonly System.Reflection.Assembly _generatorsAssembly = typeof(MessageRegistryGenerator).Assembly;
-
   [RequiresAssemblyFiles()]
   private static string _runner(string perspective) {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(SOURCE);
     return GeneratorTestHelper.GetRunnerSource(result, $"{perspective}Runner.g.cs") ?? "";
   }
 
-  [RequiresAssemblyFiles()]
-  private static string _template() =>
-    TemplateUtilities.GetEmbeddedTemplate(_generatorsAssembly, "PerspectiveRunnerBaseTemplate.cs");
+  private static string _template() => GeneratorTestHelper.RunnerBaseSource();
 
   private static string _compact(string source) => string.Concat(source.Where(c => !char.IsWhiteSpace(c)));
 
@@ -144,7 +137,7 @@ public class PerspectiveRunnerPrepareCompleteTests {
 
     await Assert.That(_count(template, "foreach (var envelope in foldEvents)")).IsEqualTo(2)
       .Because("one fold for the live apply (per-pair and prepare) and one for the replay; a third is a copy that can drift");
-    await Assert.That(_count(template, "ApplyEvent(perspective")).IsEqualTo(4);
+    await Assert.That(_count(template, "_applyEvent(perspective")).IsEqualTo(4);
     await Assert.That(_count(template, "HasStreamEventsBeforeAsync(")).IsEqualTo(1)
       .Because("the eviction probe is made in one place for both entries");
     await Assert.That(_count(template, "await _perspectiveStore.ReadForApplyAsync(")).IsEqualTo(3)

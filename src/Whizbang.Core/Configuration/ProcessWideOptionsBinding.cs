@@ -122,6 +122,14 @@ internal static class ProcessWideOptionsBinding {
 #pragma warning restore IL2026
       }));
 
+    services.AddOptions<PerspectiveRebuildOptions>();
+    services.AddSingleton<IConfigureOptions<PerspectiveRebuildOptions>>(sp =>
+      new ConfigureOptions<PerspectiveRebuildOptions>(options => {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+        Section(sp, "Whizbang:Perspectives:Rebuild").Bind(options);
+#pragma warning restore IL2026
+      }));
+
     services.AddOptions<PerspectiveStreamLockOptions>();
     services.AddSingleton<IConfigureOptions<PerspectiveStreamLockOptions>>(sp =>
       new ConfigureOptions<PerspectiveStreamLockOptions>(options => {
@@ -351,6 +359,10 @@ internal sealed class CoreConfigurationSection {
   public EmptyStreamIdPolicy? EmptyStreamIdPolicy { get; set; }
   public long? MaxMessagePayloadBytes { get; set; }
   public double? MessagePayloadWarningRatio { get; set; }
+  public Messaging.SequenceIntegrity? SequenceIntegrity { get; set; }
+  public TimeSpan? SequenceHoldTime { get; set; }
+  public TimeSpan? SequenceHoldWarningAge { get; set; }
+  public TimeSpan? SequenceHoldSampleInterval { get; set; }
 
   public void ApplyTo(WhizbangCoreOptions options) {
     options.ShutdownDeregistrationTimeout = ShutdownDeregistrationTimeout ?? options.ShutdownDeregistrationTimeout;
@@ -360,6 +372,10 @@ internal sealed class CoreConfigurationSection {
     options.EmptyStreamIdPolicy = EmptyStreamIdPolicy ?? options.EmptyStreamIdPolicy;
     options.MaxMessagePayloadBytes = MaxMessagePayloadBytes ?? options.MaxMessagePayloadBytes;
     options.MessagePayloadWarningRatio = MessagePayloadWarningRatio ?? options.MessagePayloadWarningRatio;
+    options.SequenceIntegrity = SequenceIntegrity ?? options.SequenceIntegrity;
+    options.SequenceHoldTime = SequenceHoldTime ?? options.SequenceHoldTime;
+    options.SequenceHoldWarningAge = SequenceHoldWarningAge ?? options.SequenceHoldWarningAge;
+    options.SequenceHoldSampleInterval = SequenceHoldSampleInterval ?? options.SequenceHoldSampleInterval;
   }
 }
 

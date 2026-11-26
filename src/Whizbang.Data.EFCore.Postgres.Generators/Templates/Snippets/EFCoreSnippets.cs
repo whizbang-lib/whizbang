@@ -37,12 +37,9 @@ public class EFCoreSnippets {
       //   - Collection queries (Any, Contains, Count)
       //   - String methods (Contains, StartsWith)
       //
-      // IMPORTANT LIMITATION - Dictionary<K,V> NOT SUPPORTED:
-      //   EF Core 10's ToJson() throws NullReferenceException for Dictionary properties.
-      //   If your perspective model needs key-value metadata, use one of these alternatives:
-      //     - List<KeyValuePair<string, string>> for ordered pairs
-      //     - List<AttributeEntry> where AttributeEntry has Key/Value properties
-      //     - String property with manual JSON serialization
+      // Dictionary<K,V>, IDictionary<K,V> and IReadOnlyDictionary<K,V> members, at any depth, are stored as
+      // arrays of key/value objects ([{"Key":..,"Value":..}]) by the type mapping the Whizbang options extension
+      // adds (#1911); nothing is configured for them here. See DictionaryMemberTypeMapping.
       //
       // Prerequisites (implemented in Whizbang):
       //   1. WhizbangId types store Guid directly (not TrackedGuid) for simple EF Core construction
@@ -182,7 +179,9 @@ __PHYSICAL_FIELD_CONFIGS__
         jsonOptions,
         sp.GetService<global::Microsoft.Extensions.Logging.ILogger<global::Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>>>(),
         // #1546: an appended event's kind is the one the dispatch path stamps, [Ephemeral] on a type included.
-        sp.GetService<global::Whizbang.Core.IEphemeralModeResolver>()
+        sp.GetService<global::Whizbang.Core.IEphemeralModeResolver>(),
+        // #2528: the time-ordering check for appended event ids, with the configured severity.
+        sp.GetService<global::Whizbang.Core.Validation.GuidOrderingValidator>()
       );
     });
     services.AddScoped<global::Whizbang.Core.Messaging.IWorkCoordinator, global::Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator<__DBCONTEXT_FQN__>>();
@@ -244,7 +243,9 @@ __PHYSICAL_FIELD_CONFIGS__
         inboxChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IInboxChannelWriter>(),
         detachedWork: sp.GetRequiredService<global::Whizbang.Core.Messaging.DetachedLifecycleWork>(),
         // #2228: the deferred outbox channel every strategy drains at the start of its flush.
-        deferredChannel: sp.GetRequiredService<global::Whizbang.Core.Messaging.IDeferredOutboxChannel>()
+        deferredChannel: sp.GetRequiredService<global::Whizbang.Core.Messaging.IDeferredOutboxChannel>(),
+        // #2528: the time-ordering check for queued message ids, with the configured severity.
+        guidOrdering: sp.GetService<global::Whizbang.Core.Validation.GuidOrderingValidator>()
       );
     });
     services.AddSingleton<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>(sp => {
@@ -265,7 +266,9 @@ __PHYSICAL_FIELD_CONFIGS__
         workChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkChannelWriter>(),
         detachedWork: sp.GetRequiredService<global::Whizbang.Core.Messaging.DetachedLifecycleWork>(),
         // #2228: the deferred outbox channel every strategy drains at the start of its flush.
-        deferredChannel: sp.GetRequiredService<global::Whizbang.Core.Messaging.IDeferredOutboxChannel>()
+        deferredChannel: sp.GetRequiredService<global::Whizbang.Core.Messaging.IDeferredOutboxChannel>(),
+        // #2528: the time-ordering check for queued message ids, with the configured severity.
+        guidOrdering: sp.GetService<global::Whizbang.Core.Validation.GuidOrderingValidator>()
       );
     });
 

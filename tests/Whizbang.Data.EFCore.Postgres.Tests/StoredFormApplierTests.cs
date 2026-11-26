@@ -244,6 +244,98 @@ public class StoredFormApplierTests : EFCoreTestBase {
     await Assert.That(assessment.Verdict).IsNotEqualTo(StartupVerdict.StandDown).Because(assessment.Reason);
   }
 
+  // ── #2553: what a conversion applied, and a restored database's conversions ──
+
+  [Test]
+  [Timeout(60000)]
+  public async Task EveryConversion_RecordsWhatItApplied_AsTheHashOfItsStatementAsync(CancellationToken ct) {
+    await _execAsync($"CREATE TABLE {TABLE} (id uuid PRIMARY KEY, data jsonb NOT NULL, metadata jsonb NULL)", ct);
+    await _execAsync($$"""INSERT INTO {{TABLE}} VALUES ('{{Guid.CreateVersion7()}}', '{"Status": 123, "At": "2026-01-02T03:04:05Z", "Name": "a"}', NULL)""", ct);
+    var migration = StoredFormMigrationSql.Generated("public", TABLE, "applier:Status", StoredFormStep.ToText("Status"));
+    var temporal = CanonicalTemporalRewrite.StatementFor("public", TABLE,
+      [new TemporalPath("data", ["At"], StoredTemporalKind.Instant)]);
+    var declared = new DeclaredKeyTable(TABLE, [new DeclaredKeyColumn("data", DeclaredKeyShape.ForObject(new DeclaredMember("name")))]);
+
+    using (StoredFormApplier.ScopeTo(_newer)) {
+      await StoredFormMigrationSql.DeclareAsync(_open, "public", [migration], ct);
+      await _applyAsync([.. StoredFormMigrationSql.ForPhase("public", [migration]), (TABLE, temporal)], ct);
+      await DeclaredKeySpellingPass.ApplyAsync(_open, "public", [declared], TIMEOUT_SECONDS, logger: null, cancellationToken: ct);
+    }
+
+    await Assert.That(await _textAsync("SELECT content_hash FROM wh_stored_form_migrations WHERE name = 'applier:Status'", ct))
+      .IsEqualTo(StoredFormApplier.ContentHash(migration.Sql));
+    await Assert.That(await _textAsync($"SELECT content_hash FROM wh_perspective_forms WHERE table_name = '{TABLE}'", ct))
+      .IsEqualTo(StoredFormApplier.ContentHash(temporal));
+    await Assert.That(await _textAsync($"SELECT content_hash FROM wh_stored_form_migrations WHERE name = '{declared.JournalName}'", ct))
+      .IsEqualTo(declared.ContentHash);
+  }
+
+  /// <summary>Every conversion this build's model declares, by the gate's name for it, with its journal and key.</summary>
+  private List<(string Key, string Journal, string Column, string Name, string Hash)> _declaredConversions() {
+    using var context = CreateDbContext();
+    var options = PerspectiveDocumentSerialization.Options;
+    List<(string, string, string, string, string)> found = [
+      .. CanonicalTemporalRewrite.ForModel(context.Model, options, "public")
+        .Select(r => ("temporal-form:" + r.Name, "wh_perspective_forms", "table_name", r.Name, StoredFormApplier.ContentHash(r.Sql))),
+      .. DictionaryPairsRewrite.ForModel(context.Model, options, "public")
+        .Select(t => ("stored-form:" + t.Name, "wh_stored_form_migrations", "name", t.Name, StoredFormApplier.ContentHash(t.Sql))),
+      .. DeclaredKeyShapes.ForModel(context.Model, options)
+        .Select(t => ("stored-form:" + t.JournalName, "wh_stored_form_migrations", "name", t.JournalName, t.ContentHash)),
+    ];
+    return found;
+  }
+
+  /// <summary>
+  /// The journals as a database restored from another environment holds them: every conversion this build declares,
+  /// applied by that environment's SemVer-higher application version, written before the journals recorded hashes.
+  /// </summary>
+  private async Task<List<(string Key, string Journal, string Column, string Name, string Hash)>> _restoreConversionsAsync(
+      string library, CancellationToken ct) {
+    var declared = _declaredConversions();
+    await Assert.That(declared.Count).IsGreaterThan(0).Because("the scenario needs conversions this build declares");
+    foreach (var (_, journal, column, name, _) in declared) {
+      var insert = journal == "wh_perspective_forms"
+        ? $"INSERT INTO wh_perspective_forms (table_name, temporal_form) VALUES ('{name}', 2) ON CONFLICT (table_name) DO NOTHING"
+        : $"INSERT INTO wh_stored_form_migrations (name, table_name, kind) VALUES ('{name}', 't', 'generated') ON CONFLICT (name) DO NOTHING";
+      await _execAsync(insert, ct);
+      await _execAsync(
+        $"UPDATE {journal} SET applied_library_version = '{library}', applied_application_version = '1.63.0-rc.3' WHERE {column} = '{name}'", ct);
+    }
+    return declared;
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task ARestoredDatabase_WhoseConversionsThisBuildDeclares_ServesWhateverApplicationAppliedThemAsync(CancellationToken ct) {
+    var library = (await _libraryAsync(ct))!;
+    await _restoreConversionsAsync(library, ct);
+
+    var assessment = await _assessor(library, "0.0.0-preview.restored").AssessAsync(ct);
+
+    await Assert.That(assessment.Verdict).IsNotEqualTo(StartupVerdict.StandDown)
+      .Because("a conversion recorded before its hash is identified by its name, which this build declares: " + assessment.Reason);
+    await Assert.That(assessment.Rollback).IsNull();
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task OnceAConversionRecordsItsHash_TheHashDecides_NotTheNameAsync(CancellationToken ct) {
+    var library = (await _libraryAsync(ct))!;
+    var declared = await _restoreConversionsAsync(library, ct);
+    foreach (var (_, journal, column, name, hash) in declared) {
+      await _execAsync($"UPDATE {journal} SET content_hash = '{hash}' WHERE {column} = '{name}'", ct);
+    }
+    var serving = await _assessor(library, "0.0.0-preview.restored").AssessAsync(ct);
+    var (key, firstJournal, firstColumn, firstName, _) = declared[0];
+    await _execAsync($"UPDATE {firstJournal} SET content_hash = 'an-older-statement' WHERE {firstColumn} = '{firstName}'", ct);
+
+    var refused = await _assessor(library, "0.0.0-preview.restored").AssessAsync(ct);
+
+    await Assert.That(serving.Verdict).IsNotEqualTo(StartupVerdict.StandDown).Because(serving.Reason);
+    await Assert.That(refused.Verdict).IsEqualTo(StartupVerdict.StandDown);
+    await Assert.That(refused.Reason).Contains($"{key} (applied by library {library}, application 1.63.0-rc.3)");
+  }
+
   private sealed class NoRowsMigration : IStoredFormMigration {
     public string Name => "applier:custom";
     public string BuildSql(StoredFormMigrationTarget target) => $"UPDATE {target.QualifiedTable} SET data = data WHERE false";

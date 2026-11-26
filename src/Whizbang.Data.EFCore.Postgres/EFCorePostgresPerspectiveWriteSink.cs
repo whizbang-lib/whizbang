@@ -22,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <param name="timeProvider">The clock the system-time columns are stamped from; the system clock by default.</param>
 /// <docs>fundamentals/perspectives/write-modes</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SetBasedPerspectiveWriteSinkTests.cs</tests>
-public sealed class EFCorePostgresPerspectiveWriteSink(DbContext context, TimeProvider? timeProvider = null) : IPerspectiveWriteSink {
+public sealed class EFCorePostgresPerspectiveWriteSink(DbContext context, TimeProvider? timeProvider = null) : IPerspectiveWriteSink, IPerspectiveBulkLoadSink {
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
   /// <summary>The context this sink writes through.</summary>
@@ -30,8 +30,37 @@ public sealed class EFCorePostgresPerspectiveWriteSink(DbContext context, TimePr
   public DbContext Context { get; } = context ?? throw new ArgumentNullException(nameof(context));
 
   /// <inheritdoc/>
+  /// <remarks>
+  /// #2556: a write of a stream whose work in flight was claimed under an epoch its partition no longer has is not
+  /// written; its outcome is <see cref="PerspectiveWriteStatus.Fenced"/>, and the current owner applies it. The fence is
+  /// in the statement that writes the row, so a flip cannot land between a check and the write.
+  /// </remarks>
   public async Task<IReadOnlyList<PerspectiveWriteOutcome>> WriteAsync(
       IReadOnlyList<PendingPerspectiveWrite> writes, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(writes);
+    var fence = EFCorePerspectiveWriteFence.Of(Context);
+    var outcomes = await _onConnectionAsync(writes,
+      (c, t, w, clock, ct) => PostgresPerspectiveWriter.WriteAsync(c, t, w, clock, ct, fence: fence), cancellationToken).ConfigureAwait(false);
+    EFCorePerspectiveWriteFence.Report(Context, outcomes.Count(o => o.Status == PerspectiveWriteStatus.Fenced));
+    return outcomes;
+  }
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// The rows are copied into their table with <c>COPY</c>, on the context's connection and in its current transaction;
+  /// what a copy cannot take is written with the set-based statements instead.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/rebuild#staging-load</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SetBasedPerspectiveWriteSinkTests.Load.cs</tests>
+  public Task<IReadOnlyList<PerspectiveWriteOutcome>> LoadAsync(
+      IReadOnlyList<PendingPerspectiveWrite> writes, CancellationToken cancellationToken = default) =>
+    _onConnectionAsync(writes, PostgresPerspectiveCopyLoader.LoadAsync, cancellationToken);
+
+  /// <summary>Runs <paramref name="write"/> on the context's connection and in its current transaction.</summary>
+  private async Task<IReadOnlyList<PerspectiveWriteOutcome>> _onConnectionAsync(
+      IReadOnlyList<PendingPerspectiveWrite> writes,
+      Func<NpgsqlConnection, NpgsqlTransaction?, IReadOnlyList<PendingPerspectiveWrite>, DateTime, CancellationToken, Task<IReadOnlyList<PerspectiveWriteOutcome>>> write,
+      CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(writes);
     if (writes.Count == 0) {
       return [];
@@ -50,7 +79,7 @@ public sealed class EFCorePostgresPerspectiveWriteSink(DbContext context, TimePr
     // compiler-emitted sequence point no test can reach.
     IReadOnlyList<PerspectiveWriteOutcome> outcomes;
     try {
-      outcomes = await PostgresPerspectiveWriter.WriteAsync(
+      outcomes = await write(
         connection,
         Context.Database.CurrentTransaction?.GetDbTransaction() as NpgsqlTransaction,
         writes,

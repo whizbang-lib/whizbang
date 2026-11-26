@@ -157,6 +157,24 @@ public sealed class PerspectiveMetrics {
   public PassiveCounter<long> StragglersDropped { get; }
 
   /// <summary>
+  /// #2601: queued perspective rows leased <see cref="Workers.PerspectiveWorkerOptions.LeasedWithoutFailureWarningAttempts"/>
+  /// times or more with no failure recorded, each counted once per process. Tags: perspective_name.
+  /// </summary>
+  /// <remarks>
+  /// A lease ends in an apply, which completes the row, or a failure, which the dead-letter bound counts. A row leased
+  /// again and again with neither is one nothing runs, which the dead-letter bound never sees.
+  /// </remarks>
+  /// <docs>operations/workers/perspective-worker#rows-leased-without-a-failure</docs>
+  public PassiveCounter<long> RowsLeasedWithoutFailure { get; }
+
+  /// <summary>
+  /// #2601: cursors of perspectives no service runs any more that the maintenance cycle removed, with their queued rows
+  /// and snapshots.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#perspectives-no-longer-registered</docs>
+  public PassiveCounter<long> UnregisteredCursorsRemoved { get; }
+
+  /// <summary>
   /// Snapshots of a row with collectives that were due and not taken, because a collective of the row was in flight when
   /// the row was read, or moved before the row was written (#1963). Tags: perspective_name.
   /// </summary>
@@ -189,6 +207,42 @@ public sealed class PerspectiveMetrics {
   /// <summary>Perspective events behind cursor when rewind triggered. Tags: perspective_name.</summary>
   /// <docs>fundamentals/perspectives/rewind#metrics</docs>
   public Histogram<int> RewindEventsBehind { get; }
+
+  // Write-behind (#2247)
+
+  /// <summary>
+  /// Pairs a write-behind batch prepared on a model it held (a hit) or read from the database (a miss); the hit rate is
+  /// hits over both. Tags: perspective_name, result (<c>hit</c> or <c>miss</c>).
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#write-behind-metrics</docs>
+  public PassiveCounter<long> WriteBehindLookups { get; }
+
+  /// <summary>Time from a model's first held batch to its flush, in milliseconds. Tags: reason.</summary>
+  /// <docs>fundamentals/perspectives/write-modes#write-behind-metrics</docs>
+  public Histogram<double> WriteBehindFlushLag { get; }
+
+  /// <summary>
+  /// Models flushed before their interval: over a bound, at the batch cap, for a sync wait, for a rewind, per-pair apply
+  /// or drain that needs the row current, when a rebuild of the perspective starts, on request, or at stop. Tags: reason.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/write-modes#write-behind-metrics</docs>
+  public PassiveCounter<long> WriteBehindForcedFlushes { get; }
+
+  /// <summary>Models dropped without a write because their rows' lease ran out before they could be flushed.</summary>
+  /// <docs>fundamentals/perspectives/write-modes#write-behind-metrics</docs>
+  public PassiveCounter<long> WriteBehindDropped { get; }
+
+  private long _writeBehindModelsValue;
+  private long _writeBehindBytesValue;
+
+  /// <summary>Sets the write-behind cache's size, which the models and bytes gauges report.</summary>
+  /// <param name="models">The models held.</param>
+  /// <param name="bytes">The bytes they take.</param>
+  /// <docs>fundamentals/perspectives/write-modes#write-behind-metrics</docs>
+  public void SetWriteBehindSize(long models, long bytes) {
+    Interlocked.Exchange(ref _writeBehindModelsValue, models);
+    Interlocked.Exchange(ref _writeBehindBytesValue, bytes);
+  }
 
   /// <summary>Initializes a new instance of the <see cref="PerspectiveMetrics"/> class.</summary>
   /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
@@ -226,6 +280,10 @@ public sealed class PerspectiveMetrics {
       description: "Rewinds asked for again with the same trigger on an unchanged stream, settled without running");
     StragglersDropped = meter.CreatePassiveCounter<long>("whizbang.perspective.stragglers_dropped",
       description: "Late events an ephemeral perspective dropped instead of rewinding for them");
+    RowsLeasedWithoutFailure = meter.CreatePassiveCounter<long>("whizbang.perspective.rows_leased_without_failure",
+      description: "Queued perspective rows leased past the warning bound with no failure recorded, each counted once per process");
+    UnregisteredCursorsRemoved = meter.CreatePassiveCounter<long>("whizbang.perspective.unregistered_cursors_removed",
+      description: "Cursors of perspectives no service runs that the maintenance cycle removed, with their queued rows and snapshots");
     SnapshotsDeferred = meter.CreatePassiveCounter<long>("whizbang.perspective.snapshots_deferred",
       description: "Due snapshots of a row with collectives not taken because a collective of the row was in flight");
 
@@ -236,5 +294,20 @@ public sealed class PerspectiveMetrics {
     RewindDuration = meter.CreateHistogram<double>("whizbang.perspective.rewind.duration", "ms", "Rewind replay duration");
     RewindEventsReplayed = meter.CreateHistogram<int>("whizbang.perspective.rewind.events_replayed", description: "Events replayed per rewind");
     RewindEventsBehind = meter.CreateHistogram<int>("whizbang.perspective.rewind.events_behind", description: "Events behind cursor when rewind triggered");
+
+    WriteBehindLookups = meter.CreatePassiveCounter<long>("whizbang.perspective.write_behind.lookups",
+      description: "Write-behind pairs prepared on a held model (hit) or a database read (miss)");
+    WriteBehindFlushLag = meter.CreateHistogram<double>("whizbang.perspective.write_behind.flush_lag", "ms",
+      "Time from a model's first held batch to its flush");
+    WriteBehindForcedFlushes = meter.CreatePassiveCounter<long>("whizbang.perspective.write_behind.forced_flushes",
+      description: "Held models flushed before their interval, by reason");
+    WriteBehindDropped = meter.CreatePassiveCounter<long>("whizbang.perspective.write_behind.dropped",
+      description: "Held models dropped unwritten: their lease ran out, or their partition's ownership moved on (#2556)");
+    meter.CreateObservableGauge("whizbang.perspective.write_behind.models",
+      observeValue: () => Interlocked.Read(ref _writeBehindModelsValue),
+      description: "Models the write-behind cache holds");
+    meter.CreateObservableGauge("whizbang.perspective.write_behind.bytes",
+      observeValue: () => Interlocked.Read(ref _writeBehindBytesValue), unit: "By",
+      description: "Bytes the write-behind cache's models take");
   }
 }

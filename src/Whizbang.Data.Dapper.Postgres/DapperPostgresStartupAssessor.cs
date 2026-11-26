@@ -18,22 +18,23 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// <param name="createInitializer">Builds the schema initializer whose check says whether the schema is current.</param>
 /// <param name="applicationVersion">This instance's application version, as recorded (#2022); null when unknown.</param>
 /// <param name="instanceId">This instance's id (#2022): its own row is never a newer instance; null when it has none.</param>
-/// <param name="overrideIncompatibility">Whether the incompatibility override is on (#2022).</param>
-/// <param name="allowLossyRollback">Whether a rollback may discard data a newer version wrote (#2122).</param>
+/// <param name="overrides">The operator's overrides of the rollback gate, for each side (#2022, #2122, #2553), as configuration binds them.</param>
 /// <docs>operations/startup/rolling-upgrades#one-verdict</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStartupAssessorTests.cs</tests>
 internal sealed class DapperPostgresStartupAssessor(
-    string connectionString, Func<PostgresSchemaInitializer> createInitializer, string? applicationVersion = null, Guid? instanceId = null,
-    bool overrideIncompatibility = false, bool allowLossyRollback = false)
+    string connectionString, Func<PostgresSchemaInitializer> createInitializer, string? applicationVersion, Guid? instanceId,
+    SchemaGateOverrides overrides)
     : IStartupAssessor, IOnlineVersionReader {
   /// <inheritdoc />
   public async Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken) {
     await using var connection = new NpgsqlConnection(connectionString);
     await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+    var schema = await _schemaAsync(connection, cancellationToken).ConfigureAwait(false);
     return await PostgresStartupAssessment.AssessAsync(
-      connection, await _schemaAsync(connection, cancellationToken).ConfigureAwait(false),
-      new VersionSighting(new PostgresMigrationProvider().Version, applicationVersion, instanceId), overrideIncompatibility,
-      allowLossyRollback,
+      connection, schema,
+      new StartupGateInput(
+        new VersionSighting(new PostgresMigrationProvider().Version, applicationVersion, instanceId),
+        () => createInitializer().DefinedContent(schema), overrides),
       ct => createInitializer().IsCurrentAsync(ct), cancellationToken).ConfigureAwait(false);
   }
 
@@ -45,7 +46,7 @@ internal sealed class DapperPostgresStartupAssessor(
       connection, await _schemaAsync(connection, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
   }
 
-  private async Task<string?> _schemaAsync(NpgsqlConnection connection, CancellationToken cancellationToken) =>
+  private async Task<string> _schemaAsync(NpgsqlConnection connection, CancellationToken cancellationToken) =>
     DapperCoordinatorSchema.FromConnectionString(connectionString)
       ?? await DapperCoordinatorSchema.CurrentAsync(connection, cancellationToken).ConfigureAwait(false);
 }

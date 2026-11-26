@@ -48,6 +48,7 @@ namespace Whizbang.Core.Messaging;
 /// <docs>fundamentals/receptors/exactly-once-firing</docs>
 /// <docs>operations/observability/tracing#parent-context</docs>
 /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorInvokerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/ReceptorHandlingTests.cs</tests>
 public sealed partial class ReceptorInvoker : IReceptorInvoker {
   private readonly IReceptorRegistry _registry;
   private readonly IServiceProvider _scopedProvider;
@@ -410,8 +411,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       return false;
     }
     _ensureLogger();
-    if (_logger is not null) {
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+#pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
       ReceptorInvokerLog.SkippedSameServicePostInbox(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value, _serviceName);
 #pragma warning restore CA1873
     }
@@ -440,8 +441,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       return false;
     }
     _ensureLogger();
-    if (_logger is not null) {
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+#pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
       ReceptorInvokerLog.SkippedOwnedDomainFilter(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
     }
@@ -496,8 +497,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     }
     if (kept.Count == 0) {
       _ensureLogger();
-      if (_logger is not null) {
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+      if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+#pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
         ReceptorInvokerLog.SkippedLocalDispatchPreOutbox(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
       }
@@ -526,8 +527,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       Tags.MessageChanges? changes,
       CancellationToken cancellationToken) {
     _ensureLogger();
-    if (_logger is not null) {
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+#pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
       ReceptorInvokerLog.NoReceptorsRegistered(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
     }
@@ -553,8 +554,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       return true;
     }
     _ensureLogger();
-    if (_logger is not null) {
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+#pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
       ReceptorInvokerLog.SkippedStageTrackerDedup(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
     }
@@ -564,8 +565,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   /// <summary>Logs that replay-mode filtering removed every remaining receptor.</summary>
   private void _logSkippedReplayModeFilter(IMessageEnvelope envelope, Type messageType, LifecycleStage stage) {
     _ensureLogger();
-    if (_logger is not null) {
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+#pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
       ReceptorInvokerLog.SkippedReplayModeFilter(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
     }
@@ -604,7 +605,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       // Refusing it here, after its handler ran, would protect nothing, so it runs without a context
       _ensureLogger();
       if (_logger is not null) {
-#pragma warning disable CA1873 // TypeNameFormatter.ForLog reads Type.Name: no cost to defer (#2267)
+#pragma warning disable CA1873 // an exception path: the name is read only once the refusal was thrown
         ReceptorInvokerLog.LocalStageRanWithoutContext(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
       }
@@ -936,8 +937,12 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     _setAmbientLifecycleContext(ctx.LifecycleContext);
     _logCallerInfo(receptor, ctx.CallerInfo);
 
-    // InvokeAsync is a pre-compiled delegate (no reflection)
-    var result = await receptor.InvokeAsync(_scopedProvider, ctx.Message, ctx.Envelope, ctx.CallerInfo, cancellationToken).ConfigureAwait(false);
+    // InvokeAsync is a pre-compiled delegate (no reflection). The body runs inside the handling of its envelope, so an
+    // event it publishes explicitly derives its id from the handling, as what it returns does (#2274)
+    object? result;
+    using (ReceptorHandling.Enter(ctx.Envelope)) {
+      result = await receptor.InvokeAsync(_scopedProvider, ctx.Message, ctx.Envelope, ctx.CallerInfo, cancellationToken).ConfigureAwait(false);
+    }
 
     receptorActivity?.SetStatus(ActivityStatusCode.Ok);
     receptorActivity?.SetTag("whizbang.receptor.has_result", result is not null);

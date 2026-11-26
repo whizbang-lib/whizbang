@@ -14,7 +14,7 @@ namespace Whizbang.Core.Tests.Offloads;
 /// Locks the Whizbang.Core.Offloads contract surface — the abstractions
 /// the body-offload (claim-check) feature builds on. These types live in
 /// Whizbang.Core so concrete provider projects (Whizbang.Offloads.InMemory,
-/// Whizbang.Offloads.AzureBlob, etc.) can depend on them without pulling
+/// Whizbang.Storage.AzureBlob, etc.) can depend on them without pulling
 /// Whizbang.Core into provider-specific transitive dependency graphs.
 /// </para>
 /// <para>

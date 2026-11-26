@@ -196,6 +196,10 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // ScheduleWorker wakes on the ScheduleDueSignal doorbell (poll source / arm-on-mutation NOTIFY)
     // and reconciles on its backstop interval, draining due schedules through the claimer.
     services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleClaimer, PgScheduleClaimer>();
+    // #2575: the overdue gauges the worker publishes a stuck schedule on (its optional dependency, so registered here).
+    services.AddMetrics();
+    services.TryAddSingleton<Whizbang.Core.Observability.WhizbangMetrics>();
+    services.TryAddSingleton<Whizbang.Core.Temporal.TemporalMetrics>();
     // Hosted to start at Accept commands (#1636): firing a schedule publishes into the message tables.
     services.AddWhizbangWorker<Whizbang.Core.Temporal.ScheduleWorker>();
     // Temporal engine (F2): the schedule management API (create / pause / resume / cancel / trigger / update).
@@ -235,10 +239,13 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // The commit-order stamper's leadership is one of the roles while the stamper is enabled.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       IPostConfigureOptions<Whizbang.Core.Startup.RoleAssignmentOptions>, CommitOrderStamperRoleOptions>());
-    services.AddWhizbangRoleAssignmentByDefault();
-
-    // #1254: the elected partition assigner and the claimers' cached assignment, built on the role election above.
-    services.AddWhizbangPartitionAssigner();
+    // The registration records how this instance reaches the database (direct when its shared notify connection
+    // resolved a connection of its own), without changing the heartbeat's cadence.
+    services.TryAddSingletonOverNullDefault<Whizbang.Core.Workers.IInstanceConnectionModeSource>(
+      sp => sp.GetRequiredService<PgSharedNotifyConnection>());
+    // #1254, #2559: role assignment and the elected partition assigner, registered by every Postgres driver through
+    // one method so no driver can drift from another.
+    services.AddWhizbangPostgresCoordination();
 
     // #1358: multi-stream commands. Each instance claims the streams it owns, ranked from the assignment above.
     services.AddWhizbangMultiStreamCommands();

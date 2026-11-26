@@ -72,6 +72,7 @@ WHIZ033 | active | Whizbang.Generators | Perspective Model Missing StreamId
 WHIZ034 | active | Whizbang.Generators | InheritFrom Lists The Stream ID's Own Type
 WHIZ035 | active | Whizbang.Generators | IHasStreamId Is Written Instead Of A Strong-ID Stream ID
 WHIZ036 | active | Whizbang.Generators | Stream ID Is Ambiguous
+WHIZ037 | active | Whizbang.Generators | A Constructed Or Parsed Guid Flows Into An Id
 WHIZ040 | active | Whizbang.Generators | User Service Discovered
 WHIZ041 | active | Whizbang.Generators | Abstract Class Skipped
 WHIZ042 | retired | Whizbang.Generators | Declared but never reported; retired in #1427, never reused
@@ -164,6 +165,7 @@ WHIZ606 | active | Whizbang.RepoAnalyzers | A credential-named settings property
 WHIZ607 | active | Whizbang.RepoAnalyzers | A type name is read outside the shared naming code
 WHIZ608 | active | Whizbang.RepoAnalyzers | A type-naming exception does not say why
 WHIZ609 | active | Whizbang.TestAnalyzers | A fixture with an [After(Test)] hook must not also be disposable
+WHIZ610 | active | Whizbang.RepoAnalyzers | A type name is formatted for a log call before the log level is checked
 WHIZ701 | active | Whizbang.Data.EFCore.Postgres.Generators | EF Core Perspective Discovery
 WHIZ702 | active | Whizbang.Data.EFCore.Postgres.Generators | EF Core Migration Files Discovery
 WHIZ703 | active | Whizbang.Data.EFCore.Postgres.Generators | No DbContext Found
@@ -174,7 +176,7 @@ WHIZ804 | active | Whizbang.Generators | Table storage value out of range
 WHIZ805 | active | Whizbang.Generators | Split Mode No Physical Fields
 WHIZ807 | active | Whizbang.Generators | Physical Fields Discovered
 WHIZ808 | active | Whizbang.Generators | Split class model cannot be copied
-WHIZ810 | active | Whizbang.Data.EFCore.Postgres.Generators | Perspective model contains Dictionary property
+WHIZ810 | retired | Whizbang.Data.EFCore.Postgres.Generators | Perspective model contained a Dictionary property; retired in #1911 (dictionaries are stored as key/value arrays), never reused
 WHIZ811 | active | Whizbang.Data.EFCore.Postgres.Generators | Perspective model contains polymorphic type
 WHIZ812 | active | Whizbang.Data.EFCore.Postgres.Generators | Perspective model declares a JSON converter that is never consulted
 WHIZ820 | active | Whizbang.Data.EFCore.Postgres.Generators | Table name exceeds database limit

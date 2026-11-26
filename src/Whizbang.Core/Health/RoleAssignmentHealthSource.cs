@@ -82,6 +82,15 @@ public sealed class RoleAssignmentHealthSource : IWhizbangHealthSource {
         "role unassigned: " + string.Join("; ", unassigned) + " — its duty work waits until an instance holds it");
     }
 
+    var stalled = managed
+      .Where(role => byRole.TryGetValue(role, out var s) && s.State == RoleAssignmentState.Held && s.StalledWithoutSuccessor)
+      .Select(role => _describeHeld(byRole[role]) + ", stalled with no peer to take over")
+      .ToList();
+    if (stalled.Count > 0) {
+      // #2593: the holder keeps the role (no peer could take it), so the duty is not unassigned; it is stuck, and seen.
+      return new ComponentHealth(ComponentState.Degraded, "role stalled: " + string.Join("; ", stalled));
+    }
+
     var held = managed.Select(role => byRole.TryGetValue(role, out var s) && s.State == RoleAssignmentState.Held
       ? _describeHeld(s)
       : $"'{role}' idle (held only while it runs)");
@@ -97,9 +106,9 @@ public sealed class RoleAssignmentHealthSource : IWhizbangHealthSource {
   /// A standing role is unassigned unless it is held. An episodic role (the migrator) is vacant
   /// between runs by design, so only a lapsed holder, one that stopped mid-run, counts.
   /// </summary>
-  private static bool _isUnassigned(string role, Dictionary<string, RoleAssignmentSnapshot> byRole) {
+  private bool _isUnassigned(string role, Dictionary<string, RoleAssignmentSnapshot> byRole) {
     var found = byRole.TryGetValue(role, out var snapshot);
-    if (RoleAssignmentOptions.IsEpisodic(role)) {
+    if (_options.IsEpisodic(role)) {
       return found && snapshot!.State == RoleAssignmentState.Lapsed;
     }
     return !found || snapshot!.State != RoleAssignmentState.Held;

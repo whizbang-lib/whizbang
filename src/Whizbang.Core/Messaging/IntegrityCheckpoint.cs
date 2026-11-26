@@ -883,6 +883,14 @@ public sealed class StreamIntegrityOptions {
   public IntegrityPairGuardOptions PairGuard { get; set; } = new();
 
   /// <summary>
+  /// Filling the origin positions of received events stored without one (<c>Whizbang:StreamIntegrity:OriginPositionFill</c>,
+  /// #2544). On by default.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/OriginPositionFillOptionsTests.cs</tests>
+  public OriginPositionFillOptions OriginPositionFill { get; set; } = new();
+
+  /// <summary>
   /// Publish <see cref="IntegrityDivergenceDetected"/> / <see cref="IntegrityGapDetected"/> as
   /// durable events (default <c>false</c>).
   /// </summary>

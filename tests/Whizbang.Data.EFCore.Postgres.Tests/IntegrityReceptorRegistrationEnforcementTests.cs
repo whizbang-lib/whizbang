@@ -26,11 +26,14 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityCheckpointReceptorRegistrar.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityManifestReceptors.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RedeliveryRequestReceptorRegistrar.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/OriginPositionReceptors.cs</code-under-test>
 /// <docs>resilience/stream-integrity#integrity-work-runs-on-the-maintainer</docs>
 [Category("Shard5")]
 public class IntegrityReceptorRegistrationEnforcementTests {
   private static readonly Type[] _integrityMessages = [
     typeof(IntegrityCheckpoint), typeof(RequestIntegrityManifest), typeof(IntegrityManifest), typeof(RequestRedeliveryCommand),
+    // #2544: the origin-position request and its answer.
+    typeof(RequestOriginPositions), typeof(OriginPositionsAnswer),
   ];
 
   private static readonly LifecycleStage[] _stages =

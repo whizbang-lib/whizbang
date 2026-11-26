@@ -428,6 +428,11 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
     builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
 
+    // The lifecycle stage helpers wait on this observer: it signals from ReceptorInvoker.OnReceptorFiredAsync, after
+    // each receptor at a stage completes (#2581).
+    ECommerce.Integration.TestUtilities.Fixtures.LifecycleStageFiringObserverServiceCollectionExtensions
+      .AddLifecycleStageFiringObserver(builder.Services);
+
     // Configure security to allow anonymous messages for testing
     // This is required because lifecycle receptors in PerspectiveWorker need security context
     // and test events don't have TenantId/UserId in their hops
@@ -631,6 +636,11 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // Register lifecycle services for Distribute stage support
     ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
     builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
+
+    // The lifecycle stage helpers wait on this observer: it signals from ReceptorInvoker.OnReceptorFiredAsync, after
+    // each receptor at a stage completes (#2581).
+    ECommerce.Integration.TestUtilities.Fixtures.LifecycleStageFiringObserverServiceCollectionExtensions
+      .AddLifecycleStageFiringObserver(builder.Services);
 
     // Configure security to allow anonymous messages for testing
     // This is required because lifecycle receptors in PerspectiveWorker need security context

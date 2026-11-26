@@ -67,7 +67,7 @@ public class ServiceBusEmulatorSanityTests(ServiceBusEmulatorFixtureSource fixtu
     // Create a simple test message (TrueFilter accepts any message)
     var testMessageBody = $"Sanity test message at {DateTimeOffset.UtcNow:O}";
     var message = new ServiceBusMessage(testMessageBody) {
-      MessageId = Guid.NewGuid().ToString(),
+      MessageId = Whizbang.Core.ValueObjects.TrackedGuid.New().Value.ToString(),
       ContentType = "application/json"
     };
 
@@ -134,7 +134,7 @@ public class ServiceBusEmulatorSanityTests(ServiceBusEmulatorFixtureSource fixtu
     var sender = client.CreateSender(topicName);
 
     var message = new ServiceBusMessage("Inventory topic test") {
-      MessageId = Guid.NewGuid().ToString(),
+      MessageId = Whizbang.Core.ValueObjects.TrackedGuid.New().Value.ToString(),
       ContentType = "application/json"
     };
 

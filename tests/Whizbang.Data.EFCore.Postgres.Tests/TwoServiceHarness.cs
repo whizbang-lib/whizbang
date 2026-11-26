@@ -18,6 +18,7 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Data.Postgres;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -33,7 +34,7 @@ internal enum TwoServiceAudit {
 }
 
 /// <summary>An event the origin emits: its stream, type, flags, superseding key and payload (JSON).</summary>
-internal readonly record struct TwoServiceEmit(Guid Stream, string Type, int Flags, string? Key, string Payload);
+internal readonly record struct TwoServiceEmit(Guid Stream, string Type, int Flags, string? Key, string Payload, Guid? Id = null);
 
 /// <summary>One side's store.</summary>
 internal sealed record TwoServiceStore(string Name, string ConnectionString, DbContextOptions<WorkCoordinationDbContext> Options);
@@ -72,6 +73,8 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   private ServiceProvider? _consumerProvider;
   private IntegrityManifestRequestReceptor _originRequestReceptor = null!;
   private RedeliveryRequestReceptor _originRedeliveryReceptor = null!;
+  private RequestOriginPositionsReceptor _originPositionsReceptor = null!;
+  private OriginPositionsAnswerReceptor _consumerPositionsReceptor = null!;
   private IntegrityManifestReceptor _consumerManifestReceptor = null!;
   private int _processedOrigin;
   private int _processedConsumer;
@@ -98,7 +101,7 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
       string consumerConnectionString, DbContextOptions<WorkCoordinationDbContext> consumerOptions,
       Dictionary<string, EventFlags> markers, IReadOnlyList<string>? consumedEventTypes = null, TimeProvider? consumerClock = null,
       IRuleFingerprintSource? originRules = null, IRuleFingerprintSource? consumerRules = null, bool repairDrainEnabled = false,
-      StreamIntegrityMetrics? consumerMetrics = null) {
+      StreamIntegrityMetrics? consumerMetrics = null, Action<StreamIntegrityOptions>? configure = null) {
     var originDbName = (await EFCoreSchemaTemplate.CreateDatabaseAsync("origin")).Name;
     var h = new TwoServiceHarness(markers) {
       Consumer = new TwoServiceStore("consumer", consumerConnectionString, consumerOptions),
@@ -127,6 +130,7 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
       RepairDrainEnabled = repairDrainEnabled,
       RepairDrainRatePerSecond = 1000,
     };
+    configure?.Invoke(both);
     h._originProvider = h._buildProvider(h.Origin, h._originTransport, new IntegrityWireDispatcher(), ORIGIN_NAME, both, tracker: null,
       rules: originRules);
     var tracker = new IntegrityGapTracker();
@@ -140,6 +144,10 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
       h._originProvider.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
     h._consumerManifestReceptor = new IntegrityManifestReceptor(
       h._consumerProvider.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+    h._originPositionsReceptor = new RequestOriginPositionsReceptor(
+      h._originProvider.GetRequiredService<IServiceScopeFactory>(), NullLogger<RequestOriginPositionsReceptor>.Instance);
+    h._consumerPositionsReceptor = new OriginPositionsAnswerReceptor(
+      h._consumerProvider.GetRequiredService<IServiceScopeFactory>(), NullLogger<OriginPositionsAnswerReceptor>.Instance);
     return h;
   }
 
@@ -173,9 +181,11 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   // ----- writing -----
 
   /// <summary>Emits the events on the origin through the outbox emit chain, as one batch, then stamps their commit
-  /// sequences. Ids are ordered, so a later event is also the newer one by id and by the origin's sequence.</summary>
+  /// sequences. Ids are ordered, so a later event is also the newer one by id and by the origin's sequence, unless an
+  /// event names its own id (a derived one, which sorts at its cause).</summary>
   public async Task<Guid[]> EmitAsync(params TwoServiceEmit[] events) {
-    Guid[] ids = [.. Enumerable.Range(0, events.Length).Select(_ => (Guid)TrackedGuid.New()).Order()];
+    Guid[] minted = [.. Enumerable.Range(0, events.Length).Select(_ => (Guid)TrackedGuid.New()).Order()];
+    Guid[] ids = [.. events.Select((e, i) => e.Id ?? minted[i])];
     _clock = _clock.AddMinutes(1);
     await using var conn = await _openAsync(Origin);
     var instanceId = (Guid)TrackedGuid.New();
@@ -333,6 +343,17 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
   }
 
   /// <summary>
+  /// #2544: one maintenance cycle of the consumer's origin-position fill, pumped until both sides are quiet: the consumer
+  /// asks the origin for the positions of the events it holds without one, and the origin's answer fills them.
+  /// </summary>
+  public async Task<OriginPositionFillCycle> RunConsumerPositionFillAsync() {
+    await using var scope = _consumerProvider!.CreateAsyncScope();
+    var cycle = await new OriginPositionFillStep(NullLogger.Instance).FillAsync(scope.ServiceProvider, CancellationToken.None);
+    await _pumpUntilQuietAsync();
+    return cycle;
+  }
+
+  /// <summary>
   /// One pass of the consumer's paced repair drain (#2365), pumped until both sides are quiet: the deficits an audit
   /// recorded are requested of the origin, and its answers applied.
   /// </summary>
@@ -401,6 +422,8 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
         progressed = true;
         if (envelopeType?.Contains("RedeliveryComposite", StringComparison.Ordinal) == true) {
           await _applyBundleAsync(envelope);
+        } else if (envelopeType?.Contains(nameof(OriginPositionsAnswer), StringComparison.Ordinal) == true) {
+          await _consumerPositionsReceptor.HandleAsync(_payload<OriginPositionsAnswer>(envelope));
         } else if (envelopeType?.Contains("IntegrityManifest", StringComparison.Ordinal) == true) {
           var manifest = _payload<IntegrityManifest>(envelope);
           await _consumerManifestReceptor.HandleAsync(OriginPredatesRuleFingerprint ? manifest with { RuleFingerprint = null } : manifest);
@@ -413,6 +436,8 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
           await _originRequestReceptor.HandleAsync(_payload<RequestIntegrityManifest>(envelope));
         } else if (envelopeType?.Contains("RequestRedeliveryCommand", StringComparison.Ordinal) == true) {
           await _originRedeliveryReceptor.HandleAsync(_payload<RequestRedeliveryCommand>(envelope));
+        } else if (envelopeType?.Contains(nameof(RequestOriginPositions), StringComparison.Ordinal) == true) {
+          await _originPositionsReceptor.HandleAsync(_payload<RequestOriginPositions>(envelope));
         }
       }
       if (!progressed) {
@@ -527,6 +552,12 @@ internal sealed class TwoServiceHarness : IAsyncDisposable {
     services.AddSingleton(rules ?? CatalogRuleFingerprintSource.Empty);
     services.AddSingleton(sp => new IntegrityPairGuard(sp.GetRequiredService<IRuleFingerprintSource>(), Options.Create(options),
       NullLogger<IntegrityPairGuard>.Instance, sp.GetService<TimeProvider>()));
+    // #2544: the maintenance-cycle integrity work reaches each side's own database the way the driver registers it.
+    services.AddSingleton(new PostgresArchiveConnection(async ct => {
+      var connection = new NpgsqlConnection(store.ConnectionString);
+      await connection.OpenAsync(ct);
+      return connection;
+    }, "public"));
     services.AddScoped<IWorkCoordinator>(_ =>
       new EFCoreWorkCoordinator<WorkCoordinationDbContext>(new WorkCoordinationDbContext(store.Options), _json));
     services.AddSingleton<ITransport>(transport);

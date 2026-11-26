@@ -69,7 +69,9 @@ public class SagaItemModelTests {
     var itemStreamId = Guid.Parse("22222222-2222-2222-2222-222222222222");
 
     var item = new SagaItemModel {
+#pragma warning disable WHIZ037 // a readable fixed stream id; its version is not the subject
       Id = itemStreamId,
+#pragma warning restore WHIZ037
       SagaId = sagaId,
     };
 

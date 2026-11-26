@@ -32,7 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.StartupParity;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres.Generators/Templates/DbContextSchemaExtensionTemplate.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard2")]
-public class StartupParityTests {
+public partial class StartupParityTests {
   private PerTestDatabase _database;
   private readonly List<ServiceProvider> _instances = [];
 
@@ -109,11 +109,12 @@ public class StartupParityTests {
   private Task<bool> _existsAsync(string index) => _scalarAsync<bool>("SELECT to_regclass('public.' || $1) IS NOT NULL", index);
 
   /// <summary>An index Whizbang built that the driver no longer declares, recorded by one start after it appeared.</summary>
-  private async Task _retiredIndexSeenAsync(StartupDriver driver) {
+  private async Task<ServiceProvider> _retiredIndexSeenAsync(StartupDriver driver) {
     await _execAsync($"CREATE INDEX {driver.Retired} ON {driver.Table} USING gin (data)");
-    await _startAsync(driver);
+    var instance = await _startAsync(driver);
     await Assert.That(await _existsAsync(driver.Retired)).IsTrue()
       .Because("the start that first sees an object records it and drops nothing");
+    return instance;
   }
 
   private static async Task _runReconcileStepAsync(IServiceProvider instance) {
@@ -148,24 +149,191 @@ public class StartupParityTests {
       .IsEqualTo(1L).Because("the instances that start after it see it running, so its declarations count");
   }
 
+  /// <summary>
+  /// With several instances running, an object none of them declares is dropped, and what each running instance
+  /// declares is kept. "Running" is the liveness rule's call, which reads each instance's last heartbeat on the
+  /// database clock. These instances run only their initializers, so nothing beats for them: the test beats for the
+  /// earlier ones at every stage the judging start reports (its <see cref="IStartupStageReporter"/>, awaited on each
+  /// transition), Converge among them, which both drivers enter just before the reconcile. Their heartbeats are first
+  /// aged past every window, as a slow run leaves them, so a beat that lands after the reconcile fails every run rather
+  /// than only on a loaded server. It used to rely on the three starts finishing inside the liveness window: on a loaded full run they
+  /// took 2 min 42 s, and past the window the reconcile forgets the first instance's declarations as a dead one's
+  /// (reproduced by aging the heartbeats with no beat).
+  /// </summary>
   [Test]
   [Arguments("efcore")]
   [Arguments("dapper")]
   public async Task WithSeveralInstancesRunning_ARetiredObjectIsDroppedAsync(string driverName) {
     var driver = StartupDriver.For(driverName);
     var first = await _startAsync(driver);
-    await _retiredIndexSeenAsync(driver);
+    var second = await _retiredIndexSeenAsync(driver);
+    Guid[] running = [_instanceId(first), _instanceId(second)];
+    await _execAsync("UPDATE wh_service_instances SET last_heartbeat_at = now() - interval '1 hour'");
+    var peers = new RunningPeersBeatAtEachStage(_database.ConnectionString, running);
 
-    await _startAsync(driver);
+    var third = _compose(driver, configure: s => s.AddSingleton<IStartupStageReporter>(peers));
+    await _initializer(third).StartAsync(CancellationToken.None);
 
+    Guid[] everyInstance = [.. running, _instanceId(third)];
+    await Assert.That(peers.BeatAt).Contains(StartupStage.Converge)
+      .Because("they beat on entering Converge, which both drivers enter just before the reconcile reads the liveness rule");
     await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_service_instances")).IsGreaterThanOrEqualTo(3L)
       .Because("every earlier instance is still running");
-    var firstDeclared = await _scalarAsync<long>(
-      "SELECT count(*) FROM wh_managed_object_declarations WHERE instance_id = $1",
-      first.GetRequiredService<IServiceInstanceProvider>().InstanceId);
-    await Assert.That(firstDeclared).IsEqualTo(1L).Because("each running instance has reported what it declares");
+    await Assert.That(await _scalarAsync<long>(
+        "SELECT count(*) FROM wh_managed_object_declarations WHERE instance_id = ANY($1)", everyInstance))
+      .IsEqualTo(3L).Because("each running instance has reported what it declares, and none of it was forgotten as a dead one's");
     await Assert.That(await _existsAsync(driver.Retired)).IsFalse()
       .Because("no running instance declares it, so the fleet gate lets the drop through (#1253)");
+  }
+
+  private static Guid _instanceId(IServiceProvider instance) =>
+    instance.GetRequiredService<IServiceInstanceProvider>().InstanceId;
+
+  /// <summary>
+  /// Stands in for the heartbeat of instances that are running but whose heartbeat worker this test does not start:
+  /// at every stage the start it reports for enters or skips, each beats on the database clock, so they have beaten at
+  /// Converge, just before the reconcile that reads the liveness rule. The initializer awaits its reporter on every
+  /// transition, as it does the host's own.
+  /// </summary>
+  private sealed class RunningPeersBeatAtEachStage(string connectionString, Guid[] running) : IStartupStageReporter {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<StartupStage> _beats = new();
+    public IReadOnlyCollection<StartupStage> BeatAt => _beats;
+    public StartupStageSnapshot? Current { get; private set; }
+
+    public ValueTask EnterAsync(StartupStage stage, string message, CancellationToken cancellationToken = default) {
+      Current = new StartupStageSnapshot(stage, message, false, DateTimeOffset.UnixEpoch);
+      return _beatAsync(stage, cancellationToken);
+    }
+
+    public ValueTask SkipAsync(StartupStage stage, string reason, CancellationToken cancellationToken = default) {
+      Current = new StartupStageSnapshot(stage, "skipped: " + reason, true, DateTimeOffset.UnixEpoch);
+      return _beatAsync(stage, cancellationToken);
+    }
+
+    public ValueTask InstanceRegisteredAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
+    private async ValueTask _beatAsync(StartupStage stage, CancellationToken cancellationToken) {
+      await using var db = new NpgsqlConnection(connectionString);
+      await db.OpenAsync(cancellationToken);
+      await using var beat = new NpgsqlCommand(
+        "UPDATE wh_service_instances SET last_heartbeat_at = now() WHERE instance_id = ANY($1)", db);
+      beat.Parameters.AddWithValue(running);
+      await beat.ExecuteNonQueryAsync(cancellationToken);
+      _beats.Enqueue(stage);
+    }
+  }
+
+  /// <summary>
+  /// Both drivers enter Converge before the managed-object reconcile, so a host watching the stages sees the reconcile
+  /// coming, and a test can act at that transition (#2563). Checked at the moment of entry: the retired index the
+  /// reconcile drops is still there, and it is gone once the start completes.
+  /// </summary>
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  public async Task EachDriver_EntersConverge_BeforeItsReconcileAsync(string driverName) {
+    var driver = StartupDriver.For(driverName);
+    await _startAsync(driver);
+    await _retiredIndexSeenAsync(driver);
+    var converge = new ConvergeEntry(() => _existsAsync(driver.Retired));
+
+    var instance = _compose(driver, configure: s => s.AddSingleton<IStartupStageReporter>(converge));
+    await _initializer(instance).StartAsync(CancellationToken.None);
+
+    await Assert.That(converge.Entered).IsTrue().Because("the start reports Converge, on either driver");
+    await Assert.That(converge.RetiredWhenEntered).IsTrue()
+      .Because("Converge is entered before the reconcile, which is what drops the retired index");
+    await Assert.That(await _existsAsync(driver.Retired)).IsFalse().Because("the reconcile that followed dropped it");
+  }
+
+  /// <summary>
+  /// Both drivers report a migrating start the same way (#2579): the Migrate stage is entered with how many steps the pass
+  /// owes, every one of those steps says it started and succeeded as one of that many, and one summary ends the pass. The
+  /// lines come from the one shared reporter, so an operator watching either driver's start sees the pass move.
+  /// </summary>
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  [Timeout(300000)]
+  public async Task AFreshStart_EntersMigrate_AndLogsEveryStep_OnEitherDriverAsync(string driverName, CancellationToken cancellationToken) {
+    var driver = StartupDriver.For(driverName);
+    var stages = new StageLog();
+    var log = new StepLog();
+    var instance = _compose(driver, configure: s => {
+      s.AddSingleton<IStartupStageReporter>(stages);
+      s.AddLogging(b => b.AddProvider(log));
+    });
+
+    await _initializer(instance).StartAsync(cancellationToken);
+
+    var migrate = stages.Calls.Where(c => c.StartsWith("Enter Migrate: ", StringComparison.Ordinal)).ToList();
+    await Assert.That(migrate).Count().IsEqualTo(1).Because(string.Join(" | ", stages.Calls));
+    var total = int.Parse(
+      _migrateEntry().Match(migrate[0]).Groups[1].Value,
+      System.Globalization.CultureInfo.InvariantCulture);
+    await Assert.That(total).IsGreaterThan(100).Because("a fresh database owes every migration file");
+    var lines = log.Lines;
+    for (var x = 1; x <= total; x++) {
+      await Assert.That(lines).Contains(l => l.StartsWith($"Migration {x} of {total} - Started : ", StringComparison.Ordinal))
+        .Because($"step {x} says it started");
+      await Assert.That(lines).Contains(l => l.StartsWith($"Migration {x} of {total} - Succeeded : ", StringComparison.Ordinal))
+        .Because($"step {x} says it succeeded");
+    }
+    await Assert.That(lines).Contains(l => l.StartsWith($"Migration complete: {total} of {total} succeeded ({total} applied, 0 skipped) in ", StringComparison.Ordinal));
+    var migrateAt = stages.Calls.IndexOf(migrate[0]);
+    await Assert.That(stages.Calls.FindIndex(c => c.StartsWith("Enter Converge: ", StringComparison.Ordinal))).IsGreaterThan(migrateAt)
+      .Because("Migrate comes before Converge");
+  }
+
+  [System.Text.RegularExpressions.GeneratedRegex(@"^Enter Migrate: (\d+) migration steps to apply$")]
+  private static partial System.Text.RegularExpressions.Regex _migrateEntry();
+
+  /// <summary>The migration step lines a start logs, as written.</summary>
+  private sealed class StepLog : ILoggerProvider {
+    private readonly Lock _lock = new();
+    private readonly List<string> _lines = [];
+
+    public List<string> Lines { get { lock (_lock) { return [.. _lines]; } } }
+
+    public ILogger CreateLogger(string categoryName) => new Writer(this);
+
+    public void Dispose() { }
+
+    private sealed class Writer(StepLog log) : ILogger {
+      public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+      public bool IsEnabled(LogLevel logLevel) => true;
+      public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+          Func<TState, Exception?, string> formatter) {
+        var line = formatter(state, exception);
+        if (line.StartsWith("Migration ", StringComparison.Ordinal)) {
+          lock (log._lock) {
+            log._lines.Add(line);
+          }
+        }
+      }
+    }
+  }
+
+  /// <summary>Records, when Converge is entered, whether the retired index is still there.</summary>
+  private sealed class ConvergeEntry(Func<Task<bool>> retiredExists) : IStartupStageReporter {
+    public bool Entered { get; private set; }
+    public bool RetiredWhenEntered { get; private set; }
+    public StartupStageSnapshot? Current { get; private set; }
+
+    public async ValueTask EnterAsync(StartupStage stage, string message, CancellationToken cancellationToken = default) {
+      Current = new StartupStageSnapshot(stage, message, false, DateTimeOffset.UnixEpoch);
+      if (stage == StartupStage.Converge && !Entered) {
+        Entered = true;
+        RetiredWhenEntered = await retiredExists();
+      }
+    }
+
+    public ValueTask SkipAsync(StartupStage stage, string reason, CancellationToken cancellationToken = default) {
+      Current = new StartupStageSnapshot(stage, "skipped: " + reason, true, DateTimeOffset.UnixEpoch);
+      return ValueTask.CompletedTask;
+    }
+
+    public ValueTask InstanceRegisteredAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
   [Test]
@@ -467,6 +635,114 @@ public class StartupParityTests {
     await Assert.That(await _ledgerAsync()).IsEqualTo(before);
   }
 
+  // ── #2553: two verdicts, the W! migrations first ─────────────────────
+
+  private const string NEWER_APPLICATION_CHANGE = "perspective:wh_per_only_a_newer_version_has";
+
+  /// <summary>
+  /// An application schema change this build does not make, applied by a newer release, with no recorded way to reverse
+  /// it: the application's schema stands down. Written as each driver's ledger names an application change.
+  /// </summary>
+  private Task _recordNewerApplicationChangeAsync() => _execAsync($$"""
+    WITH v AS (INSERT INTO wh_schema_versions (library_version) VALUES ('999.0.0') RETURNING id)
+    INSERT INTO wh_schema_migrations (file_name, content_hash, version_id, status)
+      SELECT '{{NEWER_APPLICATION_CHANGE}}', 'its-columns', id, 1 FROM v;
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM pg_attribute
+                 WHERE attrelid = 'wh_schema_migrations'::regclass AND attname = 'owner' AND NOT attisdropped) THEN
+        UPDATE wh_schema_migrations SET owner = 'perspective' WHERE file_name = '{{NEWER_APPLICATION_CHANGE}}';
+      END IF;
+    END $$;
+    """);
+
+  /// <summary>
+  /// Work owed on both sides: the newest W! migration's ledger row is gone, so the W! migrations have it to apply, and the
+  /// driver's perspective table is gone with its ledger rows, so the application's schema pass would build it again.
+  /// </summary>
+  /// <returns>The W! migration owed.</returns>
+  private async Task<string> _oweWorkOnBothSidesAsync(StartupDriver driver) {
+    var owed = await _scalarAsync<string>("SELECT max(file_name) FROM wh_schema_migrations WHERE file_name ~ '^[0-9]'");
+    await _execAsync($"DELETE FROM wh_schema_migrations WHERE file_name = '{owed}' OR file_name LIKE 'perspective:%'; DROP TABLE {driver.Table} CASCADE");
+    return owed;
+  }
+
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  [Timeout(300000)]
+  public async Task AnApplicationStandDown_LetsTheWMigrationsRunFirst_ThenStandsDown_LeavingTheApplicationSchemaAsItIsAsync(
+      string driverName, CancellationToken cancellationToken) {
+    var driver = StartupDriver.For(driverName);
+    await _startAsync(driver);
+    var owed = await _oweWorkOnBothSidesAsync(driver);
+    await _recordNewerApplicationChangeAsync();
+    var stages = new StageLog();
+    var instance = _compose(driver, configure: s => s.AddSingleton<IStartupStageReporter>(stages));
+    var initializer = _initializer(instance);
+
+    await initializer.StartAsync(cancellationToken);
+    await initializer.StopAsync(cancellationToken);
+    await initializer.StandDownTask!;
+
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_schema_migrations WHERE file_name = $1", owed)).IsEqualTo(1L)
+      .Because("an application stand-down never blocks the W! migrations, which run first");
+    await Assert.That(await _existsAsync(driver.Table)).IsFalse()
+      .Because("the application's schema is left as it is: its pass does not run");
+    await Assert.That(instance.GetRequiredService<ISchemaReadyGate>().IsReady).IsFalse()
+      .Because("the instance serves only when both sides can");
+    await Assert.That(stages.Calls.Any(c => c.StartsWith("Enter Preflight: standing down: ", StringComparison.Ordinal)
+      && c.Contains("application schema: ", StringComparison.Ordinal)
+      && c.Contains(NEWER_APPLICATION_CHANGE + " (applied by library 999.0.0", StringComparison.Ordinal))).IsTrue()
+      .Because("the stand-down names its side and its changes: " + string.Join(" | ", stages.Calls));
+  }
+
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  [Timeout(300000)]
+  public async Task AWStandDown_RunsNothing_NotEvenTheApplicationSchema_AndNamesItsSideAsync(
+      string driverName, CancellationToken cancellationToken) {
+    var driver = StartupDriver.For(driverName);
+    await _startAsync(driver);
+    await _oweWorkOnBothSidesAsync(driver);
+    await _recordNewerVersionAsync("999.0.0");
+    var before = await _ledgerAsync();
+    var stages = new StageLog();
+    var instance = _compose(driver, configure: s => s.AddSingleton<IStartupStageReporter>(stages));
+    var initializer = _initializer(instance);
+
+    await initializer.StartAsync(cancellationToken);
+    await initializer.StopAsync(cancellationToken);
+    await initializer.StandDownTask!;
+
+    await Assert.That(await _ledgerAsync()).IsEqualTo(before).Because("W! first: when it stands down, nothing runs");
+    await Assert.That(await _existsAsync(driver.Table)).IsFalse().Because("the application's step does not run either");
+    await Assert.That(stages.Calls.Any(c => c.StartsWith("Enter Preflight: standing down: W! migrations: ", StringComparison.Ordinal)))
+      .IsTrue().Because(string.Join(" | ", stages.Calls));
+  }
+
+  [Test]
+  [Arguments("efcore")]
+  [Arguments("dapper")]
+  [Timeout(300000)]
+  public async Task TheApplicationsOwnOverride_ServesItAsItIs_WhileTheWMigrationsStillRun_AndRecordsItAsync(
+      string driverName, CancellationToken cancellationToken) {
+    var driver = StartupDriver.For(driverName);
+    await _startAsync(driver);
+    var owed = await _oweWorkOnBothSidesAsync(driver);
+    await _recordNewerApplicationChangeAsync();
+    var instance = _compose(driver, config: ("Whizbang:Startup:Application:OverrideIncompatibility", "true"));
+
+    await _initializer(instance).StartAsync(cancellationToken);
+
+    await Assert.That(instance.GetRequiredService<ISchemaReadyGate>().IsReady).IsTrue();
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_schema_migrations WHERE file_name = $1", owed)).IsEqualTo(1L)
+      .Because("an operator never has to skip the W! migrations to get past an application change");
+    await Assert.That(await _existsAsync(driver.Table)).IsFalse().Because("the application's schema is served as it is");
+    var recorded = await _overrideRecordAsync(instance) as string;
+    await Assert.That(recorded).Contains(NEWER_APPLICATION_CHANGE);
+  }
+
   // ── the incompatibility override (owner decision, #2022) ─────────────
 
   private const string OVERRIDE = "Whizbang:Startup:OverrideIncompatibility";
@@ -522,7 +798,8 @@ public class StartupParityTests {
     var lines = _overrideLines(log);
     await Assert.That(lines.Count).IsEqualTo(1).Because("logged once per start, loudly");
     await Assert.That(lines[0].Level).IsEqualTo(LogLevel.Error);
-    await Assert.That(lines[0].Id).IsEqualTo(3);
+    await Assert.That(lines[0].Id).IsEqualTo(4).Because("#2553: the side overridden is named, the W! migrations here");
+    await Assert.That(lines[0].Message).Contains("W! migrations");
     await Assert.That(lines[0].Message).Contains("StandDown");
     await Assert.That(lines[0].Message).Contains("(applied by library 999.0.0, application unknown)")
       .Because("the full reason, as the stand-down error carries it");
