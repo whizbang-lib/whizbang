@@ -246,6 +246,7 @@ public interface IPerspectiveSnapshotStore {
   /// <param name="ct">Cancellation token.</param>
   /// <docs>fundamentals/events/ephemeral-events#the-tip-snapshot</docs>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/TipSnapshotRunnerTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:CreateTipSnapshotAsync_DefaultImpl_StoresNothingAsync</tests>
   Task CreateTipSnapshotAsync(
       Guid streamId,
       string perspectiveName,
@@ -284,6 +285,7 @@ public interface IPerspectiveSnapshotStore {
   /// <param name="ct">Cancellation.</param>
   /// <docs>fundamentals/events/ephemeral-events#the-tip-snapshot</docs>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/TipSnapshotRunnerTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveSnapshotAndRewindTests.cs:DeleteTipSnapshotFromAsync_DefaultImpl_RemovesNothingAsync</tests>
   Task DeleteTipSnapshotFromAsync(Guid streamId, string perspectiveName, Guid eventId, CancellationToken ct = default) =>
     Task.CompletedTask;
 }
