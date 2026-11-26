@@ -137,7 +137,10 @@ public sealed class RoleAssignmentOptions {
     if (RoleLeases.TryGetValue(role, out var lease)) {
       return lease;
     }
-    return IsEpisodic(role) && DefaultMigratorLease > Lease ? DefaultMigratorLease : Lease;
+    // The migrator's own default, not every episodic role's: a perspective rebuild's duty keeps the default lease.
+    return string.Equals(role, StartupDuties.MIGRATOR, StringComparison.Ordinal) && DefaultMigratorLease > Lease
+      ? DefaultMigratorLease
+      : Lease;
   }
 
   /// <summary>Whether the holder loop holds <paramref name="duty"/> and the health component reports it.</summary>
@@ -146,14 +149,27 @@ public sealed class RoleAssignmentOptions {
   public bool Manages(string duty) => Roles.Contains(duty);
 
   /// <summary>
-  /// Whether <paramref name="role"/> is held only while a task runs rather than continuously: the
-  /// migrator holds its role for one migration and then releases it, so a vacancy is its normal
-  /// state, and the holder loop never holds it (a standing holder would keep every later migration
-  /// waiting on it).
+  /// Whether <paramref name="role"/> is held only while a unit of work runs rather than for a tenure, as its declaration
+  /// in <see cref="Catalog"/> says (#2594): the migrator holds its role for one migration and a perspective rebuild for
+  /// one rebuild, so a vacancy is their normal state, and the holder loop never holds such a role (a standing holder
+  /// would keep every later unit waiting on it). An undeclared role is not episodic.
   /// </summary>
   /// <param name="role">The role.</param>
-  /// <returns>True for the migrator.</returns>
-  public static bool IsEpisodic(string role) => string.Equals(role, StartupDuties.MIGRATOR, StringComparison.Ordinal);
+  /// <returns>True when the catalog declares the role, or its family, episodic.</returns>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/RoleAssignmentOptionsTests.cs:IsEpisodic_ReadsTheRoleCatalog_TheFrameworksRolesAndAHostsAsync</tests>
+  public bool IsEpisodic(string role) => Catalog.Find(role)?.Kind == RoleKind.Episodic;
+
+  /// <summary>
+  /// The declared roles (#2594): the framework's alone, until the registered <see cref="RoleCatalog"/> is applied, which
+  /// <see cref="RoleCatalogServiceCollectionExtensions.AddWhizbangRoleCatalog"/> does for every host.
+  /// </summary>
+  /// <exception cref="ArgumentNullException">Set to null.</exception>
+  public RoleCatalog Catalog {
+    get => _catalog;
+    set => _catalog = value ?? throw new ArgumentNullException(nameof(value));
+  }
+
+  private RoleCatalog _catalog = RoleCatalog.Framework;
 
   /// <summary>Throws when the options describe a configuration that cannot work.</summary>
   /// <exception cref="ArgumentOutOfRangeException">A non-positive renew interval, fewer than two

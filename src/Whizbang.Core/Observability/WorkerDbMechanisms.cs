@@ -227,3 +227,11 @@ namespace Whizbang.Core.Configuration {
     public DbMechanism DbMechanism => DbMechanism.Startup;
   }
 }
+
+namespace Whizbang.Core.Startup {
+  // #2595: reads the instance's own role and partition assignment.
+  public sealed partial class InstanceAssignmentMonitor : IDbMechanismOwner {
+    /// <inheritdoc />
+    public DbMechanism DbMechanism => DbMechanism.Role;
+  }
+}

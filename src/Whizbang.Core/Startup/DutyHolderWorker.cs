@@ -108,11 +108,11 @@ public sealed partial class DutyHolderWorker : BackgroundService {
     // First registration of a (role, key) wins, so a host can override a framework handler by
     // registering its own first.
     _handlers = [];
-    foreach (var handler in handlers.Where(h => _options.Manages(h.Role) && !RoleAssignmentOptions.IsEpisodic(h.Role))) {
+    foreach (var handler in handlers.Where(h => _options.Manages(h.Role) && !_options.IsEpisodic(h.Role))) {
       _ = _handlers.TryAdd((handler.Role, handler.WorkKey), handler);
     }
     _onAcquired = acquisitionHandlers
-      .Where(h => _options.Manages(h.Role) && !RoleAssignmentOptions.IsEpisodic(h.Role))
+      .Where(h => _options.Manages(h.Role) && !_options.IsEpisodic(h.Role))
       .ToLookup(h => h.Role, StringComparer.Ordinal);
     // A role is held when something runs under it: owed work, or work that belongs to acquiring it.
     _roles = [.. _handlers.Keys.Select(k => k.Role).Concat(_onAcquired.Select(g => g.Key))

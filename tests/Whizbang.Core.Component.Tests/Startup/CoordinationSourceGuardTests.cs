@@ -109,6 +109,9 @@ public partial class CoordinationSourceGuardTests {
   private static readonly Dictionary<string, string> _sqlLeaseAllowlist = new(StringComparer.Ordinal) {
     ["_role_lapse_reason"] = "the role's lease, and past it the one liveness rule through _role_holder_kept_live (#2140)",
     ["wh_assert_role_epoch"] = "the fence: the role's lease, and past it the one liveness rule through _role_holder_kept_live (#2140)",
+    ["wh_role_assignment_status"] = "reports a held role whose holder is past its lease, its backend's statement and its "
+      + "progress window (through _role_holder_kept_live) and is kept only because no peer can take it (#2593); it judges "
+      + "no holder live, _role_lapse_reason does",
     ["_role_lapse_is_fleet_wide"] = "bounds the window a lapse is classified in (fleet-wide or the holder's own); it judges no holder live",
     ["_role_void_reason"] = "173's phase-1 lapse helper, which no current function calls; its callers were redefined by 184",
     ["claim_work"] = "the partition assignment's lease: which partitions an instance owns, published by the assigner, whose role "

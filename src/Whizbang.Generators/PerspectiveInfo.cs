@@ -24,6 +24,7 @@ namespace Whizbang.Generators;
 /// <param name="InheritScopeOnCreate">ScopeFields flag set declared via [InheritScope(OnCreate = ...)] on the perspective model. Default 63 = ScopeFields.All: creation records ownership, with or without the attribute.</param>
 /// <param name="InheritScopeAlways">ScopeFields flag set declared via [InheritScope(Always = ...)] on the perspective model: fields that follow the latest writer. Default 0 = ScopeFields.None, so scope is set once, at creation.</param>
 /// <param name="KeepsRewindFloor">False for a perspective that applies only ephemeral events and does not opt in with <c>[KeepEphemeralRewindFloor]</c>: it takes no snapshots (#2295)</param>
+/// <param name="KeepsTipSnapshot">True for a perspective that applies both ephemeral and durable events: it keeps a tip snapshot beside its reap-boundary floor (#2463)</param>
 /// <param name="ModelCopy">For a Split class model with an <c>init</c>-only promoted field, how the runner copies it to strip and load those fields (issue #1002); null for every other model</param>
 /// <param name="InterfaceName">The fully qualified perspective interface this info was read from (discovery only), which the typed appliers call <c>Apply</c> through (#1936); null where the generator reading the info does not need it</param>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs</tests>
@@ -50,6 +51,7 @@ internal sealed record PerspectiveInfo(
     int InheritScopeAlways = 0,
     bool IsEphemeral = false,
     bool KeepsRewindFloor = true,
+    bool KeepsTipSnapshot = false,
     int TtlRowSeconds = -1,
     bool IsFullHistory = false,
     int ArchivedStreamRowPolicy = -1,

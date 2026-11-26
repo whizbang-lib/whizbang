@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Startup;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Startup;
 
@@ -25,6 +27,27 @@ public class StandbyHandshakeCoverageTests {
   private sealed class FakeFleetSource(IReadOnlyList<FleetInstanceStatus> fleet) : IStartupFleetStatusSource {
     public Task<IReadOnlyList<FleetInstanceStatus>> GetFleetAsync(CancellationToken cancellationToken) =>
       Task.FromResult(fleet);
+  }
+
+  /// <summary>A fleet that answers each poll with the next scripted fleet, and counts the polls.</summary>
+  private sealed class ScriptedFleetSource(params IReadOnlyList<FleetInstanceStatus>[] polls) : IStartupFleetStatusSource {
+    private int _polls;
+    public int Polls => _polls;
+    public Task<IReadOnlyList<FleetInstanceStatus>> GetFleetAsync(CancellationToken cancellationToken) =>
+      Task.FromResult(polls[Math.Min(Interlocked.Increment(ref _polls), polls.Length) - 1]);
+  }
+
+  /// <summary>Records the handshake's "waiting for peers" log, the one signal that a poll found a peer still blocking.</summary>
+  private sealed class WaitingLog : ILogger<StandbyHandshake> {
+    public List<int> BlockingCounts { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (eventId.Name == "LogWaitingForPeers" && state is IReadOnlyList<KeyValuePair<string, object?>> values) {
+        BlockingCounts.Add((int)values.First(v => v.Key == "Count").Value!);
+      }
+    }
   }
 
   private sealed class FakeInstanceProvider(Guid instanceId) : IServiceInstanceProvider {
@@ -110,5 +133,36 @@ public class StandbyHandshakeCoverageTests {
 
     await Assert.That(acknowledged).IsEquivalentTo([olderPeer])
       .Because("a peer live by its lock is still a peer, whatever its heartbeat's age; skipped, it could not be waited for");
+  }
+  /// <summary>What breaks: a live older peer that has not yet posted StandingBy must hold the migration. Counted as
+  /// standing by on its first poll, the migrator would run the breaking migration while that peer still serves against
+  /// the old schema; never polled again, the wait would never see the acknowledgment it is waiting for. The first poll
+  /// finds the peer still Running and waits; the next finds it standing by, and the wait returns its acknowledgment.
+  /// The poll interval is zero, so the wait is driven by the polls alone and no clock is read.</summary>
+  [Test]
+  public async Task AwaitPeersStandingByAsync_AnOlderPeerNotYetStandingBy_BlocksUntilItAcknowledgesAsync() {
+    var self = (Guid)TrackedGuid.New();
+    var olderPeer = (Guid)TrackedGuid.New();
+    IReadOnlyList<FleetInstanceStatus> stillRunning =
+      [new(olderPeer, "svc", "host", DateTimeOffset.UnixEpoch, [], LifecyclePhase: "Running", LibraryVersion: "0.5.0", IsLive: true)];
+    IReadOnlyList<FleetInstanceStatus> standingBy =
+      [new(olderPeer, "svc", "host", DateTimeOffset.UnixEpoch, [], LifecyclePhase: "StandingBy", LibraryVersion: "0.5.0", IsLive: true)];
+    var fleet = new ScriptedFleetSource(stillRunning, standingBy);
+    var log = new WaitingLog();
+    var handshake = new StandbyHandshake(
+      scopeFactory: _emptyScopeFactory(),
+      fleetSource: fleet,
+      instanceProvider: new FakeInstanceProvider(self),
+      logger: log,
+      options: new StandbyWatcherOptions { PollInterval = TimeSpan.Zero });
+
+    var acknowledged = await handshake.AwaitPeersStandingByAsync("1.0.0", CancellationToken.None);
+
+    await Assert.That(log.BlockingCounts).IsEquivalentTo([1])
+      .Because("the first poll finds the one older peer still Running, so it blocks and the handshake waits for it");
+    await Assert.That(fleet.Polls).IsEqualTo(2)
+      .Because("the wait polls again after a poll that found a peer blocking, and stops at the poll that finds none");
+    await Assert.That(acknowledged).IsEquivalentTo([olderPeer])
+      .Because("the peer's acknowledgment on the second poll is what the handshake reports");
   }
 }

@@ -28,7 +28,7 @@ public class PerspectiveSnapshotsSchemaTests {
   public async Task Table_HasCorrectColumnsAsync() {
     var columns = PerspectiveSnapshotsSchema.Table.Columns;
 
-    await Assert.That(columns).Count().IsEqualTo(10);
+    await Assert.That(columns).Count().IsEqualTo(11);
 
     var streamId = columns.First(c => c.Name == "stream_id");
     await Assert.That(streamId.DataType).IsEqualTo(WhizbangDataType.UUID);
@@ -85,6 +85,14 @@ public class PerspectiveSnapshotsSchemaTests {
     var collectivesThrough = columns.First(c => c.Name == "collectives_through_sequence");
     await Assert.That(collectivesThrough.DataType).IsEqualTo(WhizbangDataType.BIG_INT);
     await Assert.That(collectivesThrough.Nullable).IsTrue();
+
+    // #2463: whether the snapshot is the stream's tip, which a perspective mixing ephemeral and durable events keeps
+    // beside its floor and which never counts as a reap floor. Not null, false by default: every snapshot written before
+    // the column is a floor, and migration 620 adds it to existing tables without rewriting a row.
+    var isTip = columns.First(c => c.Name == "is_tip");
+    await Assert.That(isTip.DataType).IsEqualTo(WhizbangDataType.BOOLEAN);
+    await Assert.That(isTip.Nullable).IsFalse();
+    await Assert.That(isTip.DefaultValue).IsEqualTo(DefaultValue.Boolean(false));
   }
 
   [Test]

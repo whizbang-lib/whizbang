@@ -56,9 +56,31 @@ public class RoleAssignmentOptionsTests {
   }
 
   [Test]
-  public async Task IsEpisodic_OnlyForTheMigratorAsync() {
-    await Assert.That(RoleAssignmentOptions.IsEpisodic(StartupDuties.MIGRATOR)).IsTrue();
-    await Assert.That(RoleAssignmentOptions.IsEpisodic(StartupDuties.MAINTAINER)).IsFalse();
+  public async Task IsEpisodic_ReadsTheRoleCatalog_TheFrameworksRolesAndAHostsAsync() {
+    // #2594: the catalog's declaration says whether a role is held for one unit of work; nothing else decides it.
+    var options = new RoleAssignmentOptions();
+    await Assert.That(options.IsEpisodic(StartupDuties.MIGRATOR)).IsTrue();
+    await Assert.That(options.IsEpisodic(StartupDuties.MAINTAINER)).IsFalse();
+    await Assert.That(options.IsEpisodic(Whizbang.Core.Perspectives.PerspectiveRebuildDuty.For("orders"))).IsTrue()
+      .Because("the perspective-rebuild family is declared episodic: a rebuild holds its duty for one rebuild");
+    await Assert.That(options.IsEpisodic("nightly-export")).IsFalse().Because("a role nothing declared is not episodic");
+
+    options.Catalog = new RoleCatalog([new RoleDeclaration("nightly-export", RoleKind.Episodic)]);
+    await Assert.That(options.IsEpisodic("nightly-export")).IsTrue();
+    await Assert.That(() => options.Catalog = null!).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task LeaseFor_APerspectiveRebuildDuty_KeepsTheDefaultLease_ThoughItIsEpisodicAsync() {
+    // The migrator's longer default lease belongs to the migrator, not to every episodic role: a rebuild's duty is
+    // granted the default lease, as it was before the catalog said it is episodic.
+    var options = new RoleAssignmentOptions();
+    var rebuild = Whizbang.Core.Perspectives.PerspectiveRebuildDuty.For("orders");
+
+    await Assert.That(options.LeaseFor(rebuild)).IsEqualTo(options.Lease);
+    await Assert.That(options.LeaseFor(StartupDuties.MIGRATOR)).IsEqualTo(RoleAssignmentOptions.DefaultMigratorLease);
+    options.Catalog = new RoleCatalog([new RoleDeclaration("nightly-export", RoleKind.Episodic)]);
+    await Assert.That(options.LeaseFor("nightly-export")).IsEqualTo(options.Lease);
   }
 
   [Test]

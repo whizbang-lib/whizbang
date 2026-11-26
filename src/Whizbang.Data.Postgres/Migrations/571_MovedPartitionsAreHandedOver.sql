@@ -278,7 +278,7 @@ SELECT __SCHEMA__.drop_all_overloads('wh_publish_partition_assignment');
 -- <docs>fundamentals/work-coordinator/partition-assignment#handover</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionHandoverSqlTests.cs:Publish_InMapMode_AMovedPartitionWithALiveOwner_HandsOver_KeepingTheOwnerAndEpochAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionHandoverSqlTests.cs:Publish_InMapMode_TheDeadlineIsTheOneThePublishNamesAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionHandoverSqlTests.cs:Publish_InMapMode_AMovedPartitionWhoseOwnerIsNotLive_FlipsAtOnceAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionHandoverSqlTests.cs:Publish_InMapMode_AMovedPartitionWhoseOwnerIsNotLive_HandsOverWithAnImmediateDeadline_AndTheSweepFlipsItAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionHandoverSqlTests.cs:Publish_SwitchOff_MovesAPartitionAtOnce_AsBeforeAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionHandoverSqlTests.cs:Republish_GivingAPartitionBackToItsOwnerWhileHandingOver_CancelsTheHandoverAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionHandoverSqlTests.cs:Republish_NamingAnotherNextOwnerWhileHandingOver_RedirectsTheHandoverAsync</tests>

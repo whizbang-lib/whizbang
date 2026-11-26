@@ -117,6 +117,21 @@ public class MigratorDutyLeaseTests : EFCoreTestBase {
       timeProvider: time);
   }
 
+  /// <summary>A live peer that voted for the migrator just now, so a lapse has a successor (#2593).</summary>
+  private async Task _peerAsync(CancellationToken ct) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(ct);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at)
+      VALUES (@id, 'lease-svc', 'lease-peer', 12, now(), now());
+      INSERT INTO wh_role_candidates (role, instance_id, version_key, last_voted_at) VALUES (@role, @id, '{}', now());
+      """;
+    cmd.Parameters.AddWithValue("id", (Guid)TrackedGuid.New());
+    cmd.Parameters.AddWithValue("role", StartupDuties.MIGRATOR);
+    await cmd.ExecuteNonQueryAsync(ct);
+  }
+
   /// <summary>The database clock moves on by <paramref name="by"/> for the migrator's assignment.</summary>
   private async Task _ageAsync(TimeSpan by, CancellationToken ct) {
     await using var conn = new NpgsqlConnection(ConnectionString);
@@ -184,6 +199,8 @@ public class MigratorDutyLeaseTests : EFCoreTestBase {
 
     await Assert.That(_lease * 3).IsGreaterThan(_progressWindow)
       .Because("the phase outlasts the progress window too, so the one liveness rule does not keep the role either");
+    // #2593: a live peer votes for the migrator, so the stuck holder has a successor and loses the role.
+    await _peerAsync(cancellationToken);
     await Assert.That(await _holdsAsync(pod, cancellationToken)).IsFalse();
     await Assert.That(await grant.VerifyStillHeldAsync(cancellationToken)).IsFalse()
       .Because("a lapsed lease is refused renewal even though nobody took it: the defect the keepalive prevents");

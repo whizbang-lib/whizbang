@@ -55,6 +55,8 @@ public sealed class RoleAssignmentMetrics {
       description: "Owed duty work run by this instance as holder, by outcome");
     Drains = meter.CreatePassiveCounter<long>("whizbang.roles.drains",
       description: "Roles this instance released because a newer-version instance asked it to drain");
+    StalledWithoutSuccessor = meter.CreatePassiveCounter<long>("whizbang.roles.stalled_without_successor",
+      description: "Reads of the role assignments that found a holder stalled past its progress window and kept only because no peer can take its role");
   }
 
   /// <summary>Roles won at a new epoch.</summary>
@@ -77,6 +79,13 @@ public sealed class RoleAssignmentMetrics {
 
   /// <summary>Releases on a drain request.</summary>
   public PassiveCounter<long> Drains { get; }
+
+  /// <summary>
+  /// Reads that found a role's holder stalled with no peer to take over (#2593), tagged with the role. The holder keeps
+  /// the role; restarting it is the operator's call.
+  /// </summary>
+  /// <docs>operations/startup/capabilities-and-duties#a-lapse-needs-a-successor</docs>
+  public PassiveCounter<long> StalledWithoutSuccessor { get; }
 
   /// <summary>The role tag.</summary>
   /// <param name="role">The role.</param>

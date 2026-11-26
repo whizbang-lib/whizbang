@@ -21,10 +21,10 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Tests.SystemEvents;
 
 /// <summary>
-/// Where each kind of system event is stored (#1555). An audit record is a ledger entry about a
-/// domain event, so the emitter writes it on the tenant's audit ledger exactly as the outbox path
-/// does; only the global kinds (security and advisory) stay on <c>$wb-system</c>. Whatever the
-/// stream, the envelope is built one way.
+/// Where each kind of system event is stored (#1555, #2331). An audit record is stored on a stream of its
+/// own, its own id, exactly as the receiver stores a record the outbox path ships on the tenant's ledger;
+/// only the global kinds (security and advisory) stay on <c>$wb-system</c>. Whatever the stream, the
+/// envelope is built one way.
 /// </summary>
 /// <docs>fundamentals/events/system-events#stream</docs>
 /// <code-under-test>src/Whizbang.Core/SystemEvents/SystemEventEmitter.cs</code-under-test>
@@ -34,46 +34,50 @@ public class SystemEventStreamRoutingTests {
   private static readonly DateTimeOffset _fixedTime = new(2026, 10, 21, 12, 0, 0, TimeSpan.Zero);
 
   [Test]
-  public async Task EmitEventAudited_AppendsToTheTenantsAuditLedgerAsync() {
+  public async Task EmitEventAudited_AppendsOnTheRecordsOwnIdAsync() {
     var (emitter, store) = _build(new SystemEventOptions().EnableEventAudit());
 
     await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 3, _scopedEnvelope("tenant-ledger-a"));
 
     await Assert.That(store.StreamIds).Count().IsEqualTo(1);
-    await Assert.That(store.StreamIds[0]).IsEqualTo(AuditLedger.StreamFor("tenant-ledger-a"))
-      .Because("an audit record is a ledger entry; the emitter writes it where the outbox path writes it");
+    await Assert.That(store.StreamIds[0]).IsEqualTo(((MessageEnvelope<EventAudited>)store.Envelopes[0]).Payload.Id)
+      .Because("an audit record is stored on its own id, where the receiver stores a record the outbox path ships");
+    await Assert.That(store.StreamIds[0]).IsNotEqualTo(AuditLedger.StreamFor("tenant-ledger-a"));
     await Assert.That(store.StreamIds[0]).IsNotEqualTo(SystemEventStreams.StreamId);
   }
 
   [Test]
-  public async Task EmitCommandAudited_AppendsToTheTenantsAuditLedgerAsync() {
+  public async Task EmitCommandAudited_AppendsOnTheRecordsOwnIdAsync() {
     var (emitter, store) = _build(new SystemEventOptions().EnableCommandAudit());
     var context = new RoutingMessageContext();
     context.Metadata["TenantId"] = "tenant-ledger-b";
 
     await emitter.EmitCommandAuditedAsync("Command", "Response", "Receptor", context);
 
-    await Assert.That(store.StreamIds.Single()).IsEqualTo(AuditLedger.StreamFor("tenant-ledger-b"));
+    await Assert.That(store.StreamIds.Single()).IsEqualTo(((MessageEnvelope<CommandAudited>)store.Envelopes[0]).Payload.Id);
+    await Assert.That(store.StreamIds.Single()).IsNotEqualTo(AuditLedger.StreamFor("tenant-ledger-b"));
   }
 
   [Test]
-  public async Task EmitCommandAudited_WithoutATenant_AppendsToTheNoTenantLedgerAsync() {
+  public async Task EmitCommandAudited_WithoutATenant_AppendsOnTheRecordsOwnIdAsync() {
     var (emitter, store) = _build(new SystemEventOptions().EnableCommandAudit());
 
     await emitter.EmitCommandAuditedAsync("Command", "Response", "Receptor", context: null);
 
-    await Assert.That(store.StreamIds.Single()).IsEqualTo(AuditLedger.StreamFor(null))
-      .Because("a record with no tenant has one ledger of its own, never the global stream");
+    await Assert.That(store.StreamIds.Single()).IsEqualTo(((MessageEnvelope<CommandAudited>)store.Envelopes[0]).Payload.Id)
+      .Because("a record with no tenant is stored on its own id too, never the no-tenant ledger or the global stream");
+    await Assert.That(store.StreamIds.Single()).IsNotEqualTo(AuditLedger.StreamFor(null));
   }
 
   [Test]
-  public async Task EmitAsync_AnAuditRecordGivenDirectly_StillGoesToTheLedgerAsync() {
+  public async Task EmitAsync_AnAuditRecordGivenDirectly_IsStoredOnItsOwnIdAsync() {
     var (emitter, store) = _build(new SystemEventOptions().EnableAudit());
+    var record = _eventAudited("tenant-direct");
 
-    await emitter.EmitAsync(_eventAudited("tenant-direct"));
+    await emitter.EmitAsync(record);
 
-    await Assert.That(store.StreamIds.Single()).IsEqualTo(AuditLedger.StreamFor("tenant-direct"))
-      .Because("$wb-system keeps only the global kinds, whichever method carried the audit record");
+    await Assert.That(store.StreamIds.Single()).IsEqualTo(record.Id)
+      .Because("$wb-system keeps only the global kinds, and an audit record is stored on its own id whichever method carried it");
   }
 
   [Test]
@@ -106,7 +110,7 @@ public class SystemEventStreamRoutingTests {
   }
 
   [Test]
-  public async Task StreamFor_NamesTheLedgerForAuditKindsAndTheGlobalStreamForTheRestAsync() {
+  public async Task StreamFor_NamesTheRecordsOwnIdForAuditKindsAndTheGlobalStreamForTheRestAsync() {
     var commandAudited = new CommandAudited {
       Id = Guid.CreateVersion7(),
       CommandType = "C",
@@ -126,8 +130,9 @@ public class SystemEventStreamRoutingTests {
       Timestamp = _fixedTime
     };
 
-    await Assert.That(SystemEventStreams.StreamFor(_eventAudited("tenant-evt"))).IsEqualTo(AuditLedger.StreamFor("tenant-evt"));
-    await Assert.That(SystemEventStreams.StreamFor(commandAudited)).IsEqualTo(AuditLedger.StreamFor("tenant-cmd"));
+    var eventAudited = _eventAudited("tenant-evt");
+    await Assert.That(SystemEventStreams.StreamFor(eventAudited)).IsEqualTo(eventAudited.Id);
+    await Assert.That(SystemEventStreams.StreamFor(commandAudited)).IsEqualTo(commandAudited.Id);
     await Assert.That(SystemEventStreams.StreamFor(denied)).IsEqualTo(SystemEventStreams.StreamId)
       .Because("a security fact stays on the global stream even when it carries a tenant");
     await Assert.That(SystemEventStreams.StreamFor(_advisory())).IsEqualTo(SystemEventStreams.StreamId);

@@ -75,7 +75,7 @@ internal static class EphemeralDestructionSql {
       // hides bodies that go.
       "    AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version " +
       // 534 (#2456): a snapshot whose own event is still inside its grace window covers nothing, as in the reap.
-      $"    AND {EphemeralSnapshotFloorSql.SnapshotEventPastGrace(prefix)}) " +
+      $"    AND {EphemeralSnapshotFloorSql.CoversAsAFloor(prefix)}) " +
       // 403 (#2294): the perspective's purge marker covers the stream's bodies at or before its purge event, as in the reap.
       $"  AND NOT EXISTS (SELECT 1 FROM {prefix}wh_stream_purge_markers pm JOIN {prefix}wh_event_store pv " +
       "    ON pv.event_id = pm.purge_event_id AND pv.stream_id = pm.stream_id " +

@@ -41,7 +41,7 @@ public static class SnapshotStreamOrderLookup {
   /// guess skips the events in between and leaves nothing pending to repair them.
   /// </summary>
   private const string BY_VERSION_SQL = """
-    SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data, s.archived_through_version, s.collectives_through_sequence
+    SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data, s.archived_through_version, s.collectives_through_sequence, s.is_tip
     FROM wh_perspective_snapshots s
     WHERE s.stream_id = @p_stream_id
       AND s.perspective_name = @p_perspective_name
@@ -58,7 +58,7 @@ public static class SnapshotStreamOrderLookup {
   /// never had the defect.
   /// </summary>
   private const string BY_EVENT_ID_SQL = """
-    SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data, s.archived_through_version, s.collectives_through_sequence
+    SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data, s.archived_through_version, s.collectives_through_sequence, s.is_tip
     FROM wh_perspective_snapshots s
     WHERE s.stream_id = @p_stream_id
       AND s.perspective_name = @p_perspective_name
@@ -67,9 +67,20 @@ public static class SnapshotStreamOrderLookup {
     LIMIT 1
     """;
 
+  /// <summary>
+  /// The same lookups among the stream's floors alone (#2463): a tip, which a perspective applying ephemeral and durable
+  /// events keeps near its cursor, is never the floor the reap-boundary bootstrap folds from or a refused tip falls back
+  /// to.
+  /// </summary>
+  private const string FLOORS_ONLY = "AND NOT s.is_tip\n  ORDER BY";
+
+  private static readonly string _floorByVersionSql = BY_VERSION_SQL.Replace("ORDER BY", FLOORS_ONLY, StringComparison.Ordinal);
+
+  private static readonly string _floorByEventIdSql = BY_EVENT_ID_SQL.Replace("ORDER BY", FLOORS_ONLY, StringComparison.Ordinal);
+
   /// <summary>The stream's newest snapshot by the order snapshots are written in, with its marks.</summary>
   private const string LATEST_SQL = """
-    SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data, s.archived_through_version, s.collectives_through_sequence
+    SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data, s.archived_through_version, s.collectives_through_sequence, s.is_tip
     FROM wh_perspective_snapshots s
     WHERE s.stream_id = @p_stream_id
       AND s.perspective_name = @p_perspective_name
@@ -118,12 +129,36 @@ public static class SnapshotStreamOrderLookup {
   /// <docs>fundamentals/events/archive-store#rewind-past-an-archived-snapshot</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SnapshotSelectionFollowsStreamOrderTests.cs:GetSnapshotFloor_CarriesTheArchiveMark_WhenAnArchiveCoversTheSnapshotAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/DapperPerspectiveSnapshotStoreTests.cs:GetSnapshotFloor_CarriesTheArchiveMark_WhenAnArchiveCoversTheSnapshotAsync</tests>
-  public static async Task<Whizbang.Core.Perspectives.PerspectiveSnapshotFloor?> FindFloorAsync(
+  public static Task<Whizbang.Core.Perspectives.PerspectiveSnapshotFloor?> FindFloorAsync(
       NpgsqlConnection connection,
       Guid streamId,
       string perspectiveName,
       Guid beforeEventId,
-      CancellationToken ct = default) {
+      CancellationToken ct = default) =>
+    _findBeforeAsync(connection, streamId, perspectiveName, beforeEventId, floorsOnly: false, ct);
+
+  /// <summary>
+  /// The same placement as <see cref="FindFloorAsync"/> among the stream's floors alone (#2463), never a tip: the floor
+  /// the reap-boundary bootstrap folds from, and the one a rewind falls back to when it cannot restore the tip.
+  /// </summary>
+  /// <docs>fundamentals/events/ephemeral-events#the-tip-snapshot</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/TipSnapshotStoreTests.cs:TheFloorLookup_NeverReturnsATip_WhileTheRewindsLookupDoesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/DapperTipSnapshotStoreTests.cs:TheFloorLookup_NeverReturnsATip_WhileTheRewindsLookupDoesAsync</tests>
+  public static Task<Whizbang.Core.Perspectives.PerspectiveSnapshotFloor?> FindFloorSnapshotAsync(
+      NpgsqlConnection connection,
+      Guid streamId,
+      string perspectiveName,
+      Guid beforeEventId,
+      CancellationToken ct = default) =>
+    _findBeforeAsync(connection, streamId, perspectiveName, beforeEventId, floorsOnly: true, ct);
+
+  private static async Task<Whizbang.Core.Perspectives.PerspectiveSnapshotFloor?> _findBeforeAsync(
+      NpgsqlConnection connection,
+      Guid streamId,
+      string perspectiveName,
+      Guid beforeEventId,
+      bool floorsOnly,
+      CancellationToken ct) {
     ArgumentNullException.ThrowIfNull(connection);
 
     // Resolved first, because the answer decides which order can be trusted. Two statements rather than one
@@ -137,7 +172,13 @@ public static class SnapshotStreamOrderLookup {
         : Convert.ToInt32(raw, System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    await using var cmd = new NpgsqlCommand(triggerVersion.HasValue ? BY_VERSION_SQL : BY_EVENT_ID_SQL, connection);
+    var sql = (triggerVersion.HasValue, floorsOnly) switch {
+      (true, false) => BY_VERSION_SQL,
+      (true, true) => _floorByVersionSql,
+      (false, false) => BY_EVENT_ID_SQL,
+      (false, true) => _floorByEventIdSql,
+    };
+    await using var cmd = new NpgsqlCommand(sql, connection);
     cmd.Parameters.AddWithValue("p_stream_id", streamId);
     cmd.Parameters.AddWithValue("p_perspective_name", perspectiveName);
     if (triggerVersion.HasValue) {
@@ -162,6 +203,7 @@ public static class SnapshotStreamOrderLookup {
     long? collectivesThrough = await reader.IsDBNullAsync(4, ct).ConfigureAwait(false) ? null : reader.GetInt64(4);
     return new Whizbang.Core.Perspectives.PerspectiveSnapshotFloor(snapshotEventId, snapshotVersion, JsonDocument.Parse(snapshotJson), archivedThrough) {
       CollectivesThroughSequence = collectivesThrough,
+      IsTip = reader.GetBoolean(5),
     };
   }
 }

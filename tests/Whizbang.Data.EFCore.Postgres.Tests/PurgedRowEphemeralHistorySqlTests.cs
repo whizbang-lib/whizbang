@@ -220,6 +220,33 @@ public class PurgedRowEphemeralHistorySqlTests : EFCoreTestBase {
       .Because("the marker stays: it is what keeps a purged row purged");
   }
 
+  // #2463: a purged row's tip snapshot goes with its floors; nothing is left to restore a purged row from.
+  [Test]
+  public async Task Maintenance_APurgedRowsTipSnapshot_IsRemovedWithItsFloorsAsync() {
+    await using var conn = await _openAsync();
+    await _arrangeTableAsync(conn);
+    var stream = Guid.CreateVersion7();
+    await _companionsAsync(conn, stream, PERSPECTIVE);
+    await _executeAsync(conn,
+      "UPDATE wh_perspective_snapshots SET is_tip = TRUE WHERE stream_id = @s AND perspective_name = @p AND sequence_number = 2",
+      ("s", stream), ("p", PERSPECTIVE));
+    await Assert.That(await _tipCountAsync(conn, stream)).IsEqualTo(1L).Because("the control: the row has a tip");
+    await _markPurgedAsync(conn, stream, PERSPECTIVE, Guid.CreateVersion7());
+
+    await _maintainAsync(conn);
+
+    await Assert.That(await _countAsync(conn, "wh_perspective_snapshots", stream, PERSPECTIVE)).IsEqualTo(0L)
+      .Because("the tip describes the purged row as much as the floors do");
+  }
+
+  private static async Task<long> _tipCountAsync(NpgsqlConnection conn, Guid stream) {
+    await using var cmd = new NpgsqlCommand(
+      "SELECT COUNT(*) FROM wh_perspective_snapshots WHERE stream_id = @s AND perspective_name = @p AND is_tip", conn);
+    cmd.Parameters.AddWithValue("s", stream);
+    cmd.Parameters.AddWithValue("p", PERSPECTIVE);
+    return Convert.ToInt64(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+  }
+
   [Test]
   public async Task Maintenance_ALiveRowWithAStaleMarker_KeepsItsCursorAndSnapshotsAsync() {
     // The runner clears the marker only after it writes a resurrected row, so a crash between the two leaves a marker on

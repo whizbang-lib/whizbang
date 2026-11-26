@@ -152,6 +152,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // classification to register the marker the reaper reads.
     var keepsRewindFloor = !EphemeralConsumption.KeepsNoRewindFloor(classSymbol, eventTypeSymbols);
 
+    // #2463: a perspective that applies both kinds keeps a tip snapshot beside its reap-boundary floor.
+    var keepsTipSnapshot = EphemeralConsumption.KeepsTipSnapshot(eventTypeSymbols);
+
     // TtlRow perspective-row expiry (E2-4d): resolved virally like isEphemeral. If ANY applied [Ephemeral]
     // event chose TransientStorage.TtlRow, the perspective's rows expire; the TTL is the LONGEST of its
     // TtlRow events' TtlSeconds (keep the row until its longest-lived contributing data expires). -1 = the
@@ -277,6 +280,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             InheritScopeAlways: inheritScopeAlways,
             IsEphemeral: isEphemeral,
             KeepsRewindFloor: keepsRewindFloor,
+            KeepsTipSnapshot: keepsTipSnapshot,
             TtlRowSeconds: ttlRowSeconds,
             IsFullHistory: isFullHistory,
             ArchivedStreamRowPolicy: archivedStreamRowPolicy,
@@ -645,7 +649,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// The runner traits that differ from their defaults, as object-initializer lines: the model's [InheritScope] fields,
-  /// whether its streams are ephemeral and keep a rewind floor, whether it is overwrite-only, whether it decides the
+  /// whether its streams are ephemeral and keep a rewind floor and a tip snapshot, whether it is overwrite-only, whether it decides the
   /// scope an IScopeEvent sets, and whether its snapshot is taken before the write.
   /// </summary>
   private static string _buildTraits(PerspectiveInfo perspective) {
@@ -661,6 +665,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     }
     if (!perspective.KeepsRewindFloor) {
       lines.Add("KeepsRewindFloor = false,");
+    }
+    if (perspective.KeepsTipSnapshot) {
+      lines.Add("KeepsTipSnapshot = true,");
     }
     if (perspective.IsOverwriteOnly) {
       lines.Add("IsOverwriteOnly = true,");

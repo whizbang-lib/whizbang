@@ -11,7 +11,7 @@ namespace Whizbang.Core.SystemEvents;
 /// <para>
 /// System events flow through the same event infrastructure as domain events but are
 /// stored apart from them: the global kinds on the dedicated system stream
-/// (<see cref="SystemEventStreams.Name"/>), audit records on their tenant's audit ledger
+/// (<see cref="SystemEventStreams.Name"/>), each audit record on its own id
 /// (<see cref="SystemEventStreams.StreamFor"/>).
 /// </para>
 /// <para>

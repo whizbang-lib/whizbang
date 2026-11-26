@@ -37,12 +37,15 @@ public sealed record PerspectiveWriteFence(string Prefix, Func<Guid, PartitionTe
 
   /// <summary>
   /// The statement that holds every partition of a batch at its epoch in partition order (#2557, migration 581), binding
-  /// <c>@wb_hp</c> and <c>@wb_he</c>: run first in a write's transaction, so it takes its partitions in the order every
-  /// flip and every other fenced write takes them, and a flip cannot deadlock against it.
+  /// <c>@wb_hp</c> and <c>@wb_he</c>: run first in a write's transaction. It holds them FOR KEY SHARE (#2577, migration
+  /// 610), as every other writer does, so only a flip that raises the epoch conflicts with it, and such a flip skips a
+  /// held partition instead of waiting: a handover, a cancel or a redirect never waits for the write, and a write never
+  /// deadlocks with a flip whatever order its transaction takes partitions in.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionEpochKeySqlTests.cs:AHold_LetsAChangeThatKeepsTheEpochThrough_AndMakesAnEpochChangeWaitAsync</tests>
   internal string HoldAllStatement() =>
     "SELECT 1 FROM " + Prefix + "wh_partition_ownership y WHERE (y.partition_number, y.epoch) IN "
-    + "(SELECT t.p, t.e FROM unnest(@wb_hp, @wb_he) AS t(p, e)) ORDER BY y.partition_number FOR SHARE OF y";
+    + "(SELECT t.p, t.e FROM unnest(@wb_hp, @wb_he) AS t(p, e)) ORDER BY y.partition_number FOR KEY SHARE OF y";
 
   /// <summary>The call that holds a partition at an epoch, for an update's or a purge's predicate.</summary>
   /// <param name="partition">The partition expression.</param>

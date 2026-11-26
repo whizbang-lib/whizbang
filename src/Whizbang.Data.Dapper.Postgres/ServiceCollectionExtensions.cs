@@ -501,6 +501,11 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingletonOverNullDefault<Whizbang.Core.Startup.IStartupAssessor>(sp => _assessor(sp, connectionString, createInitializer));
     // #2022: the online instances' versions, from the same read, for a newer instance's announcement.
     services.TryAddSingleton<Whizbang.Core.Versioning.IOnlineVersionReader>(sp => _assessor(sp, connectionString, createInitializer));
+    // #2595: the fleet section and each instance's assignment, through the reader the EF Core driver shares. The Dapper
+    // driver had no fleet source, so its stand-by handshake and status surface saw no fleet.
+    services.TryAddSingleton(_ => new DapperPostgresStartupFleetStatusSource(connectionString));
+    services.TryAddSingleton<Whizbang.Core.Startup.IStartupFleetStatusSource>(sp => sp.GetRequiredService<DapperPostgresStartupFleetStatusSource>());
+    services.TryAddSingleton<Whizbang.Core.Startup.IInstanceAssignmentReader>(sp => sp.GetRequiredService<DapperPostgresStartupFleetStatusSource>());
     if (initializeSchema) {
       services.AddSingleton<ISchemaInitializationRunner>(sp => new DapperSchemaInitializationRunner(
         connectionString,

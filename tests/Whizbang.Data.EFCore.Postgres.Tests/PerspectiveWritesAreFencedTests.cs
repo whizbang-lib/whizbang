@@ -350,14 +350,15 @@ public class PerspectiveWritesAreFencedTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
-  // Whether a flip of the partition would have to wait: NOWAIT answers at once instead of waiting.
+  // Whether a flip of the partition would have to wait: NOWAIT answers at once instead of waiting. A flip raises the
+  // epoch, a key column since 610 (#2577), so it locks FOR UPDATE, which a write's FOR KEY SHARE hold blocks.
   private async Task<bool> _flipIsBlockedAsync(int partition) {
     await using var flipper = await _openAsync();
     await using var tx = await flipper.BeginTransactionAsync();
     try {
       await using var cmd = flipper.CreateCommand();
       cmd.Transaction = tx;
-      cmd.CommandText = $"SELECT 1 FROM wh_partition_ownership WHERE partition_number = {partition} FOR NO KEY UPDATE NOWAIT";
+      cmd.CommandText = $"SELECT 1 FROM wh_partition_ownership WHERE partition_number = {partition} FOR UPDATE NOWAIT";
       await cmd.ExecuteScalarAsync();
       return false;
     } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.LockNotAvailable) {

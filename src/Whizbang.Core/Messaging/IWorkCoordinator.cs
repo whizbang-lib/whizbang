@@ -554,14 +554,16 @@ public interface IWorkCoordinator {
 
   /// <summary>
   /// The old owner acknowledges the handovers it has finished (#2557): what it has not started there is released, and
-  /// each partition flips to its next owner at a raised epoch, fenced on the epoch named. Nothing for a store that does
-  /// not own partitions by map.
+  /// each partition flips to its next owner at a raised epoch, fenced on the epoch named. A partition a write holds at
+  /// that moment is skipped rather than waited for, so the call may flip part of what it names (#2577); the rest stays
+  /// handing over, and the caller asks again later. Nothing for a store that does not own partitions by map.
   /// </summary>
   /// <param name="instanceId">The old owner.</param>
   /// <param name="handovers">The handovers it has finished.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <returns>The partitions flipped.</returns>
+  /// <returns>The partitions flipped, which can be fewer than were named.</returns>
   /// <docs>fundamentals/work-coordinator/partition-assignment#handover</docs>
+  /// <docs>fundamentals/work-coordinator/partition-assignment#write-order</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CoordinatorNamesTheClaimedEpochTests.cs:TheCoordinator_ListsWhatThisInstanceHandsOver_AndAcknowledgesItAsync</tests>
   Task<IReadOnlyList<int>> AcknowledgeHandoverAsync(
     Guid instanceId, IReadOnlyList<PartitionHandover> handovers, CancellationToken cancellationToken = default)

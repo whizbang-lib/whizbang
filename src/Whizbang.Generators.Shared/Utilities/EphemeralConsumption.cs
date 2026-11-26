@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.CodeAnalysis;
@@ -24,11 +25,28 @@ public static class EphemeralConsumption {
   /// <summary>The opt-in that keeps a floor for a perspective that applies only ephemeral events.</summary>
   public const string KEEP_REWIND_FLOOR_ATTRIBUTE = "global::Whizbang.Core.Attributes.KeepEphemeralRewindFloorAttribute";
 
+  // One delegate, created once. A method group passed straight to Any or All compiles to a lazily filled cache whose
+  // "not yet filled" branch only the first caller in a process takes, so which call takes it depends on test order.
+  private static readonly Func<ITypeSymbol, bool> _isEphemeral = new(EphemeralResolver.IsEphemeral);
+
   /// <summary>True when the perspective keeps no rewind floor.</summary>
   /// <param name="perspective">The perspective class.</param>
   /// <param name="appliedEvents">Every event type the perspective applies.</param>
   public static bool KeepsNoRewindFloor(INamedTypeSymbol perspective, IReadOnlyCollection<ITypeSymbol> appliedEvents) =>
     appliedEvents.Count > 0
-    && appliedEvents.All(EphemeralResolver.IsEphemeral)
+    && appliedEvents.All(_isEphemeral)
     && !perspective.GetAttributes().Any(a => TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, KEEP_REWIND_FLOOR_ATTRIBUTE));
+
+  /// <summary>
+  /// True when the perspective keeps a tip snapshot beside its rewind floor (#2463): it applies at least one ephemeral
+  /// event and at least one durable one. Its floor is the reap-boundary snapshot, moved only by the reap; its tip is the
+  /// live and rewind cadence's snapshot near the cursor, which never counts as a floor. A perspective that applies only
+  /// ephemeral events keeps its one snapshot as its floor, and one that applies only durable events loses nothing to the
+  /// reaper, so neither keeps a tip.
+  /// </summary>
+  /// <param name="appliedEvents">Every event type the perspective applies.</param>
+  /// <docs>fundamentals/events/ephemeral-events#the-tip-snapshot</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/EphemeralTipSnapshotGeneratorTests.cs</tests>
+  public static bool KeepsTipSnapshot(IReadOnlyCollection<ITypeSymbol> appliedEvents) =>
+    appliedEvents.Any(_isEphemeral) && !appliedEvents.All(_isEphemeral);
 }

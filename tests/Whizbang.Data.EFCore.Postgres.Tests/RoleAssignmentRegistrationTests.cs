@@ -63,6 +63,8 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
     services.AddSingleton<IServiceInstanceProvider>(pod);
     services.AddSingleton<IStartupStep>(new Step("Rewrite", StartupDuties.MAINTAINER));
     services.AddSingleton<IStartupStep>(new Step("Everywhere", StartupCapabilities.EVERY_INSTANCE));
+    // #2594: a host's own duty is declared once; the elector refuses one nothing declared.
+    services.AddWhizbangRole("host-duty", RoleKind.Episodic);
     if (roleAssignmentFirst) {
       services.AddWhizbangRoleAssignment(o => o.CooldownAfterLapse = TimeSpan.FromSeconds(15));
     }
@@ -104,6 +106,9 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
     await Assert.That(assigner.Grant!.Epoch).IsEqualTo(1L).Because("the partition assigner is a role too (#1254)");
     var unmanaged = await elector.TryAcquireAsync("host-duty", cancellationToken);
     await Assert.That(unmanaged.Grant!.Epoch).IsEqualTo(1L).Because("#2044: every duty is a role assignment, a host's own too");
+    var undeclared = await elector.TryAcquireAsync("undeclared-duty", cancellationToken);
+    await Assert.That(undeclared.Refusal).IsEqualTo(DutyRefusal.Refused)
+      .Because("#2594: the registered elector votes from the one catalog, and nothing declared this duty");
     await unmanaged.Grant.DisposeAsync();
 
     await Assert.That(provider.GetServices<Whizbang.Core.RunControl.IReleasesHeldRoles>().Single()).IsSameReferenceAs(elector);

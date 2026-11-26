@@ -11,13 +11,13 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// A flip never deadlocks against a writer (#2557, migration 581): every flip takes its ownership rows in partition
-/// order, the order every fenced write holds them in, so of two sessions that both want two partitions, the later one
-/// waits holding nothing the earlier one needs. Each test makes the flip's natural order the wrong one (the later
-/// partition's row first in the heap, read by a sequential scan), so only the explicit order keeps it safe.
+/// A flip never deadlocks against a writer. Every flip takes its ownership rows in partition order (#2557, migration
+/// 581), and since 610 (#2577) a flip that raises the epoch never waits at all: it skips a partition a writer holds and
+/// flips the rest, and the held one is flipped when asked again. Each test makes the flip's natural order the wrong one
+/// (the later partition's row first in the heap, read by a sequential scan).
 /// </summary>
 /// <docs>fundamentals/work-coordinator/partition-assignment#handover</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/581_FlipsLockInPartitionOrder.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/610_WritersHoldTheEpochKeyAndFlipsNeverWait.sql</code-under-test>
 [Category("Shard5")]
 public class FlipLockOrderSqlTests : EFCoreTestBase {
   private const string SUPPORTS_MAP = """{"partition_ownership_level":1}""";
@@ -26,7 +26,7 @@ public class FlipLockOrderSqlTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60_000)]
-  public async Task AnAcknowledgement_AgainstAWriterHoldingTheEarlierPartition_WaitsAndFlipsBoth_NeverDeadlocksAsync(
+  public async Task AnAcknowledgement_AgainstAWriterHoldingTheEarlierPartition_FlipsTheOtherWithoutWaiting_AndTheHeldOneWhenReAskedAsync(
       CancellationToken cancellationToken) {
     await using var setup = await _openAsync();
     _ = await _mapModeAsync(setup);
@@ -49,33 +49,30 @@ public class FlipLockOrderSqlTests : EFCoreTestBase {
 
     var flipping = _acknowledgeAsync(flipper, [6, 5], [held, held]);
     await _blockedOrDoneAsync(setup, flipperPid, flipping, cancellationToken);
-    // The writer now wants the later partition, as a write naming both takes them in order.
-    var writerError = await _caughtAsync(() => _execAsync(writer, writing, $"SELECT wh_hold_partition_epoch(6, {held})"));
+    var waited = !flipping.IsCompleted;
     await writing.CommitAsync(cancellationToken);
-    var flipError = await _caughtAsync(() => flipping);
+    var first = await flipping;
+    var reasked = await _acknowledgeAsync(flipper, [5], [held]);
 
-    await Assert.That(writerError?.SqlState).IsNull().Because("the writer is never chosen as a deadlock victim");
-    await Assert.That(flipError?.SqlState).IsNull().Because("the flip waited for the writer and then flipped");
+    await Assert.That(waited).IsFalse().Because("#2577: a flip never waits while it holds a partition; it skips what a writer holds");
+    await Assert.That(first).IsEquivalentTo([6]).Because("the acknowledgement flips what is free and leaves the held partition handing over");
+    await Assert.That(reasked).IsEquivalentTo([5]).Because("asked again once the writer is done, it flips the rest");
     await Assert.That(await _scalarAsync(setup, null, "SELECT count(*) FROM wh_partition_ownership WHERE partition_number IN (5, 6) AND owner_instance_id = @b",
       ("b", _b))).IsEqualTo(2L);
   }
 
-  private static async Task _acknowledgeAsync(NpgsqlConnection conn, int[] partitions, long[] epochs) {
+  private static async Task<List<int>> _acknowledgeAsync(NpgsqlConnection conn, int[] partitions, long[] epochs) {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT wh_acknowledge_handover(@a, @p, @e)";
+    cmd.CommandText = "SELECT partition_number FROM wh_acknowledge_handover(@a, @p, @e)";
     cmd.Parameters.AddWithValue("a", _a);
     cmd.Parameters.Add(new NpgsqlParameter("p", NpgsqlDbType.Array | NpgsqlDbType.Integer) { Value = partitions });
     cmd.Parameters.Add(new NpgsqlParameter("e", NpgsqlDbType.Array | NpgsqlDbType.Bigint) { Value = epochs });
-    await cmd.ExecuteNonQueryAsync();
-  }
-
-  private static async Task<PostgresException?> _caughtAsync(Func<Task> action) {
-    try {
-      await action();
-      return null;
-    } catch (PostgresException ex) {
-      return ex;
+    var flipped = new List<int>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      flipped.Add(reader.GetInt32(0));
     }
+    return flipped;
   }
 
   // Completes once the backend waits on a lock another session holds, or once the call finished without waiting.
