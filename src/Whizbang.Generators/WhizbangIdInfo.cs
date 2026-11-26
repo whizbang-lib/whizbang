@@ -43,6 +43,7 @@ public enum DiscoverySource {
 /// <param name="SuppressDuplicateWarning">True if WHIZ024 warning should be suppressed for this ID</param>
 /// <param name="Location">Where the [WhizbangId] attribute is written; WHIZ024 is reported there. Not part of equality.</param>
 /// <param name="AcceptAnyVersion">True if the generated id takes any non-empty Guid rather than UUIDv7 only (#2071)</param>
+/// <param name="PinnedId">The id's pinned id in its lowercase hyphenated form, or null when the id is not pinned (#2604)</param>
 /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdTypeInfoTests.cs</tests>
 public sealed record WhizbangIdInfo(
   string TypeName,
@@ -50,7 +51,8 @@ public sealed record WhizbangIdInfo(
   DiscoverySource Source,
   bool SuppressDuplicateWarning = false,
   Location? Location = null,
-  bool AcceptAnyVersion = false
+  bool AcceptAnyVersion = false,
+  string? PinnedId = null
 ) {
   /// <summary>
   /// Gets the fully qualified name of the ID type (Namespace.TypeName).

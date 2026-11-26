@@ -182,4 +182,31 @@ public sealed class WhizbangIdAttribute(string? targetNamespace = null) : Attrib
   /// </code>
   /// </example>
   public bool AcceptAnyVersion { get; set; }
+
+  /// <summary>
+  /// Gets or sets the id type's pinned id: a GUID that identifies the type for good, whatever it is named (#2604).
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/WhizbangIdAttributeTests.cs:WhizbangIdAttribute_PinnedIdProperty_CanBeSetAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdDeriveFromTests.cs</tests>
+  /// <remarks>
+  /// <para>
+  /// The pinned id is the input <c>DeriveFrom(handling, purpose)</c> derives from, so renaming or moving the type keeps
+  /// every id it derives. Without one, <c>DeriveFrom</c> does not compile (WHIZ118). An id declared as a struct can take
+  /// <c>[PinnedId("...")]</c> on the struct instead; an id declared by a property or a parameter has no declaration of its
+  /// own, so it is pinned here. The pinned-type ledger records it (kind <c>strong-id</c>), and changing it is an error
+  /// (WHIZ119), because it changes every id the type derives.
+  /// </para>
+  /// <para>
+  /// Pin an id once, or the same way everywhere it is declared. Two different pinned ids for one id are an error (WHIZ123).
+  /// </para>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// public record OrderPlaced([WhizbangId(PinnedId = "3f2c8a1e-5b7d-4c9e-a1f0-6d2b8e4c7a91")] OrderId Id) : IEvent;
+  ///
+  /// // inside a receptor body: the same id on every retry of this handling
+  /// var orderId = OrderId.DeriveFrom(Handling.Current, "order");
+  /// </code>
+  /// </example>
+  public string? PinnedId { get; set; }
 }
