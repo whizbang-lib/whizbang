@@ -47,6 +47,89 @@ public class WhizbangIdEntityColumnTests {
     public TestOrderId Converted { get; set; }
   }
 
+  public sealed class Route {
+    public TestOrderId From { get; set; }
+    public TestOrderId FromHub { get; set; }
+  }
+
+  public sealed class Leg {
+    public Guid Id { get; set; }
+    public Route Route { get; set; } = new();
+  }
+
+  /// <summary>Two ids of the same shape whose names sort in a different order than their columns' old names do.</summary>
+  private sealed class EarlierLegContext(DbContextOptions<EarlierLegContext> options) : DbContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+      modelBuilder.Entity<Leg>(e => {
+        e.ToTable("legs");
+        e.ComplexProperty(x => x.Route, r => {
+          r.ComplexProperty(x => x.From);
+          r.ComplexProperty(x => x.FromHub);
+        });
+      });
+  }
+
+  private sealed class CurrentLegContext(DbContextOptions<CurrentLegContext> options) : DbContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+      modelBuilder.Entity<Leg>(e => {
+        e.ToTable("legs");
+        e.ComplexProperty(x => x.Route);
+      });
+  }
+
+  private sealed class ConventionLegContext(DbContextOptions<ConventionLegContext> options) : DbContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+      modelBuilder.Entity<Leg>(e => {
+        e.ToTable("legs");
+        e.ComplexProperty(x => x.Route);
+      });
+      WhizbangIdConvention.Apply(modelBuilder);
+    }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
+      WhizbangIdConvention.Configure(optionsBuilder);
+  }
+
+  public sealed class RequiredFromRoute {
+    public TestOrderId From { get; set; }
+    public TestOrderId? FromHub { get; set; }
+  }
+
+  public sealed class OptionalFromRoute {
+    public TestOrderId? From { get; set; }
+    public TestOrderId FromHub { get; set; }
+  }
+
+  public sealed class RequiredFromLeg {
+    public Guid Id { get; set; }
+    public RequiredFromRoute Route { get; set; } = new();
+  }
+
+  public sealed class OptionalFromLeg {
+    public Guid Id { get; set; }
+    public OptionalFromRoute Route { get; set; } = new();
+  }
+
+  /// <summary>An earlier model whose required id became optional and the other way round.</summary>
+  private sealed class EarlierRequiredFromContext(DbContextOptions<EarlierRequiredFromContext> options) : DbContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+      modelBuilder.Entity<RequiredFromLeg>(e => {
+        e.ToTable("legs");
+        e.ComplexProperty(x => x.Route, r => {
+          r.ComplexProperty(x => x.From);
+          r.ComplexProperty(x => x.FromHub);
+        });
+      });
+  }
+
+  private sealed class CurrentOptionalFromContext(DbContextOptions<CurrentOptionalFromContext> options) : DbContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+      modelBuilder.Entity<OptionalFromLeg>(e => {
+        e.ToTable("legs");
+        e.ComplexProperty(x => x.Route);
+      });
+  }
+
   /// <summary>The model as an earlier release mapped it: each id a complex type, or a converter of the model's own.</summary>
   private sealed class EarlierContext(DbContextOptions<EarlierContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) =>
@@ -214,5 +297,64 @@ public class WhizbangIdEntityColumnTests {
     await Assert.That(operations.OfType<RenameColumnOperation>().Select(r => $"{r.Name}->{r.NewName}").ToList())
       .IsEquivalentTo(["Depot_DepotId_Value->Depot_DepotId"]);
     await Assert.That(operations.OfType<DropColumnOperation>()).IsEmpty();
+  }
+
+  /// <summary>
+  /// Entity Framework pairs a dropped column with an added one by name, then by property name, then by shape alone, and an
+  /// id's old column belongs to a property named <c>Value</c>: two ids of one shape fall through to the shape match and
+  /// are paired in name order, which swaps <c>Route_From_Value</c> and <c>Route_FromHub_Value</c>. Whizbang pairs each
+  /// <c>&lt;column&gt;_Value</c> with <c>&lt;column&gt;</c> by name, so each id keeps its own value.
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task MigrationsAdd_PairsEachValueColumnWithItsOwnId_NeverSwappingTwoOfOneShapeAsync(bool whizbang) {
+    var (from, fromHub, id) = (TestOrderId.New(), TestOrderId.New(), Guid.CreateVersion7());
+    await using (var earlier = _context<EarlierLegContext>(whizbang: false)) {
+      await earlier.Database.EnsureCreatedAsync();
+      earlier.Add(new Leg { Id = id, Route = new Route { From = from, FromHub = fromHub } });
+      await earlier.SaveChangesAsync();
+    }
+
+    IReadOnlyList<MigrationOperation> operations;
+    Leg read;
+    await using (var earlier = _context<EarlierLegContext>(whizbang: false)) {
+      if (whizbang) {
+        await using var current = _context<CurrentLegContext>(whizbang: true);
+        operations = await _applyAsync(earlier, current);
+        read = await current.Set<Leg>().AsNoTracking().SingleAsync(l => l.Id == id);
+      } else {
+        await using var convention = _context<ConventionLegContext>(whizbang: false);
+        operations = await _applyAsync(earlier, convention);
+        read = await convention.Set<Leg>().AsNoTracking().SingleAsync(l => l.Id == id);
+      }
+    }
+
+    await Assert.That(operations.OfType<RenameColumnOperation>().Select(r => $"{r.Name}->{r.NewName}").Order().ToList())
+      .IsEquivalentTo(["Route_FromHub_Value->Route_FromHub", "Route_From_Value->Route_From"]);
+    await Assert.That(read.Route.From).IsEqualTo(from);
+    await Assert.That(read.Route.FromHub).IsEqualTo(fromHub);
+  }
+
+  private static async Task<IReadOnlyList<MigrationOperation>> _applyAsync(DbContext earlier, DbContext current) {
+    var operations = _migrationsAdd(earlier, current);
+    foreach (var command in current.GetService<IMigrationsSqlGenerator>().Generate(operations, current.Model)) {
+      await current.Database.ExecuteSqlRawAsync(command.CommandText);
+    }
+    return operations;
+  }
+
+  /// <summary>
+  /// Where Entity Framework's shape match paired two ids' columns that cannot be paired by name, because each id's own
+  /// pair differs in nullability, <c>migrations add</c> fails naming the columns rather than scaffold a swap.
+  /// </summary>
+  [Test]
+  public async Task MigrationsAdd_RefusesAPairingItCannotMakeByName_RatherThanSwapAsync() {
+    await using var earlier = _context<EarlierRequiredFromContext>(whizbang: false);
+    await using var current = _context<CurrentOptionalFromContext>(whizbang: true);
+
+    var refused = Assert.Throws<InvalidOperationException>(() => _migrationsAdd(earlier, current));
+
+    await Assert.That(refused.Message).Contains("Route_From_Value").And.Contains("by hand");
   }
 }

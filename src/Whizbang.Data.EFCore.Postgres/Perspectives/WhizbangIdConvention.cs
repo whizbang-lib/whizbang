@@ -5,6 +5,7 @@ using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Query;
 using Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
 
@@ -69,6 +70,20 @@ public static class WhizbangIdConvention {
     var replaced = options.FindExtension<CoreOptionsExtension>()?.ReplacedServices;
     if (replaced?.Keys.Any(k => k.Item1 == typeof(IQueryTranslationPostprocessorFactory)) != true) {
       optionsBuilder.ReplaceService<IQueryTranslationPostprocessorFactory, ContainmentPostprocessorFactory>();
+    }
+    ReplaceMigrationsModelDiffer(optionsBuilder);
+  }
+
+  /// <summary>
+  /// Gives the options Whizbang's migrations model differ, which pairs a strongly-typed id's old <c>&lt;column&gt;_Value</c>
+  /// with <c>&lt;column&gt;</c> by name (<see cref="WhizbangIdMigrationsModelDiffer"/>), unless they already replace the
+  /// differ with one of their own.
+  /// </summary>
+  /// <param name="optionsBuilder">The options builder.</param>
+  internal static void ReplaceMigrationsModelDiffer(DbContextOptionsBuilder optionsBuilder) {
+    var replaced = optionsBuilder.Options.FindExtension<CoreOptionsExtension>()?.ReplacedServices;
+    if (replaced?.Keys.Any(k => k.Item1 == typeof(IMigrationsModelDiffer)) != true) {
+      optionsBuilder.ReplaceService<IMigrationsModelDiffer, WhizbangIdMigrationsModelDiffer>();
     }
   }
 

@@ -91,6 +91,10 @@ public static class WhizbangDbContextOptionsExtensions {
     ((IRelationalDbContextOptionsBuilderInfrastructure)optionsBuilder).OptionsBuilder
       .ReplaceService<IQueryTranslationPostprocessorFactory, ContainmentPostprocessorFactory>();
 
+    // #2518: migrations add moves a strongly-typed id's column from an earlier release's <column>_Value to <column>,
+    // paired by name, never by shape alone, so two ids of one shape never swap values.
+    WhizbangIdConvention.ReplaceMigrationsModelDiffer(((IRelationalDbContextOptionsBuilderInfrastructure)optionsBuilder).OptionsBuilder);
+
     // Statement attribution: commands run inside a framework mechanism lead with its comment and are counted. Added
     // once, however often this is called, so a statement is never counted twice. The core extension is always there:
     // the ReplaceService above adds it when nothing had.
