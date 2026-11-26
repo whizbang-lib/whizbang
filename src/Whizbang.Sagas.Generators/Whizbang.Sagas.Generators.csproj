@@ -19,6 +19,9 @@
     <DevelopmentDependency>true</DevelopmentDependency>
     <!-- Merge the shared naming helper into the generator DLL, as the other generator packages do (issue #698) -->
     <ILRepackEnabled>true</ILRepackEnabled>
+    <!-- Symbols embedded, so the one merge in ILRepack.targets serves the tests, coverage and the package, and two
+         builds of one commit write the same assembly (#2484, Directory.Build.targets, WhizbangRequireEmbeddedSymbols). -->
+    <DebugType>embedded</DebugType>
   </PropertyGroup>
 
   <ItemGroup>
@@ -35,7 +38,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="$(WhizbangPackagedAnalyzer)" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <None Include="$(OutputPath)/$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
   </ItemGroup>
 
 </Project>

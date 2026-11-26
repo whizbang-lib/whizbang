@@ -28,6 +28,9 @@
 
     <!-- Enable ILRepack to merge Shared DLL into generator DLL -->
     <ILRepackEnabled>true</ILRepackEnabled>
+    <!-- Symbols embedded, so the one merge in ILRepack.targets serves the tests, coverage and the package, and two
+         builds of one commit write the same assembly (#2484, Directory.Build.targets, WhizbangRequireEmbeddedSymbols). -->
+    <DebugType>embedded</DebugType>
 
     <!-- Disable TypeForwardedTo generation for polyfills to avoid conflicts with .NET 10 test project -->
     <!-- See: https://github.com/Sergio0694/PolySharp/issues/103 -->
@@ -43,7 +46,7 @@
   <!-- Target to add the merged analyzer DLL to the package -->
   <Target Name="PackAnalyzerDll">
     <ItemGroup>
-      <TfmSpecificPackageFile Include="$(WhizbangPackagedAnalyzer)" PackagePath="analyzers/dotnet/cs/" />
+      <TfmSpecificPackageFile Include="$(TargetPath)" PackagePath="analyzers/dotnet/cs/" />
     </ItemGroup>
   </Target>
 
