@@ -1,4 +1,4 @@
-<Project Sdk="Aspire.AppHost.Sdk/13.6.5">
+<Project Sdk="Aspire.AppHost.Sdk/17.0.0">
 
   <PropertyGroup>
     <!-- No lock file: the Aspire hosting packages this project restores are platform-specific

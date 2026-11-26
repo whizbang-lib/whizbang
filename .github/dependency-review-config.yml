@@ -79,3 +79,9 @@ allow-dependencies-licenses:
   # (about 70 of them) references it in its project file; it runs only in test runs and ships in no package, so a
   # new test project only adds another reference to a dependency the repository already has.
   - pkg:nuget/Microsoft.Testing.Extensions.CodeCoverage
+  # Microsoft Software License Terms (not an SPDX license), owner-reviewed 2026-11-26 (#2475). It arrives only
+  # through Aspire's AppHost hosting packages: Aspire.Hosting.Azure.ServiceBus 17 depends on Aspire.Hosting.SqlServer
+  # for the Service Bus emulator, which brings Microsoft.Data.SqlClient and this native runtime. An AppHost
+  # orchestrates local development and test runs, which is the use the license grants. Re-check it on its next
+  # major version, and if it ever reaches a package that is not an AppHost hosting extension.
+  - pkg:nuget/Microsoft.Data.SqlClient.SNI.runtime

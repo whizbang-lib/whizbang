@@ -112,7 +112,7 @@ messagingInfra.WithQueueBinding("bff-inbox-queue", "inbox", "bff-service");
 // Add all ECommerce services with infrastructure dependencies
 // IMPORTANT: Using --no-build to prevent concurrent rebuild conflicts on shared libraries (Whizbang.Core)
 // The preLaunchTask in VSCode builds all services once before launching Aspire
-var orderService = builder.AddProject("orderservice", "../ECommerce.OrderService.API/ECommerce.OrderService.API.csproj")
+var orderService = builder.AddDotnetProject("orderservice", "../ECommerce.OrderService.API/ECommerce.OrderService.API.csproj")
     .WithArgs("--no-build")
     .WithReference(ordersDb, "db")
     .WithReference(messagingInfra)
@@ -120,28 +120,28 @@ var orderService = builder.AddProject("orderservice", "../ECommerce.OrderService
     .WaitFor(messagingInfra)
     .WithExternalHttpEndpoints();
 
-var inventoryWorker = builder.AddProject("inventoryworker", "../ECommerce.InventoryWorker/ECommerce.InventoryWorker.csproj")
+var inventoryWorker = builder.AddDotnetProject("inventoryworker", "../ECommerce.InventoryWorker/ECommerce.InventoryWorker.csproj")
     .WithArgs("--no-build")
     .WithReference(inventoryDb, "db")
     .WithReference(messagingInfra)
     .WaitFor(inventoryDb)
     .WaitFor(messagingInfra);
 
-var paymentWorker = builder.AddProject("paymentworker", "../ECommerce.PaymentWorker/ECommerce.PaymentWorker.csproj")
+var paymentWorker = builder.AddDotnetProject("paymentworker", "../ECommerce.PaymentWorker/ECommerce.PaymentWorker.csproj")
     .WithArgs("--no-build")
     .WithReference(paymentDb, "db")
     .WithReference(messagingInfra)
     .WaitFor(paymentDb)
     .WaitFor(messagingInfra);
 
-var shippingWorker = builder.AddProject("shippingworker", "../ECommerce.ShippingWorker/ECommerce.ShippingWorker.csproj")
+var shippingWorker = builder.AddDotnetProject("shippingworker", "../ECommerce.ShippingWorker/ECommerce.ShippingWorker.csproj")
     .WithArgs("--no-build")
     .WithReference(shippingDb, "db")
     .WithReference(messagingInfra)
     .WaitFor(shippingDb)
     .WaitFor(messagingInfra);
 
-var notificationWorker = builder.AddProject("notificationworker", "../ECommerce.NotificationWorker/ECommerce.NotificationWorker.csproj")
+var notificationWorker = builder.AddDotnetProject("notificationworker", "../ECommerce.NotificationWorker/ECommerce.NotificationWorker.csproj")
     .WithArgs("--no-build")
     .WithReference(notificationDb, "db")
     .WithReference(messagingInfra)
@@ -150,11 +150,11 @@ var notificationWorker = builder.AddProject("notificationworker", "../ECommerce.
 
 // Angular UI integration - Fixed port 4200 via PORT environment variable
 // Uses run-script-os in package.json to pass $PORT to ng serve
-var angularApp = builder.AddNpmApp("ui", "../ECommerce.UI", "start")
+var angularApp = builder.AddJavaScriptApp("ui", "../ECommerce.UI", "start")
     .WithHttpEndpoint(port: 4200, env: "PORT")
     .WithExternalHttpEndpoints();
 
-var bffService = builder.AddProject("bff", "../ECommerce.BFF.API/ECommerce.BFF.API.csproj")
+var bffService = builder.AddDotnetProject("bff", "../ECommerce.BFF.API/ECommerce.BFF.API.csproj")
     .WithArgs("--no-build")
     .WithReference(bffDb, "db")
     .WithReference(messagingInfra)
