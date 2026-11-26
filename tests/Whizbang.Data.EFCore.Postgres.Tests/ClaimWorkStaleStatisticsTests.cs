@@ -339,6 +339,62 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// A small queue table that churns hard (a few dozen live rows, thousands of changes a minute) reads as stale again
+  /// right after every analyze, so a refresh that analyzed whenever the table read stale analyzed it on nearly every
+  /// claim: measured on a deployed service, about 90 times a minute, with the refresh most of each claim's time. The
+  /// refresh analyzes a table at most once per interval across every claimant: a table it analyzed is left alone until
+  /// the interval has passed, however stale it reads meanwhile.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/claim-loop#the-statistics-refresh-never-waits</docs>
+  [Test]
+  [Timeout(600000)]
+  public async Task RefreshStaleQueueStatistics_OnASmallTableThatChurns_AnalyzesItAtMostOncePerIntervalAsync(
+      CancellationToken cancellationToken) {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext, cancellationToken);
+    await _analyzeAtOnePageThenFillAsync(connection, rows: 5_000);
+    var analyzedBefore = await _analyzeCountAsync(connection);
+    await using var claimantA = new NpgsqlConnection(ConnectionString);
+    await claimantA.OpenAsync(cancellationToken);
+    await using var claimantB = new NpgsqlConnection(ConnectionString);
+    await claimantB.OpenAsync(cancellationToken);
+
+    var refreshed = new List<int>();
+    var staleBeforeEach = new List<bool>();
+    for (var round = 0; round < 4; round++) {
+      // The churn: the table is emptied to a few rows and filled again between claims, as a busy queue is.
+      await _churnAsync(connection);
+      staleBeforeEach.Add(await _isStaleAsync(connection));
+      refreshed.Add(await _refreshAsync(round % 2 == 0 ? claimantA : claimantB));
+    }
+
+    await Assert.That(staleBeforeEach.All(stale => stale)).IsTrue()
+      .Because("precondition: the churn leaves the table reading as stale before every claim, as on the deployed table");
+    await Assert.That(refreshed).IsEquivalentTo([1, 0, 0, 0], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the first claim analyzes the table; the next ones, on either connection, are inside the interval");
+    await Assert.That(await _analyzeCountAsync(connection)).IsEqualTo(analyzedBefore + 1)
+      .Because("the table is analyzed once per interval across every claimant, never on every claim");
+    await Assert.That((await _backoffAsync(connection))!.Value.Reason).IsEqualTo("analyzed");
+
+    await _executeAsync(connection, "UPDATE wh_queue_statistics_backoff SET retry_after = NOW() - INTERVAL '1 second'");
+    await _churnAsync(connection);
+    await Assert.That(await _refreshAsync(claimantA)).IsEqualTo(1).Because("once the interval has passed, it is analyzed again");
+  }
+
+  /// <summary>Empties the perspective-event table to 20 rows and fills it with 2,000 more, then reports the counts.</summary>
+  private static async Task _churnAsync(NpgsqlConnection connection) {
+    await _executeAsync(connection, """
+      DELETE FROM wh_perspective_events WHERE ctid NOT IN (SELECT ctid FROM wh_perspective_events LIMIT 20);
+      INSERT INTO wh_perspective_events (stream_id, perspective_name, event_id, status, attempts, created_at, partition_number)
+      SELECT s, 'Churn.Perspective', gen_random_uuid(), 0, 0, NOW(), compute_partition(s)
+      FROM (SELECT gen_random_uuid() AS s FROM generate_series(1, 2000)) g;
+      DELETE FROM wh_perspective_events WHERE perspective_name = 'Churn.Perspective';
+      SELECT pg_stat_force_next_flush();
+      """);
+    await _executeAsync(connection, "SELECT 1");
+  }
+
+  /// <summary>
   /// 207's remedy for a stuck autovacuum (#1349) survives: when the only sessions holding a lock that conflicts with
   /// ANALYZE are autovacuum workers, the turn's holder waits for the lock, so PostgreSQL cancels the worker after
   /// deadlock_timeout, and the wait is bounded by deadlock_timeout plus one second. No test can make PostgreSQL run an
