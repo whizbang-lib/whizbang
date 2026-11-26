@@ -881,7 +881,7 @@ public static class DiagnosticDescriptors {
   /// WHIZ119: Error — the pinned-type ledger records a strong id whose pinned id no living id carries (#2604).
   /// </summary>
   /// <docs>operations/diagnostics/whiz119</docs>
-  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedTypeRenameAnalyzerTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PinnedStrongIdTests.cs</tests>
   public static readonly DiagnosticDescriptor StrongIdPinnedIdChanged = new(
       id: "WHIZ119",
       title: "A strong id's pinned id is gone from the compilation",

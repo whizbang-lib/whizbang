@@ -15,7 +15,8 @@ namespace Whizbang.Generators;
 
 /// <summary>
 /// Emits the committable pinned-type ledger (<c>.whizbang/pinned-type-ledger.json</c>) — the rename-platform lockfile.
-/// Discovers every <c>[PinnedId]</c> message/perspective type in the assembly, MERGES it with the existing committed
+/// Discovers every <c>[PinnedId]</c> message/perspective type and every pinned strong id (kind <c>strong-id</c>, #2604) in
+/// the assembly, MERGES it with the existing committed
 /// ledger (supplied via AdditionalFiles), and emits the merged JSON as a C# constant in <c>PinnedTypeLedger.g.cs</c>.
 /// An MSBuild target extracts that constant to the on-disk ledger (mirroring the message-registry extraction), so the
 /// ledger bootstraps itself on first build and grows monotonically as new pinned types appear.
@@ -25,6 +26,7 @@ namespace Whizbang.Generators;
 /// it only ADDS newly-introduced pinned ids (empty <c>formerNames</c>). This keeps every pinned type governed from birth.
 /// </remarks>
 /// <tests>tests/Whizbang.Generators.Tests/PinnedTypeLedgerGeneratorTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PinnedStrongIdTests.cs</tests>
 /// <docs>fundamentals/identity/pinned-type-ledger</docs>
 [Generator]
 public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
@@ -44,13 +46,29 @@ public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
 
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
-    // Discover every [PinnedId] message/perspective type in this assembly.
-    var pinnedTypes = context.SyntaxProvider.CreateSyntaxProvider(
+    // Discover every [PinnedId] message/perspective type, and every pinned strong id (#2604), in this assembly.
+    var declaredTypes = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => IsAttributedTypeCandidate(node),
         transform: static (ctx, ct) => _tryDiscover(ctx, ct))
       .Where(static t => t is not null)
       .Select(static (t, _) => t!)
       .Collect();
+    // A strong id declared by a property or a parameter has no declaration of its own. A property or parameter
+    // declaration in its own compilation always has its symbol.
+    var propertyIds = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => WhizbangIdGenerator.IsAttributedPropertyCandidate(node),
+        transform: static (ctx, ct) => _strongIdOf(ctx.SemanticModel.GetDeclaredSymbol(ctx.Node, ct)!, ct))
+      .Where(static t => t is not null)
+      .Select(static (t, _) => t!)
+      .Collect();
+    var parameterIds = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => WhizbangIdGenerator.IsAttributedParameterCandidate(node),
+        transform: static (ctx, ct) => _strongIdOf(ctx.SemanticModel.GetDeclaredSymbol(ctx.Node, ct)!, ct))
+      .Where(static t => t is not null)
+      .Select(static (t, _) => t!)
+      .Collect();
+    var pinnedTypes = declaredTypes.Combine(propertyIds).Combine(parameterIds)
+      .Select(static (all, _) => all.Left.Left.AddRange(all.Left.Right).AddRange(all.Right));
 
     // Read the existing committed ledger (if any) supplied via AdditionalFiles.
     var existingLedger = context.AdditionalTextsProvider
@@ -77,6 +95,9 @@ public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
     // The predicate admits only type declarations, and a type declaration in its own compilation always
     // has its symbol.
     var type = (INamedTypeSymbol)context.SemanticModel.GetDeclaredSymbol((TypeDeclarationSyntax)context.Node, ct)!;
+    if (_strongIdOf(type, ct) is { } strongId) {
+      return strongId;
+    }
     // A type declaration is a class, a struct, a record or an interface, and an interface is abstract,
     // so a concrete one is a class or a struct.
     if (type.IsAbstract) {
@@ -109,6 +130,15 @@ public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
 
     return new DiscoveredPinnedType(idValue, TypeNameUtilities.BuildClrTypeName(type), kind);
   }
+
+  /// <summary>
+  /// The pinned strong id <paramref name="symbol"/> declares (a <c>[WhizbangId]</c> struct, property or parameter), in
+  /// the CLR name of the type the generator emits, or null when it declares none or leaves it unpinned (#2604).
+  /// </summary>
+  private static DiscoveredPinnedType? _strongIdOf(ISymbol symbol, CancellationToken ct) =>
+    WhizbangIdDeclaration.Read(symbol, ct) is { PinnedId: { } pinnedId } declared
+      ? new DiscoveredPinnedType(pinnedId, declared.FullyQualifiedName, PinnedTypeLedger.STRONG_ID_KIND)
+      : null;
 
   /// <summary>Merges discovered types with the committed ledger and emits the JSON-bearing C# constant.</summary>
   private static void _emit(
