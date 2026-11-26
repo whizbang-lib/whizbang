@@ -91,7 +91,7 @@ public class GraphQLWhizbangIdFilterIndexTests {
 
       modelBuilder.UseWhizbangJsonbContainment();
       // The id is a uuid scalar, as every generated context's OnModelCreating makes it (#2518).
-      global::Whizbang.Data.EFCore.Postgres.Perspectives.WhizbangIdConvention.Apply(modelBuilder);
+      global::Whizbang.Data.EFCore.Postgres.Perspectives.WhizbangIdConvention.Apply(modelBuilder, this);
     }
   }
 

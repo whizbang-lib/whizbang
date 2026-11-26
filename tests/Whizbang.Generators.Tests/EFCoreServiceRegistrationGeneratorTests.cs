@@ -609,12 +609,12 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
-  /// The generated context gives itself the framework's query postprocessor when its options lack the Whizbang options
-  /// extension, so ExecuteUpdate on it sets a strong id in the form the fleet reads (#2518), and keeps a hook for the
-  /// consumer's own option configuration.
+  /// The generated context's OnConfiguring calls the base context's, then the consumer's hook, then gives the options what
+  /// strongly-typed ids need when they lack the Whizbang options extension (#2518): last, so it sees a provider the hook
+  /// sets. Its OnModelCreating hands the convention the context, which refuses options it could not reach.
   /// </summary>
   [Test]
-  public async Task Generator_WithDiscoveredDbContext_GeneratesOnConfiguringThatGivesItTheQueryPostprocessorAsync() {
+  public async Task Generator_WithDiscoveredDbContext_GeneratesOnConfiguringThatConfiguresAfterTheBaseAndTheHookAsync() {
     var source = $$"""
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
@@ -632,11 +632,49 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
     var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
 
     var sourceText = result.GeneratedSources.Single(s => s.HintName.Contains("TestDbContext.Generated")).SourceText.ToString();
+    var onConfiguring = sourceText.IndexOf("protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {", StringComparison.Ordinal);
+    var baseCall = sourceText.IndexOf("base.OnConfiguring(optionsBuilder);", StringComparison.Ordinal);
+    var hook = sourceText.IndexOf("OnConfiguringExtended(optionsBuilder);", StringComparison.Ordinal);
     var configure = sourceText.IndexOf("WhizbangIdConvention.Configure(optionsBuilder);", StringComparison.Ordinal);
-    await Assert.That(sourceText).Contains("protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {");
-    await Assert.That(configure).IsGreaterThan(0);
-    await Assert.That(sourceText.IndexOf("OnConfiguringExtended(optionsBuilder);", StringComparison.Ordinal)).IsGreaterThan(configure);
+    await Assert.That(onConfiguring).IsGreaterThan(0);
+    await Assert.That(baseCall).IsGreaterThan(onConfiguring);
+    await Assert.That(hook).IsGreaterThan(baseCall);
+    await Assert.That(configure).IsGreaterThan(hook);
     await Assert.That(sourceText).Contains("partial void OnConfiguringExtended(DbContextOptionsBuilder optionsBuilder);");
+    await Assert.That(sourceText).Contains("WhizbangIdConvention.Apply(modelBuilder, this);");
+  }
+
+  /// <summary>
+  /// A context that overrides OnConfiguring itself gets WHIZ704 at its override, naming the hook, and no second override
+  /// from the generator (#2518).
+  /// </summary>
+  [Test]
+  public async Task Generator_WithDbContextThatOverridesOnConfiguring_ReportsWhiz704Async() {
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    var whiz704 = result.Diagnostics.Where(d => d.Id == "WHIZ704").ToList();
+    var sourceText = result.GeneratedSources.Single(s => s.HintName.Contains("TestDbContext.Generated")).SourceText.ToString();
+    await Assert.That(whiz704).Count().IsEqualTo(1);
+    await Assert.That(whiz704[0].Severity).IsEqualTo(Microsoft.CodeAnalysis.DiagnosticSeverity.Error);
+    await Assert.That(whiz704[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("OnConfiguringExtended");
+    await Assert.That(whiz704[0].Location.SourceTree).IsNotNull().Because("it points at the consumer's override");
+    await Assert.That(sourceText).DoesNotContain("void OnConfiguring(");
   }
 
   /// <summary>

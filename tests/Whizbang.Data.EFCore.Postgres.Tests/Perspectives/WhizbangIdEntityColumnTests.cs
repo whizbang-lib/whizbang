@@ -83,7 +83,7 @@ public class WhizbangIdEntityColumnTests {
         e.ToTable("legs");
         e.ComplexProperty(x => x.Route);
       });
-      WhizbangIdConvention.Apply(modelBuilder);
+      WhizbangIdConvention.Apply(modelBuilder, this);
     }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
@@ -167,7 +167,7 @@ public class WhizbangIdEntityColumnTests {
         e.ComplexProperty(x => x.ParentId);
         e.Property(x => x.Converted).HasConversion(v => v.Value, g => new TestOrderId(g));
       });
-      WhizbangIdConvention.Apply(modelBuilder);
+      WhizbangIdConvention.Apply(modelBuilder, this);
     }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>

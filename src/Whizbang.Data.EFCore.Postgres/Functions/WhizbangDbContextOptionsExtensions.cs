@@ -57,20 +57,24 @@ public static class WhizbangDbContextOptionsExtensions {
   }
 
   /// <summary>
-  /// Adds Whizbang's custom PostgreSQL function translators to the Npgsql provider.
-  /// Call this method when configuring Npgsql options to enable optimized principal filtering.
+  /// Adds Whizbang's services to the Npgsql provider: its custom PostgreSQL function translators, the query postprocessor
+  /// that sets a strongly-typed id inside a document in the form the fleet reads, the migrations model differ that moves
+  /// an id's column by name, and the interceptors for statement attribution and the server's database name.
   /// </summary>
   /// <param name="optionsBuilder">The Npgsql DbContext options builder.</param>
   /// <returns>The same options builder for fluent chaining.</returns>
   /// <example>
+  /// The generated registration of a <c>[WhizbangDbContext]</c> calls it already. A context registered by hand calls it
+  /// where its options are built:
   /// <code>
-  /// protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-  /// {
-  ///   optionsBuilder.UseNpgsql(connectionString, npgsqlOptions =>
-  ///   {
-  ///     npgsqlOptions.UseWhizbangFunctions();
-  ///   });
-  /// }
+  /// services.AddDbContextFactory&lt;OrdersDbContext&gt;(options =&gt;
+  ///   options.UseNpgsql(dataSource, npgsql =&gt; npgsql.UseWhizbangFunctions()));
+  /// </code>
+  /// A generated context that sets its own provider does so in <c>OnConfiguringExtended</c>, which its generated
+  /// <c>OnConfiguring</c> calls (an override of its own is WHIZ704):
+  /// <code>
+  /// partial void OnConfiguringExtended(DbContextOptionsBuilder optionsBuilder) =&gt;
+  ///   optionsBuilder.UseNpgsql(connectionString, npgsql =&gt; npgsql.UseWhizbangFunctions());
   /// </code>
   /// </example>
   /// <remarks>
@@ -79,6 +83,7 @@ public static class WhizbangDbContextOptionsExtensions {
   ///   <item><see cref="JsonArrayContainsAnyTranslator"/> - Translates to PostgreSQL's ?| operator</item>
   /// </list>
   /// </remarks>
+  /// <docs>fundamentals/identity/whizbang-ids#stored-form-switch</docs>
   public static NpgsqlDbContextOptionsBuilder UseWhizbangFunctions(
       this NpgsqlDbContextOptionsBuilder optionsBuilder) {
     ArgumentNullException.ThrowIfNull(optionsBuilder);

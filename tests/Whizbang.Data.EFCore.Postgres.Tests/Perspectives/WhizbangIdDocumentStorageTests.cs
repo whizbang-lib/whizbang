@@ -111,7 +111,7 @@ public class WhizbangIdDocumentStorageTests {
   private sealed class ConventionListContext(DbContextOptions options) : ListContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       _configure(modelBuilder);
-      WhizbangIdConvention.Apply(modelBuilder);
+      WhizbangIdConvention.Apply(modelBuilder, this);
     }
   }
 
@@ -127,7 +127,39 @@ public class WhizbangIdDocumentStorageTests {
   private sealed class ConventionContext(DbContextOptions options) : ProbeContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       _configure(modelBuilder);
-      WhizbangIdConvention.Apply(modelBuilder);
+      WhizbangIdConvention.Apply(modelBuilder, this);
+    }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
+      WhizbangIdConvention.Configure(optionsBuilder);
+  }
+
+  /// <summary>A context whose provider its own <c>OnConfiguring</c> sets, before the convention's <c>Configure</c>.</summary>
+  private sealed class ProviderInOnConfiguringContext(DbContextOptions options, NpgsqlDataSource dataSource) : ProbeContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+      _configure(modelBuilder);
+      WhizbangIdConvention.Apply(modelBuilder, this);
+    }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {
+      optionsBuilder.UseNpgsql(dataSource);
+      WhizbangIdConvention.Configure(optionsBuilder);
+    }
+  }
+
+  /// <summary>A hand-written context that calls the convention on its model but never <c>Configure</c>.</summary>
+  private sealed class UnconfiguredConventionContext(DbContextOptions options) : ProbeContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+      _configure(modelBuilder);
+      WhizbangIdConvention.Apply(modelBuilder, this);
+    }
+  }
+
+  /// <summary>A context that calls both, built by a pooled factory, whose options <c>OnConfiguring</c> cannot change.</summary>
+  private sealed class PooledConventionContext(DbContextOptions<PooledConventionContext> options) : ProbeContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+      _configure(modelBuilder);
+      WhizbangIdConvention.Apply(modelBuilder, this);
     }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
@@ -672,15 +704,51 @@ public class WhizbangIdDocumentStorageTests {
   /// </summary>
   [Test]
   public async Task Whizbang_ExecuteUpdateWhileTheGateIsClosed_SetsAnIdInTheObjectFormAsync() =>
-    await _executeUpdateWhileTheGateIsClosedAsync(o => new WhizbangContext(o));
+    await _executeUpdateWhileTheGateIsClosedAsync(capture => _context(o => new WhizbangContext(o), capture));
 
   /// <summary>
-  /// The same on a context without the extension, as a generated context built from options by hand: its
+  /// The same on a hand-written context without the extension that calls the convention as a generated context does: its
   /// <c>OnConfiguring</c> gives it the query postprocessor that sets the form (#2518).
   /// </summary>
   [Test]
   public async Task Convention_ExecuteUpdateWhileTheGateIsClosed_SetsAnIdInTheObjectFormAsync() =>
-    await _executeUpdateWhileTheGateIsClosedAsync(o => new ConventionContext(o));
+    await _executeUpdateWhileTheGateIsClosedAsync(capture => _context(o => new ConventionContext(o), capture));
+
+  /// <summary>
+  /// The same on a context whose options name no provider until its own <c>OnConfiguring</c> sets one, as a generated
+  /// context's <c>OnConfiguringExtended</c> would: the convention's <c>Configure</c> runs after it, so it sees the provider
+  /// and adds the postprocessor (#2518).
+  /// </summary>
+  [Test]
+  public async Task Convention_AProviderSetBeforeConfigureInOnConfiguring_GetsThePostprocessorAsync() =>
+    await _executeUpdateWhileTheGateIsClosedAsync(capture => new ProviderInOnConfiguringContext(
+      new DbContextOptionsBuilder().AddInterceptors(capture)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning))
+        .Options,
+      _dataSource!));
+
+  /// <summary>
+  /// A context the convention could not reach (one that never calls <c>Configure</c>, or a pooled context whose options
+  /// are frozen before <c>OnConfiguring</c>) fails when its model is built, naming the fix, rather than let an
+  /// <c>ExecuteUpdate</c> write an id in a form the fleet cannot read yet (#2518).
+  /// </summary>
+  [Test]
+  public async Task Convention_OnOptionsWithoutThePostprocessor_FailsWhenTheModelIsBuiltAsync() {
+    await using var unconfigured = _context(o => new UnconfiguredConventionContext(o));
+    var pooled = new Microsoft.EntityFrameworkCore.Infrastructure.PooledDbContextFactory<PooledConventionContext>(
+      new DbContextOptionsBuilder<PooledConventionContext>().UseNpgsql(_dataSource!)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning))
+        .Options);
+
+    var neverConfigured = Assert.Throws<InvalidOperationException>(() => _ = unconfigured.Model);
+    var frozen = Assert.Throws<InvalidOperationException>(() => {
+      using var fromPool = pooled.CreateDbContext();
+      _ = fromPool.Model;
+    });
+
+    await Assert.That(neverConfigured.Message).Contains(nameof(UnconfiguredConventionContext)).And.Contains("UseWhizbangFunctions()");
+    await Assert.That(frozen.Message).Contains("pooled");
+  }
 
   /// <summary>
   /// Plain options get the query postprocessor; options that already carry one, and a pooled
@@ -701,17 +769,17 @@ public class WhizbangIdDocumentStorageTests {
     WhizbangIdConvention.Configure(withExtension);
     WhizbangIdConvention.Configure(frozenBuilder);
 
-    await Assert.That(replaced(plain.Options)).IsEqualTo(1).Because("the query postprocessor");
+    await Assert.That(replaced(plain.Options)).IsEqualTo(2).Because("the query postprocessor and the migrations model differ");
     await Assert.That(replaced(withExtension.Options)).IsEqualTo(extensionBefore);
     await Assert.That(frozenBuilder.Options).IsSameReferenceAs(frozen);
   }
 
-  private async Task _executeUpdateWhileTheGateIsClosedAsync<T>(Func<DbContextOptions, T> create) where T : ProbeContext {
+  private async Task _executeUpdateWhileTheGateIsClosedAsync<T>(Func<SqlCapture, T> create) where T : ProbeContext {
     using var form = StrongIdDocumentForms.ScopeTo(uuidString: false);
     var (order, newOrder, newParent) = (TestOrderId.New(), TestOrderId.New(), TestOrderId.New());
     var row = _row(order, TestOrderId.New(), TestOrderId.New());
     var capture = new SqlCapture();
-    await using var db = _context(create, capture);
+    await using var db = create(capture);
     db.Rows.Add(row);
     await db.SaveChangesAsync();
     await Assert.That(await _storedTextAsync(row.Id)).Contains($"\"OrderId\": {{\"Value\": \"{order.Value}\"}}");

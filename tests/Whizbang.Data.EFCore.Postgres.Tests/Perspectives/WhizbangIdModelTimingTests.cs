@@ -56,7 +56,7 @@ public class WhizbangIdModelTimingTests {
       });
   }
 
-  /// <summary>A context without the extension that calls <see cref="WhizbangIdConvention.Apply"/>.</summary>
+  /// <summary>A context without the extension that calls the convention, as a generated context does.</summary>
   private sealed class ConventionContext(DbContextOptions options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       modelBuilder.Entity<ConventionRow>(entity => {
@@ -64,8 +64,11 @@ public class WhizbangIdModelTimingTests {
         entity.HasKey(e => e.Id);
         entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
       });
-      WhizbangIdConvention.Apply(modelBuilder);
+      WhizbangIdConvention.Apply(modelBuilder, this);
     }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
+      WhizbangIdConvention.Configure(optionsBuilder);
   }
 
   [Test]
