@@ -16,10 +16,23 @@
     -->
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
   </ItemGroup>
+  <!--
+    The Microsoft.Extensions runtime line follows the target framework. A net10.0 (LTS) build floors
+    these packages at 10.0.x, so a consumer of a shipped package on net10.0 is never forced onto the
+    11.0 line; a net11.0 build takes 11.0.x, which Aspire.Hosting.AppHost and Aspire.Hosting.Testing
+    17 require on net11.0 (an older pin there fails restore with NU1605). Restore and pack evaluate
+    each target framework on its own, so each nuspec dependency group carries its own floor. Bump
+    both lines together with the microsoft-platform Dependabot group.
+  -->
+  <PropertyGroup>
+    <WhizbangMicrosoftExtensionsVersion>10.0.15</WhizbangMicrosoftExtensionsVersion>
+    <WhizbangMicrosoftExtensionsVersion Condition="'$(TargetFramework)' != '' and $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net11.0'))">11.0.0</WhizbangMicrosoftExtensionsVersion>
+  </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="17.0.0" />
     <PackageVersion Include="Aspire.Hosting.Azure.ServiceBus" Version="17.0.0" />
-    <PackageVersion Include="Aspire.Hosting.NodeJs" Version="9.5.2" />
+    <PackageVersion Include="Aspire.Hosting.Dotnet" Version="17.0.0" />
+    <PackageVersion Include="Aspire.Hosting.JavaScript" Version="17.0.0" />
     <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="17.0.0" />
     <PackageVersion Include="Aspire.Hosting.RabbitMQ" Version="17.0.0" />
     <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.21.0" />
@@ -43,7 +56,8 @@
          2.x release. Consumed via direct PackageReferences in the Whizbang.Hosting.* projects.
          The floor moved to 2.5.302 with Aspire.Hosting 13.5.4, whose StreamJsonRpc 2.25.29 asks
          for it; a later release on the same 2.x line, so the patch above still holds. The floor
-         moved again to 2.5.307 with Aspire.Hosting 13.6.3. -->
+         moved again to 2.5.307 with Aspire.Hosting 13.6.3;
+         Aspire.Hosting 17.0.0 asks for the same 2.5.307. -->
     <PackageVersion Include="MessagePack" Version="2.5.307" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.15" />
     <!-- Transitively pinned to patch GHSA-v5pm-xwqc-g5wc (CVE-2026-49451): Microsoft.AspNetCore.OpenApi 10.0.2 pulls Microsoft.OpenApi 2.0.0, which is vulnerable. 2.7.5 is the first patched 2.x release. -->
@@ -66,14 +80,14 @@
     <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.15" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.15" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Tasks" Version="10.0.15" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="$(WhizbangMicrosoftExtensionsVersion)" />
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />
-    <PackageVersion Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.15" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.15" />
-    <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="10.0.15" />
-    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.Extensions.FileSystemGlobbing" Version="$(WhizbangMicrosoftExtensionsVersion)" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="$(WhizbangMicrosoftExtensionsVersion)" />
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="$(WhizbangMicrosoftExtensionsVersion)" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="$(WhizbangMicrosoftExtensionsVersion)" />
     <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.11.0" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="$(WhizbangMicrosoftExtensionsVersion)" />
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.Testing" Version="10.11.0" />
     <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.11.0" />
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.12.0" />
