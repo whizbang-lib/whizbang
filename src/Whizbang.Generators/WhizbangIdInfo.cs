@@ -63,19 +63,21 @@ public sealed record WhizbangIdInfo(
 
   /// <summary>
   /// Value equality is used for deduplication.
-  /// Two WhizbangIdInfo instances are equal if they have the same FullyQualifiedName and AcceptAnyVersion.
+  /// Two WhizbangIdInfo instances are equal if they have the same FullyQualifiedName, AcceptAnyVersion and PinnedId.
   /// </summary>
   /// <remarks>
-  /// AcceptAnyVersion changes the generated code, so it takes part: an id whose option was toggled must not
-  /// compare equal to the cached one, or the incremental pipeline would keep the old output.
+  /// AcceptAnyVersion and PinnedId change the generated code, so they take part: an id whose option or pin changed
+  /// must not compare equal to the cached one, or the incremental pipeline would keep the old output.
   /// </remarks>
   /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdInfoEqualityTests.cs</tests>
   public bool Equals(WhizbangIdInfo? other) =>
-    other is not null && FullyQualifiedName == other.FullyQualifiedName && AcceptAnyVersion == other.AcceptAnyVersion;
+    other is not null && FullyQualifiedName == other.FullyQualifiedName && AcceptAnyVersion == other.AcceptAnyVersion &&
+    PinnedId == other.PinnedId;
 
   /// <summary>
-  /// Hash code based on FullyQualifiedName and AcceptAnyVersion.
+  /// Hash code based on FullyQualifiedName, AcceptAnyVersion and PinnedId.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdInfoEqualityTests.cs</tests>
-  public override int GetHashCode() => (FullyQualifiedName.GetHashCode() * 397) ^ AcceptAnyVersion.GetHashCode();
+  public override int GetHashCode() =>
+    (((FullyQualifiedName.GetHashCode() * 397) ^ AcceptAnyVersion.GetHashCode()) * 397) ^ (PinnedId?.GetHashCode() ?? 0);
 }

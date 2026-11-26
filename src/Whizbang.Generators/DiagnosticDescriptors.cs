@@ -862,6 +862,53 @@ public static class DiagnosticDescriptors {
       customTags: WellKnownDiagnosticTags.CompilationEnd
   );
 
+  /// <summary>
+  /// WHIZ118: Error — <c>DeriveFrom</c> is called on a strong id that has no pinned id (#2604).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz118</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StrongIdDeriveFromAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor StrongIdDeriveFromNeedsPinnedId = new(
+      id: "WHIZ118",
+      title: "DeriveFrom on a strong id with no pinned id",
+      messageFormat: "'{0}' has no pinned id, so '{0}.DeriveFrom' cannot derive an id that survives a rename. Pin it with [PinnedId(\"<guid>\")] on its declaration, or [WhizbangId(PinnedId = \"<guid>\")] where it is declared.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "A strong id derived from a handling is fixed by the id type's pinned id, never its name, so renaming or moving the type keeps the ids it derives. An id type with no pinned id has nothing to derive from; its generated DeriveFrom throws, and a call to it does not compile."
+  );
+
+  /// <summary>
+  /// WHIZ119: Error — the pinned-type ledger records a strong id whose pinned id no living id carries (#2604).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz119</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedTypeRenameAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor StrongIdPinnedIdChanged = new(
+      id: "WHIZ119",
+      title: "A strong id's pinned id is gone from the compilation",
+      messageFormat: "The pinned-type ledger records strong id {0} ('{1}') but no [WhizbangId] in this compilation carries that pinned id. Changing a strong id's pinned id changes every id it derives; restore it, or, if the id type was removed on purpose, remove its entry from .whizbang/pinned-type-ledger.json.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "A strong id's pinned id is the input every id it derives from a handling is fixed by. A changed pinned id makes a retry across the deploy derive different ids, so the ledger treats it as an error rather than the warning (WHIZ121) a message or perspective entry gets.",
+      customTags: WellKnownDiagnosticTags.CompilationEnd
+  );
+
+  /// <summary>
+  /// WHIZ123: Error — the declarations of one strong id pin it differently (#2604).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz123</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdDeriveFromTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedIdAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor WhizbangIdPinnedIdDisagrees = new(
+      id: "WHIZ123",
+      title: "A strong id is pinned two ways",
+      messageFormat: "Pinned id '{0}' for '{1}' disagrees with '{2}', which another declaration of the same id pins. Pin the id once, or the same way everywhere it is declared.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "A strong id can be declared by a struct, a property or a parameter, and pinned by [PinnedId] on the struct or [WhizbangId(PinnedId = ...)] on any declaration. One id has one pinned id: the ids it derives depend on it."
+  );
+
   // ==========================================================================
   // WHIZ160-WHIZ163: Type-name handling (issue #698)
   // Type-name strings are keys all over the framework (clr_type_name, event_type, perspective
