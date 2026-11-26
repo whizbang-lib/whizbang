@@ -23,6 +23,7 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 | Mutation Testing | `mutation.yml` | dispatch | Stryker mutation runs (see `ai-docs/mutation-testing.md`) |
 | Analyzer Sweep | `analyzer-sweep.yml` | dispatch | Runs every analyzer across the solution |
 | Build Cost Timing | `build-cost-timing.yml` | PRs and `develop` pushes that change a generator project, the repository's analyzers or the benchmark; schedule (weekly); dispatch | Advisory: times every generator and analyzer over a large generated consumer against `build-cost-thresholds.json` (#1651). Not required and not read by `Gate · CI result`; moved out of CI so it no longer runs on every event (#2068) |
+| Reproducible Build | `reproducible-build.yml` | schedule (weekly, `develop`); dispatch | Builds the commit twice, independently (two runners, two checkout paths), and fails unless every package is byte-identical (#2484). `ci.yml` runs the same check (`Build · Reproducible build`) on every release-branch push, where a failure blocks the beta, rc and stable publishes. See `docs/RELEASING.md`, "Reproducible builds" |
 | Test Shard Report | `test-shard-report.yml` | schedule (monthly), dispatch | Measures every test suite and the EFCore shards, and posts the report on the tracking issue (`ai-docs/test-sharding.md`) |
 | Cache Cleanup | `cache-cleanup-scheduled.yml` | schedule, dispatch | Prunes stale Actions caches |
 | Mirror CI images | `mirror-ci-images.yml` | dispatch, schedule (weekly), `develop` pushes and PRs that change `.github/ci-images.txt` | Copies the Docker Hub images CI pulls to `ghcr.io/whizbang-lib/ci-mirror` (`ai-docs/ci-image-mirror.md`) |
@@ -37,6 +38,7 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 | `reusable-quality-build.yml` | CI | Quality's first half, where the scanner runs (a PR, or main): SonarScanner begin and the analysis build, beside the suites; hands its analysis state to the second half |
 | `reusable-quality.yml` | CI | Quality's second half, once every suite has finished: the coverage merge and gates, SonarScanner end and the PR comment, on this run's or a covering run's coverage |
 | `reusable-pack.yml` | CI, Release Prerelease | Pack a tested build without rebuilding |
+| `reusable-reproducible-build.yml` | CI (release-branch pushes), Reproducible Build | Two independent builds of what ships at one version, compared entry by entry (`.github/scripts/Compare-PackageSets.ps1`); the differing entries are uploaded when they differ |
 | `reusable-version.yml` | CI | Resolve the version (release PR title, release branch name, or GitVersion) |
 | `reusable-mutation.yml` | Mutation Testing | One mutation run |
 | `nuget-push.yml` | every publish path | The only workflow nuget.org's trusted publishing accepts; attests, then pushes |
@@ -195,7 +197,7 @@ Windows paths; the quality gate's merge normalizes them to repository-relative p
 
 Not routed, always `ubuntu-latest`: the planning and gate jobs (small, and the gate must not depend on a
 machine), `Build · Generator and analyzer timing` (`build-cost-timing.yml`; its thresholds were measured on GitHub-hosted runners),
-`Build · Verify rebuild matches the tested build`, `Build · Pack` and every publish, release, signing and
+`Build · Verify rebuild matches the tested build`, `Build · Reproducible build` (its two builds are the independent rebuild a consumer can repeat), `Build · Pack` and every publish, release, signing and
 attestation job (what reaches nuget.org is built and attested on GitHub-hosted runners), and the report
 and notification jobs.
 

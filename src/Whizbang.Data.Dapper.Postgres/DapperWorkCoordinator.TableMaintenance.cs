@@ -264,10 +264,4 @@ public partial class DapperWorkCoordinator {
     var prefix = await _prefixAsync(__scope.Connection, cancellationToken);
     return await work(__scope.Connection, prefix).ConfigureAwait(false);
   }
-
-  [LoggerMessage(Level = LogLevel.Warning, Message = "Table {Table} was not rewritten: {Reason}")]
-  static partial void LogTableNotRewritten(ILogger logger, string table, string reason);
-
-  [LoggerMessage(Level = LogLevel.Warning, Message = "Index {Index} was not {Action}: {Reason}")]
-  static partial void LogQueueIndexNotTouched(ILogger logger, string index, string action, string reason);
 }

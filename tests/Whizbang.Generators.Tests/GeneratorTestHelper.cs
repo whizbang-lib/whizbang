@@ -32,85 +32,7 @@ public static class GeneratorTestHelper {
     // Parse the source code
     var syntaxTree = CSharpSyntaxTree.ParseText(source);
 
-    // Get references to assemblies we need
-    var references = new List<MetadataReference>();
-
-    // Add reference to System.Runtime and other basic assemblies
-    var assemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
-    references.Add(SharedMetadataReferences.FromFile(typeof(object).Assembly.Location));
-    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
-    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
-    // ImmutableList<T> and friends: without it a source naming one compiles to an error type, and a test about how
-    // an immutable collection is judged passes without the type ever being resolved (#2112).
-    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Collections.Immutable.dll")));
-    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
-    // IQueryable lives in these two, not in System.Linq. Without them a source using it still parses,
-    // so a generator test over a queryable-returning surface finds no symbol and reports nothing
-    // generated, which reads exactly like a generator that declined to emit.
-    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Linq.Expressions.dll")));
-    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Linq.Queryable.dll")));
-    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")));
-
-    // Add reference to System.Text.Json (for [JsonPolymorphic], [JsonDerivedType], etc.)
-    references.Add(SharedMetadataReferences.FromFile(typeof(System.Text.Json.JsonSerializer).Assembly.Location));
-
-    // Add reference to Whizbang.Core (for ICommand, IEvent, etc.)
-    // Load by name since it's referenced by this test project
-    try {
-      var coreAssembly = System.Reflection.Assembly.Load("Whizbang.Core");
-      references.Add(SharedMetadataReferences.FromFile(coreAssembly.Location));
-    } catch {
-      // If assembly can't be loaded, try to find it in current directory
-      var coreAssemblyPath = Path.Combine(
-          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
-          "Whizbang.Core.dll"
-      );
-      if (File.Exists(coreAssemblyPath)) {
-        references.Add(SharedMetadataReferences.FromFile(coreAssemblyPath));
-      }
-    }
-
-    // Add reference to Whizbang.Transports.HotChocolate (for GraphQLLensAttribute)
-    try {
-      var hotChocolateAssembly = System.Reflection.Assembly.Load("Whizbang.Transports.HotChocolate");
-      references.Add(SharedMetadataReferences.FromFile(hotChocolateAssembly.Location));
-    } catch {
-      var hotChocolateAssemblyPath = Path.Combine(
-          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
-          "Whizbang.Transports.HotChocolate.dll"
-      );
-      if (File.Exists(hotChocolateAssemblyPath)) {
-        references.Add(SharedMetadataReferences.FromFile(hotChocolateAssemblyPath));
-      }
-    }
-
-    // Add reference to Whizbang.Transports.FastEndpoints (for RestLensAttribute)
-    try {
-      var fastEndpointsAssembly = System.Reflection.Assembly.Load("Whizbang.Transports.FastEndpoints");
-      references.Add(SharedMetadataReferences.FromFile(fastEndpointsAssembly.Location));
-    } catch {
-      var fastEndpointsAssemblyPath = Path.Combine(
-          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
-          "Whizbang.Transports.FastEndpoints.dll"
-      );
-      if (File.Exists(fastEndpointsAssemblyPath)) {
-        references.Add(SharedMetadataReferences.FromFile(fastEndpointsAssemblyPath));
-      }
-    }
-
-    // Add reference to Whizbang.Transports.Mutations (for CommandEndpointAttribute)
-    try {
-      var mutationsAssembly = System.Reflection.Assembly.Load("Whizbang.Transports.Mutations");
-      references.Add(SharedMetadataReferences.FromFile(mutationsAssembly.Location));
-    } catch {
-      var mutationsAssemblyPath = Path.Combine(
-          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
-          "Whizbang.Transports.Mutations.dll"
-      );
-      if (File.Exists(mutationsAssemblyPath)) {
-        references.Add(SharedMetadataReferences.FromFile(mutationsAssemblyPath));
-      }
-    }
+    var references = _defaultReferences();
 
     // Create compilation
     var compilation = CSharpCompilation.Create(
@@ -135,6 +57,26 @@ public static class GeneratorTestHelper {
 
     // Get the results
     return driver.GetRunResult();
+  }
+
+  /// <summary>
+  /// Runs a source generator over one source file at <paramref name="filePath"/>, compiled with the build's path map
+  /// (<c>-pathmap</c>, which ContinuousIntegrationBuild sets so the repository root reads <c>/_/</c>). Two builds of
+  /// one commit from different directories must produce the same output (#2484).
+  /// </summary>
+  [RequiresAssemblyFiles()]
+  public static GeneratorDriverRunResult RunGenerator<TGenerator>(
+      string source, string filePath, IEnumerable<KeyValuePair<string, string>> pathMap)
+      where TGenerator : IIncrementalGenerator, new() {
+    var syntaxTree = CSharpSyntaxTree.ParseText(source, path: filePath);
+    var resolver = new SourceFileResolver([], baseDirectory: null, [.. pathMap]);
+    var compilation = CSharpCompilation.Create(
+        assemblyName: "TestAssembly",
+        syntaxTrees: [syntaxTree],
+        references: _defaultReferences(),
+        options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary).WithSourceReferenceResolver(resolver));
+    var driver = CSharpGeneratorDriver.Create([new TGenerator().AsSourceGenerator()], additionalTexts: null, parseOptions: null, optionsProvider: null);
+    return driver.RunGenerators(compilation).GetRunResult();
   }
 
   /// <summary>
@@ -627,5 +569,92 @@ public static class GeneratorTestHelper {
     public override bool TryGetValue(string key, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? value) {
       return _options.TryGetValue(key, out value!);
     }
+  }
+
+  /// <summary>
+  /// The references every default generator run compiles against: the runtime, System.Text.Json and the Whizbang
+  /// assemblies the generators look for.
+  /// </summary>
+  [RequiresAssemblyFiles()]
+  private static List<MetadataReference> _defaultReferences() {
+    var references = new List<MetadataReference>();
+
+    // Add reference to System.Runtime and other basic assemblies
+    var assemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+    references.Add(SharedMetadataReferences.FromFile(typeof(object).Assembly.Location));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
+    // ImmutableList<T> and friends: without it a source naming one compiles to an error type, and a test about how
+    // an immutable collection is judged passes without the type ever being resolved (#2112).
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Collections.Immutable.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
+    // IQueryable lives in these two, not in System.Linq. Without them a source using it still parses,
+    // so a generator test over a queryable-returning surface finds no symbol and reports nothing
+    // generated, which reads exactly like a generator that declined to emit.
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Linq.Expressions.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.Linq.Queryable.dll")));
+    references.Add(SharedMetadataReferences.FromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")));
+
+    // Add reference to System.Text.Json (for [JsonPolymorphic], [JsonDerivedType], etc.)
+    references.Add(SharedMetadataReferences.FromFile(typeof(System.Text.Json.JsonSerializer).Assembly.Location));
+
+    // Add reference to Whizbang.Core (for ICommand, IEvent, etc.)
+    // Load by name since it's referenced by this test project
+    try {
+      var coreAssembly = System.Reflection.Assembly.Load("Whizbang.Core");
+      references.Add(SharedMetadataReferences.FromFile(coreAssembly.Location));
+    } catch {
+      // If assembly can't be loaded, try to find it in current directory
+      var coreAssemblyPath = Path.Combine(
+          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
+          "Whizbang.Core.dll"
+      );
+      if (File.Exists(coreAssemblyPath)) {
+        references.Add(SharedMetadataReferences.FromFile(coreAssemblyPath));
+      }
+    }
+
+    // Add reference to Whizbang.Transports.HotChocolate (for GraphQLLensAttribute)
+    try {
+      var hotChocolateAssembly = System.Reflection.Assembly.Load("Whizbang.Transports.HotChocolate");
+      references.Add(SharedMetadataReferences.FromFile(hotChocolateAssembly.Location));
+    } catch {
+      var hotChocolateAssemblyPath = Path.Combine(
+          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
+          "Whizbang.Transports.HotChocolate.dll"
+      );
+      if (File.Exists(hotChocolateAssemblyPath)) {
+        references.Add(SharedMetadataReferences.FromFile(hotChocolateAssemblyPath));
+      }
+    }
+
+    // Add reference to Whizbang.Transports.FastEndpoints (for RestLensAttribute)
+    try {
+      var fastEndpointsAssembly = System.Reflection.Assembly.Load("Whizbang.Transports.FastEndpoints");
+      references.Add(SharedMetadataReferences.FromFile(fastEndpointsAssembly.Location));
+    } catch {
+      var fastEndpointsAssemblyPath = Path.Combine(
+          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
+          "Whizbang.Transports.FastEndpoints.dll"
+      );
+      if (File.Exists(fastEndpointsAssemblyPath)) {
+        references.Add(SharedMetadataReferences.FromFile(fastEndpointsAssemblyPath));
+      }
+    }
+
+    // Add reference to Whizbang.Transports.Mutations (for CommandEndpointAttribute)
+    try {
+      var mutationsAssembly = System.Reflection.Assembly.Load("Whizbang.Transports.Mutations");
+      references.Add(SharedMetadataReferences.FromFile(mutationsAssembly.Location));
+    } catch {
+      var mutationsAssemblyPath = Path.Combine(
+          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
+          "Whizbang.Transports.Mutations.dll"
+      );
+      if (File.Exists(mutationsAssemblyPath)) {
+        references.Add(SharedMetadataReferences.FromFile(mutationsAssemblyPath));
+      }
+    }
+    return references;
   }
 }

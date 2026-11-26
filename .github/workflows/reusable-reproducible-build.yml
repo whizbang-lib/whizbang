@@ -1,0 +1,135 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
+name: Reproducible build (Reusable)
+
+# Builds one commit twice, independently, and fails unless every package is byte-identical (#2484). This is
+# the OpenSSF build_repeatable / build_reproducible evidence (#1442): anyone with the commit and the SDK in
+# global.json gets the same bits as the published packages.
+#
+# The two builds run on separate runners, from checkouts at different paths, so a machine path, a file
+# timestamp or anything else that varies between machines shows up as a difference. Each builds only the
+# projects that ship (.github/scripts/New-PackableSolutionFilter.ps1), with the release build's frameworks,
+# at the version passed in, then packs. .github/scripts/Compare-PackageSets.ps1 compares them entry by entry
+# and names every differing entry; both sides of each one are uploaded for a byte-level look.
+#
+# Callers: ci.yml on a release-branch push (a failure here fails the run, and a beta, rc or stable publishes
+# only from a green release-branch run), and reproducible-build.yml on a weekly schedule and on demand. It is
+# not run on pull requests or develop pushes: it is two more full builds of everything that ships.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: The package version both builds stamp
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build ${{ matrix.leg }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [first, second]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # SourceLink and the version tooling read the repository, so it is a full clone like the CI build's.
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
+        with:
+          dotnet-version: '10.0.x'
+
+      # The second build runs from a worktree at another, deeper path, so a source path that leaks into an
+      # assembly, a PDB or a package differs between the two.
+      - name: Choose the build directory
+        id: dir
+        env:
+          LEG: ${{ matrix.leg }}
+        run: |
+          set -euo pipefail
+          if [ "$LEG" = first ]; then
+            echo "path=$GITHUB_WORKSPACE" >> "$GITHUB_OUTPUT"
+          else
+            DIR="$RUNNER_TEMP/second-build/somewhere/else/whizbang"
+            mkdir -p "$(dirname "$DIR")"
+            git worktree add --detach "$DIR" HEAD
+            echo "path=$DIR" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and pack what ships
+        working-directory: ${{ steps.dir.outputs.path }}
+        env:
+          VERSION: ${{ inputs.version }}
+          OUT: ${{ runner.temp }}/packages
+        run: |
+          set -euo pipefail
+          pwsh -NoProfile -File .github/scripts/New-PackableSolutionFilter.ps1 -OutputPath "$RUNNER_TEMP/packable.slnf"
+          dotnet restore "$RUNNER_TEMP/packable.slnf" --locked-mode
+          # Built first, then packed with no build, as CI packs the tested build: a pack that builds as it goes
+          # packs each project after building only what it references, and Whizbang.Generators bundles the code
+          # fixes from a sibling project's bin folder.
+          dotnet build "$RUNNER_TEMP/packable.slnf" --no-restore --configuration Release -mt:false \
+            -p:Version="$VERSION" -p:WhizbangReleaseBuild=true
+          # Package validation compares against the last released package and changes no byte of the output;
+          # it is off here so a scheduled run's placeholder version is never refused for sorting below it.
+          dotnet pack "$RUNNER_TEMP/packable.slnf" --no-build --no-restore --configuration Release \
+            -p:Version="$VERSION" -p:WhizbangReleaseBuild=true -p:EnablePackageValidation=false --output "$OUT"
+          echo "packed $(find "$OUT" -name '*.nupkg' | wc -l) packages and $(find "$OUT" -name '*.snupkg' | wc -l) symbol packages"
+
+      - name: Upload the packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reproducible-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/packages/*
+          if-no-files-found: error
+          retention-days: 3
+
+  compare:
+    name: Compare the two builds
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github
+
+      - name: Download the first build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: reproducible-first-${{ github.run_id }}-${{ github.run_attempt }}
+          path: first
+
+      - name: Download the second build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: reproducible-second-${{ github.run_id }}-${{ github.run_attempt }}
+          path: second
+
+      - name: Require byte-identical packages
+        run: pwsh -NoProfile -File .github/scripts/Compare-PackageSets.ps1 -Left first -Right second -ExtractTo differences
+
+      - name: Upload the differing entries
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reproducible-differences-${{ github.run_id }}-${{ github.run_attempt }}
+          path: differences/
+          if-no-files-found: ignore
+          retention-days: 7

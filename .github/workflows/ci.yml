@@ -1856,6 +1856,20 @@ jobs:
       # rather than rebuild), so they live long enough to cover a release PR held over a weekend.
       retention-days: ${{ startsWith(github.ref, 'refs/heads/release/v') && 7 || 3 }}
 
+  # Two more independent builds of the release-branch commit, at the release's own version, compared byte for
+  # byte (#2484). Not in the gate's needs: a failure fails this run, and a beta, rc or stable publishes only
+  # from a release-branch run that ended green (release-prerelease.yml, Find-TestedPackages.ps1). Release
+  # pushes only; develop gets a weekly run (reproducible-build.yml), since the check costs two full builds.
+  reproducible:
+    name: Build · Reproducible build
+    needs: [version]
+    if: ${{ !failure() && !cancelled() && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v') && needs.version.outputs.semver != '' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reusable-reproducible-build.yml
+    with:
+      version: ${{ needs.version.outputs.semver }}
+
   version-comment:
     name: Report · Version comment on PR
     needs: pr-version

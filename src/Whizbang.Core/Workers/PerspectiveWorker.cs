@@ -5981,6 +5981,39 @@ public partial class PerspectiveWorker(
     Message = "Drain cycle complete: drainMode={DrainModeActive} eventsProcessed={EventsProcessed} cycleDurationMs={CycleDurationMs}"
   )]
   static partial void LogDrainCycleComplete(ILogger logger, bool drainModeActive, int eventsProcessed, long cycleDurationMs);
+
+  // Declared here with every other log method of this class, not beside its caller in PerspectiveWorker.ClaimedGroups.cs:
+  // the net10.0 logging generator orders two declarations of one class differently from build to build (#2484).
+  [LoggerMessage(EventId = 82, Level = LogLevel.Warning,
+    Message = "The claimed batch's one read of its {PairCount} set-based pair(s) failed; each pair reads its own cursor and events")]
+  static partial void LogClaimedBatchReadFailed(ILogger logger, Exception exception, int pairCount);
+
+  // Called from PerspectiveWorker.WriteBehind.cs; declared here for the same reason (#2484).
+  [LoggerMessage(EventId = 90, Level = LogLevel.Warning,
+    Message = "Write-behind perspective flush failed; the batches it held were released unwritten and replay from their checkpoints")]
+  static partial void LogWriteBehindFlushFailed(ILogger logger, Exception exception);
+
+  [LoggerMessage(EventId = 91, Level = LogLevel.Warning,
+    Message = "Write-behind model of {PerspectiveName} on stream {StreamId} outlived its lease and is dropped unwritten; its {BatchCount} held batch(es) replay from the checkpoint wherever the stream is claimed next")]
+  static partial void LogWriteBehindDropped(ILogger logger, string perspectiveName, Guid streamId, int batchCount);
+
+  [LoggerMessage(EventId = 92, Level = LogLevel.Debug,
+    Message = "Write-behind model of {PerspectiveName} on stream {StreamId} was fenced: its partition's ownership moved on, so it is dropped unwritten and its {BatchCount} held batch(es) are replayed by the current owner")]
+  static partial void LogWriteBehindFenced(ILogger logger, string perspectiveName, Guid streamId, int batchCount);
+
+  // Called from PerspectiveWorker.FlaggedRewinds.cs; declared here for the same reason (#2484).
+  [LoggerMessage(EventId = 93, Level = LogLevel.Information,
+    Message = "Cursor for stream {StreamId} / perspective {PerspectiveName} is flagged for a rewind (trigger {TriggerEventId}) and "
+            + "its {RowCount} queued row(s) hold no event it applies: rewinding from the stored trigger (#2601)")]
+  private static partial void LogFlaggedRewindWithNothingToApply(
+    ILogger logger, Guid streamId, string perspectiveName, Guid triggerEventId, int rowCount);
+
+  // Called from PerspectiveWorker.LeasedWithoutFailure.cs; declared here for the same reason (#2484).
+  [LoggerMessage(EventId = 94, Level = LogLevel.Warning,
+    Message = "Perspective {PerspectiveName} row for stream {StreamId}, event {EventId}, has been leased {Attempts} times with "
+            + "no failure recorded: nothing applies, fails or completes it, so the dead-letter bound never sees it. Warned "
+            + "once per row (#2601)")]
+  private static partial void LogRowLeasedWithoutFailure(ILogger logger, string? perspectiveName, Guid streamId, Guid eventId, int attempts);
 }
 
 /// <summary>

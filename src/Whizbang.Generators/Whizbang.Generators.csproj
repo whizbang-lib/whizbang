@@ -28,6 +28,9 @@
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
     <!-- Enable ILRepack to merge Shared DLL into generator DLL -->
     <ILRepackEnabled>true</ILRepackEnabled>
+    <!-- Symbols embedded, so the one merge in ILRepack.targets serves the tests, coverage and the package, and two
+         builds of one commit write the same assembly (#2484, Directory.Build.targets, WhizbangRequireEmbeddedSymbols). -->
+    <DebugType>embedded</DebugType>
     <!-- Exclude System.Index and System.Range from ILRepack merge -->
     <!-- These types are part of .NET runtime and should not be merged -->
     <ILRepackExcludeFilters>System.Index;System.Range</ILRepackExcludeFilters>

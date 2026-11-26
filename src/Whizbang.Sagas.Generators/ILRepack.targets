@@ -29,6 +29,9 @@
     <Message Text="ILRepack: Merging Whizbang.Generators.Shared.dll into $(TargetName)$(TargetExt)" Importance="High" />
     <Message Text="ILRepack: Search directories = $(_ILRepackSearchDirs)" Importance="High" />
 
+    <!-- One merge, in place, with the symbols the project embeds (DebugType embedded): the tests and coverage load
+         this assembly and the package ships it. An embedded symbol file is written from memory, so the assembly records
+         only its file name rather than ILRepack's per-run temp folder, and two builds of one commit match (#2484). -->
     <ILRepack
       Parallel="true"
       DebugInfo="true"

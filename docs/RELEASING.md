@@ -585,12 +585,12 @@ runs the full matrix on both frameworks.
   set**. Same commit SHA + same SDK + same assembly set is the safety argument: identical source on
   an identical toolchain behaves like what the suites tested. It builds nothing: until #2068 it
   rebuilt the whole solution at the queue's placeholder version (15 to 26 minutes per develop push)
-  to enforce exactly these two facts. Byte-for-byte hash identity is **not** a gate and is no
-  longer reported: the two builds stamp different versions into every assembly, and source
-  generators emit nondeterministically for an unpredictable subset of assemblies
-  (`[LoggerMessage]` partial-class ordering, ILRepack MVIDs), so a hash comparison flakes and a name
-  allowlist can never be complete. Tamper-evidence for the published bits is the SLSA provenance
-  attestation. A docs-only merge builds nothing, so there is nothing to compare and the job passes.
+  to enforce exactly these two facts. It does not compare hashes: the two builds stamp different
+  versions into every assembly, so every hash differs by construction. Byte-for-byte identity is
+  proven where the version is the same, by the [reproducible-build check](#reproducible-builds) on
+  every release branch and weekly on develop. Tamper-evidence for the published bits is the SLSA
+  provenance attestation. A docs-only merge builds nothing, so there is nothing to compare and the
+  job passes.
 - **Compile uploads no per-suite build slices** on this path: no suite runs, so nothing would read them.
 - **reupload-reports** republishes the tested run's coverage and TRX into the push run, both to
   Codecov and as its own `coverage-republished` artifact, so the Codecov baseline, Test Analytics,
@@ -928,9 +928,16 @@ success. CI always starts clean.
   publish then additionally requires `verify-rebuild`'s same-SDK + same-assembly-set check.
   Anything else — a direct push, an expired queue run, SDK drift, a changed assembly set,
   `PUSH_RUN_FULL_MATRIX=true` — falls back to the full matrix or blocks the publish. Never widen
-  the match beyond the exact SHA. Do NOT reintroduce a byte-identity hash gate: generator
-  nondeterminism makes it flake (it blocked a publish once, #691); the SLSA provenance
-  attestation is the tamper-evidence on the published bits.
+  the match beyond the exact SHA. Do not add a hash comparison to verify-rebuild: its two builds
+  stamp different versions, so their hashes always differ. Byte identity is the
+  [reproducible-build check](#reproducible-builds)'s job (same commit, same version, two builds);
+  the SLSA provenance attestation is the tamper-evidence on the published bits.
+- **Two builds of one commit are byte-identical** (#2484). The settings that make them so are in
+  `Directory.Build.props` and locked by `.github/scripts/tests/ReproducibleBuildSettings.Tests.ps1`;
+  a generator that sorts names uses `StringComparer.Ordinal`, one that writes a source path into
+  generated code maps it with `SourcePaths.Map`, and a type declares its `[LoggerMessage]` methods in
+  one partial declaration (`LoggerMessageDeclarationGuardTests` (Whizbang.Generators.Component.Tests)). See
+  [Reproducible builds](#reproducible-builds).
 - **The fast-forward queue skip is tree-keyed and fails safe.** `ff-validated` skips the queue
   suites only for a single-PR group whose merge tree is byte-identical to a fully-green (incl.
   Quality) PR run's tree. Every uncertain path emits `skip=false` (full queue matrix) and the job
@@ -991,6 +998,55 @@ success. CI always starts clean.
 - **`main` is protected by a ruleset, not classic branch protection.** `.../branches/main/protection`
   returns 404 "Branch not protected"; the required checks are at
   `gh api repos/<owner>/<repo>/rules/branches/main`.
+
+## Reproducible builds
+
+**Two builds of the same commit produce byte-identical packages** (#2484): every `.nupkg` and `.snupkg`,
+entry by entry, timestamps included. This is the OpenSSF `build_repeatable` and `build_reproducible`
+evidence: anyone with the commit and the SDK in `global.json` can rebuild the published packages and
+compare their hashes.
+
+**The check.** `reusable-reproducible-build.yml` builds the commit twice, on two runners, from checkouts
+at two different paths, builds exactly what ships (the projects behind `.github/nuget-packages.txt`, and
+any project whose bin output one of them packs, such as the code fixes inside Whizbang.Generators, via
+`.github/scripts/New-PackableSolutionFilter.ps1`) with the release build's frameworks at one version,
+packs that build with `--no-build` as CI packs the tested build, and compares the two package sets with `.github/scripts/Compare-PackageSets.ps1`. Any difference fails
+it, naming each differing entry (`content`, `timestamp`, `entry order`, or present in one build only),
+and both sides of every differing entry are uploaded as `reproducible-differences-<run>` for a byte-level
+look.
+
+| Where | When | Effect of a failure |
+|---|---|---|
+| `ci.yml`, `Build · Reproducible build` | every push to a `release/v*` branch, at the release's version | the run fails, so no beta, rc or stable publishes from it: they require a green release-branch run |
+| `reproducible-build.yml` | weekly on `develop` (Mondays 07:00 UTC), and on demand for any branch | the scheduled run fails, well before the next release branch would refuse to publish |
+
+It does not run on pull requests or develop pushes: it is two more builds of everything that ships,
+about the cost #2068 removed from every develop push, and reproducibility breaks rarely and from a
+small set of causes. The weekly run finds a break within a week; a release branch cannot publish over one.
+
+**What makes the builds identical**, each setting locked by
+`.github/scripts/tests/ReproducibleBuildSettings.Tests.ps1`:
+
+| Cause of a difference | Fix |
+|---|---|
+| Compiler output depending on more than its inputs | `Deterministic` (stated explicitly in `Directory.Build.props`) |
+| The checkout's directory in PDBs, `CallerFilePath` and embedded sources | `ContinuousIntegrationBuild` on every CI build (`CI=true`): the repository root reads `/_/` |
+| A generator writing a source file's absolute path (the message registry embedded in Whizbang.Core, whose change reached every assembly referencing Core) | the generator maps the path through the build's path map (`SourcePaths.Map`), as the compiler does |
+| A generator sorting names with the build machine's culture | `StringComparer.Ordinal` in every generator sort |
+| The .NET 10 logging generator (`net10.0` only) ordering two `[LoggerMessage]` declarations with one namespace and name by a per-process hash set | each type declares its log methods in one partial declaration, and a nested log class has a name unique in its namespace; `LoggerMessageDeclarationGuardTests` (Whizbang.Generators.Component.Tests) fails on a second one. The .NET 11 generator sorts by a unique key, so the guard can go with `net10.0` |
+| ILRepack writing a symbol file's path, under a per-run temp folder, into each generator assembly | every generator that ILRepack merges embeds its symbols (`DebugType` `embedded`), and is merged once, in place, with them. An embedded symbol file is written from memory, so the assembly records only its file name, and its debug entry and module id are the same in two builds. That one assembly is what the tests load, what coverage reads and what the package ships, so the generator packages carry their symbols inside the assembly. A merged generator that does not embed them fails its build (`WhizbangRequireEmbeddedSymbols`, in `Directory.Build.targets`) |
+| Package entries stamped with each file's write time (NuGet's default) | `DeterministicTimestamp` fixed at `2000-01-01T00:00:00Z` |
+
+**Reproducing a release locally.** Check out the tag, install the SDK in `global.json`, write the filter
+(`pwsh .github/scripts/New-PackableSolutionFilter.ps1 -OutputPath packable.slnf`), and run `dotnet build`
+and then `dotnet pack --no-build` over it, each with `-c Release -p:ContinuousIntegrationBuild=true
+-p:WhizbangReleaseBuild=true -p:Version=<the release version>`, then compare with the published
+packages (`pwsh .github/scripts/Compare-PackageSets.ps1 -Left <yours> -Right <downloaded>`). Two inputs
+outside the commit must match: the SDK, and the absence of a documentation checkout beside the
+repository (the message registry generator embeds documentation links when it finds one; CI never has
+one).
+
+---
 
 ## Target frameworks
 

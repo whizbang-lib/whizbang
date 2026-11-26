@@ -413,7 +413,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     _ensureLogger();
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
 #pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
-      Log.SkippedSameServicePostInbox(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value, _serviceName);
+      ReceptorInvokerLog.SkippedSameServicePostInbox(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value, _serviceName);
 #pragma warning restore CA1873
     }
     return true;
@@ -443,7 +443,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     _ensureLogger();
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
 #pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
-      Log.SkippedOwnedDomainFilter(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
+      ReceptorInvokerLog.SkippedOwnedDomainFilter(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
     }
     return true;
@@ -499,7 +499,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       _ensureLogger();
       if (_logger?.IsEnabled(LogLevel.Debug) == true) {
 #pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
-        Log.SkippedLocalDispatchPreOutbox(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
+        ReceptorInvokerLog.SkippedLocalDispatchPreOutbox(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
       }
     }
@@ -529,7 +529,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     _ensureLogger();
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
 #pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
-      Log.NoReceptorsRegistered(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
+      ReceptorInvokerLog.NoReceptorsRegistered(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
     }
     await _processTagsAsync(message, messageType, stage, scopeForTags, changes, cancellationToken).ConfigureAwait(false);
@@ -556,7 +556,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     _ensureLogger();
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
 #pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
-      Log.SkippedStageTrackerDedup(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
+      ReceptorInvokerLog.SkippedStageTrackerDedup(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
     }
     return false;
@@ -567,7 +567,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     _ensureLogger();
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
 #pragma warning disable CA1873 // guarded by the IsEnabled check above, which the rule does not see through (#2548)
-      Log.SkippedReplayModeFilter(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
+      ReceptorInvokerLog.SkippedReplayModeFilter(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
     }
   }
@@ -606,7 +606,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       _ensureLogger();
       if (_logger is not null) {
 #pragma warning disable CA1873 // an exception path: the name is read only once the refusal was thrown
-        Log.LocalStageRanWithoutContext(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
+        ReceptorInvokerLog.LocalStageRanWithoutContext(_logger, stage, TypeNameFormatter.ForLog(messageType), envelope.MessageId.Value);
 #pragma warning restore CA1873
       }
       return null;
@@ -820,7 +820,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     }
 
     if (_logger is not null) {
-      Log.ReceptorFiring(_logger, receptor.ReceptorId, ctx.Stage, messageId, streamId, messageTypeName, correlationId, sourceService);
+      ReceptorInvokerLog.ReceptorFiring(_logger, receptor.ReceptorId, ctx.Stage, messageId, streamId, messageTypeName, correlationId, sourceService);
     }
     if (_firingObserver is not null) {
       await _firingObserver.OnReceptorFiringAsync(receptor.ReceptorId, ctx.Stage, messageId, ctx.Envelope, cancellationToken).ConfigureAwait(false);
@@ -902,7 +902,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
         priorInvocation: prior);
     }
     if (_logger is not null) {
-      Log.ReceptorAlreadyFiredSkip(
+      ReceptorInvokerLog.ReceptorAlreadyFiredSkip(
         _logger,
         receptor.ReceptorId,
         ctx.Stage,
@@ -1003,7 +1003,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       ReceptorFireLogFields fields,
       CancellationToken cancellationToken) {
     if (_logger is not null) {
-      Log.ReceptorFired(_logger, receptor.ReceptorId, ctx.Stage, fields.MessageId, fields.StreamId, fields.MessageTypeName, fields.CorrelationId, fields.SourceService, fields.Stopwatch.ElapsedMilliseconds, fields.IsError, fields.ExceptionTypeName);
+      ReceptorInvokerLog.ReceptorFired(_logger, receptor.ReceptorId, ctx.Stage, fields.MessageId, fields.StreamId, fields.MessageTypeName, fields.CorrelationId, fields.SourceService, fields.Stopwatch.ElapsedMilliseconds, fields.IsError, fields.ExceptionTypeName);
     }
     if (_firingObserver is not null) {
       await _firingObserver.OnReceptorFiredAsync(
@@ -1112,7 +1112,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     _ensureLogger();
     if (_logger is not null) {
       var callerInfoString = callerInfo.ToString();
-      Log.ReceptorInvokedFromCaller(_logger, receptor.ReceptorId, callerInfoString);
+      ReceptorInvokerLog.ReceptorInvokedFromCaller(_logger, receptor.ReceptorId, callerInfoString);
     }
   }
 
@@ -1121,7 +1121,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   /// Tags (signaltags, UI notification pushes, metric emitters, etc.) fire-and-forget so
   /// slow tag handlers cannot throttle pipeline throughput — a slow SignalR push or HTTP
   /// notification must not gate perspective progress. Exceptions thrown by tag handlers are
-  /// observed asynchronously and logged via <see cref="Log.TagProcessingError"/>; they do not
+  /// observed asynchronously and logged via <see cref="ReceptorInvokerLog.TagProcessingError"/>; they do not
   /// propagate to the caller. The tag processor itself is a singleton (see
   /// <c>ServiceCollectionExtensions</c>) and creates its own DI scope internally, so scope
   /// lifetime is safe across the fire-and-forget boundary.
@@ -1167,7 +1167,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     } catch (Exception ex) {
       _ensureLogger();
       if (_logger is not null) {
-        Log.TagProcessingError(_logger, ex, TypeNameFormatter.ForLog(messageType), stage);
+        ReceptorInvokerLog.TagProcessingError(_logger, ex, TypeNameFormatter.ForLog(messageType), stage);
       }
     }
   }
@@ -1186,7 +1186,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     _logger ??= _scopedProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Messaging.ReceptorInvoker");
   }
 
-  private static partial class Log {
+  private static partial class ReceptorInvokerLog {
     [LoggerMessage(
       EventId = 1,
       Level = LogLevel.Debug,

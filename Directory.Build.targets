@@ -172,4 +172,16 @@
        nuget.org to download, so restore would fail (NU1101). It is still validated, against itself; after its first
        stable release, delete the property so it is compared like every other package (docs/RELEASING.md,
        "Public API baseline"). -->
+
+  <!-- Reproducible generator packages (#2484). A generator that ILRepack merges is merged once, in place, with symbols
+       (its ILRepack.targets): the tests and coverage load that assembly, and its package ships it. ILRepack writes the
+       merged assembly to a per-run temp folder, and a separate symbol file's path, taken from that folder, goes into
+       the assembly's debug entry and its module id; an embedded symbol file is written from memory, so the assembly
+       records only the file name and two builds of one commit write the same bytes. A merged generator that does not
+       embed its symbols therefore fails its build here rather than shipping an assembly no second build reproduces.
+       .github/scripts/tests/ReproducibleBuildSettings.Tests.ps1 fails if this check, the merge or the pack item changes. -->
+  <Target Name="WhizbangRequireEmbeddedSymbols" BeforeTargets="CoreCompile;GenerateNuspec" Condition="'$(ILRepackEnabled)' == 'true'">
+    <Error Condition="'$(DebugType)' != 'embedded'"
+           Text="$(MSBuildProjectName) is merged by ILRepack, so it must set DebugType to embedded (it is '$(DebugType)'): a separate symbol file puts ILRepack's per-run temp path into the assembly, and two builds of one commit then differ (#2484)." />
+  </Target>
 </Project>

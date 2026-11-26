@@ -1073,6 +1073,35 @@ public partial class DapperWorkCoordinator(
   )]
   static partial void LogStartupBeatBeforeItsFunction(ILogger logger, Guid instanceId);
 
+  // Every log method of this class is declared in this file, never beside its caller in another part: the net10.0
+  // logging generator orders two declarations of one class differently from build to build (#2484).
+
+  // Used by DapperWorkCoordinator.TableMaintenance.cs.
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Table {Table} was not rewritten: {Reason}")]
+  static partial void LogTableNotRewritten(ILogger logger, string table, string reason);
+
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Index {Index} was not {Action}: {Reason}")]
+  static partial void LogQueueIndexNotTouched(ILogger logger, string index, string action, string reason);
+
+  // Used by DapperWorkCoordinator.FleetAndCatalog.cs.
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to query orphaned lifecycle events ({TypeCount} type(s))")]
+  static partial void LogOrphanedLifecycleQueryFailed(ILogger logger, Exception ex, int typeCount);
+
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to deserialize orphaned event {EventId} (type: {EventType}) for reconciliation")]
+  static partial void LogOrphanedLifecycleEventUnreadable(ILogger logger, Exception ex, Guid eventId, string eventType);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Failed to parse reconciliation scope JSON; the replayed lifecycle event will run without its stored scope.")]
+  static partial void LogReconcileScopeUnreadable(ILogger logger, Exception ex);
+
+  // Used by DapperWorkCoordinator.RowRetention.cs.
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "Row-retention declaration for {ClrTypeName} matched no wh_perspective_registry row: the perspective is NOT enrolled. "
+            + "The registry key is the CLR type name (Outer+Model for a nested model); a row keyed in another form is a key drift"
+  )]
+  static partial void LogRetentionDeclarationMatchedNoRegistryRow(ILogger logger, string clrTypeName);
+
   #endregion
 
   #region Phase B: focused IWorkCoordinator methods
