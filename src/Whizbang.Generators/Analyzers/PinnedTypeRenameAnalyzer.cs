@@ -21,12 +21,15 @@ namespace Whizbang.Generators.Analyzers;
 /// <item>WHIZ120 (error) — a pinned type whose current CLR name is neither the ledger's recorded name nor one of
 /// its former names: an un-acknowledged RENAME. The code fix records the former name so old events still resolve.</item>
 /// <item>WHIZ121 (warning) — a ledger entry whose pinned id has no living type: a removed type or changed id.</item>
+/// <item>WHIZ119 (error): the same for a strong id (kind <c>strong-id</c>, #2604): its pinned id fixes every id it
+/// derives, so a changed pin is never only a warning.</item>
 /// </list>
 /// The analyzer is INERT when no <c>.whizbang/pinned-type-ledger.json</c> is supplied via AdditionalFiles, so adoption
 /// is opt-in per project.
 /// </summary>
 /// <docs>fundamentals/identity/pinned-type-ledger</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedTypeRenameAnalyzerTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PinnedStrongIdTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class PinnedTypeRenameAnalyzer : DiagnosticAnalyzer {
   /// <inheritdoc/>
@@ -34,6 +37,7 @@ public class PinnedTypeRenameAnalyzer : DiagnosticAnalyzer {
     DiagnosticDescriptors.PinnedTypeRenamedWithoutAcknowledgment,
     DiagnosticDescriptors.LedgerEntryHasNoLivingType,
     DiagnosticDescriptors.PinnedTypeLedgerMalformed,
+    DiagnosticDescriptors.StrongIdPinnedIdChanged,
   ];
 
   /// <inheritdoc/>
@@ -71,6 +75,12 @@ public class PinnedTypeRenameAnalyzer : DiagnosticAnalyzer {
       if (_tryGetPinned(symbolContext.Symbol, out var pinnedId, out var clrName, out var location)) {
         living[pinnedId] = new LivingPinnedType(clrName, location);
       }
+      // A pinned strong id lives wherever it is declared: its struct, a property or a parameter (#2604)
+      foreach (var declared in WhizbangIdDeclaration.ReadAll((INamedTypeSymbol)symbolContext.Symbol, symbolContext.CancellationToken)) {
+        if (declared.PinnedId is { } strongIdPin) {
+          living[strongIdPin] = new LivingPinnedType(declared.FullyQualifiedName, declared.PinLocation);
+        }
+      }
     }, SymbolKind.NamedType);
 
     context.RegisterCompilationEndAction(endContext => _reportLedgerDrift(endContext, ledger, living));
@@ -95,11 +105,14 @@ public class PinnedTypeRenameAnalyzer : DiagnosticAnalyzer {
       }
     }
 
-    // WHIZ121 — a ledger entry with no living type of that pinned id.
+    // WHIZ121: a ledger entry with no living type of that pinned id; WHIZ119 (an error) for a strong id, whose pin
+    // fixes every id it derives (#2604).
     foreach (var entry in ledger.Types) {
       if (!living.ContainsKey(entry.PinnedId)) {
         endContext.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.LedgerEntryHasNoLivingType,
+          entry.Kind == PinnedTypeLedger.STRONG_ID_KIND
+            ? DiagnosticDescriptors.StrongIdPinnedIdChanged
+            : DiagnosticDescriptors.LedgerEntryHasNoLivingType,
           Location.None,
           entry.PinnedId, entry.ClrTypeName));
       }

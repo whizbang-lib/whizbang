@@ -18,7 +18,9 @@ namespace Whizbang.Generators.Analyzers;
 /// <para>
 /// Reports WHIZ110 (warning) when a concrete IEvent / ICommand is missing <c>[PinnedId]</c>,
 /// WHIZ111 (warning) for the perspective variant, and WHIZ112 (error) when the attribute value
-/// is not a parseable GUID.
+/// is not a parseable GUID. A strong id's pin (<c>[PinnedId]</c> on a <c>[WhizbangId]</c> struct, or
+/// <c>[WhizbangId(PinnedId = ...)]</c>) is checked the same way, and WHIZ123 (error) reports a struct pinned two ways
+/// (#2604). A strong id is never required to be pinned here: WHIZ118 requires it where <c>DeriveFrom</c> is called.
 /// </para>
 /// <para>
 /// Abstract types, interfaces, and non-message types are skipped so adoption can be gradual.
@@ -26,6 +28,7 @@ namespace Whizbang.Generators.Analyzers;
 /// </remarks>
 /// <docs>fundamentals/identity/pinned-type-ledger</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedIdAnalyzerTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Analyzers/PinnedIdAnalyzerStrongIdTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class PinnedIdAnalyzer : DiagnosticAnalyzer {
   /// <inheritdoc/>
@@ -33,6 +36,7 @@ public class PinnedIdAnalyzer : DiagnosticAnalyzer {
     DiagnosticDescriptors.MessageMissingPinnedId,
     DiagnosticDescriptors.PerspectiveMissingPinnedId,
     DiagnosticDescriptors.PinnedIdNotAValidGuid,
+    DiagnosticDescriptors.WhizbangIdPinnedIdDisagrees,
   ];
 
   /// <inheritdoc/>
@@ -44,6 +48,9 @@ public class PinnedIdAnalyzer : DiagnosticAnalyzer {
 
   private static void _analyzeNamedType(SymbolAnalysisContext context) {
     var typeSymbol = (INamedTypeSymbol)context.Symbol;
+
+    // A strong id's pin is checked wherever it is declared (#2604); a strong id is never required to be pinned
+    _analyzeStrongIdPins(context, typeSymbol);
 
     // Skip abstract types, interfaces, and anything that isn't a concrete Class / Struct / Record / Record-Struct.
     if (typeSymbol.IsAbstract) {
@@ -102,6 +109,23 @@ public class PinnedIdAnalyzer : DiagnosticAnalyzer {
           attributeLocation,
           pinnedIdValue,
           TypeNameUtilities.SimpleName(typeSymbol)));
+    }
+  }
+
+  /// <summary>
+  /// WHIZ112 for a strong id pin that is not a GUID, on the struct, a property or a parameter, and WHIZ123 for a struct
+  /// pinned two different ways (#2604).
+  /// </summary>
+  private static void _analyzeStrongIdPins(SymbolAnalysisContext context, INamedTypeSymbol typeSymbol) {
+    foreach (var declared in WhizbangIdDeclaration.ReadAll(typeSymbol, context.CancellationToken)) {
+      if (declared.RawPinnedId is { } raw && declared.PinnedId is null) {
+        context.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.PinnedIdNotAValidGuid, declared.PinLocation, raw, declared.TypeName));
+      }
+      if (declared.ConflictingRawPinnedId is { } conflict) {
+        context.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.WhizbangIdPinnedIdDisagrees, declared.PinLocation, conflict, declared.FullyQualifiedName, declared.RawPinnedId));
+      }
     }
   }
 }

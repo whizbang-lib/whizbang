@@ -43,6 +43,7 @@ public enum DiscoverySource {
 /// <param name="SuppressDuplicateWarning">True if WHIZ024 warning should be suppressed for this ID</param>
 /// <param name="Location">Where the [WhizbangId] attribute is written; WHIZ024 is reported there. Not part of equality.</param>
 /// <param name="AcceptAnyVersion">True if the generated id takes any non-empty Guid rather than UUIDv7 only (#2071)</param>
+/// <param name="PinnedId">The id's pinned id in its lowercase hyphenated form, or null when the id is not pinned (#2604)</param>
 /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdTypeInfoTests.cs</tests>
 public sealed record WhizbangIdInfo(
   string TypeName,
@@ -50,7 +51,8 @@ public sealed record WhizbangIdInfo(
   DiscoverySource Source,
   bool SuppressDuplicateWarning = false,
   Location? Location = null,
-  bool AcceptAnyVersion = false
+  bool AcceptAnyVersion = false,
+  string? PinnedId = null
 ) {
   /// <summary>
   /// Gets the fully qualified name of the ID type (Namespace.TypeName).
@@ -61,19 +63,21 @@ public sealed record WhizbangIdInfo(
 
   /// <summary>
   /// Value equality is used for deduplication.
-  /// Two WhizbangIdInfo instances are equal if they have the same FullyQualifiedName and AcceptAnyVersion.
+  /// Two WhizbangIdInfo instances are equal if they have the same FullyQualifiedName, AcceptAnyVersion and PinnedId.
   /// </summary>
   /// <remarks>
-  /// AcceptAnyVersion changes the generated code, so it takes part: an id whose option was toggled must not
-  /// compare equal to the cached one, or the incremental pipeline would keep the old output.
+  /// AcceptAnyVersion and PinnedId change the generated code, so they take part: an id whose option or pin changed
+  /// must not compare equal to the cached one, or the incremental pipeline would keep the old output.
   /// </remarks>
   /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdInfoEqualityTests.cs</tests>
   public bool Equals(WhizbangIdInfo? other) =>
-    other is not null && FullyQualifiedName == other.FullyQualifiedName && AcceptAnyVersion == other.AcceptAnyVersion;
+    other is not null && FullyQualifiedName == other.FullyQualifiedName && AcceptAnyVersion == other.AcceptAnyVersion &&
+    PinnedId == other.PinnedId;
 
   /// <summary>
-  /// Hash code based on FullyQualifiedName and AcceptAnyVersion.
+  /// Hash code based on FullyQualifiedName, AcceptAnyVersion and PinnedId.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdInfoEqualityTests.cs</tests>
-  public override int GetHashCode() => (FullyQualifiedName.GetHashCode() * 397) ^ AcceptAnyVersion.GetHashCode();
+  public override int GetHashCode() =>
+    (((FullyQualifiedName.GetHashCode() * 397) ^ AcceptAnyVersion.GetHashCode()) * 397) ^ (PinnedId?.GetHashCode() ?? 0);
 }

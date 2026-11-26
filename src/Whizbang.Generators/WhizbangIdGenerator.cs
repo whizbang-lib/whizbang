@@ -178,7 +178,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         SuppressDuplicateWarning: suppressWarning,
         // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
         Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
-        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr)
+        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr),
+        // The pin DeriveFrom derives from (#2604): read by the reader the ledger, registry and analyzers share
+        PinnedId: WhizbangIdDeclaration.Read(structSymbol, ct)?.PinnedId
     );
 
     return (idInfo, null, null);
@@ -255,7 +257,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         SuppressDuplicateWarning: suppressWarning,
         // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
         Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
-        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr)
+        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr),
+        // The pin DeriveFrom derives from (#2604): read by the reader the ledger, registry and analyzers share
+        PinnedId: WhizbangIdDeclaration.Read(propertySymbol, ct)?.PinnedId
     );
 
     return (idInfo, null, null);
@@ -312,7 +316,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         SuppressDuplicateWarning: suppressWarning,
         // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
         Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct),
-        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr)
+        AcceptAnyVersion: _acceptsAnyVersion(whizbangIdAttr),
+        // The pin DeriveFrom derives from (#2604): read by the reader the ledger, registry and analyzers share
+        PinnedId: WhizbangIdDeclaration.Read(parameterSymbol, ct)?.PinnedId
     );
 
     return (idInfo, null, null);
@@ -451,6 +457,11 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// </summary>
   private static WhizbangIdInfo _resolveRoutes(SourceProductionContext context, IEnumerable<WhizbangIdInfo> routes) {
     var all = routes.ToList();
+    return _resolvePin(context, all, _resolveVersionRule(context, all));
+  }
+
+  /// <summary>The route whose UUIDv7 rule the id keeps, reporting WHIZ029 at each ignored opt-in (#2071).</summary>
+  private static WhizbangIdInfo _resolveVersionRule(SourceProductionContext context, List<WhizbangIdInfo> all) {
     var strict = all.Find(id => !id.AcceptAnyVersion);
     if (strict is null) {
       return all[0];
@@ -465,6 +476,29 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     }
 
     return strict;
+  }
+
+  /// <summary>
+  /// The pin the id keeps (#2604): one route pinning it pins the id. When routes pin it differently, the lowest pin is
+  /// kept whatever the discovery order, and WHIZ123 is reported at each route whose pin is not.
+  /// </summary>
+  private static WhizbangIdInfo _resolvePin(SourceProductionContext context, List<WhizbangIdInfo> all, WhizbangIdInfo chosen) {
+    var kept = all.Select(id => id.PinnedId).Where(pin => pin is not null).OrderBy(pin => pin, System.StringComparer.Ordinal).FirstOrDefault();
+    if (kept is null) {
+      return chosen;
+    }
+
+    foreach (var disagreeing in all.Where(id => id.PinnedId is not null && id.PinnedId != kept)) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.WhizbangIdPinnedIdDisagrees,
+          disagreeing.Location,
+          disagreeing.PinnedId,
+          disagreeing.FullyQualifiedName,
+          kept
+      ));
+    }
+
+    return chosen with { PinnedId = kept };
   }
 
   /// <summary>
@@ -597,6 +631,10 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine($"  public static {id.TypeName} New() => new(TrackedGuid.New());");
     sb.AppendLine();
 
+    // DeriveFrom on every id, from the template system (#2604)
+    sb.AppendLine(_deriveFrom(id));
+    sb.AppendLine();
+
     // Equality members - compare Guid values directly
     sb.AppendLine("  /// <summary>Determines whether two instances are equal.</summary>");
     sb.AppendLine($"  public bool Equals({id.TypeName} other) => _tracked.Value.Equals(other._tracked.Value);");
@@ -681,6 +719,19 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("}");
 
     return sb.ToString();
+  }
+
+  /// <summary>
+  /// The id's <c>DeriveFrom(handling, purpose)</c> (#2604): deriving from its pinned id, which is baked in as the
+  /// <c>PinnedId</c> constant, or throwing when the id is not pinned (a call is WHIZ118).
+  /// </summary>
+  private static string _deriveFrom(WhizbangIdInfo id) {
+    var snippet = TemplateUtilities.ExtractSnippet(
+        typeof(WhizbangIdGenerator).Assembly,
+        "WhizbangIdSnippets.cs",
+        id.PinnedId is null ? "DERIVE_FROM_UNPINNED" : "DERIVE_FROM_PINNED");
+    var code = snippet.Replace("__TYPE_NAME__", id.TypeName).Replace("__PINNED_ID__", id.PinnedId ?? string.Empty);
+    return TemplateUtilities.IndentCode(code, "  ");
   }
 
   /// <summary>What a generated id refuses, for its doc comments: a non-v7 Guid, or only the empty one.</summary>
