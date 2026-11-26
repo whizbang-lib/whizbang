@@ -311,7 +311,7 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     try {
       await Assert.That(await handshake.RequestAsync(NEW_VERSION, cancellationToken)).IsTrue();
 
-      // The wedged peer never acknowledges; the wait would block on it forever. The wait is cancelled at the signal that
+      // The wedged peer never acknowledges; the wait would block on it forever. The wait is canceled at the signal that
       // it is blocked on the peer (its "waiting for peers" log), never by a timer that could fire before the first poll.
       await Assert.ThrowsAsync<OperationCanceledException>(async () =>
         await handshake.AwaitPeersStandingByAsync(NEW_VERSION, blockedWait.Token));
