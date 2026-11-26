@@ -228,12 +228,17 @@ advisory lock, against 20 to 40 ms for every other service on the server.
 
 Migration 661 makes the refresh free when it cannot run: the turn is `pg_try_advisory_xact_lock` (a claimant that
 finds it taken moves on), the analyze is `ANALYZE (SKIP_LOCKED)` (a conflicting lock skips it; `pg_locks` says
-whether it ran), and a skip or a failure backs the table off for 60 seconds in `wh_queue_statistics_backoff`, read
-by key and written only by the turn's holder. The one wait kept is the one that ends a stuck autovacuum: when only
+whether it ran), and an analyze, a skip or a failure backs the table off for 60 seconds in
+`wh_queue_statistics_backoff`, read by key and written only by the turn's holder. The analyze backs off too because,
+with the lock gone, the same service's inbox state table (a few dozen live rows, thousands of changes a minute) read
+as stale again right after every analyze: the refresh ran ANALYZE about 90 times a minute and was most of each
+claim's time (387 ms a claim). The staleness rule compares changes since the last analyze to the live rows, which a
+churning queue always fails; the interval, not the rule, is what bounds the cost. The one wait kept is the one that ends a stuck autovacuum: when only
 autovacuum workers hold a conflicting lock, the turn's holder runs the plain ANALYZE under a lock timeout of
 `deadlock_timeout` plus one second. The healthy path is unchanged; the stale path adds a key probe per stale table.
 
-**Rule:** a statement on the claim path may wait only for something it ends. Waiting for a peer, or for a lock
+**Rule:** a statement on the claim path may wait only for something it ends, and work the claim path repeats is
+bounded per interval across the fleet, never per claim. Waiting for a peer, or for a lock
 whose holder is itself waiting on someone else, turns one stuck session into a stuck fleet.
 
 ## Finding 1, round five: the drain's calls read the queue and the history, not their batch (#2286)

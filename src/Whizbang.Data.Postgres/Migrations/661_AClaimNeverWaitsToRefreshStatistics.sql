@@ -3,8 +3,8 @@
 
 -- Migration: 661_AClaimNeverWaitsToRefreshStatistics.sql
 -- Date: 2026-11-26
--- Description: The claim's statistics refresh never waits on another session's lock, and backs a table off after a
---              skip or a failure (#2611).
+-- Description: The claim's statistics refresh never waits on another session's lock, and analyzes a table at most
+--              once a minute, backing it off after an analyze, a skip or a failure (#2611).
 --
 --              Measured on a deployed service: an application transaction stayed idle for over three hours, and the
 --              maintenance REINDEX INDEX CONCURRENTLY of a queue index waited on it for all that time while holding
@@ -14,9 +14,14 @@
 --              timeout in turn, and gave up. The service's claims averaged 8.2 s, against 20 to 40 ms elsewhere.
 --
 --              wh_refresh_stale_queue_statistics (copied from its last word, 463) now, per stale table:
---                the back-off     skips a table whose refresh was skipped or failed within the last 60 seconds,
---                                 read from wh_queue_statistics_backoff (one row per queue table, read by key, never
---                                 locked by a reader);
+--                the back-off     skips a table the refresh analyzed, skipped or failed on within the last 60
+--                                 seconds, read from wh_queue_statistics_backoff (one row per queue table, read by key,
+--                                 never locked by a reader). After the lock was gone, the same service showed why an
+--                                 analyze must back off too: its inbox state table, a few dozen live rows churned by
+--                                 thousands of changes a minute, read as stale again right after every analyze, so the
+--                                 refresh analyzed it about 90 times a minute and was most of every claim's time. Sixty
+--                                 seconds is autovacuum's own default naptime: a table analyzed within it is as fresh as
+--                                 autovacuum keeps any table;
 --                the turn         takes the table's advisory lock with pg_try_advisory_xact_lock: a claimant that
 --                                 finds it taken leaves the table to its holder and moves on, without waiting and
 --                                 without writing anything;
@@ -30,8 +35,9 @@
 --                                 one second. PostgreSQL cancels an autovacuum that is not preventing wraparound once
 --                                 another session has waited on it for deadlock_timeout, so the worker is ended. One
 --                                 claimant per table pays that wait, once per back-off at most;
---                the record       a skip (lock_not_available), a lock timeout (lock_timeout) or an ANALYZE that raised
---                                 (failed) writes the table's back-off row, retry 60 seconds later, and raises one
+--                the record       an analyze (analyzed), a skip (lock_not_available), a lock timeout (lock_timeout) or
+--                                 an ANALYZE that raised (failed) writes the table's back-off row, retry 60 seconds
+--                                 later; all but an analyze also raise one
 --                                 WARNING whizbang.queue_statistics_refresh_skipped with DETAIL table=reason and a HINT
 --                                 saying what happened. Only the turn's holder writes, so the row is never contended,
 --                                 and the warning is raised once per back-off. The coordinators count it
@@ -39,7 +45,8 @@
 --
 --              Cost: the healthy path is unchanged, one catalog read per table and nothing else. The stale path adds,
 --              per stale table, a relname lookup and a primary-key probe of the five-row back-off table; the turn is
---              no longer a wait. A skip adds a pg_locks read, a pg_stat_activity read and one upsert, once per back-off.
+--              no longer a wait, and ANALYZE runs at most once a minute per table. Each attempt adds one upsert, and a
+--              skip a pg_locks read and a pg_stat_activity read, once per back-off.
 --
 --              Number 661: develop ends at 660, and 630 to 659 belong to a change in flight.
 --
@@ -59,7 +66,7 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_queue_statistics_backoff (
 );
 
 COMMENT ON TABLE __SCHEMA__.wh_queue_statistics_backoff IS
-'Issue #2611: one row per queue table whose statistics refresh was skipped or failed, the last time it was. Claims leave the table alone until retry_after. reason: lock_not_available (another session held a lock that conflicts with ANALYZE), lock_timeout (a lock wait passed the refresh''s bound), failed (ANALYZE raised an error). Written only by the claimant holding the table''s turn, read by key.';
+'Issue #2611: one row per queue table, the claim statistics refresh''s last attempt at it. Claims leave the table alone until retry_after. reason: analyzed (it ran; a table that churns reads as stale again at once), lock_not_available (another session held a lock that conflicts with ANALYZE), lock_timeout (a lock wait passed the refresh''s bound), failed (ANALYZE raised an error). Written only by the claimant holding the table''s turn, read by key.';
 
 -- ---------------------------------------------------------------------------------------------
 -- _wh_only_autovacuum_blocks_analyze: whether every session holding a lock that conflicts with ANALYZE on the table is
@@ -114,6 +121,7 @@ SELECT __SCHEMA__.drop_all_overloads('wh_refresh_stale_queue_statistics');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkStaleStatisticsTests.cs:RefreshStaleQueueStatistics_WhileAReindexWaitsOnAnIdleTransaction_NeverWaits_AndBacksOffAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkStaleStatisticsTests.cs:RefreshStaleQueueStatistics_WhileAnotherSessionHoldsTheTable_GivesUpWithinTheLockTimeoutAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkStaleStatisticsTests.cs:RefreshStaleQueueStatistics_WhenTheAnalyzeFails_BacksOff_AndSaysWhatFailedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkStaleStatisticsTests.cs:RefreshStaleQueueStatistics_OnASmallTableThatChurns_AnalyzesItAtMostOncePerIntervalAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkStaleStatisticsTests.cs:RefreshStaleQueueStatistics_WhenOnlyAutovacuumHoldsTheTable_WaitsForItBoundedByTheDeadlockTimeoutAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkStaleStatisticsTests.cs:RefreshStaleQueueStatistics_AsADataOnlyRole_StillAnalyzesTheStaleTableAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkStaleStatisticsTests.cs:ClaimWork_WhileTheRefreshCannotAnalyze_NeverWaits_CountsTheSkip_AndWarnsOncePerBackoffAsync</tests>
@@ -136,7 +144,7 @@ DECLARE
   ];
   -- The advisory lock's first key: this function. The second is the table's oid, unique per schema.
   c_lock_class CONSTANT INTEGER := hashtext('wh_refresh_stale_queue_statistics');
-  -- 661: how long a table whose refresh was skipped or failed is left alone.
+  -- 661: how long a table is left alone after its refresh analyzed it, skipped it or failed.
   c_backoff CONSTANT INTERVAL := INTERVAL '60 seconds';
   -- 661: the backstop for any lock ANALYZE (SKIP_LOCKED) still waits on.
   c_backstop CONSTANT TEXT := '1s';
@@ -156,7 +164,7 @@ BEGIN
   FOREACH v_table IN ARRAY v_tables LOOP
     CONTINUE WHEN NOT __SCHEMA__._wh_queue_statistics_stale(v_table);
     v_name := (SELECT c.relname FROM pg_class c WHERE c.oid = v_table);
-    -- 661: a table backed off is left alone until its retry, by every claimant.
+    -- 661: a table analyzed, skipped or failed within the interval is left alone until its retry, by every claimant.
     CONTINUE WHEN EXISTS (
       SELECT 1 FROM __SCHEMA__.wh_queue_statistics_backoff b WHERE b.table_name = v_name AND b.retry_after > clock_timestamp());
     -- 661: one claimant analyzes a table at a time, and the rest move on rather than wait for it.
@@ -202,15 +210,17 @@ BEGIN
         v_error := SQLERRM;
     END;
 
+    -- 661: an analyze backs the table off too. A small table that churns reads as stale again right after every analyze,
+    -- so without this it was analyzed on nearly every claim; with it, at most once per interval across every claimant.
+    INSERT INTO __SCHEMA__.wh_queue_statistics_backoff AS b (table_name, retry_after, reason, backed_off_at)
+    VALUES (v_name, clock_timestamp() + c_backoff, COALESCE(v_reason, 'analyzed'), clock_timestamp())
+    ON CONFLICT (table_name) DO UPDATE
+      SET retry_after = EXCLUDED.retry_after, reason = EXCLUDED.reason, backed_off_at = EXCLUDED.backed_off_at;
     IF v_reason IS NULL THEN
       v_refreshed := v_refreshed + 1;
       RAISE LOG 'whizbang: analyzed % because its statistics were stale (#1349)', v_table;
       CONTINUE;
     END IF;
-    INSERT INTO __SCHEMA__.wh_queue_statistics_backoff AS b (table_name, retry_after, reason, backed_off_at)
-    VALUES (v_name, clock_timestamp() + c_backoff, v_reason, clock_timestamp())
-    ON CONFLICT (table_name) DO UPDATE
-      SET retry_after = EXCLUDED.retry_after, reason = EXCLUDED.reason, backed_off_at = EXCLUDED.backed_off_at;
     RAISE WARNING USING
       MESSAGE = 'whizbang.queue_statistics_refresh_skipped',
       DETAIL = v_name || '=' || v_reason,
@@ -228,4 +238,4 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_refresh_stale_queue_statistics() IS
-  'Analyzes the queue tables whose statistics are stale (207, #1349), as the role that migrated the schema (SECURITY DEFINER), and never waits on another claimant or a conflicting lock (661, #2611): one claimant per table under a transaction-scoped advisory lock taken with pg_try_advisory_xact_lock, ANALYZE (SKIP_LOCKED), a wait of deadlock_timeout plus one second only when autovacuum alone holds the table, and a 60 second back-off after a skip or a failure, raised once as the whizbang.queue_statistics_refresh_skipped warning. Returns how many tables it analyzed. claim_work calls it before acquiring.';
+  'Analyzes the queue tables whose statistics are stale (207, #1349), as the role that migrated the schema (SECURITY DEFINER), and never waits on another claimant or a conflicting lock (661, #2611): one claimant per table under a transaction-scoped advisory lock taken with pg_try_advisory_xact_lock, ANALYZE (SKIP_LOCKED), a wait of deadlock_timeout plus one second only when autovacuum alone holds the table, and a 60 second back-off after an analyze, a skip or a failure, a skip or failure raised once as the whizbang.queue_statistics_refresh_skipped warning. Returns how many tables it analyzed. claim_work calls it before acquiring.';
