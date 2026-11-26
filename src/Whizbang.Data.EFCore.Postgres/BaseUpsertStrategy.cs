@@ -230,8 +230,11 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     var (planned, hookPlan, expiresAt, businessTime, mappedTable) = _planRowWrite(context, args);
     args = planned;
     // #2518: the atomic write serializes the document before it opens a connection, so the name the server gives this
-    // context's database, which keys its schema's gate, is asked first (once for each connection string).
-    await Perspectives.StrongIdDocumentTarget.ResolveAsync(context, cancellationToken);
+    // context's database, which keys its schema's gate, is asked first (once for each connection string). Not for a row
+    // a staging load holds: that write sends no statement, and the load's own writes go through this context later.
+    if (PerspectiveStagingLoad.For(args.TableName) is null) {
+      await Perspectives.StrongIdDocumentTarget.ResolveAsync(context, cancellationToken);
+    }
 
     // Path 1 atomic upsert. When this strategy uses it (see UsesAtomicUpsert) and it applies
     // (Npgsql, plain identifiers, a resolvable model), this single round-trip replaces
