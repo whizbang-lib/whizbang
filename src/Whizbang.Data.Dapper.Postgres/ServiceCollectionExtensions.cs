@@ -610,6 +610,9 @@ public static class ServiceCollectionExtensions {
     // #2329: the maintenance step that purges the stored events of the retired event types, in bounded batches.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, RetiredEventTypePurgeStep>(
       RetiredEventTypePurgeStep.FromServices));
+    // #2601: the maintenance step that removes the cursors, queued rows and snapshots of perspectives no service runs.
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, UnregisteredPerspectiveCleanupStep>(
+      UnregisteredPerspectiveCleanupStep.FromServices));
     // #2116: the maintenance step that re-attributes stored events recorded under an origin that does not own their type.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MisattributedOriginCorrectionStep>(
       MisattributedOriginCorrectionStep.FromServices));

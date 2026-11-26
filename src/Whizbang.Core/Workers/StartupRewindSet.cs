@@ -22,6 +22,7 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupRewindBarrierTests.cs</tests>
 internal sealed class StartupRewindSet {
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte> _pending = new();
+  private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), (int Attempts, int Failures)> _leases = new();
   private readonly TaskCompletionSource _allCleared = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
   /// <summary>Fixes the set to the cursors the scan found flagged.</summary>
@@ -89,16 +90,40 @@ internal sealed class StartupRewindSet {
     _completeIfEmpty();
   }
 
+  /// <summary>
+  /// #2601: records how often a scan-time cursor's queued row was leased and how often it failed, for the cap's Warning.
+  /// The highest lease count recorded for a key is kept; a key the scan did not flag is ignored.
+  /// </summary>
+  /// <param name="streamId">The row's stream.</param>
+  /// <param name="perspectiveName">The row's perspective.</param>
+  /// <param name="attempts">The row's leases.</param>
+  /// <param name="failures">The row's recorded failures.</param>
+  /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Workers/StartupRewindSetTests.cs:DescribeRemaining_NamesHowOftenTheQueuedRowWasLeased_ForAKeyThatRecordedLeasesAsync</tests>
+  public void RecordLeases(Guid streamId, string perspectiveName, int attempts, int failures) {
+    var key = (streamId, perspectiveName);
+    if (!_pending.ContainsKey(key)) {
+      return;
+    }
+    _leases.AddOrUpdate(key, (attempts, failures), (_, held) => attempts > held.Attempts ? (attempts, failures) : held);
+  }
+
   /// <summary>Names the cursors still flagged as <c>stream/perspective</c>, at most <paramref name="max"/> of them.</summary>
   /// <param name="max">How many to name before summarizing the rest as a count.</param>
   /// <returns>A comma-separated list, ending in "and N more" when some were left out.</returns>
   public string DescribeRemaining(int max) {
     var keys = _pending.Keys.ToArray();
-    var named = string.Join(", ", keys.Take(max).Select(k => $"{k.StreamId}/{k.PerspectiveName}"));
+    var named = string.Join(", ", keys.Take(max).Select(_describe));
     return keys.Length > max
       ? string.Create(CultureInfo.InvariantCulture, $"{named}, and {keys.Length - max} more")
       : named;
   }
+
+  // #2601: a key whose queued row recorded leases names them, so a rewind nothing runs is told from a slow one.
+  private string _describe((Guid StreamId, string PerspectiveName) key) =>
+    _leases.TryGetValue(key, out var leases)
+      ? string.Create(CultureInfo.InvariantCulture,
+          $"{key.StreamId}/{key.PerspectiveName} (queued row leased {leases.Attempts} times, {leases.Failures} failures)")
+      : $"{key.StreamId}/{key.PerspectiveName}";
 
   private void _completeIfEmpty() {
     if (_pending.IsEmpty) {

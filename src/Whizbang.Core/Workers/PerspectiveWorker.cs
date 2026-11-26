@@ -2018,6 +2018,8 @@ public partial class PerspectiveWorker(
     if (rawEvents.Count == 0) {
       return null;
     }
+    // #2601: a row leased again and again with no failure is one nothing runs; it is warned about and counted.
+    _warnRowsLeasedWithoutFailure(rawEvents);
 
     // #1759: a row in the cooldown cache was applied by an earlier session of its stream and is only waiting for its
     // completion to delete it; the cooldown partition below would discard it after parsing. Parse only the rest. Every
@@ -2039,6 +2041,9 @@ public partial class PerspectiveWorker(
       // No perspective here: concluding the rows nothing applies was all there was to do.
       return null;
     }
+    // #2601: a flagged cursor whose rows hold no event its perspective applies forms no pair below; it is rewound here.
+    await _rewindFlaggedPairsWithNothingToApplyAsync(workCoordinator, rowsToParse, typedEvents, _perspectivesPerEventType, cancellationToken)
+      .ConfigureAwait(false);
     if (typedEvents.Count == 0) {
 #pragma warning disable CA1848
       _logger.LogWarning("Drain mode: DeserializeStreamEvents returned 0 typed events from {RawCount} raw events", rowsToParse.Count);
@@ -6076,6 +6081,29 @@ public class PerspectiveWorkerOptions {
   /// </para>
   /// </remarks>
   public int? MaxPerspectiveEventAttempts { get; set; } = 10;
+
+  /// <summary>
+  /// #2601: the leases after which a queued perspective row with no failure recorded is warned about, once per row and
+  /// process, and counted on <c>whizbang.perspective.rows_leased_without_failure</c>. <c>null</c> turns the warning off.
+  /// </summary>
+  /// <remarks>
+  /// A lease that ends in an apply completes the row, and one that ends in a failure counts toward
+  /// <see cref="MaxPerspectiveEventAttempts"/>. A row leased again and again with neither is one nothing runs, which the
+  /// dead-letter bound never sees. Default <c>25</c>: well past the leases a busy backlog or a rolling deploy charges a
+  /// healthy row. Bound from <c>Whizbang:Workers:Perspective:LeasedWithoutFailureWarningAttempts</c>.
+  /// </remarks>
+  /// <docs>operations/workers/perspective-worker#rows-leased-without-a-failure</docs>
+  public int? LeasedWithoutFailureWarningAttempts { get; set; } = DEFAULT_LEASED_WITHOUT_FAILURE_WARNING_ATTEMPTS;
+
+  /// <summary>The default <see cref="LeasedWithoutFailureWarningAttempts"/>.</summary>
+  public const int DEFAULT_LEASED_WITHOUT_FAILURE_WARNING_ATTEMPTS = 25;
+
+  /// <summary>
+  /// #2601: the maintenance step that removes the cursors, queued rows and snapshots of a perspective no service runs any
+  /// more. Bound from <c>Whizbang:Workers:Perspective:UnregisteredPerspectiveCleanup</c>.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#perspectives-no-longer-registered</docs>
+  public UnregisteredPerspectiveCleanupOptions UnregisteredPerspectiveCleanup { get; set; } = new();
 
   /// <summary>
   /// Whether a collective that did not get its apply lock counts as a failed apply (#964). Default <c>false</c>.

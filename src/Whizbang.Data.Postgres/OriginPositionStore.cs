@@ -211,11 +211,13 @@ public sealed class OriginPositionStore {
     return (floored, skipped);
   }
 
-  // #2571: the origin's events a perspective replays, those of the types its association rows name; every one of them
-  // when it has no association rows, since nothing then says which subset it reads.
+  // #2571: the origin's events a perspective replays, those of the types its association rows name. #2601: none when it
+  // has no association rows. The store queues a perspective only the types its rows name (the fan-out joins them), and a
+  // service's startup deletes the rows of a perspective it no longer runs, so a cursor with none is one nothing here runs:
+  // rewinding it would queue a replay no runner takes.
   private static StoredStreamEvent[] _eventsRead(List<(StoredStreamEvent Event, string Type)> events, string[]? types) =>
     types is null
-      ? [.. events.Select(e => e.Event)]
+      ? []
       : [.. events.Where(e => Array.IndexOf(types, e.Type) >= 0).Select(e => e.Event)];
 
   /// <summary>Per origin, the eligible received events still held without a position (<c>wh_origin_positions_unfilled</c>).</summary>

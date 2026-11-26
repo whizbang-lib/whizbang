@@ -38,7 +38,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
 [Category("Integration")]
 [Category("Shard4")]
-public class OriginPositionFillSqlTests : EFCoreTestBase {
+public partial class OriginPositionFillSqlTests : EFCoreTestBase {
   private const string TYPE = "Whizbang.Tests.PositionFillEvent, Whizbang.Tests";
   private const string OTHER_TYPE = "Whizbang.Tests.PositionFillOtherEvent, Whizbang.Tests";
   private const string READS_TYPE = "Reads";
@@ -297,6 +297,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     var k1 = await _seedAsync(conn, origin, 10, minutesAgo: 10, stream: kept, version: 1);
     var k2 = await _seedAsync(conn, origin, null, minutesAgo: 10, stream: kept, version: 2);
     _ = await _seedAsync(conn, origin, 30, minutesAgo: 10, stream: kept, version: 3);
+    await _associateAsync(conn, TYPE, "P1");
     foreach (var (stream, last) in new[] { (reordered, r2), (kept, k2) }) {
       await _execAsync(conn, $"""
         INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status) VALUES ('{stream}', 'P1', '{last}', 2);
@@ -358,7 +359,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     await Assert.That(rows[0].Perspective).IsEqualTo(READS_TYPE);
     await Assert.That(rows[0].Types).IsEquivalentTo(_bothTypes, TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(rows[1]).IsEqualTo((stream, READS_ALL, (string[]?)null))
-      .Because("a perspective with no association rows is not known to read any subset: it falls back to every event");
+      .Because("a perspective with no association rows names no type; the fill reads that as reading nothing (#2601)");
   }
 
   [Test]
@@ -372,6 +373,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     var u = await _seedAsync(conn, origin, null, minutesAgo: 10, stream: stream, version: 3, type: OTHER_TYPE);
     var p1 = await _seedAsync(conn, origin, 1, minutesAgo: 10, stream: stream, version: 1);
     await _associateAsync(conn, OTHER_TYPE, READS_TYPE);
+    await _readsBothTypesAsync(conn, READS_ALL);
     foreach (var perspective in new[] { READS_TYPE, READS_ALL }) {
       await _cursorAsync(conn, stream, perspective, u);
       await _snapshotAsync(conn, stream, perspective, u, 3);
@@ -385,7 +387,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
       .Because("the perspective's own events fold in the same order, so it is not rewound");
     await Assert.That(await _snapshotVersionsAsync(conn, stream, READS_TYPE)).IsEquivalentTo(_atVersionThree);
     await Assert.That(await _triggerAsync(conn, stream, READS_ALL)).IsEqualTo(p1)
-      .Because("a perspective with no association rows reads every event, and the stream's first slot changed");
+      .Because("a perspective reading every type sees the stream's first slot change");
     await Assert.That(await _snapshotVersionsAsync(conn, stream, READS_ALL)).IsEmpty();
     await Assert.That(p2).IsNotEqualTo(Guid.Empty);
   }
@@ -401,6 +403,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     var u = await _seedAsync(conn, origin, null, minutesAgo: 10, stream: stream, version: 2, type: OTHER_TYPE);
     _ = await _seedAsync(conn, origin, 2, minutesAgo: 10, stream: stream, version: 1);
     await _associateAsync(conn, OTHER_TYPE, READS_TYPE);
+    await _readsBothTypesAsync(conn, READS_ALL);
     foreach (var perspective in new[] { READS_TYPE, READS_ALL }) {
       await _cursorAsync(conn, stream, perspective, p2);
       await _snapshotAsync(conn, stream, perspective, p2, 3);
@@ -426,6 +429,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     var origin = TrackedGuid.New().Value;
     var stream = TrackedGuid.New().Value;
     var e = await _fourEventStreamAsync(conn, origin, stream);
+    await _readsBothTypesAsync(conn, READS_ALL);
     await _cursorAsync(conn, stream, READS_ALL, e[3], replayedThrough: 99);
     for (var v = 0; v < 4; v++) {
       await _snapshotAsync(conn, stream, READS_ALL, e[v], v + 1);
@@ -454,6 +458,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     var origin = TrackedGuid.New().Value;
     var stream = TrackedGuid.New().Value;
     var e = await _fourEventStreamAsync(conn, origin, stream);
+    await _readsBothTypesAsync(conn, READS_ALL);
     await _cursorAsync(conn, stream, READS_ALL, e[0]);
     await _snapshotAsync(conn, stream, READS_ALL, e[0], 1);
 
@@ -472,6 +477,9 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     var origin = TrackedGuid.New().Value;
     var stream = TrackedGuid.New().Value;
     var e = await _fourEventStreamAsync(conn, origin, stream);
+    foreach (var perspective in new[] { "Lower", "Higher", "Gone", "Fresh" }) {
+      await _associateAsync(conn, TYPE, perspective);
+    }
     await _cursorAsync(conn, stream, "Lower", e[3], flaggedAt: e[1]);
     await _cursorAsync(conn, stream, "Higher", e[3], flaggedAt: e[3]);
     await _cursorAsync(conn, stream, "Gone", e[3], flaggedAt: TrackedGuid.New().Value);
@@ -512,6 +520,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     for (var v = 2; v <= 11; v++) {
       events.Add(await _seedAsync(conn, origin, v * 10, minutesAgo: 10, stream: stream, version: v, body: false, flags: EPHEMERAL));
     }
+    await _associateAsync(conn, TYPE, REAPED_READER);
     await _cursorAsync(conn, stream, REAPED_READER, events[10]);
     await _snapshotAsync(conn, stream, REAPED_READER, events[10], 11);
 
@@ -532,8 +541,8 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
 
   /// <summary>
   /// The floor each rewind starts from: the first event at or after its trigger with a body that the perspective reads (the
-  /// types its association rows name, every type when it has none); the trigger itself whatever its type; none when nothing
-  /// readable follows; and no row for a trigger the store does not hold.
+  /// types its association rows name; none when it has none, #2601); the trigger only when the perspective reads it
+  /// (#2601); none when nothing readable follows; and no row for a trigger the store does not hold.
   /// </summary>
   [Test]
   public async Task ReapFloor_IsTheFirstEventWithABodyThePerspectiveReads_AtOrAfterTheTriggerAsync() {
@@ -551,7 +560,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     await using (var cmd = conn.CreateCommand()) {
       cmd.CommandText = "SELECT asked_trigger_event_id, trigger_event_id, perspective_name FROM wh_rewind_reap_floor(@s, @p, @t)";
       Guid[] streams = [stream, stream, stream, bare, stream];
-      string[] perspectives = [FLOOR_READS_TYPE, FLOOR_READS_ALL, FLOOR_READS_TYPE, FLOOR_READS_ALL, FLOOR_READS_ALL];
+      string[] perspectives = [FLOOR_READS_TYPE, FLOOR_READS_ALL, FLOOR_READS_TYPE, FLOOR_READS_TYPE, FLOOR_READS_ALL];
       Guid[] triggers = [v1, v1, v2, b1, gone];
       cmd.Parameters.AddWithValue("s", streams);
       cmd.Parameters.AddWithValue("p", perspectives);
@@ -565,9 +574,14 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     await Assert.That(floors.Count).IsEqualTo(4).Because("a trigger the store does not hold has no floor row");
     await Assert.That(floors[0]).IsEqualTo((v1, (Guid?)v3, FLOOR_READS_TYPE))
       .Because("version 2 has a body, but its type is not one the perspective reads");
-    await Assert.That(floors[1]).IsEqualTo((v1, (Guid?)v2, FLOOR_READS_ALL)).Because("a perspective with no association rows reads every type");
-    await Assert.That(floors[2]).IsEqualTo((v2, (Guid?)v2, FLOOR_READS_TYPE)).Because("a trigger with a body is its own floor");
-    await Assert.That(floors[3]).IsEqualTo((b1, (Guid?)null, FLOOR_READS_ALL)).Because("nothing readable follows the trigger");
+    // #2601 flipped two rules this test locked: a perspective with no association rows read every type, and a trigger with
+    // a body was its own floor whatever its type. Both let a rewind start from an event its perspective does not read,
+    // which no drain pair forms for, so the rewind never ran and held a Blocking startup to its cap.
+    await Assert.That(floors[1]).IsEqualTo((v1, (Guid?)null, FLOOR_READS_ALL))
+      .Because("a perspective with no association rows is queued no event here, so it reads none (#2601)");
+    await Assert.That(floors[2]).IsEqualTo((v2, (Guid?)v3, FLOOR_READS_TYPE))
+      .Because("the trigger counts only when the perspective reads its type (#2601)");
+    await Assert.That(floors[3]).IsEqualTo((b1, (Guid?)null, FLOOR_READS_TYPE)).Because("nothing readable follows the trigger");
   }
 
   /// <summary>
@@ -581,6 +595,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     var stream = TrackedGuid.New().Value;
     var r1 = await _seedAsync(conn, origin, null, minutesAgo: 10, stream: stream, version: 1, body: false, flags: EPHEMERAL);
     var r2 = await _seedAsync(conn, origin, 20, minutesAgo: 10, stream: stream, version: 2, body: false, flags: EPHEMERAL);
+    await _associateAsync(conn, TYPE, REAPED_READER);
     await _cursorAsync(conn, stream, REAPED_READER, r2);
     await using var meters = new ServiceCollection().AddMetrics().BuildServiceProvider();
     var skipped = new List<long>();
@@ -615,6 +630,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
       await _seedAsync(conn, origin, 20, minutesAgo: 10, stream: stream, version: 2, body: false, flags: EPHEMERAL),
       await _seedAsync(conn, origin, 30, minutesAgo: 10, stream: stream, version: 3, flags: EPHEMERAL),
       await _seedAsync(conn, origin, 40, minutesAgo: 10, stream: stream, version: 4, flags: EPHEMERAL)];
+    await _associateAsync(conn, TYPE, REAPED_READER);
     await _cursorAsync(conn, stream, REAPED_READER, e[3]);
     await _snapshotAsync(conn, stream, REAPED_READER, e[1], 2);
     await _snapshotAsync(conn, stream, REAPED_READER, e[3], 4);
@@ -643,6 +659,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     var stream = TrackedGuid.New().Value;
     var v1 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: stream, version: 1, body: false, flags: EPHEMERAL);
     var v2 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: stream, version: 2, body: false, flags: EPHEMERAL);
+    await _associateAsync(conn, TYPE, REAPED_READER);
     await _cursorAsync(conn, stream, REAPED_READER, v2);
     await _snapshotAsync(conn, stream, REAPED_READER, v2, 2);
 
@@ -672,6 +689,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
     var m3 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: moved, version: 3, flags: EPHEMERAL);
     var c1 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: cleared, version: 1, body: false, flags: EPHEMERAL);
     var k1 = await _seedAsync(conn, null, null, minutesAgo: 10, stream: kept, version: 1, flags: EPHEMERAL);
+    await _associateAsync(conn, TYPE, REAPED_READER);
     await _cursorAsync(conn, moved, REAPED_READER, m3, flaggedAt: m1);
     await _cursorAsync(conn, cleared, REAPED_READER, c1, flaggedAt: c1);
     await _cursorAsync(conn, kept, REAPED_READER, k1, flaggedAt: k1);
@@ -699,7 +717,7 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
       .IsEqualTo(0L);
     await Assert.That(await _flagAsync(conn, cleared, REAPED_READER)).IsEqualTo(0L);
     await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_events WHERE stream_id = '{cleared}'")).IsEqualTo(0L);
-    await Assert.That(await _triggerAsync(conn, kept, REAPED_READER)).IsEqualTo(k1).Because("a trigger with a body is its own floor");
+    await Assert.That(await _triggerAsync(conn, kept, REAPED_READER)).IsEqualTo(k1).Because("a trigger with a body that the perspective reads is its own floor");
     await Assert.That(await _scalarAsync(conn, $"SELECT count(*) FROM wh_perspective_events WHERE stream_id = '{kept}'")).IsEqualTo(1L);
     await Assert.That(await _flagAsync(conn, kept, "Unflagged")).IsEqualTo(0L);
   }
@@ -1093,6 +1111,12 @@ public class OriginPositionFillSqlTests : EFCoreTestBase {
       VALUES (gen_random_uuid(), '{eventType}', 'perspective', '{perspective}', 'test-service', '{eventType}', NOW(), NOW())
       ON CONFLICT DO NOTHING
       """);
+
+  /// <summary>Association rows naming both test types for <paramref name="perspective"/>: it reads every event here.</summary>
+  private static async Task _readsBothTypesAsync(NpgsqlConnection conn, string perspective) {
+    await _associateAsync(conn, TYPE, perspective);
+    await _associateAsync(conn, OTHER_TYPE, perspective);
+  }
 
   private static Task<long> _flagAsync(NpgsqlConnection conn, Guid stream, string perspective) =>
     _scalarAsync(conn, $"SELECT status & {REWIND_REQUIRED} FROM wh_perspective_cursors WHERE stream_id = '{stream}' AND perspective_name = '{perspective}'");

@@ -790,6 +790,7 @@ Whizbang:Workers:Perspective:DrainBatcher:SlidingWindow
 Whizbang:Workers:Perspective:DrainLoopMaxIterations
 Whizbang:Workers:Perspective:DrainLoopRefetchMinBatch
 Whizbang:Workers:Perspective:IdleThresholdPolls
+Whizbang:Workers:Perspective:LeasedWithoutFailureWarningAttempts
 Whizbang:Workers:Perspective:LeaseSeconds
 Whizbang:Workers:Perspective:MaxConcurrentDrainConsumers
 Whizbang:Workers:Perspective:MaxConcurrentPerspectives
@@ -803,6 +804,9 @@ Whizbang:Workers:Perspective:RetryOptions:BackoffMultiplier
 Whizbang:Workers:Perspective:RetryOptions:EnableExponentialBackoff
 Whizbang:Workers:Perspective:RetryOptions:MaxBackoffSeconds
 Whizbang:Workers:Perspective:RetryOptions:RetryTimeoutSeconds
+Whizbang:Workers:Perspective:UnregisteredPerspectiveCleanup:BatchCursors
+Whizbang:Workers:Perspective:UnregisteredPerspectiveCleanup:Enabled
+Whizbang:Workers:Perspective:UnregisteredPerspectiveCleanup:MaxBatchesPerCycle
 Whizbang:Workers:Perspective:WriteBehind:MaxBatchesPerModel
 Whizbang:Workers:Perspective:WriteBehind:MaxBytes
 Whizbang:Workers:Perspective:WriteBehind:MaxFlushIntervalMilliseconds

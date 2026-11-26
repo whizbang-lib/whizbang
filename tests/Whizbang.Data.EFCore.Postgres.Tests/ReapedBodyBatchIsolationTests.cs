@@ -49,7 +49,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard5")]
-public class ReapedBodyBatchIsolationTests : EFCoreTestBase {
+public partial class ReapedBodyBatchIsolationTests : EFCoreTestBase {
   private static readonly TimeSpan _signalDeadline = TimeSpan.FromSeconds(60);
   private static readonly DateTimeOffset _writtenInJuly = new(2026, 7, 2, 9, 0, 0, TimeSpan.Zero);
   private const int EPHEMERAL = 8;

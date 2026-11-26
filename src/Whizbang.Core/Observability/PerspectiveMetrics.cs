@@ -157,6 +157,24 @@ public sealed class PerspectiveMetrics {
   public PassiveCounter<long> StragglersDropped { get; }
 
   /// <summary>
+  /// #2601: queued perspective rows leased <see cref="Workers.PerspectiveWorkerOptions.LeasedWithoutFailureWarningAttempts"/>
+  /// times or more with no failure recorded, each counted once per process. Tags: perspective_name.
+  /// </summary>
+  /// <remarks>
+  /// A lease ends in an apply, which completes the row, or a failure, which the dead-letter bound counts. A row leased
+  /// again and again with neither is one nothing runs, which the dead-letter bound never sees.
+  /// </remarks>
+  /// <docs>operations/workers/perspective-worker#rows-leased-without-a-failure</docs>
+  public PassiveCounter<long> RowsLeasedWithoutFailure { get; }
+
+  /// <summary>
+  /// #2601: cursors of perspectives no service runs any more that the maintenance cycle removed, with their queued rows
+  /// and snapshots.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rewind#perspectives-no-longer-registered</docs>
+  public PassiveCounter<long> UnregisteredCursorsRemoved { get; }
+
+  /// <summary>
   /// Snapshots of a row with collectives that were due and not taken, because a collective of the row was in flight when
   /// the row was read, or moved before the row was written (#1963). Tags: perspective_name.
   /// </summary>
@@ -262,6 +280,10 @@ public sealed class PerspectiveMetrics {
       description: "Rewinds asked for again with the same trigger on an unchanged stream, settled without running");
     StragglersDropped = meter.CreatePassiveCounter<long>("whizbang.perspective.stragglers_dropped",
       description: "Late events an ephemeral perspective dropped instead of rewinding for them");
+    RowsLeasedWithoutFailure = meter.CreatePassiveCounter<long>("whizbang.perspective.rows_leased_without_failure",
+      description: "Queued perspective rows leased past the warning bound with no failure recorded, each counted once per process");
+    UnregisteredCursorsRemoved = meter.CreatePassiveCounter<long>("whizbang.perspective.unregistered_cursors_removed",
+      description: "Cursors of perspectives no service runs that the maintenance cycle removed, with their queued rows and snapshots");
     SnapshotsDeferred = meter.CreatePassiveCounter<long>("whizbang.perspective.snapshots_deferred",
       description: "Due snapshots of a row with collectives not taken because a collective of the row was in flight");
 
