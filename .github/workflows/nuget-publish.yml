@@ -129,13 +129,24 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: |
-          # NU5017 false positive for analyzer packages in .NET 10 SDK
-          dotnet pack --configuration Release --no-build --output ./packages -p:Version="$VERSION" || true
+          # A failed pack fails the publish (#2605). Package validation runs in the next step.
+          dotnet pack --configuration Release --no-build --output ./packages -p:Version="$VERSION" -p:EnablePackageValidation=false
           ls -la ./packages/*.nupkg
           if [ "$(ls ./packages/*.nupkg 2>/dev/null | wc -l)" -eq 0 ]; then
             echo "ERROR: No packages were created"
             exit 1
           fi
+
+      # Package validation, run as its own step (#2605). The pack above runs with it off, so a pack error fails
+      # there on its own; this packs again into a throwaway directory with it on and reports every break against
+      # the published baseline as an annotation and a row of the step summary. API_BREAKS_BLOCK is 'false' while the
+      # breaks that reached develop behind the old `|| true` are triaged; set it to 'true' to make a break fail the
+      # run. PackageValidation.Tests.ps1 (script-tests) locks both steps.
+      - name: Compare the public API with the baseline
+        env:
+          VERSION: ${{ inputs.version }}
+          API_BREAKS_BLOCK: 'false'
+        run: pwsh -NoProfile -File .github/scripts/Compare-PublicApi.ps1 -Version "$VERSION"
 
       - name: Generate the software bill of materials
         uses: ./.github/actions/package-sbom

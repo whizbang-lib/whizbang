@@ -74,9 +74,22 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: |
-          # NU5017 false positive for analyzer packages in .NET 10 SDK; verify-packages below is the
-          # real check that every package was produced.
-          dotnet pack --configuration Release --no-build --output ./packages /p:Version="$VERSION" || true
+          # A failed pack fails this step. The command used to end in `|| true`, which turned every pack error,
+          # among them the MSB4018 of a build artifact without its reference assemblies, into a pass (#2605).
+          # Package validation is off here and runs in the next step, which reports each public API break.
+          # verify-packages below still checks that the set is complete.
+          dotnet pack --configuration Release --no-build --output ./packages /p:Version="$VERSION" -p:EnablePackageValidation=false
+
+      # Package validation, run as its own step (#2605). The pack above runs with it off, so a pack error fails
+      # there on its own; this packs again into a throwaway directory with it on and reports every break against
+      # the published baseline as an annotation and a row of the step summary. API_BREAKS_BLOCK is 'false' while the
+      # breaks that reached develop behind the old `|| true` are triaged; set it to 'true' to make a break fail the
+      # run. PackageValidation.Tests.ps1 (script-tests) locks both steps.
+      - name: Compare the public API with the baseline
+        env:
+          VERSION: ${{ inputs.version }}
+          API_BREAKS_BLOCK: 'false'
+        run: pwsh -NoProfile -File .github/scripts/Compare-PublicApi.ps1 -Version "$VERSION"
 
       - name: Generate the software bill of materials
         uses: ./.github/actions/package-sbom

@@ -869,8 +869,9 @@ Every library package is compared with the **last stable release** when it is pa
 validation (`EnablePackageValidation`, set in `Directory.Build.targets`) downloads that version from nuget.org
 and fails the pack on any change that breaks binary or source compatibility, such as a removed or changed public
 member or a dropped target framework. Analyzer and generator packages ship no library to compare, and the
-command-line tools are not an API, so they are not checked. The check runs wherever packing does, so a pull
-request that breaks the API fails its `Pack` job.
+command-line tools are not an API, so they are not checked. The check runs wherever packing does (the merge
+queue for a change into `develop`, the pull request for a change into `main` or a release branch), so a break
+fails the `Pack` job once breaks block (see below).
 
 **An intended break is recorded, not avoided.** Pre-1.0 every release is a new minor, so breaking changes are
 allowed, but each one is written down where a reviewer sees it. Regenerate the project's suppression file and
@@ -883,7 +884,18 @@ dotnet pack src/<Project>/<Project>.csproj -c Release -p:WhizbangApiCheck=true -
 
 The check runs on CI by itself; locally `WhizbangApiCheck=true` turns it on, and `Version` must be above the
 baseline, because the placeholder version in `Directory.Build.props` is lower than any release and would be
-reported as an assembly identity change (`CP0003`) in every package.
+reported as an assembly identity change (`CP0003`) in every package. CI's own pull request and merge queue
+runs, where GitVersion does not run, stamp the baseline's version with a label (`<baseline>-queue.<run>`,
+`<baseline>-pr<number>.<run>`, the `Placeholder version` step of `Plan · Detect changes` in `ci.yml`), so their
+assembly version equals the baseline's and only real API changes are reported.
+
+On CI the comparison is its own step, **Compare the public API with the baseline**
+(`.github/scripts/Compare-PublicApi.ps1`), after a pack with validation off: a pack error fails the pack step on
+its own, and every break is an annotation and a row of the step summary. Before #2605 the pack ended in
+`|| true`, the build artifact left out the reference assemblies the check reads, and the placeholder was
+`0.0.0`, so nothing was ever compared, and breaks reached `develop` unrecorded. Until those are triaged the
+step reports breaks without failing (`API_BREAKS_BLOCK: 'false'` in `reusable-pack.yml` and
+`nuget-publish.yml`); setting it to `'true'` makes a break fail the run, as this section describes.
 
 That writes `src/<Project>/CompatibilitySuppressions.xml`, one entry per break (`CP0002` member removed,
 `CP0006` member added to an interface, and so on). The diff of that file is the API review. A suppression for
@@ -896,7 +908,7 @@ the baseline is moved.
 
 **After each stable release, move the baseline.** Set `PackageValidationBaselineVersion` in
 `Directory.Build.targets` to the version just released, and delete every `CompatibilitySuppressions.xml`: the
-breaks they recorded are now in the baseline. Do it in one pull request into `develop` right after the
+breaks they recorded are now in the baseline. CI's placeholder version reads the same property, so it moves too. Do it in one pull request into `develop` right after the
 release. Until then, packs still compare with the previous stable and the old suppressions keep applying,
 so nothing fails; the PR only stops them from piling up. From 1.0 a break needs a new major as well as a
 suppression.

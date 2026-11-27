@@ -211,12 +211,15 @@ jobs:
           # --test-modules, no MSBuild), so only PACKABLE projects (src/ + tools/: CLI,
           # Migrate) need obj/ intermediates for pack's dotnet pack --no-build.
           # Test/sample/benchmark intermediates are dead weight in the artifact.
+          # The reference assemblies (obj/Release/<tfm>/ref) stay: package validation compares each library's
+          # public API through them, and without them every library stopped on MSB4018 and nothing was compared
+          # (#2605). refint is only the compiler's incremental-build input, so it is still left out.
+          # PackageValidation.Tests.ps1 (script-tests) fails if ref is excluded again.
           name: build-${{ github.run_id }}
           path: |
             **/bin/Release
             src/**/obj/Release
             tools/**/obj/Release
-            !**/obj/Release/**/ref/**
             !**/obj/Release/**/refint/**
           # A release branch's build is repacked for its beta and rc prereleases
           # (release-prerelease.yml), so it lives as long as the release PR might stay open.
