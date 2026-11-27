@@ -67,11 +67,15 @@ public class LocalInvokeDeriveFromTests {
   [Arguments(LocalInvokeDeriveFromPaths.VOID_SYNC)]
   [Arguments(LocalInvokeDeriveFromPaths.RUNNER)]
   [Arguments(LocalInvokeDeriveFromPaths.PUBLISH)]
+  [Arguments(LocalInvokeDeriveFromPaths.CASCADE)]
+  [Arguments(LocalInvokeDeriveFromPaths.RUNTIME)]
   public async Task LocalDispatch_FromInsideAHandling_TheInnerReceptorDerivesInItsOwnHandlingAsync(string path) {
     // A worker-stage receptor derives an id, then reaches a receptor locally; the inner one derives the same type and
     // purpose. In its own handling that is a second id; in the outer receptor's handling it was the same purpose twice.
     var (services, recorder) = LocalInvokeDeriveFromHost.Build();
     await using var _ = services;
+    services.GetRequiredService<IReceptorRegistry>().Register(
+      new LocalInvokeDeriveFromRuntimeReceptor<LocalInvokeDeriveFromRuntimeCommand>(recorder), LifecycleStage.LocalImmediateInline);
 
     await _runOuterAsync(services, _outerEnvelope(path, Whizbang.Core.ValueObjects.MessageId.New(), scheme: null));
 
@@ -275,6 +279,10 @@ public static class LocalInvokeDeriveFromPaths {
   public const string RUNNER = "runner";
   /// <summary>PublishAsync of an event a local receptor handles.</summary>
   public const string PUBLISH = "publish";
+  /// <summary>Void LocalInvokeAsync of a receptor that returns an event a local receptor handles (the untyped publisher).</summary>
+  public const string CASCADE = "cascade";
+  /// <summary>Void LocalInvokeAsync of a command only a runtime-registered receptor handles.</summary>
+  public const string RUNTIME = "runtime";
 }
 
 /// <summary>The command the outer, worker-stage probe handles: which path it reaches the inner receptors on.</summary>
@@ -312,6 +320,12 @@ public sealed class LocalInvokeDeriveFromOuterReceptor(LocalInvokeDeriveFromReco
         break;
       case LocalInvokeDeriveFromPaths.RUNNER:
         await dispatcher.LocalInvokeAsync(new LocalInvokeDeriveFromFanCommand());
+        break;
+      case LocalInvokeDeriveFromPaths.CASCADE:
+        await dispatcher.LocalInvokeAsync(new LocalInvokeDeriveFromCascadingCommand());
+        break;
+      case LocalInvokeDeriveFromPaths.RUNTIME:
+        await dispatcher.LocalInvokeAsync(new LocalInvokeDeriveFromRuntimeCommand());
         break;
       default:
         await dispatcher.PublishAsync(new LocalInvokeDeriveFromEvent((Guid)Whizbang.Core.ValueObjects.TrackedGuid.New()));
@@ -388,6 +402,42 @@ public sealed class LocalInvokeDeriveFromFanSecondReceptor(LocalInvokeDeriveFrom
   /// <inheritdoc />
   public ValueTask HandleAsync(LocalInvokeDeriveFromFanCommand message, CancellationToken cancellationToken = default) {
     recorder.Derive("runner-second");
+    return ValueTask.CompletedTask;
+  }
+}
+
+/// <summary>A command whose receptor returns an event, which cascades to a local receptor through the untyped publisher.</summary>
+public sealed record LocalInvokeDeriveFromCascadingCommand : ICommand;
+
+/// <summary>The event the cascading receptor returns.</summary>
+public sealed record LocalInvokeDeriveFromCascadedEvent([property: StreamId] Guid OrderId) : IEvent;
+
+/// <summary>Returns the event that cascades; derives nothing itself.</summary>
+public sealed class LocalInvokeDeriveFromCascadingReceptor : IReceptor<LocalInvokeDeriveFromCascadingCommand, LocalInvokeDeriveFromCascadedEvent> {
+  /// <inheritdoc />
+  public ValueTask<LocalInvokeDeriveFromCascadedEvent> HandleAsync(LocalInvokeDeriveFromCascadingCommand message,
+      CancellationToken cancellationToken = default) =>
+    ValueTask.FromResult(new LocalInvokeDeriveFromCascadedEvent((Guid)Whizbang.Core.ValueObjects.TrackedGuid.New()));
+}
+
+/// <summary>The cascaded event's local receptor, which derives in its body.</summary>
+public sealed class LocalInvokeDeriveFromCascadedEventReceptor(LocalInvokeDeriveFromRecorder recorder) : IReceptor<LocalInvokeDeriveFromCascadedEvent> {
+  /// <inheritdoc />
+  public ValueTask HandleAsync(LocalInvokeDeriveFromCascadedEvent message, CancellationToken cancellationToken = default) {
+    recorder.Derive("cascade");
+    return ValueTask.CompletedTask;
+  }
+}
+
+/// <summary>A command only a runtime-registered receptor handles.</summary>
+public sealed record LocalInvokeDeriveFromRuntimeCommand : ICommand;
+
+/// <summary>A runtime-registered receptor that derives in its body. Generic, so the generator does not discover it.</summary>
+public sealed class LocalInvokeDeriveFromRuntimeReceptor<TMessage>(LocalInvokeDeriveFromRecorder recorder) : IReceptor<TMessage>
+    where TMessage : IMessage {
+  /// <inheritdoc />
+  public ValueTask HandleAsync(TMessage message, CancellationToken cancellationToken = default) {
+    recorder.Derive("runtime");
     return ValueTask.CompletedTask;
   }
 }
