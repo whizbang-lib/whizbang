@@ -891,6 +891,14 @@ public sealed class StreamIntegrityOptions {
   public OriginPositionFillOptions OriginPositionFill { get; set; } = new();
 
   /// <summary>
+  /// An operator's exclusion of received events from integrity checks (<c>Whizbang:StreamIntegrity:Exclusions</c>,
+  /// #2588): how the maintenance step applies queued requests and how long the audit log is kept.
+  /// </summary>
+  /// <docs>resilience/integrity-exclusions#configuration</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/IntegrityExclusionOptionsTests.cs</tests>
+  public IntegrityExclusionOptions Exclusions { get; set; } = new();
+
+  /// <summary>
   /// Publish <see cref="IntegrityDivergenceDetected"/> / <see cref="IntegrityGapDetected"/> as
   /// durable events (default <c>false</c>).
   /// </summary>

@@ -110,6 +110,33 @@ public class IntegrityPairGuardTests {
     await Assert.That(guard.Pairs.Single().HaltedSince).IsNull();
   }
 
+  /// <summary>
+  /// #2588 (decision D2): version 2 of the eligibility rule leaves out an operator's exclusions, so a peer still on version
+  /// 1 halts the pair until both run version 2. Services deploy independently, so this pause can last days: it is reported
+  /// once as an Error naming both versions, counted under the <c>eligibility_sql_version</c> reason, and ends on its own
+  /// with the first message from the upgraded peer.
+  /// </summary>
+  [Test]
+  public async Task Admit_APeerOnTheEligibilityRuleBeforeExclusions_HaltsUntilItUpgrades_ThenResumesAsync() {
+    var (guard, log, _, services) = _guard(new Rules((SHARED, "a")));
+    await using var owned = services;
+    using var collector = new Recorder<long>(services.GetRequiredService<IMeterFactory>(), "whizbang.stream_integrity.pair_halts");
+    var olderPeer = RuleFingerprint.From(new RuleSet(RuleSemantics.VERSION, RuleSemantics.ELIGIBILITY_SQL_VERSION - 1,
+      new Dictionary<string, string>(StringComparer.Ordinal) { [SHARED] = "a" }));
+
+    var halted = guard.Admit(PEER, IntegrityPairSide.Consumer, olderPeer);
+    var resumed = guard.Admit(PEER, IntegrityPairSide.Consumer, _peer((SHARED, "a")));
+
+    await Assert.That(halted.Reason).IsEqualTo(RulePairHaltReason.EligibilitySqlVersion);
+    await Assert.That(resumed.IsAgreed).IsTrue().Because("the pair resumes with the first message from the upgraded peer");
+    var error = log.Entries.Single(e => e.Level == LogLevel.Error).Message;
+    await Assert.That(error).Contains("eligibility_sql_version")
+      .And.Contains($"eligibility SQL {RuleSemantics.ELIGIBILITY_SQL_VERSION}")
+      .Because("the operator sees which side runs which rule version");
+    await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Information)).IsTrue().Because("the resumption is logged");
+    await Assert.That(collector.GetMeasurementSnapshot().Single().Tags["reason"]).IsEqualTo("eligibility_sql_version");
+  }
+
   [Test]
   public async Task Admit_ADifferentSharedType_HaltsWithOneErrorNamingBothSidesAndTheTypeAsync() {
     var (guard, log, _, services) = _guard(new Rules((SHARED, "a")));

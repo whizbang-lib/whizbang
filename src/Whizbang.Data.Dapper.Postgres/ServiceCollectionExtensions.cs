@@ -589,6 +589,11 @@ public static class ServiceCollectionExtensions {
     // is registered.
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, ArchiveRestoreRequestStep>(
       ArchiveRestoreRequestStep.FromServices));
+    // An operator's exclusion of received events from integrity checks (#2588): the API, and the maintenance step that
+    // applies its queued requests in bounded batches.
+    services.TryAddSingleton<global::Whizbang.Core.Messaging.IIntegrityExclusions>(PostgresIntegrityExclusions.FromServices);
+    services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, IntegrityExclusionStep>(
+      IntegrityExclusionStep.FromServices));
     // The maintenance step that distills staged event metadata into routes and traces (#1726).
     services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataDistillationStep>(
       MetadataDistillationStep.FromServices));

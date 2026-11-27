@@ -182,10 +182,10 @@ public class IntegrityExclusionSqlTests : EFCoreTestBase {
     var everything = await _selectAllAsync(conn, $$"""{"unresolved":7,"until":"{{until:O}}"}""");
 
     await Assert.That(unknownOnly).IsEquivalentTo([unknown]);
-    await Assert.That(undecided).IsEquivalentTo(new List<Guid> { unknown, heldOld })
+    await Assert.That(undecided).IsEquivalentTo(_list(unknown, heldOld))
       .Because("an unknown answer is a held row too; the held row stored after the cutoff is left");
     await Assert.That(unhealedOnly).IsEquivalentTo([unhealed]);
-    await Assert.That(everything).IsEquivalentTo(new List<Guid> { unknown, heldOld, unhealed });
+    await Assert.That(everything).IsEquivalentTo(_list(unknown, heldOld, unhealed));
   }
 
   // ── pending marks ──
@@ -206,11 +206,11 @@ public class IntegrityExclusionSqlTests : EFCoreTestBase {
     var askedNextLap = await _askAsync(conn, _t0.AddHours(1));
 
     await Assert.That(asked!.Value.Origin).IsEqualTo(origin);
-    await Assert.That(asked.Value.Ids).IsEquivalentTo(new List<Guid> { a, b, c });
+    await Assert.That(asked.Value.Ids).IsEquivalentTo(_list(a, b, c));
     await Assert.That(askedAgainAtOnce).IsNull().Because("a mark asked within the lap pause is not asked again");
-    await Assert.That(settled).IsEquivalentTo(new List<Guid> { a, b });
+    await Assert.That(settled).IsEquivalentTo(_list(a, b));
     await Assert.That(await _marksAsync(conn)).IsEquivalentTo([$"{a}|1|42", $"{b}|2|", $"{c}|0|"]);
-    await Assert.That(askedNextLap!.Value.Ids).IsEquivalentTo(new List<Guid> { c })
+    await Assert.That(askedNextLap!.Value.Ids).IsEquivalentTo(_list(c))
       .Because("only the mark still pending is asked again, once the lap pause has passed");
     await Assert.That(await _originCountsAsync(conn, origin)).IsEqualTo("3|1|1");
   }
@@ -350,6 +350,8 @@ public class IntegrityExclusionSqlTests : EFCoreTestBase {
   }
 
   // ── scenario and helpers ──
+
+  private static List<Guid> _list(params Guid[] ids) => [.. ids];
 
   /// <summary>An origin's stream with a kept and a positioned event in a sealed epoch, two held events (one its origin
   /// answered unknown), and ledger rows for the stream and its type lane.</summary>

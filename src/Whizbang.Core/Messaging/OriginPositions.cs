@@ -37,7 +37,23 @@ public sealed record RequestOriginPositions : ICommand, IControlPlaneMessage {
 /// <param name="EventId">The event.</param>
 /// <param name="CommitSequence">Its commit sequence in the origin's store, always positive.</param>
 /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
-public sealed record OriginPosition(Guid EventId, long CommitSequence);
+public sealed record OriginPosition(Guid EventId, long CommitSequence) {
+  /// <summary>
+  /// #2588: the tenant scope the origin stores the event under, or null for an unscoped event. Sent with
+  /// <see cref="EventType"/> and <see cref="StreamId"/> (all three, or none from an older origin): the bucket the origin
+  /// counts the event in, which an asker that excluded the event removes it from.
+  /// </summary>
+  /// <docs>resilience/integrity-exclusions#where-the-origin-holds-it</docs>
+  public string? TenantScope { get; init; }
+
+  /// <summary>#2588: the stored type name the origin counts the event under; null from an older origin.</summary>
+  /// <docs>resilience/integrity-exclusions#where-the-origin-holds-it</docs>
+  public string? EventType { get; init; }
+
+  /// <summary>#2588: the stream the origin stores the event in; null from an older origin.</summary>
+  /// <docs>resilience/integrity-exclusions#where-the-origin-holds-it</docs>
+  public Guid? StreamId { get; init; }
+}
 
 /// <summary>
 /// #2544: an origin's answer to <see cref="RequestOriginPositions"/>. Every asked id is in exactly one list:
