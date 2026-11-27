@@ -43,6 +43,19 @@ public class EFCoreCollectiveDiUnitTests {
     await Assert.That(session).IsSameReferenceAs(ctx);
   }
 
+  [Test]
+  public async Task SessionAccessor_ForAContextType_ReturnsTheRegisteredDbContextAsync() {
+    var ctx = _newCtx();
+    var sp = new ServiceCollection().AddSingleton(ctx).BuildServiceProvider();
+
+    var session = new EFCoreCollectiveSessionAccessor(typeof(Ctx)).GetSession(sp);
+
+    await Assert.That(session).IsSameReferenceAs(ctx);
+    await Assert.That(() => new EFCoreCollectiveSessionAccessor(null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new EFCoreCollectiveSessionAccessor(typeof(Ctx)).GetSession(null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new ServiceCollection().AddCollectiveEventsEFCore((Type)null!)).Throws<ArgumentNullException>();
+  }
+
   // ── EFCoreCollectiveEventExecutor ──────────────────────────────────────
 
   [Test]

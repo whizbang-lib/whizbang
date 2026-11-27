@@ -78,6 +78,7 @@ public static class CollectiveEventsDapperExtensions {
     // + bump version). TryAdd so a consumer can register their own (defaults + custom hooks) first to override.
     services.TryAddSingleton(_ => WhizbangApplyHooks.CreateCollectiveWithDefaults());
     services.TryAddSingleton<ICollectiveSessionAccessor, DapperCollectiveSessionAccessor>();
+    var tables = _getOrAddTableRegistry(services);
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ICollectiveScopeResolver, TenantCollectiveScopeResolver>());
     // #2620: the perspectives' fan-outs run through the same dispatcher, each scoped to its key and tenant.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ICollectiveScopeResolver, FanOutScopeResolver>(
@@ -86,7 +87,11 @@ public static class CollectiveEventsDapperExtensions {
       sp,
       sp.GetCollectiveDispatchEntries(handPassed),
       [.. sp.GetServices<ICollectiveScopeResolver>()],
-      [.. sp.GetServices<ICollectiveEventExecutor>()],
+      // #2620: each fan-out model gets its executor here, on the table its entry names, with nothing to register.
+      CollectiveExecutors.ForDispatch(
+        [.. sp.GetServices<ICollectiveEventExecutor>()], sp.GetPerspectiveFanOutEntries(),
+        new DapperCollectiveExecutorFactory(tables, sp.GetService<CollectiveApplyOptions>(),
+          sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>(), sp.GetService<CollectiveApplyHookRegistry>())),
       sp.GetService<EventCategoryMetrics>()));
     // Replay/rebuild seam — folds these collective events back into each stream's per-row rebuild so the
     // mutation survives a perspective rebuild. Driver-neutral applier (Whizbang.Data.Postgres); scoped for the

@@ -88,6 +88,34 @@ public class PostgresDriverExtensionsTests {
   }
 
   [Test]
+  public async Task Postgres_AHostThatDeclaresAFanOut_GetsTheCollectiveDispatcher_WithNothingToAddAsync() {
+    // #2620: a fan-out is applied by the collective dispatcher, so the driver registers it when the host declares one.
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(options => options.UseInMemoryDatabase("FanOutTurnkey"));
+    services.AddSingleton<TurnkeyFanOuts>().AddPerspectiveFanOutRegistryContribution<TurnkeyFanOuts>();
+
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    await Assert.That(services.Any(d => d.ServiceType == typeof(ICollectiveDispatcher))).IsTrue();
+    await Assert.That(services.Any(d => d.ServiceType == typeof(ICollectiveSessionAccessor))).IsTrue();
+  }
+
+  [Test]
+  public async Task Postgres_AHostWithNoFanOut_GetsNoCollectiveDispatcherFromTheDriverAsync() {
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(options => options.UseInMemoryDatabase("NoFanOutTurnkey"));
+
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    await Assert.That(services.Any(d => d.ServiceType == typeof(ICollectiveDispatcher))).IsFalse()
+      .Because("a host's collective registration stays its own; the driver adds it only for a fan-out");
+  }
+
+  private sealed class TurnkeyFanOuts : IPerspectiveFanOutRegistry {
+    public IReadOnlyList<PerspectiveFanOutEntry> Entries => [];
+  }
+
+  [Test]
   public async Task Postgres_WithNonEFCoreDriverOptions_ThrowsInvalidOperationExceptionAsync() {
     // Arrange - create a fake IDriverOptions that isn't EFCoreDriverSelector
     var services = new ServiceCollection();

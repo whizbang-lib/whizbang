@@ -3,6 +3,8 @@
 
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.Dapper.Postgres;
@@ -42,6 +44,10 @@ internal sealed class DapperSchemaInitializationRunner(
 
   /// <inheritdoc />
   public async Task RunAsync(CancellationToken cancellationToken) {
+    // #2620: refused before anything is read or applied, so a fan-out this host could never apply cannot start.
+    if (FanOutRefusal(services) is { } refusal) {
+      throw new InvalidOperationException(refusal);
+    }
     // #1992: the host's one Assess verdict is this pass's input; a stand-down is refused before anything is applied.
     var assessment = await StartupVerdictBinding.ReadAsync(services, cancellationToken).ConfigureAwait(false);
     var retry = new PostgresConnectionRetry(options, logger);
@@ -106,6 +112,26 @@ internal sealed class DapperSchemaInitializationRunner(
   /// managed-object reconcile (#2563), as the EF Core driver does, so a host watching the stages sees the same sequence
   /// on either driver.
   /// </summary>
+  /// <summary>
+  /// Why this host cannot start (#2620), or null: it declares a perspective fan-out, which reaches its rows through the
+  /// perspective associations step and the perspective worker the EF Core Postgres driver provides. The Dapper driver
+  /// provides neither, so a fan-out declared here would never change a row.
+  /// </summary>
+  /// <param name="services">The host's services, if any.</param>
+  /// <returns>The refusal, or null.</returns>
+  /// <docs>fundamentals/perspectives/multi-stream#how-a-fan-out-applies-live</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperFanOutRefusalTests.cs:ADapperHostThatDeclaresAFanOut_IsRefusedAtSchemaInitialization_BeforeItConnectsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperFanOutRefusalTests.cs:ADapperHostWithNoFanOut_IsNotRefusedForOneAsync</tests>
+  internal static string? FanOutRefusal(IServiceProvider? services) {
+    var fanOuts = services?.GetPerspectiveFanOutEntries() ?? [];
+    return fanOuts.Count == 0
+      ? null
+      : "Perspectives fan out to " + string.Join(", ", fanOuts.Select(f => TypeNameFormatter.ForLog(f.ModelType)).Distinct(StringComparer.Ordinal))
+        + ", but a fan-out is routed by the perspective associations step and applied by the perspective worker, which the "
+        + "EF Core Postgres driver provides (.WithEFCore<TDbContext>().WithDriver.Postgres) and the Dapper driver does not. "
+        + "Run these perspectives on the EF Core driver, or remove the fan-outs.";
+  }
+
   private PostgresSchemaInitializer _reportingStages(PostgresSchemaInitializer initializer) {
     initializer.Applying = (steps, ct) => SchemaInitializationStages.ApplyingAsync(services, steps, ct);
     initializer.Converging = ct => SchemaInitializationStages.ConvergingAsync(services, ct);

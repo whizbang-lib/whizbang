@@ -15,7 +15,6 @@ using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Serialization;
-using Whizbang.Data.EFCore.Postgres.Collective;
 using Whizbang.Data.EFCore.Postgres.Functions;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
@@ -150,24 +149,34 @@ public class FanOutApplyEFCoreTests : EFCoreTestBase {
 
   private static readonly PerspectiveFanOutEntry _renamed = new(
     typeof(OrderSummaryProjection), typeof(OrderSummary), typeof(CustomerRenamed), nameof(OrderSummary.CustomerId), "customer_id",
-    static (p, e) => ((OrderSummaryProjection)p).Apply((CustomerRenamed)e), _byCustomer);
+    static (p, e) => ((OrderSummaryProjection)p).Apply((CustomerRenamed)e), _byCustomer, TABLE,
+    static factory => factory.Create<OrderSummary>(TABLE));
 
   private static readonly PerspectiveFanOutEntry _deleted = new(
     typeof(OrderSummaryProjection), typeof(OrderSummary), typeof(CustomerDeleted), nameof(OrderSummary.CustomerId), "customer_id",
-    static (p, e) => ((OrderSummaryProjection)p).Apply((CustomerDeleted)e), _byCustomer);
+    static (p, e) => ((OrderSummaryProjection)p).Apply((CustomerDeleted)e), _byCustomer, TABLE,
+    static factory => factory.Create<OrderSummary>(TABLE));
 
   // ---------- helpers ----------
 
+  // The dispatcher as the EF Core collective registration builds it, with no executor registered by hand: the
+  // registration makes the fan-out model's executor from the entry (#2620).
   private async Task<CollectiveDispatchResult> _dispatchAsync(
       IEvent evt, Guid customer, string tenant, Guid eventId, Func<CancellationToken, ValueTask>? onBatchApplied = null) {
-    var dispatcher = new CollectiveDispatcher(
-      new ServiceCollection().AddSingleton(new OrderSummaryProjection()).BuildServiceProvider(),
-      [_renamed.ToCollectiveApplyEntry(), _deleted.ToCollectiveApplyEntry()],
-      [new FanOutScopeResolver([_renamed, _deleted]), new TenantCollectiveScopeResolver()],
-      [new EFCoreCollectiveEventExecutor<OrderSummary>(_batchesOfTwo)]);
+    var services = new ServiceCollection()
+      .AddSingleton(new OrderSummaryProjection())
+      .AddSingleton(_batchesOfTwo)
+      .AddSingleton<IPerspectiveFanOutRegistry>(new Listed([_renamed, _deleted]));
+    services.AddCollectiveEventsEFCore<OrderDbContext>();
+    await using var provider = services.BuildServiceProvider();
+    var dispatcher = provider.GetRequiredService<ICollectiveDispatcher>();
     await using var ctx = _context();
     _capturedSql.Clear();
     return await dispatcher.DispatchAsync(PerspectiveFanOutEntry.CollectiveEventFor(evt, customer, tenant), eventId, ctx, onBatchApplied);
+  }
+
+  private sealed class Listed(IReadOnlyList<PerspectiveFanOutEntry> entries) : IPerspectiveFanOutRegistry {
+    public IReadOnlyList<PerspectiveFanOutEntry> Entries => entries;
   }
 
   private async Task<Guid> _orderAsync(Guid customer, string tenant, string name) {

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 
 namespace Whizbang.Core.Perspectives;
 
@@ -48,9 +50,13 @@ public static class PerspectiveFanOutRegistryServiceCollectionExtensions {
   /// <param name="services">The service collection.</param>
   /// <returns>The service collection.</returns>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveFanOutRegistryTests.cs:TwoAssemblies_TheServedRegistry_ListsBothAssemblysFanOuts_LatestFirstAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FanOutWiringTests.cs:AddPerspectiveFanOutRegistryContribution_RegistersTheValidator_OnceAsync</tests>
   public static IServiceCollection AddPerspectiveFanOutRegistryContribution<TRegistry>(this IServiceCollection services)
       where TRegistry : class, IPerspectiveFanOutRegistry {
     ArgumentNullException.ThrowIfNull(services);
+    // #2620: a host that declares a fan-out it could not apply is refused at startup, whatever else it registers.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, PerspectiveFanOutWiringValidator>(
+      static sp => new PerspectiveFanOutWiringValidator(sp)));
     return services.AddContribution<IPerspectiveFanOutRegistry, TRegistry>(
       CONTRIBUTION_KEY,
       static registries => new CompositePerspectiveFanOutRegistry(registries),
@@ -73,5 +79,18 @@ public static class PerspectiveFanOutRegistryServiceCollectionExtensions {
   public static string CollisionItem(PerspectiveFanOutEntry entry) {
     ArgumentNullException.ThrowIfNull(entry);
     return TypeNameFormatter.DisplayName(entry.EventType) + " -> " + entry.EntryKey;
+  }
+
+  /// <summary>
+  /// Whether any assembly has contributed a fan-out registry to <paramref name="services"/>: the host declares a
+  /// perspective fan-out, so a driver registers what applies one (#2620).
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <returns><see langword="true"/> when a fan-out registry is contributed.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_AHostThatDeclaresAFanOut_GetsTheCollectiveDispatcher_WithNothingToAddAsync</tests>
+  public static bool DeclaresPerspectiveFanOuts(this IServiceCollection services) {
+    ArgumentNullException.ThrowIfNull(services);
+    return services.Any(static d => d.ServiceType == typeof(IPerspectiveFanOutRegistry)
+      && d.IsKeyedService && Equals(d.ServiceKey, CONTRIBUTION_KEY));
   }
 }

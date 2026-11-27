@@ -11,7 +11,6 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
-using Whizbang.Data.Dapper.Postgres.Collective;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests.Collective;
 
@@ -29,7 +28,6 @@ public class DapperFanOutApplyTests : PostgresTestBase {
   private const string TABLE = "wh_per_fan_out_dapper_order";
   private const string TENANT = "tenant-orders";
   private const string OTHER_TENANT = "tenant-other";
-  private static readonly IReadOnlyDictionary<Type, string> _noSiblings = new Dictionary<Type, string>();
   private static readonly CollectiveApplyOptions _batchesOfTwo = new() { BatchSize = 2 };
 
   static DapperFanOutApplyTests() {
@@ -141,22 +139,33 @@ public class DapperFanOutApplyTests : PostgresTestBase {
 
   private static readonly PerspectiveFanOutEntry _renamed = new(
     typeof(OrderSummaryProjection), typeof(OrderSummary), typeof(CustomerRenamed), nameof(OrderSummary.CustomerId), "customer_id",
-    static (p, e) => ((OrderSummaryProjection)p).Apply((CustomerRenamed)e), _byCustomer);
+    static (p, e) => ((OrderSummaryProjection)p).Apply((CustomerRenamed)e), _byCustomer, TABLE,
+    static factory => factory.Create<OrderSummary>(TABLE));
 
   private static readonly PerspectiveFanOutEntry _deleted = new(
     typeof(OrderSummaryProjection), typeof(OrderSummary), typeof(CustomerDeleted), nameof(OrderSummary.CustomerId), "customer_id",
-    static (p, e) => ((OrderSummaryProjection)p).Apply((CustomerDeleted)e), _byCustomer);
+    static (p, e) => ((OrderSummaryProjection)p).Apply((CustomerDeleted)e), _byCustomer, TABLE,
+    static factory => factory.Create<OrderSummary>(TABLE));
 
   // ---------- helpers ----------
 
-  private Task<CollectiveDispatchResult> _dispatchAsync(
-      IEvent evt, Guid customer, string tenant, Guid eventId, Func<CancellationToken, ValueTask>? onBatchApplied = null) =>
-    new CollectiveDispatcher(
-      new ServiceCollection().AddSingleton(new OrderSummaryProjection()).BuildServiceProvider(),
-      [_renamed.ToCollectiveApplyEntry(), _deleted.ToCollectiveApplyEntry()],
-      [new FanOutScopeResolver([_renamed, _deleted]), new TenantCollectiveScopeResolver()],
-      [new DapperCollectiveEventExecutor<OrderSummary>(TABLE, _noSiblings, _batchesOfTwo)])
+  // The dispatcher as the Dapper collective registration builds it, with no executor registered by hand: the
+  // registration makes the fan-out model's executor, on the table the entry names (#2620).
+  private async Task<CollectiveDispatchResult> _dispatchAsync(
+      IEvent evt, Guid customer, string tenant, Guid eventId, Func<CancellationToken, ValueTask>? onBatchApplied = null) {
+    var services = new ServiceCollection()
+      .AddSingleton(new OrderSummaryProjection())
+      .AddSingleton(_batchesOfTwo)
+      .AddSingleton<IPerspectiveFanOutRegistry>(new Listed([_renamed, _deleted]));
+    services.AddCollectiveEventsDapper();
+    await using var provider = services.BuildServiceProvider();
+    return await provider.GetRequiredService<ICollectiveDispatcher>()
       .DispatchAsync(PerspectiveFanOutEntry.CollectiveEventFor(evt, customer, tenant), eventId, ConnectionFactory, onBatchApplied);
+  }
+
+  private sealed class Listed(IReadOnlyList<PerspectiveFanOutEntry> entries) : IPerspectiveFanOutRegistry {
+    public IReadOnlyList<PerspectiveFanOutEntry> Entries => entries;
+  }
 
   private async Task _createTableAsync() {
     using var conn = await ConnectionFactory.CreateConnectionAsync();

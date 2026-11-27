@@ -98,6 +98,12 @@ public static class PostgresDriverExtensions {
             new PostgresUpsertStrategy()
         );
 
+        // TURNKEY (#2620): a host that declares a perspective fan-out gets the collective dispatcher that applies it, with
+        // each fan-out model's executor made for it, so a declared fan-out has nothing more to register.
+        if (selector.Services.DeclaresPerspectiveFanOuts()) {
+          selector.Services.AddCollectiveEventsEFCore(selector.DbContextType);
+        }
+
         // TURNKEY: Wrap IEventStore with sync tracking decorator
         // This enables perspective synchronization by tracking emitted events
         // before they reach the database (cross-scope sync support)
