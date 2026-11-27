@@ -24,9 +24,9 @@ internal static class RepoAnalyzerTestHelper {
   /// <returns>The analyzer diagnostics, without the compiler's own.</returns>
   [RequiresAssemblyFiles()]
   public static async Task<ImmutableArray<Diagnostic>> GetDiagnosticsAsync<TAnalyzer>(
-      string source, bool withJsonReference = true, bool withRoslynReference = false)
+      string source, bool withJsonReference = true, bool withRoslynReference = false, bool withChannelsReference = false)
       where TAnalyzer : DiagnosticAnalyzer, new() {
-    var compilation = CreateCompilation(source, withJsonReference, withRoslynReference);
+    var compilation = CreateCompilation(source, withJsonReference, withRoslynReference, withChannelsReference);
     return await compilation
       .WithAnalyzers([new TAnalyzer()])
       .GetAnalyzerDiagnosticsAsync();
@@ -38,9 +38,11 @@ internal static class RepoAnalyzerTestHelper {
   /// <param name="source">The C# source to compile.</param>
   /// <param name="withJsonReference">Whether System.Text.Json is referenced.</param>
   /// <param name="withRoslynReference">Whether Microsoft.CodeAnalysis is referenced, for a generator-shaped snippet.</param>
+  /// <param name="withChannelsReference">Whether System.Threading.Channels is referenced.</param>
   /// <returns>The compilation; its own diagnostics say whether the snippet bound.</returns>
   [RequiresAssemblyFiles()]
-  public static Compilation CreateCompilation(string source, bool withJsonReference = true, bool withRoslynReference = false) {
+  public static Compilation CreateCompilation(
+      string source, bool withJsonReference = true, bool withRoslynReference = false, bool withChannelsReference = false) {
     var runtimeDirectory = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
     var references = new List<MetadataReference> {
       MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
@@ -51,6 +53,9 @@ internal static class RepoAnalyzerTestHelper {
     };
     if (withJsonReference) {
       references.Add(MetadataReference.CreateFromFile(typeof(System.Text.Json.JsonDocument).Assembly.Location));
+    }
+    if (withChannelsReference) {
+      references.Add(MetadataReference.CreateFromFile(typeof(System.Threading.Channels.Channel).Assembly.Location));
     }
     if (withRoslynReference) {
       references.Add(MetadataReference.CreateFromFile(typeof(ISymbol).Assembly.Location));

@@ -37,7 +37,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Workers/PerspectiveWorker.cs</code-under-test>
 [NotInParallel("PerspectiveChannelModeTests")]
-public class PerspectiveWorkerInjectedClockTests {
+public partial class PerspectiveWorkerInjectedClockTests {
   private const string PERSPECTIVE = "Clock.Perspective";
 
   // ============================================================
@@ -59,12 +59,13 @@ public class PerspectiveWorkerInjectedClockTests {
     await fx.Worker.StartAsync(cts.Token);
 
     // The first pass is waiting. Either it armed its idle wait on the injected clock, or a wait on the machine's
-    // clock elapsed and the loop came round a second time without the test touching the clock.
+    // clock elapsed and the loop woke and looked at the channel without the test touching the clock. A pass that
+    // wakes always reads the channel; it no longer always asks for a new wait (#2613), so the read is what counts.
     var firstArm = clock.Armed(pollInterval, 1);
-    await Task.WhenAny(firstArm, workChannel.WaitCalls(2)).WaitAsync(cancellationToken);
+    await Task.WhenAny(firstArm, workChannel.ReadAttempts(1)).WaitAsync(cancellationToken);
     await Assert.That(firstArm.IsCompleted).IsTrue()
       .Because("the idle poll must wait on the worker's injected clock; a wait on the machine's clock lets the loop poll again by itself");
-    await Assert.That(workChannel.WaitCallCount).IsEqualTo(1)
+    await Assert.That(workChannel.ReadAttemptCount).IsEqualTo(0)
       .Because("nothing but the injected clock may end the idle wait");
 
     clock.Advance(pollInterval - TimeSpan.FromTicks(1));
@@ -72,7 +73,7 @@ public class PerspectiveWorkerInjectedClockTests {
       .Because("the idle wait lasts the whole poll interval on the injected clock");
 
     clock.Advance(TimeSpan.FromTicks(1));
-    await workChannel.WaitCalls(2).WaitAsync(cancellationToken);
+    await workChannel.ReadAttempts(1).WaitAsync(cancellationToken);
     await clock.Armed(pollInterval, 2).WaitAsync(cancellationToken);
 
     await Assert.That(clock.FiredCount(pollInterval)).IsEqualTo(1)
@@ -285,7 +286,9 @@ public class PerspectiveWorkerInjectedClockTests {
       IPerspectiveStreamLocker? streamLocker = null,
       PerspectiveStreamLockOptions? streamLockOptions = null,
       PerspectiveStreamAffinityOptions? affinityOptions = null,
-      IPerspectiveCompletionStrategy? completionStrategy = null) {
+      IPerspectiveCompletionStrategy? completionStrategy = null,
+      IPerspectiveDrainChannel? drainChannel = null,
+      IWorkNotificationListener? notificationListener = null) {
     var workerOptions = options ?? new PerspectiveWorkerOptions {
       PollingIntervalMilliseconds = 1_000_000,
       MaxConcurrentDrainConsumers = 1,
@@ -325,12 +328,12 @@ public class PerspectiveWorkerInjectedClockTests {
       perspectiveCompletionChannel: new CapturingPerspectiveCompletionChannel(),
       failureChannel: new CapturingFailureChannel(),
       leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
-      perspectiveDrainChannel: new PerspectiveDrainChannel(),
+      perspectiveDrainChannel: drainChannel ?? new PerspectiveDrainChannel(),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      perspectiveNotificationListener: notificationListener ?? new NoOpWorkNotificationListener(),
       governor: PerspectiveWorker.CreateDefaultGovernor(workerOptions),
       timeProvider: clock);
     return new Fixture(worker, workCoordinator);
@@ -428,7 +431,7 @@ public class PerspectiveWorkerInjectedClockTests {
     public T Value { get; set; } = value;
   }
 
-  /// <summary>A perspective work channel that counts how often the consumer loop starts a wait on it.</summary>
+  /// <summary>A perspective work channel that counts how often the consumer loop looks for work on it.</summary>
   private sealed class CountingPerspectiveChannel : IPerspectiveChannelWriter {
     private readonly Channel<PerspectiveWork> _channel = Channel.CreateUnbounded<PerspectiveWork>();
     private readonly CountingReader _reader;
@@ -436,19 +439,20 @@ public class PerspectiveWorkerInjectedClockTests {
     public CountingPerspectiveChannel() => _reader = new CountingReader(_channel.Reader);
 
     public ChannelReader<PerspectiveWork> Reader => _reader;
-    public int WaitCallCount => _reader.Calls.Count;
-    public Task WaitCalls(int count) => _reader.Calls.Reached(count);
+    public int ReadAttemptCount => _reader.Reads.Count;
+    public Task ReadAttempts(int count) => _reader.Reads.Reached(count);
     public ValueTask WriteAsync(PerspectiveWork work, CancellationToken ct = default) => _channel.Writer.WriteAsync(work, ct);
     public bool TryWrite(PerspectiveWork work) => _channel.Writer.TryWrite(work);
     public void Complete() => _channel.Writer.TryComplete();
 
     private sealed class CountingReader(ChannelReader<PerspectiveWork> inner) : ChannelReader<PerspectiveWork> {
-      public Counter Calls { get; } = new();
-      public override bool TryRead(out PerspectiveWork item) => inner.TryRead(out item!);
-      public override ValueTask<bool> WaitToReadAsync(CancellationToken cancellationToken = default) {
-        Calls.Increment();
-        return inner.WaitToReadAsync(cancellationToken);
+      public Counter Reads { get; } = new();
+      public override bool TryRead(out PerspectiveWork item) {
+        Reads.Increment();
+        return inner.TryRead(out item!);
       }
+      public override ValueTask<bool> WaitToReadAsync(CancellationToken cancellationToken = default) =>
+        inner.WaitToReadAsync(cancellationToken);
     }
   }
 
