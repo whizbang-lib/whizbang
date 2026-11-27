@@ -22,11 +22,13 @@ internal static class RepoAnalyzerTestHelper {
   /// when the types it looks for do not exist.
   /// </param>
   /// <returns>The analyzer diagnostics, without the compiler's own.</returns>
+  /// <param name="path">The file path the snippet is compiled at, for a rule that depends on where a file is.</param>
   [RequiresAssemblyFiles()]
   public static async Task<ImmutableArray<Diagnostic>> GetDiagnosticsAsync<TAnalyzer>(
-      string source, bool withJsonReference = true, bool withRoslynReference = false, bool withChannelsReference = false)
+      string source, bool withJsonReference = true, bool withRoslynReference = false, bool withChannelsReference = false,
+      string path = "")
       where TAnalyzer : DiagnosticAnalyzer, new() {
-    var compilation = CreateCompilation(source, withJsonReference, withRoslynReference, withChannelsReference);
+    var compilation = CreateCompilation(source, withJsonReference, withRoslynReference, withChannelsReference, path);
     return await compilation
       .WithAnalyzers([new TAnalyzer()])
       .GetAnalyzerDiagnosticsAsync();
@@ -39,10 +41,12 @@ internal static class RepoAnalyzerTestHelper {
   /// <param name="withJsonReference">Whether System.Text.Json is referenced.</param>
   /// <param name="withRoslynReference">Whether Microsoft.CodeAnalysis is referenced, for a generator-shaped snippet.</param>
   /// <param name="withChannelsReference">Whether System.Threading.Channels is referenced.</param>
+  /// <param name="path">The file path the snippet is compiled at.</param>
   /// <returns>The compilation; its own diagnostics say whether the snippet bound.</returns>
   [RequiresAssemblyFiles()]
   public static Compilation CreateCompilation(
-      string source, bool withJsonReference = true, bool withRoslynReference = false, bool withChannelsReference = false) {
+      string source, bool withJsonReference = true, bool withRoslynReference = false, bool withChannelsReference = false,
+      string path = "") {
     var runtimeDirectory = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
     var references = new List<MetadataReference> {
       MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
@@ -65,7 +69,7 @@ internal static class RepoAnalyzerTestHelper {
 
     return CSharpCompilation.Create(
       assemblyName: "RepoAnalyzerTestAssembly",
-      syntaxTrees: [CSharpSyntaxTree.ParseText(source)],
+      syntaxTrees: [CSharpSyntaxTree.ParseText(source, path: path)],
       references: references,
       options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
   }

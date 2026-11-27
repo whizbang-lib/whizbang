@@ -178,6 +178,9 @@ internal sealed class RaisableServiceBusClient(string fullyQualifiedNamespace = 
   /// <summary>When true, single-message sends never complete (they only observe cancellation).</summary>
   public bool HangOnSend { get; set; }
 
+  /// <summary>When set, every single-message send waits on this task: the test decides when the send completes.</summary>
+  public Task? HeldSend { get; set; }
+
   /// <summary>Optional TryAddMessage policy for created message batches (default: always accept).</summary>
   public Func<ServiceBusMessage, bool>? TryAddCallback { get; set; }
 
@@ -204,6 +207,7 @@ internal sealed class RaisableServiceBusClient(string fullyQualifiedNamespace = 
       SendException = SendException,
       SendBatchException = SendBatchException,
       HangOnSend = HangOnSend,
+      HeldSend = HeldSend,
       TryAddCallback = TryAddCallback
     };
     return LastSender;
@@ -342,10 +346,14 @@ internal sealed class RecordingBatchSender : ServiceBusSender {
   public Exception? SendException { get; init; }
   public Exception? SendBatchException { get; init; }
   public bool HangOnSend { get; init; }
+  public Task? HeldSend { get; init; }
   public Func<ServiceBusMessage, bool>? TryAddCallback { get; init; }
   public int DisposeCount { get; private set; }
 
   public override Task SendMessageAsync(ServiceBusMessage message, CancellationToken cancellationToken = default) {
+    if (HeldSend is not null) {
+      return HeldSend;
+    }
     if (HangOnSend) {
       var hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
       _ = cancellationToken.Register(() => hang.TrySetCanceled(cancellationToken));

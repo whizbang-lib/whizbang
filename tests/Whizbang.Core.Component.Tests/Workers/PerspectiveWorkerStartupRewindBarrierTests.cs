@@ -393,9 +393,27 @@ public class PerspectiveWorkerStartupRewindBarrierTests {
 
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
       var timer = base.CreateTimer(callback, state, dueTime, period);
+      _report(dueTime);
+      return new ReportingTimer(timer, this);
+    }
+
+    private void _report(TimeSpan dueTime) {
       _armedCounts.AddOrUpdate(dueTime, 1, static (_, n) => n + 1);
       _armed.Writer.TryWrite(dueTime);
-      return timer;
+    }
+
+    /// <summary>Reports a re-arming too: the worker's wake set makes one timer and re-arms it every pass.</summary>
+    private sealed class ReportingTimer(ITimer inner, ArmedTimerClock clock) : ITimer {
+      public bool Change(TimeSpan dueTime, TimeSpan period) {
+        var changed = inner.Change(dueTime, period);
+        if (dueTime != Timeout.InfiniteTimeSpan) {
+          clock._report(dueTime);
+        }
+        return changed;
+      }
+
+      public void Dispose() => inner.Dispose();
+      public ValueTask DisposeAsync() => inner.DisposeAsync();
     }
 
     /// <summary>How many timers due in <paramref name="due"/> have been armed so far.</summary>

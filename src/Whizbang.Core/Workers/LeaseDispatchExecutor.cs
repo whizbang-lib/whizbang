@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Whizbang.Core.Async;
+
 namespace Whizbang.Core.Workers;
 
 /// <summary>
@@ -13,8 +15,8 @@ namespace Whizbang.Core.Workers;
 /// Without active abandonment, passing the lease token down to the inner dispatch isn't enough:
 /// if the receptor (or any operation it calls) doesn't observe the token and just blocks on a
 /// sync I/O / external call / unbounded TCS, the framework's <c>await</c> on the inner Task
-/// stays parked forever. The executor solves this with <c>Task.WhenAny</c>: when the lease
-/// token cancels first, it abandons the inner Task (attaches a fire-and-forget continuation
+/// stays parked forever. The executor solves this with a <see cref="WakeSet"/> whose stop is the
+/// lease token: when the lease token cancels first, it abandons the inner Task (attaches a fire-and-forget continuation
 /// that observes any later exception so <c>UnobservedTaskException</c> doesn't escape) and
 /// throws <see cref="OperationCanceledException"/> so the worker's failure path runs.
 /// </para>
@@ -41,29 +43,21 @@ public static class LeaseDispatchExecutor {
     var ct = lease.Token;
     var dispatchTask = dispatch(ct);
 
-    // Race signal: a TCS that completes (no exception) when the lease token cancels. We use
-    // CancellationToken.UnsafeRegister instead of Task.Delay(Infinite, ct) because Task.Delay's
-    // Canceled-state transition is silent on the success path but the registration disposal
-    // contention adds noise. The TCS completes synchronously without throwing, and the
-    // `await using` registration disposes BEFORE the lease handle disposes (when the executor
-    // method returns), preventing a late callback fire.
-    var cancellationSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    await using var registration = ct.UnsafeRegister(static (state, _) => ((TaskCompletionSource)state!).TrySetResult(), cancellationSignal);
+    // The dispatch raced against the lease token, on a wake set whose stop is the lease token. The set's registration on
+    // the token goes when the set is disposed (this method's exit), BEFORE the lease handle disposes and cancels the
+    // token, so a late callback cannot fire then; that late fire was what caused the first-chance OCE storm.
+    using var race = new WakeSet(TimeProvider.System, ct);
+    race.Add(dispatchTask);
+    await race.WaitAsync(Timeout.InfiniteTimeSpan).ConfigureAwait(false);
 
-    var winner = await Task.WhenAny(dispatchTask, cancellationSignal.Task).ConfigureAwait(false);
-
-    if (winner == dispatchTask) {
-      // Dispatch finished first (success / exception / honored-CT-and-threw-OCE).
-      // Surface its result/exception to the caller. The registration disposes when this method
-      // exits (the await using above), preventing a late callback-fire when the lease handle
-      // disposes and cancels the CT — that's what was causing the first-chance OCE storm.
+    if (dispatchTask.IsCompleted) {
+      // Dispatch finished first (success / exception / honored-CT-and-threw-OCE). Surface its result or exception.
       await dispatchTask.ConfigureAwait(false);
       return;
     }
 
-    // Cancellation won the race. The dispatch task is still running (or maybe just completed
-    // moments after WhenAny picked the cancellation signal — but we treat it as abandoned for
-    // determinism). Attach an observe-only continuation so a future exception on this task
+    // Cancellation won the race. The dispatch task is still running (or completed a moment after
+    // the check above, which is treated as abandoned for determinism). Attach an observe-only continuation so a future exception on this task
     // doesn't escape as UnobservedTaskException.
     _ = dispatchTask.ContinueWith(
       static t => _ = t.Exception,  // accessing .Exception marks it observed

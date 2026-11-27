@@ -32,6 +32,7 @@ public interface ISchemaReadyGate {
   /// Awaits the schema-ready signal. Returns immediately when ready; otherwise blocks until
   /// <see cref="MarkReady"/> is called or <paramref name="cancellationToken"/> fires.
   /// </summary>
+  [Whizbang.Core.Async.WaitSource]
   Task WaitForReadyAsync(CancellationToken cancellationToken);
 
   /// <summary>True once <see cref="MarkReady"/> has been called; pure synchronous query.</summary>
