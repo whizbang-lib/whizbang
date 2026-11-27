@@ -1,6 +1,7 @@
 # Multi-stream fan-out: one foreign event, many rows (#2275)
 
-Status: planned (2026-11-26). Design decided by the owner on 2026-11-25. No slice started. Release: 1.0 (Release 1.0
+Status: F1 to F3 built on one branch (2026-11-27), not yet merged; F4 to F6 not started. Design decided by the owner
+on 2026-11-25. Release: 1.0 (Release 1.0
 Planning board). Tracking: #2275 (question, accepted); each slice below is drafted to be filed as its own issue.
 
 ## Decision
@@ -149,6 +150,12 @@ below is produced by holding a worker at a named point, never by a delay.
   `CustomerDeleted` marks the rows and removes none; a batch interrupted after one keyset batch resumes after it (#1969);
   a poison fan-out `Apply` reports a failure and does not stop the host.
 - **Docs.** The multi-stream section's live half, with a mermaid diagram of the route; `operations/workers/perspective-worker.md`.
+- **As built (2026-11-27).** A fan-out runs as an entry of the collective dispatcher (one set-based apply path). The EF
+  Core Postgres driver registers the dispatcher for a host that declares a fan-out, and the dispatcher makes each
+  fan-out model's executor, so nothing is registered by hand; a host that cannot apply a fan-out is refused at startup.
+  A Dapper host is refused at schema initialization: the Dapper driver has no associations step and no perspective
+  worker, so it cannot route or apply a fan-out. WHIZ129 (unreachable type) and WHIZ143 (fan-out of a collective) were
+  added. No migration was needed.
 
 ### F4. Rebuild and rewind fold the targeted foreign events
 
