@@ -250,7 +250,8 @@ Describe 'Compare-PublicApi.ps1 decides the step''s result (#2605)' -Skip:$IsWin
         ExitCode = $code
         Output   = ($out -join "`n")
         Summary  = if (Test-Path $summary) { Get-Content -Raw $summary } else { '' }
-        Args     = @(Get-Content -LiteralPath $argsFile)
+        # A refused run never reaches pack, so it leaves no recorded arguments
+        Args     = if (Test-Path -LiteralPath $argsFile) { @(Get-Content -LiteralPath $argsFile) } else { @() }
       }
     }
   }

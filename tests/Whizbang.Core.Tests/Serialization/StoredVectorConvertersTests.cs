@@ -61,7 +61,8 @@ public class StoredVectorConvertersTests {
     // 1.0f is 0x3F800000 and -2.0f is 0xC0000000: big-endian bytes 3F 80 00 00 C0 00 00 00.
     var read = _read(_arrayConverter(), "\"P4AAAMAAAAA=\"")!;
 
-    await Assert.That(read).IsEquivalentTo(new[] { 1.0f, -2.0f })
+    float[] expected = [1.0f, -2.0f];
+    await Assert.That(read).IsEquivalentTo(expected)
       .Because("the byte order and element order are the stored contract the SQL packing (V2) must match");
   }
 
@@ -123,7 +124,8 @@ public class StoredVectorConvertersTests {
     // base64 of FB FF FF FF is "+////w=="; a writer with the default encoder escapes '+'.
     var read = _read(_arrayConverter(), "\"\\u002B////w==\"")!;
 
-    await Assert.That(_bits(read)).IsEquivalentTo(new[] { unchecked((int)0xFBFFFFFF) });
+    int[] expectedBits = [unchecked((int)0xFBFFFFFF)];
+    await Assert.That(_bits(read)).IsEquivalentTo(expectedBits);
   }
 
   [Test]

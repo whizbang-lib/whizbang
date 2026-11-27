@@ -15,7 +15,7 @@ namespace Whizbang.Testing.Receptors;
 /// <tests>tests/Whizbang.Testing.Tests/Receptors/TestHandlingTests.cs:Dispose_EndsTheHandling_AndRestoresTheOneBeforeItAsync</tests>
 /// <tests>tests/Whizbang.Testing.Tests/Receptors/TestHandlingTests.cs:Dispose_ASecondTime_DoesNotUndoAHandlingEnteredSinceAsync</tests>
 public sealed class TestHandlingScope : IDisposable, IAsyncDisposable {
-  private ReceptorHandling.Scope _scope;
+  private readonly ReceptorHandling.Scope _scope;
   private bool _disposed;
 
   internal TestHandlingScope(ReceptorHandling.Scope scope, IMessageEnvelope envelope) {
