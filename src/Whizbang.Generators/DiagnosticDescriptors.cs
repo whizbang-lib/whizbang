@@ -504,6 +504,25 @@ public static class DiagnosticDescriptors {
       description: "Nested types used in messages must also have serializable properties."
   );
 
+  /// <summary>
+  /// WHIZ064: Info - A vector property an event reaches stays a JSON array in the stored body, because no stored-vector
+  /// path can name it: it is inside a collection element, behind a polymorphic member, or in a type that refers back
+  /// to itself (#2624).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz064</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextStoredVectorTests.cs:Generator_AVectorInsideACollectionElement_GetsNoPath_AndIsReportedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextStoredVectorTests.cs:Generator_ATypeThatRefersBackToItself_StopsAtTheCycle_AndIsReportedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextStoredVectorTests.cs:Generator_AVectorBehindAPolymorphicMember_GetsNoPath_AndIsReportedAsync</tests>
+  public static readonly DiagnosticDescriptor VectorStoredAsJsonArray = new(
+      id: "WHIZ064",
+      title: "Vector stays a JSON array in the stored event body",
+      messageFormat: "The vector reached through '{0}' on event '{1}' stays a JSON array in the stored body: {2}",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "Vector properties of stored events are packed as binary32 by default, by path. A vector inside a collection element, behind a polymorphic member, or in a type that refers back to itself has no path, so it is stored as JSON numbers. Nothing is lost; it takes more space."
+  );
+
   // ========================================
   // Guid Usage Diagnostics (WHIZ055-057)
   // ========================================

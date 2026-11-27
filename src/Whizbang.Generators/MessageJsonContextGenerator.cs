@@ -954,7 +954,9 @@ public partial class MessageJsonContextGenerator : IIncrementalGenerator {
     context.AddSource("MessageJsonContext.g.cs", template);
 
     _generateWhizbangJsonContextFacade(context, assembly, assemblyName, namespaceName, converters);
-    _generateMessageJsonContextInitializer(context, assembly, namespaceName, messages, allTypes);
+    var vectorPaths = _discoverStoredVectorPaths(messages, allTypes, polymorphicTypes);
+    _reportUnpackedVectors(context, vectorPaths);
+    _generateMessageJsonContextInitializer(context, assembly, namespaceName, messages, allTypes, vectorPaths);
   }
 
   /// <summary>
@@ -994,7 +996,8 @@ public partial class MessageJsonContextGenerator : IIncrementalGenerator {
       System.Reflection.Assembly assembly,
       string namespaceName,
       ImmutableArray<JsonMessageTypeInfo> messages,
-      ImmutableArray<JsonMessageTypeInfo> allTypes) {
+      ImmutableArray<JsonMessageTypeInfo> allTypes,
+      StoredVectorDiscovery vectorPaths) {
     var initializerTemplate = TemplateUtilities.GetEmbeddedTemplate(assembly, "MessageJsonContextInitializerTemplate.cs");
     initializerTemplate = TemplateUtilities.ReplaceHeaderRegion(assembly, initializerTemplate);
     initializerTemplate = initializerTemplate.Replace("__NAMESPACE__", namespaceName);
@@ -1003,6 +1006,7 @@ public partial class MessageJsonContextGenerator : IIncrementalGenerator {
     var derivedTypeRegistrations = _generateDerivedTypeRegistrations(messages);
     initializerTemplate = TemplateUtilities.ReplaceRegion(initializerTemplate, "DERIVED_TYPE_REGISTRATIONS", derivedTypeRegistrations);
     initializerTemplate = TemplateUtilities.ReplaceRegion(initializerTemplate, "REQUIRED_MEMBER_DECLARATIONS", _generateRequiredMemberDeclarations(allTypes));
+    initializerTemplate = TemplateUtilities.ReplaceRegion(initializerTemplate, "STORED_VECTOR_PATHS", _generateStoredVectorPathRegistrations(assembly, vectorPaths));
 
     context.AddSource("MessageJsonContextInitializer.g.cs", initializerTemplate);
   }

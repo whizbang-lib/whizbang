@@ -66,6 +66,10 @@ Whizbang uses **AOT-compatible JSON serialization** via source-generated `JsonTy
 base64 of the big-endian IEEE-754 binary32 bits of each element, and writes the array through the property's own
 metadata (so the written bytes are unchanged). `double[]`, `float?[]` and `List<float>` are not vectors.
 
+**Paths** (#2625): for each event type the generator also registers `StoredVectorPaths` (JSON-name segments from
+the payload root) from the module initializer. A vector inside a collection element, behind a polymorphic member or
+in a type that refers back to itself has no path and is reported as WHIZ064 (Info).
+
 **Readers first**: V1 only reads the packed form. Nothing writes it until the stored-body packing (V2, #2625) opens
 its rolling-deploy gate.
 

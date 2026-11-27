@@ -121,7 +121,8 @@ internal sealed record PropertyInfo(
 
 /// <summary>
 /// Which vector type a property is, for the packed binary32 stored form (#2624). The form picks the converter the
-/// generated reader attaches.
+/// generated reader attaches; every form other than <see cref="None"/> also gets a stored-vector path when an event
+/// reaches it.
 /// </summary>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextStoredVectorTests.cs</tests>
 internal enum StoredVectorForm {
