@@ -4359,7 +4359,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// ordered (stream, version) under a hard LIMIT.
   /// </summary>
   /// <docs>resilience/stream-integrity</docs>
+  /// <docs>data/event-store#what-leaves-the-database</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SelectRedeliveryEventsTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorExportSqlTests.cs:Redelivery_APackedEvent_IsSelectedInTheWireForm_WhichAPlainReaderReadsAsync</tests>
   public async Task<IReadOnlyList<RedeliveryEvent>> SelectRedeliveryEventsAsync(
     RedeliveryRequest request,
     CancellationToken cancellationToken = default) {
@@ -4369,11 +4371,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var schema = _resolveSchema(typeof(OutboxRecord));
 
     // Every filter but the type, shared by both orders. #2032: only events the answering service authored (no origin,
-    // and a first hop naming it or no service).
-    const string COLUMNS = """
+    // and a first hop naming it or no service). #2626: the body in the wire form, its packed vectors written back as
+    // JSON numbers: the selection is sent to a peer (integrity repair) and re-recorded by the audit rebuild, both over
+    // the transport, so a packed vector never leaves.
+    var columns = $"""
       es.event_id, es.stream_id, es.version::bigint AS version, es.commit_sequence,
-             es.event_type, eb.event_data::text AS event_data, eb.metadata::text AS metadata, es.scope::text AS scope,
-             COALESCE(es.flags, 0) AS flags
+             es.event_type, {schema}.wh_event_body_wire_form(es.event_type, eb.event_data)::text AS event_data,
+             eb.metadata::text AS metadata, es.scope::text AS scope, COALESCE(es.flags, 0) AS flags
       """;
     var filters = $"""
       (@p_tenant IS NULL OR es.scope->>'t' = @p_tenant)
@@ -4403,7 +4407,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         SELECT w.event_id, w.stream_id, w.version, w.commit_sequence, w.event_type, w.event_data, w.metadata, w.scope, w.flags
         FROM (SELECT DISTINCT {normalize}(t) AS name FROM unnest(@p_types::text[]) AS t) AS types
         CROSS JOIN LATERAL (
-          SELECT {COLUMNS}
+          SELECT {columns}
           FROM {schema}.wh_event_store es
           JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
           WHERE es.event_type = types.name
@@ -4417,7 +4421,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         """;
     } else {
       sql = $"""
-        SELECT {COLUMNS}
+        SELECT {columns}
         FROM {schema}.wh_event_store es
         JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
         WHERE ((@p_types::text[]) IS NULL OR es.event_type IN (SELECT {normalize}(t) FROM unnest(@p_types::text[]) AS t))
