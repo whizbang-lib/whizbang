@@ -79,9 +79,12 @@ public static class CollectiveEventsDapperExtensions {
     services.TryAddSingleton(_ => WhizbangApplyHooks.CreateCollectiveWithDefaults());
     services.TryAddSingleton<ICollectiveSessionAccessor, DapperCollectiveSessionAccessor>();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ICollectiveScopeResolver, TenantCollectiveScopeResolver>());
+    // #2620: the perspectives' fan-outs run through the same dispatcher, each scoped to its key and tenant.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<ICollectiveScopeResolver, FanOutScopeResolver>(
+      static sp => new FanOutScopeResolver(sp.GetPerspectiveFanOutEntries())));
     services.TryAddSingleton<ICollectiveDispatcher>(sp => new CollectiveDispatcher(
       sp,
-      sp.GetCollectiveApplyEntries(handPassed),
+      sp.GetCollectiveDispatchEntries(handPassed),
       [.. sp.GetServices<ICollectiveScopeResolver>()],
       [.. sp.GetServices<ICollectiveEventExecutor>()],
       sp.GetService<EventCategoryMetrics>()));
