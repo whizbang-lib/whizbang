@@ -88,7 +88,71 @@ public class CollectiveRoutingAssociationsTests {
   }
 
   [Test]
+  public async Task Entries_ForAFanOutType_AreAPerspectiveAssociationToTheSink_AndTheSinksNoFloorMarkerAsync() {
+    // #2619: a fan-out reaches the sink through the perspective association insert both emit chains already run, so a
+    // fan-out type is a perspective association whose target is the sink. The sink takes no snapshot, so it keeps no
+    // rewind floor, and the marker says so; without it the ephemeral reap would hold a fanned-out body for a snapshot
+    // the sink never takes.
+    var json = CollectiveRoutingAssociations.AssociationEntriesJson(
+      ["Jobs.Archive, Jobs"], SERVICE, ["Customers.CustomerRenamed, Customers", "Customers.CustomerDeleted, Customers"]);
+
+    await Assert.That(_rows(json)).IsEquivalentTo([
+      ("Jobs.Archive, Jobs", "collective", "__collective__", SERVICE),
+      ("__collective__", "collective_gate", "__collective__", SERVICE),
+      ("Customers.CustomerDeleted, Customers", "perspective", "__collective__", SERVICE),
+      ("Customers.CustomerRenamed, Customers", "perspective", "__collective__", SERVICE),
+      ("__collective__", EphemeralRewindFloor.NO_FLOOR_ASSOCIATION_TYPE, "__collective__", SERVICE)]);
+  }
+
+  [Test]
+  public async Task Entries_ForFanOutTypes_AreWrittenEvenWhenTheHandledSetIsUnknownAsync() {
+    // An unknown collective set turns the gate off; it says nothing about fan-outs, which this build always knows.
+    var json = CollectiveRoutingAssociations.AssociationEntriesJson(
+      null, SERVICE, ["Customers.CustomerRenamed, Customers", "Customers.CustomerRenamed, Customers"]);
+
+    await Assert.That(_rows(json)).IsEquivalentTo([
+      ("Customers.CustomerRenamed, Customers", "perspective", "__collective__", SERVICE),
+      ("__collective__", EphemeralRewindFloor.NO_FLOOR_ASSOCIATION_TYPE, "__collective__", SERVICE)])
+      .Because("two perspectives fanning out one type write it once");
+  }
+
+  [Test]
+  public async Task Entries_WithNoFanOut_AreExactlyWhatTheyWereAsync() {
+    await Assert.That(CollectiveRoutingAssociations.AssociationEntriesJson(["Jobs.Archive, Jobs"], SERVICE, []))
+      .IsEqualTo(CollectiveRoutingAssociations.AssociationEntriesJson(["Jobs.Archive, Jobs"], SERVICE));
+    await Assert.That(CollectiveRoutingAssociations.AssociationEntriesJson(null, SERVICE, [])).IsEqualTo(string.Empty);
+  }
+
+  [Test]
+  public async Task Hash_ChangesWhenAFanOutIsAddedOrRemoved_AndOnlyThenAsync() {
+    var none = CollectiveRoutingAssociations.AssociationsHash(PERSPECTIVE_HASH, ["Jobs.Archive, Jobs"]);
+    var renamed = CollectiveRoutingAssociations.AssociationsHash(
+      PERSPECTIVE_HASH, ["Jobs.Archive, Jobs"], ["Customers.CustomerRenamed, Customers"]);
+    var both = CollectiveRoutingAssociations.AssociationsHash(
+      PERSPECTIVE_HASH, ["Jobs.Archive, Jobs"], ["Customers.CustomerDeleted, Customers", "Customers.CustomerRenamed, Customers"]);
+    var bothReordered = CollectiveRoutingAssociations.AssociationsHash(
+      PERSPECTIVE_HASH, ["Jobs.Archive, Jobs"], ["Customers.CustomerRenamed, Customers", "Customers.CustomerDeleted, Customers"]);
+
+    await Assert.That(renamed).IsNotEqualTo(none).Because("adding a fan-out must write its association, and the ledger records it");
+    await Assert.That(both).IsNotEqualTo(renamed);
+    await Assert.That(bothReordered).IsEqualTo(both);
+    await Assert.That(CollectiveRoutingAssociations.AssociationsHash(PERSPECTIVE_HASH, ["Jobs.Archive, Jobs"], [])).IsEqualTo(none)
+      .Because("a host without a fan-out keeps the hash it already recorded, so no deployed database re-runs the step");
+    await Assert.That(CollectiveRoutingAssociations.AssociationsHash(PERSPECTIVE_HASH, null, ["Customers.CustomerRenamed, Customers"]))
+      .IsNotEqualTo(CollectiveRoutingAssociations.AssociationsHash(PERSPECTIVE_HASH, null));
+  }
+
+  [Test]
   public async Task Hash_ForAContextWithNoPerspectives_StaysEmpty_SoItHasNoAssociationsStepAsync() {
     await Assert.That(CollectiveRoutingAssociations.AssociationsHash(string.Empty, ["Jobs.Archive, Jobs"])).IsEqualTo(string.Empty);
+  }
+
+  private static List<(string Type, string Kind, string Target, string Service)> _rows(string json) {
+    using var doc = JsonDocument.Parse("[{}" + json + "]");
+    return [.. doc.RootElement.EnumerateArray().Skip(1).Select(e => (
+      e.GetProperty("MessageType").GetString()!,
+      e.GetProperty("AssociationType").GetString()!,
+      e.GetProperty("TargetName").GetString()!,
+      e.GetProperty("ServiceName").GetString()!))];
   }
 }
