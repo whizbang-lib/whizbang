@@ -70,7 +70,7 @@ public sealed class PerspectiveFanOutAnalyzer : DiagnosticAnalyzer {
       if (FanOutShape.FirstUnreachable(type, model, eventType) is { } unreachable) {
         context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.FanOutTypeUnreachable, type.Locations[0],
-          type.ToDisplayString(_withContainingTypes), unreachable.ToDisplayString(_withContainingTypes)));
+          TypeNameUtilities.Display(type, _withContainingTypes), TypeNameUtilities.Display(unreachable, _withContainingTypes)));
       }
       if (FanOutShape.IsCollectiveEvent(eventType)) {
         context.ReportDiagnostic(Diagnostic.Create(
