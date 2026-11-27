@@ -780,18 +780,17 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
       // WORKAROUND: Azure Service Bus Emulator sometimes hangs on first send
       // Use a task-based timeout instead of CancellationToken (which also hangs)
       // Increased to 30 seconds for emulator (originally 5s, too short for slow emulator with many topics)
+      // The timeout is the send's own deadline on the injected clock, stopped the moment the send completes, so no
+      // timer outlives a send that finished in time; a separate delay raced against it stayed armed for the whole
+      // SendTimeout after every message.
       var sendTask = sender.SendMessageAsync(message, cancellationToken);
-      var timeoutTask = Task.Delay(_options.SendTimeout, cancellationToken);
-
-      var completedTask = await Task.WhenAny(sendTask, timeoutTask).ConfigureAwait(false);
-
-      if (completedTask == timeoutTask) {
+      try {
+        await sendTask.WaitAsync(_options.SendTimeout, _timeProvider, cancellationToken).ConfigureAwait(false);
+      } catch (TimeoutException timedOut) when (!sendTask.IsCompleted) {
         // #1976: rethrown to the outbox, which retries the publish and dead-letters it at the bound, so a Warning.
-        _logger.LogWarning("DIAGNOSTIC [PublishAsync]: SendMessageAsync timed out after {SendTimeout} for {MessageId} - emulator may not be ready", _options.SendTimeout, envelope.MessageId);
-        throw new TimeoutException($"SendMessageAsync timed out after {_options.SendTimeout} for message {envelope.MessageId}. The Azure Service Bus emulator may not be ready or topics/subscriptions may not exist.");
+        _logger.LogWarning(timedOut, "DIAGNOSTIC [PublishAsync]: SendMessageAsync timed out after {SendTimeout} for {MessageId} - emulator may not be ready", _options.SendTimeout, envelope.MessageId);
+        throw new TimeoutException($"SendMessageAsync timed out after {_options.SendTimeout} for message {envelope.MessageId}. The Azure Service Bus emulator may not be ready or topics/subscriptions may not exist.", timedOut);
       }
-
-      await sendTask; // Re-await to propagate exceptions
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
         var messageId = envelope.MessageId;
