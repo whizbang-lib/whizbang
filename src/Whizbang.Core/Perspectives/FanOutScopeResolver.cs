@@ -29,10 +29,10 @@ namespace Whizbang.Core.Perspectives;
 /// <docs>fundamentals/perspectives/multi-stream#how-a-fan-out-applies-live</docs>
 /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FanOutCollectiveDispatchTests.cs:ScopeFilter_MatchesTheRowsWhoseKeyIsTheStream_InTheEventsTenantOnlyAsync</tests>
 public sealed class FanOutScopeResolver(IReadOnlyList<PerspectiveFanOutEntry> entries) : ICollectiveScopeResolver {
-  // object.Equals(object, object), read from an expression the compiler builds, so the comparison compares values in
-  // memory as SQL does, with no method looked up by name.
-  private static readonly MethodInfo _valueEquals =
-    ((MethodCallExpression)((Expression<Func<object?, object?, bool>>)((a, b) => Equals(a, b))).Body).Method;
+  // KeyHolds, read from an expression the compiler builds, so the comparison in memory compares what the column stores,
+  // as SQL does, with no method looked up by name.
+  private static readonly MethodInfo _keyHolds =
+    ((MethodCallExpression)((Expression<Func<object?, object?, bool>>)((key, stream) => KeyHolds(key, stream))).Body).Method;
 
   private readonly IReadOnlyList<PerspectiveFanOutEntry> _entries = entries ?? throw new ArgumentNullException(nameof(entries));
 
@@ -59,7 +59,7 @@ public sealed class FanOutScopeResolver(IReadOnlyList<PerspectiveFanOutEntry> en
     var row = tenant.Parameters[0];
     var keyOfRow = new Rebind(new Rebind(row).Visit(data.Body)).Visit(key.Body);
     var keyIsStream = Expression.Equal(
-      keyOfRow, Expression.Constant(fanOut.StreamId, typeof(object)), liftToNull: false, _valueEquals);
+      keyOfRow, Expression.Constant(fanOut.StreamId, typeof(object)), liftToNull: false, _keyHolds);
     return Expression.Lambda<Func<PerspectiveRow<TModel>, bool>>(Expression.AndAlso(tenant.Body, keyIsStream), row);
   }
 
@@ -77,6 +77,18 @@ public sealed class FanOutScopeResolver(IReadOnlyList<PerspectiveFanOutEntry> en
     };
     return new Restore(prior);
   }
+
+  /// <summary>
+  /// Whether a row's key holds the stream id, compared as the key's column stores it: a strongly typed id
+  /// (<see cref="IWhizbangId"/>) by its Guid, as its physical column holds it, and any other key by value. The SQL path
+  /// compares the column with the stream id the same way.
+  /// </summary>
+  /// <param name="key">The row's key value, boxed.</param>
+  /// <param name="streamId">The stream id, boxed.</param>
+  /// <returns><see langword="true"/> when the row is one the event targets.</returns>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FanOutCollectiveDispatchTests.cs:ScopeFilter_AStronglyTypedIdKey_MatchesTheRowWhoseIdWrapsTheStreamIdAsync</tests>
+  internal static bool KeyHolds(object? key, object? streamId) =>
+    Equals(key is IWhizbangId id ? id.ToGuid() : key, streamId);
 
   private static FanOutScope _require(ICollectiveScope scope) =>
     scope as FanOutScope ?? throw new ArgumentException(

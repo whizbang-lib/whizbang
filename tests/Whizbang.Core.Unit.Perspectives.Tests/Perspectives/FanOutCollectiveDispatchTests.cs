@@ -123,6 +123,19 @@ public class FanOutCollectiveDispatchTests {
   }
 
   [Test]
+  public async Task ScopeFilter_AStronglyTypedIdKey_MatchesTheRowWhoseIdWrapsTheStreamIdAsync() {
+    // WHIZ127 accepts a [WhizbangId] key. The SQL compares the column, which stores the Guid, with the stream id; the
+    // filter in memory compares the id's underlying Guid the same way, never a boxed id with a boxed Guid.
+    var customer = Guid.CreateVersion7();
+    var resolver = new FanOutScopeResolver([_strongFanOut()]);
+
+    var filter = resolver.ScopeFilter<StrongOrder>(_wrap(new CustomerRenamed("Ada"), customer).Scope).Compile();
+
+    await Assert.That(filter(_strongRow(FanOutCustomerId.From(customer), TENANT))).IsTrue();
+    await Assert.That(filter(_strongRow(FanOutCustomerId.From(Guid.CreateVersion7()), TENANT))).IsFalse();
+  }
+
+  [Test]
   public async Task ScopeFilter_ForAModelAndEventNoFanOutDeclares_ThrowsAsync() {
     var resolver = new FanOutScopeResolver([_renamedFanOut()]);
 
@@ -199,6 +212,25 @@ public class FanOutCollectiveDispatchTests {
 
   // ---------- fixtures ----------
 
+  private static PerspectiveFanOutEntry _strongFanOut() => new(
+    typeof(OrderSummaryProjection), typeof(StrongOrder), typeof(CustomerRenamed), nameof(StrongOrder.CustomerId), "customer_id",
+    static (_, _) => new NameSpec("strong"),
+    (Expression<Func<StrongOrder, object?>>)(row => row.CustomerId));
+
+  private static PerspectiveRow<StrongOrder> _strongRow(FanOutCustomerId customer, string tenant) => new() {
+    Id = Guid.NewGuid(),
+    Data = new StrongOrder { CustomerId = customer },
+    Metadata = new PerspectiveMetadata { EventType = "e", EventId = Guid.NewGuid().ToString(), Timestamp = DateTime.UtcNow },
+    Scope = new PerspectiveScope { TenantId = tenant },
+    CreatedAt = DateTime.UtcNow,
+    UpdatedAt = DateTime.UtcNow,
+    Version = 1,
+  };
+
+  internal sealed class StrongOrder {
+    public FanOutCustomerId CustomerId { get; init; }
+  }
+
   private static FanOutCollectiveEvent _wrap(IEvent evt, Guid stream) =>
     (FanOutCollectiveEvent)PerspectiveFanOutEntry.CollectiveEventFor(evt, stream, TENANT);
 
@@ -271,3 +303,7 @@ public class FanOutCollectiveDispatchTests {
     }
   }
 }
+
+/// <summary>A strongly typed id a fan-out key holds (#2620).</summary>
+[WhizbangId]
+public readonly partial struct FanOutCustomerId;
