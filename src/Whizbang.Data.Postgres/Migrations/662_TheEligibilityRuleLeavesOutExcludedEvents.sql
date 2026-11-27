@@ -22,6 +22,7 @@
 --              RuleSemantics.ELIGIBILITY_SQL_VERSION moves to 2 with this rule, so a pair of services on different
 --              versions halts its comparisons until both run version 2 (#2588 decision D2, open question #2615).
 --
+-- Reversal: reversible (the down file restores each function's previous definition, counting by version 1)
 -- Dependencies: the last word of each function below (its section header names the file), 452 (the held-fold
 --               triggers), 336 (_wh_fold_stream_digests, _wh_digest_lane)
 -- Objects: _wh_track_unsequenced_digest, wh_rebuild_unsequenced_digests,
