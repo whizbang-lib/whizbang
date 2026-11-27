@@ -816,7 +816,7 @@ public partial class PerspectiveWorker(
       // processing of PerspectiveWork items.
       if (drainReader is not null && drainStreamIds.Count > 0
           && drainStreamIds.Count < drainBatcherOpts.MaxSize) {
-        await _accumulateDrainSignalsWithinWindowAsync(
+        await AccumulateDrainSignalsWithinWindowAsync(
           drainReader, drainStreamIds, drainBatcherOpts, _timeProvider, stoppingToken).ConfigureAwait(false);
       }
 
@@ -948,7 +948,7 @@ public partial class PerspectiveWorker(
   /// to write its second signal into a 150 ms wall-clock race -- which a loaded runner loses. That
   /// test dequeued a green pull request from the merge queue.
   /// </param>
-  private static async Task _accumulateDrainSignalsWithinWindowAsync(
+  internal static async Task AccumulateDrainSignalsWithinWindowAsync(
       System.Threading.Channels.ChannelReader<Guid> drainReader,
       List<Guid> drainStreamIds,
       SlidingWindowBatcherOptions opts,
