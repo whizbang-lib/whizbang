@@ -31,11 +31,12 @@ public class IntegrityExclusionSqlTests : EFCoreTestBase {
   private const string TENANT = "tenant-e";
   private const string REASON = "a defect made these unresolvable";
   private const string OPERATOR = "operator-a";
-  private const string ZERO = "00000000-0000-0000-0000-000000000000";
   private const int EXCLUDED = (int)EventFlags.IntegrityExcluded;
   private const string THIS_SERVICE = "receiver-svc";
 
   private static readonly DateTimeOffset _t0 = new(2026, 3, 1, 9, 30, 0, TimeSpan.Zero);
+  private static readonly long[] _sequence42 = [42L];
+  private static readonly int[] _lanesRead = [0, 2];
 
   // ── marking ──
 
@@ -156,7 +157,7 @@ public class IntegrityExclusionSqlTests : EFCoreTestBase {
       calls++;
     }
 
-    await Assert.That(all.Order()).IsEquivalentTo(picked.Order());
+    await Assert.That(all).IsEquivalentTo(picked);
     await Assert.That(calls).IsGreaterThan(2).Because("each call reads at most the scan window of the store");
   }
 
@@ -181,10 +182,10 @@ public class IntegrityExclusionSqlTests : EFCoreTestBase {
     var everything = await _selectAllAsync(conn, $$"""{"unresolved":7,"until":"{{until:O}}"}""");
 
     await Assert.That(unknownOnly).IsEquivalentTo([unknown]);
-    await Assert.That(undecided.Order()).IsEquivalentTo(new[] { unknown, heldOld }.Order())
+    await Assert.That(undecided).IsEquivalentTo(new List<Guid> { unknown, heldOld })
       .Because("an unknown answer is a held row too; the held row stored after the cutoff is left");
     await Assert.That(unhealedOnly).IsEquivalentTo([unhealed]);
-    await Assert.That(everything.Order()).IsEquivalentTo(new[] { unknown, heldOld, unhealed }.Order());
+    await Assert.That(everything).IsEquivalentTo(new List<Guid> { unknown, heldOld, unhealed });
   }
 
   // ── pending marks ──
@@ -201,14 +202,16 @@ public class IntegrityExclusionSqlTests : EFCoreTestBase {
     var asked = await _askAsync(conn, _t0);
     var askedAgainAtOnce = await _askAsync(conn, _t0.AddMinutes(1));
     var settled = await _scalarAsync<Guid[]>(conn,
-      "SELECT wh_integrity_exclusion_settle($1, $2, $3, $4, $5)", origin, new[] { a }, new[] { 42L }, new[] { b }, _t0);
+      "SELECT wh_integrity_exclusion_settle($1, $2, $3, $4, NULL, NULL, NULL, $5)", origin, new[] { a }, _sequence42, new[] { b }, _t0);
     var askedNextLap = await _askAsync(conn, _t0.AddHours(1));
 
-    await Assert.That(asked).IsEqualTo((origin, new[] { a, b, c }.Order().ToArray()));
+    await Assert.That(asked!.Value.Origin).IsEqualTo(origin);
+    await Assert.That(asked.Value.Ids).IsEquivalentTo(new List<Guid> { a, b, c });
     await Assert.That(askedAgainAtOnce).IsNull().Because("a mark asked within the lap pause is not asked again");
-    await Assert.That(settled.Order()).IsEquivalentTo(new[] { a, b }.Order());
+    await Assert.That(settled).IsEquivalentTo(new List<Guid> { a, b });
     await Assert.That(await _marksAsync(conn)).IsEquivalentTo([$"{a}|1|42", $"{b}|2|", $"{c}|0|"]);
-    await Assert.That(askedNextLap).IsEqualTo((origin, new[] { c }));
+    await Assert.That(askedNextLap!.Value.Ids).IsEquivalentTo(new List<Guid> { c })
+      .Because("only the mark still pending is asked again, once the lap pause has passed");
     await Assert.That(await _originCountsAsync(conn, origin)).IsEqualTo("3|1|1");
   }
 
@@ -343,7 +346,7 @@ public class IntegrityExclusionSqlTests : EFCoreTestBase {
     await Assert.That(removed).IsEqualTo("1|1");
     await Assert.That(await _requestStateAsync(conn, done)).IsNull();
     await Assert.That(await _requestStateAsync(conn, open)).IsNotNull().Because("an open request is work, never rolled off");
-    await Assert.That(await _logAsync(conn)).IsEquivalentTo([$"unexclude|{(await _originOfAsync(conn, a))}|1|{REASON}|{OPERATOR}"]);
+    await Assert.That(await _logAsync(conn)).IsEquivalentTo([$"unexclude|{await _originOfAsync(conn, a)}|1|{REASON}|{OPERATOR}"]);
   }
 
   // ── scenario and helpers ──
@@ -406,7 +409,7 @@ public class IntegrityExclusionSqlTests : EFCoreTestBase {
         SELECT _wh_fold_stream_digests(ARRAY[$1::uuid], ARRAY[$2::text], ARRAY[$3::text], ARRAY[$4::uuid], ARRAY[$5::uuid], 'fold', NOW())
         """, origin, TENANT, type, stream, id);
     }
-    foreach (var lane in new[] { 0, 2 }) {
+    foreach (var lane in _lanesRead) {
       _lanes[(id, lane)] = await _scalarAsync<long>(conn, "SELECT _wh_digest_lane($1, $2)", id, lane);
     }
     return id;
