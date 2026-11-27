@@ -52,8 +52,8 @@ public class StartupWorkCatalogTests {
     await Assert.That(FrameworkStartupWork.Find(FrameworkStartupWork.ANALYZE_NEW_INDEXES)?.Scope)
       .IsEqualTo(StartupWorkScope.PerInstance).Because("only this instance's own pass queues tables for it");
     await Assert.That(FrameworkStartupWork.Find(FrameworkStartupWork.MANAGED_OBJECT_RECONCILE)?.Scope)
-      .IsEqualTo(StartupWorkScope.PerInstance)
-      .Because("each run records what this instance declares, and the drop gate reads every live instance's record");
+      .IsEqualTo(StartupWorkScope.PerSchemaPerBuild)
+      .Because("#2608: the report the drop gate reads from every live instance is made apart from it, at every start");
     await Assert.That(FrameworkStartupWork.Find(FrameworkStartupWork.PERSPECTIVE_REGISTRY)?.Scope)
       .IsEqualTo(StartupWorkScope.PerSchemaPerBuild);
     await Assert.That(FrameworkStartupWork.Find(FrameworkStartupWork.PERSPECTIVE_STORAGE_SETTINGS)?.Scope)

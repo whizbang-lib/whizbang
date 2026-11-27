@@ -90,12 +90,8 @@ public static class ManagedSchemaReconciler {
         return null;
       }
 
-      // The tables that declare row retention keep their updated_at index (#2087): built here when missing, before
-      // the tables are read, and declared, so the plan keeps it while it retires the same index everywhere else.
-      var retention = await PerspectiveRetentionIndexes.EnsureAsync(
-        connection, schema, settings.Mode is ReconcileMode.Apply or ReconcileMode.AddOnly, target.Logger, token);
-      var live = await ManagedSchemaCatalog.ReadLiveAsync(connection, schema, token);
-      var effective = await _withEquivalentsAsync(connection, schema, declared.With(retention), live, token);
+      var (effective, live) = await _effectiveAsync(
+        connection, schema, declared, settings.Mode is ReconcileMode.Apply or ReconcileMode.AddOnly, target.Logger, token);
       var ledger = await ManagedSchemaCatalog.ReadLedgerAsync(connection, target.LedgerTable, token);
       var fleet = await ManagedSchemaFleet.ReportAndReadAsync(
         connection, schema, instanceId, effective, token);
@@ -110,6 +106,66 @@ public static class ManagedSchemaReconciler {
     var (dropped, failed) = await _dropAsync(target, plan.Drops, cancellationToken);
     _logPlan(logger, schema, plan);
     return new ManagedSchemaReport(false, plan.Records.Count, dropped, plan.Kept, plan.Missing, failed);
+  }
+
+  /// <summary>
+  /// Records what this instance declares for the fleet gate, and changes nothing else (#2608): what every start does,
+  /// whether or not it is the start of its build that reconciles. Cheap: catalog reads and one upsert of this
+  /// instance's own row, with no lock, so it is made whoever holds the schema lock.
+  /// </summary>
+  /// <remarks>
+  /// What is recorded is what a reconcile by this instance would record: the declarations, each table's
+  /// <c>updated_at</c> index where row retention asks for it (read, never built here), and each declared index that
+  /// stands under another name. Never fatal: a report that fails is logged at Warning, and the gate keeps every object
+  /// while this instance is live and unreported, as it does for any instance that has not reported.
+  /// </remarks>
+  /// <param name="connection">An open connection, outside any transaction, that the caller owns.</param>
+  /// <param name="schema">The schema, bare.</param>
+  /// <param name="declared">Everything declared by Whizbang's contributors.</param>
+  /// <param name="settings">The settings; with the reconcile <see cref="ReconcileMode.Off"/> nothing is recorded.</param>
+  /// <param name="instanceId">This instance; null records nothing.</param>
+  /// <param name="logger">Where a failed report is said.</param>
+  /// <param name="cancellationToken">Cancels the report.</param>
+  /// <returns>True when the record was written.</returns>
+  /// <docs>fundamentals/perspectives/managed-schema-objects#rolling-deploys</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/ManagedSchemaReportTests.cs</tests>
+  public static async Task<bool> ReportAsync(
+      NpgsqlConnection connection, string schema, ManagedSchemaObjectSet declared, ManagedSchemaSettings settings,
+      Guid? instanceId, ILogger? logger, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(connection);
+    ArgumentException.ThrowIfNullOrWhiteSpace(schema);
+    ArgumentNullException.ThrowIfNull(declared);
+    ArgumentNullException.ThrowIfNull(settings);
+    if (settings.Mode == ReconcileMode.Off || instanceId is not { } self) {
+      return false;
+    }
+    var log = logger ?? NullLogger.Instance;
+    try {
+      if (!await CatalogPresence.RelationExistsAsync(connection, schema, "wh_managed_object_declarations", cancellationToken)) {
+        return false;
+      }
+      var (effective, _) = await _effectiveAsync(connection, schema, declared, build: false, log, cancellationToken);
+      await ManagedSchemaFleet.ReportAsync(connection, schema, self, effective, cancellationToken);
+      return true;
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      ManagedSchemaLog.ReportFailed(log, ex, schema);
+      return false;
+    }
+  }
+
+  /// <summary>
+  /// What one pass declares, as the database names it: <paramref name="declared"/>, the <c>updated_at</c> index of each
+  /// table row retention enrolls (built first when <paramref name="build"/>), and each declared index that stands under
+  /// another name; with the objects the tables have now.
+  /// </summary>
+  private static async Task<(ManagedSchemaObjectSet Effective, List<LiveSchemaObject> Live)> _effectiveAsync(
+      NpgsqlConnection connection, string schema, ManagedSchemaObjectSet declared, bool build, ILogger logger,
+      CancellationToken cancellationToken) {
+    // The tables that declare row retention keep their updated_at index (#2087): built here when missing, before
+    // the tables are read, and declared, so the plan keeps it while it retires the same index everywhere else.
+    var retention = await PerspectiveRetentionIndexes.EnsureAsync(connection, schema, build, logger, cancellationToken);
+    var live = await ManagedSchemaCatalog.ReadLiveAsync(connection, schema, cancellationToken);
+    return (await _withEquivalentsAsync(connection, schema, declared.With(retention), live, cancellationToken), live);
   }
 
   /// <summary>Where the drops go: the backend, the schema, its ledger, the schema lock's key, and the log.</summary>
@@ -307,6 +363,11 @@ internal static partial class ManagedSchemaLog {
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Schema reconcile ({Schema}.{Table}): declared {Kind} {Name} is missing from the database (declared by {DeclaredBy})")]
   public static partial void Missing(ILogger logger, string schema, string table, ManagedObjectKind kind, string name, string declaredBy);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+    Message = "Schema reconcile ({Schema}): could not record what this instance declares; every object is kept while it "
+      + "runs unreported, and the next start reports again")]
+  public static partial void ReportFailed(ILogger logger, Exception exception, string schema);
 
   [LoggerMessage(Level = LogLevel.Information,
     Message = "Schema reconcile ({Schema}): another session took the schema lock after the plan, so these drops stay pending for the next run: {Objects}")]

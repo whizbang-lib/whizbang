@@ -474,16 +474,18 @@ public sealed class PostgresSchemaInitializer {
         () => new NpgsqlConnection(_connectionString), schema, registry, SchemaCommandTimeout.Resolve(_connectionString),
         services: null, Logger, ct).ConfigureAwait(false) != PerspectiveRegistryConvergence.Failed, cancellationToken)
       .ConfigureAwait(false);
-    // The managed-object reconcile, after the lock is released (it takes the same lock itself, with a try). Never
-    // fatal, as on the EF Core driver: a reconcile that cannot finish leaves every object where it is, and the next
-    // start tries again. Per instance: each run records what this instance declares for the drop gate.
-    if (ManagedObjects is { } declared) {
+    // #2608: every start reports what this instance declares, which the drop gate needs from each live instance; the
+    // managed-object reconcile itself runs once per schema per build, after the lock is released (it takes the same lock
+    // itself, with a try). Never fatal, as on the EF Core driver: a reconcile that cannot finish, or finds the lock taken,
+    // leaves every object where it is and is not recorded done, so the next start runs it.
+    if (ManagedObjects is { } declared && ManagedObjectSettings.Mode != ReconcileMode.Off) {
       try {
-        _ = await work.RunAsync(FrameworkStartupWork.MANAGED_OBJECT_RECONCILE, "", async ct => {
-          _ = await ManagedSchemaReconciler.RunAsync(
-            connection, schema, declared, ManagedObjectSettings, Instance?.InstanceId, Logger, ct).ConfigureAwait(false);
-          return true;
-        }, cancellationToken).ConfigureAwait(false);
+        _ = await ManagedSchemaReconciler.ReportAsync(
+          connection, schema, declared, ManagedObjectSettings, Instance?.InstanceId, Logger, cancellationToken).ConfigureAwait(false);
+        _ = await work.RunAsync(FrameworkStartupWork.MANAGED_OBJECT_RECONCILE, StartupWorkInputs.Of(declared, ManagedObjectSettings), async ct =>
+          !(await ManagedSchemaReconciler.RunAsync(
+            connection, schema, declared, ManagedObjectSettings, Instance?.InstanceId, Logger, ct).ConfigureAwait(false)).Skipped,
+          cancellationToken).ConfigureAwait(false);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         if (Logger is { } logger) {
           _logReconcileFailed(logger, ex);

@@ -74,6 +74,13 @@ public class DapperManagedObjectsStartupTests {
     await db.ExecuteAsync(sql);
   }
 
+  /// <summary>
+  /// The record the next build finds (#2608): the reconcile runs once per schema per build, so a scenario about what a
+  /// later build's start reconciles marks the record as an earlier build's before that start.
+  /// </summary>
+  private Task _nextBuildAsync() =>
+    _execAsync("UPDATE wh_startup_work SET fingerprint = 'an-earlier-build' WHERE work_name = 'managed-object-reconcile'");
+
   private async Task<bool> _existsAsync(string index) {
     await using var db = new NpgsqlConnection(_database.ConnectionString);
     return await db.ExecuteScalarAsync<bool>("SELECT to_regclass('public.' || @index) IS NOT NULL", new { index });
@@ -101,7 +108,9 @@ public class DapperManagedObjectsStartupTests {
   public async Task AtStart_TheConfiguredModeIsHonoredAsync() {
     await _startOnceAsync(_services());
     await _execAsync($"CREATE INDEX {RETIRED} ON {TABLE} USING gin (data)");
+    await _nextBuildAsync();
     await _startOnceAsync(_services());
+    await _nextBuildAsync();
 
     await _startOnceAsync(_services(config: ("Whizbang:Schema:Reconcile:Mode", "ReportOnly")));
 
@@ -138,7 +147,9 @@ public class DapperManagedObjectsStartupTests {
   public async Task AtStart_TheReconcileReportsThroughTheHostsLoggerAsync() {
     await _startOnceAsync(_services());
     await _execAsync($"CREATE INDEX {RETIRED} ON {TABLE} USING gin (data)");
+    await _nextBuildAsync();
     await _startOnceAsync(_services());
+    await _nextBuildAsync();
     var logs = new ListLoggerProvider();
 
     await _startOnceAsync(_services(logs));
@@ -150,7 +161,9 @@ public class DapperManagedObjectsStartupTests {
   public async Task AtStart_AContributorsObjectIsDeclaredAndKeptAsync() {
     await _startOnceAsync(_services());
     await _execAsync($"CREATE INDEX {RETIRED} ON {TABLE} USING gin (data)");
+    await _nextBuildAsync();
     await _startOnceAsync(_services());
+    await _nextBuildAsync();
     var services = _services();
     services.AddSingleton<IManagedSchemaObjectContributor>(new Contributor());
 
