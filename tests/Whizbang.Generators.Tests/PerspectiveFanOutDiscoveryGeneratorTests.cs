@@ -90,6 +90,7 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
             EventType: typeof(global::TestApp.CustomerRenamed),
             KeyProperty: "CustomerId",
             KeyColumn: "customer_id",
+            KeySelector: (global::System.Linq.Expressions.Expression<global::System.Func<global::TestApp.OrderSummary, object?>>)(row => row.CustomerId),
             Invoker: static (perspective, evt) => ((global::Whizbang.Core.Perspectives.IPerspectiveFanOutFor<global::TestApp.OrderSummary, global::TestApp.CustomerRenamed>)perspective).Apply((global::TestApp.CustomerRenamed)evt)
           ),
       """;
@@ -129,6 +130,8 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
     await Assert.That(code).Contains("EventType: typeof(global::TestApp.CustomerRenamed),\n      KeyProperty: \"CustomerId\",\n      KeyColumn: \"customer_id\",");
     await Assert.That(code).Contains("EventType: typeof(global::TestApp.RegionRenamed),\n      KeyProperty: \"RegionId\",\n      KeyColumn: \"region\",")
       .Because("an explicit Targets is read per interface, and a declared ColumnName is the column");
+    await Assert.That(code).Contains("Func<global::TestApp.OrderSummary, object?>>)(row => row.RegionId)")
+      .Because("#2620: the key selector the live apply matches rows by is the key each interface declares");
   }
 
   [Test]

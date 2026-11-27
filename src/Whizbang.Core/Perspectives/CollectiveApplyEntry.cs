@@ -84,4 +84,27 @@ public sealed record CollectiveApplyEntry(
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveApplyEntryTests.cs:EntryKey_DiffersForTwoMethodsOfOneHandlerAsync</tests>
   public string EntryKey =>
     TypeNameFormatter.FormatClrTypeName(HandlerType) + "." + MethodName + ":" + TypeNameFormatter.FormatClrTypeName(ModelType);
+
+  /// <summary>
+  /// The perspective fan-out this entry applies (#2620), or <see langword="null"/> for a <c>[CollectiveApplyFor]</c>
+  /// handler. Set by <see cref="PerspectiveFanOutEntry.ToCollectiveApplyEntry"/>.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/multi-stream#how-a-fan-out-applies-live</docs>
+  public PerspectiveFanOutEntry? FanOut { get; init; }
+
+  /// <summary>
+  /// Whether this entry applies <paramref name="evt"/>: a handler applies a collective of its <see cref="EventType"/>, and
+  /// a fan-out applies a <see cref="FanOutCollectiveEvent"/> that carries an event of its <see cref="EventType"/>. Neither
+  /// applies the other's, so a type that is both a collective and fanned out runs each from its own row.
+  /// </summary>
+  /// <param name="evt">The event being dispatched.</param>
+  /// <returns><see langword="true"/> when the dispatcher runs this entry for the event.</returns>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FanOutCollectiveDispatchTests.cs:AppliesTo_AFanOutEntry_AppliesOnlyToTheWrapperOfItsOwnEventTypeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FanOutCollectiveDispatchTests.cs:AppliesTo_ACollectiveEntry_NeverAppliesToAFanOutWrapperAsync</tests>
+  public bool AppliesTo(ICollectiveEvent evt) {
+    ArgumentNullException.ThrowIfNull(evt);
+    return evt is FanOutCollectiveEvent fanOut
+      ? FanOut is not null && EventType == fanOut.Event.GetType()
+      : FanOut is null && EventType == evt.GetType();
+  }
 }

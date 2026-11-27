@@ -89,5 +89,6 @@ public class PerspectiveFanOutContractTests {
     KeyProperty: nameof(OrderSummary.CustomerId),
     KeyColumn: "customer_id",
     Invoker: static (perspective, evt) =>
-      ((IPerspectiveFanOutFor<OrderSummary, CustomerRenamed>)perspective).Apply((CustomerRenamed)evt));
+      ((IPerspectiveFanOutFor<OrderSummary, CustomerRenamed>)perspective).Apply((CustomerRenamed)evt),
+    KeySelector: (Expression<Func<OrderSummary, object?>>)(o => o.CustomerId));
 }

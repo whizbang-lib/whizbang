@@ -23,7 +23,9 @@ public class PerspectiveFanOutRegistryTests {
   private sealed class InvoiceProjection;
 
   private static PerspectiveFanOutEntry _entry(Type perspective, Type model, Type evt, string key = "CustomerId") =>
-    new(perspective, model, evt, key, "customer_id", Invoker: static (_, _) => null!);
+    new(perspective, model, evt, key, "customer_id", Invoker: static (_, _) => null!, KeySelector: _anyKey);
+
+  private static readonly System.Linq.Expressions.Expression<Func<object, object?>> _anyKey = row => row;
 
   private static readonly PerspectiveFanOutEntry _orders = _entry(typeof(OrderProjection), typeof(OrderModel), typeof(CustomerRenamed));
   private static readonly PerspectiveFanOutEntry _invoices = _entry(typeof(InvoiceProjection), typeof(InvoiceModel), typeof(CustomerRenamed));

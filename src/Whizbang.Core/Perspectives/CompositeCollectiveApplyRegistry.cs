@@ -79,6 +79,20 @@ public static class CollectiveApplyRegistryServiceCollectionExtensions {
     return handPassed is null ? served : Union(served.Concat(handPassed));
   }
 
+  /// <summary>
+  /// What the collective dispatcher runs (#2620): the handlers (<see cref="GetCollectiveApplyEntries"/>), then each
+  /// perspective fan-out the container serves as an entry of its own (<see cref="PerspectiveFanOutEntry.ToCollectiveApplyEntry"/>).
+  /// The replay applier walks the handlers alone.
+  /// </summary>
+  /// <param name="services">The host's service provider.</param>
+  /// <param name="handPassed">A handler table a consumer passed by hand to the obsolete registration, or none.</param>
+  /// <returns>Each handler and each fan-out once.</returns>
+  /// <docs>fundamentals/perspectives/multi-stream#how-a-fan-out-applies-live</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/FanOutCollectiveDispatchTests.cs:GetCollectiveDispatchEntries_AreTheHandlersThenEachFanOutAsync</tests>
+  public static IReadOnlyList<CollectiveApplyEntry> GetCollectiveDispatchEntries(
+      this IServiceProvider services, IReadOnlyList<CollectiveApplyEntry>? handPassed = null) =>
+    [.. services.GetCollectiveApplyEntries(handPassed), .. services.GetPerspectiveFanOutEntries().Select(f => f.ToCollectiveApplyEntry())];
+
   /// <summary>How a handler is named in the startup collisions report: the event and the handler's entry key.</summary>
   /// <param name="entry">The handler.</param>
   /// <returns>The event's display name and <see cref="CollectiveApplyEntry.EntryKey"/>.</returns>

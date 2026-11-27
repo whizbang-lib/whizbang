@@ -96,6 +96,7 @@ public class PerspectiveFanOutDiscoveryGenerator : IIncrementalGenerator {
       .Replace("__MODEL__", info.ModelFqn)
       .Replace("__EVENT__", info.EventFqn)
       .Replace("__KEY_PROPERTY__", ServiceAssemblyFactsGenerator.Literal(info.KeyProperty))
+      .Replace("__KEY_MEMBER__", Microsoft.CodeAnalysis.CSharp.SyntaxFacts.GetKeywordKind(info.KeyProperty) == Microsoft.CodeAnalysis.CSharp.SyntaxKind.None ? info.KeyProperty : "@" + info.KeyProperty)
       .Replace("__KEY_COLUMN__", ServiceAssemblyFactsGenerator.Literal(info.KeyColumn))));
 
     var source = TemplateUtilities.GetEmbeddedTemplate(assembly, TEMPLATE_FILE);
