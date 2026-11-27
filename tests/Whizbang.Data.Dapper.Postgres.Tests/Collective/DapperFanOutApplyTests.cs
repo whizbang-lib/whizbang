@@ -110,7 +110,8 @@ public class DapperFanOutApplyTests : PostgresTestBase {
 
     using var conn = await ConnectionFactory.CreateConnectionAsync();
     var flags = (await conn.QueryAsync<bool>($"SELECT (data->>'CustomerDeleted')::boolean FROM {TABLE}")).OrderDescending().ToArray();
-    await Assert.That(flags).IsEquivalentTo(new[] { true, true, false });
+    bool[] marked = [true, true, false];
+    await Assert.That(flags).IsEquivalentTo(marked);
   }
 
   // ---------- the perspective, as a generated entry describes it ----------
