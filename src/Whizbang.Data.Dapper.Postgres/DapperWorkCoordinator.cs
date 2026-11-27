@@ -607,16 +607,15 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
     var rows = await connection.QueryAsync<InboxBatchRowDto>(
-      // 576 (#2551): the fetch that ranks each stream in stream order and returns the rank; 740 (#2633): and records the
-      // derivation scheme a row's first run runs under, returning each row's.
-      $"SELECT * FROM {prefix}{Whizbang.Data.Postgres.InboxDerivationSchemeSql.FETCH_FUNCTION}(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes, @p_derivation_scheme)",
+      // 576 (#2551): the fetch that ranks each stream in stream order and returns the rank; 740 (#2633): and the
+      // derivation scheme each row's first claim recorded.
+      $"SELECT * FROM {prefix}{Whizbang.Data.Postgres.InboxDerivationSchemeSql.FETCH_FUNCTION}(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
       // NULL = count bound only, the pre-byte-budget behavior.
       new {
         p_stream_ids = streamArr,
         p_instance_id = instanceId,
         p_max_per_stream = maxPerStream,
         p_max_bytes = maxBytes,
-        p_derivation_scheme = Whizbang.Data.Postgres.InboxDerivationSchemeSql.CurrentScheme,
       },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
@@ -1563,7 +1562,7 @@ public partial class DapperWorkCoordinator(
           "c.source AS Source, c.work_id AS WorkId, c.work_stream_id AS StreamId",
           prefix + "claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease, @Fresh, @Rows, @Steal, @Persp, "
           + "p_assignment_epoch => @AssignmentEpoch, p_assignment_revision => @AssignmentRevision, p_alive_lock_held => @AliveLockHeld, "
-          + "p_lifecycle_phase => @LifecyclePhase, p_acquire_inbox => @AcquireInbox)",
+          + "p_lifecycle_phase => @LifecyclePhase, p_acquire_inbox => @AcquireInbox, p_derivation_scheme => @DerivationScheme)",
           "@Id", "@Part", epochColumn: "PartitionEpoch", partitionColumn: "TenurePartition"),
         new {
           Id = request.InstanceId,
@@ -1586,7 +1585,9 @@ public partial class DapperWorkCoordinator(
           // 229 (#1638): a row recording another phase than the caller's is reported stale; null: liveness alone.
           request.LifecyclePhase,
           // 390 (#1853): no new inbox rows while the caller's inbox working set is at its byte budget.
-          request.AcquireInbox
+          request.AcquireInbox,
+          // 740 (#2633): this build's derivation scheme, stamped on an inbox row's first claim.
+          DerivationScheme = Whizbang.Data.Postgres.InboxDerivationSchemeSql.CurrentScheme,
         },
         commandTimeout: CoordinatorCommandTimeout.SECONDS);
     } finally {

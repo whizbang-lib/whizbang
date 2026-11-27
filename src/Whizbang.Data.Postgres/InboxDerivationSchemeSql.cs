@@ -7,17 +7,18 @@ namespace Whizbang.Data.Postgres;
 
 /// <summary>
 /// What both Postgres work coordinators send and read to keep a retried inbox row on the derivation scheme its first run
-/// ran under (#2633): the fetch that records and returns it (migration 740), the scheme this build stamps, and the
-/// mapping of the stored number back to a scheme.
+/// ran under (#2633): the scheme this build hands the claim, which stamps it on a row's first claim (migration 740), the
+/// fetch that returns each row's, and the mapping of the stored number back to a scheme.
 /// </summary>
 /// <docs>fundamentals/identity/whizbang-ids#a-receptor-invoked-locally</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FetchInboxBatchDerivationSchemeSqlTests.cs</tests>
-/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperWorkCoordinatorWithDataTests.cs:FetchInboxBatchAsync_ReturnsTheSchemeTheRowFirstRanUnderAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimDerivationSchemeSqlTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperWorkCoordinatorWithDataTests.cs:ClaimAndFetch_RecordAndReturnTheSchemeTheRowFirstRanUnderAsync</tests>
 public static class InboxDerivationSchemeSql {
-  /// <summary>The inbox fetch that records a row's first-run scheme and returns each row's (migration 740).</summary>
+  /// <summary>The inbox fetch that returns the scheme each row's first claim recorded (migration 740).</summary>
   public const string FETCH_FUNCTION = "fetch_inbox_batch_with_derivation_scheme";
 
-  /// <summary>The number of the scheme this build runs a handling under, which the fetch stamps on a row's first run.</summary>
+  /// <summary>The number of the scheme this build runs a handling under, which the claim stamps on a row's first claim.</summary>
   public static short CurrentScheme => (short)ReceptorHandling.CurrentScheme;
 
   /// <summary>The scheme a fetched row records.</summary>

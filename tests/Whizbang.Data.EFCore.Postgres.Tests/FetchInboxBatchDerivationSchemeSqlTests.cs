@@ -13,9 +13,8 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// An inbox row records the derivation scheme its first run ran under, and every retry runs under it (#2633, migration
-/// 740): the fetch stamps a row on its first run and returns each row's recorded scheme, so a row a build before the
-/// column ran first keeps that build's ids on a retry.
+/// The inbox fetch returns the derivation scheme each row's first claim recorded (#2633, migration 740), the shared
+/// scheme for a row a build before the column claimed first, and writes nothing: the claim records it.
 /// </summary>
 /// <docs>fundamentals/identity/whizbang-ids#a-receptor-invoked-locally</docs>
 [Category("Shard3")]
@@ -23,93 +22,43 @@ public class FetchInboxBatchDerivationSchemeSqlTests : EFCoreTestBase {
   private const string COMMAND_TYPE = "Producer.AdjustOrder, Producer";
 
   [Test]
-  public async Task FirstRun_IsStampedWithThisBuildsScheme_AndReturnsItAsync() {
+  [Arguments((short)1, HandlingDerivationScheme.OwnHandling)]
+  [Arguments((short)0, HandlingDerivationScheme.SharedWithCaller)]
+  public async Task ARecordedScheme_IsReturnedAsync(short recorded, HandlingDerivationScheme expected) {
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var instance = await _registerInstanceAsync(conn);
+    var stream = (Guid)TrackedGuid.New();
+    var id = (Guid)TrackedGuid.New();
+    await _storeLeasedAsync(conn, instance, id, stream, attempts: 3);
+    await using (var record = conn.CreateCommand()) {
+      record.CommandText = "UPDATE wh_inbox_state SET derivation_scheme = @recorded WHERE message_id = @id";
+      record.Parameters.AddWithValue(nameof(recorded), recorded);
+      record.Parameters.AddWithValue(nameof(id), id);
+      await record.ExecuteNonQueryAsync();
+    }
+
+    var rows = await _coordinator(dbContext).FetchInboxBatchAsync([stream], instance, 100, null);
+
+    await Assert.That(rows.Single().DerivationScheme).IsEqualTo(expected);
+  }
+
+  [Test]
+  public async Task ARowThatRecordsNothing_ReturnsTheSharedScheme_AndTheFetchWritesNothingAsync() {
+    // Recorded by no claim: a build before the column claimed it first
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
     var instance = await _registerInstanceAsync(conn);
     var stream = (Guid)TrackedGuid.New();
     var id = (Guid)TrackedGuid.New();
     await _storeLeasedAsync(conn, instance, id, stream, attempts: 1);
-
-    var rows = await _coordinator(dbContext).FetchInboxBatchAsync([stream], instance, 100, null);
-
-    await Assert.That(rows.Single().DerivationScheme).IsEqualTo(HandlingDerivationScheme.OwnHandling);
-    await Assert.That(await _recordedAsync(conn, id)).IsEqualTo((short)1)
-      .Because("the first run records its scheme, so a retry on any later build runs under it");
-  }
-
-  [Test]
-  public async Task ARowAnEarlierBuildRanFirst_IsNotStamped_AndReturnsTheSharedSchemeAsync() {
-    // Claimed twice (attempts 2) and nothing recorded: a build before the column ran it first
-    await using var dbContext = CreateDbContext();
-    var conn = await _openAsync(dbContext);
-    var instance = await _registerInstanceAsync(conn);
-    var stream = (Guid)TrackedGuid.New();
-    var id = (Guid)TrackedGuid.New();
-    await _storeLeasedAsync(conn, instance, id, stream, attempts: 2);
 
     var rows = await _coordinator(dbContext).FetchInboxBatchAsync([stream], instance, 100, null);
 
     await Assert.That(rows.Single().DerivationScheme).IsEqualTo(HandlingDerivationScheme.SharedWithCaller)
       .Because("the retry derives the ids its first run derived on the earlier build");
-    await Assert.That(await _recordedAsync(conn, id)).IsNull();
-  }
-
-  [Test]
-  public async Task ARecordedScheme_IsReturnedOnARetry_AndNeverOverwrittenAsync() {
-    await using var dbContext = CreateDbContext();
-    var conn = await _openAsync(dbContext);
-    var instance = await _registerInstanceAsync(conn);
-    var stream = (Guid)TrackedGuid.New();
-    var id = (Guid)TrackedGuid.New();
-    await _storeLeasedAsync(conn, instance, id, stream, attempts: 1);
-    await _execAsync(conn, "UPDATE wh_inbox_state SET derivation_scheme = 0 WHERE message_id = @id", id);
-
-    var first = await _coordinator(dbContext).FetchInboxBatchAsync([stream], instance, 100, null);
-    await _execAsync(conn, "UPDATE wh_inbox_state SET attempts = 3 WHERE message_id = @id", id);
-    var retry = await _coordinator(dbContext).FetchInboxBatchAsync([stream], instance, 100, null);
-
-    await Assert.That(first.Single().DerivationScheme).IsEqualTo(HandlingDerivationScheme.SharedWithCaller);
-    await Assert.That(retry.Single().DerivationScheme).IsEqualTo(HandlingDerivationScheme.SharedWithCaller);
-    await Assert.That(await _recordedAsync(conn, id)).IsEqualTo((short)0);
-  }
-
-  [Test]
-  public async Task ARowTheBudgetCuts_IsNotStampedAsync() {
-    // Two rows of one stream with room for one: the second is not run now, so it records nothing
-    await using var dbContext = CreateDbContext();
-    var conn = await _openAsync(dbContext);
-    var instance = await _registerInstanceAsync(conn);
-    var stream = (Guid)TrackedGuid.New();
-    var first = (Guid)TrackedGuid.New();
-    var second = (Guid)TrackedGuid.New();
-    await _storeLeasedAsync(conn, instance, first, stream, attempts: 1);
-    await _storeLeasedAsync(conn, instance, second, stream, attempts: 1);
-
-    var rows = await _coordinator(dbContext).FetchInboxBatchAsync([stream], instance, 1, null);
-
-    await Assert.That(rows.Select(r => r.MessageId)).IsEquivalentTo([first]);
-    await Assert.That(await _recordedAsync(conn, second)).IsNull();
-  }
-
-  [Test]
-  public async Task TheEarlierFetch_StillRecordsNothingAsync() {
-    // A build before 740 calls fetch_inbox_batch_in_stream_order, unchanged: its first runs record no scheme
-    await using var dbContext = CreateDbContext();
-    var conn = await _openAsync(dbContext);
-    var instance = await _registerInstanceAsync(conn);
-    var stream = (Guid)TrackedGuid.New();
-    var id = (Guid)TrackedGuid.New();
-    await _storeLeasedAsync(conn, instance, id, stream, attempts: 1);
-
-    await using (var cmd = conn.CreateCommand()) {
-      cmd.CommandText = "SELECT count(*) FROM fetch_inbox_batch_in_stream_order(@s, @i, 100, NULL)";
-      cmd.Parameters.AddWithValue("s", new[] { stream });
-      cmd.Parameters.AddWithValue("i", instance);
-      await Assert.That(Convert.ToInt64(await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture)).IsEqualTo(1L);
-    }
-
-    await Assert.That(await _recordedAsync(conn, id)).IsNull();
+    await Assert.That(await _recordedAsync(conn, id)).IsNull()
+      .Because("the claim is where a scheme is recorded, in the update it already makes; the fetch adds no write");
   }
 
   // ===== Helpers =====
@@ -131,13 +80,6 @@ public class FetchInboxBatchDerivationSchemeSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue(nameof(id), id);
     var value = await cmd.ExecuteScalarAsync();
     return value is DBNull or null ? null : (short)value;
-  }
-
-  private static async Task _execAsync(NpgsqlConnection conn, string sql, Guid id) {
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = sql;
-    cmd.Parameters.AddWithValue(nameof(id), id);
-    await cmd.ExecuteNonQueryAsync();
   }
 
   /// <summary>One command, stored by store_inbox_messages, then leased to the instance as a claim leases it.</summary>

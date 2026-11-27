@@ -3926,7 +3926,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       "c.source, c.work_id, c.work_stream_id, c.partition_number, c.destination, c.message_type, c.envelope_type, "
       + "c.message_data, c.metadata, c.status, c.attempts, c.is_newly_stored, c.is_orphaned, c.perspective_name, c.priority, "
       + "c.received_at",
-      $"{functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after, @p_outbox_rows, @p_outbox_run, @p_assignment_epoch, @p_assignment_revision, @p_alive_lock_held, @p_lifecycle_phase, @p_acquire_inbox)",
+      $"{functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after, @p_outbox_rows, @p_outbox_run, @p_assignment_epoch, @p_assignment_revision, @p_alive_lock_held, @p_lifecycle_phase, @p_acquire_inbox, @p_derivation_scheme)",
       "@p_id", "@p_part");
     if (request.IncludeOutstanding) {
       // #635: the outstanding-budget counts ride the claim's round trip as a second result set,
@@ -3979,6 +3979,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     });
     // 390 (#1853): no new inbox rows while the caller's inbox working set is at its byte budget.
     cmd.Parameters.Add(new NpgsqlParameter("p_acquire_inbox", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = request.AcquireInbox });
+    // 740 (#2633): this build's derivation scheme, stamped on an inbox row's first claim.
+    cmd.Parameters.Add(new NpgsqlParameter("p_derivation_scheme", NpgsqlTypes.NpgsqlDbType.Smallint) {
+      Value = Whizbang.Data.Postgres.InboxDerivationSchemeSql.CurrentScheme,
+    });
 
     var rows = new List<WorkBatchRow>();
     OutstandingWork? outstanding = null;
@@ -6691,8 +6695,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    // 576 (#2551): the fetch that ranks each stream in stream order and returns the rank; 740 (#2633): and records the
-    // derivation scheme a row's first run runs under, returning each row's.
+    // 576 (#2551): the fetch that ranks each stream in stream order and returns the rank; 740 (#2633): and the
+    // derivation scheme each row's first claim recorded.
     var functionName = BuildSchemaQualifiedName(schema, Whizbang.Data.Postgres.InboxDerivationSchemeSql.FETCH_FUNCTION);
 
     var streamArr = AsArray(streamIds);
@@ -6700,16 +6704,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var dbConnection = __scope.Connection;
     await using var cmd = dbConnection.CreateCoordinatorCommand();
-    cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes, @p_derivation_scheme)";
+    cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)";
     cmd.Parameters.Add(new NpgsqlParameter(P_STREAM_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamArr });
     cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
     cmd.Parameters.Add(new NpgsqlParameter("p_max_per_stream", maxPerStream));
     // NULL = count bound only, which is exactly what this function did before the byte budget.
     cmd.Parameters.Add(new NpgsqlParameter("p_max_bytes", NpgsqlTypes.NpgsqlDbType.Bigint) {
       Value = (object?)maxBytes ?? DBNull.Value,
-    });
-    cmd.Parameters.Add(new NpgsqlParameter("p_derivation_scheme", NpgsqlTypes.NpgsqlDbType.Smallint) {
-      Value = Whizbang.Data.Postgres.InboxDerivationSchemeSql.CurrentScheme,
     });
 
     var results = new List<InboxBatchRow>();

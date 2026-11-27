@@ -5917,8 +5917,8 @@ public sealed record InboxBatchRow : Whizbang.Core.Priority.IPrioritized {
   public string? Error { get; init; }
   /// <summary>
   /// The scheme the row records (<c>wh_inbox_state.derivation_scheme</c>, #2633): the scheme it first ran under, which the
-  /// fetch stamps on a row's first run and returns on every later one, <see cref="HandlingDerivationScheme.SharedWithCaller"/>
-  /// for a row that first ran on a build before the column. Null from a store that does not record one.
+  /// claim stamps on a row's first claim and the fetch returns, <see cref="HandlingDerivationScheme.SharedWithCaller"/>
+  /// for a row a build before the column claimed first. Null from a store that does not record one.
   /// </summary>
   /// <docs>fundamentals/identity/whizbang-ids#a-receptor-invoked-locally</docs>
   public HandlingDerivationScheme? DerivationScheme { get; init; }
