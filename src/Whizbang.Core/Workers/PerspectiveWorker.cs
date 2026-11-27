@@ -740,52 +740,30 @@ public partial class PerspectiveWorker(
     var workReader = _perspectiveChannelWriter.Reader;
     var drainReader = _perspectiveDrainChannel.Reader;
     var drainBatcherOpts = _options.DrainBatcher;
-    // One pending wait per channel, carried from pass to pass and replaced only once it has completed (#2613). A pass
-    // the idle timeout or the wake signal ends leaves its channel waits unfinished; asking for fresh ones every pass
-    // queued two more waiters on the stopping token each time, and the channels keep a queued waiter until an item is
-    // written or its token is canceled, so an idle instance grew by them for its whole life.
-    var workWaits = new Whizbang.Core.Async.PendingChannelWait<PerspectiveWork>(workReader);
-    var drainWaits = drainReader is null ? null : new Whizbang.Core.Async.PendingChannelWait<Guid>(drainReader);
-    var drainNever = new TaskCompletionSource<bool>().Task; // never completes: only the work reader is consulted
+    // Every wake source of the loop, waited on together pass after pass with nothing left behind (#2613, #728): one
+    // pending wait per channel and one for the signal, carried across passes, and one idle timer the set stops whenever
+    // a channel or the signal wins. Racing both readers keeps drain mode from starving behind a quiet perspective
+    // channel (or the reverse). Only the NOTIFY listener sets the signal, so with none wired it never fires. The set
+    // lowers the signal on every wake, before the drain below looks for work, so a signal raised from there on wakes
+    // the next pass. Disposing the set when the loop ends releases every wait it made.
+    using var wakes = new Whizbang.Core.Async.WakeSet(_timeProvider, stoppingToken);
+    wakes.Add(workReader);
+    if (drainReader is not null) {
+      wakes.Add(drainReader);
+    }
+    wakes.Add(_perspectiveWake);
 
     while (!stoppingToken.IsCancellationRequested) {
-      // Block until either channel has work. WaitToReadAsync returns true when an item is
-      // available (or false when the channel is closed). We race both readers to avoid
-      // starving drain mode behind a quiet perspective channel (or vice versa). A timeout
-      // task keeps the database-readiness counter ticking even when no work arrives — the
-      // legacy poll loop did this naturally; the channel architecture needs it explicit.
-      var workWait = workWaits.WaitAsync(stoppingToken);
-      var drainWait = drainWaits?.WaitAsync(stoppingToken) ?? drainNever;
-      // Slice 7a — when the NOTIFY listener is wired, use the relaxed cadence
-      // (safety-net only); otherwise fall back to the legacy tight cadence so a
-      // NOTIFY outage doesn't introduce latency.
+      // Slice 7a: when the NOTIFY listener is wired, use the relaxed cadence (safety net only); otherwise the legacy
+      // tight cadence, so a NOTIFY outage adds no latency. The idle timeout keeps the database-readiness counter
+      // ticking when no work arrives, and runs on the worker's clock, so a test that owns the clock decides when it ends.
       var pollMs = !_perspectiveNotificationListener.IsConfigured
         ? _options.PollingIntervalMilliseconds
         : Math.Max(_options.PollingIntervalMilliseconds, _options.NotifyHealthyPollingIntervalMilliseconds);
-      // On the worker's clock, so the safety-net cadence is the injected TimeProvider's and a test that
-      // owns the clock decides when the next idle poll comes round.
-      var idleTimeout = Task.Delay(TimeSpan.FromMilliseconds(pollMs), _timeProvider, stoppingToken);
-      // WaitAsync returns the SAME pending task while a wait is outstanding, so an iteration that
-      // ends on a channel or the timeout leaves no extra waiter behind (#728). The signal is a level:
-      // a Set() that lands while the loop is busy stays raised until the Consume() below, so the next
-      // WhenAny returns at once even though the waiter it completed had already been abandoned.
-      var perspectiveSignal = _perspectiveNotificationListener.IsConfigured
-        ? _perspectiveWake.WaitAsync(stoppingToken)
-        : new TaskCompletionSource<bool>().Task;   // never completes when no listener
-
-      // The composite wake is awaited through AwaitConsumerWakeAsync so the "a canceled wait stops
-      // this loop" decision lives in one narrow member that a test can hold to it directly; see that
-      // method's remarks for why nothing reachable from here can make the await throw.
-      var awake = await AwaitConsumerWakeAsync(
-        Task.WhenAny(workWait, drainWait, idleTimeout, perspectiveSignal)).ConfigureAwait(false);
-
-      if (!awake || stoppingToken.IsCancellationRequested) {
+      var wake = await wakes.WaitAsync(TimeSpan.FromMilliseconds(pollMs)).ConfigureAwait(false);
+      if (wake.IsStopped || stoppingToken.IsCancellationRequested) {
         break;
       }
-
-      // Awake, and about to look: lower the signal before draining, so any signal raised from here
-      // on wakes the next iteration rather than being taken as already served by this one.
-      _perspectiveWake.Consume();
 
       // Drain whatever is currently queued on both channels (non-blocking after the wait).
       var workBatch = new List<PerspectiveWork>(_options.MaxStreamsPerBatch);
@@ -978,20 +956,14 @@ public partial class PerspectiveWorker(
         return;
       }
 
-      using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-      // Delayed THROUGH the provider, the same way SlidingWindowBatcher does it, so a fake clock
-      // controls when the window closes instead of only what the elapsed arithmetic reads. Armed
-      // BEFORE the wait begins: a deadline created after it would be measured from whatever the
-      // clock reads by then, so time that passed in between would not count against the window.
-      var timerTask = Task.Delay(waitFor, timeProvider, waitCts.Token);
-      var arrivalTask = drainReader.WaitToReadAsync(waitCts.Token).AsTask();
-      var completed = await Task.WhenAny(arrivalTask, timerTask).ConfigureAwait(false);
-      await waitCts.CancelAsync();
+      // One wake set per window: the arrival wait and the window's deadline, on the injected clock so a fake clock
+      // decides when the window closes. The set arms the deadline BEFORE the wait begins, so time that passes while the
+      // wait is set up counts against the window, and disposing it releases the wait the deadline beat.
+      using var window = new Whizbang.Core.Async.WakeSet(timeProvider, stoppingToken);
+      window.Add(drainReader);
+      var wake = await window.WaitAsync(waitFor).ConfigureAwait(false);
 
-      if (stoppingToken.IsCancellationRequested) {
-        return;
-      }
-      if (completed == timerTask) {
+      if (stoppingToken.IsCancellationRequested || wake.IsTimeout) {
         return;
       }
 
@@ -1290,13 +1262,13 @@ public partial class PerspectiveWorker(
   /// </summary>
   /// <returns>True when the set cleared; false when the interval elapsed and a re-read is due.</returns>
   private async Task<bool> _clearedBeforeNextPollAsync(Task allCleared, TimeSpan poll, CancellationToken ct) {
-    using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-    var delay = Task.Delay(poll, _timeProvider, delayCts.Token);
-    if (await Task.WhenAny(allCleared, delay).ConfigureAwait(false) == allCleared) {
-      await delayCts.CancelAsync().ConfigureAwait(false);
+    using var wakes = new Whizbang.Core.Async.WakeSet(_timeProvider, ct);
+    wakes.Add(allCleared);
+    await wakes.WaitAsync(poll).ConfigureAwait(false);
+    if (allCleared.IsCompleted) {
       return true;
     }
-    await delay.ConfigureAwait(false); // a stop surfaces here, as a cancellation
+    ct.ThrowIfCancellationRequested(); // a stop surfaces here, as a cancellation
     return false;
   }
 
@@ -5445,28 +5417,6 @@ public partial class PerspectiveWorker(
     Message = "Initial perspective cursor processing complete"
   )]
   static partial void LogInitialCheckpointProcessingComplete(ILogger logger);
-
-  /// <summary>
-  /// Awaits the channel-consumer loop's composite wake and reports whether the loop should run
-  /// another cycle: <c>false</c> means the wait ended in cancellation and the loop must stop.
-  /// </summary>
-  /// <remarks>
-  /// Internal rather than private so the cancellation contract can be asserted directly. The loop
-  /// hands this a <see cref="Task.WhenAny(Task[])"/> over its four wake sources, and that task
-  /// always ends in <see cref="TaskStatus.RanToCompletion"/> — a canceled or faulted source is
-  /// simply the one it reports — so no composition the loop can build makes this await throw. The
-  /// guard stays because a wait that does end canceled has to stop the loop cleanly; letting the
-  /// exception out instead tears the consumer task down with nobody watching, and the batch the
-  /// loop was about to take never gets taken.
-  /// </remarks>
-  internal static async Task<bool> AwaitConsumerWakeAsync(Task wake) {
-    try {
-      await wake.ConfigureAwait(false);
-      return true;
-    } catch (OperationCanceledException) {
-      return false;
-    }
-  }
 
   /// <summary>The event id of a batch lost to a database failure that passes of its own accord.</summary>
   internal const int TRANSIENT_BATCH_FAILURE_EVENT_ID = 67;

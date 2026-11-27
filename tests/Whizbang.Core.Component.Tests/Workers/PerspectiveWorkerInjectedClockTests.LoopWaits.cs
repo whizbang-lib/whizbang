@@ -1,11 +1,9 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Threading.Channels;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Core.Messaging;
 using Whizbang.Core.Workers;
 using Whizbang.Testing.Async;
 
@@ -25,8 +23,8 @@ public partial class PerspectiveWorkerInjectedClockTests {
   public async Task IdlePasses_HeldToAWaitBudget_KeepAtMostOneWaitOnEachChannelAsync(CancellationToken cancellationToken) {
     var pollInterval = TimeSpan.FromMilliseconds(150);
     var clock = new ArmingClock();
-    var workChannel = new CountedWorkChannel();
-    var drainChannel = new CountedDrainChannel();
+    var workChannel = new CountingWorkChannel();
+    var drainChannel = new CountingDrainChannel();
     var fx = _build(clock, new PerspectiveWorkerOptions {
       PollingIntervalMilliseconds = (int)pollInterval.TotalMilliseconds,
       MaxConcurrentDrainConsumers = 1,
@@ -51,31 +49,5 @@ public partial class PerspectiveWorkerInjectedClockTests {
       await cts.CancelAsync();
       await fx.Worker.StopAsync(CancellationToken.None);
     }
-  }
-
-  /// <summary>A perspective work channel read through a <see cref="CountingChannelReader{T}"/>.</summary>
-  private sealed class CountedWorkChannel : IPerspectiveChannelWriter {
-    private readonly Channel<PerspectiveWork> _channel = Channel.CreateUnbounded<PerspectiveWork>();
-
-    public CountedWorkChannel() => Counting = new CountingChannelReader<PerspectiveWork>(_channel.Reader);
-
-    public CountingChannelReader<PerspectiveWork> Counting { get; }
-    public ChannelReader<PerspectiveWork> Reader => Counting;
-    public ValueTask WriteAsync(PerspectiveWork work, CancellationToken ct = default) => _channel.Writer.WriteAsync(work, ct);
-    public bool TryWrite(PerspectiveWork work) => _channel.Writer.TryWrite(work);
-    public void Complete() => _channel.Writer.TryComplete();
-  }
-
-  /// <summary>A perspective drain channel read through a <see cref="CountingChannelReader{T}"/>.</summary>
-  private sealed class CountedDrainChannel : IPerspectiveDrainChannel {
-    private readonly Channel<Guid> _channel = Channel.CreateUnbounded<Guid>();
-
-    public CountedDrainChannel() => Counting = new CountingChannelReader<Guid>(_channel.Reader);
-
-    public CountingChannelReader<Guid> Counting { get; }
-    public ChannelReader<Guid> Reader => Counting;
-    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) =>
-      _channel.Writer.WriteAsync(streamId, cancellationToken);
-    public bool TryWrite(Guid streamId) => _channel.Writer.TryWrite(streamId);
   }
 }

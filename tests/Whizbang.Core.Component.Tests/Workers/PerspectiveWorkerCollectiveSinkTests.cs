@@ -2042,9 +2042,18 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     }
 
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
-      if (dueTime != PollInterval || period != Timeout.InfiniteTimeSpan) {
+      if (period != Timeout.InfiniteTimeSpan) {
         return base.CreateTimer(callback, state, dueTime, period);
       }
+      // A one-shot timer may be re-armed: the worker's wake set makes one timer and re-arms it every pass. Every arming
+      // for the poll interval, at creation or later, is parked here; any other runs on the fake time.
+      var timer = new PollSwitchingTimer(
+        this, callback, state, base.CreateTimer(callback, state, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan));
+      timer.Change(dueTime, period);
+      return timer;
+    }
+
+    private ParkedPoll _park(TimerCallback callback, object? state) {
       var poll = new ParkedPoll(callback, state);
       lock (_pollLock) {
         _parked.Add(poll);
@@ -2077,6 +2086,31 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
         }
       }
       await until;
+    }
+
+    /// <summary>A timer that runs on the fake time, except while armed for the poll interval, when it is parked.</summary>
+    private sealed class PollSwitchingTimer(PollFiringClock clock, TimerCallback callback, object? state, ITimer inner) : ITimer {
+      private ParkedPoll? _parkedPoll;
+
+      public bool Change(TimeSpan dueTime, TimeSpan period) {
+        Interlocked.Exchange(ref _parkedPoll, null)?.Dispose();
+        if (dueTime == PollInterval && period == Timeout.InfiniteTimeSpan) {
+          inner.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+          Volatile.Write(ref _parkedPoll, clock._park(callback, state));
+          return true;
+        }
+        return inner.Change(dueTime, period);
+      }
+
+      public void Dispose() {
+        Interlocked.Exchange(ref _parkedPoll, null)?.Dispose();
+        inner.Dispose();
+      }
+
+      public ValueTask DisposeAsync() {
+        Dispose();
+        return ValueTask.CompletedTask;
+      }
     }
 
     private sealed class ParkedPoll(TimerCallback callback, object? state) : ITimer {

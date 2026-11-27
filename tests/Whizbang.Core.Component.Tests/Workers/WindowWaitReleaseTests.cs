@@ -7,6 +7,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Async;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -40,7 +41,7 @@ public class WindowWaitReleaseTests {
     // Each batch makes two waits: the one that finds its first item (already written, so it completes at once) and the
     // window's wait for a second. The window's deadline is armed before its wait begins, so advancing as that wait
     // begins closes the window with nothing arrived.
-    var reader = new WaitTrackingReader<int>(channel.Reader, wait => {
+    var reader = new CountingChannelReader<int>(channel.Reader, wait => {
       if (wait % 2 == 0) {
         clock.Advance(_window);
       }
@@ -51,7 +52,7 @@ public class WindowWaitReleaseTests {
     var batches = 0;
     channel.Writer.TryWrite(0);
     await foreach (var batch in batcher.ReadBatchesAsync(cancellationToken)) {
-      held.Add(reader.HeldWaits);
+      held.Add(reader.OutstandingWaits);
       if (++batches == WINDOWS) {
         break;
       }
@@ -70,14 +71,14 @@ public class WindowWaitReleaseTests {
     var channel = Channel.CreateUnbounded<Guid>();
     var clock = new FakeTimeProvider();
     // The window's only wait is for a second stream; advancing as it begins closes the window with nothing arrived.
-    var reader = new WaitTrackingReader<Guid>(channel.Reader, _ => clock.Advance(_window));
+    var reader = new CountingChannelReader<Guid>(channel.Reader, _ => clock.Advance(_window));
     using var stopping = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
     var held = new List<int>();
     for (var window = 0; window < WINDOWS; window++) {
       List<Guid> streams = [Guid.CreateVersion7()];
       await PerspectiveWorker.AccumulateDrainSignalsWithinWindowAsync(reader, streams, _options, clock, stopping.Token);
-      held.Add(reader.HeldWaits);
+      held.Add(reader.OutstandingWaits);
     }
 
     await Assert.That(reader.WaitCalls).IsEqualTo(WINDOWS)
