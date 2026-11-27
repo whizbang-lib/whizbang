@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -9,7 +10,6 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Postgres;
-using Microsoft.Extensions.Time.Testing;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
