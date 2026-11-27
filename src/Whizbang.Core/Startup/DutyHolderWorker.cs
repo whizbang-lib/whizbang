@@ -201,7 +201,9 @@ public sealed partial class DutyHolderWorker : BackgroundService {
     using var subscription = _signalBus?.Subscribe<Whizbang.Core.Signals.RoleReleasedSignal>(_onReleased);
     using var wakes = new Whizbang.Core.Async.WakeSet(_time, stoppingToken);
     wakes.Add(_wake);
-    while (!stoppingToken.IsCancellationRequested) {
+    // The loop ends only through a stop: a canceled pass breaks out below, and the wake set observes the stopping
+    // token, so its wait reports IsStopped. A loop-top token check would be a branch nothing can take.
+    while (true) {
       // A release announced during the pass wakes the next one (one announced before it is served by it), and the
       // cadence is measured from the start of this pass.
       _wake.Consume();
