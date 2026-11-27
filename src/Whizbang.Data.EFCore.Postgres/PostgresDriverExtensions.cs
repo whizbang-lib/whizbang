@@ -392,6 +392,11 @@ public static class PostgresDriverExtensions {
           MetadataTrimGateStep.FromServices));
         selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, MetadataHistoryConversionStep>(
           MetadataHistoryConversionStep.FromServices));
+        // TURNKEY: #2625: the packing gate writes this service's event vector paths and opens packed vectors in stored
+        // bodies once every live instance reads them, under the maintainer duty.
+        // <docs>data/event-store#packing-gate</docs>
+        selector.Services.TryAddEnumerable(ServiceDescriptor.Scoped<global::Whizbang.Core.Workers.IMaintenanceStep, VectorPackingGateStep>(
+          VectorPackingGateStep.FromServices));
         // TURNKEY: the maintenance step that converts audit records written before the pointer default (#1588) to the
         // pointer form (#2326), keeping the bodies of [AuditEvent(IncludeBody = true)] types, under the maintainer duty.
         // <docs>fundamentals/events/system-events#audit-body</docs>

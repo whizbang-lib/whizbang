@@ -64,14 +64,21 @@ Whizbang uses **AOT-compatible JSON serialization** via source-generated `JsonTy
 **Purpose**: every `float[]` and `IReadOnlyList<float>` property of a generated type, unless marked
 `[StoredAsJsonArray]`, gets a `CustomConverter` that reads either a JSON array of numbers or one JSON string holding
 base64 of the big-endian IEEE-754 binary32 bits of each element, and writes the array through the property's own
-metadata (so the written bytes are unchanged). `double[]`, `float?[]` and `List<float>` are not vectors.
+metadata (so the written bytes are unchanged). A `List<float>` or `ReadOnlyMemory<float>` is a vector only when
+marked `[VectorField]` (`ForList`, `ForReadOnlyMemory`); on an event the analyzers accept that and need no pgvector
+package. `double[]`, `float?[]` and an unmarked `List<float>` are not vectors.
 
 **Paths** (#2625): for each event type the generator also registers `StoredVectorPaths` (JSON-name segments from
 the payload root) from the module initializer. A vector inside a collection element, behind a polymorphic member or
 in a type that refers back to itself has no path and is reported as WHIZ064 (Info).
 
-**Readers first**: V1 only reads the packed form. Nothing writes it until the stored-body packing (V2, #2625) opens
-its rolling-deploy gate.
+**Writers** (#2625, migration 720): the stored body (`wh_event_body`, never the outbox, inbox or wire) is packed in
+SQL by both emit chains and `wh_append_event`, at the paths `VectorPackingGateStep` writes to `wh_event_vector_paths`,
+once that step's gate journals `stored-form:wh_event_body:packed-vectors` (every live instance at
+`stored_form_level` 2). The journal row is the switch, and the rollback gate reads it.
+
+**Exports** (#2626, migration 721): any read that sends a stored body out as raw JSON goes through
+`wh_event_body_wire_form`; `PackedVectorExportInventoryTests` derives every such read and fails an unclassified one.
 
 ## Generator-Managed Type Handling
 

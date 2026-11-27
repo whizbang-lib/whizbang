@@ -271,6 +271,22 @@ public class PostgresDriverExtensionsTests {
   }
 
   [Test]
+  public async Task Postgres_RegistersTheVectorPackingGateStep_Once_AfterTheTrimGateAsync() {
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
+
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    await using var sp = services.BuildServiceProvider();
+    using var scope = sp.CreateScope();
+    var steps = scope.ServiceProvider.GetServices<Whizbang.Core.Workers.IMaintenanceStep>().ToList();
+    await Assert.That(steps.OfType<Whizbang.Data.Postgres.VectorPackingGateStep>().ToList()).Count().IsEqualTo(1);
+    await Assert.That(steps.FindIndex(s => s is Whizbang.Data.Postgres.VectorPackingGateStep))
+      .IsGreaterThan(steps.FindIndex(s => s is Whizbang.Data.Postgres.MetadataTrimGateStep));
+  }
+
+  [Test]
   public async Task Postgres_RegistersTheMetadataHistoryConversionStep_OnceAsync() {
     var services = new ServiceCollection();
     services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
