@@ -29,9 +29,10 @@ public sealed class PgStartupWorkLedger : IStartupWorkLedger {
   }
 
   /// <inheritdoc />
+  // IS NOT NULL always answers true or false, never null
   public async Task<bool> IsAvailableAsync(CancellationToken cancellationToken) =>
-    await _scalarAsync("SELECT to_regprocedure($1) IS NOT NULL", cancellationToken,
-      PgIdentifier.Qualify(_schema, "wh_try_acquire_startup_permit") + "(uuid, integer)").ConfigureAwait(false) is true;
+    (bool)(await _scalarAsync("SELECT to_regprocedure($1) IS NOT NULL", cancellationToken,
+      PgIdentifier.Qualify(_schema, "wh_try_acquire_startup_permit") + "(uuid, integer)").ConfigureAwait(false))!;
 
   /// <inheritdoc />
   public async Task<StartupWorkClaim> ClaimAsync(

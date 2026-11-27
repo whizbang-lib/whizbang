@@ -50,9 +50,15 @@ internal static class WhizbangIdDeclaration {
   /// </summary>
   internal static DeclaredStrongId? Read(ISymbol symbol, System.Threading.CancellationToken cancellationToken = default) {
     var attribute = symbol.GetAttributes().FirstOrDefault(IsWhizbangIdAttribute);
-    if (attribute is null) {
-      return null;
-    }
+    return attribute is null ? null : FromAttribute(symbol, attribute, cancellationToken);
+  }
+
+  /// <summary>
+  /// Reads the id <paramref name="symbol"/> declares through its <c>[WhizbangId]</c> <paramref name="attribute"/>, for a
+  /// caller that has already found the attribute.
+  /// </summary>
+  internal static DeclaredStrongId FromAttribute(
+      ISymbol symbol, AttributeData attribute, System.Threading.CancellationToken cancellationToken = default) {
     // A property or a parameter declares the id of its type; a struct declares itself
     var typeName = TypeNameUtilities.SimpleName(symbol switch {
       IPropertySymbol property => property.Type,

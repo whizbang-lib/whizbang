@@ -88,6 +88,19 @@ public class PinnedStrongIdTests {
     await Assert.That(generated).DoesNotContain("UnpinnedId");
   }
 
+  // A strong id declared outside any namespace is emitted as a top-level type, so the registry must name it
+  // global::ProductId; a "global::.ProductId" entry would not compile.
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Registry_AStrongIdInTheGlobalNamespace_IsNamedWithoutANamespaceAsync() {
+    var result = GeneratorTestHelper.RunGenerator<PinnedIdRegistryGenerator>(
+      $"using Whizbang.Core;\n[WhizbangId(PinnedId = \"{STRUCT_PIN}\")] public readonly partial struct ProductId;");
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "PinnedIdRegistry.g.cs");
+
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains($"(typeof(global::ProductId), \"{STRUCT_PIN}\")");
+  }
+
   [Test]
   [RequiresAssemblyFiles]
   public async Task Registry_ForAnIdDeclaredTwice_ListsItOnceAsync() {

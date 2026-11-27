@@ -115,7 +115,7 @@ public partial class StartupParityTests {
       INSERT INTO wh_service_instances
         (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, connection_mode,
          liveness_window_seconds, startup_stage, lifecycle_phase, metadata, library_version)
-      VALUES ('{peer}', 'peer-svc', 'peer-host', 1, NOW(), NOW(), 'pooled', 600, 40, 'Migrating', '{"{}"}'::jsonb, '1.2.3');
+      VALUES ('{peer}', 'peer-svc', 'peer-host', 1, NOW(), NOW(), 'pooled', 600, 40, 'Migrating', jsonb_build_object(), '1.2.3');
       INSERT INTO wh_startup_permits (instance_id) VALUES ('{peer}');
       """);
     return peer;
