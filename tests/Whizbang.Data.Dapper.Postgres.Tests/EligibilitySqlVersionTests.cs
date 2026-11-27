@@ -53,8 +53,8 @@ public class EligibilitySqlVersionTests {
   public async Task TheVersionOneRule_IsFrozen_AndTheCurrentRuleIsVersionTwoAsync() {
     await Assert.That(_hashOf(EligibilitySql.DIGEST_ELIGIBLE_V1, EligibilitySql.INTEGRITY_COUNTED_V1)).IsEqualTo(_goldenByVersion[1])
       .Because("the shipped migrations write this text; it is frozen");
-    await Assert.That(RuleSemantics.ELIGIBILITY_SQL_VERSION).IsEqualTo(2)
-      .Because("the rule tests the integrity-excluded flag (#2588)");
+    await Assert.That(_goldenByVersion.Keys.Max()).IsEqualTo(RuleSemantics.ELIGIBILITY_SQL_VERSION)
+      .Because("the current version is the newest recorded one: version 2 tests the integrity-excluded flag (#2588)");
   }
 
   /// <summary>
