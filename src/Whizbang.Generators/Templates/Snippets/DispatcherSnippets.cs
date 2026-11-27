@@ -20,6 +20,7 @@ public class DispatcherSnippets {
   protected ValueTask<bool> AdmitReceptorAsync<TMessage>(Type receptorType, TMessage message, IServiceProvider scopedProvider,
       object? envelope, global::System.Threading.CancellationToken cancellationToken) => new(true);
   protected bool AdmitReceptor<TMessage>(Type receptorType, TMessage message, IServiceProvider scopedProvider) => true;
+  protected global::System.IDisposable EnterLocalReceptorHandling(string receptorId) => null!;
 
   /// <summary>
   /// Example method showing snippet structure for Send routing.
@@ -57,7 +58,11 @@ public class DispatcherSnippets {
           var receptor = scope.ServiceProvider.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>("__RECEPTOR_CLASS__")
                       ?? scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
           var typedMsg = (__MESSAGE_TYPE__)msg;
-          var result = await receptor.HandleAsync(typedMsg);
+          // The body runs in a handling of its own when an outer handling is active (#2633)
+          __RESPONSE_TYPE__ result;
+          using (EnterLocalReceptorHandling("__RECEPTOR_CLASS__")) {
+            result = await receptor.HandleAsync(typedMsg);
+          }
           // Unwrap Routed<T> only when the caller asked for the inner type. A caller taking the result as
           // it is (object) gets the Routed<T> itself, so the cascade keeps the receptor's route.
           // Cast to object first to avoid C# compile-time type checking (CS8121)
@@ -279,7 +284,10 @@ public class DispatcherSnippets {
           var receptor = scope.ServiceProvider.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>("__RECEPTOR_CLASS__")
                       ?? scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
           var typedMsg = (__MESSAGE_TYPE__)msg;
-          await receptor.HandleAsync(typedMsg);
+          // The body runs in a handling of its own when an outer handling is active (#2633)
+          using (EnterLocalReceptorHandling("__RECEPTOR_CLASS__")) {
+            await receptor.HandleAsync(typedMsg);
+          }
         } finally {
           if (scope is IAsyncDisposable asyncDisposable) {
             await asyncDisposable.DisposeAsync();
@@ -330,7 +338,11 @@ public class DispatcherSnippets {
         var receptor = scope.ServiceProvider.GetKeyedService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>("__RECEPTOR_CLASS__")
                     ?? scope.ServiceProvider.GetRequiredService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
         var typedMsg = (__MESSAGE_TYPE__)msg;
-        var result = receptor.Handle(typedMsg);
+        // The body runs in a handling of its own when an outer handling is active (#2633)
+        __RESPONSE_TYPE__ result;
+        using (EnterLocalReceptorHandling("__RECEPTOR_CLASS__")) {
+          result = receptor.Handle(typedMsg);
+        }
         // Unwrap Routed<T> if receptor returned a wrapped value for cascade control
         // Cast to object first to avoid C# compile-time type checking (CS8121)
         if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult && (object)result is not TResult && routedResult.Value is TResult unwrappedValue) {
@@ -386,7 +398,10 @@ public class DispatcherSnippets {
         var receptor = scope.ServiceProvider.GetKeyedService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>("__RECEPTOR_CLASS__")
                     ?? scope.ServiceProvider.GetRequiredService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
         var typedMsg = (__MESSAGE_TYPE__)msg;
-        receptor.Handle(typedMsg);
+        // The body runs in a handling of its own when an outer handling is active (#2633)
+        using (EnterLocalReceptorHandling("__RECEPTOR_CLASS__")) {
+          receptor.Handle(typedMsg);
+        }
       }
 
       return InvokeReceptor;
@@ -742,7 +757,10 @@ public class DispatcherSnippets {
                       ?? scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
           var typedMsg = (__MESSAGE_TYPE__)msg;
           // Returned as it is: a Routed<T> reaches the cascade with its route
-          return await receptor.HandleAsync(typedMsg);
+          // The body runs in a handling of its own when an outer handling is active (#2633)
+          using (EnterLocalReceptorHandling("__RECEPTOR_CLASS__")) {
+            return await receptor.HandleAsync(typedMsg);
+          }
         } finally {
           if (scope is IAsyncDisposable asyncDisposable) {
             await asyncDisposable.DisposeAsync();
@@ -796,7 +814,10 @@ public class DispatcherSnippets {
           var receptor = scope.ServiceProvider.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>("__RECEPTOR_CLASS__")
                       ?? scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
           var typedMsg = (__MESSAGE_TYPE__)msg;
-          await receptor.HandleAsync(typedMsg);
+          // The body runs in a handling of its own when an outer handling is active (#2633)
+          using (EnterLocalReceptorHandling("__RECEPTOR_CLASS__")) {
+            await receptor.HandleAsync(typedMsg);
+          }
           return null;  // Void receptor - no result to cascade
         } finally {
           if (scope is IAsyncDisposable asyncDisposable) {

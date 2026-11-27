@@ -54,7 +54,8 @@ public static class StrongIdDerivation {
   /// <exception cref="ArgumentNullException">An argument is null.</exception>
   /// <exception cref="ArgumentException">The purpose is empty or white space, or the pinned id is not a GUID.</exception>
   /// <exception cref="InvalidOperationException">
-  /// The handling is not active (outside a receptor body, or ended), its message has no id, or the purpose was already
+  /// The handling is not active (outside a receptor body, a receptor reached by local dispatch outside any handling, or
+  /// ended), its message has no id, or the purpose was already
   /// derived for this type in this handling.
   /// </exception>
   public static Guid Derive(Handling handling, string pinnedId, string purpose, string idTypeName) {
@@ -68,7 +69,10 @@ public static class StrongIdDerivation {
 
     var envelope = handling.Envelope ?? throw new InvalidOperationException(
       $"{idTypeName}.DeriveFrom was called outside a receptor handling: there is no handled message to derive the id from, " +
-      $"so a retry could not derive the same id again. Call it inside a receptor body, or mint a fresh id with {idTypeName}.New().");
+      "so a retry could not derive the same id again. A receptor called through LocalInvokeAsync, SendAsync or a local publish " +
+      "outside any handling has none either: it handles a fresh in-process call, not a delivered message (#2633). Call it in a " +
+      "receptor the receptor invoker runs (an inbox or lifecycle-stage receptor) or in one it invokes locally, or mint a fresh " +
+      $"id with {idTypeName}.New().");
     if (handling.HasEnded) {
       throw new InvalidOperationException(
         $"{idTypeName}.DeriveFrom was given a handling that has ended: its receptor body has returned, so a retry of the " +

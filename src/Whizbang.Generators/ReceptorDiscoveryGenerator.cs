@@ -1788,6 +1788,20 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// A receptor's body in a publisher or runner block, run inside the handling the dispatcher enters for it (#2633): its
+  /// own when an outer handling is active. A result is declared before the handling and assigned inside it, so it
+  /// cascades, or answers, after the body's handling ends, as the receptor invoker cascades one after its handling ends.
+  /// </summary>
+  private static void _appendBodyInLocalHandling(StringBuilder sb, ReceptorInfo receptor, string call) {
+    if (!receptor.IsVoid) {
+      sb.AppendLine($"              {receptor.ResponseType} result;");
+    }
+    sb.AppendLine($"              using (EnterLocalReceptorHandling(\"{receptor.ClassName}\")) {{");
+    sb.AppendLine(receptor.IsVoid ? $"                {call};" : $"                result = {call};");
+    sb.AppendLine("              }");
+  }
+
+  /// <summary>
   /// One receptor's block in a runner: its perspective wait when it has one, then the invocation. The first
   /// result the caller asked for is kept as the answer; every other result cascades, as on a publish.
   /// </summary>
@@ -1802,10 +1816,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
     sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{typeArgs}>>(\"{receptor.ClassName}\");");
     sb.AppendLine("            if (r is not null) {");
-    if (receptor.IsVoid) {
-      sb.AppendLine($"              {call};");
-    } else {
-      sb.AppendLine($"              var result = {call};");
+    _appendBodyInLocalHandling(sb, receptor, call);
+    if (!receptor.IsVoid) {
       sb.AppendLine($"              if (!answered && TryTakeLocalAnswer<TAnswer, {receptor.ResponseType}>(result, out var taken)) {{");
       sb.AppendLine("                answer = taken;");
       sb.AppendLine("                answered = true;");
@@ -1848,10 +1860,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
     sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{typeArgs}>>(\"{receptor.ClassName}\");");
     sb.AppendLine("            if (r is not null) {");
-    if (receptor.IsVoid) {
-      sb.AppendLine($"              {call};");
-    } else {
-      sb.AppendLine($"              var result = {call};");
+    _appendBodyInLocalHandling(sb, receptor, call);
+    if (!receptor.IsVoid) {
       sb.AppendLine($"              await CascadeLocalResultAsync(result, typedEvt, typeof({messageType}), {cascadeArgs});");
     }
     sb.AppendLine("            }");

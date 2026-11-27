@@ -71,6 +71,16 @@ public sealed record MessageDispatchContext {
   public string? HandlerName { get; init; }
 
   /// <summary>
+  /// The scheme the inbox row this envelope is dispatched for records (#2633): how a receptor its handling invokes locally
+  /// derives its ids. In-process only, as <see cref="HandlerName"/> is: the inbox worker stamps it from the row, the
+  /// scheme the row first ran under or <see cref="HandlingDerivationScheme.SharedWithCaller"/> for a row that records
+  /// none. Null for a dispatch that is not an inbox row, which runs under this build's scheme.
+  /// </summary>
+  /// <docs>fundamentals/identity/whizbang-ids#a-receptor-invoked-locally</docs>
+  [System.Text.Json.Serialization.JsonIgnore]
+  public HandlingDerivationScheme? DerivationScheme { get; init; }
+
+  /// <summary>
   /// Returns a copy of this context with <see cref="IsDefaultDispatch"/> set to true.
   /// Used by cascade paths to signal that only default-stage receptors should fire.
   /// </summary>

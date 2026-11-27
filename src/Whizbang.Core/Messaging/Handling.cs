@@ -35,6 +35,8 @@ public sealed class Handling {
     Envelope = envelope;
     ServiceName = serviceName;
     ReceptorId = receptorId;
+    // An inbox row's recorded scheme rides its envelope; every other handling runs under this build's (#2633)
+    Scheme = envelope?.DispatchContext.DerivationScheme ?? ReceptorHandling.CurrentScheme;
   }
 
   /// <summary>The handling the calling code runs in; one that is not <see cref="IsActive"/> outside a receptor body.</summary>
@@ -51,6 +53,12 @@ public sealed class Handling {
 
   /// <summary>The receptor whose body runs in the handling, or null when the handling names none.</summary>
   internal string? ReceptorId { get; }
+
+  /// <summary>
+  /// How a receptor this handling's body invokes locally derives its ids (#2633): the scheme the handling's inbox row
+  /// records, so a retry keeps the ids of its first run, or this build's for a handling with no row.
+  /// </summary>
+  internal HandlingDerivationScheme Scheme { get; }
 
   /// <summary>True once the receptor body that ran in this handling has returned.</summary>
   internal bool HasEnded => _ended;
