@@ -6,7 +6,9 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -74,10 +76,79 @@ public class CollectiveAssociationRegistrationTests : EFCoreTestBase {
     await Assert.That(touched.Year).IsEqualTo(2001).Because("the same set hashes the same, so the step is not run again");
   }
 
-  private async Task _initializeAsync(IReadOnlyList<string>? handled, CancellationToken cancellationToken) {
+  [Test]
+  [Timeout(120000)]
+  public async Task AFanOut_IsWrittenAsAPerspectiveAssociationToTheSink_WithTheSinksNoFloorMarkerAsync(CancellationToken cancellationToken) {
+    // #2619: the host's fan-outs come from the fan-out registry it serves, beside the handled collective set.
+    await _initializeAsync([ARCHIVE], cancellationToken, typeof(FanOutRenamed));
+
+    await Assert.That(await _sinkRowsAsync()).IsEquivalentTo([
+      ("collective", ARCHIVE), ("collective_gate", "__collective__"), ("perspective", _fanOutType),
+      (EphemeralRewindFloor.NO_FLOOR_ASSOCIATION_TYPE, "__collective__")]);
+  }
+
+  [Test]
+  [Timeout(120000)]
+  public async Task AFanOutAddedToADeployedHost_IsWrittenOnTheNextStart_AndChangesTheRecordedHashAsync(CancellationToken cancellationToken) {
+    // Adding a fan-out changes no table, migration or perspective association. Only a hash over the fan-out set sends
+    // the start through the step, and the changed hash is what the ledger records, so an older build that does not
+    // define it stands by instead of running a sink that knows nothing of the fan-out.
+    await _initializeAsync([ARCHIVE], cancellationToken);
+    var before = await _recordedContentAsync([ARCHIVE]);
+
+    await _initializeAsync([ARCHIVE], cancellationToken, typeof(FanOutRenamed));
+    var after = await _recordedContentAsync([ARCHIVE], typeof(FanOutRenamed));
+
+    await Assert.That(await _sinkRowsAsync()).Contains(("perspective", _fanOutType));
+    await Assert.That(after).IsNotEqualTo(before).Because("the release that first carries a fan-out runs the standby handshake");
+  }
+
+  private static readonly string _fanOutType = TypeNameFormatter.Format(typeof(FanOutRenamed));
+
+  private async Task<string> _recordedContentAsync(IReadOnlyList<string>? handled, params Type[] fanOutEvents) {
+    await using var provider = _provider(handled, fanOutEvents);
+    await using var context = CreateDbContext();
+    var content = context.GetWhizbangSchemaContent(provider);
+    return content.Single(c => c.Key.StartsWith("associations:", StringComparison.Ordinal)).Value;
+  }
+
+  private async Task<List<(string Kind, string Type)>> _sinkRowsAsync() {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+      SELECT association_type, message_type FROM wh_message_associations
+      WHERE service_name = @service AND target_name = '__collective__'
+      """;
+    cmd.Parameters.AddWithValue("service", SERVICE);
+    var rows = new List<(string, string)>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      rows.Add((reader.GetString(0), reader.GetString(1)));
+    }
+    return rows;
+  }
+
+  private static ServiceProvider _provider(IReadOnlyList<string>? handled, Type[] fanOutEvents) {
     var services = new ServiceCollection();
     services.AddSingleton<IConsumerRegistry>(new FixedCollectiveRegistry(handled));
-    await using var provider = services.BuildServiceProvider();
+    if (fanOutEvents.Length > 0) {
+      services.AddSingleton<IPerspectiveFanOutRegistry>(new FixedFanOutRegistry([.. fanOutEvents.Select(e =>
+        new PerspectiveFanOutEntry(typeof(FanOutRenamed), typeof(FanOutRenamed), e, "CustomerId", "customer_id",
+          static (_, _) => throw new InvalidOperationException("not applied here"),
+          (System.Linq.Expressions.Expression<Func<FanOutRenamed, object?>>)(row => row.Name)))]));
+    }
+    return services.BuildServiceProvider();
+  }
+
+  internal sealed record FanOutRenamed(string Name) : IEvent;
+
+  private sealed class FixedFanOutRegistry(IReadOnlyList<PerspectiveFanOutEntry> entries) : IPerspectiveFanOutRegistry {
+    public IReadOnlyList<PerspectiveFanOutEntry> Entries => entries;
+  }
+
+  private async Task _initializeAsync(IReadOnlyList<string>? handled, CancellationToken cancellationToken, params Type[] fanOutEvents) {
+    await using var provider = _provider(handled, fanOutEvents);
     await using var context = CreateDbContext();
     await context.EnsureWhizbangDatabaseInitializedAsync(serviceProvider: provider, cancellationToken: cancellationToken);
   }

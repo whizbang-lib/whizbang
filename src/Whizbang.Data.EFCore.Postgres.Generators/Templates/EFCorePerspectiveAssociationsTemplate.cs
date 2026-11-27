@@ -37,13 +37,16 @@ public static class EFCorePerspectiveAssociationExtensions {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <param name="collectiveEventTypes">The collective event types a handler on this service applies (#2145), from the
   /// consumer registry; null when they cannot be known, which writes no collective gate.</param>
+  /// <param name="fanOutEventTypes">The event types this host's perspectives fan out (#2619), from its fan-out registry;
+  /// each is written as a perspective association to the collective sink.</param>
   public static async Task RegisterPerspectiveAssociationsAsync<TDbContext>(
     this TDbContext context,
     string schema,
     string serviceName,
     ILogger? logger = null,
     CancellationToken cancellationToken = default,
-    global::System.Collections.Generic.IReadOnlyList<string>? collectiveEventTypes = null)
+    global::System.Collections.Generic.IReadOnlyList<string>? collectiveEventTypes = null,
+    global::System.Collections.Generic.IReadOnlyList<string>? fanOutEventTypes = null)
     where TDbContext : DbContext {
 
     // Build JSON array of message associations
@@ -54,8 +57,8 @@ public static class EFCorePerspectiveAssociationExtensions {
     // This region gets replaced with generated association JSON
     #endregion
 
-    // #2145: the collective associations and the gate marker, in the same call, so the orphan delete keeps them in step.
-    json.Append(global::Whizbang.Core.Perspectives.CollectiveRoutingAssociations.AssociationEntriesJson(collectiveEventTypes, serviceName));
+    // #2145: the collective associations and the gate marker, and #2619's fan-out routes, in the same call, so the orphan delete keeps them in step.
+    json.Append(global::Whizbang.Core.Perspectives.CollectiveRoutingAssociations.AssociationEntriesJson(collectiveEventTypes, serviceName, fanOutEventTypes));
     json.AppendLine("]");
 
     var jsonString = json.ToString();
