@@ -75,6 +75,8 @@ public class EFCoreCollectiveDiUnitTests {
     await Assert.That(sp.GetService<ICollectiveDispatcher>()).IsNotNull();
     await Assert.That(sp.GetService<ICollectiveSessionAccessor>()).IsTypeOf<EFCoreCollectiveSessionAccessor<Ctx>>();
     await Assert.That(sp.GetServices<ICollectiveScopeResolver>().Any(r => r.ScopeKind == "tenant")).IsTrue();
+    await Assert.That(sp.GetServices<ICollectiveScopeResolver>().Any(r => r.ScopeKind == FanOutScope.KIND)).IsTrue()
+      .Because("#2620: the perspectives' fan-outs run through the same dispatcher, scoped to their key and tenant");
     await Assert.That(sp.GetServices<ICollectiveEventExecutor>().Any(e => e.ModelType == typeof(JobModel))).IsTrue();
   }
 

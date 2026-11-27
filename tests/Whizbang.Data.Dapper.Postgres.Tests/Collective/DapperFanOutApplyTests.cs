@@ -23,6 +23,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Collective;
 /// </summary>
 /// <tests>src/Whizbang.Core/Perspectives/FanOutScopeResolver.cs</tests>
 /// <tests>src/Whizbang.Data.Dapper.Postgres/Collective/DapperCollectiveEventApplier.cs</tests>
+/// <docs>fundamentals/perspectives/multi-stream#fan-out-design-choices</docs>
 [NotInParallel("PostgreSQL")]
 public class DapperFanOutApplyTests : PostgresTestBase {
   private const string TABLE = "wh_per_fan_out_dapper_order";

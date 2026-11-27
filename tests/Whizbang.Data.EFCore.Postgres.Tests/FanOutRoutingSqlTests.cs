@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/574_ReceivedStreamsAreVersionedInReceiveOrder.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/600_ARewindNeverReachesBelowTheReapFloor.sql</code-under-test>
 /// <docs>fundamentals/messaging/collective-events#fan-out-rows</docs>
+/// <docs>fundamentals/perspectives/multi-stream#fan-out-design-choices</docs>
 [Category("Integration")]
 [Category("Shard2")]
 public class FanOutRoutingSqlTests : EFCoreTestBase {

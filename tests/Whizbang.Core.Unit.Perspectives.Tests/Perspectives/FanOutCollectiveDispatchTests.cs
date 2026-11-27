@@ -22,6 +22,7 @@ namespace Whizbang.Core.Tests.Perspectives;
 /// <code-under-test>src/Whizbang.Core/Perspectives/FanOutScopeResolver.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Perspectives/PerspectiveFanOutEntry.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Perspectives/CollectiveApplyEntry.cs</code-under-test>
+/// <docs>fundamentals/perspectives/multi-stream#fan-out-design-choices</docs>
 [Category("Unit")]
 [Category("CollectiveEvents")]
 public class FanOutCollectiveDispatchTests {

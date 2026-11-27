@@ -1464,8 +1464,13 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     public ConcurrentQueue<(Guid EventId, string PerspectiveName)> PerspectiveSignals { get; } = new();
     public Task FirstPerspectiveSignal => _firstPerspectiveSignal.Task;
 
-    public ILifecycleTracking BeginTracking(LifecycleTrackingPath path, Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage, MessageSource source, Guid? streamId = null, Type? perspectiveType = null) =>
-      new NoOpTracking(eventId);
+    /// <summary>The events the drain began tracking, in order.</summary>
+    public ConcurrentQueue<Guid> Tracked { get; } = new();
+
+    public ILifecycleTracking BeginTracking(LifecycleTrackingPath path, Guid eventId, IMessageEnvelope envelope, LifecycleStage entryStage, MessageSource source, Guid? streamId = null, Type? perspectiveType = null) {
+      Tracked.Enqueue(eventId);
+      return new NoOpTracking(eventId);
+    }
 
     public ILifecycleTracking? GetTracking(LifecycleTrackingPath path, Guid eventId) => null;
     public void ExpectCompletionsFrom(LifecycleTrackingPath path, Guid eventId, params PostLifecycleCompletionSource[] sources) { }

@@ -30,6 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 /// <tests>src/Whizbang.Core/Perspectives/FanOutScopeResolver.cs</tests>
 /// <tests>src/Whizbang.Core/Perspectives/PerspectiveFanOutEntry.cs</tests>
 /// <tests>src/Whizbang.Data.EFCore.Postgres/Collective/CollectiveEventApplier.cs</tests>
+/// <docs>fundamentals/perspectives/multi-stream#fan-out-design-choices</docs>
 [Category("Integration")]
 [Category("CollectiveEvents")]
 [Category("Shard3")]
