@@ -36,6 +36,8 @@ public class IntegrityExclusionSqlTests : EFCoreTestBase {
   private static readonly DateTimeOffset _t0 = new(2026, 3, 1, 9, 30, 0, TimeSpan.Zero);
   private static readonly long[] _sequence42 = [42L];
   private static readonly int[] _lanesRead = [0, 2];
+  private static readonly string[] _tenantO = ["tenant-o"];
+  private static readonly string[] _otherType = [OTHER_TYPE];
 
   // ── marking ──
 
@@ -212,6 +214,23 @@ public class IntegrityExclusionSqlTests : EFCoreTestBase {
     await Assert.That(askedNextLap!.Value.Ids).IsEquivalentTo(_list(c))
       .Because("only the mark still pending is asked again, once the lap pause has passed");
     await Assert.That(await _originCountsAsync(conn, origin)).IsEqualTo("3|1|1");
+  }
+
+  [Test]
+  public async Task Settle_TakesTheBucketTheOriginNames_WhenItNamesOneAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var held = await _storeAsync(conn, origin, TrackedGuid.New().Value, seq: null);
+    _ = await _excludeAsync(conn, [held]);
+    var originStream = TrackedGuid.New().Value;
+
+    await _executeAsync(conn, "SELECT wh_integrity_exclusion_settle($1, $2, $3, NULL, $4, $5, $6, $7)",
+      origin, new[] { held }, _sequence42, _tenantO, _otherType, new[] { originStream }, _t0);
+
+    await Assert.That(await _scalarAsync<string>(conn,
+      "SELECT tenant_scope || '|' || event_type || '|' || stream_id || '|' || origin_state FROM wh_integrity_exclusions WHERE event_id = $1", held))
+      .IsEqualTo($"tenant-o|{OTHER_TYPE}|{originStream}|1")
+      .Because("the adjustment removes the event from the bucket the origin counts it in");
   }
 
   // ── the adjustment the comparison subtracts ──

@@ -20,6 +20,8 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <code-under-test>src/Whizbang.Core/Messaging/StreamIntegrityOptionsValidator.cs</code-under-test>
 public class IntegrityExclusionOptionsTests {
   private const string SECTION = "Whizbang:StreamIntegrity:Exclusions:";
+  private const string EXCLUDED_GAUGE = "whizbang.stream_integrity.excluded_events";
+  private const string PENDING_GAUGE = "whizbang.stream_integrity.exclusions_pending";
 
   [Test]
   public async Task Exclusions_HaveTheDocumentedDefaultsAsync() {
@@ -73,5 +75,32 @@ public class IntegrityExclusionOptionsTests {
     var result = new StreamIntegrityOptionsValidator().Validate(null, options);
 
     await Assert.That(result.Failed).IsFalse();
+  }
+
+  [Test]
+  public async Task TheExclusionGauges_PublishEachOrigin_AndANullReadingPublishesNoneAsync() {
+    using var meters = new Microsoft.Extensions.DependencyInjection.ServiceCollection().AddMetrics().BuildServiceProvider();
+    var factory = meters.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>();
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: factory));
+    var excluded = new List<long>();
+    var pending = new List<long>();
+    using var listener = new System.Diagnostics.Metrics.MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (instrument.Meter.Scope == factory && instrument.Name is EXCLUDED_GAUGE or PENDING_GAUGE) {
+          l.EnableMeasurementEvents(instrument);
+        }
+      },
+    };
+    listener.SetMeasurementEventCallback<long>((instrument, value, _, _) =>
+      (instrument.Name == PENDING_GAUGE ? pending : excluded).Add(value));
+    listener.Start();
+
+    metrics.UpdateExclusions([(Guid.NewGuid(), 5, 2)]);
+    listener.RecordObservableInstruments();
+    metrics.UpdateExclusions(null);
+    listener.RecordObservableInstruments();
+
+    await Assert.That(excluded).IsEquivalentTo([5L]).Because("a null reading resets to no series");
+    await Assert.That(pending).IsEquivalentTo([2L]);
   }
 }

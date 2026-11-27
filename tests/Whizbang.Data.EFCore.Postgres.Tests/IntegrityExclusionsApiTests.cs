@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 using System.Diagnostics.Metrics;
+using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Npgsql;
@@ -12,6 +15,8 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
+using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
@@ -299,6 +304,166 @@ public class IntegrityExclusionsApiTests : EFCoreTestBase {
     await Assert.That(none.TenantScope).IsNull();
     await Assert.That(none.EventType).IsNull();
     await Assert.That(none.StreamId).IsNull();
+  }
+
+  [Test]
+  public async Task UnexcludingAnOrigin_ReversesOnlyThatOriginsMarks_OfTheTypesNamedAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var other = TrackedGuid.New().Value;
+    var mine = await _storeAsync(conn, origin, seq: 1);
+    var theirs = await _storeAsync(conn, other, seq: 1);
+    var options = new StreamIntegrityOptions();
+    await using var services = _services(options, metrics: null);
+    var exclusions = PostgresIntegrityExclusions.FromServices(services);
+    _ = await exclusions.ExcludeAsync(_request([mine, theirs]));
+
+    var queued = await exclusions.UnexcludeAsync(_unrequest() with { OriginServiceId = origin, EventTypes = [TYPE] });
+    _ = await new IntegrityExclusionStep(new ListLogger()).ApplyAsync(services, CancellationToken.None);
+
+    await Assert.That(queued.Queued).IsTrue().Because("reversing by origin is a selection, applied by the step");
+    await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_integrity_exclusions WHERE event_id = $1", mine))
+      .IsEqualTo(0L);
+    await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_integrity_exclusions WHERE event_id = $1", theirs))
+      .IsEqualTo(1L).Because("another origin's marks are not named, so they stay");
+  }
+
+  [Test]
+  public async Task TheOriginsAnswerReceptor_SendsTheBucketEachEventIsCountedInAsync() {
+    await using var conn = await _openAsync();
+    var own = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    await _executeAsync(conn, """
+      INSERT INTO wh_event_store
+        (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence, flags, created_at)
+      VALUES ($1, $2, $2, 'TestAggregate', $3, jsonb_build_object('t', 'tenant-r'), 1, nextval('wh_commit_seq'), 0, $4)
+      """, own, stream, TYPE, _now);
+    var transport = new IntegrityWireTransport();
+    var json = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    await using var services = new ServiceCollection()
+      .AddSingleton(_connection())
+      .AddSingleton<ITransport>(transport)
+      .AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(json))
+      .AddScoped<IWorkCoordinator>(_ => new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), json))
+      .BuildServiceProvider();
+
+    await new RequestOriginPositionsReceptor(services.GetRequiredService<IServiceScopeFactory>(),
+      NullLogger<RequestOriginPositionsReceptor>.Instance).HandleAsync(new RequestOriginPositions {
+        RequesterService = "consumer-svc",
+        Topic = "consumer.inbox",
+        EventIds = [own],
+      });
+
+    var (envelope, _, _) = transport.Published.Single();
+    var answer = (OriginPositionsAnswer)JsonSerializer.Deserialize(
+      ((MessageEnvelope<JsonElement>)envelope).Payload.GetRawText(), json.GetTypeInfo(typeof(OriginPositionsAnswer)))!;
+    var position = answer.Positions.Single();
+    await Assert.That(position.TenantScope).IsEqualTo("tenant-r");
+    await Assert.That(position.EventType).IsEqualTo(TYPE);
+    await Assert.That(position.StreamId).IsEqualTo(stream)
+      .Because("an asker that excluded the event removes it from the bucket the origin counts it in (#2588)");
+  }
+
+  [Test]
+  public async Task ThePostgresDriver_RegistersTheApi_AndTheStepAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection([]).Build());
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres;
+    await using var provider = services.BuildServiceProvider();
+    await using var scope = provider.CreateAsyncScope();
+
+    await Assert.That(scope.ServiceProvider.GetServices<IMaintenanceStep>().OfType<IntegrityExclusionStep>().Count()).IsEqualTo(1)
+      .Because("turnkey: queued exclusion requests are applied by the maintenance cycle");
+    await Assert.That(services.Count(d => d.ServiceType == typeof(IIntegrityExclusions))).IsEqualTo(1)
+      .Because("the API is registered by the driver, so an operator endpoint can resolve it");
+  }
+
+  [Test]
+  public async Task Unexclude_AnIdThatWasNeverExcluded_IsNotExcluded_AndNotARefusalAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var marked = await _storeAsync(conn, origin, seq: 1);
+    var never = await _storeAsync(conn, origin, seq: 2);
+    var logger = new ListLogger();
+    var exclusions = _exclusions(logger);
+    _ = await exclusions.ExcludeAsync(_request([marked]));
+
+    var undone = await exclusions.UnexcludeAsync(_unrequest() with { EventIds = [marked, never] });
+
+    List<IntegrityExclusionOutcome> expected = [new(origin, "unmarked", 1), new(null, "not_excluded", 1)];
+    await Assert.That(undone.Outcomes).IsEquivalentTo(expected);
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("were refused", StringComparison.Ordinal))).IsFalse()
+      .Because("asking to reverse what was never excluded is nothing to do, not a refusal");
+  }
+
+  [Test]
+  public async Task AStoreWithoutAServiceIdentity_RefusesNoSelectionByItsOriginAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    _ = await _storeAsync(conn, origin, seq: 1);
+    await _executeAsync(conn, "DELETE FROM wh_service_config");
+
+    var dryRun = await _exclusions().ExcludeAsync(new IntegrityExclusionRequest {
+      Reason = REASON,
+      RequestedBy = OPERATOR,
+      DryRun = true,
+      Selection = new IntegrityExclusionSelection { OriginServiceId = origin },
+    });
+
+    await Assert.That(dryRun.Outcomes.Single()).IsEqualTo(new IntegrityExclusionOutcome(origin, MARKED, 1))
+      .Because("with no service id recorded there is nothing a selection's origin could be confused with");
+  }
+
+  [Test]
+  public async Task TheApiTheStepAndTheStore_ReachTheTablesThroughTheSearchPath_WhenNoSchemaIsNamedAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var a = await _storeAsync(conn, origin, seq: 1);
+    var searchPath = new PostgresArchiveConnection(async ct => {
+      var connection = new NpgsqlConnection(ConnectionString);
+      await connection.OpenAsync(ct);
+      return connection;
+    }, null);
+    var exclusions = new PostgresIntegrityExclusions(searchPath, new StreamIntegrityOptions(), new FakeTimeProvider(_now), THIS_SERVICE,
+      new ListLogger());
+    await using var services = new ServiceCollection().AddSingleton(searchPath).BuildServiceProvider();
+
+    var marked = await exclusions.ExcludeAsync(_request([a]));
+    var cycle = await new IntegrityExclusionStep(new ListLogger()).ApplyAsync(services, CancellationToken.None);
+    var adjustment = await new IntegrityExclusionStore(searchPath)
+      .AdjustmentAsync(origin, null, null, null, null, byStream: false, CancellationToken.None);
+
+    await Assert.That(marked.Outcomes.Single().Outcome).IsEqualTo(MARKED);
+    await Assert.That(cycle.Batches).IsEqualTo(0);
+    await Assert.That(adjustment.Single().Digest.EventCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task TheAnswerReceptor_LeavesExcludedEventsOutOfEveryList_ItFillsOrRecordsAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var excludedUnstamped = await _storeAsync(conn, origin, seq: null);
+    var excludedUnknown = await _storeAsync(conn, origin, seq: null);
+    var keptUnknown = await _storeAsync(conn, origin, seq: null);
+    _ = await _exclusions().ExcludeAsync(_request([excludedUnstamped, excludedUnknown]));
+    await using var services = new ServiceCollection().AddSingleton(_connection()).BuildServiceProvider();
+
+    await new OriginPositionsAnswerReceptor(services.GetRequiredService<IServiceScopeFactory>(),
+      NullLogger<OriginPositionsAnswerReceptor>.Instance).HandleAsync(new OriginPositionsAnswer {
+        OriginServiceId = origin,
+        NotYetStamped = [excludedUnstamped],
+        Unknown = [excludedUnknown, keptUnknown],
+      });
+
+    await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_origin_position_unknown WHERE event_id = $1", keptUnknown))
+      .IsEqualTo(1L).Because("an event that is not excluded is recorded as the origin answered");
+    await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_origin_position_unknown WHERE event_id = $1", excludedUnknown))
+      .IsEqualTo(0L).Because("an excluded event's answer settles its mark instead");
+    await Assert.That(await _scalarAsync<short>(conn, "SELECT origin_state FROM wh_integrity_exclusions WHERE event_id = $1", excludedUnknown))
+      .IsEqualTo((short)2);
+    await Assert.That(await _scalarAsync<short>(conn, "SELECT origin_state FROM wh_integrity_exclusions WHERE event_id = $1", excludedUnstamped))
+      .IsEqualTo((short)0).Because("an unstamped event stays pending and is asked again");
   }
 
   // ── fixture ──
