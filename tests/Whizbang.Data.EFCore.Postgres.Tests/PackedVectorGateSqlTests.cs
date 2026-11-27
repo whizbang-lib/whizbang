@@ -220,7 +220,8 @@ public class PackedVectorGateSqlTests : EFCoreTestBase {
     await _registerThisBuildAsync();
     var step = VectorPackingGateStep.FromServices(_services("2.0.0"));
 
-    await step.RunAsync(_services("2.0.0"), CancellationToken.None);
+    // No schema: the connection's own, unqualified, as the trim gate's step reads it.
+    await step.RunAsync(_services("2.0.0", schema: null), CancellationToken.None);
 
     await Assert.That(step.Name).IsEqualTo("vector-packing-gate");
     await Assert.That(await _scalarAsync<bool>(conn, "SELECT _wh_vector_packing_on()")).IsTrue();
@@ -254,13 +255,13 @@ public class PackedVectorGateSqlTests : EFCoreTestBase {
   private static Task<string?> _pathsAsync(NpgsqlConnection conn, string type) =>
     _scalarAsync<string?>(conn, "SELECT paths::text FROM wh_event_vector_paths WHERE event_type = @t", ("t", type));
 
-  private ServiceProvider _services(string? library, bool withInstance = true) {
+  private ServiceProvider _services(string? library, bool withInstance = true, string? schema = "public") {
     var services = new ServiceCollection()
       .AddSingleton(new PostgresArchiveConnection(async ct => {
         var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync(ct);
         return connection;
-      }, "public"));
+      }, schema));
     if (library is not null) {
       services.AddSingleton<ILibraryVersionProvider>(new LibraryVersionProvider(library));
     }
