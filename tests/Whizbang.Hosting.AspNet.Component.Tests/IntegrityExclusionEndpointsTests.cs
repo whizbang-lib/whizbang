@@ -47,7 +47,7 @@ public class IntegrityExclusionEndpointsTests {
     await Assert.That(request.Selection.EventTypes).IsEquivalentTo(["Contracts.A"]);
     await Assert.That(request.Selection.From).IsEqualTo(new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero));
     await Assert.That(request.Selection.Until).IsEqualTo(new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero));
-    await Assert.That(request.Selection.Unresolved).IsEqualTo(IntegrityUnresolved.All);
+    await Assert.That(request.Selection.Unresolved).IsEqualTo(IntegrityUnresolvedKinds.All);
     await Assert.That(await response.Content.ReadAsStringAsync()).Contains("\"outcome\":\"marked\"").And.Contains("\"dryRun\":true");
   }
 
@@ -65,7 +65,7 @@ public class IntegrityExclusionEndpointsTests {
     await Assert.That(await byIds.Content.ReadAsStringAsync()).Contains(request.ToString());
     await Assert.That(api.Excludes[0].EventIds).IsEquivalentTo([_event]);
     await Assert.That(api.Excludes[0].DryRun).IsFalse();
-    await Assert.That(api.Excludes[1].Selection!.Unresolved).IsEqualTo(IntegrityUnresolved.None);
+    await Assert.That(api.Excludes[1].Selection!.Unresolved).IsEqualTo(IntegrityUnresolvedKinds.None);
   }
 
   [Test]

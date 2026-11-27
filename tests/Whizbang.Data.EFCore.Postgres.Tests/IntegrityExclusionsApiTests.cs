@@ -131,7 +131,7 @@ public class IntegrityExclusionsApiTests : EFCoreTestBase {
       Reason = REASON,
       RequestedBy = OPERATOR,
       DryRun = true,
-      Selection = new IntegrityExclusionSelection { OriginServiceId = origin, EventTypes = [TYPE], Unresolved = IntegrityUnresolved.None },
+      Selection = new IntegrityExclusionSelection { OriginServiceId = origin, EventTypes = [TYPE], Unresolved = IntegrityUnresolvedKinds.None },
     });
 
     await Assert.That(byIds.DryRun).IsTrue();
@@ -176,7 +176,7 @@ public class IntegrityExclusionsApiTests : EFCoreTestBase {
     var bySelection = await exclusions.ExcludeAsync(new IntegrityExclusionRequest {
       Reason = REASON,
       RequestedBy = OPERATOR,
-      Selection = new IntegrityExclusionSelection { OriginServiceId = origin, Unresolved = IntegrityUnresolved.Undecided, Until = _now },
+      Selection = new IntegrityExclusionSelection { OriginServiceId = origin, Unresolved = IntegrityUnresolvedKinds.Undecided, Until = _now },
     });
     var summaryQueued = await exclusions.SummarizeAsync();
     var logger = new ListLogger();
@@ -249,7 +249,7 @@ public class IntegrityExclusionsApiTests : EFCoreTestBase {
       EventTypes = [TYPE],
       From = _now.AddDays(-1),
       Until = _now,
-      Unresolved = IntegrityUnresolved.All,
+      Unresolved = IntegrityUnresolvedKinds.All,
     });
 
     await Assert.That(empty).IsEqualTo("{}");

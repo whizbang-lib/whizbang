@@ -89,14 +89,14 @@ public sealed record IntegrityExclusionSelection {
   /// <summary>Only events stored before this time (with <see cref="Unresolved"/>: recorded as unresolved before it).</summary>
   public DateTimeOffset? Until { get; init; }
 
-  /// <summary>Only what is currently unresolved, of the kinds given; <see cref="IntegrityUnresolved.None"/> for any event.</summary>
-  public IntegrityUnresolved Unresolved { get; init; }
+  /// <summary>Only what is currently unresolved, of the kinds given; <see cref="IntegrityUnresolvedKinds.None"/> for any event.</summary>
+  public IntegrityUnresolvedKinds Unresolved { get; init; }
 }
 
 /// <summary>What the integrity engine currently cannot resolve, as a selection names it (#2588).</summary>
 /// <docs>resilience/integrity-exclusions#the-past-everything-unresolved-before-a-time</docs>
 [Flags]
-public enum IntegrityUnresolved {
+public enum IntegrityUnresolvedKinds {
   /// <summary>No condition: every event the rest of the selection names.</summary>
   None = 0,
 

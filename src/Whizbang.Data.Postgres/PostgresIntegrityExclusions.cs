@@ -192,7 +192,7 @@ public sealed partial class PostgresIntegrityExclusions : IIntegrityExclusions {
       if (selection.Until is DateTimeOffset until) {
         writer.WriteString("until", until);
       }
-      if (selection.Unresolved != IntegrityUnresolved.None) {
+      if (selection.Unresolved != IntegrityUnresolvedKinds.None) {
         writer.WriteNumber("unresolved", (int)selection.Unresolved);
       }
       writer.WriteEndObject();

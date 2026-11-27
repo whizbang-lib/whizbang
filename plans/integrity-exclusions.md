@@ -192,7 +192,7 @@ public sealed record IntegrityExclusionSelection {
   public IReadOnlyList<string>? EventTypes { get; init; }
   public DateTimeOffset? From { get; init; }            // created_at range
   public DateTimeOffset? Until { get; init; }
-  public IntegrityUnresolved? Unresolved { get; init; } // section 5
+  public IntegrityUnresolvedKinds? Unresolved { get; init; } // section 5
 }
 ```
 
@@ -228,7 +228,7 @@ host audits system events (decision D4).
 
 ## 5. The past: "everything currently unresolved older than X"
 
-`IntegrityUnresolved` is a flags enum over what the engine already knows, each a bounded indexed selection:
+`IntegrityUnresolvedKinds` is a flags enum over what the engine already knows, each a bounded indexed selection:
 
 | Flag | Source | Selection |
 | --- | --- | --- |

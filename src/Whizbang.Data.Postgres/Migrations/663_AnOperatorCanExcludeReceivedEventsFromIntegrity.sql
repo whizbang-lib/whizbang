@@ -621,9 +621,9 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.wh_integrity_exclusion_select(
 ) RETURNS TABLE(event_ids UUID[], next_after UUID, done BOOLEAN) AS $$
 #variable_conflict use_column
 DECLARE
-  c_unknown_answers CONSTANT INTEGER := 1;  -- IntegrityUnresolved.UnknownAnswers
-  c_undecided CONSTANT INTEGER := 2;        -- IntegrityUnresolved.Undecided
-  c_unhealed CONSTANT INTEGER := 4;         -- IntegrityUnresolved.Unhealed
+  c_unknown_answers CONSTANT INTEGER := 1;  -- IntegrityUnresolvedKinds.UnknownAnswers
+  c_undecided CONSTANT INTEGER := 2;        -- IntegrityUnresolvedKinds.Undecided
+  c_unhealed CONSTANT INTEGER := 4;         -- IntegrityUnresolvedKinds.Unhealed
   v_origin UUID := (p_selection ->> 'originServiceId')::uuid;
   v_types TEXT[] := CASE WHEN jsonb_typeof(p_selection -> 'eventTypes') = 'array'
                          THEN ARRAY(SELECT jsonb_array_elements_text(p_selection -> 'eventTypes')) END;

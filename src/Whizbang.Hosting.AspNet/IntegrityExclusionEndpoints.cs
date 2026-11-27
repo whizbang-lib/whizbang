@@ -92,7 +92,7 @@ public static class IntegrityExclusionEndpoints {
           EventTypes = s.EventTypes,
           From = s.From,
           Until = s.Until,
-          Unresolved = s.Unresolved ?? IntegrityUnresolved.None,
+          Unresolved = s.Unresolved ?? IntegrityUnresolvedKinds.None,
         } : null,
         DryRun = body?.DryRun ?? false,
       }, http.RequestAborted).ConfigureAwait(false);
@@ -193,7 +193,7 @@ public static class IntegrityExclusionEndpoints {
     public DateTimeOffset? Until { get; init; }
 
     /// <summary>Only what is currently unresolved, of these kinds.</summary>
-    public IntegrityUnresolved? Unresolved { get; init; }
+    public IntegrityUnresolvedKinds? Unresolved { get; init; }
   }
 
   /// <summary>The body of <c>POST {prefix}/unmark</c>; see <see cref="IntegrityUnexclusionRequest"/> for each field.</summary>
