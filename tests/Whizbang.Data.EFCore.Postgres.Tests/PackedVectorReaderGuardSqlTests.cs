@@ -68,6 +68,8 @@ public class PackedVectorReaderGuardSqlTests : EFCoreTestBase {
     await _openTheGateAsync();
     // A property packed by an earlier build, since opted out with [StoredAsJsonArray]: this build reads it as numbers only.
     await _executeAsync(conn, "INSERT INTO wh_packed_vector_paths (event_type, path) VALUES (@t, '[\"Centroid\"]'::jsonb)", ("t", _sampleType));
+    // And a nested vector since removed from the chunk type.
+    await _executeAsync(conn, "INSERT INTO wh_packed_vector_paths (event_type, path) VALUES (@t, '[\"Lead\", \"Retired\"]'::jsonb)", ("t", _sampleType));
 
     var failure = await Assert.That(async () => await _step().ExecuteAsync(CancellationToken.None))
       .Throws<PackedVectorsNoLongerReadException>();
@@ -76,7 +78,9 @@ public class PackedVectorReaderGuardSqlTests : EFCoreTestBase {
     await Assert.That(failure.Message).Contains("Centroid");
     await Assert.That(failure.Message).Contains("[VectorField]");
     await Assert.That(failure.Message).Contains("unpack");
-    await Assert.That(failure.Paths).IsEquivalentTo([$"{_sampleType}: Centroid"]);
+    await Assert.That(failure.Message).Contains("Lead.Retired");
+    await Assert.That(failure.Paths).IsEquivalentTo([$"{_sampleType}: Centroid", $"{_sampleType}: Lead.Retired"],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
 
   [Test]
