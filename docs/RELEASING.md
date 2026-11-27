@@ -874,32 +874,44 @@ queue for a change into `develop`, the pull request for a change into `main` or 
 fails the `Pack` job once breaks block (see below).
 
 **An intended break is recorded, not avoided.** Pre-1.0 every release is a new minor, so breaking changes are
-allowed, but each one is written down where a reviewer sees it. Regenerate the project's suppression file and
-commit it with the change:
+allowed, but each one is written down where a reviewer sees it. Regenerate the suppression files and commit them
+with the change:
 
 ```bash
-dotnet pack src/<Project>/<Project>.csproj -c Release -p:WhizbangApiCheck=true -p:Version=1.0.0-local \
-  -p:ApiCompatGenerateSuppressionFile=true
+pwsh .github/scripts/Compare-PublicApi.ps1 -UpdateSuppressions
 ```
 
-The check runs on CI by itself; locally `WhizbangApiCheck=true` turns it on, and `Version` must be above the
-baseline, because the placeholder version in `Directory.Build.props` is lower than any release and would be
-reported as an assembly identity change (`CP0003`) in every package. CI's own pull request and merge queue
-runs, where GitVersion does not run, stamp the baseline's version with a label (`<baseline>-queue.<run>`,
-`<baseline>-pr<number>.<run>`, the `Placeholder version` step of `Plan · Detect changes` in `ci.yml`), so their
-assembly version equals the baseline's and only real API changes are reported.
+That builds and packs the tree with `ApiCompatGenerateSuppressionFile=true`, so the SDK rewrites every
+`src/<Project>/CompatibilitySuppressions.xml` with each break against the baseline (`CP0002` member removed,
+`CP0006` member added to an interface, and so on), the ones already recorded included. It stamps the baseline's
+own version with a `-local` label (`-Version` overrides it), because the placeholder in `Directory.Build.props`
+is lower than any release and would be reported as an assembly identity change (`CP0003`) in every package. It
+deletes the incremental validation markers first (see the end of this section), and it puts back the comments at
+the top of each file, which the SDK replaces with its own. A file it creates says only that: add a comment that
+says why the breaks are intended and where the upgrade note is. The diff of those files is the API review; a
+suppression for a break nobody meant to make is the signal to fix the code instead.
+
+Run it again whenever several changes that each made a break are assembled into one pull request, so the
+files record all of them; each change's own file only knew about its own breaks.
+
+CI's own pull request and merge queue runs, where GitVersion does not run, stamp the baseline's version with a
+label (`<baseline>-queue.<run>`, `<baseline>-pr<number>.<run>`, the `Placeholder version` step of
+`Plan · Detect changes` in `ci.yml`), so their assembly version equals the baseline's and only real API changes
+are reported.
 
 On CI the comparison is its own step, **Compare the public API with the baseline**
 (`.github/scripts/Compare-PublicApi.ps1`), after a pack with validation off: a pack error fails the pack step on
 its own, and every break is an annotation and a row of the step summary. Before #2605 the pack ended in
 `|| true`, the build artifact left out the reference assemblies the check reads, and the placeholder was
-`0.0.0`, so nothing was ever compared, and breaks reached `develop` unrecorded. Until those are triaged the
-step reports breaks without failing (`API_BREAKS_BLOCK: 'false'` in `reusable-pack.yml` and
-`nuget-publish.yml`); setting it to `'true'` makes a break fail the run, as this section describes.
+`0.0.0`, so nothing was ever compared, and breaks reached `develop` unrecorded. Those breaks were accepted and
+recorded, and the step now blocks (`API_BREAKS_BLOCK: 'true'` in `reusable-pack.yml` and `nuget-publish.yml`):
+a break that is not in a suppression file fails the run. To run the same comparison locally on a tree built at
+the baseline's version:
 
-That writes `src/<Project>/CompatibilitySuppressions.xml`, one entry per break (`CP0002` member removed,
-`CP0006` member added to an interface, and so on). The diff of that file is the API review. A suppression for
-a break nobody meant to make is the signal to fix the code instead.
+```bash
+dotnet build -c Release -p:Version=<baseline>-local
+API_BREAKS_BLOCK=true pwsh .github/scripts/Compare-PublicApi.ps1 -Version <baseline>-local
+```
 
 **A new package has no baseline yet.** Its project file sets `<WhizbangUnreleasedPackage>true</WhizbangUnreleasedPackage>`,
 which keeps package validation on but skips the comparison with nuget.org, where there is nothing to download

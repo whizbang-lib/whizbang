@@ -139,13 +139,15 @@ jobs:
 
       # Package validation, run as its own step (#2605). The pack above runs with it off, so a pack error fails
       # there on its own; this packs again into a throwaway directory with it on and reports every break against
-      # the published baseline as an annotation and a row of the step summary. API_BREAKS_BLOCK is 'false' while the
-      # breaks that reached develop behind the old `|| true` are triaged; set it to 'true' to make a break fail the
-      # run. PackageValidation.Tests.ps1 (script-tests) locks both steps.
+      # the published baseline as an annotation and a row of the step summary. API_BREAKS_BLOCK is 'true': the breaks
+      # that reached develop behind the old `|| true` were accepted and recorded in each project's
+      # CompatibilitySuppressions.xml, so any further break fails the run until it is recorded too
+      # (`Compare-PublicApi.ps1 -UpdateSuppressions`, docs/RELEASING.md, "Public API baseline").
+      # PackageValidation.Tests.ps1 (script-tests) locks both steps.
       - name: Compare the public API with the baseline
         env:
           VERSION: ${{ inputs.version }}
-          API_BREAKS_BLOCK: 'false'
+          API_BREAKS_BLOCK: 'true'
         run: pwsh -NoProfile -File .github/scripts/Compare-PublicApi.ps1 -Version "$VERSION"
 
       - name: Generate the software bill of materials
