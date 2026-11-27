@@ -319,6 +319,8 @@ public class HandWrittenWaitRaceAnalyzerTests {
         static Task N(IEnumerable<Task> many) => Task.WhenAny(many);
         static Task O(Task work) => Task.WhenAny(work);
         static Task Q(Task work, Task other) => Task.WhenAny(new[] { work, other });
+        sealed class Holder { public Task Work { get; } = System.Threading.Tasks.Task.CompletedTask; }
+        static Task S(Holder holder) => Task.WhenAny(holder.Work);
         static Task R() => Task.WhenAny(new Task[2]);
         static Task P(Task work) {
           var copy = work;
