@@ -79,7 +79,7 @@ public class IntegrityExclusionOptionsTests {
 
   [Test]
   public async Task TheExclusionGauges_PublishEachOrigin_AndANullReadingPublishesNoneAsync() {
-    using var meters = new Microsoft.Extensions.DependencyInjection.ServiceCollection().AddMetrics().BuildServiceProvider();
+    await using var meters = new Microsoft.Extensions.DependencyInjection.ServiceCollection().AddMetrics().BuildServiceProvider();
     var factory = meters.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>();
     var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics(meterFactory: factory));
     var excluded = new List<long>();

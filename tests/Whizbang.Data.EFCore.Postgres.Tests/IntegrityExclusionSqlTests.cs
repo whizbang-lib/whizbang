@@ -233,6 +233,62 @@ public class IntegrityExclusionSqlTests : EFCoreTestBase {
       .Because("the adjustment removes the event from the bucket the origin counts it in");
   }
 
+  [Test]
+  public async Task Exclude_RefusesAnEventRecordedUnderTheEmptyOriginOrThisServicesId_AsItsOwnAsync() {
+    await using var conn = await _openAsync();
+    var local = await _scalarAsync<Guid>(conn, "SELECT service_id FROM wh_service_config LIMIT 1");
+    var underEmpty = await _storeAsync(conn, Guid.Empty, TrackedGuid.New().Value, seq: 1);
+    var underLocal = await _storeAsync(conn, local, TrackedGuid.New().Value, seq: 2);
+
+    var outcome = await _excludeAsync(conn, [underEmpty, underLocal]);
+
+    await Assert.That(outcome[underEmpty]).IsEqualTo("own_event").Because("the empty origin is the local lane");
+    await Assert.That(outcome[underLocal]).IsEqualTo("own_event").Because("this service's own id is the local lane too");
+  }
+
+  [Test]
+  public async Task Select_Unresolved_KeepsToTheTypesAndTheStartGivenAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var wanted = await _storeAsync(conn, origin, TrackedGuid.New().Value, seq: null, createdAt: _t0);
+    _ = await _storeAsync(conn, origin, TrackedGuid.New().Value, seq: null, type: OTHER_TYPE, createdAt: _t0);
+    _ = await _storeAsync(conn, origin, TrackedGuid.New().Value, seq: null, createdAt: _t0.AddDays(-5));
+
+    var selected = await _selectAllAsync(conn,
+      $$"""{"unresolved":2,"eventTypes":["{{TYPE}}"],"from":"{{_t0.AddDays(-1):O}}","until":"{{_t0.AddDays(1):O}}"}""");
+
+    await Assert.That(selected).IsEquivalentTo(_list(wanted));
+  }
+
+  [Test]
+  public async Task Settle_RefusesPositionsThatDoNotPairWithTheirEventsAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    long[] twoSequences = [1L, 2L];
+
+    await Assert.That(async () => await _executeAsync(conn,
+        "SELECT wh_integrity_exclusion_settle($1, $2, $3, NULL, NULL, NULL, NULL, $4)",
+        origin, new[] { TrackedGuid.New().Value }, twoSequences, _t0))
+      .Throws<PostgresException>();
+  }
+
+  [Test]
+  public async Task PositionsOf_NamesTheBucketOfAnArchivedEventAsync() {
+    await using var conn = await _openAsync();
+    var archived = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    await _executeAsync(conn, """
+      INSERT INTO wh_event_archive (event_id, stream_id, event_type, scope, version, commit_sequence)
+      VALUES ($1, $2, $3, jsonb_build_object('t', 'tenant-a'), 1, 77)
+      """, archived, stream, TYPE);
+
+    var row = await _scalarAsync<string>(conn,
+      "SELECT state || '|' || commit_sequence || '|' || tenant_scope || '|' || event_type || '|' || stream_id FROM wh_origin_positions_of($1)",
+      new[] { archived });
+
+    await Assert.That(row).IsEqualTo($"archived|77|tenant-a|{TYPE}|{stream}");
+  }
+
   // ── the adjustment the comparison subtracts ──
 
   [Test]

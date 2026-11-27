@@ -388,13 +388,15 @@ public class IntegrityExclusionsApiTests : EFCoreTestBase {
     var logger = new ListLogger();
     var exclusions = _exclusions(logger);
     _ = await exclusions.ExcludeAsync(_request([marked]));
+    var again = await exclusions.ExcludeAsync(_request([marked]));
 
     var undone = await exclusions.UnexcludeAsync(_unrequest() with { EventIds = [marked, never] });
 
+    await Assert.That(again.Outcomes.Single()).IsEqualTo(new IntegrityExclusionOutcome(origin, "already_excluded", 1));
     List<IntegrityExclusionOutcome> expected = [new(origin, "unmarked", 1), new(null, "not_excluded", 1)];
     await Assert.That(undone.Outcomes).IsEquivalentTo(expected);
     await Assert.That(logger.Entries.Any(e => e.Message.Contains("were refused", StringComparison.Ordinal))).IsFalse()
-      .Because("asking to reverse what was never excluded is nothing to do, not a refusal");
+      .Because("marking what is already excluded, or reversing what never was, is nothing to do, not a refusal");
   }
 
   [Test]
