@@ -30,7 +30,7 @@ public class PerspectiveFanOutContractTests {
   internal sealed class OrderSummaryProjection : IPerspectiveFanOutFor<OrderSummary, CustomerRenamed> {
     public static FanOutKey<OrderSummary> Targets => FanOut.By<OrderSummary>(o => o.CustomerId);
 
-    public ICollectiveSpec<OrderSummary> Set(CustomerRenamed @event) =>
+    public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed @event) =>
       new Spec(s => s.SetProperty(o => o.CustomerName, @event.Name));
   }
 
@@ -66,10 +66,10 @@ public class PerspectiveFanOutContractTests {
     var entry = _entry();
 
     await Assert.That(entry.EntryKey).IsEqualTo(
-      "Whizbang.Core.Tests.Perspectives.PerspectiveFanOutContractTests+OrderSummaryProjection.Set("
+      "Whizbang.Core.Tests.Perspectives.PerspectiveFanOutContractTests+OrderSummaryProjection.Apply("
       + "Whizbang.Core.Tests.Perspectives.PerspectiveFanOutContractTests+CustomerRenamed):"
       + "Whizbang.Core.Tests.Perspectives.PerspectiveFanOutContractTests+OrderSummary")
-      .Because("one perspective has one Set per foreign event, so the event is part of what tells two fan-outs apart");
+      .Because("one perspective has one Apply per foreign event, so the event is part of what tells two fan-outs apart");
   }
 
   [Test]
@@ -89,5 +89,5 @@ public class PerspectiveFanOutContractTests {
     KeyProperty: nameof(OrderSummary.CustomerId),
     KeyColumn: "customer_id",
     Invoker: static (perspective, evt) =>
-      ((IPerspectiveFanOutFor<OrderSummary, CustomerRenamed>)perspective).Set((CustomerRenamed)evt));
+      ((IPerspectiveFanOutFor<OrderSummary, CustomerRenamed>)perspective).Apply((CustomerRenamed)evt));
 }

@@ -114,7 +114,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   );
 
   /// <summary>
-  /// WHIZ106: Error - a set-based apply (a collective apply or a fan-out's Set) depends on more than the row and the
+  /// WHIZ106: Error - a set-based apply (a collective apply or a fan-out's Apply) depends on more than the row and the
   /// event: an apply-time cross-perspective query, or state of the perspective (#2618).
   /// </summary>
   /// <docs>operations/diagnostics/whiz106</docs>
@@ -127,7 +127,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
-      description: "A [CollectiveApplyFor] spec and a fan-out's Set are folded per row during replay or rebuild against a single stream in isolation. An apply-time query against a sibling perspective (ICollectiveQuery.Of<>()), the perspective's own fields, properties or methods, or a static field that can change, cannot be reconstructed then, so the effect would differ on rebuild. Facts from elsewhere are resolved on the command side, when the event is created, and carried on the event."
+      description: "A [CollectiveApplyFor] spec and a fan-out's Apply are folded per row during replay or rebuild against a single stream in isolation. An apply-time query against a sibling perspective (ICollectiveQuery.Of<>()), the perspective's own fields, properties or methods, or a static field that can change, cannot be reconstructed then, so the effect would differ on rebuild. Facts from elsewhere are resolved on the command side, when the event is created, and carried on the event."
   );
 
   private const string CROSS_PERSPECTIVE_QUERY = "calls ICollectiveQuery.Of<>(), an apply-time cross-perspective query";
@@ -165,9 +165,9 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     // time. This is independent of the Apply-name / perspective-interface gating below.
     var isCollectiveApply = _isCollectiveApply(methodSymbol);
 
-    // A fan-out's Set is a set-based apply too, folded per row on a rebuild (#2618): the same determinism checks, and
+    // A fan-out's Apply is a set-based apply too, folded per row on a rebuild (#2618): the same determinism checks, and
     // WHIZ106 for anything it reads besides the row and the event.
-    var isFanOutSet = FanOutShape.IsSet(methodSymbol);
+    var isFanOutApply = FanOutShape.IsApply(methodSymbol);
 
     // The determinism checks (async/await, DB/HTTP I/O, DateTime.UtcNow) apply to BOTH perspective Apply
     // methods and collective applies — both are folded during replay and must be deterministic.
@@ -178,7 +178,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     // exit instead of standing on a line of its own that no input reaches. Nothing below this point
     // runs for a null symbol, and the collective-apply analysis moves under the same gate — it only
     // ever ran when isCollectiveApply was true, which cannot be true for a null symbol.
-    if (!isPerspectiveApply && !isCollectiveApply && !isFanOutSet) {
+    if (!isPerspectiveApply && !isCollectiveApply && !isFanOutApply) {
       return;
     }
 
@@ -186,8 +186,8 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
       _analyzeCollectiveApply(context, methodDeclaration, methodSymbol);
     }
 
-    if (isFanOutSet) {
-      _analyzeFanOutSet(context, methodDeclaration, methodSymbol.ContainingType);
+    if (isFanOutApply) {
+      _analyzeFanOutApply(context, methodDeclaration, methodSymbol.ContainingType);
     }
 
     // Check 1: Apply method must not return Task
@@ -290,11 +290,11 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   }
 
   /// <summary>
-  /// WHIZ106 for a fan-out's <c>Set</c> (#2618): flags each read of the perspective's own state (<c>this</c>,
+  /// WHIZ106 for a fan-out's <c>Apply</c> (#2618): flags each read of the perspective's own state (<c>this</c>,
   /// <c>base</c>, or an instance member of the perspective) and each read of a static field that can change. The row
   /// and the event are reached only through the setters' lambdas and the event parameter, which are never flagged.
   /// </summary>
-  private static void _analyzeFanOutSet(
+  private static void _analyzeFanOutApply(
       SyntaxNodeAnalysisContext context, MethodDeclarationSyntax methodDeclaration, INamedTypeSymbol perspective) {
     var name = methodDeclaration.Identifier.ValueText;
     foreach (var node in methodDeclaration.DescendantNodes()) {
@@ -310,7 +310,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   }
 
   /// <summary>
-  /// What <paramref name="identifier"/> reads that a fan-out's <c>Set</c> must not, and the node to report; nulls when it
+  /// What <paramref name="identifier"/> reads that a fan-out's <c>Apply</c> must not, and the node to report; nulls when it
   /// reads nothing of the kind. A member read through <c>this</c> is reported once, at <c>this</c>; a static field read
   /// through its type is reported at the whole access.
   /// </summary>

@@ -53,10 +53,10 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
           IPerspectiveFanOutFor<OrderSummary, CustomerDeleted> {
         public static FanOutKey<OrderSummary> Targets => FanOut.By<OrderSummary>(o => o.CustomerId);
 
-        public ICollectiveSpec<OrderSummary> Set(CustomerRenamed e) =>
+        public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e) =>
           new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
 
-        public ICollectiveSpec<OrderSummary> Set(CustomerDeleted e) =>
+        public ICollectiveSpec<OrderSummary> Apply(CustomerDeleted e) =>
           new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerDeleted, true));
       }
       """;
@@ -90,7 +90,7 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
             EventType: typeof(global::TestApp.CustomerRenamed),
             KeyProperty: "CustomerId",
             KeyColumn: "customer_id",
-            Invoker: static (perspective, evt) => ((global::Whizbang.Core.Perspectives.IPerspectiveFanOutFor<global::TestApp.OrderSummary, global::TestApp.CustomerRenamed>)perspective).Set((global::TestApp.CustomerRenamed)evt)
+            Invoker: static (perspective, evt) => ((global::Whizbang.Core.Perspectives.IPerspectiveFanOutFor<global::TestApp.OrderSummary, global::TestApp.CustomerRenamed>)perspective).Apply((global::TestApp.CustomerRenamed)evt)
           ),
       """;
     await Assert.That(code).Contains(expected.Replace("\r\n", "\n"));
@@ -115,10 +115,10 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
             get { return FanOut.By<OrderSummary>(o => o.RegionId); }
           }
 
-          public ICollectiveSpec<OrderSummary> Set(CustomerRenamed e) =>
+          public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e) =>
             new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
 
-          ICollectiveSpec<OrderSummary> IPerspectiveFanOutFor<OrderSummary, RegionRenamed>.Set(RegionRenamed e) =>
+          ICollectiveSpec<OrderSummary> IPerspectiveFanOutFor<OrderSummary, RegionRenamed>.Apply(RegionRenamed e) =>
             new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
         }
         """;
@@ -137,7 +137,7 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
     var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<PerspectiveFanOutDiscoveryGenerator>(ONE_KEY_TWO_EVENTS);
 
     await Assert.That(errors).IsEmpty()
-      .Because("the invoker casts to the fan-out interface and calls Set, which must bind for an implicit and an explicit Set");
+      .Because("the invoker casts to the fan-out interface and calls Apply, which must bind for an implicit and an explicit Apply");
   }
 
   [Test]
@@ -168,7 +168,7 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
         public class OrderSummaryProjection : IPerspectiveFanOutFor<OrderSummary, CustomerRenamed> {
           public static FanOutKey<OrderSummary> Targets => {{targets}};
 
-          public ICollectiveSpec<OrderSummary> Set(CustomerRenamed e) =>
+          public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e) =>
             new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
         }
         """;
@@ -185,7 +185,7 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
     const string source = PREAMBLE + """
         public abstract class OrderSummaryProjection : IPerspectiveFanOutFor<OrderSummary, CustomerRenamed> {
           public static FanOutKey<OrderSummary> Targets => FanOut.By<OrderSummary>(o => o.CustomerId);
-          public abstract ICollectiveSpec<OrderSummary> Set(CustomerRenamed e);
+          public abstract ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e);
         }
         """;
 
@@ -200,7 +200,7 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
   public async Task Generator_APartialPerspective_WithTargetsInAnotherFile_IsDiscoveredOnceAsync() {
     const string first = PREAMBLE + """
         public partial class OrderSummaryProjection : IPerspectiveFanOutFor<OrderSummary, CustomerRenamed> {
-          public ICollectiveSpec<OrderSummary> Set(CustomerRenamed e) =>
+          public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e) =>
             new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
         }
         """;
@@ -241,7 +241,7 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
         namespace Consumer;
 
         public class OrderSummaryProjection : FanOutBase, IPerspectiveFanOutFor<OrderSummary, CustomerRenamed> {
-          public ICollectiveSpec<OrderSummary> Set(CustomerRenamed e) => null!;
+          public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e) => null!;
         }
         """;
     var compilation = GeneratorTestHelper.CreateCompilationWithFullReferences("Consumer", consumer)
@@ -258,7 +258,7 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
   public async Task Generator_APerspectiveThatDoesNotImplementTargets_IsLeftOutAsync() {
     const string source = PREAMBLE + """
         public class OrderSummaryProjection : IPerspectiveFanOutFor<OrderSummary, CustomerRenamed> {
-          public ICollectiveSpec<OrderSummary> Set(CustomerRenamed e) => null!;
+          public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e) => null!;
         }
         """;
 
@@ -285,7 +285,7 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
     var source = PREAMBLE + $$"""
         public class OrderSummaryProjection : {{named}} {
           public static FanOutKey<OrderSummary> Targets => FanOut.By<OrderSummary>(o => o.CustomerId);
-          public ICollectiveSpec<OrderSummary> Set(CustomerRenamed e) => null!;
+          public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e) => null!;
         }
         """;
 
@@ -324,7 +324,7 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
 
         public class ShipmentProjection : IPerspectiveFanOutFor<Shipment, CarrierRenamed> {
           public static FanOutKey<Shipment> Targets => FanOut.By<Shipment>(s => s.CarrierId);
-          public ICollectiveSpec<Shipment> Set(CarrierRenamed e) => null!;
+          public ICollectiveSpec<Shipment> Apply(CarrierRenamed e) => null!;
         }
         """;
 

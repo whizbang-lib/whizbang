@@ -990,7 +990,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
-      description: "A rebuild finds the foreign events that target a row from the key values the row takes while its own events are folded. A set-based apply (a fan-out's Set or a [CollectiveApplyFor] handler) that assigned the key would move rows without the rebuild seeing it, so live and rebuilt rows would differ.",
+      description: "A rebuild finds the foreign events that target a row from the key values the row takes while its own events are folded. A set-based apply (a fan-out's Apply or a [CollectiveApplyFor] handler) that assigned the key would move rows without the rebuild seeing it, so live and rebuilt rows would differ.",
       customTags: WellKnownDiagnosticTags.CompilationEnd
   );
 

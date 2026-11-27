@@ -41,18 +41,20 @@ public class OrderSummaryProjection
   // The rows each foreign event targets: those whose CustomerId equals the event's stream id
   public static FanOutKey<OrderSummary> Targets => FanOut.By(o => o.CustomerId);
 
-  public ICollectiveSpec<OrderSummary> Set(CustomerRenamed e) =>
+  public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e) =>
     new CollectiveSpec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
 
-  public ICollectiveSpec<OrderSummary> Set(CustomerDeleted e) =>
+  public ICollectiveSpec<OrderSummary> Apply(CustomerDeleted e) =>
     new CollectiveSpec<OrderSummary>(s => s.SetProperty(o => o.CustomerDeleted, true));
 }
 ```
 
 Names are working names from the design discussion. One shape change from the sketch there: the sketch's
-`void Set(ICollectiveSetters<T> s, TEvent e)` becomes `ICollectiveSpec<T> Set(TEvent e)`, because both drivers compile
+`void Set(ICollectiveSetters<T> s, TEvent e)` becomes `ICollectiveSpec<T> Apply(TEvent e)`, because both drivers compile
 the setters from an expression tree (`CollectiveSettersRewriter` for EF Core, `DapperCollectiveSpecCompiler` for
-Dapper), which is the shape `[CollectiveApplyFor]` handlers already return. A perspective that needs a different key per
+Dapper), which is the shape `[CollectiveApplyFor]` handlers already return. The member is named `Apply`, not the sketch's `Set`
+(owner, 2026-11-27): every other member that turns an event into a row change is `Apply`, and `Apply(TEvent)` overloads
+cleanly beside `IPerspectiveFor.Apply(model, event)`. A perspective that needs a different key per
 foreign event implements `Targets` explicitly per interface
 (`static FanOutKey<OrderSummary> IPerspectiveFanOutFor<OrderSummary, RegionRenamed>.Targets => FanOut.By(o => o.RegionId)`).
 
@@ -78,7 +80,7 @@ foreign event implements `Targets` explicitly per interface
 | Contract | new `IPerspectiveFanOutFor<TModel, TEvent>`, `FanOutKey<TModel>`, `FanOut.By` in `src/Whizbang.Core/Perspectives/`; reuses `ICollectiveSpec<TModel>` and `ICollectiveSetters<TModel>` |
 | Registration entry | `src/Whizbang.Core/Perspectives/CollectiveApplyEntry.cs` (a fan-out entry carries its key column and a `SpecKind` for fan-out; `EntryKey` keeps progress per handler) |
 | Generator | `src/Whizbang.Generators/CollectiveApplyDiscoveryGenerator.cs`, `CollectiveApplyShape.cs`, `PerspectiveRunnerGenerator.cs` and `Templates/PerspectiveRunnerClassTemplate.cs` (the runner learns its fan-out types and key columns) |
-| Analyzers | `src/Whizbang.Generators/PerspectivePurityAnalyzer.cs` (WHIZ106 covers `Set`), `src/Whizbang.Generators/Analyzers/CollectiveApplyShapeAnalyzer.cs`, `Analyzers/PerspectiveFieldAnalyzer.cs` (key column rules); new diagnostic ids from the registry checked by `.github/scripts/Test-DiagnosticIds.ps1` |
+| Analyzers | `src/Whizbang.Generators/PerspectivePurityAnalyzer.cs` (WHIZ106 covers the fan-out `Apply`), `src/Whizbang.Generators/Analyzers/CollectiveApplyShapeAnalyzer.cs`, `Analyzers/PerspectiveFieldAnalyzer.cs` (key column rules); new diagnostic ids from the registry checked by `.github/scripts/Test-DiagnosticIds.ps1` |
 | Routing | `src/Whizbang.Core/Perspectives/CollectiveRoutingAssociations.cs` (fan-out association entries and the associations hash), the association startup step that writes `wh_message_associations` |
 | Live dispatch | `src/Whizbang.Core/Workers/PerspectiveWorker.cs` (the sink path: `_loadCollectiveSinkBatchAsync`, the `DispatchAsync` loop, which casts to `ICollectiveEvent` today), `src/Whizbang.Core/Perspectives/CollectiveDispatcher.cs`, a new `FanOutScopeResolver : ICollectiveScopeResolver` |
 | Drivers | EF Core: `src/Whizbang.Data.EFCore.Postgres/Collective/EFCoreCollectiveEventExecutor.cs`, `CollectiveEventApplier.cs`, `EFCoreCollectiveAdapter.cs`; Dapper: `src/Whizbang.Data.Dapper.Postgres/Collective/DapperCollectiveEventExecutor.cs`, `DapperCollectiveEventApplier.cs`, `DapperCollectiveSpecCompiler.cs`; shared: `src/Whizbang.Data.Postgres/Collective/CollectivePredicateSqlCompiler.cs`, `CollectivePhysicalColumns.cs`, `CollectiveApplyLockKey.cs` |
@@ -116,8 +118,8 @@ below is produced by holding a worker at a named point, never by a delay.
 - **Changes.** `IPerspectiveFanOutFor<TModel, TEvent>`, `FanOutKey<TModel>`, `FanOut.By`. The generator discovers each
   fan-out, extracts the key member from the `FanOut.By` lambda at compile time, and emits a registration entry beside
   the `[CollectiveApplyFor]` entries. New analyzer errors: the key is not a declared physical field; the key has no
-  `[Indexed]`; the key's type cannot hold a stream id (`Guid` or a strongly typed id over one); a `Set` assigns the key
-  column (keys come only from the row's own events, which is what makes the replay's key discovery sound); a `Set`
+  `[Indexed]`; the key's type cannot hold a stream id (`Guid` or a strongly typed id over one); a fan-out `Apply` assigns the key
+  column (keys come only from the row's own events, which is what makes the replay's key discovery sound); a fan-out `Apply`
   references anything but the row and the event (WHIZ106).
 - **RED first.** Generator tests over source snippets: one entry per `(model, foreign event)` with the right key column;
   two interfaces with explicit `Targets` get two keys; each analyzer error fires on its shape and not on the valid one;
@@ -145,7 +147,7 @@ below is produced by holding a worker at a named point, never by a delay.
 - **RED first (integration, both drivers).** The issue's example: `CustomerRenamed` on c-1 updates o-1 and o-2 and leaves
   o-3 (c-2) alone; a row of another tenant with the same `CustomerId` is untouched; a redelivered event applies once;
   `CustomerDeleted` marks the rows and removes none; a batch interrupted after one keyset batch resumes after it (#1969);
-  a poison `Set` reports a failure and does not stop the host.
+  a poison fan-out `Apply` reports a failure and does not stop the host.
 - **Docs.** The multi-stream section's live half, with a mermaid diagram of the route; `operations/workers/perspective-worker.md`.
 
 ### F4. Rebuild and rewind fold the targeted foreign events

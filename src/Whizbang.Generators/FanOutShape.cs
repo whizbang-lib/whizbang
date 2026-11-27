@@ -17,7 +17,7 @@ namespace Whizbang.Generators;
 /// <c>IPerspectiveFanOutFor&lt;TModel, TEvent&gt;</c> whose <c>Targets</c> is <c>FanOut.By&lt;TModel&gt;(row =&gt; row.Key)</c>
 /// naming a key property that is a physical field, indexed, and able to hold a stream id. Every reader uses it: the
 /// discovery generator that registers the fan-outs it accepts, the analyzer that reports the ones it does not
-/// (WHIZ124 to WHIZ128), and the purity analyzer that holds a fan-out's <c>Set</c> to the set-based apply rule (WHIZ106).
+/// (WHIZ124 to WHIZ128), and the purity analyzer that holds a fan-out's <c>Apply</c> to the set-based apply rule (WHIZ106).
 /// </summary>
 /// <docs>fundamentals/perspectives/multi-stream#fan-out-from-another-stream</docs>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveFanOutDiscoveryGeneratorTests.cs</tests>
@@ -25,7 +25,7 @@ namespace Whizbang.Generators;
 internal static class FanOutShape {
   internal const string INTERFACE_NAME = "IPerspectiveFanOutFor";
   internal const string TARGETS = "Targets";
-  private const string SET = "Set";
+  private const string APPLY = "Apply";
   private const string INTERFACE_FQN = "Whizbang.Core.Perspectives.IPerspectiveFanOutFor<TModel, TEvent>";
   private const string FAN_OUT_FQN = "Whizbang.Core.Perspectives.FanOut";
   private const string SETTERS_FQN = "Whizbang.Core.Perspectives.ICollectiveSetters<TModel>";
@@ -54,10 +54,10 @@ internal static class FanOutShape {
   internal static IPropertySymbol? TargetsOf(INamedTypeSymbol type, INamedTypeSymbol fanOut) =>
     type.FindImplementationForInterfaceMember(fanOut.GetMembers(TARGETS)[0]) as IPropertySymbol;
 
-  /// <summary>Whether <paramref name="method"/> implements a fan-out's <c>Set</c> for its containing type.</summary>
-  internal static bool IsSet(IMethodSymbol method) =>
+  /// <summary>Whether <paramref name="method"/> implements a fan-out's <c>Apply</c> for its containing type.</summary>
+  internal static bool IsApply(IMethodSymbol method) =>
     Interfaces(method.ContainingType).Any(i => SymbolEqualityComparer.Default.Equals(
-      method.ContainingType.FindImplementationForInterfaceMember(i.GetMembers(SET)[0]), method));
+      method.ContainingType.FindImplementationForInterfaceMember(i.GetMembers(APPLY)[0]), method));
 
   /// <summary>
   /// Reads the key a <c>Targets</c> declaration names. The value is the expression the property returns: its expression

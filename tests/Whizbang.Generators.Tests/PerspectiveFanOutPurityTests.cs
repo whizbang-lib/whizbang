@@ -9,7 +9,7 @@ using static Whizbang.Generators.Tests.PerspectiveContractTestHarness;
 namespace Whizbang.Generators.Tests;
 
 /// <summary>
-/// A fan-out's <c>Set</c> is folded per row on a rebuild against that row and the event alone, so it falls under the
+/// A fan-out's <c>Apply</c> is folded per row on a rebuild against that row and the event alone, so it falls under the
 /// purity rule collective specs follow (#2618): it depends on nothing but the row and the event (WHIZ106), and the
 /// determinism checks every Apply has (WHIZ100 to WHIZ104) cover it too.
 /// </summary>
@@ -60,7 +60,7 @@ public class PerspectiveFanOutPurityTests {
 
         public static FanOutKey<OrderSummary> Targets => FanOut.By<OrderSummary>(o => o.CustomerId);
 
-        public ICollectiveSpec<OrderSummary> Set(CustomerRenamed e) {
+        public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e) {
           {{body}}
         }
       }
@@ -84,7 +84,7 @@ public class PerspectiveFanOutPurityTests {
     await Assert.That(reported.Length).IsEqualTo(1);
     await Assert.That(reported[0].Severity).IsEqualTo(DiagnosticSeverity.Error);
     await Assert.That(LocatedText(reported[0])).IsEqualTo(located);
-    await Assert.That(reported[0].GetMessage(CultureInfo.InvariantCulture)).Contains("Set");
+    await Assert.That(reported[0].GetMessage(CultureInfo.InvariantCulture)).Contains("Apply");
   }
 
   [Test]
@@ -108,7 +108,7 @@ public class PerspectiveFanOutPurityTests {
       "return new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));");
 
     await Assert.That(await ReportedAsync(source, "WHIZ106")).IsEmpty()
-      .Because("only the Set a fan-out declares is folded on a rebuild");
+      .Because("only the Apply a fan-out declares is folded on a rebuild");
   }
 
   [Test]
@@ -133,7 +133,7 @@ public class PerspectiveFanOutPurityTests {
 
           public static FanOutKey<OrderSummary> Targets => FanOut.By<OrderSummary>(o => o.CustomerId);
 
-          ICollectiveSpec<OrderSummary> IPerspectiveFanOutFor<OrderSummary, CustomerRenamed>.Set(CustomerRenamed e) =>
+          ICollectiveSpec<OrderSummary> IPerspectiveFanOutFor<OrderSummary, CustomerRenamed>.Apply(CustomerRenamed e) =>
             new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, _prefix));
         }
         """;

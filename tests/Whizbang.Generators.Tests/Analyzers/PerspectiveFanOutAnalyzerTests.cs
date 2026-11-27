@@ -59,7 +59,7 @@ public class PerspectiveFanOutAnalyzerTests {
 
         public static FanOutKey<OrderSummary> Targets => {{targets}};
 
-        public ICollectiveSpec<OrderSummary> Set(CustomerRenamed e) => new Spec<OrderSummary>(s => {{setters}});
+        public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e) => new Spec<OrderSummary>(s => {{setters}});
       }
       """;
 
@@ -129,8 +129,8 @@ public class PerspectiveFanOutAnalyzerTests {
             get { return FanOut.By<OrderSummary>(o => o.DocumentOnlyId); }
           }
 
-          public ICollectiveSpec<OrderSummary> Set(CustomerRenamed e) => new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
-          public ICollectiveSpec<OrderSummary> Set(CustomerDeleted e) => new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, ""));
+          public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e) => new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
+          public ICollectiveSpec<OrderSummary> Apply(CustomerDeleted e) => new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, ""));
         }
         """;
 
@@ -150,7 +150,7 @@ public class PerspectiveFanOutAnalyzerTests {
         public class OrderSummaryProjection : IPerspectiveFanOutFor<OrderSummary, CustomerRenamed> {
           public static FanOutKey<OrderSummary> Targets {{accessors}}
 
-          public ICollectiveSpec<OrderSummary> Set(CustomerRenamed e) => new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
+          public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e) => new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
         }
         """;
 
@@ -171,7 +171,7 @@ public class PerspectiveFanOutAnalyzerTests {
         public class OrderSummaryProjection : IPerspectiveFanOutFor<OrderSummary, CustomerRenamed> {
           {{targets}}
 
-          public ICollectiveSpec<OrderSummary> Set(CustomerRenamed e) => new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
+          public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e) => new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
         }
         """;
 
@@ -192,7 +192,7 @@ public class PerspectiveFanOutAnalyzerTests {
 
           {{targets}}
 
-          public ICollectiveSpec<OrderSummary> Set(CustomerRenamed e) => new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
+          public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e) => new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
         }
         """;
 

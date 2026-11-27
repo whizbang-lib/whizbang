@@ -14,7 +14,7 @@ namespace Whizbang.Generators;
 /// <summary>
 /// Discovers every perspective fan-out (<c>IPerspectiveFanOutFor&lt;TModel, TEvent&gt;</c>) at compile time, reads the
 /// key column from its <c>Targets</c>, and emits the assembly's contribution to the fan-out registry the host serves:
-/// one entry per (model, foreign event), with a typed invoker that calls <c>Set</c> (no reflection). A declaration that
+/// one entry per (model, foreign event), with a typed invoker that calls <c>Apply</c> (no reflection). A declaration that
 /// breaks a fan-out rule is left out, and <c>PerspectiveFanOutAnalyzer</c> reports it (#2618).
 /// </summary>
 /// <docs>fundamentals/perspectives/multi-stream#fan-out-from-another-stream</docs>

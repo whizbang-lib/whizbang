@@ -15,7 +15,7 @@ namespace Whizbang.Core.Perspectives;
 /// <param name="KeyProperty">The model's key property, as <see cref="FanOut.By{TModel}"/> names it.</param>
 /// <param name="KeyColumn">The key property's column: its <c>[PhysicalField(ColumnName)]</c>, else its snake_case name.</param>
 /// <param name="Invoker">
-/// Calls the perspective's <c>Set</c> for the event, with both casts made statically by the generated lambda (no
+/// Calls the perspective's <c>Apply</c> for the event, with both casts made statically by the generated lambda (no
 /// reflection), and returns the setters.
 /// </param>
 /// <docs>fundamentals/perspectives/multi-stream#fan-out-from-another-stream</docs>
@@ -29,11 +29,11 @@ public sealed record PerspectiveFanOutEntry(
   Func<object, IEvent, ICollectiveSpecSetters> Invoker
 ) {
   /// <summary>
-  /// The stable identity of this fan-out: the perspective, its <c>Set</c> for the event, and the model. Built from names,
+  /// The stable identity of this fan-out: the perspective, its <c>Apply</c> for the event, and the model. Built from names,
   /// so it survives a restart and a redeploy, as <see cref="CollectiveApplyEntry.EntryKey"/> does.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveFanOutContractTests.cs:Entry_EntryKey_NamesThePerspectiveTheEventAndTheModelAsync</tests>
   public string EntryKey =>
-    TypeNameFormatter.FormatClrTypeName(PerspectiveType) + ".Set(" + TypeNameFormatter.FormatClrTypeName(EventType) + "):"
+    TypeNameFormatter.FormatClrTypeName(PerspectiveType) + ".Apply(" + TypeNameFormatter.FormatClrTypeName(EventType) + "):"
     + TypeNameFormatter.FormatClrTypeName(ModelType);
 }
