@@ -7,6 +7,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -52,6 +53,28 @@ public class StoredFormScalarMismatchReadTests : EFCoreTestBase {
       .Because($"the worker parks only a failure it classifies; the store raised {_describeChain(raised!)}");
     await Assert.That(failure!.Path).IsNotNull().And.Contains("Status")
       .Because("the operator needs to know where in the document the value is");
+  }
+
+  /// <summary>
+  /// A strong id in the object form is not what a read failure is blamed on: its reader takes either form, so the walk
+  /// goes past it to the value that is wrong (#2518).
+  /// </summary>
+  [Test]
+  public async Task GetByStreamId_AnObjectFormIdBesideTheWrongValue_IsNotBlamedAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    using (global::Whizbang.Data.Postgres.StrongIdDocumentForms.ScopeTo(uuidString: false))
+    await using (var writeContext = CreateDbContext()) {
+      var writer = new EFCorePostgresPerspectiveStore<Order>(writeContext, "wh_per_order", new PostgresUpsertStrategy());
+      await writer.UpsertAsync(streamId, new Order { OrderId = new TestOrderId(streamId), Amount = 5m, Status = "Created" });
+    }
+    await _storeNumberForStatusAsync(streamId);
+
+    await using var readContext = CreateDbContext();
+    var reader = new EFCorePostgresPerspectiveStore<Order>(readContext, "wh_per_order", new PostgresUpsertStrategy());
+    var raised = await Assert.That(async () => await reader.GetByStreamIdAsync(streamId)).Throws<Exception>();
+
+    await Assert.That(StoredFormUnreadable.TryClassify(raised!, out var failure)).IsTrue();
+    await Assert.That(failure!.Path).IsNotNull().And.Contains("Status").And.DoesNotContain("OrderId");
   }
 
   [Test]

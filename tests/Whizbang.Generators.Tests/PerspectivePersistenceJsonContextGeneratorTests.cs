@@ -8,7 +8,7 @@ namespace Whizbang.Generators.Tests;
 
 /// <summary>
 /// Tests for <see cref="PerspectivePersistenceJsonContextGenerator"/>.
-/// Verifies discovery of [WhizbangId] structs, the emitted object-mode
+/// Verifies discovery of [WhizbangId] structs, the emitted document-form
 /// PerspectivePersistenceJsonContext resolver, and the ModuleInitializer that joins it to
 /// the registry's persistence profile when perspectives are present in the consuming assembly.
 /// </summary>
@@ -47,18 +47,16 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
       """;
 
   /// <summary>
-  /// Test that a [WhizbangId] struct produces an object-mode type info: written as
-  /// {"Value":"guid"}, read from that shape or from the scalar string an older row may hold.
+  /// Test that a [WhizbangId] struct produces a converter type info: written as the UUID string,
+  /// read from that or from the object {"Value":"guid"} a release before #2518 stored (#2518).
   /// </summary>
   /// <remarks>
-  /// A document stored as one value once took its identifiers in the scalar form when the atomic
-  /// path was unavailable and Entity Framework wrote it under the default profile. A converter can
-  /// read both; object metadata could read only the object. The scalar read is counted, so the
-  /// tolerance can be removed once nothing needs it.
+  /// Object metadata could read only the object form. The object read is counted, so the tolerance
+  /// can be removed once the stored-form rewrite has reached every row.
   /// </remarks>
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task Generator_WithWhizbangIdStruct_EmitsObjectModeTypeInfoAsync() {
+  public async Task Generator_WithWhizbangIdStruct_EmitsScalarDocumentTypeInfoAsync() {
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectivePersistenceJsonContextGenerator>(SINGLE_ID_SOURCE);
 
@@ -71,14 +69,18 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
     await Assert.That(generated).Contains("if (type == typeof(global::MyApp.Domain.ProductId)) {");
     await Assert.That(generated).Contains("return _createProductIdTypeInfo(options);");
 
-    // A converter, not object metadata: the object form on write, either form on read
+    // A converter, not object metadata: the form the fleet reads on write, either form on read (#2518)
     await Assert.That(generated).Contains("private sealed class _ProductIdDocumentConverter : JsonConverter<global::MyApp.Domain.ProductId>");
     await Assert.That(generated).Contains("return JsonMetadataServices.CreateValueInfo<global::MyApp.Domain.ProductId>(options, new _ProductIdDocumentConverter());");
+    await Assert.That(generated).Contains("if (global::Whizbang.Core.Perspectives.WhizbangIdDocumentForm.WritesUuidString) {")
+      .Because("Entity Framework's writer for the same property follows the same switch, and the two writers must agree");
+    await Assert.That(generated).Contains("writer.WriteStringValue(value.Value);")
+      .Because("the UUID string once every live instance reads it");
     await Assert.That(generated).Contains("writer.WriteString(\"Value\", value.Value);")
-      .Because("the object form is what Entity Framework writes for the same property, and the two writers must agree");
+      .Because("the object form every release reads, until then");
     await Assert.That(generated).Contains("if (reader.TokenType == JsonTokenType.String) {");
-    await Assert.That(generated).Contains("global::Whizbang.Core.Perspectives.StoredFormFallbacks.ScalarIdentifierRead(\"ProductId\");")
-      .Because("a scalar read is a row the atomic path did not write, and the count decides when the tolerance goes");
+    await Assert.That(generated).Contains("global::Whizbang.Core.Perspectives.StoredFormFallbacks.ObjectFormIdentifierRead(global::Whizbang.Core.TypeNameFormatter.SimpleName(typeof(global::MyApp.Domain.ProductId)));")
+      .Because("an object read is a row the stored-form rewrite did not reach, and the count decides when the tolerance goes");
     await Assert.That(generated).Contains("return new global::MyApp.Domain.ProductId(reader.GetGuid());");
     await Assert.That(generated).DoesNotContain("JsonObjectInfoValues<global::MyApp.Domain.ProductId>")
       .Because("object metadata reads the object form and nothing else");
@@ -408,7 +410,7 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
 
   /// <summary>
   /// Test that the generated resolver compiles without errors when the [WhizbangId] struct
-  /// supplies the Value property and Guid constructor the object-mode metadata references.
+  /// supplies the Value property and Guid constructor the document converter references.
   /// No perspectives are present, so only the resolver file is compiled (the callback
   /// initializer requires MessageJsonContext + Whizbang.Data.EFCore.Postgres, which
   /// only exist in a full consumer build).

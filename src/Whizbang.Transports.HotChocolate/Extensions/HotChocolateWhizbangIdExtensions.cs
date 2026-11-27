@@ -32,8 +32,8 @@ public static class HotChocolateWhizbangIdExtensions {
   /// <summary>
   /// Gives every generated <c>[WhizbangId]</c> type the schema uses a scalar, named after the type and written as a
   /// UUID string, so a resolver can take the id as an argument or an input field and return it. Input goes through
-  /// the id's own <c>From(Guid)</c>: a Guid the id refuses (not UUIDv7, or empty for an id declared with
-  /// <c>AcceptAnyVersion</c>) is a GraphQL error with the code <c>WHIZBANG_INVALID_ID</c>, not an exception in the
+  /// the id's own <c>From(Guid)</c>: a Guid the id refuses (a version outside its <c>Versions</c>, UUIDv7 by
+  /// default, or empty for an id declared with <c>AcceptAnyVersion</c>) is a GraphQL error with the code <c>WHIZBANG_INVALID_ID</c>, not an exception in the
   /// resolver. A filter on an id field compares the id itself (<c>where: { id: { eq: "..." } }</c>, and <c>neq</c>,
   /// <c>in</c>, <c>nin</c>), with the id's scalar as the operand, so a filter value is checked the same way.
   /// </summary>

@@ -270,6 +270,27 @@ public class PostgresDriverExtensionsTests {
     await Assert.That(steps).Count().IsEqualTo(1);
   }
 
+  /// <summary>
+  /// The driver registers the strong-id step for its DbContext (#2518): it opens the process's strong-id write form once
+  /// the fleet reads it, and carries the stored-form rewrite on from where startup left it.
+  /// </summary>
+  [Test]
+  public async Task Postgres_RegistersTheStrongIdRewriteStep_ForItsContextAsync() {
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
+
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    await using var sp = services.BuildServiceProvider();
+    using var scope = sp.CreateScope();
+    var steps = scope.ServiceProvider.GetServices<Whizbang.Core.Workers.IMaintenanceStep>()
+      .OfType<Whizbang.Data.EFCore.Postgres.Perspectives.StrongIdScalarRewriteStep>().ToList();
+    await Assert.That(steps).Count().IsEqualTo(1);
+    await Assert.That(steps[0].Name).IsEqualTo(Whizbang.Data.EFCore.Postgres.Perspectives.StrongIdScalarRewriteStep.STEP_NAME);
+    await Assert.That(steps[0].DbContextType).IsEqualTo(typeof(PostgresTestDbContext))
+      .Because("the step converts, and asks the gate of, the schema of the context the driver was configured for");
+  }
+
   [Test]
   public async Task Postgres_RegistersTheMetadataHistoryConversionStep_OnceAsync() {
     var services = new ServiceCollection();

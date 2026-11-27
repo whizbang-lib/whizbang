@@ -229,6 +229,12 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       where TModel : class {
     var (planned, hookPlan, expiresAt, businessTime, mappedTable) = _planRowWrite(context, args);
     args = planned;
+    // #2518: the atomic write serializes the document before it opens a connection, so the name the server gives this
+    // context's database, which keys its schema's gate, is asked first (once for each connection string). Not for a row
+    // a staging load holds: that write sends no statement, and the load's own writes go through this context later.
+    if (PerspectiveStagingLoad.For(args.TableName) is null) {
+      await Perspectives.StrongIdDocumentTarget.ResolveAsync(context, cancellationToken);
+    }
 
     // Path 1 atomic upsert. When this strategy uses it (see UsesAtomicUpsert) and it applies
     // (Npgsql, plain identifiers, a resolvable model), this single round-trip replaces
@@ -457,10 +463,19 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       typeof(IVersionedApplyTarget).IsAssignableFrom(typeof(TModel)),
       Whizbang.Core.Messaging.ProcessingModeAccessor.Current);
 
+    // #2518: a strongly-typed id in the document is written in the form this schema's gate allows, whatever the
+    // process's other schemas say.
+    string data, metadata, scope;
+    using (Perspectives.StrongIdDocumentTarget.Of(context, schema)) {
+      (data, metadata, scope) = (
+        JsonSerializer.Serialize(args.Model, modelInfo),
+        JsonSerializer.Serialize(args.Metadata, metadataInfo),
+        JsonSerializer.Serialize(args.Scope, scopeInfo));
+    }
     var row = new PerspectiveRowValues(
-      Data: JsonSerializer.Serialize(args.Model, modelInfo),
-      Metadata: JsonSerializer.Serialize(args.Metadata, metadataInfo),
-      Scope: JsonSerializer.Serialize(args.Scope, scopeInfo),
+      Data: data,
+      Metadata: metadata,
+      Scope: scope,
       ForceUpdateScope: args.ForceUpdateScope,
       OrdersOnEventId: ordersOnEventId,
       // created_at is written only on insert. A row whose stream no longer holds its first event is dated at the
@@ -967,10 +982,14 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     }
 
     var copyStatement = DocumentCopySql<TModel>(context, physicalFieldValues);
-    if (copyStatement is null) {
-      await context.SaveChangesAsync(cancellationToken);
-    } else {
-      await _saveWithDocumentCopyAsync(context, copyStatement, id, cancellationToken);
+    // #2518: the document's strongly-typed ids in the form the gates of every schema this save writes into allow.
+    await Perspectives.StrongIdDocumentTarget.ResolveAsync(context, cancellationToken);
+    using (Perspectives.StrongIdDocumentTarget.OfTracked(context)) {
+      if (copyStatement is null) {
+        await context.SaveChangesAsync(cancellationToken);
+      } else {
+        await _saveWithDocumentCopyAsync(context, copyStatement, id, cancellationToken);
+      }
     }
 
     if (ClearChangeTrackerAfterSave) {

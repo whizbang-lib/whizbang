@@ -43,6 +43,14 @@ public enum DiscoverySource {
 /// <param name="SuppressDuplicateWarning">True if WHIZ024 warning should be suppressed for this ID</param>
 /// <param name="Location">Where the [WhizbangId] attribute is written; WHIZ024 is reported there. Not part of equality.</param>
 /// <param name="AcceptAnyVersion">True if the generated id takes any non-empty Guid rather than UUIDv7 only (#2071)</param>
+/// <param name="Versions">The UUID versions the id accepts, as a <see cref="UuidVersionMask"/> (#2516). Ignored when
+/// <paramref name="AcceptAnyVersion"/> is true.</param>
+/// <param name="DeclaresVersions">True if <c>Versions</c> is written on this declaration's attribute, so writing it
+/// next to <c>AcceptAnyVersion = true</c> can be reported (WHIZ039).</param>
+/// <param name="OutOfRangeVersionBits">The bits of the written <c>Versions</c> outside versions 1 to 8, which name no
+/// version and are reported (WHIZ044); zero when there are none.</param>
+/// <param name="DeclaresIsAccepted">True if the id type, as written, already declares a member named
+/// <c>IsAccepted</c>, which the generated id declares for its version rule (WHIZ045).</param>
 /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdTypeInfoTests.cs</tests>
 public sealed record WhizbangIdInfo(
   string TypeName,
@@ -50,7 +58,11 @@ public sealed record WhizbangIdInfo(
   DiscoverySource Source,
   bool SuppressDuplicateWarning = false,
   Location? Location = null,
-  bool AcceptAnyVersion = false
+  bool AcceptAnyVersion = false,
+  int Versions = UuidVersionMask.V7,
+  bool DeclaresVersions = false,
+  int OutOfRangeVersionBits = 0,
+  bool DeclaresIsAccepted = false
 ) {
   /// <summary>
   /// Gets the fully qualified name of the ID type (Namespace.TypeName).
@@ -61,19 +73,33 @@ public sealed record WhizbangIdInfo(
 
   /// <summary>
   /// Value equality is used for deduplication.
-  /// Two WhizbangIdInfo instances are equal if they have the same FullyQualifiedName and AcceptAnyVersion.
+  /// Two WhizbangIdInfo instances are equal if they have the same FullyQualifiedName and version rule.
   /// </summary>
   /// <remarks>
-  /// AcceptAnyVersion changes the generated code, so it takes part: an id whose option was toggled must not
-  /// compare equal to the cached one, or the incremental pipeline would keep the old output.
+  /// AcceptAnyVersion and Versions change the generated code, and DeclaresVersions, OutOfRangeVersionBits and
+  /// DeclaresIsAccepted the diagnostics, so they take
+  /// part: an id whose option was toggled must not compare equal to the cached one, or the incremental pipeline
+  /// would keep the old output.
   /// </remarks>
   /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdInfoEqualityTests.cs</tests>
   public bool Equals(WhizbangIdInfo? other) =>
-    other is not null && FullyQualifiedName == other.FullyQualifiedName && AcceptAnyVersion == other.AcceptAnyVersion;
+    other is not null
+    && FullyQualifiedName == other.FullyQualifiedName
+    && AcceptAnyVersion == other.AcceptAnyVersion
+    && Versions == other.Versions
+    && DeclaresVersions == other.DeclaresVersions
+    && OutOfRangeVersionBits == other.OutOfRangeVersionBits
+    && DeclaresIsAccepted == other.DeclaresIsAccepted;
 
   /// <summary>
-  /// Hash code based on FullyQualifiedName and AcceptAnyVersion.
+  /// Hash code based on FullyQualifiedName and the version rule.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdInfoEqualityTests.cs</tests>
-  public override int GetHashCode() => (FullyQualifiedName.GetHashCode() * 397) ^ AcceptAnyVersion.GetHashCode();
+  public override int GetHashCode() {
+    var hash = (FullyQualifiedName.GetHashCode() * 397) ^ AcceptAnyVersion.GetHashCode();
+    hash = (hash * 397) ^ Versions;
+    hash = (hash * 397) ^ DeclaresVersions.GetHashCode();
+    hash = (hash * 397) ^ OutOfRangeVersionBits;
+    return (hash * 397) ^ DeclaresIsAccepted.GetHashCode();
+  }
 }

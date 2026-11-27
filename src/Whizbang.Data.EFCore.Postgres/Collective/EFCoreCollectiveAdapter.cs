@@ -119,15 +119,19 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
 
     var logger = dbContext.GetService<ILoggerFactory>().CreateLogger("Whizbang.Collective.Apply");
 
-    // Model-field (jsonb) setters = the spec's setters plus any the hooks added, minus any a hook removed.
-    var assignments = CollectiveSettersRewriter.CollectAssignments(spec.Setters)
-      .Concat(CollectiveSettersRewriter.FromHookSetters(hookPlan.ModelFieldSetters))
-      .Where(a => !hookPlan.RemovedModelFields.Contains(a.PathName))
-      .ToList();
-
     var (table, schema) = PerspectiveRowTable.Resolve(
       dbContext.Model, typeof(PerspectiveRow<TModel>), TypeNameFormatter.SimpleName(typeof(TModel)),
       "the collective event's perspective is not registered in this DbContext.");
+
+    // Model-field (jsonb) setters = the spec's setters plus any the hooks added, minus any a hook removed. A strongly-typed
+    // id among them is serialized in the form this schema's gate allows (#2518).
+    List<CollectiveSettersRewriter.CollectiveSetterAssignment> assignments;
+    await Perspectives.StrongIdDocumentTarget.ResolveAsync(dbContext, cancellationToken);
+    using (Perspectives.StrongIdDocumentTarget.Of(dbContext, schema)) {
+      assignments = [.. CollectiveSettersRewriter.CollectAssignments(spec.Setters)
+        .Concat(CollectiveSettersRewriter.FromHookSetters(hookPlan.ModelFieldSetters))
+        .Where(a => !hookPlan.RemovedModelFields.Contains(a.PathName))];
+    }
     var qualifiedTable = schema is null
       ? PgIdentifier.Quote(table)
       : PgIdentifier.Quote(schema) + "." + PgIdentifier.Quote(table);
@@ -353,9 +357,19 @@ public static partial class EFCoreCollectiveAdapter<TModel> where TModel : class
       return (column, "to_jsonb(" + column + ")");
     }
     parameters["p" + idx] = a.JsonValue;
-    var comparison = "(data->'" + cmp.ComparedProperty + "')" + JSONB_CAST + " " + cmp.SqlOperator + " @p" + idx + JSONB_CAST;
+    var (stored, value) = ("(data->'" + cmp.ComparedProperty + "')" + JSONB_CAST, "@p" + idx + JSONB_CAST);
+    if (cmp.ComparesStrongIds) {
+      (stored, value) = (_strongIdScalar(stored), _strongIdScalar(value));
+    }
+    var comparison = stored + " " + cmp.SqlOperator + " " + value;
     return ("(" + comparison + ")", "to_jsonb(" + comparison + ")");
   }
+
+  // A strongly-typed id's UUID string, from the object {"Value": ...} an earlier release stored or the string itself
+  // (#2518), so a comparison matches a row in either form. Inline rather than the schema's _wh_strong_id_scalar: the
+  // statement does not name the schema.
+  private static string _strongIdScalar(string json) =>
+    "(CASE WHEN jsonb_typeof(" + json + ") = 'object' THEN " + json + " -> 'Value' ELSE " + json + " END)";
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "Collective apply {CollectiveEventId} on {Table} updated {AffectedRows} rows in {Batches} batch(es)")]

@@ -440,6 +440,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests {
       _mapRow<JobModel>(modelBuilder, "wh_per_collective_job");
       _mapRow<JobStatusModel>(modelBuilder, "wh_per_collective_job_status");
       _mapRow<OverlayModel>(modelBuilder, "wh_per_collective_overlay");
+      _mapRow<StrongIdOverlayModel>(modelBuilder, "wh_per_collective_strong_id_overlay");
       // POLYMORPHIC model mapping: Data is a SCALAR jsonb column (Property + HasColumnType), NOT
       // ComplexProperty().ToJson(). This is exactly what a consumer's generator produces for perspective models with
       // [JsonPolymorphic] members (e.g. a tenant-fields model whose field cells are polymorphic). EF Core 10
@@ -541,6 +542,17 @@ public class CollectiveDispatcherEFCoreIntegrationTests {
         version INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS wh_per_collective_overlay (
+        id UUID PRIMARY KEY,
+        data JSONB NOT NULL,
+        metadata JSONB NOT NULL,
+        scope JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        sys_created_at TIMESTAMPTZ,
+        sys_updated_at TIMESTAMPTZ,
+        version INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS wh_per_collective_strong_id_overlay (
         id UUID PRIMARY KEY,
         data JSONB NOT NULL,
         metadata JSONB NOT NULL,
@@ -889,6 +901,81 @@ public class CollectiveDispatcherEFCoreIntegrationTests {
     private sealed record WhereSpec(
         Expression<Action<ICollectiveSetters<OverlayModel>>> Setters,
         Expression<Func<PerspectiveRow<OverlayModel>, bool>>? Where) : ICollectiveSpec<OverlayModel>;
+  }
+
+  internal sealed class StrongIdOverlayModel {
+    public TestOrderId OrderId { get; set; }
+    public bool IsActive { get; set; }
+    public Guid GlobalTemplateId { get; set; }
+  }
+
+  internal sealed class StrongIdOverlayActivePerspective {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Invoked through the instance invoker the generator emits; a static member does not compile there.")]
+    public ICollectiveSpec<StrongIdOverlayModel> SetActive(SetActiveEvent e) {
+      var activated = TestOrderId.From(e.OverlayId);
+      return new WhereSpec(
+        s => s.SetProperty(o => o.IsActive, o => o.OrderId == activated),
+        r => r.Data.GlobalTemplateId == e.GlobalTemplateId);
+    }
+
+    private sealed record WhereSpec(
+        Expression<Action<ICollectiveSetters<StrongIdOverlayModel>>> Setters,
+        Expression<Func<PerspectiveRow<StrongIdOverlayModel>, bool>>? Where) : ICollectiveSpec<StrongIdOverlayModel>;
+  }
+
+  /// <summary>
+  /// A computed setter that compares a strong id finds the row whatever form the id is stored in, the object form an
+  /// earlier release wrote or the UUID string (#2518).
+  /// </summary>
+  [Test]
+  public async Task DispatchAsync_AComparisonOnAStrongId_MatchesItInEitherStoredFormAsync() {
+    var gid = Guid.CreateVersion7();
+    var (objectForm, uuidString) = (Guid.CreateVersion7(), Guid.CreateVersion7());
+    await _seedStrongIdOverlayAsync(objectForm, $$"""{"Value": "{{objectForm}}"}""", gid);
+    await _seedStrongIdOverlayAsync(uuidString, $"\"{uuidString}\"", gid);
+    var services = new ServiceCollection();
+    services.AddSingleton(new StrongIdOverlayActivePerspective());
+    var dispatcher = new CollectiveDispatcher(
+      services.BuildServiceProvider(),
+      [new(typeof(StrongIdOverlayModel), typeof(SetActiveEvent), typeof(StrongIdOverlayActivePerspective),
+        nameof(StrongIdOverlayActivePerspective.SetActive), CollectiveScopeHandling.Custom, CollectiveSpecKind.Linq,
+        static (h, e, _) => ((StrongIdOverlayActivePerspective)h).SetActive((SetActiveEvent)e))],
+      [new TenantCollectiveScopeResolver()],
+      [new EFCoreCollectiveEventExecutor<StrongIdOverlayModel>()]);
+    async Task<bool> activateAsync(Guid target) {
+      await dispatcher.DispatchAsync(
+        new SetActiveEvent { OverlayId = target, GlobalTemplateId = gid, Scope = new TenantCollectiveScope("t-A") },
+        Guid.NewGuid(), _ctx!, default);
+      return await _readStrongIdOverlayActiveAsync(target);
+    }
+
+    var objectFormMatched = await activateAsync(objectForm);
+    var uuidStringMatched = await activateAsync(uuidString);
+
+    await Assert.That(objectFormMatched).IsTrue().Because("the comparison reads the object form's Value");
+    await Assert.That(uuidStringMatched).IsTrue();
+    await Assert.That(await _readStrongIdOverlayActiveAsync(objectForm)).IsFalse()
+      .Because("the second event's comparison is false for the first row");
+  }
+
+  private async Task _seedStrongIdOverlayAsync(Guid id, string storedOrderId, Guid globalTemplateId) {
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    var data = $$"""{"OrderId": {{storedOrderId}}, "IsActive": false, "GlobalTemplateId": "{{globalTemplateId}}"}""";
+    var scopeJson = JsonSerializer.Serialize(new PerspectiveScope { TenantId = "t-A" });
+    await conn.ExecuteAsync("""
+      INSERT INTO wh_per_collective_strong_id_overlay (id, data, metadata, scope, created_at, updated_at, version)
+      VALUES (@id, @data::jsonb, '{}'::jsonb, @scope::jsonb, now(), now(), 1);
+      """, new { id, data, scope = scopeJson });
+  }
+
+  private async Task<bool> _readStrongIdOverlayActiveAsync(Guid id) {
+    await using var conn = new NpgsqlConnection(_connectionString);
+    await conn.OpenAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT (data->>'IsActive')::bool FROM wh_per_collective_strong_id_overlay WHERE id = @id;";
+    cmd.Parameters.AddWithValue(nameof(id), id);
+    return (bool)(await cmd.ExecuteScalarAsync())!;
   }
 
   [Test]

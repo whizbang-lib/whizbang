@@ -69,6 +69,35 @@ namespace Whizbang.Core;
 /// public readonly partial struct ProductId;
 /// </code>
 /// </para>
+/// <para>
+/// <strong>Grandfathered values:</strong>
+/// A strict or allow-list id declares <c>static partial void _isGrandfathered(Guid value, ref bool grandfathered)</c>.
+/// An id type whose stored data holds a few values that predate its version rule (hand-typed seed ids, well-known
+/// system identities) implements it to name them, and its checked entry points accept them while every other value
+/// keeps the rule. Left unimplemented, the compiler removes the call. <c>New()</c> mints UUIDv7 as always:
+/// <code>
+/// [WhizbangId]
+/// public readonly partial struct ProductCatalogId {
+///   // Seeded before ids were UUIDv7. Frozen: new values are always minted.
+///   private static readonly FrozenSet&lt;Guid&gt; _grandfatheredValues = new[] {
+///     new Guid("3f2504e0-4f89-41d3-9a0c-0305e82c3301"),
+///   }.ToFrozenSet();
+///
+///   static partial void _isGrandfathered(Guid value, ref bool grandfathered) =>
+///     grandfathered = _grandfatheredValues.Contains(value);
+/// }
+/// </code>
+/// Implement it as declared, without an accessibility modifier: C# lets a partial method go unimplemented only when
+/// it has none, so the generated declaration has none, and an implementation that adds one (<c>private</c>, which
+/// IDE0040 may suggest) is CS8799. Without a modifier the method is private, which is why it is named in the
+/// <c>_camelCase</c> private methods take. It is a void method with a <c>ref</c> result for the same reason.
+/// </para>
+/// <para>
+/// The hook is asked only for a value that breaks the rule. It is never asked about <see cref="Guid.Empty"/>, which a
+/// strict or allow-list id always refuses. An <see cref="AcceptAnyVersion"/> id refuses nothing but the empty Guid, so
+/// it has no hook to ask: it declares none, and an implementation on one is a compile error (CS0759) rather than code
+/// that never runs. The hook runs for every value that breaks the rule, so keep it a set lookup.
+/// </para>
 /// </remarks>
 /// <example>
 /// Complete example with all three patterns:
@@ -170,7 +199,14 @@ public sealed class WhizbangIdAttribute(string? targetNamespace = null) : Attrib
   /// </para>
   /// <para>
   /// Set the option the same way on every <c>[WhizbangId]</c> for an id (the struct, a property, a parameter). When
-  /// they disagree, the id keeps the UUIDv7 rule and WHIZ029 is reported at each ignored opt-in.
+  /// they disagree, the id keeps the stricter rule of the others (UUIDv7, or their <see cref="Versions"/>) and
+  /// WHIZ029 is reported at each ignored opt-in.
+  /// </para>
+  /// <para>
+  /// Prefer <see cref="Versions"/> when the versions the id must hold are known, for example v7 for the ids the
+  /// application mints and v4 for ids imported from another system: the id then still refuses anything else, such as
+  /// a raw hash. Keep this option for ids issued outside the application, whose version it does not control. Writing
+  /// both is an error (WHIZ039).
   /// </para>
   /// </remarks>
   /// <example>
@@ -182,4 +218,54 @@ public sealed class WhizbangIdAttribute(string? targetNamespace = null) : Attrib
   /// </code>
   /// </example>
   public bool AcceptAnyVersion { get; set; }
+
+  /// <summary>
+  /// Gets or sets the UUID versions the generated ID accepts through its checked entry points. Defaults to
+  /// <see cref="UuidVersions.V7"/>.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/WhizbangIdAttributeTests.cs:WhizbangIdAttribute_VersionsProperty_CanBeSetAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdVersionAcceptanceTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdVersionsTests.cs</tests>
+  /// <remarks>
+  /// <para>
+  /// An allow-list between the UUIDv7-only default and <see cref="AcceptAnyVersion"/>, for an id that must also hold
+  /// values the application did not make: ids that already exist in stored data, or that another system issues.
+  /// <c>From(Guid)</c>, <c>From(TrackedGuid)</c>, <c>Parse</c>, the explicit cast, the transport JSON reader and the
+  /// GraphQL scalar accept a Guid whose version is in the list and whose variant is RFC 9562's, and throw
+  /// <see cref="ArgumentException"/> naming the accepted versions otherwise. <see cref="Guid.Empty"/> has no version and
+  /// is always refused. The public constructor and the <c>Value</c> initializer stay unchecked, as on every id.
+  /// </para>
+  /// <para>
+  /// It is not needed for ids the application makes. Mint a new id with <c>New()</c>, and derive one through the
+  /// framework's derivations (<c>GeneratedStreamIdentity.Derive</c>, <c>EmissionIdentity.Derive</c>,
+  /// <c>CompositeChildIdentity.ForChild</c>): all of them produce UUIDv7, which the default accepts.
+  /// </para>
+  /// <para>
+  /// A value of another version costs what time-ordering gave. <c>IsTimeOrdered</c> is <c>false</c>,
+  /// <c>GetTimestamp()</c> returns no meaningful time, and <c>CompareTo</c> and the ordering operators no longer follow
+  /// creation order. Used as a stream id, it also loses the index locality time-ordered values give a database: new
+  /// rows land across the index rather than at its end. The framework's ordering guarantees are unaffected, since they
+  /// rely on the message and event ids it mints, and a stream id is only hashed for partitioning and sorted for lock
+  /// ordering.
+  /// </para>
+  /// <para>
+  /// When the <c>[WhizbangId]</c> declarations for one id (the struct, a property, a parameter) list different
+  /// versions, the id accepts the versions they have in common and WHIZ038 is reported at each list that was
+  /// narrowed. An empty list, or declarations with no version in common, is an error (WHIZ043), as is a bit that
+  /// names no version, such as <c>(UuidVersions)1</c> (WHIZ044). Writing this together with
+  /// <c>AcceptAnyVersion = true</c> is an error (WHIZ039).
+  /// </para>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// // New customers are minted here; customers imported from the previous CRM keep their v4 ids.
+  /// [WhizbangId(Versions = UuidVersions.V7 | UuidVersions.V4)]
+  /// public readonly partial struct CustomerId;
+  ///
+  /// var minted = CustomerId.New();                                                     // v7: accepted
+  /// var imported = CustomerId.From(Guid.Parse("3f2504e0-4f89-41d3-9a0c-0305e82c3301")); // v4: accepted
+  /// var hashed = CustomerId.From(NameBasedGuid.V5(ns, "a"));                           // v5: ArgumentException
+  /// </code>
+  /// </example>
+  public UuidVersions Versions { get; set; } = UuidVersions.V7;
 }

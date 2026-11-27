@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 using System.Diagnostics.CodeAnalysis;
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Query.Expressions.Internal;
+using Whizbang.Data.EFCore.Postgres.Perspectives;
 
 namespace Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
 
@@ -65,7 +67,10 @@ public static class JsonbContainmentSql {
   /// </summary>
   /// <param name="member">The translated JSON member, which carries both the column and the path.</param>
   /// <param name="value">The value to compare against, already translated.</param>
-  /// <returns>The containment test, or null when the member's shape cannot be expressed as one.</returns>
+  /// <returns>
+  /// The containment test, or null when the member's shape cannot be expressed as one. For a strong id, the test for
+  /// either stored form: the UUID string, or the object <c>{"Value": ...}</c> an earlier release wrote.
+  /// </returns>
   /// <remarks>
   /// Returns null rather than throwing for a shape it cannot express, because every caller's correct
   /// response is the same: leave the comparison alone. An array index is the case that arises, since
@@ -81,29 +86,53 @@ public static class JsonbContainmentSql {
     ArgumentNullException.ThrowIfNull(member);
     ArgumentNullException.ThrowIfNull(value);
 
-    if (member.Json.TypeMapping is null) {
+    if (member.Json.TypeMapping is not { } jsonb || _document(member, value, jsonb) is not { } document) {
       return null;
     }
 
+    var contains = new PgUnknownBinaryExpression(member.Json, document, "@>", typeof(bool), BoolTypeMapping.Default);
+    if (member.TypeMapping is not WhizbangIdTypeMapping) {
+      return contains;
+    }
+
+    // A strong id an earlier release stored as {"Value": ...} (#2518): until the stored-form rewrite reaches the row,
+    // or for a row an instance of that release writes, the id is matched in that form too. Both arms are containment,
+    // so the document index answers each.
+    var asObject = _document(member, _object(STRONG_ID_VALUE, value, jsonb), jsonb)!;
+    return new SqlBinaryExpression(
+      ExpressionType.OrElse,
+      contains,
+      new PgUnknownBinaryExpression(member.Json, asObject, "@>", typeof(bool), BoolTypeMapping.Default),
+      typeof(bool),
+      BoolTypeMapping.Default);
+  }
+
+  /// <summary>The member an id's object form keeps its value under.</summary>
+  private const string STRONG_ID_VALUE = "Value";
+
+  /// <summary>The value nested one object per path segment, so a.b.c becomes {"a":{"b":{"c":value}}}.</summary>
+  /// <returns>The document, or null when a segment is a position rather than a key.</returns>
+  private static SqlExpression? _document(JsonScalarExpression member, SqlExpression value, RelationalTypeMapping jsonb) {
     var payload = value;
 
-    // Built from the inside out, so a.b.c becomes {"a":{"b":{"c":value}}}.
+    // Built from the inside out.
     for (var i = member.Path.Count - 1; i >= 0; i--) {
-      var name = member.Path[i].PropertyName;
-      if (name is null) {
+      if (member.Path[i].PropertyName is not { } name) {
         return null;
       }
 
-      payload = new SqlFunctionExpression(
-        "jsonb_build_object",
-        [new SqlConstantExpression(name, typeof(string), StringTypeMapping.Default), payload],
-        nullable: true,
-        argumentsPropagateNullability: _argumentsPropagateNullability,
-        typeof(string),
-        member.Json.TypeMapping);
+      payload = _object(name, payload, jsonb);
     }
 
-    return new PgUnknownBinaryExpression(
-      member.Json, payload, "@>", typeof(bool), BoolTypeMapping.Default);
+    return payload;
   }
+
+  private static SqlFunctionExpression _object(string key, SqlExpression value, RelationalTypeMapping jsonb) =>
+    new(
+      "jsonb_build_object",
+      [new SqlConstantExpression(key, typeof(string), StringTypeMapping.Default), value],
+      nullable: true,
+      argumentsPropagateNullability: _argumentsPropagateNullability,
+      typeof(string),
+      jsonb);
 }

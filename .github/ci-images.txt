@@ -20,3 +20,7 @@ rabbitmq:3.13-management-alpine@sha256:606d8c0d6b3c18d1da9afc53bc7cdb2a8d5486df9
 # The Testcontainers reaper. The tag is fixed by the Testcontainers package version (4.10.0 uses 0.14.0);
 # a Testcontainers upgrade that moves it fails the pull check until this line follows.
 testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0
+
+# A pooler in front of the shared PostgreSQL, so a database is reached under an alias of its own name
+# (StrongIdPooledDatabaseNameTests, #2518).
+edoburu/pgbouncer:v1.26.1-p0@sha256:488422e38cff912895d0d65d8963fcd306e6ac589a724398b6eb8e294e94d624

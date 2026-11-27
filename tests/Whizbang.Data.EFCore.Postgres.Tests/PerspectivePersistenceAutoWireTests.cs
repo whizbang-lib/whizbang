@@ -6,6 +6,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Data.EFCore.Postgres.Perspectives;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -24,18 +25,20 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard2")]
 public class PerspectivePersistenceAutoWireTests {
   [Test]
-  public async Task RegistryPersistenceOptions_WithNoStartupHookRun_ProduceEFCompatibleByteFormatAsync() {
+  [Arguments(true, "\"OrderId\":\"019e244a-6bda-78a9-a08f-a1011c9c31dd\"")]
+  [Arguments(false, "\"OrderId\":{\"Value\":\"019e244a-6bda-78a9-a08f-a1011c9c31dd\"}")]
+  public async Task RegistryPersistenceOptions_WithNoStartupHookRun_ProduceEFCompatibleByteFormatAsync(bool uuidString, string expected) {
     var testGuid = System.Guid.Parse("019e244a-6bda-78a9-a08f-a1011c9c31dd");
     var order = new Order {
       OrderId = new TestOrderId(testGuid),
       Amount = 100.00m,
       Status = "Created"
     };
+    using var form = global::Whizbang.Data.Postgres.StrongIdDocumentForms.ScopeTo(uuidString);
 
     var json = PerspectiveDocumentSerialization.Serialize(order);
 
-    // Byte-format invariant matches what EF Core 10's ComplexProperty.ToJson writes.
-    await Assert.That(json).Contains("\"OrderId\":{\"Value\":\"019e244a-6bda-78a9-a08f-a1011c9c31dd\"}");
-    await Assert.That(json).DoesNotContain("\"OrderId\":\"019e244a-6bda-78a9-a08f-a1011c9c31dd\"");
+    // Byte-format invariant matches what Entity Framework writes under the id's scalar type mapping in the same form (#2518).
+    await Assert.That(json).Contains(expected);
   }
 }

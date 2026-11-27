@@ -11,8 +11,8 @@ namespace Whizbang.Transports.HotChocolate.Types;
 /// <summary>
 /// The GraphQL scalar of one <c>[WhizbangId]</c> type, named after it. On the wire it is a UUID string, the same
 /// as the <c>UUID</c> scalar; on input it goes through the id's own <c>From(Guid)</c>, so a Guid the id refuses
-/// (not UUIDv7, or empty for an id declared with <c>AcceptAnyVersion</c>) fails input coercion with a GraphQL
-/// error instead of reaching the resolver.
+/// (a version outside the id's <c>Versions</c>, UUIDv7 by default, or empty for an id declared with
+/// <c>AcceptAnyVersion</c>) fails input coercion with a GraphQL error instead of reaching the resolver.
 /// </summary>
 /// <docs>apis/graphql/setup</docs>
 /// <tests>tests/Whizbang.Transports.HotChocolate.Ids.Tests/Unit/WhizbangIdTypeTests.cs</tests>

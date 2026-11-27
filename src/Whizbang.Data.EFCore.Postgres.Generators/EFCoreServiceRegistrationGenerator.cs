@@ -323,7 +323,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         ConnectionStringName: connectionStringName,
         // The name earlier releases derived from the class, read as a fallback only when the context
         // names no connection string (see WhizbangNamingConvention.ResolveConnectionStringName).
-        LegacyConnectionStringName: explicitConnectionStringName is null ? _legacyConnectionStringName(TypeNameUtilities.SimpleName(symbol)) : null
+        LegacyConnectionStringName: explicitConnectionStringName is null ? _legacyConnectionStringName(TypeNameUtilities.SimpleName(symbol)) : null,
+        // #2518: the generated partial overrides OnConfiguring; an override of the consumer's own is reported (WHIZ704).
+        OwnOnConfiguring: symbol.GetMembers("OnConfiguring").OfType<IMethodSymbol>()
+          .FirstOrDefault(m => m.IsOverride && m.Parameters.Length == 1)?.Locations.FirstOrDefault()
     );
   }
 
@@ -1680,8 +1683,36 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("    // convention plugin, and the rows it reads were written as numbers. After the extension, so");
       sb.AppendLine("    // the walk sees what the consumer configured too.");
       sb.AppendLine("    global::Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalConvention.Apply(modelBuilder);");
+      sb.AppendLine("    // A strongly-typed id is a uuid scalar, stored in a document as the UUID string the atomic upsert");
+      sb.AppendLine("    // writes, whether or not this context carries the options extension whose type mapping makes it one");
+      sb.AppendLine("    // (#2518).");
+      sb.AppendLine("    global::Whizbang.Data.EFCore.Postgres.Perspectives.WhizbangIdConvention.Apply(modelBuilder, this);");
       sb.AppendLine("  }");
       sb.AppendLine();
+      if (dbContext.OwnOnConfiguring is { } ownOnConfiguring) {
+        // WHIZ704: a second OnConfiguring would be a duplicate member; the consumer's configuration belongs in the hook.
+        context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.DbContextOverridesOnConfiguring, ownOnConfiguring, dbContext.ClassName));
+      } else {
+        sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
+        sb.AppendLine("  /// Calls the base context's OnConfiguring, then OnConfiguringExtended() for custom user configuration, then");
+        sb.AppendLine("  /// gives the options what strongly-typed ids need when they do not carry the Whizbang options extension");
+        sb.AppendLine("  /// (#2518): last, so it sees the provider wherever it was set.");
+        sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
+        sb.AppendLine("  /// <param name=\"optionsBuilder\">The builder for this context's options.</param>");
+        sb.AppendLine("  protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {");
+        sb.AppendLine("    base.OnConfiguring(optionsBuilder);");
+        sb.AppendLine("    OnConfiguringExtended(optionsBuilder);");
+        sb.AppendLine("    global::Whizbang.Data.EFCore.Postgres.Perspectives.WhizbangIdConvention.Configure(optionsBuilder);");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
+        sb.AppendLine("  /// Override this method to configure this context's options beyond Whizbang's.");
+        sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
+        sb.AppendLine("  /// <param name=\"optionsBuilder\">The builder for this context's options.</param>");
+        sb.AppendLine("  partial void OnConfiguringExtended(DbContextOptionsBuilder optionsBuilder);");
+        sb.AppendLine();
+      }
       sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
       sb.AppendLine("  /// Override this method to extend the model configuration beyond Whizbang's auto-generated setup.");
       sb.AppendLine("  /// Use this for custom entity configurations, indexes, constraints, etc.");
@@ -4069,7 +4100,8 @@ internal sealed record DbContextInfo(
     string Schema,
     string[] Keys,
     string ConnectionStringName,
-    string? LegacyConnectionStringName = null);
+    string? LegacyConnectionStringName = null,
+    Location? OwnOnConfiguring = null);
 
 /// <summary>
 /// Information about a discovered perspective and its TModel type.

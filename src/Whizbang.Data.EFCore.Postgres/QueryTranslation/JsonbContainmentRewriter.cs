@@ -370,6 +370,10 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
       return false;
     }
 
+    if (_strongIdTypeOf(member.Type) is { } idType) {
+      return _tryRewriteStrongId(comparison, member, candidateValue, idType, out rewritten);
+    }
+
     var overload = JsonbContainment.OverloadFor(member.Type);
     if (overload is null || _isValueConverted(member) || _hasOwnIndex(member)) {
       return false;
@@ -384,6 +388,38 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
       ? candidateValue
       : Expression.Convert(candidateValue, parameterType);
 
+    var containment = Expression.Call(overload, memberArgument, valueArgument);
+
+    rewritten = _mayBeNull(candidateValue) ? _guardedAgainstNull(containment, comparison, candidateValue) : containment;
+    return true;
+  }
+
+  /// <summary>The strongly-typed id a member holds, when its type (or its nullable's underlying type) is one.</summary>
+  private static Type? _strongIdTypeOf(Type memberType) {
+    var bare = Nullable.GetUnderlyingType(memberType) ?? memberType;
+    return Whizbang.Core.WhizbangIdForms.TryGet(bare, out _) ? bare : null;
+  }
+
+  /// <summary>
+  /// The containment test for an equality on a strongly-typed id inside a document (#2518), through the <see cref="Guid"/>
+  /// overload: the id is stored as its UUID string, which is what the Guid's document holds.
+  /// </summary>
+  /// <remarks>
+  /// The member reaches the overload unboxed through <see cref="object"/>, a conversion the translation removes around a
+  /// JSON member, so the member keeps its column and path. The value is converted to its Guid by the id's own operator,
+  /// on the client, where the query's parameters are evaluated; a null value is the guard's to answer.
+  /// </remarks>
+  private bool _tryRewriteStrongId(
+      Expression comparison, MemberExpression member, Expression candidateValue, Type idType, out Expression rewritten) {
+    rewritten = Expression.Empty();
+    if (_isValueConverted(member) || _hasOwnIndex(member)) {
+      return false;
+    }
+
+    var overload = JsonbContainment.OverloadFor(typeof(Guid))!;
+    var memberArgument = Expression.Convert(Expression.Convert(member, typeof(object)), typeof(Guid));
+    var value = candidateValue.Type == idType ? candidateValue : Expression.Convert(candidateValue, idType);
+    var valueArgument = Expression.Convert(value, typeof(Guid));
     var containment = Expression.Call(overload, memberArgument, valueArgument);
 
     rewritten = _mayBeNull(candidateValue) ? _guardedAgainstNull(containment, comparison, candidateValue) : containment;

@@ -293,8 +293,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           rewriteConnectionFactory, "__SCHEMA__", storedFormMigrations, cancellationToken);
         // A dictionary an earlier release stored as an object becomes an array of key/value pairs before the temporal
         // rewrite, so a temporal held in a dictionary's value is at the path the readers read (#1911).
-        var rewrites = global::System.Linq.Enumerable.ToList(global::System.Linq.Enumerable.Concat(global::System.Linq.Enumerable.Concat(global::System.Linq.Enumerable.Concat(
-          global::Whizbang.Data.Postgres.StoredFormMigrationSql.ForPhase("__SCHEMA__", storedFormMigrations),
+        var rewrites = global::System.Linq.Enumerable.ToList(global::System.Linq.Enumerable.Concat(global::System.Linq.Enumerable.Concat(
+          global::System.Linq.Enumerable.Concat(
+            global::Whizbang.Data.Postgres.StoredFormMigrationSql.ForPhase("__SCHEMA__", storedFormMigrations),
           global::System.Linq.Enumerable.Select(
             Whizbang.Data.EFCore.Postgres.Perspectives.DictionaryPairsRewrite.ForModel(
               dbContext.Model,
@@ -313,10 +314,38 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         // type, concurrently, now that the conversion has committed. One that cannot be is left to the schema pass.
         await global::Whizbang.Data.Postgres.StoredFormIndexRebuild.ApplyAsync(
           rewriteConnectionFactory, storedFormMigrations, _schemaCommandTimeoutSeconds, logger, cancellationToken);
-        // Last, once a [StoredForm(DefaultWhenMissing)] has filled what it fills: a required member still missing from
+        // Then, once a [StoredForm(DefaultWhenMissing)] has filled what it fills: a required member still missing from
         // stored rows is reported, and each table checked is recorded, settled when nothing changed or is missing.
         await global::Whizbang.Data.Postgres.Perspectives.DeclaredKeySpellingPass.SettleAsync(
           rewriteConnectionFactory, "__SCHEMA__", declaredKeys, _schemaCommandTimeoutSeconds, startupClock, logger, cancellationToken);
+        // Last and on its own, so a failure here skips nothing above.
+        try {
+          // A strongly-typed id an earlier release stored as {"Value": ...} becomes the UUID string (#2518): one slice here,
+          // a batch at a time from where the journal says the last one stopped, each batch committed under the rewrite's own
+          // lock, so a sibling's schema pass never waits on it; the maintenance cycle carries on until every table is
+          // settled. Queries read both forms meanwhile, so nothing waits on it. It runs only once every live instance reads
+          // and writes the UUID string (the schema's strong-id document gate), so nothing writes the object form behind it.
+          await global::Whizbang.Data.Postgres.BatchedRewriteRunner.RunAsync(
+            new global::Whizbang.Data.Postgres.BatchedRewriteRequest(
+              rewriteConnectionFactory, "__SCHEMA__", global::Whizbang.Data.Postgres.BatchedRewriteLockKey.Compute("__SCHEMA__"),
+              global::System.Linq.Enumerable.ToList(global::System.Linq.Enumerable.Select(
+                Whizbang.Data.EFCore.Postgres.Perspectives.StrongIdScalarRewrite.ForModel(
+                  dbContext.Model,
+                  Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options,
+                  "__SCHEMA__"),
+                t => (t.Name, t.Sql))),
+              _schemaCommandTimeoutSeconds),
+            global::Whizbang.Data.Postgres.BatchedRewriteBudget.ForStartup(_schemaCommandTimeoutSeconds),
+            (connection, ct) => global::Whizbang.Data.Postgres.StrongIdDocumentGate.RewriteHoldAsync(connection, "__SCHEMA__", ct),
+            global::Whizbang.Data.Postgres.StoredFormApplier.Current,
+            startupClock,
+            logger,
+            cancellationToken);
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+          logger?.LogWarning(ex,
+            "The strong-id stored-form slice did not complete for {Schema}; the maintenance cycle carries it on",
+            "__SCHEMA__");
+        }
       } catch (Exception ex) when (ex is not OperationCanceledException
           and not Whizbang.Data.Postgres.StoredFormConversionBlockedException) {
         // A conversion blocked by values it cannot read is the one failure that stops startup: it names the
@@ -682,6 +711,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     }
     await _analyzeNewlyIndexedTablesAsync(dbContext, segmentConnectionFactory, logger, cancellationToken);
 
+    // A strongly-typed id in a document is written as its UUID string only once every live instance reads it (#2518):
+    // this start asks the schema's gate, so a restart after it opened writes the UUID string from its first write, and
+    // a closed or missing gate keeps the object form every release reads. The maintenance cycle asks again.
+    await _checkStrongIdDocumentGateAsync(dbContext, segmentConnectionFactory, logger, cancellationToken);
+
     // The managed-object reconcile runs at every start, the fast path included: an object retired by a release
     // whose schema hash did not change, or dropped by hand, is found by reading the catalog, not the hash. After
     // the commit, on a connection of its own, because DROP INDEX CONCURRENTLY cannot run in a transaction.
@@ -962,6 +996,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           global::System.Linq.Enumerable.Select(
             Whizbang.Data.EFCore.Postgres.Perspectives.DeclaredKeyShapes.ForModel(dbContext.Model, documentOptions),
             t => (t.JournalName, t.Table)),
+          // The strong-id rewrite is not waited on (#2518): queries read both forms, and the maintenance cycle finishes it.
           global::System.Linq.Enumerable.Select(
             Whizbang.Data.EFCore.Postgres.Perspectives.DictionaryPairsRewrite.ForModel(dbContext.Model, documentOptions, "__SCHEMA__"),
             t => (t.Name, t.Table)))),
@@ -1007,6 +1042,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     }
     foreach (var (table, sql) in Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalRewrite.ForModel(dbContext.Model, documentOptions, "__SCHEMA__")) {
       content["temporal-form:" + table] = global::Whizbang.Data.Postgres.StoredFormApplier.ContentHash(sql);
+    }
+    // #2518: the strong-id rewrite records the hash of its one-batch statement, which the maintenance cycle runs too.
+    foreach (var strongIds in Whizbang.Data.EFCore.Postgres.Perspectives.StrongIdScalarRewrite.ForModel(dbContext.Model, documentOptions, "__SCHEMA__")) {
+      content["stored-form:" + strongIds.Name] = global::Whizbang.Data.Postgres.StoredFormApplier.ContentHash(strongIds.Sql);
     }
     return content;
   }
@@ -2688,6 +2727,37 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       // Don't throw — reconciliation is informational, not critical for startup.
       logger?.LogWarning(ex, "Failed to reconcile message type registry (function may not exist yet)");
     }, cancellationToken);
+  }
+
+  /// <summary>
+  /// Asks the schema's strong-id document gate, which sets the form this process writes a strongly-typed id in (#2518).
+  /// Never fatal: a gate that cannot be asked leaves the object form, which every release reads.
+  /// </summary>
+  private static async Task _checkStrongIdDocumentGateAsync(
+    __DBCONTEXT_FQN__ dbContext,
+    Func<Npgsql.NpgsqlConnection>? segmentConnectionFactory,
+    ILogger? logger,
+    CancellationToken cancellationToken) {
+    try {
+      if (segmentConnectionFactory is not null) {
+        await using var connection = segmentConnectionFactory();
+        await connection.OpenAsync(cancellationToken);
+        await global::Whizbang.Data.Postgres.StrongIdDocumentGate.CheckAsync(connection, "__SCHEMA__", logger, cancellationToken);
+        return;
+      }
+      await dbContext.Database.OpenConnectionAsync(cancellationToken);
+      try {
+        await global::Whizbang.Data.Postgres.StrongIdDocumentGate.CheckAsync(
+          (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection(), "__SCHEMA__", logger, cancellationToken);
+      } finally {
+        await dbContext.Database.CloseConnectionAsync();
+      }
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      global::Whizbang.Data.Postgres.StrongIdDocumentGate.HoldUnasked(dbContext.Database.GetDbConnection(), "__SCHEMA__");
+      logger?.LogWarning(ex,
+        "Could not ask the strong-id document gate for {Schema}; strongly-typed ids in documents are written in the "
+        + "object form every release reads until the maintenance cycle can", "__SCHEMA__");
+    }
   }
 
   /// <summary>

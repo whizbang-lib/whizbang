@@ -4,7 +4,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -39,9 +38,11 @@ public static class WhizbangIdProviderRegistry {
   private static readonly Dictionary<Type, Func<IWhizbangIdProvider, object>> _factories = [];
   private static readonly List<Action<IServiceCollection, IWhizbangIdProvider>> _diRegistrations = [];
   private static readonly Dictionary<Type, Func<Guid, object>> _guidConversions = [];
-  private static readonly Dictionary<Type, MemberInfo> _valueMembers = [];
   private static readonly Lock _lock = new();
   private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, byte> _anyVersionIds = new();
+
+  /// <summary>Each id type's own rule, as its generated <c>IsAccepted</c>: never throws for a value it refuses (#2516, #2517).</summary>
+  private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, Func<Guid, bool>> _acceptance = new();
 
   /// <summary>
   /// Registers a factory for creating IWhizbangIdProvider{TId} instances.
@@ -187,6 +188,62 @@ public static class WhizbangIdProviderRegistry {
   public static bool AcceptsAnyVersion(Type? idType) => idType is not null && _anyVersionIds.ContainsKey(idType);
 
   /// <summary>
+  /// Records an id type's own rule, its generated <c>IsAccepted</c>, so a stream id of that type is never reported for a
+  /// value the rule accepts: a version its <c>Versions</c> list holds (#2516) or a grandfathered value (#2517).
+  /// Called automatically by generated ModuleInitializer - users should not call this directly.
+  /// </summary>
+  /// <typeparam name="TId">The WhizbangId struct type</typeparam>
+  /// <param name="isAccepted">The id's <c>IsAccepted(Guid)</c>, which never throws for a value it refuses.</param>
+  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingStreamIdByTypeTests.cs</tests>
+  public static void RegisterAcceptance<TId>(Func<Guid, bool> isAccepted) where TId : struct, IWhizbangId {
+    ArgumentNullException.ThrowIfNull(isAccepted);
+    _acceptance[typeof(TId)] = isAccepted;
+  }
+
+  /// <summary>
+  /// Whether <paramref name="idType"/>'s own rule accepts <paramref name="value"/>, so a stream id of that type carrying it
+  /// is never reported as not time-ordered (#2528, #2516, #2517): an id declared to accept any version, or one whose
+  /// <c>IsAccepted</c> says yes. Lock-free and without exceptions: it is asked on every append of a stream id that is not
+  /// UUIDv7. A grandfathered-values hook that throws is the id type's fault, not the append's: the value counts as not
+  /// accepted and is reported. Not for <see cref="Guid.Empty"/>, which the caller refuses first.
+  /// </summary>
+  /// <param name="idType">The stream id's declared type, or null when unknown.</param>
+  /// <param name="value">The stream id.</param>
+  /// <returns>True when the type's rule accepts the value; false for a null or unregistered type.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingStreamIdByTypeTests.cs</tests>
+  public static bool AcceptsStreamId(Type? idType, Guid value) => AcceptsStreamId(idType, value, out _);
+
+  /// <summary>
+  /// Whether <paramref name="idType"/>'s own rule accepts <paramref name="value"/>, as
+  /// <see cref="AcceptsStreamId(Type, Guid)"/>, and what the id type's hook threw when it threw, so the caller can say so.
+  /// </summary>
+  /// <param name="idType">The stream id's declared type, or null when unknown.</param>
+  /// <param name="value">The stream id.</param>
+  /// <param name="hookFailure">What the id type's <c>IsAccepted</c> threw, or null.</param>
+  /// <returns>True when the type's rule accepts the value; false for a null or unregistered type, or a hook that threw.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Validation/GuidOrderingStreamIdByTypeTests.cs:AcceptsStreamId_AHookThatThrows_IsLoggedAtWarningNamingTheIdTypeAndStreamIdAsync</tests>
+  public static bool AcceptsStreamId(Type? idType, Guid value, out Exception? hookFailure) {
+    hookFailure = null;
+    if (idType is null) {
+      return false;
+    }
+    if (_anyVersionIds.ContainsKey(idType)) {
+      return true;
+    }
+    if (!_acceptance.TryGetValue(idType, out var isAccepted)) {
+      return false;
+    }
+    try {
+      return isAccepted(value);
+    } catch (Exception ex) when (ex is not OutOfMemoryException) {
+      // The id type's own hook threw: the report says what the rule could not, the caller logs what failed, and the
+      // append goes on.
+      hookFailure = ex;
+      return false;
+    }
+  }
+
+  /// <summary>
   /// Gets the Guid conversion of every id type that has one, recorded by <see cref="RegisterGuidConversion{TId}"/>:
   /// every generated WhizbangId in the loaded assemblies. Each conversion returns the boxed id and throws
   /// <see cref="ArgumentException"/> for a Guid the id refuses.
@@ -195,39 +252,6 @@ public static class WhizbangIdProviderRegistry {
   public static IReadOnlyDictionary<Type, Func<Guid, object>> GetGuidConversions() {
     lock (_lock) {
       return new Dictionary<Type, Func<Guid, object>>(_guidConversions);
-    }
-  }
-
-  /// <summary>
-  /// Records the id's <c>Value</c> property, read from a member access the compiler builds, so that an integration
-  /// that composes queries over the id (a GraphQL filter comparing the Guid inside a perspective document) can read
-  /// the Guid without looking the property up by name.
-  /// Called automatically by generated ModuleInitializer - users should not call this directly.
-  /// </summary>
-  /// <typeparam name="TId">The WhizbangId struct type</typeparam>
-  /// <param name="value">The read of the id's Guid, <c>id =&gt; id.Value</c></param>
-  /// <exception cref="ArgumentNullException">Thrown when value is null</exception>
-  /// <exception cref="ArgumentException">Thrown when value is not a member read</exception>
-  public static void RegisterValueMember<TId>(Expression<Func<TId, Guid>> value)
-    where TId : struct, IWhizbangId {
-    ArgumentNullException.ThrowIfNull(value);
-    if (value.Body is not MemberExpression read) {
-      throw new ArgumentException($"The read of {TypeNameFormatter.SimpleName(typeof(TId))}'s Guid has to be a member read, such as id => id.Value.", nameof(value));
-    }
-
-    lock (_lock) {
-      _valueMembers[typeof(TId)] = read.Member;
-    }
-  }
-
-  /// <summary>
-  /// Gets the <c>Value</c> member of every id type that has one, recorded by
-  /// <see cref="RegisterValueMember{TId}"/>: every generated WhizbangId in the loaded assemblies.
-  /// </summary>
-  /// <returns>The members by id type, as a snapshot</returns>
-  public static IReadOnlyDictionary<Type, MemberInfo> GetValueMembers() {
-    lock (_lock) {
-      return new Dictionary<Type, MemberInfo>(_valueMembers);
     }
   }
 

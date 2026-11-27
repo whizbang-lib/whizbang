@@ -61,6 +61,34 @@ public class GuidOrderingInMemoryAppendTests {
     await Assert.That(await store.GetLastSequenceAsync(stream)).IsEqualTo(-1L);
   }
 
+  /// <summary>
+  /// A stream id typed by an id whose <c>Versions</c> list holds its version is stored at Error, and one it does not
+  /// list is refused (#2516).
+  /// </summary>
+  [Test]
+  public async Task Append_AStreamIdItsTypeLists_IsStoredAtError_AndOneItDoesNotIsRefusedAsync() {
+    var options = new WhizbangOptions { StreamIdOrderingViolationSeverity = GuidOrderingSeverity.Error };
+    var store = new InMemoryEventStore { GuidOrdering = new GuidOrderingValidator(options, NullLogger.Instance) };
+    var listed = NonTimeOrderedGuidShapes.V5;
+    var unlisted = NonTimeOrderedGuidShapes.V4;
+
+    await store.AppendAsync(listed, _keyed(listed));
+    await Assert.That(async () => await store.AppendAsync(unlisted, _keyed(unlisted))).Throws<GuidOrderingException>();
+
+    await Assert.That(await store.GetLastSequenceAsync(listed)).IsGreaterThanOrEqualTo(0L);
+    await Assert.That(await store.GetLastSequenceAsync(unlisted)).IsEqualTo(-1L);
+  }
+
+  private static MessageEnvelope<VersionsKeyedProbe> _keyed(Guid stream) {
+    var id = (Guid)TrackedGuid.New();
+    return new() {
+      MessageId = new MessageId(id),
+      Payload = new VersionsKeyedProbe(new Whizbang.Core.Tests.ValueObjects.MintedOrNamedTestId(stream)),
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = Dispatch.DispatchModes.Local, Source = MessageSource.Local },
+    };
+  }
+
   [Test]
   public async Task Append_NonV7StreamId_ByDefault_IsStoredAsync() {
     var store = new InMemoryEventStore();
@@ -93,3 +121,7 @@ public class GuidOrderingInMemoryAppendTests {
     await Assert.That(thrown.MessageType).IsEqualTo(nameof(Probe));
   }
 }
+
+/// <summary>An event whose stream id is a strong id declared with a <c>Versions</c> list (v7 or v5, #2516).</summary>
+/// <param name="StreamId">The stream.</param>
+public sealed record VersionsKeyedProbe([property: StreamId] Whizbang.Core.Tests.ValueObjects.MintedOrNamedTestId StreamId) : IEvent;

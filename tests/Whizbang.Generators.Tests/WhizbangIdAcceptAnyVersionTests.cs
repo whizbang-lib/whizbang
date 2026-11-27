@@ -25,8 +25,8 @@ namespace Whizbang.Generators.Tests;
 [Category("SourceGenerators")]
 public class WhizbangIdAcceptAnyVersionTests {
 
-  private const string STRICT_FROM_GUARD = "if (value.Version != 7)";
-  private const string STRICT_TRACKED_GUARD = "if (!tracked.IsTimeOrdered)";
+  private const string STRICT_FROM_GUARD = "if (value.Version != 7 && !_grandfathers(value))";
+  private const string STRICT_TRACKED_GUARD = "if (!tracked.IsTimeOrdered && !_grandfathers(tracked.Value))";
   private const string NON_EMPTY_GUARD = "_requireNonEmpty(";
 
   [RequiresAssemblyFiles()]
@@ -49,7 +49,7 @@ public class WhizbangIdAcceptAnyVersionTests {
     var generated = _generatedId(source);
 
     await Assert.That(generated).DoesNotContain(STRICT_FROM_GUARD);
-    await Assert.That(generated).DoesNotContain(STRICT_TRACKED_GUARD);
+    await Assert.That(generated).DoesNotContain("!tracked.IsTimeOrdered");
     await Assert.That(generated).Contains(
       "public static ProductId From(Guid value) => new(TrackedGuid.FromExternal(_requireNonEmpty(value, nameof(value))));");
     await Assert.That(generated).Contains("_requireNonEmpty(tracked.Value, nameof(tracked));");

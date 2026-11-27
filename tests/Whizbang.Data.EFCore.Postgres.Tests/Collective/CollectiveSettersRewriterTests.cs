@@ -8,7 +8,9 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Hooks;
 using Whizbang.Data.EFCore.Postgres.Collective;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 
@@ -188,6 +190,46 @@ public class CollectiveSettersRewriterTests {
     await Assert.That(error!.Message).Contains("RawSql")
       .Because("the message is the only place the caller is told which spec kind accepts richer "
              + "value sources, and without it the next step is guesswork");
+  }
+
+  // ── Strong id → the form the fleet reads (#2518) ──────────────────────
+
+  [Test]
+  public async Task CollectAssignments_AStrongIdWhileTheGateIsClosed_IsSerializedInTheObjectFormAsync() {
+    using var form = StrongIdDocumentForms.ScopeTo(uuidString: false);
+    var id = TestOrderId.New();
+    Expression<Action<ICollectiveSetters<OrderModel>>> source = s => s.SetProperty(o => o.OrderId, id);
+
+    var assignments = CollectiveSettersRewriter.CollectAssignments(source);
+
+    await Assert.That(assignments[0].JsonValue).IsEqualTo($$"""{"Value":"{{id.Value}}"}""")
+      .Because("an instance of an earlier release reads only the object form until the fleet's gate opens");
+  }
+
+  [Test]
+  public async Task CollectAssignments_AStrongIdOnceTheGateIsOpen_IsSerializedAsItsUuidStringAsync() {
+    using var form = StrongIdDocumentForms.ScopeTo(uuidString: true);
+    var id = TestOrderId.New();
+    Expression<Action<ICollectiveSetters<OrderModel>>> source = s => s.SetProperty(o => o.OrderId, id);
+
+    var assignments = CollectiveSettersRewriter.CollectAssignments(source);
+
+    await Assert.That(assignments[0].JsonValue).IsEqualTo($"\"{id.Value}\"");
+  }
+
+  [Test]
+  public async Task FromHookSetters_AStrongIdWhileTheGateIsClosed_IsSerializedInTheObjectFormAsync() {
+    using var form = StrongIdDocumentForms.ScopeTo(uuidString: false);
+    var id = TestOrderId.New();
+    Expression<Func<OrderModel, TestOrderId>> selector = o => o.OrderId;
+
+    var assignments = CollectiveSettersRewriter.FromHookSetters([new SetPropertyOp(selector, "OrderId", id, typeof(TestOrderId))]);
+
+    await Assert.That(assignments[0].JsonValue).IsEqualTo($$"""{"Value":"{{id.Value}}"}""");
+  }
+
+  private sealed class OrderModel {
+    public TestOrderId OrderId { get; }
   }
 
   private sealed class JobModel {

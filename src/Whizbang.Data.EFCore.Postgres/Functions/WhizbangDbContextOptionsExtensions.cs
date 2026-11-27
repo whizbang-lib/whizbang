@@ -57,20 +57,24 @@ public static class WhizbangDbContextOptionsExtensions {
   }
 
   /// <summary>
-  /// Adds Whizbang's custom PostgreSQL function translators to the Npgsql provider.
-  /// Call this method when configuring Npgsql options to enable optimized principal filtering.
+  /// Adds Whizbang's services to the Npgsql provider: its custom PostgreSQL function translators, the query postprocessor
+  /// that sets a strongly-typed id inside a document in the form the fleet reads, the migrations model differ that moves
+  /// an id's column by name, and the interceptors for statement attribution and the server's database name.
   /// </summary>
   /// <param name="optionsBuilder">The Npgsql DbContext options builder.</param>
   /// <returns>The same options builder for fluent chaining.</returns>
   /// <example>
+  /// The generated registration of a <c>[WhizbangDbContext]</c> calls it already. A context registered by hand calls it
+  /// where its options are built:
   /// <code>
-  /// protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-  /// {
-  ///   optionsBuilder.UseNpgsql(connectionString, npgsqlOptions =>
-  ///   {
-  ///     npgsqlOptions.UseWhizbangFunctions();
-  ///   });
-  /// }
+  /// services.AddDbContextFactory&lt;OrdersDbContext&gt;(options =&gt;
+  ///   options.UseNpgsql(dataSource, npgsql =&gt; npgsql.UseWhizbangFunctions()));
+  /// </code>
+  /// A generated context that sets its own provider does so in <c>OnConfiguringExtended</c>, which its generated
+  /// <c>OnConfiguring</c> calls (an override of its own is WHIZ704):
+  /// <code>
+  /// partial void OnConfiguringExtended(DbContextOptionsBuilder optionsBuilder) =&gt;
+  ///   optionsBuilder.UseNpgsql(connectionString, npgsql =&gt; npgsql.UseWhizbangFunctions());
   /// </code>
   /// </example>
   /// <remarks>
@@ -79,6 +83,7 @@ public static class WhizbangDbContextOptionsExtensions {
   ///   <item><see cref="JsonArrayContainsAnyTranslator"/> - Translates to PostgreSQL's ?| operator</item>
   /// </list>
   /// </remarks>
+  /// <docs>fundamentals/identity/whizbang-ids#stored-form-switch</docs>
   public static NpgsqlDbContextOptionsBuilder UseWhizbangFunctions(
       this NpgsqlDbContextOptionsBuilder optionsBuilder) {
     ArgumentNullException.ThrowIfNull(optionsBuilder);
@@ -91,6 +96,10 @@ public static class WhizbangDbContextOptionsExtensions {
     ((IRelationalDbContextOptionsBuilderInfrastructure)optionsBuilder).OptionsBuilder
       .ReplaceService<IQueryTranslationPostprocessorFactory, ContainmentPostprocessorFactory>();
 
+    // #2518: migrations add moves a strongly-typed id's column from an earlier release's <column>_Value to <column>,
+    // paired by name, never by shape alone, so two ids of one shape never swap values.
+    WhizbangIdConvention.ReplaceMigrationsModelDiffer(((IRelationalDbContextOptionsBuilderInfrastructure)optionsBuilder).OptionsBuilder);
+
     // Statement attribution: commands run inside a framework mechanism lead with its comment and are counted. Added
     // once, however often this is called, so a statement is never counted twice. The core extension is always there:
     // the ReplaceService above adds it when nothing had.
@@ -98,6 +107,12 @@ public static class WhizbangDbContextOptionsExtensions {
     var interceptors = coreOptionsBuilder.Options.GetExtension<CoreOptionsExtension>().Interceptors;
     if (interceptors?.Contains(WhizbangCommandAttributionInterceptor.Instance) != true) {
       coreOptionsBuilder.AddInterceptors(WhizbangCommandAttributionInterceptor.Instance);
+    }
+
+    // #2518: a strongly-typed id in a document follows the gate of its schema as the server names the database, which a
+    // pooler's alias or a connection string of the coordinator's own does not change. Added once, as above.
+    if (interceptors?.Contains(ServerDatabaseNameInterceptor.Instance) != true) {
+      coreOptionsBuilder.AddInterceptors(ServerDatabaseNameInterceptor.Instance);
     }
 
     // Add our custom method call translator plugin to the existing collection
@@ -250,6 +265,11 @@ internal sealed class WhizbangOptionsExtension : IDbContextOptionsExtension {
     // Framework asks the type mapping source while it discovers a complex type's members, so the mapping has to be
     // answered there. A key lookup on one is translated by DictionaryMemberTranslatorPlugin, above.
     services.AddSingleton<IRelationalTypeMappingSourcePlugin, DictionaryMemberTypeMappingSourcePlugin>();
+
+    // A strongly-typed id is a uuid scalar (#2518): inside a document a UUID string, like a Guid and like the transport
+    // writes it, rather than the object {"Value": ...} Entity Framework would otherwise discover. Answered at the same
+    // point as the dictionary mapping, for the same reason.
+    services.AddSingleton<IRelationalTypeMappingSourcePlugin, WhizbangIdTypeMappingSourcePlugin>();
   }
 
   public void Validate(IDbContextOptions options) {

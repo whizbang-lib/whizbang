@@ -279,4 +279,24 @@ internal static class DiagnosticDescriptors {
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
       description: "No DbContext carries [WhizbangDbContext], which is expected in a library project; partial class generation requires that opt-in. It is reported without a location because it is about the whole compilation, not one declaration; turn it off for a project in .globalconfig or NoWarn.");
+
+  /// <summary>
+  /// WHIZ704: Error - a [WhizbangDbContext] declares its own OnConfiguring, which the generated partial overrides.
+  /// </summary>
+  /// <remarks>
+  /// The generated partial overrides <c>OnConfiguring</c> to give the context what its strongly-typed ids need when its
+  /// options do not carry the Whizbang extension (#2518), and calls the consumer's configuration through
+  /// <c>OnConfiguringExtended</c> first. A second override in the consumer's part of the class would be a duplicate member,
+  /// so the generator leaves its own out and reports this, naming the hook the configuration moves to.
+  /// </remarks>
+  /// <docs>operations/diagnostics/whiz704</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDbContextThatOverridesOnConfiguring_ReportsWhiz704Async</tests>
+  public static readonly DiagnosticDescriptor DbContextOverridesOnConfiguring = new(
+      id: "WHIZ704",
+      title: "DbContext overrides OnConfiguring",
+      messageFormat: "'{0}' overrides OnConfiguring, which Whizbang generates for it; move this configuration into 'partial void OnConfiguringExtended(DbContextOptionsBuilder optionsBuilder)', which the generated OnConfiguring calls",
+      category: GENERATOR_CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "A [WhizbangDbContext] gets a generated OnConfiguring that calls the base context's, then OnConfiguringExtended, then gives the options what strongly-typed ids need. Put the context's own configuration in OnConfiguringExtended.");
 }

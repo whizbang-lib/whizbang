@@ -12,8 +12,8 @@ namespace Whizbang.Core.Tests;
 
 /// <summary>
 /// Locks in the priority-ranked, profile-scoped provider lookup added to <see cref="JsonContextRegistry"/>.
-/// Persistence vs Default(transport) profiles let WhizbangId stay scalar for the event store while
-/// perspective persistence uses object-mode — both sourced from the same cross-assembly union, ordered by
+/// Persistence vs Default(transport) profiles let WhizbangId read through its version rule for the event store while
+/// perspective persistence reads a stored row unchecked, in either form. Both are sourced from the same cross-assembly union, ordered by
 /// priority (deterministic, not assembly-load order). The registry is additive-and-static, so every test
 /// here uses unique marker types to stay isolated from cross-test registrations.
 /// </summary>
@@ -115,6 +115,6 @@ public partial class JsonContextRegistryTests {
     await Assert.That(def.Converters).Contains(converter)
       .Because("A Default-profile converter belongs in the Default (transport) options.");
     await Assert.That(persistence.Converters).DoesNotContain(converter)
-      .Because("A Default-only converter must be excluded from the Persistence options (object-mode WhizbangId).");
+      .Because("A Default-only converter must be excluded from the Persistence options (the document form of WhizbangId).");
   }
 }

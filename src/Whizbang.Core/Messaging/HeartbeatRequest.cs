@@ -56,12 +56,31 @@ public sealed record HeartbeatRequest(
   public const string STORED_FORM_LEVEL_KEY = "stored_form_level";
 
   /// <summary>
-  /// The stored form level this build reads: 1 reads stored metadata that leaves out the message id and hop scope its row
-  /// holds (#2323). Monotonic: a later stored form raises it, never this one.
+  /// The stored form level this build reads. Each level reads everything the levels below it read:
+  /// <list type="bullet">
+  ///   <item>1 reads stored metadata that leaves out the message id and hop scope its row holds (#2323);</item>
+  ///   <item>2 reads a strongly-typed id inside a perspective document stored as its UUID string (#2518).</item>
+  /// </list>
+  /// Monotonic: a later stored form raises it, never lowers it. Each gate asks for the level its form needs, so a gate
+  /// for level 1 opens for an instance at level 2.
   /// </summary>
   /// <docs>data/event-store#trim-gate</docs>
-  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/HeartbeatRequestStoredFormLevelTests.cs:StoredFormLevel_IsOne_TheLevelThatReadsTrimmedRowsAsync</tests>
-  public const int STORED_FORM_LEVEL = 1;
+  /// <docs>fundamentals/identity/whizbang-ids#stored-form</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/HeartbeatRequestStoredFormLevelTests.cs:StoredFormLevel_IsTwo_TheLevelThatReadsStrongIdsAsUuidStringsAsync</tests>
+  public const int STORED_FORM_LEVEL = 2;
+
+  /// <summary>
+  /// The key in the registry row's metadata that says this instance writes a strongly-typed id inside a perspective
+  /// document as its UUID string (#2518), present with the value <see cref="STRONG_ID_DOCUMENT_FORM_UUID_STRING"/> once
+  /// it does (<see cref="Whizbang.Core.Perspectives.WhizbangIdDocumentForm"/>). The stored-form rewrite starts only once
+  /// every live instance says so, so no instance writes the object form behind it.
+  /// </summary>
+  /// <docs>fundamentals/identity/whizbang-ids#stored-form</docs>
+  /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/HeartbeatRequestStoredFormLevelTests.cs:MetadataJson_SaysItWritesUuidStrings_OnlyOnceItDoesAsync</tests>
+  public const string STRONG_ID_DOCUMENT_FORM_KEY = "strong_id_document_form";
+
+  /// <summary>The value of <see cref="STRONG_ID_DOCUMENT_FORM_KEY"/> for an instance that writes the UUID string.</summary>
+  public const string STRONG_ID_DOCUMENT_FORM_UUID_STRING = "uuid-string";
 
   /// <summary>
   /// The key in the registry row's metadata (<c>wh_service_instances.metadata</c>) that says which partition ownership
@@ -82,26 +101,38 @@ public sealed record HeartbeatRequest(
 
   /// <summary>
   /// The metadata the heartbeat records for this instance: <see cref="Metadata"/>'s keys, with
-  /// <see cref="STORED_FORM_LEVEL_KEY"/> set to <see cref="STORED_FORM_LEVEL"/> (#2323) and
-  /// <see cref="PARTITION_OWNERSHIP_LEVEL_KEY"/> set to <see cref="PARTITION_OWNERSHIP_LEVEL"/> (#2555). Every driver writes this, so no
-  /// caller can leave the marker out. Metadata that is not a JSON object is replaced by the marker alone.
+  /// <see cref="STORED_FORM_LEVEL_KEY"/> set to <see cref="STORED_FORM_LEVEL"/> (#2323),
+  /// <see cref="PARTITION_OWNERSHIP_LEVEL_KEY"/> set to <see cref="PARTITION_OWNERSHIP_LEVEL"/> (#2555), and
+  /// <see cref="STRONG_ID_DOCUMENT_FORM_KEY"/> once this process writes strongly-typed ids as UUID strings (#2518). Every
+  /// driver writes this, so no caller can leave the markers out or set them. Metadata that is not a JSON object is
+  /// replaced by the markers alone.
   /// </summary>
   /// <returns>The metadata as JSON text.</returns>
   /// <docs>data/event-store#trim-gate</docs>
   /// <tests>tests/Whizbang.Core.Unit.Messaging.Tests/Messaging/HeartbeatRequestStoredFormLevelTests.cs</tests>
-  public string MetadataJson() {
+  public string MetadataJson() => MetadataJson(Whizbang.Core.Perspectives.WhizbangIdDocumentForm.WritesUuidString);
+
+  /// <summary>
+  /// The metadata, saying the given strong-id document form: for a driver whose store writes a strongly-typed id as its
+  /// UUID string whatever the gate says (the Dapper driver, #2518), which passes true from its first beat.
+  /// </summary>
+  /// <param name="writesUuidStrings">Whether this process writes strongly-typed ids as UUID strings.</param>
+  /// <returns>The metadata as JSON text.</returns>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStrongIdDocumentGateTests.cs:TheDapperHeartbeat_SaysItWritesTheUuidString_FromItsFirstBeatAsync</tests>
+  public string MetadataJson(bool writesUuidStrings) {
     using var buffer = new System.IO.MemoryStream();
     using (var writer = new Utf8JsonWriter(buffer)) {
       writer.WriteStartObject();
       if (Metadata is { ValueKind: JsonValueKind.Object } given) {
-        foreach (var property in given.EnumerateObject()) {
-          if (property.Name != STORED_FORM_LEVEL_KEY && property.Name != PARTITION_OWNERSHIP_LEVEL_KEY) {
-            property.WriteTo(writer);
-          }
+        foreach (var property in given.EnumerateObject().Where(p => p.Name is not (STORED_FORM_LEVEL_KEY or PARTITION_OWNERSHIP_LEVEL_KEY or STRONG_ID_DOCUMENT_FORM_KEY))) {
+          property.WriteTo(writer);
         }
       }
       writer.WriteNumber(STORED_FORM_LEVEL_KEY, STORED_FORM_LEVEL);
       writer.WriteNumber(PARTITION_OWNERSHIP_LEVEL_KEY, PARTITION_OWNERSHIP_LEVEL);
+      if (writesUuidStrings) {
+        writer.WriteString(STRONG_ID_DOCUMENT_FORM_KEY, STRONG_ID_DOCUMENT_FORM_UUID_STRING);
+      }
       writer.WriteEndObject();
     }
     return System.Text.Encoding.UTF8.GetString(buffer.ToArray());

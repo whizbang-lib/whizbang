@@ -60,13 +60,14 @@ public class WhizbangIdFilterHandlerTests {
       : 0;
 
   [Test]
-  public async Task IdEquals_InADocument_ComparesTheInnerValueAsync() {
+  public async Task IdEquals_InADocument_ComparesTheIdAsync() {
     var id = GraphQLOrderId.New();
 
     var comparison = (BinaryExpression)WhizbangIdFilterHandler.IdEquals(_documentField(nameof(OrderDocument.Id)), id);
 
-    await Assert.That(comparison.Left.Type).IsEqualTo(typeof(Guid));
-    await Assert.That(comparison.Left.ToString()).IsEqualTo("w.Data.Id.Value");
+    // Inside a document the id is a uuid scalar since #2518, so the id itself is compared, not its inner Value.
+    await Assert.That(comparison.Left.Type).IsEqualTo(typeof(GraphQLOrderId));
+    await Assert.That(comparison.Left.ToString()).IsEqualTo("w.Data.Id");
   }
 
   [Test]
@@ -136,12 +137,12 @@ public class WhizbangIdFilterHandlerTests {
   }
 
   [Test]
-  public async Task IdNotEquals_InADocument_ComparesTheInnerValueAsync() {
+  public async Task IdNotEquals_InADocument_ComparesTheIdAsync() {
     var comparison = (BinaryExpression)WhizbangIdFilterHandler.IdNotEquals(
       _documentField(nameof(OrderDocument.Id)), GraphQLOrderId.New());
 
     await Assert.That(comparison.NodeType).IsEqualTo(ExpressionType.NotEqual);
-    await Assert.That(comparison.Left.Type).IsEqualTo(typeof(Guid));
+    await Assert.That(comparison.Left.Type).IsEqualTo(typeof(GraphQLOrderId));
   }
 
   [Test]
