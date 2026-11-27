@@ -86,6 +86,20 @@ public sealed partial class IntegrityPairGuard {
   /// <summary>The <c>state</c> attribute of a halted pair.</summary>
   public const string STATE_HALTED = "halted";
 
+  /// <summary>
+  /// The <c>state</c> attribute of a pair paused because its two services run different rules versions (#2588): an
+  /// expected state between services that deploy separately, until both upgrade.
+  /// </summary>
+  public const string STATE_PAUSED = "paused";
+
+  /// <summary>
+  /// Whether a halt reason is a rules-version pause (#2588): the two services run different rules versions (rule semantics
+  /// or the SQL eligibility rule), which is expected while service types upgrade separately.
+  /// </summary>
+  /// <param name="reason">The reason.</param>
+  /// <returns>True for a rules-version difference.</returns>
+  public static bool IsRulesVersionPause(RulePairHaltReason reason) => false;
+
   private readonly ConcurrentDictionary<(string Peer, IntegrityPairSide Side), IntegrityPairState> _pairs = new();
   private readonly IRuleFingerprintSource _rules;
   private readonly IntegrityPairGuardOptions _options;
