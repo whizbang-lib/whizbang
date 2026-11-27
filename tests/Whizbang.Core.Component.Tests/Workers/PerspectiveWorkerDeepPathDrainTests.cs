@@ -1029,7 +1029,8 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       CompositeMetrics? compositeMetrics = null,
       bool withoutRegistry = false,
       bool withoutEventStore = false,
-      IConsumerRegistry? consumerRegistry = null) {
+      IConsumerRegistry? consumerRegistry = null,
+      IPerspectiveFanOutRegistry? fanOutRegistry = null) {
     var instanceProvider = new FakeInstanceProvider();
     var harness = new PerspectiveWorkerTestHarness();
 
@@ -1056,6 +1057,9 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     }
     if (receptorInvoker is not null) {
       services.AddSingleton(receptorInvoker);
+    }
+    if (fanOutRegistry is not null) {
+      services.AddSingleton(fanOutRegistry);
     }
     services.AddLogging();
     var provider = services.BuildServiceProvider();
