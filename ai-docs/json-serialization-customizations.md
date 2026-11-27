@@ -53,6 +53,22 @@ Whizbang uses **AOT-compatible JSON serialization** via source-generated `JsonTy
 
 ---
 
+### StoredVectorConverters (packed binary32 vectors, #2624)
+
+**Location**: `src/Whizbang.Core/Serialization/StoredVectorConverters.cs`, attached by
+`src/Whizbang.Generators/MessageJsonContextGenerator.StoredVectors.cs`
+
+**Tests**: `tests/Whizbang.Core.Tests/Serialization/StoredVectorConvertersTests.cs`,
+`StoredVectorEventReadTests.cs`, `tests/Whizbang.Generators.Tests/MessageJsonContextStoredVectorTests.cs`
+
+**Purpose**: every `float[]` and `IReadOnlyList<float>` property of a generated type, unless marked
+`[StoredAsJsonArray]`, gets a `CustomConverter` that reads either a JSON array of numbers or one JSON string holding
+base64 of the big-endian IEEE-754 binary32 bits of each element, and writes the array through the property's own
+metadata (so the written bytes are unchanged). `double[]`, `float?[]` and `List<float>` are not vectors.
+
+**Readers first**: V1 only reads the packed form. Nothing writes it until the stored-body packing (V2, #2625) opens
+its rolling-deploy gate.
+
 ## Generator-Managed Type Handling
 
 ### Nullable Enum Types
