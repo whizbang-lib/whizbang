@@ -48,6 +48,14 @@ public static class CollectiveRoutingAssociations {
   /// </summary>
   public const string FAN_OUT_ASSOCIATION_TYPE = "perspective";
 
+  /// <summary>The collective entries alone, for a host that declares no fan-out: <see cref="AssociationEntriesJson(IReadOnlyList{string}, string, IReadOnlyList{string})"/> with none.</summary>
+  /// <param name="handledEventTypes">The handled collective event types, or null when they cannot be known.</param>
+  /// <param name="serviceName">The service the rows belong to, as the perspective associations name it.</param>
+  /// <returns>The entries, ready to follow at least one entry already in the array.</returns>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Entries_WithNoFanOut_AreExactlyWhatTheyWereAsync</tests>
+  public static string AssociationEntriesJson(IReadOnlyList<string>? handledEventTypes, string serviceName) =>
+    AssociationEntriesJson(handledEventTypes, serviceName, null);
+
   /// <summary>
   /// The JSON objects to append to the perspective associations array: each preceded by a comma, one
   /// <see cref="ASSOCIATION_TYPE"/> entry per handled type and then the <see cref="GATE_ASSOCIATION_TYPE"/> marker
@@ -65,7 +73,7 @@ public static class CollectiveRoutingAssociations {
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Entries_ForAKnownSet_AreOneCollectiveAssociationPerType_AndTheGateMarkerAsync</tests>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Entries_ForAnUnknownSet_AreNothing_SoTheStoreKeepsCreatingEveryRowAsync</tests>
   public static string AssociationEntriesJson(
-      IReadOnlyList<string>? handledEventTypes, string serviceName, IReadOnlyList<string>? fanOutEventTypes = null) {
+      IReadOnlyList<string>? handledEventTypes, string serviceName, IReadOnlyList<string>? fanOutEventTypes) {
     var json = new StringBuilder();
     if (handledEventTypes is not null) {
       foreach (var type in _canonical(handledEventTypes)) {
@@ -84,6 +92,14 @@ public static class CollectiveRoutingAssociations {
     return json.ToString();
   }
 
+  /// <summary>The hash over the collective set alone, for a host that declares no fan-out: <see cref="AssociationsHash(string, IReadOnlyList{string}, IReadOnlyList{string})"/> with none.</summary>
+  /// <param name="perspectiveAssociationsHash">The generated hash of the perspective associations.</param>
+  /// <param name="handledEventTypes">The handled collective event types, or null when they cannot be known.</param>
+  /// <returns>The hash the step records and compares.</returns>
+  /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Hash_ChangesWhenTheHandledSetChanges_AndOnlyThenAsync</tests>
+  public static string AssociationsHash(string perspectiveAssociationsHash, IReadOnlyList<string>? handledEventTypes) =>
+    AssociationsHash(perspectiveAssociationsHash, handledEventTypes, null);
+
   /// <summary>
   /// The associations step's hash: a SHA-256 over the perspective associations' compile-time hash and the handled
   /// collective set. Empty when <paramref name="perspectiveAssociationsHash"/> is (a context with no perspectives has no
@@ -100,7 +116,7 @@ public static class CollectiveRoutingAssociations {
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Hash_TellsUnknownFromEmpty_AndFromThePerspectiveSetAloneAsync</tests>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/CollectiveRoutingAssociationsTests.cs:Hash_ForAContextWithNoPerspectives_StaysEmpty_SoItHasNoAssociationsStepAsync</tests>
   public static string AssociationsHash(
-      string perspectiveAssociationsHash, IReadOnlyList<string>? handledEventTypes, IReadOnlyList<string>? fanOutEventTypes = null) {
+      string perspectiveAssociationsHash, IReadOnlyList<string>? handledEventTypes, IReadOnlyList<string>? fanOutEventTypes) {
     ArgumentNullException.ThrowIfNull(perspectiveAssociationsHash);
     if (perspectiveAssociationsHash.Length == 0) {
       return string.Empty;
