@@ -33,6 +33,12 @@
 --                               wh_event_body:packed-vectors, applied by this instance's library version
 --                the switch     the journal row itself (_wh_vector_packing_on): nothing can pack unjournaled. One
 --                               primary-key probe per write call, beside the trim gate's
+--                the record     every path registered while the gate is open is recorded in wh_packed_vector_paths
+--                               (at the open for the paths already registered, at each later registration for new
+--                               ones), and a later registration never drops a record: its bodies stay packed. The
+--                               StoredVectorReaders startup step reads wh_packed_vector_paths_unread and refuses to
+--                               make an instance ready while a type it reads has a packed path it no longer reads
+--                               as a vector (an opted-out or removed property), naming each one
 --                the latch      one-way. The rollback gate (#2022) reads the row like any conversion
 --                               (stored-form:wh_event_body:packed-vectors) and stands an older library down at Assess,
 --                               naming it. No application version is recorded: reading packed vectors is a library
@@ -44,7 +50,7 @@
 --           and the journal row keeps standing down a library that cannot read them)
 -- Dependencies: 573 (_emit_event_store_chain), 574 (_emit_event_store_chain_for_inbox), 537 (wh_append_event,
 --               _wh_metadata_trim_on), 316 (wh_live_instance_ids), 176 and 385 (wh_stored_form_migrations)
--- Objects: wh_event_vector_paths, _wh_pack_vector, _wh_pack_vectors, wh_register_event_vector_paths,
+-- Objects: wh_event_vector_paths, wh_packed_vector_paths, wh_packed_vector_paths_unread, _wh_pack_vector, _wh_pack_vectors, wh_register_event_vector_paths,
 --          _wh_vector_packing_on, wh_open_vector_packing_gate, _emit_event_store_chain, _emit_event_store_chain_for_inbox,
 --          wh_append_event
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
@@ -55,6 +61,7 @@ SELECT __SCHEMA__.drop_all_overloads('_wh_pack_vectors');
 SELECT __SCHEMA__.drop_all_overloads('wh_register_event_vector_paths');
 SELECT __SCHEMA__.drop_all_overloads('_wh_vector_packing_on');
 SELECT __SCHEMA__.drop_all_overloads('wh_open_vector_packing_gate');
+SELECT __SCHEMA__.drop_all_overloads('wh_packed_vector_paths_unread');
 
 -- ===========================================================================================
 -- The paths
@@ -72,12 +79,26 @@ COMMENT ON TABLE __SCHEMA__.wh_event_vector_paths IS
   'wh_event_store.event_type, written by the vector-packing-gate step from the generated registry. The write paths pack '
   'the stored body at these paths once the packing gate is open.';
 
+CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_packed_vector_paths (
+  event_type TEXT NOT NULL,
+  path JSONB NOT NULL,
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (event_type, path)
+);
+
+COMMENT ON TABLE __SCHEMA__.wh_packed_vector_paths IS
+  'Issue #2625: every vector path registered while the packing gate is open, so stored bodies may hold it packed. A later '
+  'registration never drops a row; the StoredVectorReaders startup step refuses to start a build that no longer reads one '
+  'of these as a vector for a type it reads.';
+
 -- Writes one service's vector paths: p_entries is [{"t": event type, "p": [[segment, ...], ...]}, ...]. Upserts each
 -- type (the latest registration wins), and deletes the rows this service wrote for a type it no longer declares. A row
--- that is unchanged is not rewritten. Returns the rows written or deleted.
+-- that is unchanged is not rewritten. While the packing gate is open, each registered path is also recorded in
+-- wh_packed_vector_paths, which no registration ever removes. Returns the rows written or deleted.
 -- <docs>data/event-store#packing-gate</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorGateSqlTests.cs:Paths_TheStepWritesThisServicesGeneratedPaths_AndReplacesOnlyItsOwnAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorGateSqlTests.cs:Paths_TheRegistrationRefusesAnEntryWithoutPathsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorReaderGuardSqlTests.cs:Ledger_RecordsTheRegisteredPaths_OnlyOnceTheGateOpens_AndKeepsThemWhenARegistrationDropsThemAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_register_event_vector_paths(p_service_name TEXT, p_entries JSONB)
 RETURNS INTEGER AS $$
 DECLARE
@@ -103,6 +124,15 @@ BEGIN
     RETURNING 1
   )
   SELECT count(*) INTO v_written FROM written;
+
+  -- While the gate is open, every registered path is recorded as packed before anything packs it (same transaction).
+  IF __SCHEMA__._wh_vector_packing_on() THEN
+    INSERT INTO __SCHEMA__.wh_packed_vector_paths (event_type, path)
+    SELECT DISTINCT e ->> 't', p.path
+    FROM jsonb_array_elements(p_entries) e
+    CROSS JOIN LATERAL jsonb_array_elements(e -> 'p') AS p(path)
+    ON CONFLICT DO NOTHING;
+  END IF;
 
   DELETE FROM __SCHEMA__.wh_event_vector_paths p
   WHERE p.service_name = p_service_name
@@ -209,6 +239,7 @@ COMMENT ON FUNCTION __SCHEMA__._wh_vector_packing_on() IS
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorGateSqlTests.cs:Gate_WithoutALibraryVersion_StaysClosed_SoNothingPacksUnjournaledAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorGateSqlTests.cs:Journal_RecordsTheLibraryThatStartedPacking_AndNoApplicationVersionAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorGateSqlTests.cs:Rollback_AnOlderLibrary_StandsDownAtAssess_NamingPackedVectorsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorReaderGuardSqlTests.cs:Ledger_RecordsTheRegisteredPaths_OnlyOnceTheGateOpens_AndKeepsThemWhenARegistrationDropsThemAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_open_vector_packing_gate(p_library_version TEXT)
 RETURNS TEXT AS $$
 DECLARE
@@ -244,6 +275,15 @@ BEGIN
           last_applied_at = NOW()
       WHERE __SCHEMA__.wh_stored_form_migrations.applied_library_version IS NULL
     RETURNING 1
+  ), recorded AS (
+    -- The paths registered so far are recorded as packed in the statement that opens the gate.
+    INSERT INTO __SCHEMA__.wh_packed_vector_paths (event_type, path)
+    SELECT vp.event_type, p.path
+    FROM __SCHEMA__.wh_event_vector_paths vp
+    CROSS JOIN LATERAL jsonb_array_elements(vp.paths) AS p(path)
+    WHERE EXISTS (SELECT 1 FROM journaled)
+    ON CONFLICT DO NOTHING
+    RETURNING 1
   )
   SELECT EXISTS (SELECT 1 FROM journaled) INTO v_opened;
 
@@ -256,6 +296,30 @@ COMMENT ON FUNCTION __SCHEMA__.wh_open_vector_packing_gate(TEXT) IS
   'by p_library_version), which opens the write paths'' packing, once at least one instance is live and every live '
   'instance''s registry metadata says stored_form_level >= 2. One-way. Returns open, opened, or closed (...). Called by '
   'the vector-packing-gate maintenance step.';
+
+-- The packed paths a build no longer reads: each recorded packed path of the event types in p_types (the types the
+-- calling service reads) that p_entries ([{"t": event type, "p": [[segment, ...], ...]}], the calling build's vector
+-- paths) does not list for its type. Read by the StoredVectorReaders startup step, which refuses to start on any row.
+-- <docs>data/event-store#packed-vectors-no-longer-read</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorReaderGuardSqlTests.cs:Startup_APackedPathThisBuildNoLongerReads_FailsNamingTheTypeAndThePropertyAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorReaderGuardSqlTests.cs:Startup_EveryPackedPathStillRead_Completes_AndAPathOfATypeThisServiceDoesNotReadIsNotItsConcernAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PackedVectorReaderGuardSqlTests.cs:Startup_ATypeTheCatalogNamesWithNoVectorLeft_IsCheckedTooAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_packed_vector_paths_unread(p_types TEXT[], p_entries JSONB)
+RETURNS TABLE(event_type TEXT, path JSONB) AS $$
+  SELECT pv.event_type, pv.path
+  FROM __SCHEMA__.wh_packed_vector_paths pv
+  WHERE pv.event_type = ANY(p_types)
+    AND NOT EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements(p_entries) e
+      CROSS JOIN LATERAL jsonb_array_elements(e -> 'p') AS p(path)
+      WHERE e ->> 't' = pv.event_type AND p.path = pv.path)
+  ORDER BY pv.event_type, pv.path::text;
+$$ LANGUAGE sql STABLE;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_packed_vector_paths_unread(TEXT[], JSONB) IS
+  'Issue #2625: the recorded packed vector paths of the given event types that the given registration no longer lists: '
+  'a build that reads those types cannot read their packed bodies. Read by the StoredVectorReaders startup step.';
 
 -- ===========================================================================================
 -- The write paths

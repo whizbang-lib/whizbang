@@ -75,7 +75,9 @@ in a type that refers back to itself has no path and is reported as WHIZ064 (Inf
 **Writers** (#2625, migration 720): the stored body (`wh_event_body`, never the outbox, inbox or wire) is packed in
 SQL by both emit chains and `wh_append_event`, at the paths `VectorPackingGateStep` writes to `wh_event_vector_paths`,
 once that step's gate journals `stored-form:wh_event_body:packed-vectors` (every live instance at
-`stored_form_level` 2). The journal row is the switch, and the rollback gate reads it.
+`stored_form_level` 2). The journal row is the switch, and the rollback gate reads it. Every path registered while
+the gate is open is kept in `wh_packed_vector_paths`; the blocking `StoredVectorReaders` startup step refuses to make an
+instance ready when a type it reads has a packed path its build no longer reads as a vector.
 
 **Exports** (#2626, migration 721): any read that sends a stored body out as raw JSON goes through
 `wh_event_body_wire_form`; `PackedVectorExportInventoryTests` derives every such read and fails an unclassified one.

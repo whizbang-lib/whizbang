@@ -81,6 +81,24 @@ public class DapperPackedVectorTests : PostgresTestBase {
       .IsEquivalentTo(vector.Select(BitConverter.SingleToUInt32Bits));
   }
 
+  [Test]
+  public async Task AddWhizbangPostgres_RegistersTheStoredVectorReadersStep_WhichRefusesAPackedPathThisBuildNoLongerReadsAsync() {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    var services = new ServiceCollection().AddWhizbangPostgres(ConnectionString, new JsonSerializerOptions(), false, (string?)null, null);
+    services.AddLogging();
+    await using var provider = services.BuildServiceProvider();
+    var step = provider.GetServices<Whizbang.Core.Startup.IStartupStep>().OfType<StoredVectorReadersStartupStep>().Single();
+
+    var clean = await step.ExecuteAsync(CancellationToken.None);
+    _ = await conn.ExecuteAsync("INSERT INTO wh_packed_vector_paths (event_type, path) VALUES (@t, '[\"Retired\"]'::jsonb)",
+      new { t = TypeNameFormatter.Format(typeof(DapperPackedVectorNoted)) });
+    var failure = await Assert.That(async () => await step.ExecuteAsync(CancellationToken.None)).Throws<PackedVectorsNoLongerReadException>();
+
+    await Assert.That(clean.Outcome).IsEqualTo(Whizbang.Core.Startup.StartupStepOutcome.Completed);
+    await Assert.That(failure!.Paths).IsEquivalentTo([$"{TypeNameFormatter.Format(typeof(DapperPackedVectorNoted))}: Retired"]);
+  }
+
   private DapperPostgresEventStore _eventStore() {
     var jsonOptions = Whizbang.Data.Dapper.Postgres.Tests.Generated.WhizbangJsonContext.CreateOptions();
     return new DapperPostgresEventStore(

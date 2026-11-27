@@ -287,6 +287,19 @@ public class PostgresDriverExtensionsTests {
   }
 
   [Test]
+  public async Task Postgres_RegistersTheStoredVectorReadersStartupStep_OnceAsync() {
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
+
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    await using var sp = services.BuildServiceProvider();
+    var steps = sp.GetServices<Whizbang.Core.Startup.IStartupStep>().OfType<Whizbang.Data.Postgres.StoredVectorReadersStartupStep>().ToList();
+    await Assert.That(steps).Count().IsEqualTo(1).Because("every instance checks its packed vector readers before it is ready");
+  }
+
+  [Test]
   public async Task Postgres_RegistersTheMetadataHistoryConversionStep_OnceAsync() {
     var services = new ServiceCollection();
     services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
