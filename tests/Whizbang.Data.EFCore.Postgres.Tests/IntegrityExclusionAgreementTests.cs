@@ -33,6 +33,13 @@ public class IntegrityExclusionAgreementTests : EFCoreTestBase {
   private const string OPERATOR = "operator-a";
   private const int EXCLUDED_FLAG = (int)EventFlags.IntegrityExcluded;
 
+  /// <summary>
+  /// When a hand-made fold is stamped: on the harness's own timeline, never the database's <c>NOW()</c>. The consumer's
+  /// settle check reads the host clock, so a database clock a few seconds ahead of it made the fold look in flight, the
+  /// bucket was skipped, and the controls saw nothing (and the agreement tests agreed without comparing).
+  /// </summary>
+  private const string FOLDED_AT = "TIMESTAMPTZ '2025-06-01 12:00:00+00'";
+
   private static TwoServiceEmit _event(Guid stream) => new(stream, TYPE, 0, null, PAYLOAD);
 
   // ── the origin holds the excluded event ──
@@ -81,9 +88,9 @@ public class IntegrityExclusionAgreementTests : EFCoreTestBase {
     await TwoServiceHarness.ExecuteAsync(h.Consumer,
       $"UPDATE wh_event_store SET flags = flags | {EXCLUDED_FLAG} WHERE event_id = @id", ("id", ids[1]));
     await TwoServiceHarness.ExecuteAsync(h.Consumer, "DELETE FROM wh_stream_digests WHERE stream_id = @s", ("s", stream));
-    await TwoServiceHarness.ExecuteAsync(h.Consumer, """
+    await TwoServiceHarness.ExecuteAsync(h.Consumer, $"""
       SELECT _wh_fold_stream_digests(array_agg(origin_service_id), array_agg(COALESCE(scope ->> 't', '')), array_agg(event_type),
-        array_agg(stream_id), array_agg(event_id), 'fold', NOW())
+        array_agg(stream_id), array_agg(event_id), 'fold', {FOLDED_AT})
       FROM wh_event_store WHERE stream_id = @s AND flags & 256 = 0
       """, ("s", stream));
     await h.AuditAsync(audit, TYPE);
@@ -210,14 +217,14 @@ public class IntegrityExclusionAgreementTests : EFCoreTestBase {
   /// the origin's lane: the reaction shape #2573 left behind.</summary>
   private static async Task<Guid> _ghostAsync(TwoServiceHarness h, Guid stream) {
     var id = TrackedGuid.New().Value;
-    await TwoServiceHarness.ExecuteAsync(h.Consumer, """
+    await TwoServiceHarness.ExecuteAsync(h.Consumer, $"""
       INSERT INTO wh_event_store
         (event_id, stream_id, aggregate_id, aggregate_type, event_type, version,
          commit_sequence, flags, created_at, origin_service_id, origin_commit_sequence)
       VALUES (@id, @s, @s, 'TwoService', @t,
               (SELECT COALESCE(MAX(version), 0) + 1 FROM wh_event_store WHERE stream_id = @s),
               nextval('wh_commit_seq'), 0, NOW() - INTERVAL '1 hour', @o, NULL);
-      SELECT _wh_fold_stream_digests(ARRAY[@o::uuid], ARRAY[''], ARRAY[@t::text], ARRAY[@s::uuid], ARRAY[@id::uuid], 'fold', NOW());
+      SELECT _wh_fold_stream_digests(ARRAY[@o::uuid], ARRAY[''], ARRAY[@t::text], ARRAY[@s::uuid], ARRAY[@id::uuid], 'fold', {FOLDED_AT});
       """, ("id", id), ("s", stream), ("t", TYPE), ("o", h.OriginId));
     return id;
   }
