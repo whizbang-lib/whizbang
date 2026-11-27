@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- https://learn.microsoft.com/dotnet/fundamentals/package-validation/diagnostic-ids -->
+<!-- #2605: breaks against the 0.4521.0 baseline that reached develop while package validation could not fail a run
+     (the pack ended in `|| true`). Each was a deliberate pre-1.0 change; the owner reviewed and accepted all of them on
+     2026-11-27, and from then on a break that is not recorded here fails the run. Here: the event store and work coordinator constructors changed with their dependencies. -->
+<Suppressions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Data.Dapper.Postgres.DapperPostgresEventStore.#ctor(Whizbang.Core.Data.IDbConnectionFactory,Whizbang.Core.Data.IDbExecutor,System.Text.Json.JsonSerializerOptions,Whizbang.Core.Data.IJsonbPersistenceAdapter{Whizbang.Core.Observability.IMessageEnvelope},Whizbang.Core.Data.JsonbSizeValidator,Whizbang.Core.Policies.IPolicyEngine,Whizbang.Core.Perspectives.IPerspectiveInvoker,Microsoft.Extensions.Logging.ILogger{Whizbang.Data.Dapper.Postgres.DapperPostgresEventStore},Whizbang.Core.IEphemeralModeResolver)</Target>
+    <Left>lib/net10.0/Whizbang.Data.Dapper.Postgres.dll</Left>
+    <Right>lib/net10.0/Whizbang.Data.Dapper.Postgres.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Data.Dapper.Postgres.DapperWorkCoordinator.#ctor(System.String,System.Text.Json.JsonSerializerOptions,Microsoft.Extensions.Logging.ILogger{Whizbang.Data.Dapper.Postgres.DapperWorkCoordinator},Whizbang.Core.Messaging.WorkCoordinatorGate,System.String)</Target>
+    <Left>lib/net10.0/Whizbang.Data.Dapper.Postgres.dll</Left>
+    <Right>lib/net10.0/Whizbang.Data.Dapper.Postgres.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Data.Dapper.Postgres.DapperPostgresEventStore.#ctor(Whizbang.Core.Data.IDbConnectionFactory,Whizbang.Core.Data.IDbExecutor,System.Text.Json.JsonSerializerOptions,Whizbang.Core.Data.IJsonbPersistenceAdapter{Whizbang.Core.Observability.IMessageEnvelope},Whizbang.Core.Data.JsonbSizeValidator,Whizbang.Core.Policies.IPolicyEngine,Whizbang.Core.Perspectives.IPerspectiveInvoker,Microsoft.Extensions.Logging.ILogger{Whizbang.Data.Dapper.Postgres.DapperPostgresEventStore},Whizbang.Core.IEphemeralModeResolver)</Target>
+    <Left>lib/net11.0/Whizbang.Data.Dapper.Postgres.dll</Left>
+    <Right>lib/net11.0/Whizbang.Data.Dapper.Postgres.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Data.Dapper.Postgres.DapperWorkCoordinator.#ctor(System.String,System.Text.Json.JsonSerializerOptions,Microsoft.Extensions.Logging.ILogger{Whizbang.Data.Dapper.Postgres.DapperWorkCoordinator},Whizbang.Core.Messaging.WorkCoordinatorGate,System.String)</Target>
+    <Left>lib/net11.0/Whizbang.Data.Dapper.Postgres.dll</Left>
+    <Right>lib/net11.0/Whizbang.Data.Dapper.Postgres.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+</Suppressions>

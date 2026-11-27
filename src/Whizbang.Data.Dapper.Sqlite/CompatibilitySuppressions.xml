@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- https://learn.microsoft.com/dotnet/fundamentals/package-validation/diagnostic-ids -->
+<!-- #2605: breaks against the 0.4521.0 baseline that reached develop while package validation could not fail a run
+     (the pack ended in `|| true`). Each was a deliberate pre-1.0 change; the owner reviewed and accepted all of them on
+     2026-11-27, and from then on a break that is not recorded here fails the run. Here: the event store constructor changed with its dependencies. -->
+<Suppressions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Data.Dapper.Sqlite.DapperSqliteEventStore.#ctor(Whizbang.Core.Data.IDbConnectionFactory,Whizbang.Core.Data.IDbExecutor,System.Text.Json.JsonSerializerOptions,Whizbang.Core.Policies.IPolicyEngine)</Target>
+    <Left>lib/net10.0/Whizbang.Data.Dapper.Sqlite.dll</Left>
+    <Right>lib/net10.0/Whizbang.Data.Dapper.Sqlite.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Data.Dapper.Sqlite.DapperSqliteEventStore.#ctor(Whizbang.Core.Data.IDbConnectionFactory,Whizbang.Core.Data.IDbExecutor,System.Text.Json.JsonSerializerOptions,Whizbang.Core.Policies.IPolicyEngine)</Target>
+    <Left>lib/net11.0/Whizbang.Data.Dapper.Sqlite.dll</Left>
+    <Right>lib/net11.0/Whizbang.Data.Dapper.Sqlite.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+</Suppressions>

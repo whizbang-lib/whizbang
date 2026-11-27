@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- https://learn.microsoft.com/dotnet/fundamentals/package-validation/diagnostic-ids -->
+<!-- #2605: breaks against the 0.4521.0 baseline that reached develop while package validation could not fail a run
+     (the pack ended in `|| true`). Each was a deliberate pre-1.0 change; the owner reviewed and accepted all of them on
+     2026-11-27, and from then on a break that is not recorded here fails the run. Here: the event store, work coordinator and startup assessor constructors changed with their dependencies. -->
+<Suppressions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Data.EFCore.Postgres.EFCoreEventStore`1.#ctor(`0,System.Text.Json.JsonSerializerOptions,Microsoft.Extensions.Logging.ILogger{Whizbang.Data.EFCore.Postgres.EFCoreEventStore{`0}},Whizbang.Core.IEphemeralModeResolver)</Target>
+    <Left>lib/net10.0/Whizbang.Data.EFCore.Postgres.dll</Left>
+    <Right>lib/net10.0/Whizbang.Data.EFCore.Postgres.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Data.EFCore.Postgres.EFCorePostgresStartupAssessor.#ctor(Microsoft.Extensions.DependencyInjection.IServiceScopeFactory,System.Type,Whizbang.Core.Observability.ILibraryVersionProvider,Whizbang.Core.Versioning.IApplicationVersionProvider,Whizbang.Core.Observability.IServiceInstanceProvider,System.Boolean,System.Boolean)</Target>
+    <Left>lib/net10.0/Whizbang.Data.EFCore.Postgres.dll</Left>
+    <Right>lib/net10.0/Whizbang.Data.EFCore.Postgres.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator`1.#ctor(`0,System.Text.Json.JsonSerializerOptions,Microsoft.Extensions.Logging.ILogger{Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator{`0}},Whizbang.Core.Observability.WorkCoordinatorMetrics,Whizbang.Core.Messaging.WorkCoordinatorGate,Whizbang.Core.Observability.IServiceInstanceProvider,Microsoft.Extensions.Options.IOptions{Whizbang.Core.Configuration.WhizbangCoreOptions})</Target>
+    <Left>lib/net10.0/Whizbang.Data.EFCore.Postgres.dll</Left>
+    <Right>lib/net10.0/Whizbang.Data.EFCore.Postgres.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Data.EFCore.Postgres.EFCoreEventStore`1.#ctor(`0,System.Text.Json.JsonSerializerOptions,Microsoft.Extensions.Logging.ILogger{Whizbang.Data.EFCore.Postgres.EFCoreEventStore{`0}},Whizbang.Core.IEphemeralModeResolver)</Target>
+    <Left>lib/net11.0/Whizbang.Data.EFCore.Postgres.dll</Left>
+    <Right>lib/net11.0/Whizbang.Data.EFCore.Postgres.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Data.EFCore.Postgres.EFCorePostgresStartupAssessor.#ctor(Microsoft.Extensions.DependencyInjection.IServiceScopeFactory,System.Type,Whizbang.Core.Observability.ILibraryVersionProvider,Whizbang.Core.Versioning.IApplicationVersionProvider,Whizbang.Core.Observability.IServiceInstanceProvider,System.Boolean,System.Boolean)</Target>
+    <Left>lib/net11.0/Whizbang.Data.EFCore.Postgres.dll</Left>
+    <Right>lib/net11.0/Whizbang.Data.EFCore.Postgres.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator`1.#ctor(`0,System.Text.Json.JsonSerializerOptions,Microsoft.Extensions.Logging.ILogger{Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator{`0}},Whizbang.Core.Observability.WorkCoordinatorMetrics,Whizbang.Core.Messaging.WorkCoordinatorGate,Whizbang.Core.Observability.IServiceInstanceProvider,Microsoft.Extensions.Options.IOptions{Whizbang.Core.Configuration.WhizbangCoreOptions})</Target>
+    <Left>lib/net11.0/Whizbang.Data.EFCore.Postgres.dll</Left>
+    <Right>lib/net11.0/Whizbang.Data.EFCore.Postgres.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+</Suppressions>
