@@ -104,6 +104,7 @@ public static class OperationalTableRegistry {
     _state("wh_event_destruction_hold", "holds on bodies about to be destroyed; removed once the body is gone"),
     _rolling("wh_event_metadata_staging", OperationalCategory.Queues, "own retention: metadata_staging_days (2), daily partitions dropped"),
     _state("wh_event_store", "event data"),
+    _state("wh_event_vector_paths", "configuration: each event type's vector paths, one row per type, replaced by its service (#2625)"),
     _state("wh_fillfactor_rewrite_requests", "work in flight: rewrites owed, removed when done"),
     _state("wh_housekeeping_deferrals", "deferral budgets; removed when a pass completes"),
     _state("wh_inbox", WORK_IN_FLIGHT_REMOVED_ON_COMPLETION),

@@ -63,7 +63,6 @@ public partial class PackedVectorExportInventoryTests {
     ["wh_archive_stream"] = (Use.StorageCopy, "moves an archived stream's bodies to wh_event_archive in the stored form"),
     ["wh_truncate_stream_prefix"] = (Use.StorageCopy, "moves a truncated prefix's bodies to wh_event_archive in the stored form"),
     ["wh_trace_metadata"] = (Use.Export, "the trace store hands the payload to consumer code as a JsonElement"),
-    [WIRE_FORM] = (Use.Export, "the wire form itself"),
   };
 
   /// <summary>Every driver source whose SQL names a stored-body table, with how many times, and why its form is right.</summary>
@@ -95,7 +94,7 @@ public partial class PackedVectorExportInventoryTests {
 
     var unclassified = found.Keys.Where(f => !_functions.ContainsKey(f)).Order(StringComparer.Ordinal).ToList();
     var stale = _functions.Keys.Where(f => !found.ContainsKey(f)).Order(StringComparer.Ordinal).ToList();
-    var unwired = found.Where(f => _functions.TryGetValue(f.Key, out var c) && c.Use == Use.Export && f.Key != WIRE_FORM
+    var unwired = found.Where(f => _functions.TryGetValue(f.Key, out var c) && c.Use == Use.Export
         && !f.Value.Contains(WIRE_FORM, StringComparison.Ordinal))
       .Select(f => f.Key).ToList();
 
