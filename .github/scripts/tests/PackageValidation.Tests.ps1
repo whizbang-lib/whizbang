@@ -95,7 +95,7 @@ Describe 'The build artifact carries what pack validates (#2605)' {
     $Upload | Should -Contain '            tools/**/obj/Release'
   }
 
-  It 'keeps the reference assemblies, which package validation reads from obj/Release/<tfm>/ref' {
+  It 'keeps the reference assemblies, which package validation reads from each framework''s obj/Release folder' {
     ($Upload | Where-Object { $_ -match '^\s+!.*/ref/' }) | Should -BeNullOrEmpty -Because 'without them every library stops on MSB4018 and its API is never compared'
   }
 }
@@ -168,5 +168,134 @@ Describe 'A failed pack fails its step (#2605)' {
   It 'never discards the exit code of dotnet pack' {
     $hidden = @($PackLines | Where-Object { $_.Line -match '\|\|\s*(true|:)\s*$' } | ForEach-Object { "$($_.File): $($_.Line)" })
     $hidden | Should -BeNullOrEmpty -Because 'package validation reports an API break as a pack error, and a discarded exit code turns it into a pass'
+  }
+}
+
+Describe 'Every pack is followed by a public API comparison that reports each break (#2605)' {
+  BeforeAll {
+    $script:PackWorkflows = @{
+      'reusable-pack.yml' = 'Pack NuGet packages (no rebuild)'
+      'nuget-publish.yml' = 'Pack NuGet packages (no rebuild)'
+    }
+  }
+
+  It 'packs <_> with validation off, so a pack error fails on its own and an API break is reported by the comparison' -TestCases @('reusable-pack.yml', 'nuget-publish.yml') {
+    $pack = Get-StepLines (Get-Content -LiteralPath (Join-Path $Workflows $_)) $PackWorkflows[$_]
+    ($pack | Where-Object { $_ -match '^\s+dotnet pack\b' }) | Should -Match '-p:EnablePackageValidation=false'
+  }
+
+  It 'compares the public API in <_> with the script, saying whether a break blocks' -TestCases @('reusable-pack.yml', 'nuget-publish.yml') {
+    $lines = Get-Content -LiteralPath (Join-Path $Workflows $_)
+    $compare = Get-StepLines $lines 'Compare the public API with the baseline'
+    ($compare -join "`n") | Should -Match 'Compare-PublicApi\.ps1'
+    ($compare | Where-Object { $_ -match '^\s+API_BREAKS_BLOCK:' }) | Should -Not -BeNullOrEmpty -Because 'whether an API break fails the run is stated where the step runs'
+  }
+}
+
+Describe 'Compare-PublicApi.ps1 reads the findings of package validation (#2605)' {
+  BeforeAll {
+    . (Join-Path $Root '.github' 'scripts' 'Compare-PublicApi.ps1') -Version 1.0.0
+    $script:Sdk = '/sdk/Microsoft.NET.ApiCompat.ValidatePackage.targets(39,5)'
+  }
+
+  It 'returns one finding per break, the same break in both frameworks counted once' {
+    $lines = @(
+      "$Sdk`: error CP0002: Member 'void A.B.C()' exists on [Baseline] lib/net10.0/A.dll but not on lib/net10.0/A.dll [/repo/src/A/A.csproj]"
+      "$Sdk`: error CP0002: Member 'void A.B.C()' exists on [Baseline] lib/net11.0/A.dll but not on lib/net11.0/A.dll [/repo/src/A/A.csproj]"
+      "$Sdk`: error CP0006: Cannot add interface member 'void A.I.M()' to lib/net10.0/A.dll because it does not exist on [Baseline] lib/net10.0/A.dll [/repo/src/A/A.csproj]"
+      "$Sdk`: error PKV006: The target framework 'net9.0' is no longer supported [/repo/src/B/B.csproj]"
+      "$Sdk`: error : API breaking changes found. [/repo/src/A/A.csproj]"
+      '  A -> /repo/src/A/bin/Release/net10.0/A.dll'
+    )
+    $findings = @(Get-PublicApiFinding -Lines $lines)
+    $findings | Should -HaveCount 3
+    $findings[0].Project | Should -Be 'A'
+    $findings[0].Code | Should -Be 'CP0002'
+    $findings[0].Message | Should -Be "Member 'void A.B.C()' exists on [Baseline] lib/<tfm>/A.dll but not on lib/<tfm>/A.dll"
+    ($findings | Where-Object Code -EQ 'PKV006').Project | Should -Be 'B'
+  }
+
+  It 'returns nothing for a clean pack' {
+    @(Get-PublicApiFinding -Lines @('  A -> /repo/src/A/bin/Release/net10.0/A.dll', 'Successfully created package.')) | Should -HaveCount 0
+  }
+}
+
+Describe 'Compare-PublicApi.ps1 decides the step''s result (#2605)' -Skip:$IsWindows {
+  BeforeAll {
+    $script:ScriptPath = Join-Path $Root '.github' 'scripts' 'Compare-PublicApi.ps1'
+    $script:Break = "/sdk/x.targets(39,5): error CP0002: Member 'void A.B.C()' exists on [Baseline] lib/net10.0/A.dll but not on lib/net10.0/A.dll [/repo/src/A/A.csproj]"
+
+    # Runs the script with a stand-in dotnet that prints the given lines and exits with the given code.
+    function script:Invoke-Compare([string[]]$PackOutput, [int]$PackExit, [string]$Block) {
+      $bin = Join-Path $TestDrive "bin-$([guid]::NewGuid())"
+      New-Item -ItemType Directory -Path $bin | Out-Null
+      $outputFile = Join-Path $bin 'pack-output.txt'
+      Set-Content -LiteralPath $outputFile -Value $PackOutput
+      $argsFile = Join-Path $bin 'args.txt'
+      Set-Content -LiteralPath (Join-Path $bin 'dotnet') -Value "#!/usr/bin/env bash`nprintf '%s\n' `"`$@`" > '$argsFile'`ncat '$outputFile'`nexit $PackExit"
+      chmod +x (Join-Path $bin 'dotnet')
+      $summary = Join-Path $bin 'summary.md'
+      $oldPath = $env:PATH
+      $env:PATH = "$bin$([IO.Path]::PathSeparator)$oldPath"
+      $env:GITHUB_STEP_SUMMARY = $summary
+      $env:API_BREAKS_BLOCK = $Block
+      try {
+        $out = & pwsh -NoProfile -File $ScriptPath -Version '0.4521.0-queue.1' -OutputDirectory (Join-Path $bin 'out') 2>&1 | ForEach-Object { "$_" }
+        $code = $LASTEXITCODE
+      } finally {
+        $env:PATH = $oldPath
+        Remove-Item Env:GITHUB_STEP_SUMMARY, Env:API_BREAKS_BLOCK -ErrorAction SilentlyContinue
+      }
+      return [pscustomobject]@{
+        ExitCode = $code
+        Output   = ($out -join "`n")
+        Summary  = if (Test-Path $summary) { Get-Content -Raw $summary } else { '' }
+        Args     = @(Get-Content -LiteralPath $argsFile)
+      }
+    }
+  }
+
+  It 'packs at the given version, with validation on, without rebuilding' {
+    $result = Invoke-Compare @('Successfully created package.') 0 'false'
+    $result.Args | Should -Contain 'pack'
+    $result.Args | Should -Contain '--no-build'
+    $result.Args | Should -Contain '-p:Version=0.4521.0-queue.1'
+    $result.Args | Should -Contain '-p:WhizbangApiCheck=true'
+  }
+
+  It 'passes a pack that reports no change' {
+    $result = Invoke-Compare @('Successfully created package.') 0 'false'
+    $result.ExitCode | Should -Be 0
+    $result.Summary | Should -Match 'No public API break'
+  }
+
+  It 'reports each break and passes while breaks do not block' {
+    $result = Invoke-Compare @($Break, $Break.Replace('net10.0', 'net11.0')) 1 'false'
+    $result.ExitCode | Should -Be 0
+    $result.Output | Should -Match '::warning title=Public API break CP0002 in A::'
+    $result.Summary | Should -Match '\| A \| CP0002 \|'
+    $result.Summary | Should -Match '1 public API break'
+  }
+
+  It 'fails on a break once breaks block' {
+    $result = Invoke-Compare @($Break) 1 'true'
+    $result.ExitCode | Should -Be 1
+    $result.Output | Should -Match '::error title=Public API break CP0002 in A::'
+  }
+
+  It 'fails a pack that failed for any other reason, whether or not breaks block' {
+    $result = Invoke-Compare @('/repo/src/A/A.csproj : error MSB4018: Could not find file ref/A.dll') 1 'false'
+    $result.ExitCode | Should -Be 1
+    $result.Output | Should -Match '::error'
+  }
+
+  It 'fails a failed pack that also reports a break, since the break does not explain the failure alone' {
+    $result = Invoke-Compare @($Break, '/repo/src/A/A.csproj : error MSB4018: Could not find file ref/A.dll') 1 'false'
+    $result.ExitCode | Should -Be 1
+  }
+
+  It 'refuses an unknown blocking value rather than guessing' {
+    $result = Invoke-Compare @('Successfully created package.') 0 'maybe'
+    $result.ExitCode | Should -Be 2
   }
 }
