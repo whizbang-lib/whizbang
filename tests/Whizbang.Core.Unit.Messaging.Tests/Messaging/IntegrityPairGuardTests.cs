@@ -175,6 +175,23 @@ public class IntegrityPairGuardTests {
   }
 
   [Test]
+  public async Task Admit_APauseOnAGuardWithoutMetrics_StillWarnsAndAlertsOnceAsync() {
+    var (guard, log, time, services) = _guard(new Rules((SHARED, "a")), TimeSpan.FromMinutes(30), withMetrics: false);
+    await using var owned = services;
+    var olderPeer = _peerOnRules(RuleSemantics.VERSION, RuleSemantics.ELIGIBILITY_SQL_VERSION - 1);
+    var paused = guard.Admit(PEER, IntegrityPairSide.Origin, olderPeer);
+
+    time.Advance(TimeSpan.FromMinutes(30));
+    _ = guard.Admit(PEER, IntegrityPairSide.Origin, olderPeer);
+
+    await Assert.That(IntegrityPairGuard.IsRulesVersionPause(paused.Reason)).IsTrue();
+    await Assert.That(log.Entries.Count(e => e.Level == LogLevel.Warning)).IsEqualTo(2)
+      .Because("a host without metrics still gets the pause and the one reminder, both at Warning");
+    await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Critical)).IsFalse();
+    await Assert.That(guard.Pairs.Single().Alerted).IsTrue();
+  }
+
+  [Test]
   public async Task TheStateGauge_TellsAPauseFromAHaltAsync() {
     var (guard, _, _, services) = _guard(new Rules((SHARED, "a")));
     await using var owned = services;
