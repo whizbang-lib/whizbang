@@ -85,6 +85,75 @@ public class NarrowedCandidatePredicateTests {
     await Assert.That(EFCoreServiceRegistrationGenerator.IsMultiLensQueryParameterCandidate(node)).IsEqualTo(expected);
   }
 
+  // #2604's strong-id discovery admitted every attributed property and parameter, so the registry looked up a symbol
+  // for every [JsonPropertyName] or [Required] in a consumer (145 ms to 860 ms). It now admits only a declaration
+  // that names [WhizbangId], however it is written.
+  [Test]
+  [Arguments("public class C { [WhizbangId] public OrderId Id { get; set; } }", true)]
+  [Arguments("public class C { [WhizbangIdAttribute] public OrderId Id { get; set; } }", true)]
+  [Arguments("public class C { [Whizbang.Core.WhizbangId] public OrderId Id { get; set; } }", true)]
+  [Arguments("public class C { [global::Whizbang.Core.WhizbangId] public OrderId Id { get; set; } }", true)]
+  [Arguments("public class C { [global::WhizbangId] public OrderId Id { get; set; } }", true)]
+  [Arguments("public class C { [Required, WhizbangId(PinnedId = \"x\")] public OrderId Id { get; set; } }", true)]
+  [Arguments("public class C { [JsonPropertyName(\"id\")] public Guid Id { get; set; } }", false)]
+  [Arguments("public class C { public OrderId Id { get; set; } }", false)]
+  public async Task IsStrongIdPropertyCandidate_NeedsAWhizbangIdAttributeAsync(string source, bool expected) {
+    var node = _first<PropertyDeclarationSyntax>(source);
+    await Assert.That(PinnedIdRegistryGenerator.IsStrongIdPropertyCandidate(node)).IsEqualTo(expected);
+    await Assert.That(PinnedTypeLedgerGenerator.IsStrongIdPropertyCandidate(node)).IsEqualTo(expected);
+  }
+
+  [Test]
+  [Arguments("public record R([WhizbangId] LineId Id);", true)]
+  [Arguments("public record R([FromBody] LineId Id);", false)]
+  [Arguments("public record R(LineId Id);", false)]
+  public async Task IsStrongIdParameterCandidate_NeedsAWhizbangIdAttributeAsync(string source, bool expected) {
+    var node = _first<ParameterSyntax>(source);
+    await Assert.That(PinnedIdRegistryGenerator.IsStrongIdParameterCandidate(node)).IsEqualTo(expected);
+    await Assert.That(PinnedTypeLedgerGenerator.IsStrongIdParameterCandidate(node)).IsEqualTo(expected);
+  }
+
+  [Test]
+  [Arguments("[WhizbangId] public readonly partial struct ProductId;", true)]
+  [Arguments("[StructLayout(LayoutKind.Auto)] public struct S { }", false)]
+  [Arguments("[WhizbangId] public partial class ProductId;", false)]
+  public async Task IsStrongIdStructCandidate_NeedsAWhizbangIdAttributeAsync(string source, bool expected) {
+    var node = _first<TypeDeclarationSyntax>(source);
+    await Assert.That(PinnedIdRegistryGenerator.IsStrongIdStructCandidate(node)).IsEqualTo(expected);
+  }
+
+  // Each generator discovers pinned types and every strong-id route through ONE provider: a provider per route ran its
+  // predicate on every node of every file, which is what made #2604's registry and ledger slow.
+  [Test]
+  [Arguments("[PinnedId(\"x\")] public record E : IEvent;", true)]
+  [Arguments("[WhizbangId] public readonly partial struct ProductId;", true)]
+  [Arguments("public class C { [WhizbangId] public OrderId Id { get; set; } }", true)]
+  [Arguments("public record R([WhizbangId] LineId Id);", true)]
+  [Arguments("public class C { [Required] public string Name { get; set; } = \"\"; }", false)]
+  [Arguments("public record R([FromBody] LineId Id);", false)]
+  public async Task IsPinnedIdCandidate_AdmitsEachRouteAndNothingElseAsync(string source, bool expected) {
+    var admitted = _admits(source, PinnedIdRegistryGenerator.IsPinnedIdCandidate);
+    await Assert.That(admitted).IsEqualTo(expected);
+  }
+
+  [Test]
+  [Arguments("[PinnedId(\"x\")] public record E : IEvent;", true)]
+  [Arguments("[WhizbangId] public readonly partial struct ProductId;", true)]
+  [Arguments("public class C { [WhizbangId] public OrderId Id { get; set; } }", true)]
+  [Arguments("public record R([WhizbangId] LineId Id);", true)]
+  [Arguments("public class C { [Required] public string Name { get; set; } = \"\"; }", false)]
+  [Arguments("public record R([FromBody] LineId Id);", false)]
+  public async Task IsLedgerCandidate_AdmitsEachRouteAndNothingElseAsync(string source, bool expected) {
+    var admitted = _admits(source, PinnedTypeLedgerGenerator.IsLedgerCandidate);
+    await Assert.That(admitted).IsEqualTo(expected);
+  }
+
+  private static bool _admits(string source, Func<SyntaxNode, bool> predicate) =>
+      CSharpSyntaxTree.ParseText(source).GetRoot().DescendantNodes().Any(predicate);
+
+  private static T _first<T>(string source) where T : SyntaxNode =>
+      CSharpSyntaxTree.ParseText(source).GetRoot().DescendantNodes().OfType<T>().First();
+
   private static TypeDeclarationSyntax _type(string source) =>
       CSharpSyntaxTree.ParseText(source).GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>().First();
 }
