@@ -91,6 +91,8 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
             KeyProperty: "CustomerId",
             KeyColumn: "customer_id",
             KeySelector: (global::System.Linq.Expressions.Expression<global::System.Func<global::TestApp.OrderSummary, object?>>)(row => row.CustomerId),
+            TableName: "wh_per_order_summary",
+            CreateExecutor: static factory => factory.Create<global::TestApp.OrderSummary>("wh_per_order_summary"),
             Invoker: static (perspective, evt) => ((global::Whizbang.Core.Perspectives.IPerspectiveFanOutFor<global::TestApp.OrderSummary, global::TestApp.CustomerRenamed>)perspective).Apply((global::TestApp.CustomerRenamed)evt)
           ),
       """;
@@ -254,6 +256,55 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
 
     await Assert.That(GeneratorTestHelper.GetAllGeneratedSources(result)).IsEmpty()
       .Because("a Targets with no source cannot be read here; the library's own build checked it");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_AFanOutTheRegistryCannotReach_IsLeftOut_SoTheGeneratedCodeCompilesAsync() {
+    // WHIZ129 reports it; the registry leaves it out, so the build fails on the diagnostic and not on CS0122 in
+    // generated code. An internal nested perspective beside it is registered.
+    const string source = PREAMBLE + """
+        public class Host {
+          private sealed class Hidden : IPerspectiveFanOutFor<OrderSummary, CustomerRenamed> {
+            public static FanOutKey<OrderSummary> Targets => FanOut.By<OrderSummary>(o => o.CustomerId);
+            public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e) => null!;
+          }
+
+          internal sealed class Reachable : IPerspectiveFanOutFor<OrderSummary, CustomerDeleted> {
+            public static FanOutKey<OrderSummary> Targets => FanOut.By<OrderSummary>(o => o.CustomerId);
+            public ICollectiveSpec<OrderSummary> Apply(CustomerDeleted e) => null!;
+          }
+        }
+        """;
+
+    var (result, compilation) = GeneratorTestHelper.RunGeneratorWithFullReferences(
+        new PerspectiveFanOutDiscoveryGenerator(), source, "Orders.Service");
+    var code = GeneratorTestHelper.GetRequiredGeneratedSource(result, FILE);
+
+    await Assert.That(code).DoesNotContain("Host.Hidden");
+    await Assert.That(code).Contains("typeof(global::TestApp.Host.Reachable)");
+    await Assert.That(compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).Select(d => d.Id)).IsEmpty()
+      .Because("the generated registry names only the types it can reach");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_AFanOutOfACollectiveEvent_IsLeftOutAsync() {
+    // WHIZ143 reports it; the sink applies a collective from its own row and never as a fan-out.
+    const string source = PREAMBLE + """
+        public sealed record TenantWide : Whizbang.Core.Messaging.ICollectiveEvent {
+          public Whizbang.Core.Messaging.CollectiveScope Scope { get; init; } = null!;
+        }
+
+        public class OrderSummaryProjection : IPerspectiveFanOutFor<OrderSummary, TenantWide> {
+          public static FanOutKey<OrderSummary> Targets => FanOut.By<OrderSummary>(o => o.CustomerId);
+          public ICollectiveSpec<OrderSummary> Apply(TenantWide e) => null!;
+        }
+        """;
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveFanOutDiscoveryGenerator>(source);
+
+    await Assert.That(GeneratorTestHelper.GetAllGeneratedSources(result)).IsEmpty();
   }
 
   [Test]

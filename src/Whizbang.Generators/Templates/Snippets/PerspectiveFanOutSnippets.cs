@@ -16,6 +16,8 @@ public class PerspectiveFanOutSnippets {
       KeyProperty: __KEY_PROPERTY__,
       KeyColumn: __KEY_COLUMN__,
       KeySelector: (global::System.Linq.Expressions.Expression<global::System.Func<__MODEL__, object?>>)(row => row.__KEY_MEMBER__),
+      TableName: __TABLE__,
+      CreateExecutor: static factory => factory.Create<__MODEL__>(__TABLE__),
       Invoker: static (perspective, evt) => ((global::Whizbang.Core.Perspectives.IPerspectiveFanOutFor<__MODEL__, __EVENT__>)perspective).Apply((__EVENT__)evt)
     ),
     #endregion

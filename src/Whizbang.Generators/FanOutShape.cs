@@ -31,6 +31,7 @@ internal static class FanOutShape {
   private const string SETTERS_FQN = "Whizbang.Core.Perspectives.ICollectiveSetters<TModel>";
   private const string PHYSICAL_FIELD = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
   private const string INDEXED = "Whizbang.Core.Perspectives.IndexedAttribute";
+  private const string COLLECTIVE_EVENT = "Whizbang.Core.Messaging.ICollectiveEvent";
 
   /// <summary>
   /// What a <c>Targets</c> names: the key property, or null when it is not <c>FanOut.By&lt;TModel&gt;(row =&gt; row.Key)</c>,
@@ -120,6 +121,29 @@ internal static class FanOutShape {
   }
 
   /// <summary>Whether a key passes every rule, so the generator registers the fan-out.</summary>
+  /// <summary>
+  /// The first of <paramref name="types"/> the code generated into the declaring assembly cannot name: one that is, or is
+  /// nested in, a private or protected type (WHIZ129). Null when every one is reachable.
+  /// </summary>
+  internal static ITypeSymbol? FirstUnreachable(params ITypeSymbol[] types) =>
+    types.FirstOrDefault(static type => _containers(type).Any(static t => t.DeclaredAccessibility
+      is Accessibility.Private or Accessibility.Protected or Accessibility.ProtectedAndInternal));
+
+  /// <summary>Whether <paramref name="eventType"/> is a collective event, which a fan-out never applies (WHIZ143).</summary>
+  internal static bool IsCollectiveEvent(ITypeSymbol eventType) =>
+    eventType.AllInterfaces.Any(static i => TypeNameUtilities.IsNamed(i, COLLECTIVE_EVENT));
+
+  /// <summary>Whether the generated registry can register the fan-out: every type it names is reachable and the event is not a collective.</summary>
+  internal static bool IsRegistrable(INamedTypeSymbol perspective, INamedTypeSymbol fanOut) =>
+    FirstUnreachable(perspective, fanOut.TypeArguments[0], fanOut.TypeArguments[1]) is null
+    && !IsCollectiveEvent(fanOut.TypeArguments[1]);
+
+  private static IEnumerable<ITypeSymbol> _containers(ITypeSymbol type) {
+    for (ITypeSymbol? current = type; current is not null; current = current.ContainingType) {
+      yield return current;
+    }
+  }
+
   internal static bool IsValidKey(IPropertySymbol key) => IsPhysicalField(key) && IsIndexed(key) && CanHoldStreamId(key);
 
   /// <summary>The key's column: its <c>[PhysicalField(ColumnName)]</c>, else its snake_case name, as the schema names it.</summary>

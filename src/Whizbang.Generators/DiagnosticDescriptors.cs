@@ -910,7 +910,7 @@ public static class DiagnosticDescriptors {
   );
 
   // ==========================================================================
-  // WHIZ124-WHIZ128: Perspective fan-out from another stream (#2618)
+  // WHIZ124-WHIZ129, WHIZ143: Perspective fan-out from another stream (#2618, #2620)
   // A fan-out (IPerspectiveFanOutFor<TModel, TEvent>) targets the rows whose key column holds a foreign event's
   // stream id. The key is read at build time, so it must be a declared, indexed column that holds a stream id and
   // changes only through the row's own events. The generator leaves out every declaration that breaks a rule.
@@ -992,6 +992,37 @@ public static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "A rebuild finds the foreign events that target a row from the key values the row takes while its own events are folded. A set-based apply (a fan-out's Apply or a [CollectiveApplyFor] handler) that assigned the key would move rows without the rebuild seeing it, so live and rebuilt rows would differ.",
       customTags: WellKnownDiagnosticTags.CompilationEnd
+  );
+
+  /// <summary>
+  /// WHIZ129: Error - a fan-out names a type the generated registry cannot reach (#2620).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz129</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFanOutAnalyzerTests.cs:Whiz129_AFanOutTheGeneratedRegistryCannotReach_IsAnErrorAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFanOutAnalyzerTests.cs:Whiz129_AFanOutOfAModelOrEventTheRegistryCannotReach_IsAnErrorAsync</tests>
+  public static readonly DiagnosticDescriptor FanOutTypeUnreachable = new(
+      id: "WHIZ129",
+      title: "Fan-out names a type the generated registry cannot reach",
+      messageFormat: "The fan-out declared by '{0}' names {1}, which is private or protected, so the fan-out registry generated beside it cannot name it. Make {1} internal or public.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Each fan-out is registered by code generated into the declaring assembly, which casts to the perspective, the model and the foreign event. A private or protected nested type cannot be named there, so the fan-out is left out of the registry and would never apply. Internal and public types are reachable."
+  );
+
+  /// <summary>
+  /// WHIZ143: Error - a fan-out's foreign event is a collective event (#2620).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz143</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFanOutAnalyzerTests.cs:Whiz143_AFanOutOfACollectiveEvent_IsAnErrorAsync</tests>
+  public static readonly DiagnosticDescriptor FanOutOfCollectiveEvent = new(
+      id: "WHIZ143",
+      title: "Fan-out of a collective event",
+      messageFormat: "'{0}' fans out {1}, a collective event. A collective carries its own scope and is applied from its own row; apply it with a [CollectiveApplyFor] handler on {2}, or fan out an event that is not collective.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "The collective sink applies a collective event through its [CollectiveApplyFor] handlers, scoped by the scope the event carries; it never applies a collective as a fan-out, so a fan-out of one would be silently ignored. A collective is applied to a model with a [CollectiveApplyFor] handler; a fan-out is for an ordinary event of another stream."
   );
 
   // ==========================================================================

@@ -29,9 +29,15 @@ public sealed class PerspectiveFanOutAnalyzer : DiagnosticAnalyzer {
     DiagnosticDescriptors.FanOutKeyNotIndexed,
     DiagnosticDescriptors.FanOutKeyCannotHoldStreamId,
     DiagnosticDescriptors.FanOutKeyAssigned,
+    DiagnosticDescriptors.FanOutTypeUnreachable,
+    DiagnosticDescriptors.FanOutOfCollectiveEvent,
   ];
 
   /// <summary>A key a fan-out targets rows by: the model and the property.</summary>
+  // A nested type is named with the types it is nested in, so a reader finds the one that hides it.
+  private static readonly SymbolDisplayFormat _withContainingTypes =
+    new(typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypes);
+
   private readonly record struct DeclaredKey(string Model, string Property);
 
   /// <summary>A set-based apply's assignment of a property, and where and by what it is made.</summary>
@@ -45,9 +51,33 @@ public sealed class PerspectiveFanOutAnalyzer : DiagnosticAnalyzer {
       var keys = new ConcurrentDictionary<DeclaredKey, string>();
       var assignments = new ConcurrentBag<Assignment>();
       start.RegisterSyntaxNodeAction(c => _analyzeTargets(c, keys), SyntaxKind.PropertyDeclaration);
+      start.RegisterSymbolAction(_analyzeDeclaration, SymbolKind.NamedType);
       start.RegisterSyntaxNodeAction(c => _collectAssignment(c, assignments), SyntaxKind.InvocationExpression);
       start.RegisterCompilationEndAction(end => _reportAssignedKeys(end, keys, assignments));
     });
+  }
+
+  /// <summary>
+  /// WHIZ129 and WHIZ143 for each fan-out a type declares: a type the generated registry cannot name, and a foreign event
+  /// that is a collective, which the sink applies through its own handlers and never as a fan-out. The generator leaves
+  /// both out, so each is reported here once, at the declaring type.
+  /// </summary>
+  private static void _analyzeDeclaration(SymbolAnalysisContext context) {
+    var type = (INamedTypeSymbol)context.Symbol;
+    foreach (var fanOut in FanOutShape.Interfaces(type)) {
+      var model = fanOut.TypeArguments[0];
+      var eventType = fanOut.TypeArguments[1];
+      if (FanOutShape.FirstUnreachable(type, model, eventType) is { } unreachable) {
+        context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.FanOutTypeUnreachable, type.Locations[0],
+          type.ToDisplayString(_withContainingTypes), unreachable.ToDisplayString(_withContainingTypes)));
+      }
+      if (FanOutShape.IsCollectiveEvent(eventType)) {
+        context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.FanOutOfCollectiveEvent, type.Locations[0],
+          TypeNameUtilities.SimpleName(type), TypeNameUtilities.SimpleName(eventType), TypeNameUtilities.SimpleName(model)));
+      }
+    }
   }
 
   private static void _analyzeTargets(SyntaxNodeAnalysisContext context, ConcurrentDictionary<DeclaredKey, string> keys) {

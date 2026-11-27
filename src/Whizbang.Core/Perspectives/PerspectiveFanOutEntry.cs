@@ -26,6 +26,13 @@ namespace Whizbang.Core.Perspectives;
 /// it (an <c>Expression&lt;Func&lt;TModel, object?&gt;&gt;</c>, emitted by the generator). The live apply matches rows by
 /// it (<see cref="FanOutScopeResolver"/>), with no member looked up by name.
 /// </param>
+/// <param name="TableName">The model's perspective table, as the schema names it; the generator emits it.</param>
+/// <param name="CreateExecutor">
+/// Makes the driver's executor for the model through the driver's <see cref="ICollectiveExecutorFactory"/>
+/// (<c>factory =&gt; factory.Create&lt;TModel&gt;(table)</c>, emitted by the generator), so the dispatcher gives every
+/// fan-out model its executor with no registration to remember. Null only for an entry written by hand, which then
+/// needs the model's executor registered; the startup validator refuses a host where it is not.
+/// </param>
 /// <docs>fundamentals/perspectives/multi-stream#fan-out-from-another-stream</docs>
 /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/PerspectiveFanOutContractTests.cs:Entry_Invoker_CallsThePerspectivesSetForTheEventAsync</tests>
 public sealed record PerspectiveFanOutEntry(
@@ -35,7 +42,9 @@ public sealed record PerspectiveFanOutEntry(
   string KeyProperty,
   string KeyColumn,
   Func<object, IEvent, ICollectiveSpecSetters> Invoker,
-  LambdaExpression KeySelector
+  LambdaExpression KeySelector,
+  string TableName = "",
+  Func<ICollectiveExecutorFactory, ICollectiveEventExecutor>? CreateExecutor = null
 ) {
   /// <summary>
   /// The stable identity of this fan-out: the perspective, its <c>Apply</c> for the event, and the model. Built from names,

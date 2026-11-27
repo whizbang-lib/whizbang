@@ -17,7 +17,7 @@ namespace Whizbang.Generators.Tests.Analyzers;
 [Category("Analyzers")]
 [Category("FanOut")]
 public class PerspectiveFanOutAnalyzerTests {
-  private static readonly string[] _fanOutIds = ["WHIZ124", "WHIZ125", "WHIZ126", "WHIZ127", "WHIZ128"];
+  private static readonly string[] _fanOutIds = ["WHIZ124", "WHIZ125", "WHIZ126", "WHIZ127", "WHIZ128", "WHIZ129", "WHIZ143"];
 
   private const string FAN_OUT_PREAMBLE = """
       #nullable enable
@@ -269,5 +269,95 @@ public class PerspectiveFanOutAnalyzerTests {
 
     await Assert.That(await ReportedAsync(source, "WHIZ128")).IsEmpty()
       .Because("CustomerId is a key only where a fan-out declares it, and here none does");
+  }
+
+  [Test]
+  [Arguments("private")]
+  [Arguments("protected")]
+  [Arguments("private protected")]
+  [RequiresAssemblyFiles]
+  [RequiresUnreferencedCode("Finds the analyzers by reflection.")]
+  public async Task Whiz129_AFanOutTheGeneratedRegistryCannotReach_IsAnErrorAsync(string access) {
+    // The registry is generated beside the declaration and casts to the perspective, the model and the event; a type it
+    // cannot name would break the build in generated code (CS0122) instead of here.
+    var source = FAN_OUT_PREAMBLE + $$"""
+        public class Host {
+          {{access}} sealed class Projection : IPerspectiveFanOutFor<OrderSummary, CustomerRenamed> {
+            public static FanOutKey<OrderSummary> Targets => FanOut.By<OrderSummary>(o => o.CustomerId);
+            public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e) => new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
+          }
+        }
+        """;
+
+    var reported = await ReportedAsync(source, "WHIZ129");
+
+    await Assert.That(reported.Length).IsEqualTo(1);
+    await Assert.That(reported[0].Severity).IsEqualTo(DiagnosticSeverity.Error);
+    await Assert.That(LocatedText(reported[0])).IsEqualTo("Projection");
+    await Assert.That(reported[0].GetMessage(CultureInfo.InvariantCulture)).Contains("Host.Projection");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  [RequiresUnreferencedCode("Finds the analyzers by reflection.")]
+  public async Task Whiz129_AFanOutOfAModelOrEventTheRegistryCannotReach_IsAnErrorAsync() {
+    const string source = FAN_OUT_PREAMBLE + """
+        public class Host {
+          private sealed record Hidden(string Name) : IEvent;
+
+          internal sealed class Projection : IPerspectiveFanOutFor<OrderSummary, Hidden> {
+            public static FanOutKey<OrderSummary> Targets => FanOut.By<OrderSummary>(o => o.CustomerId);
+            ICollectiveSpec<OrderSummary> IPerspectiveFanOutFor<OrderSummary, Hidden>.Apply(Hidden e) => new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
+          }
+        }
+        """;
+
+    var reported = await ReportedAsync(source, "WHIZ129");
+
+    await Assert.That(reported.Length).IsEqualTo(1);
+    await Assert.That(reported[0].GetMessage(CultureInfo.InvariantCulture)).Contains("Host.Hidden");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  [RequiresUnreferencedCode("Finds the analyzers by reflection.")]
+  public async Task Whiz129_AnInternalNestedFanOut_ReportsNothingAsync() {
+    const string source = FAN_OUT_PREAMBLE + """
+        public class Host {
+          internal sealed class Projection : IPerspectiveFanOutFor<OrderSummary, CustomerRenamed> {
+            public static FanOutKey<OrderSummary> Targets => FanOut.By<OrderSummary>(o => o.CustomerId);
+            public ICollectiveSpec<OrderSummary> Apply(CustomerRenamed e) => new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
+          }
+        }
+        """;
+
+    await Assert.That(await ReportedAsync(source, "WHIZ129")).IsEmpty();
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  [RequiresUnreferencedCode("Finds the analyzers by reflection.")]
+  public async Task Whiz143_AFanOutOfACollectiveEvent_IsAnErrorAsync() {
+    // A collective already carries its own scope and is applied from its own sink row; the sink never wraps it as a
+    // fan-out, so the declaration would be ignored. The build refuses it instead.
+    const string source = FAN_OUT_PREAMBLE + """
+        public sealed record TenantWide(string Name) : Whizbang.Core.Messaging.ICollectiveEvent {
+          public Whizbang.Core.Messaging.CollectiveScope Scope { get; init; } = null!;
+        }
+
+        public class OrderSummaryProjection : IPerspectiveFanOutFor<OrderSummary, TenantWide> {
+          public static FanOutKey<OrderSummary> Targets => FanOut.By<OrderSummary>(o => o.CustomerId);
+          public ICollectiveSpec<OrderSummary> Apply(TenantWide e) => new Spec<OrderSummary>(s => s.SetProperty(o => o.CustomerName, e.Name));
+        }
+        """;
+
+    var reported = await ReportedAsync(source, "WHIZ143");
+
+    await Assert.That(reported.Length).IsEqualTo(1);
+    await Assert.That(reported[0].Severity).IsEqualTo(DiagnosticSeverity.Error);
+    await Assert.That(LocatedText(reported[0])).IsEqualTo("OrderSummaryProjection");
+    var message = reported[0].GetMessage(CultureInfo.InvariantCulture);
+    await Assert.That(message).Contains("TenantWide");
+    await Assert.That(message).Contains("[CollectiveApplyFor]");
   }
 }
