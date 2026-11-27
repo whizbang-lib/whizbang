@@ -587,7 +587,8 @@ DECLARE
   v_read INTEGER;
 BEGIN
   IF v_unresolved = 0 THEN
-    SELECT array_agg(w.event_id ORDER BY w.event_id) FILTER (WHERE w.picked), max(w.event_id), count(*)::int
+    SELECT array_agg(w.event_id ORDER BY w.event_id) FILTER (WHERE w.picked),
+           (array_agg(w.event_id ORDER BY w.event_id DESC))[1], count(*)::int
       INTO v_ids, v_last, v_read
     FROM (
       SELECT es.event_id,
@@ -608,7 +609,8 @@ BEGIN
     RETURN;
   END IF;
 
-  SELECT array_agg(c.event_id ORDER BY c.event_id), max(c.event_id), count(*)::int INTO v_ids, v_last, v_read
+  SELECT array_agg(c.event_id ORDER BY c.event_id), (array_agg(c.event_id ORDER BY c.event_id DESC))[1], count(*)::int
+    INTO v_ids, v_last, v_read
   FROM (
     SELECT DISTINCT s.event_id
     FROM (

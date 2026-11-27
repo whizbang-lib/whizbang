@@ -112,8 +112,17 @@ public sealed partial class OriginPositionFillStep : IMaintenanceStep {
 
     var batches = 0;
     long requested = 0;
+    // #2588: the pending exclusions are asked first, through the same exchange: until its origin says where it holds an
+    // excluded event, the event's buckets are undecided. Then the held rows the walk reaches.
+    var exclusions = new IntegrityExclusionStore(services.GetRequiredService<PostgresArchiveConnection>());
+    var exclusionsCaughtUp = false;
     while (batches < options.MaxBatchesPerCycle) {
-      var ask = await store.AskAsync(options.BatchSize, options.LapPause, clock.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+      OriginPositionAsk? ask = null;
+      if (!exclusionsCaughtUp) {
+        ask = await exclusions.AskAsync(options.BatchSize, options.LapPause, clock.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+        exclusionsCaughtUp = ask is null;
+      }
+      ask ??= await store.AskAsync(options.BatchSize, options.LapPause, clock.GetUtcNow(), cancellationToken).ConfigureAwait(false);
       if (ask is null) {
         return new OriginPositionFillCycle(batches, requested, CAUGHT_UP);
       }

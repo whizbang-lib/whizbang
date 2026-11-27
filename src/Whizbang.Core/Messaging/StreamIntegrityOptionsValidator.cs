@@ -89,6 +89,15 @@ public sealed class StreamIntegrityOptionsValidator : IValidateOptions<StreamInt
       "it bounds the position requests one maintenance cycle sends, and a bound below one sends none (#2544)");
     _positive(failures, "OriginPositionFill:LapPause", options.OriginPositionFill.LapPause,
       "it is the pause before a finished walk asks again, and an empty pause re-asks every cycle (#2544)");
+    _atLeastOne(failures, "Exclusions:BatchSize", options.Exclusions.BatchSize,
+      "it is the events one maintenance batch marks or unmarks, and a batch below one applies nothing (#2588)");
+    _positive(failures, "Exclusions:LogRetention", options.Exclusions.LogRetention,
+      "it is how long the exclusion audit log is kept, and an empty retention removes every entry as it is written (#2588)");
+    if (options.Exclusions.InlineLimit < 0) {
+      failures.Add(
+        $"Whizbang:StreamIntegrity:Exclusions:InlineLimit must not be negative (was {options.Exclusions.InlineLimit}); " +
+        "it is the most event ids a call marks at once, and 0 queues every call (#2588).");
+    }
     if (options.MaxOutstandingRepairAnswers < 0) {
       failures.Add(
         $"Whizbang:StreamIntegrity:MaxOutstandingRepairAnswers must not be negative (was {options.MaxOutstandingRepairAnswers}); " +
