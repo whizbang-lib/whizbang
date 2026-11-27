@@ -11,3 +11,7 @@ dotnet_diagnostic.WHIZ608.severity = none
 # WHIZ610 (#2548) guards the library's own hot paths: a type name formatted for a debug log or an activity name is
 # read only once the level or a listener says it is consumed. Tests, tools, samples and benchmarks are outside it.
 dotnet_diagnostic.WHIZ610.severity = none
+# WHIZ611 (#2613) guards the library's long-lived loops: a channel wait raced in Task.WhenAny and never released
+# stays queued for the life of its token, which for a worker is the life of the process. A test's waits end with
+# the test, so tests, tools, samples and benchmarks are outside it.
+dotnet_diagnostic.WHIZ611.severity = none

@@ -740,6 +740,13 @@ public partial class PerspectiveWorker(
     var workReader = _perspectiveChannelWriter.Reader;
     var drainReader = _perspectiveDrainChannel.Reader;
     var drainBatcherOpts = _options.DrainBatcher;
+    // One pending wait per channel, carried from pass to pass and replaced only once it has completed (#2613). A pass
+    // the idle timeout or the wake signal ends leaves its channel waits unfinished; asking for fresh ones every pass
+    // queued two more waiters on the stopping token each time, and the channels keep a queued waiter until an item is
+    // written or its token is canceled, so an idle instance grew by them for its whole life.
+    var workWaits = new Whizbang.Core.Async.PendingChannelWait<PerspectiveWork>(workReader);
+    var drainWaits = drainReader is null ? null : new Whizbang.Core.Async.PendingChannelWait<Guid>(drainReader);
+    var drainNever = new TaskCompletionSource<bool>().Task; // never completes: only the work reader is consulted
 
     while (!stoppingToken.IsCancellationRequested) {
       // Block until either channel has work. WaitToReadAsync returns true when an item is
@@ -747,10 +754,8 @@ public partial class PerspectiveWorker(
       // starving drain mode behind a quiet perspective channel (or vice versa). A timeout
       // task keeps the database-readiness counter ticking even when no work arrives — the
       // legacy poll loop did this naturally; the channel architecture needs it explicit.
-      var workWait = workReader.WaitToReadAsync(stoppingToken).AsTask();
-      var drainWait = drainReader is null
-        ? new TaskCompletionSource<bool>().Task // never completes — only workReader is consulted
-        : drainReader.WaitToReadAsync(stoppingToken).AsTask();
+      var workWait = workWaits.WaitAsync(stoppingToken);
+      var drainWait = drainWaits?.WaitAsync(stoppingToken) ?? drainNever;
       // Slice 7a — when the NOTIFY listener is wired, use the relaxed cadence
       // (safety-net only); otherwise fall back to the legacy tight cadence so a
       // NOTIFY outage doesn't introduce latency.
@@ -948,6 +953,12 @@ public partial class PerspectiveWorker(
   /// to write its second signal into a 150 ms wall-clock race -- which a loaded runner loses. That
   /// test dequeued a green pull request from the merge queue.
   /// </param>
+  /// <remarks>
+  /// Each window's wait for a further stream runs on a token of its own that is canceled once the race is decided, so a
+  /// window closed by its deadline leaves no waiter on the channel; disposing the source alone would not release it
+  /// (#2613). Internal so that property can be held directly.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/WindowWaitReleaseTests.cs:PerspectiveWorkerDrainWindow_WindowsClosedByTheDeadline_LeaveNoWaitOnTheChannelAsync</tests>
   internal static async Task AccumulateDrainSignalsWithinWindowAsync(
       System.Threading.Channels.ChannelReader<Guid> drainReader,
       List<Guid> drainStreamIds,
