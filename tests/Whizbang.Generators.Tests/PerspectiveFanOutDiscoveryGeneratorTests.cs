@@ -301,11 +301,12 @@ public class PerspectiveFanOutDiscoveryGeneratorTests {
         class B : IPerspectiveFor<M, E> { }
         class C : IPerspectiveFanOutFor<M> { }
         class D { }
+        class E : global::IPerspectiveFanOutFor<M, E> { }
         """).GetRootAsync();
     var admitted = root.DescendantNodes().Where(PerspectiveFanOutDiscoveryGenerator.IsFanOutCandidate)
       .OfType<Microsoft.CodeAnalysis.CSharp.Syntax.TypeDeclarationSyntax>().Select(t => t.Identifier.ValueText).ToArray();
 
-    await Assert.That(admitted).IsEquivalentTo(["A"]);
+    await Assert.That(admitted).IsEquivalentTo(["A", "E"]);
   }
 
   [Test]

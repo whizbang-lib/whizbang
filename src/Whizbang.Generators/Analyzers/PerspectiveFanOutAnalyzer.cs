@@ -91,10 +91,8 @@ public sealed class PerspectiveFanOutAnalyzer : DiagnosticAnalyzer {
       return;
     }
     var model = assigned.Model;
+    // The declared member the call is in (a lambda is not one), so the message names the method a reader wrote.
     var by = context.ContainingSymbol;
-    while (by is IMethodSymbol { MethodKind: MethodKind.LambdaMethod } lambda) {
-      by = lambda.ContainingSymbol;
-    }
     assignments.Add(new Assignment(
       new DeclaredKey(TypeNameUtilities.FullyQualified(model), assigned.Property.Name),
       TypeNameUtilities.SimpleName(model),
