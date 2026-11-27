@@ -9,6 +9,7 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Postgres;
+using Microsoft.Extensions.Time.Testing;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -27,6 +28,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard4")]
 [NotInParallel("IntegrityManifestGates")]   // the manifest receptors' per-process gates are shared state
 public class IntegrityExclusionAgreementTests : EFCoreTestBase {
+  /// <summary>When the exclusions API stamps marks, the log and requests: a fixed instant, never the host clock.</summary>
+  private static readonly FakeTimeProvider _clock = new(new DateTimeOffset(2025, 6, 1, 12, 0, 0, TimeSpan.Zero));
+
   private const string TYPE = "TwoService.Contracts.OrderPlaced, TwoService.Contracts";
   private const string PAYLOAD = """{"k":"v"}""";
   private const string REASON = "unresolvable after a defect";
@@ -210,7 +214,7 @@ public class IntegrityExclusionAgreementTests : EFCoreTestBase {
       var connection = new NpgsqlConnection(h.Consumer.ConnectionString);
       await connection.OpenAsync(ct);
       return connection;
-    }, "public"), new StreamIntegrityOptions(), TimeProvider.System, TwoServiceHarness.CONSUMER_NAME,
+    }, "public"), new StreamIntegrityOptions(), _clock, TwoServiceHarness.CONSUMER_NAME,
       NullLogger<PostgresIntegrityExclusions>.Instance);
 
   /// <summary>An event the consumer holds under the origin that the origin never wrote, without a position, folded into

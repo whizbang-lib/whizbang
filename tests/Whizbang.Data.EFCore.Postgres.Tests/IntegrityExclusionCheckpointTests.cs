@@ -13,6 +13,7 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Postgres;
+using Microsoft.Extensions.Time.Testing;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -29,6 +30,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [NotInParallel("IntegrityCheckpoint")]   // the checkpoint receptor keeps a process-wide repair policy and ownership-conflict memory
 [Category("Shard3")]
 public class IntegrityExclusionCheckpointTests : EFCoreTestBase {
+  /// <summary>When the exclusions API stamps marks, the log and requests: a fixed instant, never the host clock.</summary>
+  private static readonly FakeTimeProvider _clock = new(new DateTimeOffset(2025, 6, 1, 12, 0, 0, TimeSpan.Zero));
+
   private const string TYPE = "Contracts.CheckpointProbe, Contracts";
   private const int EXCLUDED_FLAG = (int)EventFlags.IntegrityExcluded;
   private const string TENANT = "tenant-c";
@@ -127,7 +131,7 @@ public class IntegrityExclusionCheckpointTests : EFCoreTestBase {
   }
 
   private PostgresIntegrityExclusions _exclusions() =>
-    new(_connection(), new StreamIntegrityOptions(), TimeProvider.System, "consumer-svc",
+    new(_connection(), new StreamIntegrityOptions(), _clock, "consumer-svc",
       NullLogger<PostgresIntegrityExclusions>.Instance);
 
   private PostgresArchiveConnection _connection() =>

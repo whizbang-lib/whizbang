@@ -36,6 +36,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Integration")]
 [Category("Shard2")]
 public class IntegrityExclusionsApiTests : EFCoreTestBase {
+  /// <summary>When the exclusions API stamps marks, the log and requests: a fixed instant, never the host clock.</summary>
+  private static readonly FakeTimeProvider _clock = new(new DateTimeOffset(2025, 6, 1, 12, 0, 0, TimeSpan.Zero));
+
   private const string TYPE = "Contracts.ApiProbe, Contracts";
   private const string REASON = "pre-1.0 history recorded under older rules";
   private const string OPERATOR = "operator-a";
@@ -260,10 +263,10 @@ public class IntegrityExclusionsApiTests : EFCoreTestBase {
     var options = new StreamIntegrityOptions();
     var logger = new ListLogger();
 
-    await Assert.That(() => new PostgresIntegrityExclusions(null!, options, TimeProvider.System, null, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new PostgresIntegrityExclusions(database, null!, TimeProvider.System, null, logger)).Throws<ArgumentNullException>();
+    await Assert.That(() => new PostgresIntegrityExclusions(null!, options, _clock, null, logger)).Throws<ArgumentNullException>();
+    await Assert.That(() => new PostgresIntegrityExclusions(database, null!, _clock, null, logger)).Throws<ArgumentNullException>();
     await Assert.That(() => new PostgresIntegrityExclusions(database, options, null!, null, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new PostgresIntegrityExclusions(database, options, TimeProvider.System, null, null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new PostgresIntegrityExclusions(database, options, _clock, null, null!)).Throws<ArgumentNullException>();
     await Assert.That(() => PostgresIntegrityExclusions.FromServices(null!)).Throws<ArgumentNullException>();
     await Assert.That(() => PostgresIntegrityExclusions.SelectionJson(null!)).Throws<ArgumentNullException>();
     await Assert.That(() => new IntegrityExclusionStep(null!)).Throws<ArgumentNullException>();
