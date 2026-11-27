@@ -52,6 +52,14 @@ public class EventFlagsTests {
   }
 
   [Test]
+  public async Task EventFlags_IntegrityExcluded_BitPositionLocked_AndItIsNotStateBasedAsync() {
+    await Assert.That(_asInt(EventFlags.IntegrityExcluded)).IsEqualTo(256)
+      .Because("Bit position 8. The SQL eligibility rule (version 2) reads (flags & 256) to leave an operator's exclusion out of every digest, epoch, held fold and checkpoint count (#2588); moving the bit silently puts excluded events back in.");
+    await Assert.That(EventFlags.IntegrityExcluded.IsStateBased()).IsFalse()
+      .Because("An exclusion changes what integrity counts, not how the event replays: it stays in the log.");
+  }
+
+  [Test]
   public async Task IsStateBased_TrueForEphemeralAndCompacted_FalseOtherwiseAsync() {
     await Assert.That(EventFlags.Ephemeral.IsStateBased()).IsTrue()
       .Because("Ephemeral is StateBased (no-replay) — self-destructing.");

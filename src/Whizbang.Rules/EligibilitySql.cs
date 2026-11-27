@@ -20,6 +20,14 @@ public static class EligibilitySql {
   public const string INTEGRITY_COUNTED =
     "(COALESCE(e.flags, 0) & 32 = 0 AND split_part(e.event_type, ',', 1) <> ALL(__DIGEST_EXEMPT_TYPES__))";
 
+  /// <summary>Version 1 of <c>__DIGEST_ELIGIBLE__(e)</c>, frozen: the text every shipped migration writes.</summary>
+  public const string DIGEST_ELIGIBLE_V1 =
+    "(COALESCE(e.flags, 0) & 8 = 0 AND COALESCE(e.flags, 0) & 32 = 0 AND split_part(e.event_type, ',', 1) <> ALL(__DIGEST_EXEMPT_TYPES__))";
+
+  /// <summary>Version 1 of <c>__INTEGRITY_COUNTED__(e)</c>, frozen: the text every shipped migration writes.</summary>
+  public const string INTEGRITY_COUNTED_V1 =
+    "(COALESCE(e.flags, 0) & 32 = 0 AND split_part(e.event_type, ',', 1) <> ALL(__DIGEST_EXEMPT_TYPES__))";
+
   /// <summary><c>__DIGEST_EXEMPT_TYPES__</c>: the audit system events, which no digest counts.</summary>
   public const string DIGEST_EXEMPT_TYPES =
     "ARRAY['Whizbang.Core.SystemEvents.EventAudited','Whizbang.Core.SystemEvents.CommandAudited']";
