@@ -114,19 +114,23 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   );
 
   /// <summary>
-  /// WHIZ106: Error - Collective apply performs an apply-time cross-perspective query.
+  /// WHIZ106: Error - a set-based apply (a collective apply or a fan-out's Set) depends on more than the row and the
+  /// event: an apply-time cross-perspective query, or state of the perspective (#2618).
   /// </summary>
   /// <docs>operations/diagnostics/whiz106</docs>
   /// <tests>tests/Whizbang.Generators.Tests/PerspectivePurityAnalyzerTests.cs:Analyzer_CollectiveApplyUsesCollectiveQuery_ReportsWHIZ106Async</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveFanOutPurityTests.cs:Whiz106_ASetThatReadsStateBesidesTheRowAndTheEvent_IsAnErrorAsync</tests>
   public static readonly DiagnosticDescriptor CollectiveApplyUsesCollectiveQuery = new(
       id: "WHIZ106",
-      title: "Collective apply must not query other perspectives at apply time",
-      messageFormat: "Collective apply method '{0}' calls ICollectiveQuery.Of<>(), an apply-time cross-perspective query. This makes the spec non-replayable: it can't be re-evaluated per-row during a single-stream replay/rebuild. Resolve the cross-query BEFORE event creation and bake the result into the event as static payload, so the apply depends only on the row's own state and the event.",
+      title: "Set-based apply must depend only on the row and the event",
+      messageFormat: "Set-based apply '{0}' {1}. A set-based apply is folded per row during a replay or rebuild against that row and the event alone, so it must not depend on anything else. Resolve it before the event is created and carry it on the event as payload.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
-      description: "A [CollectiveApplyFor] spec is folded per-row during replay/rebuild against a single stream in isolation. An apply-time query against a sibling perspective (ICollectiveQuery.Of<>()) cannot be reconstructed in isolation, so the collective effect would be lost on rebuild. Cross-perspective facts must be resolved on the command side (when the event is created) and carried on the event."
+      description: "A [CollectiveApplyFor] spec and a fan-out's Set are folded per row during replay or rebuild against a single stream in isolation. An apply-time query against a sibling perspective (ICollectiveQuery.Of<>()), the perspective's own fields, properties or methods, or a static field that can change, cannot be reconstructed then, so the effect would differ on rebuild. Facts from elsewhere are resolved on the command side, when the event is created, and carried on the event."
   );
+
+  private const string CROSS_PERSPECTIVE_QUERY = "calls ICollectiveQuery.Of<>(), an apply-time cross-perspective query";
 
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(
@@ -161,6 +165,10 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     // time. This is independent of the Apply-name / perspective-interface gating below.
     var isCollectiveApply = _isCollectiveApply(methodSymbol);
 
+    // A fan-out's Set is a set-based apply too, folded per row on a rebuild (#2618): the same determinism checks, and
+    // WHIZ106 for anything it reads besides the row and the event.
+    var isFanOutSet = FanOutShape.IsSet(methodSymbol);
+
     // The determinism checks (async/await, DB/HTTP I/O, DateTime.UtcNow) apply to BOTH perspective Apply
     // methods and collective applies — both are folded during replay and must be deterministic.
     var isPerspectiveApply = methodSymbol.Name == "Apply"
@@ -170,12 +178,16 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     // exit instead of standing on a line of its own that no input reaches. Nothing below this point
     // runs for a null symbol, and the collective-apply analysis moves under the same gate — it only
     // ever ran when isCollectiveApply was true, which cannot be true for a null symbol.
-    if (!isPerspectiveApply && !isCollectiveApply) {
+    if (!isPerspectiveApply && !isCollectiveApply && !isFanOutSet) {
       return;
     }
 
     if (isCollectiveApply) {
       _analyzeCollectiveApply(context, methodDeclaration, methodSymbol);
+    }
+
+    if (isFanOutSet) {
+      _analyzeFanOutSet(context, methodDeclaration, methodSymbol.ContainingType);
     }
 
     // Check 1: Apply method must not return Task
@@ -271,9 +283,64 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
       var diagnostic = Diagnostic.Create(
           CollectiveApplyUsesCollectiveQuery,
           memberAccess.GetLocation(),
-          methodSymbol.Name);
+          methodSymbol.Name,
+          CROSS_PERSPECTIVE_QUERY);
       context.ReportDiagnostic(diagnostic);
     }
+  }
+
+  /// <summary>
+  /// WHIZ106 for a fan-out's <c>Set</c> (#2618): flags each read of the perspective's own state (<c>this</c>,
+  /// <c>base</c>, or an instance member of the perspective) and each read of a static field that can change. The row
+  /// and the event are reached only through the setters' lambdas and the event parameter, which are never flagged.
+  /// </summary>
+  private static void _analyzeFanOutSet(
+      SyntaxNodeAnalysisContext context, MethodDeclarationSyntax methodDeclaration, INamedTypeSymbol perspective) {
+    var name = methodDeclaration.Identifier.ValueText;
+    foreach (var node in methodDeclaration.DescendantNodes()) {
+      var (reported, reason) = node switch {
+        ThisExpressionSyntax or BaseExpressionSyntax => (node, "reads 'this', the perspective's own state"),
+        IdentifierNameSyntax identifier => _fanOutSetRead(context, identifier, perspective),
+        _ => (null, null),
+      };
+      if (reported is not null) {
+        context.ReportDiagnostic(Diagnostic.Create(CollectiveApplyUsesCollectiveQuery, reported.GetLocation(), name, reason));
+      }
+    }
+  }
+
+  /// <summary>
+  /// What <paramref name="identifier"/> reads that a fan-out's <c>Set</c> must not, and the node to report; nulls when it
+  /// reads nothing of the kind. A member read through <c>this</c> is reported once, at <c>this</c>; a static field read
+  /// through its type is reported at the whole access.
+  /// </summary>
+  private static (SyntaxNode? Reported, string? Reason) _fanOutSetRead(
+      SyntaxNodeAnalysisContext context, IdentifierNameSyntax identifier, INamedTypeSymbol perspective) {
+    var access = identifier.Parent as MemberAccessExpressionSyntax;
+    var isMemberName = access is not null && access.Name == identifier;
+    if (isMemberName && access!.Expression is ThisExpressionSyntax or BaseExpressionSyntax) {
+      return (null, null);
+    }
+    var symbol = context.SemanticModel.GetSymbolInfo(identifier, context.CancellationToken).Symbol;
+    if (symbol is IFieldSymbol { IsStatic: true, IsConst: false, IsReadOnly: false }) {
+      return (isMemberName ? access : identifier, $"reads '{TypeNameUtilities.SimpleName(symbol.ContainingType)}.{symbol.Name}', a static field that can change");
+    }
+    return !isMemberName && _isPerspectiveState(symbol, perspective)
+      ? (identifier, $"reads '{symbol!.Name}', the perspective's own state")
+      : (null, null);
+  }
+
+  /// <summary>Whether <paramref name="symbol"/> is an instance member of <paramref name="perspective"/> or a base of it.</summary>
+  private static bool _isPerspectiveState(ISymbol? symbol, INamedTypeSymbol perspective) {
+    if (symbol is not (IFieldSymbol or IPropertySymbol or IEventSymbol or IMethodSymbol { MethodKind: MethodKind.Ordinary }) || symbol.IsStatic) {
+      return false;
+    }
+    for (var type = perspective; type is not null; type = type.BaseType) {
+      if (SymbolEqualityComparer.Default.Equals(type, symbol.ContainingType)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static void _analyzeConstructor(SyntaxNodeAnalysisContext context) {
