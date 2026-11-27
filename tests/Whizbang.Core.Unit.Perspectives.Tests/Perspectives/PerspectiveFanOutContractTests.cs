@@ -16,16 +16,18 @@ namespace Whizbang.Core.Tests.Perspectives;
 /// <code-under-test>src/Whizbang.Core/Perspectives/FanOutKey.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Perspectives/PerspectiveFanOutEntry.cs</code-under-test>
 public class PerspectiveFanOutContractTests {
-  private sealed class OrderSummary {
+  internal sealed class OrderSummary {
+    [PhysicalField]
+    [Indexed]
     public Guid CustomerId { get; init; }
     public string CustomerName { get; init; } = "";
   }
 
-  private sealed record CustomerRenamed(string Name) : IEvent;
+  internal sealed record CustomerRenamed(string Name) : IEvent;
 
-  private sealed record Spec(Expression<Action<ICollectiveSetters<OrderSummary>>> Setters) : ICollectiveSpec<OrderSummary>;
+  internal sealed record Spec(Expression<Action<ICollectiveSetters<OrderSummary>>> Setters) : ICollectiveSpec<OrderSummary>;
 
-  private sealed class OrderSummaryProjection : IPerspectiveFanOutFor<OrderSummary, CustomerRenamed> {
+  internal sealed class OrderSummaryProjection : IPerspectiveFanOutFor<OrderSummary, CustomerRenamed> {
     public static FanOutKey<OrderSummary> Targets => FanOut.By<OrderSummary>(o => o.CustomerId);
 
     public ICollectiveSpec<OrderSummary> Set(CustomerRenamed @event) =>
