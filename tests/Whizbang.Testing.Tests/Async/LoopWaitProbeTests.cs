@@ -46,7 +46,11 @@ public class LoopWaitProbeTests {
     await Assert.That(beforeCancel).IsEqualTo(2);
     await Assert.That(reader.OutstandingWaits).IsEqualTo(0);
     await Assert.That(reader.WaitCalls).IsEqualTo(2);
-    await Assert.That(abandoned.All(w => w.IsCanceled)).IsTrue();
+    // The channel completes a canceled wait's task once its own cancellation callback has run, which can be after
+    // CancelAsync returns: awaiting the tasks is what waits for that, where reading IsCanceled raced it.
+    foreach (var wait in abandoned) {
+      await Assert.That(async () => await wait).Throws<OperationCanceledException>();
+    }
   }
 
   [Test]
@@ -108,7 +112,7 @@ public class LoopWaitProbeTests {
 
   [Test]
   public async Task CountingClock_ADelay_IsLiveUntilItIsCanceledAsync() {
-    var clock = new CountingTimeProvider(TimeProvider.System);
+    var clock = new CountingTimeProvider(new FiringClock());
     using var cts = new CancellationTokenSource();
 
     var delay = _delay(_hour, clock, cts.Token);
@@ -123,7 +127,7 @@ public class LoopWaitProbeTests {
 
   [Test]
   public async Task CountingClock_ADelayLeftToRun_StaysLiveAsync() {
-    var clock = new CountingTimeProvider(TimeProvider.System);
+    var clock = new CountingTimeProvider(new FiringClock());
     using var cts = new CancellationTokenSource();
 
     var delay = _delay(_hour, clock, cts.Token);
@@ -136,7 +140,7 @@ public class LoopWaitProbeTests {
 
   [Test]
   public async Task CountingClock_Created_CompletesOnceThatManyTimersExistAsync() {
-    var clock = new CountingTimeProvider(TimeProvider.System);
+    var clock = new CountingTimeProvider(new FiringClock());
     var one = clock.Created(1);
     var three = clock.Created(3);
 
@@ -155,7 +159,7 @@ public class LoopWaitProbeTests {
 
   [Test]
   public async Task CountingClock_ATimer_ChangesAndDisposesThroughTheInnerTimer_CountedOnceAsync() {
-    var clock = new CountingTimeProvider(TimeProvider.System);
+    var clock = new CountingTimeProvider(new FiringClock());
     var timer = clock.CreateTimer(_ => { }, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
 
     await Assert.That(timer.Change(_hour, Timeout.InfiniteTimeSpan)).IsTrue();
@@ -168,7 +172,7 @@ public class LoopWaitProbeTests {
 
   [Test]
   public async Task CountingClock_ADelay_IsArmedUntilItIsCanceledAsync() {
-    var clock = new CountingTimeProvider(TimeProvider.System);
+    var clock = new CountingTimeProvider(new FiringClock());
     using var cts = new CancellationTokenSource();
 
     var delay = _delay(_hour, clock, cts.Token);
@@ -183,7 +187,7 @@ public class LoopWaitProbeTests {
 
   [Test]
   public async Task CountingClock_ATimerReArmedAndStopped_IsCountedAsEachArmingAsync() {
-    var clock = new CountingTimeProvider(TimeProvider.System);
+    var clock = new CountingTimeProvider(new FiringClock());
     var twice = clock.Armed(2);
     await using var timer = clock.CreateTimer(_ => { }, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
 

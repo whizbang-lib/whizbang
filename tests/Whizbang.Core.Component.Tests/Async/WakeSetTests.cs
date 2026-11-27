@@ -23,7 +23,6 @@ namespace Whizbang.Core.Tests.Async;
 /// <see cref="CountingTimeProvider"/>, <see cref="LoopWaitBudget"/>, <see cref="ReleaseCheck"/>).
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Async/WakeSet.cs</code-under-test>
-[Category("Unit")]
 public class WakeSetTests {
   private static readonly TimeSpan _poll = TimeSpan.FromSeconds(1);
 
@@ -562,7 +561,7 @@ public class WakeSetTests {
 
   [MethodImpl(MethodImplOptions.NoInlining)]
   private static WakeSet _parkOnGate(Task gate, bool dispose) {
-    var set = new WakeSet(TimeProvider.System, CancellationToken.None);
+    var set = new WakeSet(new ManualClock(), CancellationToken.None);
     set.Add(gate);
     // A zero timeout arms every source (here: the set's wait on the gate) and returns without parking, so nothing but
     // the gate can be what keeps the set; a parked wait's own completion would finish on the thread pool.

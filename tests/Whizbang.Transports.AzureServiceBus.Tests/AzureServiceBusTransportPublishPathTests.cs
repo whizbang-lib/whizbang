@@ -171,18 +171,19 @@ public class AzureServiceBusTransportPublishPathTests {
   /// </summary>
   [Test]
   public async Task PublishAsync_SendCompletesInTime_LeavesNoTimeoutRunningAsync() {
-    var send = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    // Continuations run inline: completing the send runs the rest of the publish, and the deadline's own cleanup, on
+    // this thread before SetResult returns, so what the test reads next is settled.
+    var send = new TaskCompletionSource();
     var client = new RaisableServiceBusClient { HeldSend = send.Task };
     var clock = new CountingTimeProvider(new FakeTimeProvider());
     var (transport, _) = _createTransport(client: client, timeProvider: clock);
 
     var publishing = transport.PublishAsync(AsbTransportTestData.CreateEnvelope(), _destination());
-    await clock.Armed(1).WaitAsync(TimeSpan.FromSeconds(5));
+    await clock.Armed(1);
     var armedWhileSending = clock.ArmedTimers;
     send.SetResult();
     await publishing;
-    // The deadline is stopped as the send completes: on the stack that completed it, so wait for the signal, not a guess.
-    await clock.Disarmed(1).WaitAsync(TimeSpan.FromSeconds(5));
+    await clock.Disarmed(1);
 
     await Assert.That(armedWhileSending).IsEqualTo(1)
       .Because("the send timeout runs on the injected clock while the send is in flight");
@@ -205,7 +206,7 @@ public class AzureServiceBusTransportPublishPathTests {
     var (transport, _) = _createTransport(options: options, client: client, timeProvider: clock);
 
     var publishing = transport.PublishAsync(AsbTransportTestData.CreateEnvelope(), _destination());
-    await clock.Armed(1).WaitAsync(TimeSpan.FromSeconds(5));
+    await clock.Armed(1);
     fake.Advance(options.SendTimeout);
 
     var ex = await Assert.ThrowsAsync<TimeoutException>(async () => await publishing);

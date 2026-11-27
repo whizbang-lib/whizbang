@@ -19,7 +19,6 @@ namespace Whizbang.Core.Tests.Async;
 /// a permit to come back is a wait on the semaphore itself, bounded only so a broken hand-back fails the test.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Async/WakeSet.cs</code-under-test>
-[Category("Unit")]
 public class WakeSetPermitTests {
   private static readonly TimeSpan _bound = TimeSpan.FromSeconds(30);
 

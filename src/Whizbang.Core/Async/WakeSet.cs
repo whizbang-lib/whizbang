@@ -42,7 +42,7 @@ namespace Whizbang.Core.Async;
 /// </para>
 /// </remarks>
 /// <docs>contributors/loop-waits</docs>
-/// <tests>tests/Whizbang.Core.Tests/Async/WakeSetTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Async/WakeSetTests.cs</tests>
 public sealed class WakeSet : IValueTaskSource<Wake>, IDisposable {
   private const int MAX_SOURCES = 64;
 
@@ -62,7 +62,7 @@ public sealed class WakeSet : IValueTaskSource<Wake>, IDisposable {
   /// <summary>Creates the set for a loop.</summary>
   /// <param name="time">The clock the timeout runs on.</param>
   /// <param name="stoppingToken">Ends the loop: a stop wakes the pending wait, and every later wait, as stopped.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Async/WakeSetTests.cs:Misuse_IsRefusedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Async/WakeSetTests.cs:Misuse_IsRefusedAsync</tests>
   public WakeSet(TimeProvider time, CancellationToken stoppingToken) {
     ArgumentNullException.ThrowIfNull(time);
     _time = time;
@@ -76,14 +76,14 @@ public sealed class WakeSet : IValueTaskSource<Wake>, IDisposable {
   /// The token every wait the set makes runs on: canceled when the loop's token is, and when the set is disposed. Hand it
   /// to a wait made outside the set (a readiness gate's wait, say) so disposing the set releases that wait too.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Async/WakeSetTests.cs:Dispose_CancelsTheSetsToken_AndSoAWaitMadeOnItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Async/WakeSetTests.cs:Dispose_CancelsTheSetsToken_AndSoAWaitMadeOnItAsync</tests>
   public CancellationToken Token => _stop.Token;
 
   /// <summary>Adds a channel: it wakes the loop when an item can be read, or once the channel is completed.</summary>
   /// <typeparam name="T">The channel's item type.</typeparam>
   /// <param name="reader">The channel's reader. The loop reads it; the set only waits on it.</param>
   /// <returns>The source, to test a wake against and to ask whether the channel completed.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Async/WakeSetTests.cs:WaitAsync_AnItemOnOneChannel_WakesWithThatChannelOnlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Async/WakeSetTests.cs:WaitAsync_AnItemOnOneChannel_WakesWithThatChannelOnlyAsync</tests>
   public ChannelWakeSource<T> Add<T>(ChannelReader<T> reader) {
     ArgumentNullException.ThrowIfNull(reader);
     return _add(new ChannelWakeSource<T>(reader));
@@ -92,7 +92,7 @@ public sealed class WakeSet : IValueTaskSource<Wake>, IDisposable {
   /// <summary>Adds a wake signal: it wakes the loop when the signal is raised, and is consumed on every wake.</summary>
   /// <param name="signal">The signal.</param>
   /// <returns>The source, to test a wake against.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Async/WakeSetTests.cs:ASignal_WakesTheSet_AndIsConsumedOnEveryWakeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Async/WakeSetTests.cs:ASignal_WakesTheSet_AndIsConsumedOnEveryWakeAsync</tests>
   public WakeSource Add(WakeSignal signal) {
     ArgumentNullException.ThrowIfNull(signal);
     return _add(new SignalWakeSource(signal));
@@ -105,7 +105,7 @@ public sealed class WakeSet : IValueTaskSource<Wake>, IDisposable {
   /// </summary>
   /// <param name="once">The task.</param>
   /// <returns>The source, to test a wake against.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Async/WakeSetTests.cs:AGate_WakesTheSetOnceOpen_AndOnEveryPassAfterAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Async/WakeSetTests.cs:AGate_WakesTheSetOnceOpen_AndOnEveryPassAfterAsync</tests>
   public WakeSource Add(Task once) {
     ArgumentNullException.ThrowIfNull(once);
     return _add(new TaskWakeSource(once));
@@ -118,7 +118,7 @@ public sealed class WakeSet : IValueTaskSource<Wake>, IDisposable {
   /// </summary>
   /// <param name="semaphore">The semaphore.</param>
   /// <returns>The source, to take the permit from.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Async/WakeSetPermitTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Async/WakeSetPermitTests.cs</tests>
   public PermitWakeSource Add(SemaphoreSlim semaphore) {
     ArgumentNullException.ThrowIfNull(semaphore);
     return _add(new PermitWakeSource(semaphore));
@@ -133,7 +133,7 @@ public sealed class WakeSet : IValueTaskSource<Wake>, IDisposable {
   /// <exception cref="ArgumentOutOfRangeException">The timeout is negative and not infinite.</exception>
   /// <exception cref="InvalidOperationException">A wait is already pending.</exception>
   /// <exception cref="ObjectDisposedException">The set was disposed.</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Async/WakeSetTests.cs:ATimeoutStartedBeforeTheWork_CountsTheWorkAgainstThePassAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Async/WakeSetTests.cs:ATimeoutStartedBeforeTheWork_CountsTheWorkAgainstThePassAsync</tests>
   public void StartTimeout(TimeSpan timeout) {
     if (timeout < TimeSpan.Zero && timeout != Timeout.InfiniteTimeSpan) {
       throw new ArgumentOutOfRangeException(nameof(timeout), timeout, "A timeout is zero or more, or infinite.");
@@ -159,7 +159,7 @@ public sealed class WakeSet : IValueTaskSource<Wake>, IDisposable {
   /// <exception cref="ArgumentOutOfRangeException">The timeout is negative and not infinite.</exception>
   /// <exception cref="InvalidOperationException">A wait is already pending.</exception>
   /// <exception cref="ObjectDisposedException">The set was disposed.</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Async/WakeSetTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Async/WakeSetTests.cs</tests>
   public ValueTask<Wake> WaitAsync(TimeSpan timeout) {
     StartTimeout(timeout);
     return WaitAsync();
@@ -172,7 +172,7 @@ public sealed class WakeSet : IValueTaskSource<Wake>, IDisposable {
   /// <returns>The wake.</returns>
   /// <exception cref="InvalidOperationException">A wait is already pending.</exception>
   /// <exception cref="ObjectDisposedException">The set was disposed.</exception>
-  /// <tests>tests/Whizbang.Core.Tests/Async/WakeSetTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Async/WakeSetTests.cs</tests>
   public ValueTask<Wake> WaitAsync() {
     lock (_gate) {
       _refuseWhileParkedOrDisposed();
@@ -205,7 +205,7 @@ public sealed class WakeSet : IValueTaskSource<Wake>, IDisposable {
   /// Cancels every wait the set made, which releases them where they are held, hands back every permit not taken, and
   /// wakes a pending wait as stopped.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Async/WakeSetTests.cs:Dispose_ReleasesEveryWaitTheSetMadeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Async/WakeSetTests.cs:Dispose_ReleasesEveryWaitTheSetMadeAsync</tests>
   public void Dispose() {
     lock (_gate) {
       if (_disposed) {
@@ -369,7 +369,7 @@ public enum WakeReason : byte {
 /// <param name="Reason">Why the wait ended.</param>
 /// <param name="Ready">The ready sources, one bit each.</param>
 /// <docs>contributors/loop-waits</docs>
-/// <tests>tests/Whizbang.Core.Tests/Async/WakeSetTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Async/WakeSetTests.cs</tests>
 public readonly record struct Wake(WakeReason Reason, ulong Ready) {
   internal static readonly Wake Stopped = new(WakeReason.Stopped, 0);
 
@@ -487,7 +487,7 @@ internal sealed class TaskWakeSource(Task once) : WakeSource {
 /// taken is handed back exactly once: when the set is disposed, or as a late acquire lands after that.
 /// </summary>
 /// <docs>contributors/loop-waits</docs>
-/// <tests>tests/Whizbang.Core.Tests/Async/WakeSetPermitTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Async/WakeSetPermitTests.cs</tests>
 public sealed class PermitWakeSource : WakeSource {
   private readonly SemaphoreSlim _semaphore;
   private readonly Lock _permit = new();
