@@ -23,7 +23,8 @@ internal sealed record PinnedFormerName(string PinnedId, string FormerClrTypeNam
 
 /// <summary>
 /// A currently-compiled <c>[PinnedId]</c> type discovered by the ledger generator. Value-equatable so it flows
-/// through the incremental pipeline. <see cref="Kind"/> is <c>event</c>/<c>command</c>/<c>message</c>/<c>perspective</c>.
+/// through the incremental pipeline. <see cref="Kind"/> is <c>event</c>/<c>command</c>/<c>message</c>/<c>perspective</c>,
+/// or <see cref="PinnedTypeLedger.STRONG_ID_KIND"/> for a pinned <c>[WhizbangId]</c> (#2604).
 /// </summary>
 internal sealed record DiscoveredPinnedType(string PinnedId, string ClrTypeName, string Kind);
 
@@ -41,6 +42,12 @@ internal sealed record DiscoveredPinnedType(string PinnedId, string ClrTypeName,
 internal sealed class PinnedTypeLedger {
   public int Version { get; set; } = 1;
   public List<PinnedTypeLedgerEntry> Types { get; set; } = [];
+
+  /// <summary>
+  /// The kind of a pinned strong id (#2604). Its pinned id fixes every id the type derives, so an entry of this kind with
+  /// no living pin is an error (WHIZ119), not the warning (WHIZ121) another kind gets.
+  /// </summary>
+  public const string STRONG_ID_KIND = "strong-id";
 
   /// <summary>Standard on-disk file name. Discovered among <c>AdditionalFiles</c> by suffix match.</summary>
   public const string FILE_NAME = "pinned-type-ledger.json";

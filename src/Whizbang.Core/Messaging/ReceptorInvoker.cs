@@ -938,9 +938,10 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     _logCallerInfo(receptor, ctx.CallerInfo);
 
     // InvokeAsync is a pre-compiled delegate (no reflection). The body runs inside the handling of its envelope, so an
-    // event it publishes explicitly derives its id from the handling, as what it returns does (#2274)
+    // event it publishes explicitly derives its id from the handling, as what it returns does (#2274), and a strong id
+    // it creates derives from the handling, its service and its receptor (#2604)
     object? result;
-    using (ReceptorHandling.Enter(ctx.Envelope)) {
+    using (ReceptorHandling.Enter(ctx.Envelope, _serviceName, receptor.ReceptorId)) {
       result = await receptor.InvokeAsync(_scopedProvider, ctx.Message, ctx.Envelope, ctx.CallerInfo, cancellationToken).ConfigureAwait(false);
     }
 

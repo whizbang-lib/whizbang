@@ -270,3 +270,16 @@ keeps the role and is reported Degraded (a healthy sole holder is Healthy); no R
   grace measured from the monitor's start.
   Locked by `InstanceAssignmentMonitorTests`, `InstanceAssignmentHealthSourceTests`, `InstanceAssignmentMonitorLoopTests`
   and the parity test.
+- **Phase 4 and the fleet-wide cap, #2596 (done):** migration `630_HeavyStartupWorkIsCappedAndSharedWorkRunsOncePerBuild.sql`
+  (`wh_startup_work` with `wh_claim_startup_work` / `wh_complete_startup_work`; `wh_startup_permits` with
+  `wh_try_acquire_startup_permit` / `wh_release_startup_permit`, a permit of an instance the liveness rule calls dead
+  being free). `FrameworkStartupWork` declares each Converge unit with a `StartupWorkScope` (a declaration without a
+  defined scope cannot be made); `StartupWorkSession` is the one way both drivers run them: shared work claimed per build
+  fingerprint (library version, name, the build's inputs), skipped while a live peer runs it or after it finished,
+  released when it did not finish, re-claimed by another build or after this start's own pass applied something; every
+  unit that runs holds one of `MaxConcurrentHeavyStarts` permits (default 2), waiting in Converge past the cap and running
+  without one after `PermitWaitLimit`. Bound from `Whizbang:Database:StartupWork`. Departure from 3.5: the managed-object
+  reconcile stays `PerInstance`, because each run records the instance's declarations, which the drop gate reads for every
+  live instance; skipping it on peers would stop every drop. Locked by `StartupWorkCatalogTests`,
+  `StartupWorkSessionTests`, `StartupWorkLedgerSqlTests`, the parity tests in `StartupParity/StartupWorkParityTests.cs`
+  and `StartupWorkDeclarationGuardTests`.

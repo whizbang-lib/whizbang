@@ -95,6 +95,15 @@ public class WhizbangIdAttributeTests {
   }
 
   [Test]
+  public async Task WhizbangIdAttribute_PinnedIdProperty_CanBeSetAsync() {
+    var attribute = new WhizbangIdAttribute { PinnedId = "3f2c8a1e-5b7d-4c9e-a1f0-6d2b8e4c7a91" };
+
+    await Assert.That(attribute.PinnedId).IsEqualTo("3f2c8a1e-5b7d-4c9e-a1f0-6d2b8e4c7a91");
+    await Assert.That(new WhizbangIdAttribute().PinnedId).IsNull()
+      .Because("an id is unpinned unless its declaration pins it");
+  }
+
+  [Test]
   public async Task WhizbangIdAttribute_AttributeUsage_AllowsStructTargetAsync() {
     // Arrange & Act
     var attributeUsage = typeof(WhizbangIdAttribute)

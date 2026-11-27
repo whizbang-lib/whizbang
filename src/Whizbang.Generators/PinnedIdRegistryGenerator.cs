@@ -14,8 +14,9 @@ namespace Whizbang.Generators;
 /// <summary>
 /// Generates an AOT-safe, zero-reflection <c>IPinnedIdRegistry</c> implementation by
 /// discovering <c>[PinnedId]</c> attributes on concrete <c>IMessage</c> and
-/// <c>IPerspectiveFor&lt;&gt;</c> types.
+/// <c>IPerspectiveFor&lt;&gt;</c> types, and pinned strong ids (<c>[WhizbangId]</c>, #2604).
 /// </summary>
+/// <tests>tests/Whizbang.Generators.Tests/PinnedStrongIdTests.cs</tests>
 [Generator]
 public class PinnedIdRegistryGenerator : IIncrementalGenerator {
   /// <summary>
@@ -28,6 +29,18 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
       node is (ClassDeclarationSyntax or RecordDeclarationSyntax or StructDeclarationSyntax) and TypeDeclarationSyntax type &&
       SyntaxCandidates.MayHaveBaseTypes(type) && SyntaxCandidates.MayHaveAttributes(type);
 
+  /// <summary>Whether a node can declare a strong id by a [WhizbangId] struct (#2604); the same test the id generator uses.</summary>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsStrongIdStructCandidate(SyntaxNode node) => WhizbangIdGenerator.IsAttributedStructCandidate(node);
+
+  /// <summary>Whether a node can declare a strong id by a [WhizbangId] property (#2604); the same test the id generator uses.</summary>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsStrongIdPropertyCandidate(SyntaxNode node) => WhizbangIdGenerator.IsAttributedPropertyCandidate(node);
+
+  /// <summary>Whether a node can declare a strong id by a [WhizbangId] parameter (#2604); the same test the id generator uses.</summary>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsStrongIdParameterCandidate(SyntaxNode node) => WhizbangIdGenerator.IsAttributedParameterCandidate(node);
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     var pinnedTypes = context.SyntaxProvider.CreateSyntaxProvider(
@@ -35,7 +48,24 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractPinnedInfo(ctx, ct)
     ).Where(static info => info is not null);
 
-    var combined = context.CompilationProvider.Combine(pinnedTypes.Collect());
+    // Pinned strong ids (#2604), from each route a [WhizbangId] can be declared by. A declaration in its own
+    // compilation always has its symbol.
+    var structIds = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => IsStrongIdStructCandidate(node),
+        transform: static (ctx, ct) => _strongIdOf(ctx.SemanticModel.GetDeclaredSymbol(ctx.Node, ct)!, ct)
+    ).Where(static info => info is not null);
+    var propertyIds = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => IsStrongIdPropertyCandidate(node),
+        transform: static (ctx, ct) => _strongIdOf(ctx.SemanticModel.GetDeclaredSymbol(ctx.Node, ct)!, ct)
+    ).Where(static info => info is not null);
+    var parameterIds = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => IsStrongIdParameterCandidate(node),
+        transform: static (ctx, ct) => _strongIdOf(ctx.SemanticModel.GetDeclaredSymbol(ctx.Node, ct)!, ct)
+    ).Where(static info => info is not null);
+    var allPinned = pinnedTypes.Collect().Combine(structIds.Collect()).Combine(propertyIds.Collect()).Combine(parameterIds.Collect())
+      .Select(static (all, _) => all.Left.Left.Left.AddRange(all.Left.Left.Right).AddRange(all.Left.Right).AddRange(all.Right));
+
+    var combined = context.CompilationProvider.Combine(allPinned);
 
     context.RegisterSourceOutput(
         combined,
@@ -100,6 +130,15 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
     );
   }
 
+  /// <summary>
+  /// The pinned strong id <paramref name="symbol"/> declares, as the type the strong id generator emits, or null when it
+  /// declares none or leaves it unpinned (#2604).
+  /// </summary>
+  private static PinnedIdInfo? _strongIdOf(ISymbol symbol, System.Threading.CancellationToken cancellationToken) =>
+    WhizbangIdDeclaration.Read(symbol, cancellationToken) is { PinnedId: { } pinnedId } declared
+      ? new PinnedIdInfo(TypeName: $"global::{declared.FullyQualifiedName}", PinnedId: pinnedId)
+      : null;
+
   private static void _generateRegistry(
       SourceProductionContext context,
       Compilation compilation,
@@ -112,7 +151,8 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
     var assemblyName = compilation.AssemblyName ?? "UnknownAssembly";
     var namespaceName = $"{assemblyName}.Generated";
 
-    var ordered = infos.OrderBy(i => i.TypeName, System.StringComparer.Ordinal).ToList();
+    // An id declared twice (a property and a parameter) is one id
+    var ordered = infos.Distinct().OrderBy(i => i.TypeName, System.StringComparer.Ordinal).ToList();
 
     var source = new StringBuilder();
     source.AppendLine("// <auto-generated/>");

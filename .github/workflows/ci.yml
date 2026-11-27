@@ -91,12 +91,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # merge_group has no base ref to diff against, so the filter is skipped there and
-      # every code-gated job forces itself on instead. A queue run must never narrow its
-      # own matrix: the filter returning empty would skip the suites, CI Result would go
-      # green on nothing, and the queue would merge untested code.
+      # Runs on every event, so every job reads one answer (#2602). merge_group has no base ref
+      # to diff against, so the script answers code there: a queue run must never narrow its own
+      # matrix. The filter used to be skipped on merge_group, leaving code empty, and each
+      # code-gated job had to remember to force itself on in the queue; Compile net10.0 did not,
+      # and never ran in the queue. CiChangeGating.Tests.ps1 (script-tests) locks both.
       - name: Detect changed paths
-        if: github.event_name != 'merge_group'
         id: filter
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1021,9 +1021,11 @@ jobs:
   # tests both frameworks itself and skips this. In ci-result's needs: a failure blocks the merge.
   compile-net10:
     name: Build · Compile net10.0
-    needs: [changes, pick-runner]
+    # Stands down on a fast-forward queue run, as Compile and Analyzers do: the pull request run compiled this exact
+    # tree for net10.0, and ff-validated requires that run's gate (which needs this job) to be green.
+    needs: [changes, ff-validated, pick-runner]
     if: >-
-      ${{ !failure() && !cancelled() &&
+      ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
       ((github.event_name == 'pull_request' && github.base_ref == 'develop') || github.event_name == 'merge_group') &&
       needs.changes.outputs.code == 'true' }}
     runs-on: ${{ fromJSON(needs.pick-runner.outputs.attempt == github.run_attempt && needs.pick-runner.outputs.compile || '"ubuntu-latest"') }}
@@ -1842,6 +1844,8 @@ jobs:
     needs: [version, build]
     # version is skipped (not failed) on PRs. Packability is validated in the merge queue for a change into
     # develop (#2070), and on its own PR run for a change into main or a release branch.
+    # It packs this run's build and nothing else, so it runs only after that build succeeded: a fast-forward
+    # queue run skips Compile and Pack with it (CiChangeGating.Tests.ps1, #2602).
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && (github.event_name != 'pull_request' || github.base_ref != 'develop' || vars.PR_RUN_FULL_MATRIX == 'true') }}
     permissions:
       contents: read

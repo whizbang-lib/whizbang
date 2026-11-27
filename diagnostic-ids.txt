@@ -114,9 +114,12 @@ WHIZ114 | active | Whizbang.Generators | Two Apply methods handle the same event
 WHIZ115 | active | Whizbang.Generators | Apply returns a shape its interface does not declare
 WHIZ116 | active | Whizbang.Generators | Collective Apply does not match the shape the framework binds
 WHIZ117 | active | Whizbang.Generators | Event is listed only by an interface that declares no Apply for it
+WHIZ118 | active | Whizbang.Generators | DeriveFrom on a strong id with no pinned id
+WHIZ119 | active | Whizbang.Generators | A strong id's pinned id is gone from the compilation
 WHIZ120 | active | Whizbang.Generators | Pinned Type Renamed Without Ledger Acknowledgment
 WHIZ121 | active | Whizbang.Generators | Pinned-Type Ledger Entry Has No Living Type
 WHIZ122 | active | Whizbang.Generators | Pinned-Type Ledger Could Not Be Parsed
+WHIZ123 | active | Whizbang.Generators | A strong id is pinned two ways
 WHIZ130 | active | Whizbang.Generators | Perspective mixes ephemeral and Sourced Apply methods
 WHIZ131 | active | Whizbang.Generators | Rebuild or rewind of an ephemeral-only perspective
 WHIZ132 | active | Whizbang.Generators | Receptor turns an ephemeral message into a Sourced event

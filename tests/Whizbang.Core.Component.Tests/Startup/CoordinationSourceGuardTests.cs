@@ -216,6 +216,8 @@ public partial class CoordinationSourceGuardTests {
     ["src/Whizbang.Data.Dapper.Postgres/DapperWorkCoordinator.FleetAndCatalog.cs"] = STORE,
     ["src/Whizbang.Data.Dapper.Postgres/DapperWorkCoordinator.RetentionSweeps.cs"] = STORE,
     ["src/Whizbang.Data.Postgres/FleetClaim.cs"] = "the once-per-window claim helper the maintenance steps share",
+    ["src/Whizbang.Core/Startup/StartupWorkSession.cs"] = "the once-per-build claim on Converge work (#2596), taken in the "
+      + "Converge stage, before any worker starts or any permit can close",
     ["src/Whizbang.Data.Postgres/Observability/PostgresTableStatisticsProvider.cs"] = "the physical-column fill's window claim, "
       + "run by its maintenance step",
     ["src/Whizbang.Core/Workers/QueueIndexReindexStep.cs"] = MAINTENANCE_STEP,

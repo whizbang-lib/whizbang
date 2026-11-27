@@ -34,6 +34,15 @@ public sealed record PerspectiveStorageReport(
   IReadOnlyList<string> ManualTables, IReadOnlyList<TableStorageChange> Applied, IReadOnlyList<string> Failed) {
   /// <summary>A reconcile that read or did nothing.</summary>
   public static PerspectiveStorageReport Empty { get; } = new([], [], []);
+
+  /// <summary>A reconcile that could not read the catalog or the setting, said at Warning; nothing is known about the tables.</summary>
+  public static PerspectiveStorageReport Unread { get; } = new([], [], []) { WasUnread = true };
+
+  /// <summary>Whether the reconcile could not read what it needed (#2596), so it did not finish.</summary>
+  public bool WasUnread { get; init; }
+
+  /// <summary>Whether every declared table is in line or managed by hand: read, and nothing left for the next start.</summary>
+  public bool Completed => !WasUnread && Failed.Count == 0;
 }
 
 /// <summary>
@@ -212,7 +221,7 @@ public static partial class PerspectiveStorageParameters {
       return new PerspectiveStorageReport(manual, applied, failed);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogReconcileFailed(logger, schema, ex.Message);
-      return PerspectiveStorageReport.Empty;
+      return PerspectiveStorageReport.Unread;
     }
   }
 
