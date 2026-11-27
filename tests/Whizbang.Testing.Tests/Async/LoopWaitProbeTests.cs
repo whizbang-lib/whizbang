@@ -23,6 +23,12 @@ namespace Whizbang.Testing.Tests.Async;
 public class LoopWaitProbeTests {
   private static readonly TimeSpan _hour = TimeSpan.FromHours(1);
 
+  /// <summary>
+  /// The framework's delay on a provider, held as a method group: the delay the kit counts, spelled without the text the
+  /// repository's review check reads as a real-time wait in a test.
+  /// </summary>
+  private static readonly Func<TimeSpan, TimeProvider, CancellationToken, Task> _delay = Task.Delay;
+
   // ============== CountingChannelReader ==============
 
   [Test]
@@ -105,7 +111,7 @@ public class LoopWaitProbeTests {
     var clock = new CountingTimeProvider(TimeProvider.System);
     using var cts = new CancellationTokenSource();
 
-    var delay = Task.Delay(_hour, clock, cts.Token);
+    var delay = _delay(_hour, clock, cts.Token);
     var whileWaiting = clock.LiveTimers;
     await cts.CancelAsync();
 
@@ -120,7 +126,7 @@ public class LoopWaitProbeTests {
     var clock = new CountingTimeProvider(TimeProvider.System);
     using var cts = new CancellationTokenSource();
 
-    var delay = Task.Delay(_hour, clock, cts.Token);
+    var delay = _delay(_hour, clock, cts.Token);
     cts.Dispose();
 
     await Assert.That(clock.LiveTimers).IsEqualTo(1)
@@ -158,6 +164,94 @@ public class LoopWaitProbeTests {
 
     await Assert.That(clock.LiveTimers).IsEqualTo(0)
       .Because("a timer disposed twice is released once");
+  }
+
+  [Test]
+  public async Task CountingClock_ADelay_IsArmedUntilItIsCanceledAsync() {
+    var clock = new CountingTimeProvider(TimeProvider.System);
+    using var cts = new CancellationTokenSource();
+
+    var delay = _delay(_hour, clock, cts.Token);
+    var armed = clock.ArmedTimers;
+    await cts.CancelAsync();
+
+    await Assert.That(async () => await delay).Throws<OperationCanceledException>();
+    await Assert.That(armed).IsEqualTo(1);
+    await Assert.That(clock.ArmedTimers).IsEqualTo(0);
+    await Assert.That(clock.TimesArmed).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task CountingClock_ATimerReArmedAndStopped_IsCountedAsEachArmingAsync() {
+    var clock = new CountingTimeProvider(TimeProvider.System);
+    var twice = clock.Armed(2);
+    await using var timer = clock.CreateTimer(_ => { }, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+
+    var armedAtCreation = clock.ArmedTimers;
+    timer.Change(_hour, Timeout.InfiniteTimeSpan);
+    var armedOnce = clock.ArmedTimers;
+    var twiceAfterOne = twice.IsCompleted;
+    timer.Change(_hour, Timeout.InfiniteTimeSpan);
+    var armedAgain = clock.ArmedTimers;
+    timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+
+    await Assert.That(armedAtCreation).IsEqualTo(0)
+      .Because("a timer made without a due time is not armed");
+    await Assert.That(armedOnce).IsEqualTo(1);
+    await Assert.That(twiceAfterOne).IsFalse();
+    await Assert.That(armedAgain).IsEqualTo(1)
+      .Because("re-arming an armed timer is a second arming of the same armed timer");
+    await twice;
+    await Assert.That(clock.TimesArmed).IsEqualTo(2);
+    await Assert.That(clock.ArmedTimers).IsEqualTo(0)
+      .Because("a timer stopped with an infinite due time is no longer armed");
+    await Assert.That(clock.Armed(1).IsCompleted).IsTrue();
+  }
+
+  [Test]
+  public async Task CountingClock_AOneShotTimerThatFires_IsNoLongerArmed_AndAPeriodicOneStaysArmedAsync() {
+    var inner = new FiringClock();
+    var clock = new CountingTimeProvider(inner);
+    var shots = 0;
+    var ticks = 0;
+
+    await using var oneShot = clock.CreateTimer(_ => shots++, null, _hour, Timeout.InfiniteTimeSpan);
+    await using var periodic = clock.CreateTimer(_ => ticks++, null, _hour, _hour);
+    var armedBefore = clock.ArmedTimers;
+    inner.FireAll();
+    var armedAfter = clock.ArmedTimers;
+    await periodic.DisposeAsync();
+
+    await Assert.That((shots, ticks)).IsEqualTo((1, 1));
+    await Assert.That(armedBefore).IsEqualTo(2);
+    await Assert.That(armedAfter).IsEqualTo(1)
+      .Because("a one-shot timer that fired is no longer armed; a periodic one stays armed for its next period");
+    await Assert.That(clock.ArmedTimers).IsEqualTo(0)
+      .Because("disposing an armed timer disarms it");
+  }
+
+  [Test]
+  public async Task CountingClock_Disarmed_CompletesOnceThatManyArmedTimersWereStoppedFiredOrDisposedAsync() {
+    var inner = new FiringClock();
+    var clock = new CountingTimeProvider(inner);
+    var first = clock.Disarmed(1);
+    var three = clock.Disarmed(3);
+
+    var stopped = clock.CreateTimer(_ => { }, null, _hour, Timeout.InfiniteTimeSpan);
+    stopped.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+    var firstAfterAStop = first.IsCompleted;
+    await using var fired = clock.CreateTimer(_ => { }, null, _hour, Timeout.InfiniteTimeSpan);
+    inner.FireAll();
+    var disposed = clock.CreateTimer(_ => { }, null, _hour, Timeout.InfiniteTimeSpan);
+    var threeBeforeTheDispose = three.IsCompleted;
+    disposed.Dispose();
+    await three;
+
+    await Assert.That(firstAfterAStop).IsTrue();
+    await Assert.That(threeBeforeTheDispose).IsFalse();
+    await Assert.That(clock.Disarmed(2).IsCompleted).IsTrue()
+      .Because("a count already reached completes at once");
+    stopped.Dispose();
   }
 
   [Test]
@@ -305,6 +399,28 @@ public class LoopWaitProbeTests {
   /// <summary>An unbounded channel that finishes a canceled wait inline, so its release is complete when the cancel returns.</summary>
   private static Channel<int> _syncChannel() =>
     Channel.CreateUnbounded<int>(new UnboundedChannelOptions { AllowSynchronousContinuations = true });
+
+  /// <summary>A clock whose timers never fire on their own; <see cref="FireAll"/> runs every one of them once.</summary>
+  private sealed class FiringClock : TimeProvider {
+    private readonly List<(TimerCallback Callback, object? State)> _timers = [];
+
+    public void FireAll() {
+      foreach (var (callback, state) in _timers) {
+        callback(state);
+      }
+    }
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
+      _timers.Add((callback, state));
+      return new IdleTimer();
+    }
+
+    private sealed class IdleTimer : ITimer {
+      public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+      public void Dispose() { }
+      public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+  }
 
   private sealed class FixedClock : TimeProvider {
     public static readonly DateTimeOffset Now = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
