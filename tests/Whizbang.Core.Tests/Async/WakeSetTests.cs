@@ -356,8 +356,11 @@ public class WakeSetTests {
     var work = Channel.CreateUnbounded<int>();
     using var set = new WakeSet(clock, CancellationToken.None);
     var source = set.Add(work.Reader);
-
+    var first = set.WaitAsync(_poll);
     clock.Timer!.Fire();
+    await first;
+
+    clock.Timer.Fire();
     var waiting = set.WaitAsync(Timeout.InfiniteTimeSpan);
     clock.Timer.Fire();
     var afterFire = waiting.IsCompleted;
@@ -365,6 +368,134 @@ public class WakeSetTests {
 
     await Assert.That(afterFire).IsFalse();
     await Assert.That((await waiting).Woke(source)).IsTrue();
+  }
+
+  [Test]
+  public async Task ASetThatNeverWaitsWithATimeout_MakesNoTimerAsync() {
+    var clock = new CountingTimeProvider(new FakeTimeProvider());
+    var work = Channel.CreateUnbounded<int>();
+    using var set = new WakeSet(clock, CancellationToken.None);
+    set.Add(work.Reader);
+
+    var waiting = set.WaitAsync(Timeout.InfiniteTimeSpan);
+    work.Writer.TryWrite(1);
+    await waiting;
+    await set.WaitAsync(TimeSpan.Zero);
+
+    await Assert.That(clock.CreatedTimers).IsEqualTo(0)
+      .Because("the timer is made by the first pass that has a timeout; a race with no deadline allocates none");
+  }
+
+  /// <summary>
+  /// The deadline is armed before the sources are, so time that passes while a wait is being set up counts against the
+  /// pass: here the clock moves past the timeout as the channel wait is made, and the pass ends as a timeout.
+  /// </summary>
+  [Test]
+  public async Task TheDeadline_IsArmedBeforeTheSources_SoTimeSpentArmingThemCountsAsync() {
+    var clock = new FakeTimeProvider();
+    var reader = new CountingChannelReader<int>(Channel.CreateUnbounded<int>().Reader, _ => clock.Advance(_poll));
+    using var set = new WakeSet(clock, CancellationToken.None);
+    set.Add(reader);
+
+    var wake = await set.WaitAsync(_poll);
+
+    await Assert.That(wake.IsTimeout).IsTrue();
+    await Assert.That(reader.WaitCalls).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// A timeout started before work the loop does before it waits counts that work against the pass: a deadline that
+  /// passes during the work ends the wait that follows at once, as a delay made before the work did.
+  /// </summary>
+  [Test]
+  public async Task ATimeoutStartedBeforeTheWork_CountsTheWorkAgainstThePassAsync() {
+    var clock = new FakeTimeProvider();
+    var work = Channel.CreateUnbounded<int>();
+    using var set = new WakeSet(clock, CancellationToken.None);
+    var source = set.Add(work.Reader);
+
+    set.StartTimeout(_poll);
+    clock.Advance(_poll);   // the work between the start and the wait took the whole pass
+    var late = set.WaitAsync();
+    var endedAtOnce = late.IsCompleted;
+    var lateWake = await late;
+
+    set.StartTimeout(_poll);
+    clock.Advance(_poll / 2);
+    var inTime = set.WaitAsync();
+    var parkedForTheRest = !inTime.IsCompleted;
+    clock.Advance(_poll / 2);
+    var inTimeWake = await inTime;
+
+    set.StartTimeout(_poll);
+    work.Writer.TryWrite(1);
+    var readyWake = await set.WaitAsync();
+
+    await Assert.That(endedAtOnce && lateWake.IsTimeout).IsTrue();
+    await Assert.That(parkedForTheRest && inTimeWake.IsTimeout).IsTrue()
+      .Because("the pass waits only for what is left of the timeout started before the work");
+    await Assert.That(readyWake.Woke(source)).IsTrue()
+      .Because("a source ready when the wait begins wins over a timeout that has not passed");
+  }
+
+  [Test]
+  public async Task WaitWithNoTimeoutStarted_WaitsForASource_AndAStartedTimeoutIsOverWithItsPassAsync() {
+    var clock = new FakeTimeProvider();
+    var work = Channel.CreateUnbounded<int>();
+    using var set = new WakeSet(clock, CancellationToken.None);
+    var source = set.Add(work.Reader);
+
+    set.StartTimeout(_poll);
+    work.Writer.TryWrite(1);
+    await set.WaitAsync();
+    work.Reader.TryRead(out _);
+    var next = set.WaitAsync();
+    clock.Advance(_poll * 3);
+    var stillWaiting = !next.IsCompleted;
+    work.Writer.TryWrite(2);
+
+    await Assert.That(stillWaiting).IsTrue()
+      .Because("the timeout started for the first pass ended with it; the second pass started none");
+    await Assert.That((await next).Woke(source)).IsTrue();
+  }
+
+  [Test]
+  public async Task Dispose_CancelsTheSetsToken_AndSoAWaitMadeOnItAsync() {
+    var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var set = new WakeSet(new FakeTimeProvider(), CancellationToken.None);
+    var gateWait = gate.Task.WaitAsync(set.Token);
+    set.Add(gateWait);
+    var token = set.Token;
+
+    var before = token.IsCancellationRequested;
+    set.Dispose();
+
+    await Assert.That(before).IsFalse();
+    await Assert.That(token.IsCancellationRequested).IsTrue();
+    await Assert.That(gateWait.IsCanceled).IsTrue()
+      .Because("a wait made outside the set on the set's token is released with the set");
+  }
+
+  [Test]
+  public async Task AChannelSourcesLastWait_GivesTheWaitsAnswer_AsAwaitingTheWhenAnyWinnerDidAsync() {
+    var work = Channel.CreateUnbounded<int>();
+    using var set = new WakeSet(new FakeTimeProvider(), CancellationToken.None);
+    var source = set.Add(work.Reader);
+    var unarmed = source.LastWait.IsCompleted;
+
+    work.Writer.TryWrite(1);
+    await set.WaitAsync(_poll);
+    var withAnItem = await source.LastWait;
+    work.Reader.TryRead(out _);
+    work.Writer.Complete(new InvalidOperationException("the writer failed"));
+    await set.WaitAsync(_poll);
+
+    await Assert.That(unarmed).IsFalse()
+      .Because("before its first pass a source holds no wait that could have completed");
+    await Assert.That(withAnItem).IsTrue();
+    await Assert.That(async () => await source.LastWait).Throws<InvalidOperationException>();
+    await Assert.That(source.IsChannelCompleted).IsFalse()
+      .Because("a channel completed with a fault reports the fault, not a clean completion");
   }
 
   [Test]
@@ -401,11 +532,14 @@ public class WakeSetTests {
     await Assert.That(() => set.Add((ChannelReader<int>)null!)).Throws<ArgumentNullException>();
     await Assert.That(() => set.Add((WakeSignal)null!)).Throws<ArgumentNullException>();
     await Assert.That(() => set.Add((Task)null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => set.Add((SemaphoreSlim)null!)).Throws<ArgumentNullException>();
     await Assert.That(async () => await set.WaitAsync(TimeSpan.FromSeconds(-2))).Throws<ArgumentOutOfRangeException>();
+    await Assert.That(() => set.StartTimeout(TimeSpan.FromSeconds(-2))).Throws<ArgumentOutOfRangeException>();
     await Assert.That(() => default(Wake).Woke(null!)).Throws<ArgumentNullException>();
 
     var pending = set.WaitAsync(_poll);
     await Assert.That(async () => await set.WaitAsync(_poll)).Throws<InvalidOperationException>();
+    await Assert.That(() => set.StartTimeout(_poll)).Throws<InvalidOperationException>();
     await Assert.That(() => set.Add(new WakeSignal())).Throws<InvalidOperationException>();
     clock.Advance(_poll);
     await pending;
