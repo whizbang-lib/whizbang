@@ -142,3 +142,52 @@ $$ LANGUAGE sql STABLE;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_origin_positions_of(UUID[]) IS
 '561 (#2544): per asked event id, this service''s commit sequence for an event it wrote: positioned (from the store), unstamped (held, not stamped yet: ask again), archived (from wh_event_archive), or unknown (never written here, received from another service, or no longer held with a sequence).';
+
+-- ── _wh_event_flags_from_names: back to its definition in 295 ──
+-- <docs>fundamentals/messaging/collective-events</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StringEventFlagsStoreTests.cs:StoreOutbox_FlagsWrittenAsNames_KeepsEveryBitAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingEventReaperSqlTests.cs:Emit_FlagsWrittenAsNames_StampTheKeyOfASupersedingEventAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StringEventFlagsStoreTests.cs:StoreInbox_FlagsWrittenAsNames_KeepsEveryBitAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StringEventFlagsStoreTests.cs:StoreOutbox_FlagsNamedUnderANamingPolicy_KeepsEveryBitAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StringEventFlagsStoreTests.cs:StoreOutbox_FlagsWrittenAsNamesAndANumber_KeepsEveryBitAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StringEventFlagsStoreTests.cs:StoreOutbox_FlagsNameNoEventFlagsValueHas_RaisesAndStoresNothingAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__._wh_event_flags_from_names(p_names TEXT)
+RETURNS INTEGER AS $$
+DECLARE
+  v_token TEXT;
+  v_name TEXT;
+  v_bits INTEGER;
+  v_flags INTEGER := 0;
+BEGIN
+  FOREACH v_token IN ARRAY string_to_array(p_names, ',') LOOP
+    -- One spelling per name under every naming policy: atMostOnce, at_most_once, AT_MOST_ONCE, at-most-once.
+    v_name := lower(regexp_replace(v_token, '[[:space:]_-]', '', 'g'));
+    v_bits := CASE
+      WHEN v_name ~ '^[0-9]+$' THEN v_name::INTEGER
+      WHEN v_name = 'none' THEN 0             -- EventFlags.None
+      WHEN v_name = 'collective' THEN 1       -- EventFlags.Collective (1 << 0)
+      WHEN v_name = 'composite' THEN 2        -- EventFlags.Composite (1 << 1)
+      WHEN v_name = 'norebroadcast' THEN 4    -- EventFlags.NoRebroadcast (1 << 2)
+      WHEN v_name = 'ephemeral' THEN 8        -- EventFlags.Ephemeral (1 << 3)
+      WHEN v_name = 'compacted' THEN 16       -- EventFlags.Compacted (1 << 4)
+      WHEN v_name = 'atmostonce' THEN 32      -- EventFlags.AtMostOnce (1 << 5)
+      WHEN v_name = 'terminal' THEN 64        -- EventFlags.Terminal (1 << 6), 266
+      WHEN v_name = 'superseding' THEN 128    -- EventFlags.Superseding (1 << 7), 295
+    END;
+    IF v_bits IS NULL THEN
+      RAISE EXCEPTION USING
+        ERRCODE = 'invalid_text_representation',
+        MESSAGE = format('Event flags %L name %L, which no EventFlags value has, so the event''s kind cannot be read '
+          'and it is not stored (#1612).', p_names, btrim(v_token));
+    END IF;
+    v_flags := v_flags | v_bits;
+  END LOOP;
+  RETURN v_flags;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE;
+
+COMMENT ON FUNCTION __SCHEMA__._wh_event_flags_from_names(TEXT) IS
+  'The bits of EventFlags written as a comma-separated name list (JsonStringEnumConverter''s form), matched without '
+  'regard to case, spaces, underscores or hyphens; a number among the names is read as its bits. Raises 22P02 on a '
+  'name EventFlags does not define. Read by store_outbox_messages and store_inbox_messages for a value that is not a '
+  'number (232, #1612). 266: and Terminal (#1733). 295: and Superseding (#1729).';

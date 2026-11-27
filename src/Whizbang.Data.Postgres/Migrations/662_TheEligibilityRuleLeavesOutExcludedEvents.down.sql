@@ -1157,6 +1157,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- ── _wh_reclassify_ephemeral_events: back to its definition in 453 ──
+SELECT __SCHEMA__.drop_all_overloads('_wh_reclassify_ephemeral_events');
 -- <docs>fundamentals/events/ephemeral-events#making-an-existing-type-ephemeral</docs>
 -- <docs>fundamentals/events/ephemeral-events#what-holds-ephemeral-history-back</docs>
 -- <docs>fundamentals/events/ephemeral-events#allowing-mixed-streams</docs>
@@ -2223,6 +2224,7 @@ END;
 $$ LANGUAGE plpgsql SET enable_seqscan = off;
 
 -- ── wh_append_event: back to its definition in 537 ──
+SELECT __SCHEMA__.drop_all_overloads('wh_append_event');
 -- <docs>fundamentals/events/superseding-events#superseding-groups</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SupersedingGroupSqlTests.cs:DirectAppend_StampsTheGroup_AndQueuesAcrossTypesAsync</tests>
 -- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSupersedingKeyTests.cs:AppendAsync_GroupedTypes_SupersedeEachOther_AndTheOlderIsReapedAsync</tests>
@@ -4834,6 +4836,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- ── wh_restore_written_here_origins: back to its definition in 599 ──
+SELECT __SCHEMA__.drop_all_overloads('wh_restore_written_here_origins');
 -- <docs>resilience/stream-integrity#events-written-here-returned</docs>
 -- <docs>resilience/stream-integrity#one-digest-fold</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WrittenHereOriginRestorationSqlTests.cs:Restore_AReactionAndAReturn_GoBackToTheLocalLane_AndAReceivedEventStaysAsync</tests>

@@ -29,7 +29,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/IntegrityExclusionStep.cs</code-under-test>
 /// <docs>resilience/integrity-exclusions#the-api</docs>
 [Category("Integration")]
-[NotInParallel("IntegrityCheckpoint")]
 [Category("Shard2")]
 public class IntegrityExclusionsApiTests : EFCoreTestBase {
   private const string TYPE = "Contracts.ApiProbe, Contracts";

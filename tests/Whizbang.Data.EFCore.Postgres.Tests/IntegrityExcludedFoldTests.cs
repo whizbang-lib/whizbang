@@ -21,7 +21,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/662_TheEligibilityRuleLeavesOutExcludedEvents.sql</code-under-test>
 /// <docs>resilience/integrity-exclusions</docs>
 [Category("Integration")]
-[NotInParallel("IntegrityCheckpoint")]
 [Category("Shard2")]
 public class IntegrityExcludedFoldTests : EFCoreTestBase {
   private const string TYPE = "Contracts.ExclusionProbe, Contracts";

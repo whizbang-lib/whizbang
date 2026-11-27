@@ -26,7 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityExclusionAdjustment.cs</code-under-test>
 /// <docs>resilience/integrity-exclusions#cross-service-agreement</docs>
 [Category("Integration")]
-[NotInParallel("IntegrityCheckpoint")]
+[NotInParallel("IntegrityCheckpoint")]   // the checkpoint receptor keeps a process-wide repair policy and ownership-conflict memory
 [Category("Shard3")]
 public class IntegrityExclusionCheckpointTests : EFCoreTestBase {
   private const string TYPE = "Contracts.CheckpointProbe, Contracts";
