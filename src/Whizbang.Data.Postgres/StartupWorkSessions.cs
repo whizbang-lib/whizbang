@@ -94,6 +94,32 @@ public static class StartupWorkInputs {
     return Of(payloads.Select(p => p.ServiceName + "\n" + p.Json));
   }
 
+  /// <summary>
+  /// What a build gives the managed-object reconcile (#2608): every declared object and pin, and the settings it plans
+  /// with, each in a fixed order, so two instances of one build and configuration agree whatever order their
+  /// contributors declared in, and a changed setting (a mode, a kind kept, a pin, the fleet gate) runs it again.
+  /// </summary>
+  /// <param name="declared">What this build declares.</param>
+  /// <param name="settings">The reconcile settings.</param>
+  /// <returns>The inputs.</returns>
+  public static string Of(Schema.ManagedSchemaObjectSet declared, Schema.ManagedSchemaSettings settings) {
+    ArgumentNullException.ThrowIfNull(declared);
+    ArgumentNullException.ThrowIfNull(settings);
+    var parts = new List<string> {
+      string.Create(CultureInfo.InvariantCulture, $"mode:{settings.Mode}"),
+      string.Create(CultureInfo.InvariantCulture, $"fleet-gate:{settings.DropAfterFleetConverged}"),
+    };
+    parts.AddRange(settings.KeepKinds.Select(k => string.Create(CultureInfo.InvariantCulture, $"keep:{k}")).Order(StringComparer.Ordinal));
+    parts.AddRange(settings.Pins.Select(p => "pin-glob:" + p).Order(StringComparer.Ordinal));
+    parts.AddRange(declared.Objects
+      .Select(o => Of([o.Table, o.Name, o.Kind.ToString(), o.DeclaredBy]))
+      .Select(o => "object:" + o).Order(StringComparer.Ordinal));
+    parts.AddRange(declared.Pins
+      .Select(p => Of([p.Table, p.Name, p.Reason ?? "\0", p.DeclaredBy]))
+      .Select(p => "pin:" + p).Order(StringComparer.Ordinal));
+    return Of(parts);
+  }
+
   /// <summary>Text parts, in order, each ended so no two lists of parts give the same text.</summary>
   /// <param name="parts">The parts.</param>
   /// <returns>The inputs.</returns>

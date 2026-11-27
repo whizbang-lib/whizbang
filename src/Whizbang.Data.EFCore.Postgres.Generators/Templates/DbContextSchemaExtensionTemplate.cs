@@ -690,9 +690,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       segmentConnectionFactory, "__SCHEMA__", serviceProvider, passApplied, logger);
     await _analyzeNewlyIndexedTablesAsync(dbContext, segmentConnectionFactory, startupWork, logger, cancellationToken);
 
-    // The managed-object reconcile runs at every start, the fast path included: an object retired by a release
-    // whose schema hash did not change, or dropped by hand, is found by reading the catalog, not the hash. After
-    // the commit, on a connection of its own, because DROP INDEX CONCURRENTLY cannot run in a transaction.
+    // #2608: every start, the fast path included, reports what this instance declares; the managed-object reconcile
+    // runs once per schema per build, and again on a start whose pass applied anything. After the commit, on a
+    // connection of its own, because DROP INDEX CONCURRENTLY cannot run in a transaction.
     await _reconcileManagedObjectsAsync(dbContext, reconcileSettings, segmentConnectionFactory, serviceProvider, startupWork, logger, cancellationToken);
 
     // #2561: the perspective registry, once per schema per build (#2596). No hash covers it, so a start that skips the
@@ -2745,9 +2745,9 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   }
 
   /// <summary>
-  /// Reconciles the managed-object ledger with what this context declares: records every object on its
-  /// perspective tables, drops the ones Whizbang built and no longer declares, and reports declared objects the
-  /// database lacks. Never fatal: a reconcile that fails leaves every object in place, and the next start
+  /// Reports what this instance declares, then, once per schema per build, reconciles the managed-object ledger with
+  /// what this context declares: records every object on its perspective tables, drops the ones Whizbang built and no
+  /// longer declares, and reports declared objects the database lacks (#2608). Never fatal: a reconcile that fails leaves every object in place, and the next start
   /// tries again.
   /// </summary>
   private static async Task _reconcileManagedObjectsAsync(
@@ -2760,13 +2760,21 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     CancellationToken cancellationToken) {
     // The settings were read at the top of initialization, outside any catch: a setting that is not one fails the
     // start, rather than being ignored into a drop the operator meant to switch off.
+    if (settings.Mode == global::Whizbang.Data.Postgres.Schema.ReconcileMode.Off) {
+      return;
+    }
+    var manifest = new global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest(typeof(__DBCONTEXT_FQN__), "__SCHEMA__", GetManagedSchemaObjects);
     try {
-      _ = await startupWork.RunAsync(global::Whizbang.Core.Startup.FrameworkStartupWork.MANAGED_OBJECT_RECONCILE, "", async ct => {
-        _ = await Whizbang.Data.EFCore.Postgres.ManagedSchemaReconcile.RunAsync(
-          dbContext, new global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest(typeof(__DBCONTEXT_FQN__), "__SCHEMA__", GetManagedSchemaObjects),
-          settings, segmentConnectionFactory, serviceProvider, logger, ct);
-        return true;
-      }, cancellationToken);
+      // #2608: every start reports what this instance declares, which the drop gate needs from each live instance; the
+      // reconcile itself runs once per schema per build. One that found the schema lock taken did nothing, so it is not
+      // recorded done, and the next start runs it.
+      _ = await Whizbang.Data.EFCore.Postgres.ManagedSchemaReconcile.ReportAsync(
+        dbContext, manifest, settings, segmentConnectionFactory, serviceProvider, logger, cancellationToken);
+      _ = await startupWork.RunAsync(global::Whizbang.Core.Startup.FrameworkStartupWork.MANAGED_OBJECT_RECONCILE,
+        Whizbang.Data.EFCore.Postgres.ManagedSchemaReconcile.Inputs(manifest, settings, serviceProvider), async ct =>
+          !(await Whizbang.Data.EFCore.Postgres.ManagedSchemaReconcile.RunAsync(
+            dbContext, manifest, settings, segmentConnectionFactory, serviceProvider, logger, ct)).Skipped,
+        cancellationToken);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       logger?.LogWarning(ex,
         "The managed-object reconcile for {Schema} failed; nothing was dropped that it did not report, and the "

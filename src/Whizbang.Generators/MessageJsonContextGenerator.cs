@@ -51,7 +51,7 @@ namespace Whizbang.Generators;
 /// Use with WhizbangInfrastructureJsonContext for complete Whizbang serialization support.
 /// </summary>
 [Generator]
-public class MessageJsonContextGenerator : IIncrementalGenerator {
+public partial class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string I_COMMAND = "Whizbang.Core.ICommand";
   private const string I_EVENT = "Whizbang.Core.IEvent";
   private const string I_COMPOSITE_EVENT = "Whizbang.Core.Minting.ICompositeEvent";
@@ -142,7 +142,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       IsRequiredKeyword: p.IsRequired,
       InitAccessorOwner: p.SetMethod is { IsInitOnly: true } && _initAccessorIsReachable(p.ContainingType)
         ? TypeNameUtilities.FullyQualified(p.ContainingType)
-        : null);
+        : null,
+      VectorForm: _storedVectorForm(p));
 
   /// <summary>
   /// Whether generated code can call an init accessor <paramref name="owner"/> declares through
@@ -1902,11 +1903,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         TEMPLATE_SNIPPET_FILE,
         "PARAMETER_INFO_VALUES");
 
+    var vectorConverterSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "STORED_VECTOR_CONVERTER");
+
     foreach (var message in messages) {
       var constructionMembers = _constructionMembers(message);
 
       _generateFactoryMethod(sb, message, constructionMembers);
-      _generatePropertyCreationMethod(sb, message, constructionMembers, propertyCreationSnippet);
+      _generatePropertyCreationMethod(sb, message, constructionMembers, propertyCreationSnippet, vectorConverterSnippet);
       if (constructionMembers.Length > 0) {
         _generateCtorParamsMethod(sb, message, constructionMembers, parameterInfoSnippet);
       }
@@ -2027,7 +2033,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// calls the init accessor of each init-only member set after construction (#2374).
   /// </summary>
   private static void _generatePropertyCreationMethod(
-      StringBuilder sb, JsonMessageTypeInfo message, PropertyInfo[] constructionMembers, string propertyCreationSnippet) {
+      StringBuilder sb, JsonMessageTypeInfo message, PropertyInfo[] constructionMembers, string propertyCreationSnippet,
+      string vectorConverterSnippet) {
     var construction = new HashSet<string>(constructionMembers.Select(static p => p.Name), StringComparer.Ordinal);
     foreach (var prop in message.Properties.Where(p => p.IsInitOnly && !construction.Contains(p.Name))) {
       sb.AppendLine($"[global::System.Runtime.CompilerServices.UnsafeAccessor(global::System.Runtime.CompilerServices.UnsafeAccessorKind.Method, Name = \"set_{prop.Name}\")]");
@@ -2058,6 +2065,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
       if (refused) {
         sb.AppendLine($"  properties[{i}].IsRequired = true;");
+      }
+      if (_storedVectorConverterStatement(vectorConverterSnippet, prop, i) is { } vectorConverter) {
+        sb.AppendLine(vectorConverter);
       }
       sb.AppendLine();
     }

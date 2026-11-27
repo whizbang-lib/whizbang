@@ -20,8 +20,8 @@ namespace Whizbang.Core.Startup;
 /// <tests>tests/Whizbang.Core.Unit.Workers.Tests/Startup/StartupWorkCatalogTests.cs</tests>
 public enum StartupWorkScope {
   /// <summary>
-  /// The work changes this instance, or records something about this instance (the managed-object reconcile reports
-  /// what this instance declares). Every instance runs it at every start, within the fleet's heavy-start cap.
+  /// The work changes this instance, or concerns only what this instance did (the analyze of the tables its own schema
+  /// pass indexed). Every instance runs it at every start, within the fleet's heavy-start cap.
   /// </summary>
   PerInstance = 1,
 
@@ -72,8 +72,9 @@ public static class FrameworkStartupWork {
   public const string ANALYZE_NEW_INDEXES = "analyze-new-indexes";
 
   /// <summary>
-  /// The managed-object reconcile. Per instance: each run records what this instance declares, which the drop gate
-  /// reads to keep an object while any live instance still declares it.
+  /// The managed-object reconcile: create, alter and drop. Per schema per build (#2608). What each instance declares,
+  /// which the drop gate reads to keep an object while any live instance still declares it, is reported apart from it at
+  /// every start, so a start that skips the reconcile still reports.
   /// </summary>
   public const string MANAGED_OBJECT_RECONCILE = "managed-object-reconcile";
 
@@ -87,7 +88,7 @@ public static class FrameworkStartupWork {
   /// <summary>Every framework declaration.</summary>
   public static IReadOnlyList<StartupWorkDeclaration> Declarations { get; } = [
     new(ANALYZE_NEW_INDEXES, StartupWorkScope.PerInstance),
-    new(MANAGED_OBJECT_RECONCILE, StartupWorkScope.PerInstance),
+    new(MANAGED_OBJECT_RECONCILE, StartupWorkScope.PerSchemaPerBuild),
     new(PERSPECTIVE_REGISTRY, StartupWorkScope.PerSchemaPerBuild),
     new(PERSPECTIVE_STORAGE_SETTINGS, StartupWorkScope.PerSchemaPerBuild),
   ];

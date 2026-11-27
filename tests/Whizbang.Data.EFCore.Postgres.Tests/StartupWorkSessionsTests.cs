@@ -48,7 +48,7 @@ public class StartupWorkSessionsTests {
       return new NpgsqlConnection("Host=unreachable.invalid");
     }, "public", new ServiceCollection().BuildServiceProvider(), passApplied: false);
 
-    var outcome = await session.RunAsync(FrameworkStartupWork.MANAGED_OBJECT_RECONCILE, "", _ => Task.FromResult(true), CancellationToken.None);
+    var outcome = await session.RunAsync(FrameworkStartupWork.ANALYZE_NEW_INDEXES, "", _ => Task.FromResult(true), CancellationToken.None);
 
     await Assert.That(outcome).IsEqualTo(StartupWorkOutcome.Ran);
     await Assert.That(opened).IsEqualTo(0);
@@ -73,6 +73,40 @@ public class StartupWorkSessionsTests {
       .IsNotEqualTo(StartupWorkInputs.Of([new PerspectiveRegistryPayload("svc-b", "[1]")]));
     await Assert.That(() => StartupWorkInputs.Of((IEnumerable<string>)null!)).Throws<ArgumentNullException>();
     await Assert.That(() => StartupWorkInputs.Of((IEnumerable<PerspectiveRegistryPayload>)null!)).Throws<ArgumentNullException>();
+  }
+
+  /// <summary>
+  /// #2608: the managed-object reconcile's inputs follow every declaration and every setting, whatever order the
+  /// declarations were made in, and the EF Core driver gives the same text as the Dapper driver for the same ones.
+  /// </summary>
+  [Test]
+  public async Task TheReconcileInputs_FollowEachDeclarationAndSetting_InAnyOrder_AndAgreeAcrossDriversAsync() {
+    static ManagedSchemaObjectSet declared() => new ManagedSchemaObjectSet()
+      .Index("wh_per_a", "idx_a", "A [Indexed]").Constraint("wh_per_b", "ck_b", "B [MaxLength]");
+    var settings = new ManagedSchemaSettings(ReconcileMode.Apply, [], [], DropAfterFleetConverged: true);
+    var baseline = StartupWorkInputs.Of(declared(), settings);
+
+    await Assert.That(StartupWorkInputs.Of(
+        new ManagedSchemaObjectSet().Constraint("wh_per_b", "ck_b", "B [MaxLength]").Index("wh_per_a", "idx_a", "A [Indexed]"), settings))
+      .IsEqualTo(baseline).Because("the order contributors declared in is not an input");
+    string[] changed = [
+      StartupWorkInputs.Of(declared().Index("wh_per_a", "idx_a2", "A [Indexed]"), settings),
+      StartupWorkInputs.Of(new ManagedSchemaObjectSet().Index("wh_per_a", "idx_a", "A2 [Indexed]").Constraint("wh_per_b", "ck_b", "B [MaxLength]"), settings),
+      StartupWorkInputs.Of(declared().Pin("wh_per_a", "idx_a", "kept", "A [KeepSchemaObject]"), settings),
+      StartupWorkInputs.Of(declared().Pin("wh_per_a", "idx_a", null, "A [KeepSchemaObject]"), settings),
+      StartupWorkInputs.Of(declared(), settings with { Mode = ReconcileMode.ReportOnly }),
+      StartupWorkInputs.Of(declared(), settings with { KeepKinds = [ManagedObjectKind.Index] }),
+      StartupWorkInputs.Of(declared(), settings with { Pins = ["wh_per_a:*"] }),
+      StartupWorkInputs.Of(declared(), settings with { DropAfterFleetConverged = false }),
+    ];
+    await Assert.That(changed.Distinct(StringComparer.Ordinal).Count()).IsEqualTo(changed.Length);
+    await Assert.That(changed).DoesNotContain(baseline);
+
+    var manifest = new ManagedSchemaManifest(typeof(StartupWorkSessionsTests), "public", declared);
+    await Assert.That(ManagedSchemaReconcile.Inputs(manifest, settings, services: null)).IsEqualTo(baseline);
+    await Assert.That(() => StartupWorkInputs.Of(null!, settings)).Throws<ArgumentNullException>();
+    await Assert.That(() => StartupWorkInputs.Of(declared(), null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => ManagedSchemaReconcile.Inputs(null!, settings, null)).Throws<ArgumentNullException>();
   }
 
   [Test]

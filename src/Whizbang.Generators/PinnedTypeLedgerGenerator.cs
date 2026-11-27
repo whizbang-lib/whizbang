@@ -44,39 +44,37 @@ public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
   public static bool IsAttributedTypeCandidate(SyntaxNode node) =>
       node is TypeDeclarationSyntax { AttributeLists.Count: > 0 };
 
-  /// <summary>Whether a node can declare a strong id by a [WhizbangId] property (#2604); the same test the id generator uses.</summary>
-  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
-  public static bool IsStrongIdPropertyCandidate(SyntaxNode node) => WhizbangIdGenerator.IsAttributedPropertyCandidate(node);
+  /// <summary>Whether a node can declare a strong id by a [WhizbangId] property (#2604); named on its syntax, so ordinary attributed code costs no symbol lookup.</summary>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/NarrowedCandidatePredicateTests.cs</tests>
+  public static bool IsStrongIdPropertyCandidate(SyntaxNode node) =>
+      node is PropertyDeclarationSyntax property && WhizbangIdDeclaration.NamesWhizbangId(property.AttributeLists);
 
-  /// <summary>Whether a node can declare a strong id by a [WhizbangId] parameter (#2604); the same test the id generator uses.</summary>
-  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
-  public static bool IsStrongIdParameterCandidate(SyntaxNode node) => WhizbangIdGenerator.IsAttributedParameterCandidate(node);
+  /// <summary>Whether a node can declare a strong id by a [WhizbangId] parameter (#2604); named on its syntax, so ordinary attributed code costs no symbol lookup.</summary>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/NarrowedCandidatePredicateTests.cs</tests>
+  public static bool IsStrongIdParameterCandidate(SyntaxNode node) =>
+      node is ParameterSyntax parameter && WhizbangIdDeclaration.NamesWhizbangId(parameter.AttributeLists);
+
+  /// <summary>
+  /// Syntax predicate for the one discovery pass: an attributed type declaration, or a property or parameter that names
+  /// <c>[WhizbangId]</c>. One provider, not one per route, because every provider runs its predicate on every node of
+  /// every file (#2604 build cost).
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/NarrowedCandidatePredicateTests.cs</tests>
+  public static bool IsLedgerCandidate(SyntaxNode node) =>
+      IsAttributedTypeCandidate(node) || IsStrongIdPropertyCandidate(node) || IsStrongIdParameterCandidate(node);
 
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
-    // Discover every [PinnedId] message/perspective type, and every pinned strong id (#2604), in this assembly.
-    var declaredTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => IsAttributedTypeCandidate(node),
-        transform: static (ctx, ct) => _tryDiscover(ctx, ct))
+    // Discover every [PinnedId] message/perspective type, and every pinned strong id (#2604), in this assembly. A strong
+    // id declared by a property or a parameter has no declaration of its own; in its own compilation it always has a symbol.
+    var pinnedTypes = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => IsLedgerCandidate(node),
+        transform: static (ctx, ct) => ctx.Node is TypeDeclarationSyntax
+          ? _tryDiscover(ctx, ct)
+          : _strongIdOf(ctx.SemanticModel.GetDeclaredSymbol(ctx.Node, ct)!, ct))
       .Where(static t => t is not null)
       .Select(static (t, _) => t!)
       .Collect();
-    // A strong id declared by a property or a parameter has no declaration of its own. A property or parameter
-    // declaration in its own compilation always has its symbol.
-    var propertyIds = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => IsStrongIdPropertyCandidate(node),
-        transform: static (ctx, ct) => _strongIdOf(ctx.SemanticModel.GetDeclaredSymbol(ctx.Node, ct)!, ct))
-      .Where(static t => t is not null)
-      .Select(static (t, _) => t!)
-      .Collect();
-    var parameterIds = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => IsStrongIdParameterCandidate(node),
-        transform: static (ctx, ct) => _strongIdOf(ctx.SemanticModel.GetDeclaredSymbol(ctx.Node, ct)!, ct))
-      .Where(static t => t is not null)
-      .Select(static (t, _) => t!)
-      .Collect();
-    var pinnedTypes = declaredTypes.Combine(propertyIds).Combine(parameterIds)
-      .Select(static (all, _) => all.Left.Left.AddRange(all.Left.Right).AddRange(all.Right));
 
     // Read the existing committed ledger (if any) supplied via AdditionalFiles.
     var existingLedger = context.AdditionalTextsProvider

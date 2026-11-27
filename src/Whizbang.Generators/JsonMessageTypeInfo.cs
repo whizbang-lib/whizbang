@@ -98,6 +98,7 @@ internal enum RequiredMemberReading {
 /// <param name="IsRequired">True when the property is declared required: a <c>required</c> or <c>[JsonRequired]</c> member whose type does not admit null. Whether a document missing it is refused depends on the declaring type's <see cref="JsonMessageTypeInfo.RequiredMembers"/>.</param>
 /// <param name="IsRequiredKeyword">True when the property carries the C# <see langword="required"/> keyword, whatever its type: a construction must set it, so it stays in the generated object initializer (#2374).</param>
 /// <param name="InitAccessorOwner">For an init-only property, the fully qualified type that declares its init accessor, when generated code can call that accessor through <c>[UnsafeAccessor]</c> (the type and every type containing it are non-generic classes); <see langword="null"/> otherwise (#2374).</param>
+/// <param name="VectorForm">Which vector type the property is, when it is one whose stored form may be packed binary32 (#2624); <see cref="StoredVectorForm.None"/> otherwise, and for a property marked <c>[StoredAsJsonArray]</c>.</param>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextPropertyNameTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextRequiredMemberTests.cs</tests>
@@ -111,10 +112,27 @@ internal sealed record PropertyInfo(
     string? IgnoreCondition = null,
     bool IsRequired = false,
     bool IsRequiredKeyword = false,
-    string? InitAccessorOwner = null
+    string? InitAccessorOwner = null,
+    StoredVectorForm VectorForm = StoredVectorForm.None
 ) {
   /// <summary>The name the property is written and read under: its <c>[JsonPropertyName]</c> when present, its C# name otherwise.</summary>
   public string WireName => JsonName ?? Name;
+}
+
+/// <summary>
+/// Which vector type a property is, for the packed binary32 stored form (#2624). The form picks the converter the
+/// generated reader attaches.
+/// </summary>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextStoredVectorTests.cs</tests>
+internal enum StoredVectorForm {
+  /// <summary>Not a vector, or a vector opted out with <c>[StoredAsJsonArray]</c>: always a JSON array.</summary>
+  None,
+
+  /// <summary>A <c>float[]</c>.</summary>
+  Array,
+
+  /// <summary>An <c>IReadOnlyList&lt;float&gt;</c>.</summary>
+  ReadOnlyList,
 }
 
 /// <summary>
