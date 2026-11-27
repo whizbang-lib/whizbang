@@ -87,9 +87,37 @@ jobs:
       pull-requests: read
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      placeholder-version: ${{ steps.placeholder.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The version Compile and Pack stamp where GitVersion does not run (pull requests and the merge
+      # queue, see the version job). Packing compares every library's public API with the published
+      # baseline (Directory.Build.targets, #1439), and an assembly version below the baseline's is
+      # reported as an identity change (CP0003) in every library. The placeholder used to be
+      # 0.0.0-queue.N, so validation could never pass and its result was ignored (#2605). Taking the
+      # baseline's own version keeps the two in step when the baseline moves after a release; nothing
+      # is published at it. PackageValidation.Tests.ps1 (script-tests) runs this script.
+      - name: Placeholder version
+        id: placeholder
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          BASELINE=$(sed -n 's:.*<PackageValidationBaselineVersion[^>]*>\([0-9][0-9.]*\)</PackageValidationBaselineVersion>.*:\1:p' Directory.Build.targets)
+          if [ "$(printf '%s\n' "$BASELINE" | grep -c .)" -ne 1 ]; then
+            echo "::error::Directory.Build.targets must set exactly one PackageValidationBaselineVersion; found '${BASELINE}'."
+            exit 1
+          fi
+          case "$EVENT" in
+            merge_group)  LABEL="queue.$RUN_NUMBER" ;;
+            pull_request) LABEL="pr$PR_NUMBER.$RUN_NUMBER" ;;
+            *)            LABEL="ci.$RUN_NUMBER" ;;
+          esac
+          echo "Placeholder version: $BASELINE-$LABEL"
+          echo "version=$BASELINE-$LABEL" >> "$GITHUB_OUTPUT"
 
       # Runs on every event, so every job reads one answer (#2602). merge_group has no base ref
       # to diff against, so the script answers code there: a queue run must never narrow its own
@@ -812,7 +840,8 @@ jobs:
   # its prerelease label from the branch name — for a queue ref that is
   # gh-readonly-queue/develop/pr-544-<40 hex>, yielding an 85-character version. Package file
   # names built from it trip NU5123 (path too long), which is warning-as-error here, so pack
-  # fails on every queue run. Both events fall through to the placeholder below instead.
+  # fails on every queue run. Both events fall through to the placeholder from Plan · Detect changes
+  # instead: the package validation baseline's own version with a queue or pr label (#2605).
   version:
     name: Plan · Version
     if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
@@ -950,7 +979,7 @@ jobs:
     with:
       runs-on: ${{ needs.pick-runner.outputs.compile }}
       runner-plan-attempt: ${{ needs.pick-runner.outputs.attempt }}
-      version: ${{ needs.version.outputs.semver || (github.event_name == 'merge_group' && format('0.0.0-queue.{0}', github.run_number) || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number)) }}
+      version: ${{ needs.version.outputs.semver || needs.changes.outputs.placeholder-version }}
       # The suites skip when this push reuses an already-tested run, so their slices would be read by nothing.
       upload-slices: ${{ needs.queue-validated.outputs.validated != 'true' }}
       # Analyzers run once per run, in the analyzers job below, not on the suites' critical path (#2068).
@@ -1841,7 +1870,7 @@ jobs:
 
   pack:
     name: Build · Pack
-    needs: [version, build]
+    needs: [version, changes, build]
     # version is skipped (not failed) on PRs. Packability is validated in the merge queue for a change into
     # develop (#2070), and on its own PR run for a change into main or a release branch.
     # It packs this run's build and nothing else, so it runs only after that build succeeded: a fast-forward
@@ -1852,7 +1881,7 @@ jobs:
       actions: read
     uses: ./.github/workflows/reusable-pack.yml
     with:
-      version: ${{ needs.version.outputs.semver || (github.event_name == 'merge_group' && format('0.0.0-queue.{0}', github.run_number) || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number)) }}
+      version: ${{ needs.version.outputs.semver || needs.changes.outputs.placeholder-version }}
       # On PRs and queue runs pack is a packability gate only: nothing consumes the artifact,
       # because the publish jobs are gated on push.
       artifact-name: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && format('nuget-packages-{0}', github.run_id) || '' }}
