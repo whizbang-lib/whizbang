@@ -203,7 +203,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
     wakes.Add(_wake);
     // The loop ends only through a stop: a canceled pass breaks out below, and the wake set observes the stopping
     // token, so its wait reports IsStopped. A loop-top token check would be a branch nothing can take.
-    while (true) {
+    do {
       // A release announced during the pass wakes the next one (one announced before it is served by it), and the
       // cadence is measured from the start of this pass.
       _wake.Consume();
@@ -213,10 +213,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
       } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
         break;
       }
-      if ((await wakes.WaitAsync().ConfigureAwait(false)).IsStopped) {
-        break;
-      }
-    }
+    } while (!(await wakes.WaitAsync().ConfigureAwait(false)).IsStopped);
   }
 
   /// <inheritdoc />
