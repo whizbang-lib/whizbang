@@ -99,6 +99,8 @@ public class PerspectiveSyncAwaiterAppliedTests {
 
     var waiting = awaiter.WaitForAppliedAsync(typeof(OrderPerspective), eventId, _timeout);
     await ledger.WaitForReadAsync(1);
+    // Armed twice: the wait's timeout, then the re-read deadline once the read is back.
+    await clock.Armed(2);
     var liveWhileWaiting = clock.LiveTimers;
     var waitersWhileWaiting = tracker.AppliedWaiterCount;
     tracker.MarkApplied([eventId], _name);
@@ -106,7 +108,7 @@ public class PerspectiveSyncAwaiterAppliedTests {
 
     await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
     await Assert.That(liveWhileWaiting).IsEqualTo(2)
-      .Because("the wait holds its timeout and the next re-read's delay, and the counter must see them");
+      .Because("the wait holds its timeout and the next re-read's deadline, and the counter must see them");
     await Assert.That(waitersWhileWaiting).IsEqualTo(2)
       .Because("the wait listens for the perspective's apply and the collective sink's, and the counter must see both");
     await Assert.That(clock.LiveTimers).IsEqualTo(0)
@@ -128,7 +130,7 @@ public class PerspectiveSyncAwaiterAppliedTests {
 
     await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
     await Assert.That(clock.CreatedTimers).IsEqualTo(2)
-      .Because("the wait armed its timeout and a re-read delay before the ledger answered");
+      .Because("the wait armed its timeout, and the re-read's deadline before the read, as the ledger answered");
     await Assert.That(clock.LiveTimers).IsEqualTo(0);
     await Assert.That(tracker.AppliedWaiterCount).IsEqualTo(0)
       .Because("both in-process waiters lost to the ledger and must be released when the wait returns");

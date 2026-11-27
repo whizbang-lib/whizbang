@@ -33,5 +33,6 @@ public interface IStartupStageGate {
   /// <param name="cancellationToken">Ends the wait.</param>
   /// <returns>A task that completes when the stage is reached, or is canceled with the token.</returns>
   /// <exception cref="ArgumentOutOfRangeException"><paramref name="stage"/> is not a startup stage.</exception>
+  [Whizbang.Core.Async.WaitSource]
   Task WaitForAsync(StartupStage stage, CancellationToken cancellationToken);
 }

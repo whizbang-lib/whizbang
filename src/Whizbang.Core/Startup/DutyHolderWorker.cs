@@ -66,7 +66,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
   private readonly TimeProvider _time;
   private readonly Dictionary<string, IDutyGrant> _held = new(StringComparer.Ordinal);
   private readonly SemaphoreSlim _passGate = new(1, 1);
-  private TaskCompletionSource _wake = _newWake();
+  private readonly Whizbang.Core.Async.WakeSignal _wake = new();
 
   /// <summary>Creates the worker.</summary>
   /// <param name="elector">The elector that decides who holds each role.</param>
@@ -153,7 +153,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
 
   /// <summary>Runs the next pass at once instead of at the next interval.</summary>
   public void Wake() {
-    Volatile.Read(ref _wake).TrySetResult();
+    _wake.Set();
     OnWakeRequested?.Invoke();
   }
 
@@ -199,17 +199,21 @@ public sealed partial class DutyHolderWorker : BackgroundService {
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     using var subscription = _signalBus?.Subscribe<Whizbang.Core.Signals.RoleReleasedSignal>(_onReleased);
+    using var wakes = new Whizbang.Core.Async.WakeSet(_time, stoppingToken);
+    wakes.Add(_wake);
     while (!stoppingToken.IsCancellationRequested) {
-      // Both armed before the pass: a release announced during the pass wakes the next one, and
-      // the cadence is measured from the start of this pass.
-      var wake = _armWake();
-      var next = Task.Delay(_options.RenewInterval, _time, stoppingToken);
+      // A release announced during the pass wakes the next one (one announced before it is served by it), and the
+      // cadence is measured from the start of this pass.
+      _wake.Consume();
+      wakes.StartTimeout(_options.RenewInterval);
       try {
         await RunOnceAsync(stoppingToken).ConfigureAwait(false);
       } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
         break;
       }
-      _ = await Task.WhenAny(wake.Task, next).ConfigureAwait(false);
+      if ((await wakes.WaitAsync().ConfigureAwait(false)).IsStopped) {
+        break;
+      }
     }
   }
 
@@ -224,14 +228,6 @@ public sealed partial class DutyHolderWorker : BackgroundService {
     _passGate.Dispose();
     base.Dispose();
   }
-
-  private TaskCompletionSource _armWake() {
-    var next = _newWake();
-    Volatile.Write(ref _wake, next);
-    return next;
-  }
-
-  private static TaskCompletionSource _newWake() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
   /// <summary>Keeps a role this instance holds, which renews it. False when it is not held (any more).</summary>
   private async Task<bool> _keepAsync(string role, CancellationToken cancellationToken) {

@@ -313,11 +313,11 @@ public static class CompositeBatchExtensions {
   /// A read that completes as the window closes is taken, never lost: the caller checks it before cutting.
   /// </summary>
   private static async Task<bool> _arrivesWithinAsync(Task<bool> pending, TimeSpan due, TimeProvider time) {
-    using var timer = new CancellationTokenSource();
-    var window = Task.Delay(due, time, timer.Token);
-    var first = await Task.WhenAny(pending, window).ConfigureAwait(false);
-    await timer.CancelAsync().ConfigureAwait(false);
-    return first == pending;
+    // One wake set per window: the pending read (kept across windows by the caller) against the window's deadline.
+    // Disposing the set stops the deadline and takes the set off the read, which stays pending for the next window.
+    using var window = new Whizbang.Core.Async.WakeSet(time, CancellationToken.None);
+    var read = window.Add(pending);
+    return (await window.WaitAsync(due).ConfigureAwait(false)).Woke(read);
   }
 
   private static TComposite _cut<TEvent, TComposite>(Func<IReadOnlyList<TEvent>, TComposite> factory, List<TEvent> batch) {

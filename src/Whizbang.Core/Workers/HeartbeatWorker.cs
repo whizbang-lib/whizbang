@@ -284,12 +284,12 @@ public partial class HeartbeatWorker(
       await Task.Delay(wait, _time, cancellationToken).ConfigureAwait(false);
       return;
     }
-    using var either = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-    var ended = await Task.WhenAny(Task.Delay(wait, _time, either.Token), _schemaReady.WaitForReadyAsync(either.Token))
-      .ConfigureAwait(false);
-    await either.CancelAsync().ConfigureAwait(false);
-    // Rethrows the stop's cancellation; a delay or a gate that ended normally completes the wait.
-    await ended.ConfigureAwait(false);
+    // The cadence is the set's timeout; the gate's wait runs on the set's token, so it is released when the cadence wins.
+    using var either = new Whizbang.Core.Async.WakeSet(_time, cancellationToken);
+    either.Add(_schemaReady.WaitForReadyAsync(either.Token));
+    await either.WaitAsync(wait).ConfigureAwait(false);
+    // Rethrows the stop's cancellation; a cadence or a gate that ended normally completes the wait.
+    cancellationToken.ThrowIfCancellationRequested();
   }
 
   /// <summary>

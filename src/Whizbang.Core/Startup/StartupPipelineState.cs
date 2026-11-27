@@ -61,6 +61,7 @@ public interface IStartupPipelineState {
   /// which a blocking step fails never completes this — waiters stay held, exactly as workers hold
   /// at a gate the initializer never opens.
   /// </summary>
+  [Whizbang.Core.Async.WaitSource]
   Task WaitForReadyAsync(CancellationToken cancellationToken);
 
   /// <summary>Where <paramref name="stepName"/> currently stands. Unknown names report
@@ -84,6 +85,7 @@ public interface IStartupPipelineState {
 
   /// <summary>Completes when <paramref name="stepName"/> finishes (whatever its outcome).
   /// Returns immediately if it already has this run.</summary>
+  [Whizbang.Core.Async.WaitSource]
   Task WaitForAsync(string stepName, CancellationToken cancellationToken);
 }
 

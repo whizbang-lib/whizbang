@@ -5,6 +5,7 @@ using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.Async;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
@@ -134,25 +135,24 @@ public sealed partial class WorkCoordinatorGate : IDisposable, Whizbang.Core.Con
     if (await _reserve!.WaitAsync(0, cancellationToken).ConfigureAwait(false)) {
       return _grant(_reserve, caller);
     }
-    var sharedWait = AcquireTimeoutMilliseconds <= 0
-      ? _semaphore.WaitAsync(cancellationToken).ContinueWith(t => { t.GetAwaiter().GetResult(); return true; }, TaskScheduler.Default)
-      : _semaphore.WaitAsync(AcquireTimeoutMilliseconds, cancellationToken);
-    var reserveWait = AcquireTimeoutMilliseconds <= 0
-      ? _reserve.WaitAsync(cancellationToken).ContinueWith(t => { t.GetAwaiter().GetResult(); return true; }, TaskScheduler.Default)
-      : _reserve.WaitAsync(AcquireTimeoutMilliseconds, cancellationToken);
-    var first = await Task.WhenAny(sharedWait, reserveWait).ConfigureAwait(false);
-    var taken = first == sharedWait ? _semaphore : _reserve;
-    var other = first == sharedWait ? reserveWait : sharedWait;
-    var acquired = await first.ConfigureAwait(false);
-    // The loser keeps waiting in the background; if it lands later, its permit is handed straight back.
-    _ = other.ContinueWith(t => {
-      if (t.Status == TaskStatus.RanToCompletion && t.Result) {
-        (taken == _semaphore ? _reserve : _semaphore).Release();
-      }
-    }, TaskScheduler.Default);
-    if (acquired) {
-      return _grant(taken, caller);
+    // Both semaphores waited on together as permit sources: whichever frees first wakes the caller. A permit the other
+    // source acquired and the caller does not take is handed back when the set is disposed, or as it lands if later,
+    // so the reserve stays whole for the next interactive caller and the shared pool loses nothing.
+    using var permits = new WakeSet(TimeProvider.System, cancellationToken);
+    var shared = permits.Add(_semaphore);
+    var reserved = permits.Add(_reserve);
+    await permits.WaitAsync(AcquireTimeoutMilliseconds <= 0
+      ? Timeout.InfiniteTimeSpan
+      : TimeSpan.FromMilliseconds(AcquireTimeoutMilliseconds)).ConfigureAwait(false);
+    // The shared permits go first, so the reserve is whole whenever it is needed.
+    if (shared.TryTake()) {
+      return _grant(_semaphore, caller);
     }
+    if (reserved.TryTake()) {
+      return _grant(_reserve, caller);
+    }
+    // Neither permit was acquired: the caller's stop, or the deadline.
+    cancellationToken.ThrowIfCancellationRequested();
     LogAcquireTimedOut(_logger, AcquireTimeoutMilliseconds, MaxConcurrent, HoldersSummary());
     return default;
   }

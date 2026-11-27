@@ -173,9 +173,9 @@ public sealed partial class WhizbangInstanceExit : IWhizbangInstanceExit {
       }
       using var budget = new CancellationTokenSource(CrashExitBudget, _time);
       // Bounded on the clock as well as by the token, so a step that ignores the token cannot hold the dying process.
-      var bound = Task.Delay(CrashExitBudget, _time, CancellationToken.None);
-      var exiting = _crashExitAsync(budget.Token);
-      Task.WhenAny(exiting, bound).GetAwaiter().GetResult();
+      using var bound = new Whizbang.Core.Async.WakeSet(_time, CancellationToken.None);
+      bound.Add(_crashExitAsync(budget.Token));
+      bound.WaitAsync(CrashExitBudget).AsTask().GetAwaiter().GetResult();
     } catch (Exception) {
       // intentionally swallowed: see the pragma's justification; the exit's own entry says what it could
     }

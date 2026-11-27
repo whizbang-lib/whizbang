@@ -37,6 +37,7 @@ public interface IReadModelsReadyGate {
   bool IsReady { get; }
 
   /// <summary>Awaits the read-models-ready signal. Sticky — late waiters return immediately.</summary>
+  [Whizbang.Core.Async.WaitSource]
   Task WaitForReadyAsync(CancellationToken cancellationToken);
 
   /// <summary>Signals the barrier. Idempotent. Called by <see cref="ReadModelsReadyDriver"/>.</summary>
