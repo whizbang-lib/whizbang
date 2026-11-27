@@ -575,6 +575,11 @@ public sealed partial class IntegrityManifestReceptor(
       }
     }
 
+    // #2588: the events this side excluded from integrity come out of the origin's answer here, once, before any
+    // comparison reads it; a bucket holding a mark the origin has not placed yet is undecided.
+    var exclusions = await IntegrityExclusionAdjustment.ApplyAsync(services, message, cancellationToken).ConfigureAwait(false);
+    message = exclusions.Message;
+
     // #2225: a stream-level page with nothing to compare (it held no digest, or every one was left out above) still says,
     // by its cursor, that the walk has more pages. Only an origin that echoes the walk's types can be followed: such a
     // page names no type of its own, and asking for none would ask for nothing.
@@ -588,7 +593,7 @@ public sealed partial class IntegrityManifestReceptor(
     var settle = TimeSpan.FromMinutes(options.AuditSettleWindowMinutes);
 
     if (message.Level == ManifestLevel.Types) {
-      await _handleTypeLevelAsync(services, options, message, types, settle, cancellationToken).ConfigureAwait(false);
+      await _handleTypeLevelAsync(services, options, message, types, settle, exclusions.Pending, cancellationToken).ConfigureAwait(false);
       return;
     }
 
@@ -678,6 +683,11 @@ public sealed partial class IntegrityManifestReceptor(
       if (placement.Verdict == HeldWindowVerdict.Matches) {
         // provably complete — a later divergence is a fresh incident.
         healedKeys.Add(key);
+        continue;
+      }
+      if (exclusions.Pending.Contains(new IntegrityBucket(origin.TenantScope, origin.EventType, origin.StreamId))) {
+        // #2588: an excluded event the origin has not placed yet may be the difference: undecided, never repaired.
+        undecidedKeys.Add(key);
         continue;
       }
       if (!message.Recomputed && IntegrityDigestMath.IsInsideSettle(origin.UpdatedAt, mine?.UpdatedAt, settle)) {
@@ -1178,8 +1188,9 @@ public sealed partial class IntegrityManifestReceptor(
   /// </summary>
   private async Task _handleTypeLevelAsync(
       IServiceProvider services, StreamIntegrityOptions options, IntegrityManifest message,
-      List<string> types, TimeSpan settle, CancellationToken cancellationToken) {
-    var compared = await _compareTypeLevelAsync(services, options, message, types, settle, cancellationToken).ConfigureAwait(false);
+      List<string> types, TimeSpan settle, IReadOnlySet<IntegrityBucket> pendingExclusions, CancellationToken cancellationToken) {
+    var compared = await _compareTypeLevelAsync(services, options, message, types, settle, pendingExclusions, cancellationToken)
+      .ConfigureAwait(false);
     if (!compared || !message.WindowCapped || message.ChunkCount != 1 || message.ComputedThrough is not long through) {
       return;
     }
@@ -1200,7 +1211,7 @@ public sealed partial class IntegrityManifestReceptor(
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The type-level compare matches each type's roll-up, applies the settle window, sorts the mismatches into bulk-backfill candidates and drill-down requests, applies the repair grant cap over the candidates, and addresses each drill-down to its origin's request topic. The stages share the mismatch set they narrow.")]
   private async Task<bool> _compareTypeLevelAsync(
       IServiceProvider services, StreamIntegrityOptions options, IntegrityManifest message,
-      List<string> types, TimeSpan settle, CancellationToken cancellationToken) {
+      List<string> types, TimeSpan settle, IReadOnlySet<IntegrityBucket> pendingExclusions, CancellationToken cancellationToken) {
     var coordinator = services.GetRequiredService<IWorkCoordinator>();
     var windowed = message.ComputedThrough is not null;
     if (message.NothingSettledAbove) {
@@ -1239,6 +1250,7 @@ public sealed partial class IntegrityManifestReceptor(
 
     var mismatched = new List<string>();
     var matched = new List<StreamDigest>();
+    var undecided = false;
     var bulkCandidates = new List<(StreamDigest Origin, StreamDigest? Mine, long Deficit)>();
     foreach (var origin in message.Digests) {
       var bucket = (origin.TenantScope, origin.EventType, origin.StreamId);
@@ -1247,6 +1259,11 @@ public sealed partial class IntegrityManifestReceptor(
       var placement = IntegrityDigestMath.PlaceHeld(origin, placed, sequenceless);
       if (placement.Verdict == HeldWindowVerdict.Matches) {
         matched.Add(origin);
+        continue;
+      }
+      if (pendingExclusions.Contains(new IntegrityBucket(origin.TenantScope, origin.EventType, origin.StreamId))) {
+        // #2588: an excluded event the origin has not placed yet may be the difference: undecided, and the window unsealed.
+        undecided = true;
         continue;
       }
       var mine = placement.Held;
@@ -1265,6 +1282,9 @@ public sealed partial class IntegrityManifestReceptor(
       }
     }
     await _healProvenTypeLanesAsync(services, coordinator, message, matched, cancellationToken).ConfigureAwait(false);
+    if (mismatched.Count == 0 && undecided) {
+      return true;   // #2588: nothing to repair, and nothing proven either: the window is not sealed.
+    }
     if (mismatched.Count == 0) {
       // #80-C seal advance — only when the whole window PROVABLY passed: every bucket matched,
       // the answer was one complete chunk, and no resume cursor was pending. Chunks carry no

@@ -152,6 +152,12 @@ public sealed partial class IntegrityCheckpointReceptor(
         actual += _heldCount(await _unsequencedAsync(coordinator, pending.OriginServiceId, [pending.EventType], cancellationToken)
           .ConfigureAwait(false), pending.TenantScope, pending.EventType);
       }
+      if (actual < pending.ExpectedCount) {
+        // #2588: the events this side excluded that the origin counts in the window are not missing.
+        actual += (await IntegrityExclusionAdjustment.CheckpointCountsAsync(services, pending.OriginServiceId,
+          pending.FromCommitSequence, pending.ToCommitSequence, cancellationToken).ConfigureAwait(false))
+          .GetValueOrDefault((pending.TenantScope, pending.EventType));
+      }
       var observation = new IntegrityRepairPolicy.GapObservation(
         pending.OriginServiceId, pending.EventType, pending.TenantScope,
         pending.FromCommitSequence, pending.ToCommitSequence,
@@ -301,9 +307,16 @@ public sealed partial class IntegrityCheckpointReceptor(
     var held = shortTypes.Count == 0
       ? []
       : await _unsequencedAsync(coordinator, message.OriginServiceId, shortTypes, cancellationToken).ConfigureAwait(false);
+    // #2588: the events this side excluded that the origin counts in the window are not missing; read only when a bucket
+    // reads short.
+    var excluded = shortTypes.Count == 0
+      ? new Dictionary<(string?, string), int>()
+      : await IntegrityExclusionAdjustment.CheckpointCountsAsync(services, message.OriginServiceId, message.FromCommitSequence,
+          message.ToCommitSequence, cancellationToken).ConfigureAwait(false);
     foreach (var bucket in verified) {
       var actual = _bucketCount(actualBuckets, bucket.TenantScope, bucket.EventType)
-        + _heldCount(held, bucket.TenantScope, bucket.EventType);
+        + _heldCount(held, bucket.TenantScope, bucket.EventType)
+        + excluded.GetValueOrDefault((bucket.TenantScope, bucket.EventType));
       if (actual < bucket.Count) {
         tracker.AddPending(new IntegrityGapTracker.PendingGap {
           OriginServiceId = message.OriginServiceId,

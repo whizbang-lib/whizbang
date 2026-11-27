@@ -372,6 +372,9 @@ Whizbang:StreamIntegrity:CompletionWindowMinutes
 Whizbang:StreamIntegrity:ControlMessageTimeToLiveMinutes
 Whizbang:StreamIntegrity:DivergenceReportCooldownMinutes
 Whizbang:StreamIntegrity:EpochClosureEnabled
+Whizbang:StreamIntegrity:Exclusions:BatchSize
+Whizbang:StreamIntegrity:Exclusions:InlineLimit
+Whizbang:StreamIntegrity:Exclusions:LogRetention
 Whizbang:StreamIntegrity:FullHistoryCompare:Enabled
 Whizbang:StreamIntegrity:FullHistoryCompare:Lookback
 Whizbang:StreamIntegrity:FullHistoryCompare:MaxPerRun

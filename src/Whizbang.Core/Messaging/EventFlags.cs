@@ -138,6 +138,16 @@ public enum EventFlags {
   /// <docs>fundamentals/events/superseding-events</docs>
   Superseding = 1 << 7,
 
+  /// <summary>
+  /// Treatment flag: an operator <strong>excluded this event from integrity checks</strong> (#2588). Set only on a
+  /// received event (history recorded under another origin), only by <c>IIntegrityExclusions</c>, never by a writer or
+  /// the wire. The SQL eligibility rule (version 2) reads <c>(flags &amp; 256) = 0</c>, so every stream digest, sealed
+  /// epoch, held fold and checkpoint count leaves the event out, and the comparison removes it from the origin's answer
+  /// too. It does not change replay: the event stays in the log and its perspectives keep it. Reversed by unexcluding.
+  /// </summary>
+  /// <docs>resilience/integrity-exclusions</docs>
+  IntegrityExcluded = 1 << 8,
+
   // Future flags add new values here without requiring schema migrations.
 }
 

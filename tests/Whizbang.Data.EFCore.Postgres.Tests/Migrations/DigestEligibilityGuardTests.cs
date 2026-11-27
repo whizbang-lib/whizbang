@@ -40,11 +40,12 @@ public partial class DigestEligibilityGuardTests {
   private static partial Regex DigestContext();
 
   // A piece of the rule written by hand: the ephemeral (8) or at-most-once (32) flag test, or the exempt-type list.
-  [GeneratedRegex(@"&\s*\(?\s*(8|32|c_flag_ephemeral|c_flag_at_most_once|v_flag_ephemeral|v_flag_at_most_once)\b|__DIGEST_EXEMPT_TYPES__", RegexOptions.IgnoreCase)]
+  // #2588: and the integrity-excluded flag (256).
+  [GeneratedRegex(@"&\s*\(?\s*(8|32|256|c_flag_ephemeral|c_flag_at_most_once|c_flag_integrity_excluded|v_flag_ephemeral|v_flag_at_most_once)\b|__DIGEST_EXEMPT_TYPES__", RegexOptions.IgnoreCase)]
   private static partial Regex SqlRuleCopy();
 
   // The same in C# SQL: the flag tests, or the exempt list bound as a parameter.
-  [GeneratedRegex(@"flags,\s*0\)\s*&\s*((8|32)\b|\{AT_MOST_ONCE_FLAG\})|p_digest_exempt|DigestExemptTypes\.TypeNames")]
+  [GeneratedRegex(@"flags,\s*0\)\s*&\s*((8|32|256)\b|\{AT_MOST_ONCE_FLAG\})|p_digest_exempt|DigestExemptTypes\.TypeNames")]
   private static partial Regex CSharpRuleCopy();
 
   [Test]
@@ -91,16 +92,38 @@ public partial class DigestEligibilityGuardTests {
 
   [Test]
   public async Task TheConstants_ExpandToTheRule_UnderTheAliasGivenAsync() {
-    var eligible = MigrationConstants.Apply("__DIGEST_ELIGIBLE__(es)");
-    var counted = MigrationConstants.Apply("__INTEGRITY_COUNTED__(NEW)");
+    var eligible = MigrationConstants.Apply("__DIGEST_ELIGIBLE_V2__(es)");
+    var counted = MigrationConstants.Apply("__INTEGRITY_COUNTED_V2__(NEW)");
 
+    // #2588: version 2 leaves out an operator's exclusion (EventFlags.IntegrityExcluded, 256) on both.
     await Assert.That(eligible).IsEqualTo(
-      "(COALESCE(es.flags, 0) & 8 = 0 AND COALESCE(es.flags, 0) & 32 = 0 AND split_part(es.event_type, ',', 1) <> ALL("
-      + MigrationConstants.Tokens["__DIGEST_EXEMPT_TYPES__"] + "))");
+      "(COALESCE(es.flags, 0) & 8 = 0 AND COALESCE(es.flags, 0) & 32 = 0 AND COALESCE(es.flags, 0) & 256 = 0 AND "
+      + "split_part(es.event_type, ',', 1) <> ALL(" + MigrationConstants.Tokens["__DIGEST_EXEMPT_TYPES__"] + "))");
     await Assert.That(counted).IsEqualTo(
-      "(COALESCE(NEW.flags, 0) & 32 = 0 AND split_part(NEW.event_type, ',', 1) <> ALL("
+      "(COALESCE(NEW.flags, 0) & 32 = 0 AND COALESCE(NEW.flags, 0) & 256 = 0 AND split_part(NEW.event_type, ',', 1) <> ALL("
       + MigrationConstants.Tokens["__DIGEST_EXEMPT_TYPES__"] + "))");
-    await Assert.That(MigrationConstants.UnknownTokens("WHERE __DIGEST_ELIGIBLE__(es) AND __INTEGRITY_COUNTED__(es)")).IsEmpty();
+    await Assert.That(MigrationConstants.UnknownTokens("WHERE __DIGEST_ELIGIBLE_V2__(es) AND __INTEGRITY_COUNTED_V2__(es)")).IsEmpty();
+  }
+
+  /// <summary>
+  /// #2588: the rule's version 1 tokens stay defined only because shipped migrations write them; the latest definition of
+  /// every function reads the current version, so no fold counts by a rule the fingerprint no longer names.
+  /// </summary>
+  [Test]
+  public async Task NoFunctionsLatestDefinition_ReadsARetiredRuleVersionAsync() {
+    var latest = _latestFunctionBodies(_migrationsDirectory());
+    await Assert.That(latest.Count(f => f.Value.Contains("__DIGEST_ELIGIBLE_V2__(", StringComparison.Ordinal))).IsGreaterThan(25)
+      .Because("precondition: the readers of the rule are among the functions read");
+
+    List<string> offenders = [.. latest
+      .Where(f => f.Value.Contains("__DIGEST_ELIGIBLE__(", StringComparison.Ordinal)
+        || f.Value.Contains("__INTEGRITY_COUNTED__(", StringComparison.Ordinal))
+      .Select(f => f.Key)
+      .Order(StringComparer.Ordinal)];
+
+    await Assert.That(offenders).IsEmpty()
+      .Because("these functions still count by version 1 of the eligibility rule, which leaves an excluded event in: "
+        + string.Join(", ", offenders));
   }
 
   [Test]

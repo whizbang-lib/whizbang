@@ -282,6 +282,14 @@ public sealed class StreamIntegrityMetrics {
   /// <docs>resilience/stream-integrity#events-written-here-returned</docs>
   public PassiveCounter<long> WrittenHereRestorationAmbiguous { get; }
 
+  /// <summary>#2588: received events an operator excluded from integrity checks, tagged by <c>origin</c>.</summary>
+  /// <docs>resilience/integrity-exclusions#metrics</docs>
+  public PassiveCounter<long> ExclusionsMarked { get; }
+
+  /// <summary>#2588: integrity exclusions an operator reversed, tagged by <c>origin</c>.</summary>
+  /// <docs>resilience/integrity-exclusions#metrics</docs>
+  public PassiveCounter<long> ExclusionsUnmarked { get; }
+
   /// <summary>#2544: events named in position requests sent to their origins, tagged by <c>origin</c>.</summary>
   /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
   public PassiveCounter<long> OriginPositionsRequested { get; }
@@ -563,6 +571,20 @@ public sealed class StreamIntegrityMetrics {
     WrittenHereRestorationAmbiguous = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.written_here_restoration_ambiguous",
       description: "Unpositioned events left under their origin because nothing proves they were written here");
+    ExclusionsMarked = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.exclusions_marked",
+      description: "Received events an operator excluded from integrity checks; tagged by origin");
+    ExclusionsUnmarked = meter.CreatePassiveCounter<long>(
+      "whizbang.stream_integrity.exclusions_unmarked",
+      description: "Integrity exclusions an operator reversed; tagged by origin");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.excluded_events",
+      () => _exclusionMeasurements(pending: false),
+      description: "Received events excluded from integrity checks, per origin");
+    _ = meter.CreateObservableGauge(
+      "whizbang.stream_integrity.exclusions_pending",
+      () => _exclusionMeasurements(pending: true),
+      description: "Integrity exclusions whose place at the origin is not known yet, per origin; their buckets are undecided");
     OriginPositionsRequested = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.origin_positions_requested",
       description: "Received events named in position requests sent to their origins; tagged by origin");
@@ -869,6 +891,28 @@ public sealed class StreamIntegrityMetrics {
   private long _unauditedSeals;
 
   private volatile IReadOnlyList<(Guid OriginServiceId, long Unfilled)> _unfilledPositions = [];
+
+  private volatile IReadOnlyList<(Guid OriginServiceId, long Excluded, long Pending)> _exclusions = [];
+
+  /// <summary>
+  /// Publishes, per origin, the integrity exclusions this service holds and how many are pending (#2588), read each
+  /// maintenance cycle by the exclusion step.
+  /// </summary>
+  /// <param name="exclusions">The counts per origin; null resets to none.</param>
+  /// <docs>resilience/integrity-exclusions#metrics</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityExclusionsApiTests.cs:Step_AppliesQueuedRequests_LogsAWarningPerOriginAndBatch_AndPublishesTheGaugesAsync</tests>
+  public void UpdateExclusions(IReadOnlyList<(Guid OriginServiceId, long Excluded, long Pending)>? exclusions) =>
+    _exclusions = exclusions ?? [];
+
+  private Measurement<long>[] _exclusionMeasurements(bool pending) {
+    var exclusions = _exclusions;
+    var measurements = new Measurement<long>[exclusions.Count];
+    for (var i = 0; i < exclusions.Count; i++) {
+      measurements[i] = new Measurement<long>(pending ? exclusions[i].Pending : exclusions[i].Excluded,
+        new KeyValuePair<string, object?>(ORIGIN_SERVICE_ID_TAG, exclusions[i].OriginServiceId.ToString()));
+    }
+    return measurements;
+  }
 
   /// <summary>
   /// Publishes, per origin, how many received events this service still holds without the origin's commit sequence

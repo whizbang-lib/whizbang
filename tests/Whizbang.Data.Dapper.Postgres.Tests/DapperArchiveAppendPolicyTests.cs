@@ -90,6 +90,22 @@ public class DapperArchiveAppendPolicyTests : PostgresTestBase {
   }
 
   [Test]
+  public async Task AddWhizbangPostgres_RegistersIntegrityExclusions_AndTheirMaintenanceStepAsync() {
+    var services = new ServiceCollection().AddWhizbangPostgres(ConnectionString, new JsonSerializerOptions(), false, (string?)null, null);
+    services.AddLogging();
+    await using var provider = services.BuildServiceProvider();
+
+    var steps = provider.GetServices<IMaintenanceStep>().ToList();
+    var exclusions = provider.GetRequiredService<global::Whizbang.Core.Messaging.IIntegrityExclusions>();
+    var summary = await exclusions.SummarizeAsync();
+
+    await Assert.That(steps.OfType<IntegrityExclusionStep>()).Count().IsEqualTo(1)
+      .Because("queued integrity exclusion requests are applied by the maintenance cycle on either driver (#2588)");
+    await Assert.That(exclusions).IsTypeOf<PostgresIntegrityExclusions>();
+    await Assert.That(summary.Origins).IsEmpty();
+  }
+
+  [Test]
   public async Task AddWhizbangPostgres_TheRestoreRequestStep_RunsOnTheHostsClock_InAHostWithoutLoggingAsync() {
     var stream = (Guid)TrackedGuid.New();
     await _eventStore().AppendAsync(stream, new DapperMixedStreamProbeNoted { StreamId = stream });

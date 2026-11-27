@@ -19,8 +19,12 @@ public sealed record OriginPositionAsk(Guid OriginServiceId, IReadOnlyList<Guid>
 /// <param name="EventId">The event.</param>
 /// <param name="State"><c>positioned</c>, <c>unstamped</c>, <c>archived</c> or <c>unknown</c>.</param>
 /// <param name="CommitSequence">The origin's commit sequence when it has one.</param>
+/// <param name="TenantScope">#2588: the tenant scope it is stored under (null when unscoped or not held).</param>
+/// <param name="EventType">#2588: its stored type name, when the origin holds it.</param>
+/// <param name="StreamId">#2588: its stream, when the origin holds it.</param>
 /// <docs>resilience/stream-integrity#filling-missing-origin-positions</docs>
-public sealed record OriginPositionLookup(Guid EventId, string State, long? CommitSequence);
+public sealed record OriginPositionLookup(Guid EventId, string State, long? CommitSequence, string? TenantScope = null,
+  string? EventType = null, Guid? StreamId = null);
 
 /// <summary>What applying one origin's position answer did (#2544).</summary>
 /// <param name="Filled">Positions filled (only ever NULL ones).</param>
@@ -95,13 +99,15 @@ public sealed class OriginPositionStore {
     ArgumentNullException.ThrowIfNull(eventIds);
     await using var connection = await _database.Open(cancellationToken).ConfigureAwait(false);
     await using var command = new NpgsqlCommand(
-      $"SELECT event_id, state, commit_sequence FROM {_prefix}wh_origin_positions_of($1)", connection);
+      $"SELECT event_id, state, commit_sequence, tenant_scope, event_type, stream_id FROM {_prefix}wh_origin_positions_of($1)", connection);
     var asked = eventIds.Take(MAX_EVENTS_PER_ANSWER).ToArray();
     command.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Uuid, Value = asked });
     var lookups = new List<OriginPositionLookup>();
     await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-      lookups.Add(new OriginPositionLookup(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetInt64(2)));
+      lookups.Add(new OriginPositionLookup(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetInt64(2),
+        reader.IsDBNull(3) ? null : reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4),
+        reader.IsDBNull(5) ? null : reader.GetGuid(5)));
     }
     return lookups;
   }

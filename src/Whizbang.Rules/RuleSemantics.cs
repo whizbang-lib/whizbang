@@ -22,7 +22,8 @@ public static class RuleSemantics {
   /// <summary>
   /// The version of the SQL eligibility rule (<c>__DIGEST_ELIGIBLE__</c>, <c>__INTEGRITY_COUNTED__</c> and
   /// <c>__DIGEST_EXEMPT_TYPES__</c>). A guard test holds the constants' text to a golden copy, so the text cannot change
-  /// without this version changing with it.
+  /// without this version changing with it. Version 2 (#2588): an event an operator excluded from integrity is counted by
+  /// neither rule. A pair whose two sides run different versions halts its comparisons until both run the same one.
   /// </summary>
-  public const int ELIGIBILITY_SQL_VERSION = 1;
+  public const int ELIGIBILITY_SQL_VERSION = 2;
 }
