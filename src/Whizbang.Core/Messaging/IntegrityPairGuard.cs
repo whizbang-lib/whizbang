@@ -98,7 +98,8 @@ public sealed partial class IntegrityPairGuard {
   /// </summary>
   /// <param name="reason">The reason.</param>
   /// <returns>True for a rules-version difference.</returns>
-  public static bool IsRulesVersionPause(RulePairHaltReason reason) => false;
+  public static bool IsRulesVersionPause(RulePairHaltReason reason) =>
+    reason is RulePairHaltReason.SemanticsVersion or RulePairHaltReason.EligibilitySqlVersion;
 
   private readonly ConcurrentDictionary<(string Peer, IntegrityPairSide Side), IntegrityPairState> _pairs = new();
   private readonly IRuleFingerprintSource _rules;
@@ -107,6 +108,8 @@ public sealed partial class IntegrityPairGuard {
   private readonly ILogger _logger;
   private readonly Counter<long>? _halts;
   private readonly Counter<long>? _alerts;
+  private readonly Counter<long>? _pauses;
+  private readonly Counter<long>? _pauseAlerts;
   private readonly Lock _hydrateLock = new();
   private bool _hydrated;
   private Task? _hydrating;
@@ -130,8 +133,13 @@ public sealed partial class IntegrityPairGuard {
         description: "Service pairs halted because their eligibility rules differ; tagged by reason and side");
       _alerts = meter.CreateCounter<long>("whizbang.stream_integrity.pair_halt_alerts",
         description: "Halted service pairs that stayed halted past PairGuard:HaltedAlertAfter; tagged by side");
+      // #2588: a pair whose services run different rules versions is paused, not halted: expected until both upgrade.
+      _pauses = meter.CreateCounter<long>("whizbang.stream_integrity.pair_rules_version_pauses",
+        description: "Service pairs paused because their services run different rules versions, expected until both upgrade; tagged by side");
+      _pauseAlerts = meter.CreateCounter<long>("whizbang.stream_integrity.pair_rules_version_pause_alerts",
+        description: "Paused service pairs still on different rules versions past PairGuard:HaltedAlertAfter; tagged by side");
       _ = meter.CreateObservableGauge("whizbang.stream_integrity.pair_state", _stateMeasurements,
-        description: "1 for each service pair in its current state (agreed | halted), by peer and side");
+        description: "1 for each service pair in its current state (agreed | halted | paused), by peer and side");
       _ = meter.CreateObservableGauge("whizbang.stream_integrity.pair_halted_seconds", _haltedSecondsMeasurements, unit: "s",
         description: "How long each halted service pair has been halted, by peer and side");
       _ = meter.CreateObservableGauge("whizbang.stream_integrity.rule_fingerprint_info",
@@ -232,12 +240,19 @@ public sealed partial class IntegrityPairGuard {
     var reason = ReasonTag(verdict.Reason);
     var sideTag = _sideTag(side);
     IntegrityPairHaltRecord? halted = null;
+    var paused = IsRulesVersionPause(verdict.Reason);
     if (!sameHalt) {
-      _halts?.Add(1, new KeyValuePair<string, object?>("reason", reason), new KeyValuePair<string, object?>("side", sideTag));
       var localFingerprint = mine.Fingerprint();
-      var differing = string.Join(", ", verdict.DifferingTypes);
-      LogPairHalted(_logger, peer, side, reason, mine.SemanticsVersion, mine.EligibilitySqlVersion, localFingerprint,
-        theirs?.SemanticsVersion, theirs?.EligibilitySqlVersion, peerRules?.Fingerprint, differing);
+      if (paused) {
+        // #2588: two services on different rules versions; expected until both upgrade, so a Warning, not an Error.
+        _pauses?.Add(1, new KeyValuePair<string, object?>("side", sideTag));
+        LogPairPaused(_logger, peer, side, reason, mine.SemanticsVersion, mine.EligibilitySqlVersion,
+          theirs!.SemanticsVersion, theirs.EligibilitySqlVersion);
+      } else {
+        _halts?.Add(1, new KeyValuePair<string, object?>("reason", reason), new KeyValuePair<string, object?>("side", sideTag));
+        LogPairHalted(_logger, peer, side, reason, mine.SemanticsVersion, mine.EligibilitySqlVersion, localFingerprint,
+          theirs?.SemanticsVersion, theirs?.EligibilitySqlVersion, peerRules?.Fingerprint, string.Join(", ", verdict.DifferingTypes));
+      }
       halted = new IntegrityPairHaltRecord(peer, side, verdict.Reason, verdict.DifferingTypes,
         mine.SemanticsVersion, mine.EligibilitySqlVersion, localFingerprint,
         theirs?.SemanticsVersion, theirs?.EligibilitySqlVersion, peerRules?.Fingerprint, haltedSince, null);
@@ -247,8 +262,13 @@ public sealed partial class IntegrityPairGuard {
     if (!alerted && haltedFor >= _options.HaltedAlertAfter) {
       alerted = true;
       alertedNow = (peer, side, now);
-      _alerts?.Add(1, new KeyValuePair<string, object?>("side", sideTag));
-      LogPairHaltAlert(_logger, peer, side, reason, haltedFor, _options.HaltedAlertAfter);
+      if (paused) {
+        _pauseAlerts?.Add(1, new KeyValuePair<string, object?>("side", sideTag));
+        LogPairStillPaused(_logger, peer, side, haltedFor, _options.HaltedAlertAfter);
+      } else {
+        _alerts?.Add(1, new KeyValuePair<string, object?>("side", sideTag));
+        LogPairHaltAlert(_logger, peer, side, reason, haltedFor, _options.HaltedAlertAfter);
+      }
     }
     _pairs[key] = new IntegrityPairState(peer, side, verdict, haltedSince, alerted);
     change = new PairChange(halted, alertedNow, null);
@@ -341,7 +361,14 @@ public sealed partial class IntegrityPairGuard {
     _pairs.Values.Select(p => new Measurement<long>(1,
       new KeyValuePair<string, object?>("peer", p.Peer),
       new KeyValuePair<string, object?>("side", _sideTag(p.Side)),
-      new KeyValuePair<string, object?>("state", p.HaltedSince is null ? STATE_AGREED : STATE_HALTED)));
+      new KeyValuePair<string, object?>("state", _stateTag(p))));
+
+  private static string _stateTag(IntegrityPairState pair) {
+    if (pair.HaltedSince is null) {
+      return STATE_AGREED;
+    }
+    return IsRulesVersionPause(pair.Verdict.Reason) ? STATE_PAUSED : STATE_HALTED;
+  }
 
   private IEnumerable<Measurement<double>> _haltedSecondsMeasurements() {
     var now = _time.GetUtcNow();
@@ -371,6 +398,20 @@ public sealed partial class IntegrityPairGuard {
   [LoggerMessage(EventId = 3, Level = LogLevel.Information,
     Message = "Integrity resumed for the pair with '{Peer}' (this service is the {Side}) after {HaltedFor}: the rules match")]
   static partial void LogPairResumed(ILogger logger, string peer, IntegrityPairSide side, TimeSpan haltedFor);
+
+  [LoggerMessage(EventId = 6, Level = LogLevel.Warning,
+    Message = "Integrity paused for the pair with '{Peer}' (this service is the {Side}): the two services run different "
+            + "rules versions ({Reason}). This service runs rule semantics {LocalSemantics}, eligibility SQL {LocalSql}; the "
+            + "peer runs {PeerSemantics}, {PeerSql}. Expected while the two services upgrade separately: nothing is compared, "
+            + "repaired or redelivered for the pair until both run the same rules version, and it resumes on its own")]
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "LoggerMessage source-generated method: the parameters are the structured log template's placeholders, both sides' versions as separate structured fields.")]
+  static partial void LogPairPaused(ILogger logger, string peer, IntegrityPairSide side, string reason,
+    int localSemantics, int localSql, int peerSemantics, int peerSql);
+
+  [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
+    Message = "Integrity for the pair with '{Peer}' (this service is the {Side}) is still paused after {PausedFor}, past "
+            + "{Threshold}: the two services still run different rules versions. It resumes once the other service upgrades")]
+  static partial void LogPairStillPaused(ILogger logger, string peer, IntegrityPairSide side, TimeSpan pausedFor, TimeSpan threshold);
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Warning,
     Message = "The pair guard could not load the halts kept before this process started; verdicts go on, and a halt that "

@@ -203,7 +203,7 @@ public class IntegrityPairGuardTests {
     var verdict = guard.Admit(PEER, IntegrityPairSide.Consumer, samePeerOnAnotherPackage);
     var wire = System.Text.Json.JsonSerializer.Serialize(samePeerOnAnotherPackage,
       Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(RuleFingerprint)));
-    var fields = System.Text.Json.JsonDocument.Parse(wire).RootElement.EnumerateObject().Select(p => p.Name.ToUpperInvariant()).Order().ToList();
+    var fields = System.Text.Json.JsonElement.Parse(wire).EnumerateObject().Select(p => p.Name.ToUpperInvariant()).Order().ToList();
 
     await Assert.That(verdict.IsAgreed).IsTrue();
     await Assert.That(log.Entries).IsEmpty();
