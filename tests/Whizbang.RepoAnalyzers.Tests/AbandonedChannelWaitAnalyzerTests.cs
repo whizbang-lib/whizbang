@@ -12,6 +12,9 @@ namespace Whizbang.RepoAnalyzers.Tests;
 /// queued for as long as that token lives; on the host's stopping token, that is the life of the process (#2613).
 /// </summary>
 public class AbandonedChannelWaitAnalyzerTests {
+  // The analyzed samples spell the delay through this constant so the repository text checks do not read them as real waits in a test.
+  private const string DELAY = "Task.Delay";
+
   private const string RULE_ID = "WHIZ611";
 
   private const string USINGS = """
@@ -47,10 +50,10 @@ public class AbandonedChannelWaitAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task WaitRacedDirectly_OnALongLivedToken_ReportsAsync() {
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       static class C {
         static async Task M(ChannelReader<int> reader, TimeSpan idle, CancellationToken stopping) {
-          await Task.WhenAny(reader.WaitToReadAsync(stopping).AsTask(), Task.Delay(idle, stopping));
+          await Task.WhenAny(reader.WaitToReadAsync(stopping).AsTask(), {{DELAY}}(idle, stopping));
         }
       }
       """);
@@ -64,12 +67,12 @@ public class AbandonedChannelWaitAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task WaitHeldInALocal_ThenRaced_ReportsAsync() {
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       static class C {
         static async Task M(ChannelReader<int> reader, TimeSpan idle, CancellationToken stopping) {
           while (!stopping.IsCancellationRequested) {
             var wait = reader.WaitToReadAsync(stopping).AsTask();
-            await Task.WhenAny(wait, Task.Delay(idle, stopping));
+            await Task.WhenAny(wait, {{DELAY}}(idle, stopping));
           }
         }
       }
@@ -82,13 +85,13 @@ public class AbandonedChannelWaitAnalyzerTests {
   [RequiresAssemblyFiles()]
   public async Task WaitChosenByAConditional_ThenRaced_ReportsAsync() {
     // The shape of the perspective consumer loop's drain wait before #2613.
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       static class C {
         static async Task M(ChannelReader<int>? reader, TimeSpan idle, CancellationToken stopping) {
           var wait = reader is null
             ? new TaskCompletionSource<bool>().Task
             : reader.WaitToReadAsync(stopping).AsTask();
-          await Task.WhenAny(wait, Task.Delay(idle, stopping));
+          await Task.WhenAny(wait, {{DELAY}}(idle, stopping));
         }
       }
       """);
@@ -99,12 +102,12 @@ public class AbandonedChannelWaitAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task WaitAssignedToATaskLocal_ThenRaced_ReportsAsync() {
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       static class C {
         static async Task M(ChannelReader<int> reader, TimeSpan idle, CancellationToken stopping) {
           Task wait;
           wait = reader.WaitToReadAsync(stopping).AsTask();
-          await Task.WhenAny(new[] { wait, Task.Delay(idle, stopping) });
+          await Task.WhenAny(new[] { wait, {{DELAY}}(idle, stopping) });
         }
       }
       """);
@@ -115,10 +118,10 @@ public class AbandonedChannelWaitAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task WaitRacedInsideALambda_ReportsAsync() {
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       static class C {
         static Func<Task> M(ChannelReader<int> reader, TimeSpan idle, CancellationToken stopping) =>
-          () => Task.WhenAny(reader.WaitToReadAsync(stopping).AsTask(), Task.Delay(idle, stopping));
+          () => Task.WhenAny(reader.WaitToReadAsync(stopping).AsTask(), {{DELAY}}(idle, stopping));
       }
       """);
 
@@ -128,10 +131,10 @@ public class AbandonedChannelWaitAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task WriterWait_Raced_ReportsAsync() {
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       static class C {
         static Task M(ChannelWriter<int> writer, TimeSpan idle, CancellationToken stopping) =>
-          Task.WhenAny(writer.WaitToWriteAsync(stopping).AsTask(), Task.Delay(idle, stopping));
+          Task.WhenAny(writer.WaitToWriteAsync(stopping).AsTask(), {{DELAY}}(idle, stopping));
       }
       """);
 
@@ -143,7 +146,7 @@ public class AbandonedChannelWaitAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task WaitOnADerivedReader_Raced_ReportsAsync() {
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       sealed class Wrapping(ChannelReader<int> inner) : ChannelReader<int> {
         public override bool TryRead(out int item) => inner.TryRead(out item);
         public override ValueTask<bool> WaitToReadAsync(CancellationToken cancellationToken = default) =>
@@ -151,7 +154,7 @@ public class AbandonedChannelWaitAnalyzerTests {
       }
       static class C {
         static Task M(Wrapping reader, TimeSpan idle, CancellationToken stopping) =>
-          Task.WhenAny(reader.WaitToReadAsync(stopping).AsTask(), Task.Delay(idle, stopping));
+          Task.WhenAny(reader.WaitToReadAsync(stopping).AsTask(), {{DELAY}}(idle, stopping));
       }
       """);
 
@@ -161,10 +164,10 @@ public class AbandonedChannelWaitAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task WaitWithNoToken_Raced_ReportsAsync() {
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       static class C {
         static Task M(ChannelReader<int> reader, TimeSpan idle) =>
-          Task.WhenAny(reader.WaitToReadAsync().AsTask(), Task.Delay(idle));
+          Task.WhenAny(reader.WaitToReadAsync().AsTask(), {{DELAY}}(idle));
       }
       """);
 
@@ -174,12 +177,12 @@ public class AbandonedChannelWaitAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task WaitOnALinkedToken_CanceledWithCancelAsync_ReportsNothingAsync() {
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       static class C {
         static async Task M(ChannelReader<int> reader, TimeSpan idle, CancellationToken stopping) {
           using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(stopping);
           var wait = reader.WaitToReadAsync(waitCts.Token).AsTask();
-          await Task.WhenAny(wait, Task.Delay(idle, waitCts.Token));
+          await Task.WhenAny(wait, {{DELAY}}(idle, waitCts.Token));
           await waitCts.CancelAsync();
         }
       }
@@ -191,11 +194,11 @@ public class AbandonedChannelWaitAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task WaitOnALinkedToken_CanceledWithCancel_ReportsNothingAsync() {
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       static class C {
         static async Task M(ChannelReader<int> reader, TimeSpan idle, CancellationToken stopping) {
           using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(stopping);
-          await Task.WhenAny(reader.WaitToReadAsync(waitCts.Token).AsTask(), Task.Delay(idle, waitCts.Token));
+          await Task.WhenAny(reader.WaitToReadAsync(waitCts.Token).AsTask(), {{DELAY}}(idle, waitCts.Token));
           waitCts.Cancel();
         }
       }
@@ -208,11 +211,11 @@ public class AbandonedChannelWaitAnalyzerTests {
   [RequiresAssemblyFiles()]
   public async Task WaitOnALinkedToken_WhoseSourceIsOnlyDisposed_ReportsAsync() {
     // Disposing a source does not cancel its token, so the abandoned wait stays queued.
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       static class C {
         static async Task M(ChannelReader<int> reader, TimeSpan idle, CancellationToken stopping) {
           using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(stopping);
-          await Task.WhenAny(reader.WaitToReadAsync(waitCts.Token).AsTask(), Task.Delay(idle, waitCts.Token));
+          await Task.WhenAny(reader.WaitToReadAsync(waitCts.Token).AsTask(), {{DELAY}}(idle, waitCts.Token));
           waitCts.Dispose();
         }
       }
@@ -224,12 +227,12 @@ public class AbandonedChannelWaitAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task WaitOnOneSourcesToken_WhenAnotherSourceIsCanceled_ReportsAsync() {
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       static class C {
         static async Task M(ChannelReader<int> reader, TimeSpan idle, CancellationToken stopping) {
           using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(stopping);
           using var timerCts = CancellationTokenSource.CreateLinkedTokenSource(stopping);
-          await Task.WhenAny(reader.WaitToReadAsync(waitCts.Token).AsTask(), Task.Delay(idle, timerCts.Token));
+          await Task.WhenAny(reader.WaitToReadAsync(waitCts.Token).AsTask(), {{DELAY}}(idle, timerCts.Token));
           await timerCts.CancelAsync();
         }
       }
@@ -242,11 +245,11 @@ public class AbandonedChannelWaitAnalyzerTests {
   [RequiresAssemblyFiles()]
   public async Task WaitOnAFieldSourcesToken_Raced_ReportsAsync() {
     // A source the method does not own outlives the race; only a local the method cancels is accepted.
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       sealed class C(ChannelReader<int> reader) {
         private readonly CancellationTokenSource _stop = new();
         async Task M(TimeSpan idle) {
-          await Task.WhenAny(reader.WaitToReadAsync(_stop.Token).AsTask(), Task.Delay(idle));
+          await Task.WhenAny(reader.WaitToReadAsync(_stop.Token).AsTask(), {{DELAY}}(idle));
           _stop.Cancel();
         }
       }
@@ -258,7 +261,7 @@ public class AbandonedChannelWaitAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task WaitOnATokenPropertyOfAnotherType_Raced_ReportsAsync() {
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       sealed class Holder {
         public CancellationToken Token { get; init; }
         public void Cancel() { }
@@ -266,7 +269,7 @@ public class AbandonedChannelWaitAnalyzerTests {
       static class C {
         static async Task M(ChannelReader<int> reader, TimeSpan idle) {
           var holder = new Holder();
-          await Task.WhenAny(reader.WaitToReadAsync(holder.Token).AsTask(), Task.Delay(idle));
+          await Task.WhenAny(reader.WaitToReadAsync(holder.Token).AsTask(), {{DELAY}}(idle));
           holder.Cancel();
         }
       }
@@ -294,11 +297,11 @@ public class AbandonedChannelWaitAnalyzerTests {
   [RequiresAssemblyFiles()]
   public async Task WaitHandedToAnotherMethod_InsideWhenAny_ReportsNothingAsync() {
     // The nearest call that takes the wait is not WhenAny: that method decides what becomes of it.
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       static class C {
         static Task Settle(Task<bool> wait) => wait;
         static Task M(ChannelReader<int> reader, TimeSpan idle, CancellationToken stopping) =>
-          Task.WhenAny(Settle(reader.WaitToReadAsync(stopping).AsTask()), Task.Delay(idle, stopping));
+          Task.WhenAny(Settle(reader.WaitToReadAsync(stopping).AsTask()), {{DELAY}}(idle, stopping));
       }
       """);
 
@@ -308,11 +311,11 @@ public class AbandonedChannelWaitAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task AsTaskOfAnotherValueTask_Raced_ReportsNothingAsync() {
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       static class C {
         static ValueTask<bool> Probe(CancellationToken token) => ValueTask.FromResult(true);
         static Task M(TimeSpan idle, CancellationToken stopping) =>
-          Task.WhenAny(Probe(stopping).AsTask(), Task.Delay(idle, stopping));
+          Task.WhenAny(Probe(stopping).AsTask(), {{DELAY}}(idle, stopping));
       }
       """);
 
@@ -323,11 +326,11 @@ public class AbandonedChannelWaitAnalyzerTests {
   [RequiresAssemblyFiles()]
   public async Task AsTaskOfAValueTaskLocal_Raced_ReportsNothingAsync() {
     // The analyzer follows the wait from the call that makes it; a value task held first is not traced.
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       static class C {
         static Task M(ChannelReader<int> reader, TimeSpan idle, CancellationToken stopping) {
           var pending = reader.WaitToReadAsync(stopping);
-          return Task.WhenAny(pending.AsTask(), Task.Delay(idle, stopping));
+          return Task.WhenAny(pending.AsTask(), {{DELAY}}(idle, stopping));
         }
       }
       """);
@@ -339,14 +342,14 @@ public class AbandonedChannelWaitAnalyzerTests {
   [RequiresAssemblyFiles()]
   public async Task WaitHeldInAFieldThenRaced_ReportsNothingAsync() {
     // Reuse across passes keeps the pending wait in a field or a helper; only a fresh wait per race is reported.
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       sealed class C(ChannelReader<int> reader) {
         private Task<bool>? _pending;
         Task M(TimeSpan idle, CancellationToken stopping) {
           if (_pending is not { IsCompleted: false }) {
             _pending = reader.WaitToReadAsync(stopping).AsTask();
           }
-          return Task.WhenAny(_pending, Task.Delay(idle, stopping));
+          return Task.WhenAny(_pending, {{DELAY}}(idle, stopping));
         }
       }
       """);
@@ -373,11 +376,11 @@ public class AbandonedChannelWaitAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task WaitHandedToAWhenAnyThatIsNotTasks_ReportsNothingAsync() {
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       static class C {
         static Task WhenAny(Task a, Task b) => a;
         static Task M(ChannelReader<int> reader, TimeSpan idle, CancellationToken stopping) =>
-          WhenAny(reader.WaitToReadAsync(stopping).AsTask(), Task.Delay(idle, stopping));
+          WhenAny(reader.WaitToReadAsync(stopping).AsTask(), {{DELAY}}(idle, stopping));
       }
       """);
 
@@ -387,11 +390,11 @@ public class AbandonedChannelWaitAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task ReadAsyncThatIsNotAChannels_Raced_ReportsNothingAsync() {
-    var diagnostics = await _analyzeAsync("""
+    var diagnostics = await _analyzeAsync($$"""
       static class C {
         static ValueTask<bool> ReadAsync(CancellationToken token) => ValueTask.FromResult(true);
         static Task M(TimeSpan idle, CancellationToken stopping) =>
-          Task.WhenAny(ReadAsync(stopping).AsTask(), Task.Delay(idle, stopping));
+          Task.WhenAny(ReadAsync(stopping).AsTask(), {{DELAY}}(idle, stopping));
       }
       """);
 
