@@ -12,8 +12,9 @@ namespace Whizbang.Data.Postgres.Schema;
 /// <para>
 /// Under a rolling update the instances on the previous release keep running, and keep querying, until the new
 /// ones are ready. Dropping an index the previous release still declares would take it out from under them. So
-/// each instance records, at its reconcile, every object it declares, and an object is dropped only once no
-/// live instance (one the database's one liveness rule calls live, #2027) declares it.
+/// each instance records, at every start, every object it declares (#2608: a report of its own, apart from the
+/// reconcile, which runs once per schema per build), and an object is dropped only once no live instance (one the
+/// database's one liveness rule calls live, #2027) declares it.
 /// </para>
 /// <para>
 /// An instance that is alive and has recorded nothing is on a release that predates the ledger, and what it
@@ -38,13 +39,7 @@ internal static class ManagedSchemaFleet {
     var live = $"(SELECT l.instance_id FROM {quoted}.wh_live_instance_ids() l)";
 
     if (self is { } instanceId) {
-      await using var report = new NpgsqlCommand(
-        $"INSERT INTO {declarations} (instance_id, objects, reported_at) VALUES (@id, @objects, now()) "
-        + "ON CONFLICT (instance_id) DO UPDATE SET objects = EXCLUDED.objects, reported_at = EXCLUDED.reported_at",
-        connection);
-      report.Parameters.AddWithValue("id", instanceId);
-      report.Parameters.AddWithValue("objects", declared.Objects.Select(o => $"{o.Table}:{o.Name}").Distinct().ToArray());
-      await report.ExecuteNonQueryAsync(cancellationToken);
+      await ReportAsync(connection, schema, instanceId, declared, cancellationToken);
     }
 
     if (await _scalarAsync(connection, "SELECT to_regclass(@t) IS NOT NULL", ("t", instances), cancellationToken) is not true) {
@@ -71,6 +66,23 @@ internal static class ManagedSchemaFleet {
       fleet.UnionWith(reader.GetFieldValue<string[]>(0));
     }
     return fleet;
+  }
+
+  /// <summary>
+  /// Records what <paramref name="self"/> declares, as <c>table:name</c>, replacing its earlier record (#2608): the one
+  /// write the drop gate needs from each live instance, made by every start whether or not it reconciles.
+  /// </summary>
+  internal static async Task ReportAsync(
+      NpgsqlConnection connection, string schema, Guid self, ManagedSchemaObjectSet declared,
+      CancellationToken cancellationToken) {
+    await using var report = new NpgsqlCommand(
+      $"INSERT INTO {PgIdentifier.Quote(schema)}.wh_managed_object_declarations (instance_id, objects, reported_at) "
+      + "VALUES (@id, @objects, now()) "
+      + "ON CONFLICT (instance_id) DO UPDATE SET objects = EXCLUDED.objects, reported_at = EXCLUDED.reported_at",
+      connection);
+    report.Parameters.AddWithValue("id", self);
+    report.Parameters.AddWithValue("objects", declared.Objects.Select(o => $"{o.Table}:{o.Name}").Distinct().ToArray());
+    await report.ExecuteNonQueryAsync(cancellationToken);
   }
 
   private static async Task<object?> _scalarAsync(
