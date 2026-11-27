@@ -378,6 +378,31 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
       .Because("the drain publishes the row's number; a fetch that drops it ships every message undeclared");
   }
 
+  /// <summary>#2633: the fetch stamps a row's first run with this build's derivation scheme and returns each row's.</summary>
+  [Test]
+  [Arguments(1, HandlingDerivationScheme.OwnHandling, (short)1)]
+  [Arguments(2, HandlingDerivationScheme.SharedWithCaller, null)]
+  public async Task FetchInboxBatchAsync_ReturnsTheSchemeTheRowFirstRanUnderAsync(int attempts, HandlingDerivationScheme expected,
+      short? recorded) {
+    var c = _build();
+    var instanceId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var msgId = (Guid)TrackedGuid.New();
+    await c.StoreInboxMessagesAsync([_makeInbox(msgId, streamId, _makeHops(streamId))], partitionCount: 100);
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await conn.ExecuteAsync(
+      "UPDATE wh_inbox_state SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes', chain_emitted_at = NOW(), attempts = @a WHERE message_id = @m",
+      new { i = instanceId, m = msgId, a = attempts });
+
+    var rows = await c.FetchInboxBatchAsync([streamId], instanceId, maxPerStream: 10);
+
+    await Assert.That(rows.Single().DerivationScheme).IsEqualTo(expected)
+      .Because("a first run records this build's scheme; a row an earlier build ran first keeps that build's");
+    await Assert.That(await conn.ExecuteScalarAsync<short?>("SELECT derivation_scheme FROM wh_inbox_state WHERE message_id = @m", new { m = msgId }))
+      .IsEqualTo(recorded);
+  }
+
   /// <summary>#2556: each fetched inbox row is recorded under its stream's claimed tenure, so its commit names that epoch.</summary>
   [Test]
   public async Task FetchInboxBatchAsync_RecordsEachRowUnderItsStreamsClaimedTenureAsync() {

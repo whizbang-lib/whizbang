@@ -607,10 +607,17 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Attributed;
     var prefix = await _prefixAsync(connection, cancellationToken);
     var rows = await connection.QueryAsync<InboxBatchRowDto>(
-      // 576 (#2551): the fetch that ranks each stream in stream order and returns the rank.
-      $"SELECT * FROM {prefix}fetch_inbox_batch_in_stream_order(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)",
+      // 576 (#2551): the fetch that ranks each stream in stream order and returns the rank; 740 (#2633): and records the
+      // derivation scheme a row's first run runs under, returning each row's.
+      $"SELECT * FROM {prefix}{Whizbang.Data.Postgres.InboxDerivationSchemeSql.FETCH_FUNCTION}(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes, @p_derivation_scheme)",
       // NULL = count bound only, the pre-byte-budget behavior.
-      new { p_stream_ids = streamArr, p_instance_id = instanceId, p_max_per_stream = maxPerStream, p_max_bytes = maxBytes },
+      new {
+        p_stream_ids = streamArr,
+        p_instance_id = instanceId,
+        p_max_per_stream = maxPerStream,
+        p_max_bytes = maxBytes,
+        p_derivation_scheme = Whizbang.Data.Postgres.InboxDerivationSchemeSql.CurrentScheme,
+      },
       commandTimeout: CoordinatorCommandTimeout.SECONDS);
 
     // #2556: each fetched message is recorded under its stream's claimed tenure, which its result then names.
@@ -629,6 +636,7 @@ public partial class DapperWorkCoordinator(
       Error = r.error,
       Priority = r.priority,
       StreamPosition = r.stream_position,
+      DerivationScheme = Whizbang.Data.Postgres.InboxDerivationSchemeSql.FromStored(r.derivation_scheme),
     }).ToList(), r => r.MessageId, r => r.StreamId);
   }
 
@@ -814,6 +822,8 @@ public partial class DapperWorkCoordinator(
     public int priority { get; set; }
     // 576 (#2551): the row's position in its stream.
     public long stream_position { get; set; }
+    // 740 (#2633): the derivation scheme the row first ran under.
+    public short derivation_scheme { get; set; }
   }
 
   private sealed class PendingPerspectiveEventDto {

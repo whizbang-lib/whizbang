@@ -72,13 +72,36 @@ public static class MessageEnvelopeExtensions {
   public static IMessageEnvelope ReconstructWithPayload(
       this IMessageEnvelope<JsonElement> jsonEnvelope,
       object deserializedPayload,
-      string? handlerName) {
+      string? handlerName) =>
+    ReconstructWithPayload(jsonEnvelope, deserializedPayload, handlerName, derivationScheme: null);
+
+  /// <summary>
+  /// Reconstructs the envelope for one handler row of an inbound message, as
+  /// <see cref="ReconstructWithPayload(IMessageEnvelope{JsonElement}, object, string?)"/> does, also stamping the scheme the
+  /// row records (#2633) on the dispatch context, so a receptor its handling invokes locally derives its ids under the
+  /// scheme the row first ran under.
+  /// </summary>
+  /// <param name="jsonEnvelope">The original envelope containing a JsonElement payload.</param>
+  /// <param name="deserializedPayload">The deserialized message object.</param>
+  /// <param name="handlerName">The inbox handler this reconstruction is for, or null to leave the context's untouched.</param>
+  /// <param name="derivationScheme">The scheme the row records, or null to leave the context's untouched.</param>
+  /// <returns>An envelope with the deserialized payload and, when given, the handler name and scheme on its dispatch context.</returns>
+  /// <docs>fundamentals/identity/whizbang-ids#a-receptor-invoked-locally</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeHandlerNameTests.cs</tests>
+  public static IMessageEnvelope ReconstructWithPayload(
+      this IMessageEnvelope<JsonElement> jsonEnvelope,
+      object deserializedPayload,
+      string? handlerName,
+      Messaging.HandlingDerivationScheme? derivationScheme) {
     ArgumentNullException.ThrowIfNull(jsonEnvelope);
     ArgumentNullException.ThrowIfNull(deserializedPayload);
 
     var context = jsonEnvelope.DispatchContext;
     if (handlerName is not null) {
       context = context with { HandlerName = handlerName };
+    }
+    if (derivationScheme is not null) {
+      context = context with { DerivationScheme = derivationScheme };
     }
 
     return new MessageEnvelope<object> {

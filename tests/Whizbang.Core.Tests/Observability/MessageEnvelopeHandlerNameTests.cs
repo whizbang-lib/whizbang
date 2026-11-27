@@ -43,6 +43,33 @@ public class MessageEnvelopeHandlerNameTests {
   }
 
   [Test]
+  public async Task ReconstructWithPayload_WithDerivationScheme_StampsItOnTheDispatchContextAsync() {
+    // #2633: the scheme the inbox row first ran under rides with the row's envelope into its handling
+    var envelope = _jsonEnvelope(new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Inbox });
+
+    var typed = envelope.ReconstructWithPayload(new object(), "OrderHandler", HandlingDerivationScheme.SharedWithCaller);
+    var untouched = envelope.ReconstructWithPayload(new object(), null, null);
+
+    await Assert.That(typed.DispatchContext.DerivationScheme).IsEqualTo(HandlingDerivationScheme.SharedWithCaller);
+    await Assert.That(typed.DispatchContext.HandlerName).IsEqualTo("OrderHandler");
+    await Assert.That(untouched.DispatchContext).IsSameReferenceAs(envelope.DispatchContext);
+  }
+
+  [Test]
+  public async Task DerivationScheme_IsNeverSerializedAsync() {
+    var context = new MessageDispatchContext {
+      Mode = DispatchModes.Outbox,
+      Source = MessageSource.Inbox,
+      DerivationScheme = HandlingDerivationScheme.OwnHandling,
+    };
+
+    var json = JsonSerializer.Serialize(context, _jsonOpts.GetTypeInfo(typeof(MessageDispatchContext)));
+
+    await Assert.That(json).DoesNotContain("DerivationScheme")
+      .Because("in-process only, as the handler name is: persisted and transported envelopes are unchanged");
+  }
+
+  [Test]
   public async Task ReconstructWithPayload_WithHandlerName_PreservesEverythingElseAsync() {
     var context = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Inbox, IsDefaultDispatch = true };
     var envelope = _jsonEnvelope(context);

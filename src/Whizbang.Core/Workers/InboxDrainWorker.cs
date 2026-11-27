@@ -735,6 +735,7 @@ public sealed partial class InboxDrainWorker(
       PartitionNumber = row.PartitionNumber,
       Attempts = row.Attempts,
       HandlerName = row.HandlerName,
+      DerivationScheme = row.DerivationScheme,
       Status = (MessageProcessingStatus)row.Status,
       Flags = WorkBatchOptions.None,
       Error = row.Error,

@@ -761,15 +761,16 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private (IMessageEnvelope? Envelope, Exception? Refusal) _resolveTypedEnvelope(InboxWork work) {
     // The handler name rides on the typed envelope's dispatch context so an emission made while handling
     // this row derives an identity that names the handler; a sibling handler row of the same message
-    // then cannot derive the same id (EmissionIdentity).
+    // then cannot derive the same id (EmissionIdentity). The scheme the row first ran under rides with it, so a receptor
+    // the handling invokes locally derives the first run's ids on a retry (#2633).
     if (_deserializeCache is not null && _deserializeCache.TryGet(work.MessageId, out var cached) && cached is not null) {
-      return (work.Envelope.ReconstructWithPayload(cached, work.HandlerName), null);
+      return (work.Envelope.ReconstructWithPayload(cached, work.HandlerName, work.DerivationScheme), null);
     }
     try {
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
       MessageParseDiagnostics.Record(work.MessageId, MessageParseSource.ReceptorDispatch, MessageParseKind.Payload);
       _deserializeCache?.Set(work.MessageId, message, InboxPayload.Bytes(work.Envelope.Payload));
-      return (work.Envelope.ReconstructWithPayload(message, work.HandlerName), null);
+      return (work.Envelope.ReconstructWithPayload(message, work.HandlerName, work.DerivationScheme), null);
     } catch (Exception ex) when (IsPayloadRefusal(ex)) {
       return (null, ex);
     } catch (Exception ex) {

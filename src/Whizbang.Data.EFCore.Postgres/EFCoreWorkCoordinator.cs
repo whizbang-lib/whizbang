@@ -6691,21 +6691,25 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    // 576 (#2551): the fetch that ranks each stream in stream order and returns the rank.
-    var functionName = BuildSchemaQualifiedName(schema, "fetch_inbox_batch_in_stream_order");
+    // 576 (#2551): the fetch that ranks each stream in stream order and returns the rank; 740 (#2633): and records the
+    // derivation scheme a row's first run runs under, returning each row's.
+    var functionName = BuildSchemaQualifiedName(schema, Whizbang.Data.Postgres.InboxDerivationSchemeSql.FETCH_FUNCTION);
 
     var streamArr = AsArray(streamIds);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var dbConnection = __scope.Connection;
     await using var cmd = dbConnection.CreateCoordinatorCommand();
-    cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)";
+    cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes, @p_derivation_scheme)";
     cmd.Parameters.Add(new NpgsqlParameter(P_STREAM_IDS, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamArr });
     cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
     cmd.Parameters.Add(new NpgsqlParameter("p_max_per_stream", maxPerStream));
     // NULL = count bound only, which is exactly what this function did before the byte budget.
     cmd.Parameters.Add(new NpgsqlParameter("p_max_bytes", NpgsqlTypes.NpgsqlDbType.Bigint) {
       Value = (object?)maxBytes ?? DBNull.Value,
+    });
+    cmd.Parameters.Add(new NpgsqlParameter("p_derivation_scheme", NpgsqlTypes.NpgsqlDbType.Smallint) {
+      Value = Whizbang.Data.Postgres.InboxDerivationSchemeSql.CurrentScheme,
     });
 
     var results = new List<InboxBatchRow>();
@@ -6720,6 +6724,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var priorityOrdinal = _ordinalOrAbsent(reader, "priority");
     // 576 (#2551): the row's position in its stream.
     var streamPositionOrdinal = reader.GetOrdinal("stream_position");
+    // 740 (#2633): the derivation scheme the row first ran under.
+    var derivationSchemeOrdinal = reader.GetOrdinal("derivation_scheme");
     while (await reader.ReadAsync(cancellationToken)) {
       results.Add(new InboxBatchRow {
         MessageId = reader.GetGuid(0),
@@ -6738,6 +6744,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           : null,
         Priority = priorityOrdinal >= 0 ? reader.GetInt32(priorityOrdinal) : 0,
         StreamPosition = reader.GetInt64(streamPositionOrdinal),
+        DerivationScheme = Whizbang.Data.Postgres.InboxDerivationSchemeSql.FromStored(reader.GetInt16(derivationSchemeOrdinal)),
       });
     }
     // #2556: each fetched message is recorded under its stream's claimed tenure, which its result then names.
