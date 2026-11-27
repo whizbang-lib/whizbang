@@ -1,6 +1,27 @@
 # Loop waits: nothing left behind, by construction
 
-Status: design + prototype on `design/loop-waits` (not pushed). Follows #2613 / PR #2614.
+Status: **done** in #2617 (implemented on `design/loop-waits`, archived). Follows #2613 / PR #2614.
+
+## Outcome (#2617)
+
+The maintainer's decisions, as implemented:
+
+1. `WakeSet` and `WakeSignal` are public, with `<docs>` and `<tests>` tags.
+2. The verification kit stays in `Whizbang.Testing` (not packable); shipping it to applications is deferred.
+3. No accepted shape and no suppression: every site in section 4 moved onto `WakeSet`, including the batching windows
+   (one set per window), the perspective sync wait, the heartbeat tick, the lease dispatch race, the crash-exit bound,
+   the startup probe and stage gate, and the work coordinator gate, whose permit race uses the new semaphore source
+   (`Add(SemaphoreSlim)`, `PermitWakeSource.TryTake`) with exact hand-back. `CompositeBatches` needed no new source
+   kind: its pending read is a one-shot task source on a per-window set, and the read stays pending for the next window.
+4. WHIZ612 treats a task it cannot place as compute; gate waits are marked `[WaitSource]`.
+5. WHIZ611 is folded into WHIZ612 and retired (one rule; its acceptance of a canceled per-race token is gone).
+6. `PendingChannelWait<T>`, `AwaitConsumerWakeAsync` and #2614's test-local `WaitTrackingReader` are removed; the tests
+   use the kit's `CountingChannelReader`.
+7. The Azure Service Bus send timeout is `sendTask.WaitAsync(SendTimeout, timeProvider, ct)`.
+8. `BatchBuffer` has no race to move: its wait is a completion source the release completes, canceled through a
+   registration that admission disposes (locked by `BatchBufferTests.AWaitingAppend_OnceAdmitted_IsNotKeptByItsTokenAsync`).
+
+The sections below are the design as written before the decisions.
 
 ## Why
 
