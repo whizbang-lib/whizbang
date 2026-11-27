@@ -109,8 +109,13 @@ public partial class StartupParityTests {
   private Task<bool> _existsAsync(string index) => _scalarAsync<bool>("SELECT to_regclass('public.' || $1) IS NOT NULL", index);
 
   /// <summary>An index Whizbang built that the driver no longer declares, recorded by one start after it appeared.</summary>
+  /// <remarks>
+  /// The reconcile runs once per schema per build (#2608), so the start that records it is a later build's: the
+  /// scenarios here are about what a reconcile does, and a restart of the same build only reports.
+  /// </remarks>
   private async Task<ServiceProvider> _retiredIndexSeenAsync(StartupDriver driver) {
     await _execAsync($"CREATE INDEX {driver.Retired} ON {driver.Table} USING gin (data)");
+    await _asIfTheNextBuildStartsAsync();
     var instance = await _startAsync(driver);
     await Assert.That(await _existsAsync(driver.Retired)).IsTrue()
       .Because("the start that first sees an object records it and drops nothing");
@@ -172,6 +177,7 @@ public partial class StartupParityTests {
     var peers = new RunningPeersBeatAtEachStage(_database.ConnectionString, running);
 
     var third = _compose(driver, configure: s => s.AddSingleton<IStartupStageReporter>(peers));
+    await _asIfTheNextBuildStartsAsync();
     await _initializer(third).StartAsync(CancellationToken.None);
 
     Guid[] everyInstance = [.. running, _instanceId(third)];
@@ -238,6 +244,7 @@ public partial class StartupParityTests {
     var converge = new ConvergeEntry(() => _existsAsync(driver.Retired));
 
     var instance = _compose(driver, configure: s => s.AddSingleton<IStartupStageReporter>(converge));
+    await _asIfTheNextBuildStartsAsync();
     await _initializer(instance).StartAsync(CancellationToken.None);
 
     await Assert.That(converge.Entered).IsTrue().Because("the start reports Converge, on either driver");
@@ -387,7 +394,9 @@ public partial class StartupParityTests {
     await _startAsync(driver);
     await _execAsync($"CREATE INDEX IF NOT EXISTS {driver.UpdatedAtIndex} ON {driver.Table} (updated_at)");
 
+    await _asIfTheNextBuildStartsAsync();
     await _startAsync(driver);
+    await _asIfTheNextBuildStartsAsync();
     await _startAsync(driver);
 
     await Assert.That(await _existsAsync(driver.UpdatedAtIndex)).IsFalse()
@@ -404,11 +413,14 @@ public partial class StartupParityTests {
     await _startAsync(driver);
     await _enrollAsync(driver);
 
+    await _asIfTheNextBuildStartsAsync();
     await _startAsync(driver);
     await Assert.That(await _existsAsync(driver.UpdatedAtIndex)).IsTrue()
       .Because("the reapers range-scan updated_at on an enrolled table");
 
+    await _asIfTheNextBuildStartsAsync();
     await _startAsync(driver);
+    await _asIfTheNextBuildStartsAsync();
     await _startAsync(driver);
     await Assert.That(await _updatedAtIndexCountAsync(driver)).IsEqualTo(1L).Because("later starts neither drop nor duplicate it");
   }

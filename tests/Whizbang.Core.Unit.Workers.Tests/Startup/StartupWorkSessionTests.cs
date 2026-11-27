@@ -71,7 +71,7 @@ public class StartupWorkSessionTests {
     var runs = 0;
 
     await session.RunAsync(FrameworkStartupWork.PERSPECTIVE_REGISTRY, "x", _ => Task.FromResult(++runs > 0), CancellationToken.None);
-    await session.RunAsync(FrameworkStartupWork.MANAGED_OBJECT_RECONCILE, "", _ => Task.FromResult(++runs > 0), CancellationToken.None);
+    await session.RunAsync(FrameworkStartupWork.ANALYZE_NEW_INDEXES, "", _ => Task.FromResult(++runs > 0), CancellationToken.None);
 
     await Assert.That(runs).IsEqualTo(2);
     await Assert.That(ledger.Calls).IsEquivalentTo(["available"]);
@@ -218,7 +218,7 @@ public class StartupWorkSessionTests {
     await using var session = _session(ledger);
     var held = false;
 
-    var outcome = await session.RunAsync(FrameworkStartupWork.MANAGED_OBJECT_RECONCILE, "", _ => { held = session.HoldsPermit; return Task.FromResult(true); }, CancellationToken.None);
+    var outcome = await session.RunAsync(FrameworkStartupWork.ANALYZE_NEW_INDEXES, "", _ => { held = session.HoldsPermit; return Task.FromResult(true); }, CancellationToken.None);
 
     await Assert.That(outcome).IsEqualTo(StartupWorkOutcome.Ran);
     await Assert.That(held).IsTrue();
@@ -230,7 +230,7 @@ public class StartupWorkSessionTests {
     var ledger = new FakeStartupWorkLedger();
     var session = _session(ledger);
 
-    await session.RunAsync(FrameworkStartupWork.MANAGED_OBJECT_RECONCILE, "", _ => Task.FromResult(true), CancellationToken.None);
+    await session.RunAsync(FrameworkStartupWork.ANALYZE_NEW_INDEXES, "", _ => Task.FromResult(true), CancellationToken.None);
     await session.RunAsync(FrameworkStartupWork.ANALYZE_NEW_INDEXES, "", _ => Task.FromResult(true), CancellationToken.None);
     await session.DisposeAsync();
     await session.DisposeAsync();
@@ -257,7 +257,7 @@ public class StartupWorkSessionTests {
     var logger = new FakeLogger<StartupWorkSession>();
     var session = _session(ledger, logger: logger);
 
-    await session.RunAsync(FrameworkStartupWork.MANAGED_OBJECT_RECONCILE, "", _ => Task.FromResult(true), CancellationToken.None);
+    await session.RunAsync(FrameworkStartupWork.ANALYZE_NEW_INDEXES, "", _ => Task.FromResult(true), CancellationToken.None);
     await session.DisposeAsync();
 
     await Assert.That(logger.Collector.GetSnapshot().Any(r => r.Level == LogLevel.Warning)).IsTrue();
@@ -282,7 +282,7 @@ public class StartupWorkSessionTests {
       },
     };
 
-    var outcome = await session.RunAsync(FrameworkStartupWork.MANAGED_OBJECT_RECONCILE, "", _ => Task.FromResult(true), CancellationToken.None);
+    var outcome = await session.RunAsync(FrameworkStartupWork.ANALYZE_NEW_INDEXES, "", _ => Task.FromResult(true), CancellationToken.None);
 
     await Assert.That(outcome).IsEqualTo(StartupWorkOutcome.Ran);
     await Assert.That(waits).IsEquivalentTo([TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3)]);
@@ -313,7 +313,7 @@ public class StartupWorkSessionTests {
     };
     var ran = false;
 
-    await session.RunAsync(FrameworkStartupWork.MANAGED_OBJECT_RECONCILE, "", _ => { ran = true; return Task.FromResult(true); }, CancellationToken.None);
+    await session.RunAsync(FrameworkStartupWork.ANALYZE_NEW_INDEXES, "", _ => { ran = true; return Task.FromResult(true); }, CancellationToken.None);
     await session.RunAsync(FrameworkStartupWork.ANALYZE_NEW_INDEXES, "", _ => Task.FromResult(true), CancellationToken.None);
     await session.DisposeAsync();
 
@@ -332,7 +332,7 @@ public class StartupWorkSessionTests {
     await using var session = _session(ledger, logger: logger);
     var ran = false;
 
-    await session.RunAsync(FrameworkStartupWork.MANAGED_OBJECT_RECONCILE, "", _ => { ran = true; return Task.FromResult(true); }, CancellationToken.None);
+    await session.RunAsync(FrameworkStartupWork.ANALYZE_NEW_INDEXES, "", _ => { ran = true; return Task.FromResult(true); }, CancellationToken.None);
 
     await Assert.That(ran).IsTrue();
     await Assert.That(session.HoldsPermit).IsFalse();
@@ -368,7 +368,7 @@ public class StartupWorkSessionTests {
     await using var session = new StartupWorkSession(ledger, _instance, new StartupWorkOptions(), false, null, time, null);
     var acquiredTwice = ledger.AcquireCalled(2);
 
-    var run = session.RunAsync(FrameworkStartupWork.MANAGED_OBJECT_RECONCILE, "", _ => Task.FromResult(true), CancellationToken.None);
+    var run = session.RunAsync(FrameworkStartupWork.ANALYZE_NEW_INDEXES, "", _ => Task.FromResult(true), CancellationToken.None);
     await ledger.AcquireCalled(1);
     await Assert.That(acquiredTwice.IsCompleted).IsFalse();
     // The delay is a timer on the fake clock: it fires only when the clock passes the poll interval.
