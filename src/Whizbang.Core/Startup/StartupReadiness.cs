@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core.Async;
 
 namespace Whizbang.Core.Startup;
 
@@ -38,6 +39,7 @@ public interface IStartupReadySignal {
   bool IsReady { get; }
 
   /// <summary>Completes when the composite is signalled. Sticky — late waiters return immediately.</summary>
+  [Whizbang.Core.Async.WaitSource]
   Task WaitForReadyAsync(CancellationToken cancellationToken);
 }
 
@@ -173,16 +175,18 @@ public sealed partial class StartupReadyService : IHostedLifecycleService {
     var probes = 0;
     var nextNarration = 3;
     while (true) {
-      var winner = await Task.WhenAny(wait, Task.Delay(WaitProbeInterval, _time, cancellationToken))
-        .ConfigureAwait(false);
-      if (ReferenceEquals(winner, wait)) {
+      // The wait against one probe interval, a set per probe: the narration's cadence is a fresh interval each time.
+      using (var probe = new WakeSet(_time, cancellationToken)) {
+        probe.Add(wait);
+        await probe.WaitAsync(WaitProbeInterval).ConfigureAwait(false);
+      }
+      if (wait.IsCompleted) {
         await wait.ConfigureAwait(false);   // propagate faults/cancellation
         return;
       }
-      // The probe shares the stopping token, so a stop completes it at once, canceled. That is the
-      // stop, not a probe: awaiting it throws, and StartedAsync leaves quietly. Counting it instead
-      // spun the loop with no delay and narrated "not ready after 0s" after the stop (#2387).
-      await winner.ConfigureAwait(false);
+      // A stop ends the probe at once. That is the stop, not a probe: it throws, and StartedAsync leaves quietly.
+      // Counting it instead spun the loop with no delay and narrated "not ready after 0s" after the stop (#2387).
+      cancellationToken.ThrowIfCancellationRequested();
       probes++;
       if (probes >= nextNarration) {
         nextNarration = nextNarration switch { 3 => 10, 10 => 30, _ => nextNarration + 60 };

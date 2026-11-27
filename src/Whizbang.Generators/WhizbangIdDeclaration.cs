@@ -4,6 +4,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Whizbang.Generators.Shared.Utilities;
 using Whizbang.Generators.Utilities;
 
@@ -39,6 +40,29 @@ internal sealed record DeclaredStrongId(
 /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdDeriveFromTests.cs</tests>
 internal static class WhizbangIdDeclaration {
   private const string PINNED_ID_PROPERTY = "PinnedId";
+
+  /// <summary>
+  /// Whether any of <paramref name="attributeLists"/> names <c>[WhizbangId]</c> (or <c>[WhizbangIdAttribute]</c>),
+  /// plain, qualified or <c>global::</c>-qualified: a syntax-only test, so discovery never asks for the symbol of an
+  /// ordinary attributed property or parameter (#2604 build cost).
+  /// </summary>
+  /// <remarks>An alias (<c>using Id = Whizbang.Core.WhizbangIdAttribute;</c>) is not seen; write the attribute's name.</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/NarrowedCandidatePredicateTests.cs</tests>
+  internal static bool NamesWhizbangId(SyntaxList<AttributeListSyntax> attributeLists) {
+    foreach (var list in attributeLists) {
+      foreach (var attribute in list.Attributes) {
+        var name = attribute.Name switch {
+          QualifiedNameSyntax qualified => qualified.Right,
+          AliasQualifiedNameSyntax aliased => aliased.Name,
+          _ => (SimpleNameSyntax)attribute.Name,
+        };
+        if (name.Identifier.ValueText is "WhizbangId" or "WhizbangIdAttribute") {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
 
   /// <summary>Whether an attribute is <c>[WhizbangId]</c>, matched by its class's simple name as the generator always has.</summary>
   internal static bool IsWhizbangIdAttribute(AttributeData attribute) =>

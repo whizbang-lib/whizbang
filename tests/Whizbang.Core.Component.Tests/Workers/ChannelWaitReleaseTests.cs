@@ -1,11 +1,11 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Testing.Async;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -14,7 +14,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// a wait nobody awaits until the wait's token is canceled, and disposing the token's source does not cancel it.
 /// </summary>
 /// <remarks>
-/// <see cref="WaitTrackingReader{T}"/> counts a wait as released once it completes or its token is canceled. These
+/// <see cref="Whizbang.Testing.Async.CountingChannelReader{T}"/> counts a wait as released once it completes or its token is canceled. These
 /// tests are what make that count truthful: if a runtime ever stops releasing a canceled wait, or starts releasing an
 /// abandoned one, they fail here first and the counting reader's premise is reopened. Each wait is made and dropped in
 /// a method of its own, so nothing on the test's stack keeps it alive; whatever is still alive after a full collection
@@ -27,10 +27,9 @@ public class ChannelWaitReleaseTests {
     var channel = _channel();
     using var stopping = new CancellationTokenSource();
 
-    var wait = _abandon(channel.Reader, stopping.Token);
-    _collect();
+    var released = ReleaseCheck.IsReleased(() => channel.Reader.WaitToReadAsync(stopping.Token).AsTask());
 
-    await Assert.That(wait.IsAlive).IsTrue()
+    await Assert.That(released).IsFalse()
       .Because("an unbounded channel queues a waiting reader until an item is written or its token is canceled");
     GC.KeepAlive(channel);
   }
@@ -40,10 +39,9 @@ public class ChannelWaitReleaseTests {
     var channel = _channel();
     using var stopping = new CancellationTokenSource();
 
-    var wait = _abandonThenCancel(channel.Reader, stopping.Token);
-    _collect();
+    var released = ReleaseCheck.IsReleased(() => _abandonThenCancel(channel.Reader, stopping.Token));
 
-    await Assert.That(wait.IsAlive).IsFalse()
+    await Assert.That(released).IsTrue()
       .Because("canceling the wait's token takes the waiter off the channel's queue");
     GC.KeepAlive(channel);
   }
@@ -53,32 +51,26 @@ public class ChannelWaitReleaseTests {
     var channel = _channel();
     using var stopping = new CancellationTokenSource();
 
-    var wait = _abandonThenDisposeOnly(channel.Reader, stopping.Token);
-    _collect();
+    var released = ReleaseCheck.IsReleased(() => _abandonThenDisposeOnly(channel.Reader, stopping.Token));
 
-    await Assert.That(wait.IsAlive).IsTrue()
+    await Assert.That(released).IsFalse()
       .Because("disposing a linked source does not cancel its token, so the waiter stays queued: cancel, then dispose");
     GC.KeepAlive(channel);
   }
 
-  [MethodImpl(MethodImplOptions.NoInlining)]
-  private static WeakReference _abandon(ChannelReader<int> reader, CancellationToken token) =>
-    new(reader.WaitToReadAsync(token).AsTask());
-
-  [MethodImpl(MethodImplOptions.NoInlining)]
-  private static WeakReference _abandonThenCancel(ChannelReader<int> reader, CancellationToken token) {
-    using var linked = CancellationTokenSource.CreateLinkedTokenSource(token);
+  private static Task<bool> _abandonThenCancel(ChannelReader<int> reader, CancellationToken token) {
+    var linked = CancellationTokenSource.CreateLinkedTokenSource(token);
     var wait = reader.WaitToReadAsync(linked.Token).AsTask();
     linked.Cancel();
-    return new WeakReference(wait);
+    linked.Dispose();
+    return wait;
   }
 
-  [MethodImpl(MethodImplOptions.NoInlining)]
-  private static WeakReference _abandonThenDisposeOnly(ChannelReader<int> reader, CancellationToken token) {
+  private static Task<bool> _abandonThenDisposeOnly(ChannelReader<int> reader, CancellationToken token) {
     var linked = CancellationTokenSource.CreateLinkedTokenSource(token);
     var wait = reader.WaitToReadAsync(linked.Token).AsTask();
     linked.Dispose();
-    return new WeakReference(wait);
+    return wait;
   }
 
   /// <summary>
@@ -90,10 +82,4 @@ public class ChannelWaitReleaseTests {
   /// </summary>
   private static Channel<int> _channel() =>
     Channel.CreateUnbounded<int>(new UnboundedChannelOptions { AllowSynchronousContinuations = true });
-
-  private static void _collect() {
-    GC.Collect();
-    GC.WaitForPendingFinalizers();
-    GC.Collect();
-  }
 }

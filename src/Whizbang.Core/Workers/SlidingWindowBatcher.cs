@@ -106,28 +106,26 @@ public sealed class SlidingWindowBatcher<T> {
           break; // sliding window or max wait elapsed
         }
 
-        // Wait for either a new arrival or the wait window to expire.
-        using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        // The deadline is armed BEFORE the wait begins: one created after it would be measured from whatever the
-        // clock reads by then, so time that passed in between would not count against the window.
-        var timerTask = Task.Delay(waitFor, _timeProvider, waitCts.Token);
-        var waitTask = _reader.WaitToReadAsync(waitCts.Token).AsTask();
-        var completed = await Task.WhenAny(waitTask, timerTask).ConfigureAwait(false);
-        await waitCts.CancelAsync();
+        // Wait for either a new arrival or the wait window to expire. One wake set per window: it arms the deadline
+        // BEFORE the wait begins (time that passes while the wait is set up counts against the window), and disposing
+        // it releases the wait the deadline beat.
+        using var window = new Whizbang.Core.Async.WakeSet(_timeProvider, cancellationToken);
+        var arrival = window.Add(_reader);
+        var wake = await window.WaitAsync(waitFor).ConfigureAwait(false);
 
         if (cancellationToken.IsCancellationRequested) {
           yield break;
         }
 
-        if (completed == timerTask) {
-          // Sliding-window or max-wait expired without new arrivals — flush.
+        if (wake.IsTimeout) {
+          // Sliding-window or max-wait expired without new arrivals: flush.
           break;
         }
 
         // New arrival is available. Drain whatever is buffered now.
         bool waitResult;
         try {
-          waitResult = await waitTask.ConfigureAwait(false);
+          waitResult = await arrival.LastWait.ConfigureAwait(false);
         } catch (OperationCanceledException) {
           yield break;
         }

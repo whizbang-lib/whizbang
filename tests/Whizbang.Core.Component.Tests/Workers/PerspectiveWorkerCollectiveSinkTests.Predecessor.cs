@@ -412,7 +412,8 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     private sealed class ArmingTimer(ITimer inner, HoldClock clock) : ITimer {
       public bool Change(TimeSpan dueTime, TimeSpan period) {
         var changed = inner.Change(dueTime, period);
-        if (dueTime != Timeout.InfiniteTimeSpan && clock._armed(dueTime) == clock.HoldWorkerAtArm) {
+        // An arming for the poll interval is the worker's idle poll (its wake set's timer), never a predecessor wake.
+        if (dueTime != Timeout.InfiniteTimeSpan && dueTime != PollInterval && clock._armed(dueTime) == clock.HoldWorkerAtArm) {
           // Blocks on purpose: the worker must stay inside the run that armed the wake.
           clock._armGate.Task.Wait(clock.HoldBound);
         }

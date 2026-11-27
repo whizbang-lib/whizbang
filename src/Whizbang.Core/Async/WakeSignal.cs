@@ -33,9 +33,14 @@ namespace Whizbang.Core.Async;
 /// raised after that point wakes the following iteration. Repeated signals before the consume
 /// coalesce into one wake.
 /// </para>
+/// <para>
+/// A loop waits on a signal together with its other wake sources through a <see cref="WakeSet"/>, which keeps the
+/// signal's one waiter across passes and consumes the signal on every wake.
+/// </para>
 /// </remarks>
+/// <docs>contributors/loop-waits</docs>
 /// <tests>tests/Whizbang.Core.Tests/Async/WakeSignalTests.cs</tests>
-internal sealed class WakeSignal {
+public sealed class WakeSignal {
   private readonly Lock _gate = new();
   private TaskCompletionSource<bool>? _waiter;
   private CancellationTokenRegistration _waiterCancellation;

@@ -26,8 +26,8 @@ public partial class PerspectiveWorkerInjectedClockTests {
   public async Task IdlePasses_EndedByTheTimeoutOrTheWakeSignal_HoldAtMostOneWaitOnEachChannelAsync(CancellationToken cancellationToken) {
     var pollInterval = TimeSpan.FromMilliseconds(150);
     var clock = new ArmingClock();
-    var workChannel = new WaitTrackingWorkChannel();
-    var drainChannel = new WaitTrackingDrainChannel();
+    var workChannel = new CountingWorkChannel();
+    var drainChannel = new CountingDrainChannel();
     var listener = new SignalingNotificationListener();
     var fx = _build(clock, new PerspectiveWorkerOptions {
       PollingIntervalMilliseconds = (int)pollInterval.TotalMilliseconds,
@@ -43,8 +43,8 @@ public partial class PerspectiveWorkerInjectedClockTests {
     for (var pass = 1; pass <= IDLE_PASSES; pass++) {
       // Each pass arms one idle wait, after its channel waits and before it parks; once it is armed the pass is waiting.
       await clock.Armed(pollInterval, pass).WaitAsync(cancellationToken);
-      maxWorkHeld = Math.Max(maxWorkHeld, workChannel.TrackingReader.HeldWaits);
-      maxDrainHeld = Math.Max(maxDrainHeld, drainChannel.TrackingReader.HeldWaits);
+      maxWorkHeld = Math.Max(maxWorkHeld, workChannel.Counting.OutstandingWaits);
+      maxDrainHeld = Math.Max(maxDrainHeld, drainChannel.Counting.OutstandingWaits);
       // Half the passes end on the idle timeout, half on the wake signal; neither writes to a channel.
       if (pass % 2 == 0) {
         listener.Raise(WorkSignalCategory.Perspective);
@@ -58,17 +58,17 @@ public partial class PerspectiveWorkerInjectedClockTests {
       .Because("an idle pass must leave no wait behind on the work channel; the pending one carries over to the next pass");
     await Assert.That(maxDrainHeld).IsEqualTo(1)
       .Because("an idle pass must leave no wait behind on the drain channel; the pending one carries over to the next pass");
-    await Assert.That(workChannel.TrackingReader.HeldWaits).IsEqualTo(1);
-    await Assert.That(drainChannel.TrackingReader.HeldWaits).IsEqualTo(1);
+    await Assert.That(workChannel.Counting.OutstandingWaits).IsEqualTo(1);
+    await Assert.That(drainChannel.Counting.OutstandingWaits).IsEqualTo(1);
     await Assert.That(fx.Worker.PendingWakeWaiters).IsLessThanOrEqualTo(1)
       .Because("the wake signal keeps its single waiter across passes (#728)");
 
     await cts.CancelAsync();
     await fx.Worker.StopAsync(CancellationToken.None);
 
-    await Assert.That(workChannel.TrackingReader.HeldWaits).IsEqualTo(0)
+    await Assert.That(workChannel.Counting.OutstandingWaits).IsEqualTo(0)
       .Because("stopping the worker releases the wait it carried");
-    await Assert.That(drainChannel.TrackingReader.HeldWaits).IsEqualTo(0);
+    await Assert.That(drainChannel.Counting.OutstandingWaits).IsEqualTo(0);
   }
 
   [Test]
@@ -77,8 +77,8 @@ public partial class PerspectiveWorkerInjectedClockTests {
     const int consumers = 3;
     var pollInterval = TimeSpan.FromMilliseconds(150);
     var clock = new ArmingClock();
-    var workChannel = new WaitTrackingWorkChannel();
-    var drainChannel = new WaitTrackingDrainChannel();
+    var workChannel = new CountingWorkChannel();
+    var drainChannel = new CountingDrainChannel();
     var fx = _build(clock, new PerspectiveWorkerOptions {
       PollingIntervalMilliseconds = (int)pollInterval.TotalMilliseconds,
       MaxConcurrentDrainConsumers = consumers,
@@ -92,8 +92,8 @@ public partial class PerspectiveWorkerInjectedClockTests {
     for (var round = 1; round <= IDLE_PASSES / 2; round++) {
       // Every consumer has armed its idle wait for this round: all of them are waiting.
       await clock.Armed(pollInterval, consumers * round).WaitAsync(cancellationToken);
-      maxWorkHeld = Math.Max(maxWorkHeld, workChannel.TrackingReader.HeldWaits);
-      maxDrainHeld = Math.Max(maxDrainHeld, drainChannel.TrackingReader.HeldWaits);
+      maxWorkHeld = Math.Max(maxWorkHeld, workChannel.Counting.OutstandingWaits);
+      maxDrainHeld = Math.Max(maxDrainHeld, drainChannel.Counting.OutstandingWaits);
       clock.Advance(pollInterval);
     }
 

@@ -81,7 +81,7 @@ public sealed class CapturingWorkCoordinator : IWorkCoordinator {
   /// surfaces as a diagnosable timeout rather than a hang.
   /// </summary>
   public async Task<IReadOnlyList<InboxMessage>> WaitForInboxAsync(int count, TimeSpan timeout) {
-    var deadline = Task.Delay(timeout);
+    var started = TimeProvider.System.GetTimestamp();
     while (true) {
       Task signalTask;
       lock (_lock) {
@@ -90,8 +90,11 @@ public sealed class CapturingWorkCoordinator : IWorkCoordinator {
         }
         signalTask = _signal.Task;
       }
-      var winner = await Task.WhenAny(signalTask, deadline);
-      if (winner == deadline) {
+      // The next capture against what is left of the deadline, one wake set per wait so nothing outlives it.
+      using var next = new Whizbang.Core.Async.WakeSet(TimeProvider.System, CancellationToken.None);
+      next.Add(signalTask);
+      var left = TimeSpan.FromTicks(Math.Max((timeout - TimeProvider.System.GetElapsedTime(started)).Ticks, 0));
+      if ((await next.WaitAsync(left)).IsTimeout) {
         lock (_lock) {
           throw new TimeoutException(
             $"Expected {count} captured inbox message(s) within {timeout.TotalSeconds:0.#}s but saw {_stored.Count}.");

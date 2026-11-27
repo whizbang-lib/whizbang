@@ -11,6 +11,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Async;
 
 #pragma warning disable CA1707 // Test method names use underscores by convention
 
@@ -382,5 +383,39 @@ public class BatchBufferTests {
     await Assert.That(() => new BatchBuffer(limits, new FakeLogger<BatchBuffer>(), null, null!)).Throws<ArgumentNullException>();
     await Assert.That(async () => await _buffer(limits).AdmitAsync(null!, 1, false, _standard, default)).Throws<ArgumentNullException>();
     await Assert.That(() => _buffer(limits).Release(null!)).Throws<ArgumentNullException>();
+  }
+  /// <summary>
+  /// An append that waited and was then admitted lets go of its registration on the caller's token (loop-waits audit).
+  /// A producer loop appends on its stopping token for the life of the host; a registration kept after admission
+  /// would hold every admitted waiter on that token until shutdown.
+  /// </summary>
+  [Test]
+  public async Task AWaitingAppend_OnceAdmitted_IsNotKeptByItsTokenAsync() {
+    using var stopping = new CancellationTokenSource();
+    var admitted = _buffer(_limits(messages: 1, bytes: 100));
+    var parked = _buffer(_limits(messages: 1, bytes: 100));
+
+    var releasedOnceAdmitted = ReleaseCheck.IsReleased(() => _waitThenAdmit(admitted, admit: true, stopping.Token));
+    var releasedWhileWaiting = ReleaseCheck.IsReleased(() => _waitThenAdmit(parked, admit: false, stopping.Token));
+
+    await Assert.That(releasedOnceAdmitted).IsTrue()
+      .Because("admission disposes the wait's registration, so nothing on the long-lived token keeps the waiter");
+    await Assert.That(releasedWhileWaiting).IsFalse()
+      .Because("the positive control: a wait still queued is kept, by the buffer and by its registration");
+    GC.KeepAlive(admitted);
+    GC.KeepAlive(parked);
+  }
+
+  [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+  private static Task _waitThenAdmit(BatchBuffer buffer, bool admit, CancellationToken token) {
+    var first = new object();
+    if (!_admit(buffer, first, bytes: 1, cancellationToken: CancellationToken.None).AsTask().IsCompletedSuccessfully) {
+      throw new InvalidOperationException("the first append fits and is admitted at once");
+    }
+    var waiting = _admit(buffer, new object(), bytes: 1, cancellationToken: token).AsTask();
+    if (admit) {
+      buffer.ReleaseOne(first);
+    }
+    return waiting;
   }
 }

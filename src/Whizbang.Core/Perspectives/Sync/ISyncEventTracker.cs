@@ -202,6 +202,7 @@ public interface ISyncEventTracker {
   /// <remarks>The default never completes on its own: it waits for the token.</remarks>
   /// <docs>fundamentals/perspectives/perspective-sync#cross-service-wake</docs>
   /// <tests>tests/Whizbang.Core.Unit.Perspectives.Tests/Perspectives/Sync/SyncEventTrackerAppliedTests.cs</tests>
+  [Whizbang.Core.Async.WaitSource]
   Task WhenAppliedAsync(Guid eventId, string perspectiveName, CancellationToken cancellationToken) =>
     Task.Delay(Timeout.Infinite, cancellationToken);
 }

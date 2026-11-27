@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core.Async;
 using Whizbang.Core.Diagnostics;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -333,10 +334,14 @@ public sealed partial class PerspectiveSyncAwaiter(
     // Registered before the first read, so an apply committed between the read and the wait is not missed.
     Task? appliedHere = _whenAppliedHereOrNull(eventId, inquiry.PerspectiveName, token);
     var reread = _firstLedgerReread;
+    // The in-process signal and the next ledger re-read, waited on together pass after pass: the re-read is the set's
+    // timeout, and the set's one timer is stopped whenever the signal wins.
+    using var wakes = new WakeSet(_timeProvider, token);
+    var applied = appliedHere is null ? null : wakes.Add(appliedHere);
     try {
       while (true) {
-        // The re-read timer starts before the read, so the backoff is measured from the read's start.
-        var nextRead = Task.Delay(reread, _timeProvider, token);
+        // The re-read's deadline starts before the read, so the backoff is measured from the read's start.
+        wakes.StartTimeout(reread);
         var status = await _coordinator.GetAppliedEventStatusAsync(inquiry with { EventId = eventId }, token);
         if (status is null) {
           return await _appliedWithoutLedgerAsync(requireLedger, appliedHere, inquiry, stopwatch, syncActivity);
@@ -347,8 +352,13 @@ public sealed partial class PerspectiveSyncAwaiter(
         if (appliedHere is null && status.Value.EventId is { } resolved) {
           eventId = resolved;
           appliedHere = _whenAppliedHereAsync(resolved, inquiry.PerspectiveName, token);
+          applied = wakes.Add(appliedHere);
         }
-        if (await _appliedBeforeRereadAsync(appliedHere, nextRead)) {
+        var wake = await wakes.WaitAsync();
+        // A stop is the wait's own token: the caller's, or the timeout's, which the handler below reports.
+        token.ThrowIfCancellationRequested();
+        if (applied is not null && wake.Woke(applied)) {
+          await appliedHere!;
           return _appliedResult(SyncOutcome.Synced, inquiry, stopwatch, syncActivity);
         }
         reread = _nextReread(reread);
@@ -396,19 +406,16 @@ public sealed partial class PerspectiveSyncAwaiter(
   private static TimeSpan _nextReread(TimeSpan reread) =>
     reread * 2 < _maxLedgerReread ? reread * 2 : _maxLedgerReread;
 
-  /// <summary>True when the in-process applied signal came first; false when it is time to read the ledger again.</summary>
-  private static async Task<bool> _appliedBeforeRereadAsync(Task? appliedHere, Task nextRead) {
-    var woke = await Task.WhenAny(appliedHere ?? nextRead, nextRead);
-    await woke;
-    return woke == appliedHere;
-  }
-
   /// <summary>Completes when this process applies the event for the perspective, or for the collective sink.</summary>
   private async Task _whenAppliedHereAsync(Guid eventId, string perspectiveName, CancellationToken token) {
-    var first = await Task.WhenAny(
-      _syncEventTracker.WhenAppliedAsync(eventId, perspectiveName, token),
-      _syncEventTracker.WhenAppliedAsync(eventId, CollectiveRouting.SINK_PERSPECTIVE_NAME, token));
-    await first;
+    using var wakes = new WakeSet(_timeProvider, token);
+    var here = _syncEventTracker.WhenAppliedAsync(eventId, perspectiveName, token);
+    var sink = _syncEventTracker.WhenAppliedAsync(eventId, CollectiveRouting.SINK_PERSPECTIVE_NAME, token);
+    var hereSource = wakes.Add(here);
+    wakes.Add(sink);
+    var wake = await wakes.WaitAsync(Timeout.InfiniteTimeSpan);
+    token.ThrowIfCancellationRequested();
+    await (wake.Woke(hereSource) ? here : sink);
   }
 
   private static SyncResult _appliedResult(

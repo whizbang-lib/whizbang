@@ -38,8 +38,9 @@ public partial class StartupParityTests {
 
     var recorded = await _startupWorkAsync();
     await Assert.That(recorded.Keys).IsEquivalentTo([
-      FrameworkStartupWork.PERSPECTIVE_REGISTRY, FrameworkStartupWork.PERSPECTIVE_STORAGE_SETTINGS,
-    ]).Because("only shared work is recorded; per-instance work runs at every start");
+      FrameworkStartupWork.MANAGED_OBJECT_RECONCILE, FrameworkStartupWork.PERSPECTIVE_REGISTRY,
+      FrameworkStartupWork.PERSPECTIVE_STORAGE_SETTINGS,
+    ]).Because("only shared work is recorded, the managed-object reconcile among it (#2608); per-instance work runs at every start");
     await Assert.That(recorded.Values.All(r => r.State == "done" && r.Instance == firstId)).IsTrue();
     await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM wh_startup_permits")).IsEqualTo(0L)
       .Because("the permit the start took is given back when its Converge work is done");
@@ -62,6 +63,8 @@ public partial class StartupParityTests {
     var driver = StartupDriver.For(driverName);
     _ = await _startAsync(driver);
     var peer = await _livePeerHoldingAPermitAsync();
+    // A rollout of the next build, when the cap matters: the start owes the shared reconcile, so it asks for a permit.
+    await _asIfTheNextBuildStartsAsync();
     var stages = new PermitWaitStages();
     var instance = _compose(driver, true, null, null, s => s.AddSingleton<IStartupStageReporter>(stages),
       (CAP_KEY, "1"), (POLL_KEY, "00:00:00.050"));
