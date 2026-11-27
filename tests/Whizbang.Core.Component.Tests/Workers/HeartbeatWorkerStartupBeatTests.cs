@@ -15,6 +15,7 @@ using Whizbang.Core.Signals;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Tests.Startup;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Async;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -217,10 +218,67 @@ public class HeartbeatWorkerStartupBeatTests {
     await Assert.That(async () => await wait.WaitAsync(_deadline)).Throws<OperationCanceledException>();
   }
 
+  /// <summary>
+  /// While the gate is closed the wait races the cadence against the gate. Whichever wins, the loser is released when
+  /// the wait returns, because the wait cancels its own token on the way out (loop-waits audit). The wait runs once per
+  /// beat for as long as the gate stays closed, so a loser left behind would pile up: a gate wait per beat on the gate,
+  /// or a cadence delay per beat on the clock.
+  /// </summary>
+  [Test]
+  public async Task TheWait_WhileTheGateIsClosed_EndedByTheCadence_ReleasesItsWaitOnTheGateAsync() {
+    var gate = new TokenRecordingGate();
+    var fixture = new Fixture(gate);
+
+    for (var beat = 1; beat <= 5; beat++) {
+      var wait = fixture.Worker.WaitForNextTickAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+      fixture.Time.Advance(TimeSpan.FromSeconds(30));
+      await wait.WaitAsync(_deadline);
+    }
+
+    await Assert.That(gate.Tokens.Count).IsEqualTo(5)
+      .Because("each wait under a closed gate also waited on the gate");
+    await Assert.That(gate.Tokens.All(t => t.IsCancellationRequested)).IsTrue()
+      .Because("a gate wait that lost to the cadence must be canceled when the wait returns, or one is left per beat");
+  }
+
+  [Test]
+  public async Task TheWait_WhileTheGateIsClosed_EndedByTheGate_ReleasesItsCadenceDelayAsync() {
+    var gate = new SchemaReadyGate();
+    var clock = new CountingTimeProvider(new FakeTimeProvider(Fixture.Start));
+    var fixture = new Fixture(gate, counting: clock);
+    var before = clock.LiveTimers;
+
+    var wait = fixture.Worker.WaitForNextTickAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+    var whileWaiting = clock.LiveTimers - before;
+    gate.MarkReady();
+    await wait.WaitAsync(_deadline);
+
+    await Assert.That(whileWaiting).IsEqualTo(1)
+      .Because("the wait holds one cadence delay, and the counter must see it");
+    await Assert.That(clock.LiveTimers - before).IsEqualTo(0)
+      .Because("the cadence delay that lost to the gate must be canceled when the wait returns");
+  }
+
+  /// <summary>A closed schema-ready gate that remembers the token of every wait asked of it.</summary>
+  private sealed class TokenRecordingGate : ISchemaReadyGate {
+    private readonly SchemaReadyGate _inner = new();
+
+    public List<CancellationToken> Tokens { get; } = [];
+    public bool IsReady => _inner.IsReady;
+    public void MarkReady() => _inner.MarkReady();
+
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      Tokens.Add(cancellationToken);
+      return _inner.WaitForReadyAsync(cancellationToken);
+    }
+  }
+
   private sealed class Fixture {
     public static readonly DateTimeOffset Start = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
-    public Fixture(ISchemaReadyGate gate, bool startupAccepted = true, bool fullAccepted = true, bool withExit = true) {
+    public Fixture(ISchemaReadyGate gate, bool startupAccepted = true, bool fullAccepted = true, bool withExit = true,
+        CountingTimeProvider? counting = null) {
+      Time = counting?.Inner as FakeTimeProvider ?? new FakeTimeProvider(Start);
       Coordinator = new BeatCoordinator(startupAccepted, fullAccepted);
       var services = new ServiceCollection();
       services.AddSingleton<IWorkCoordinator>(Coordinator);
@@ -241,14 +299,14 @@ public class HeartbeatWorkerStartupBeatTests {
         signalBus: Bus,
         schemaReady: gate,
         instanceExit: withExit ? Exit : null!,
-        timeProvider: Time);
+        timeProvider: (TimeProvider?)counting ?? Time);
     }
 
     public BeatCoordinator Coordinator { get; }
     public Whizbang.Testing.Lifecycle.RecordingInstanceExit Exit { get; } = new();
     public RecordingStageReporter Stages { get; } = new();
     public CapturingBus Bus { get; } = new();
-    public FakeTimeProvider Time { get; } = new(Start);
+    public FakeTimeProvider Time { get; }
     public ServiceInstanceProvider Instance { get; }
     public HeartbeatWorker Worker { get; }
   }
